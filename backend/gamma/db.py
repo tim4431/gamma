@@ -593,7 +593,12 @@ USERS_SCHEMA = [
 # and the directory: what its next turn resumes; agent_turns = one row a
 # turn of that chat, its state (queued, running, done, failed, stopped),
 # its process and ``error``, this computer's record (the whole error, the
-# stderr tail), never written in the conversation.
+# stderr tail), never written in the conversation; agent_policies = what a
+# vault's agent may run (``ask``: its chat's turns may ask the person; no
+# row is ``never``), who set it and when; agent_grants = a command a person
+# allowed in a conversation of that chat, exactly as asked, the directory it
+# runs in (``.`` the folder) and the network host it reaches ("" none), and
+# its vault.
 VAULTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS linked_files (
         ws TEXT NOT NULL,
@@ -706,6 +711,21 @@ VAULTS_SCHEMA = [
         pid INTEGER
     )""",
     "CREATE INDEX IF NOT EXISTS idx_agent_turns_open ON agent_turns(ended_at) WHERE ended_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS agent_policies (
+        link_id TEXT PRIMARY KEY,
+        runs TEXT NOT NULL,
+        set_by TEXT NOT NULL,
+        set_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_grants (
+        conversation_id TEXT NOT NULL,
+        command TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        host TEXT NOT NULL,
+        link_id TEXT NOT NULL,
+        at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, command, cwd, host)
+    )""",
 ]
 
 # unified_blocks' typed hot fields, after the seven columns blocks always

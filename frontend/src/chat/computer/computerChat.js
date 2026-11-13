@@ -12,11 +12,19 @@
 // changes: [path], changed: n, built, error, fresh, at, ended_at}, `changes`
 // the folder's relative paths it named (at most 200), `changed` how many
 // files changed in all, `error` the server's English sentence, `fresh`
-// when a follow-up could not resume the agent's session.
+// when a follow-up could not resume the agent's session. While the folder
+// lets its agent ask (the vault's agent `runs: "ask"`), a running turn's
+// message also has `asks`, what the agent waits on the person for:
+// [{id, kind: "command" | "files" | "tool", command, cwd, paths, diff,
+// reason, at}], `cwd` and `paths` relative to the folder, "outside" or
+// "~", `diff` a unified diff; a step asked about reads "asked", then
+// "allowed" or "declined".
 import { t, tn } from "../../shared/i18n/i18n.js";
 
 // How long a message may be (the server's cap).
 export const TEXT_MAX = 20000;
+// How long the note of a decline may be (the server's cap).
+export const NOTE_MAX = 2000;
 // How often the side reads the conversation again while a turn is queued
 // or running, ms.
 export const POLL_MS = 1500;
@@ -40,6 +48,17 @@ export function turnBody(id, page, text, selections = []) {
   };
 }
 
+// The path an answer to an ask posts to, and what it posts: the decision
+// ("once", "chat" or "deny") and, for a decline, the note when one was
+// written.
+export const askPath = (turnId, askId) =>
+  `/local-agents/chat/turns/${encodeURIComponent(turnId)}/asks/${encodeURIComponent(askId)}`;
+
+export function answerBody(decision, note = "") {
+  const said = decision === "deny" ? String(note || "").trim().slice(0, NOTE_MAX) : "";
+  return said ? { decision, note: said } : { decision };
+}
+
 // Whether a message is a turn still to end: queued or running.
 export const isLive = (message) => message?.role === "agent" && (message.state === "queued" || message.state === "running");
 
@@ -56,10 +75,32 @@ function placeOf(step) {
   return step?.path || "";
 }
 
+// A step asked about, in words: "Asked to run latexmk", then "Allowed to
+// run latexmk" or "Not allowed to run latexmk".
+function askedStep(step, path) {
+  const run = step.kind === "run";
+  const edit = step.kind === "edit";
+  const program = step.program || "";
+  switch (step.status) {
+    case "allowed":
+      return run ? (program ? t("Allowed to run {program}", { program }) : t("Allowed to run a command"))
+        : edit ? (path ? t("Allowed to edit {path}", { path }) : t("Allowed to edit a file")) : t("Allowed");
+    case "declined":
+      return run ? (program ? t("Not allowed to run {program}", { program }) : t("Not allowed to run a command"))
+        : edit ? (path ? t("Not allowed to edit {path}", { path }) : t("Not allowed to edit a file")) : t("Not allowed");
+    default:
+      return run ? (program ? t("Asked to run {program}", { program }) : t("Asked to run a command"))
+        : edit ? (path ? t("Asked to edit {path}", { path }) : t("Asked to edit a file")) : t("Asked to go further");
+  }
+}
+
+const ASKED = new Set(["asked", "allowed", "declined"]);
+
 // A step in words, done: "Read sections/intro.tex", "Edited …", "Ran
-// latexmk", "Searched the sources", "Worked".
+// latexmk", "Searched the sources", "Worked"; one asked about says so.
 export function stepText(step) {
   const path = placeOf(step);
+  if (ASKED.has(step?.status)) return askedStep(step, path);
   switch (step?.kind) {
     case "read": return path ? t("Read {path}", { path }) : t("Read a file");
     case "edit": return path ? t("Edited {path}", { path }) : t("Edited a file");
@@ -94,6 +135,7 @@ export function currentStep(message) {
 // before its first step), once it ended how many steps it took.
 export function turnLabel(message, label) {
   const agent = message?.label || label;
+  if (isLive(message) && message.asks?.length) return t("{agent} is waiting for you", { agent });
   if (isLive(message)) {
     const now = stepNow(currentStep(message));
     return now ? t("{agent} is working: {detail}", { agent, detail: now }) : t("{agent} is working…", { agent });
@@ -130,15 +172,52 @@ export function endText(message) {
 export const freshLine = (label) =>
   t("{agent} started a new session: it does not remember the earlier turns of this conversation.", { agent: label });
 
+// What an ask's card is headed: "Codex wants to run a command".
+export function askTitle(ask, agent) {
+  if (ask?.kind === "command") return t("{agent} wants to run a command", { agent });
+  if (ask?.kind === "files") return t("{agent} wants to change files outside its sandbox", { agent });
+  return t("{agent} wants to use a tool", { agent });
+}
+
+// Where an asked command runs: the folder's relative path, a folder outside
+// it, or the home folder ("~"); the work folder itself for "" or ".".
+export function askPlace(cwd) {
+  if (!cwd || cwd === ".") return t("In the work folder");
+  if (cwd === "outside") return t("In a folder outside the work folder");
+  if (cwd === "~") return t("In your home folder");
+  return t("In {path}", { path: cwd });
+}
+
+// The line under an ask's buttons: what allowing it means.
+export function askRisk(ask) {
+  if (ask?.kind === "command") return t("It runs as you, with your files and the network.");
+  if (ask?.kind === "files") return t("It changes files outside the work folder.");
+  return "";
+}
+
+// A unified diff as rows to draw: [{kind, text}], `kind` "del" or "ins" for
+// a line taken out or put in, "head" for the file and hunk lines, "same"
+// for the context.
+export function diffRows(diff) {
+  if (!diff) return [];
+  return String(diff).replace(/\n$/, "").split("\n").map((text) => {
+    if (/^(---|\+\+\+|@@|diff |index )/.test(text)) return { kind: "head", text };
+    if (text.startsWith("-")) return { kind: "del", text };
+    if (text.startsWith("+")) return { kind: "ins", text };
+    return { kind: "same", text };
+  });
+}
+
 // The strip under the header: {text, kind}, `kind` its look ("ready",
-// "working", "waiting", "problem", "paused"). `info` is the server's
-// `computer` ({label, ready, problem, folder, paused, turn: {turn_id,
-// state, ahead} | null}) or, until it is read, the page's (vaultState
-// computerAgent); `live` the conversation's turn still to end, whose step
-// the strip names.
+// "working", "waiting", "asking", "problem", "paused"). `info` is the
+// server's `computer` ({label, ready, problem, folder, paused, turn:
+// {turn_id, state, ahead} | null}) or, until it is read, the page's
+// (vaultState computerAgent); `live` the conversation's turn still to end,
+// whose step, or what it asks, the strip names.
 export function stripLine(info, live = null) {
   const agent = info?.label || "";
   if (info?.paused) return { text: t("The work folder is paused on this computer: {agent} starts once it syncs again.", { agent }), kind: "paused" };
+  if (live?.asks?.length) return { text: t("Waiting for you: {ask}", { ask: askTitle(live.asks[0], live.label || agent) }), kind: "asking" };
   const turn = info?.turn || (live ? { state: live.state, ahead: false } : null);
   if (turn?.state === "queued") {
     return turn.ahead ? { text: t("Waiting for {agent} to finish its other work in this folder", { agent }), kind: "waiting" }

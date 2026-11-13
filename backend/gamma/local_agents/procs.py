@@ -252,11 +252,12 @@ class Child:
             return None
 
 
-def spawn(argv: list[str], *, cwd: str) -> Child:
+def spawn(argv: list[str], *, cwd: str, env: dict | None = None) -> Child:
     """Start ``argv`` in ``cwd`` with pipes for all three streams (UTF-8
     text, line buffered), in a Job object on Windows, and register it for
-    ``stop_all``. OSError when it cannot start."""
-    proc = subprocess.Popen(argv, cwd=cwd, env=child_env(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    ``stop_all``; ``env``, variables of a driver's own added to
+    ``child_env``. OSError when it cannot start."""
+    proc = subprocess.Popen(argv, cwd=cwd, env={**child_env(), **(env or {})}, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1,
                             **_popen_flags())
     job = None

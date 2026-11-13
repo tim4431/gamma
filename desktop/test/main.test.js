@@ -588,6 +588,58 @@ test('a work folder\'s agent from the panel: the agents found are read, turning 
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex'), /Only a work folder/);
 });
 
+test('what a work folder\'s agent may run, from the panel: Ask is asked first with the risk and carries the shell\'s word, Nothing more asks nothing', async () => {
+  fresh();
+  const s = server('Asking');
+  const agentOf = (runs) => ({ name: 'claude', label: 'Claude Code', ready: true, problem: '', running: null, runs });
+  s.fake.vaults = [vaultLink({ push: 'everything', mine: true, agent: agentOf('never') })];
+  s.fake.routes = (p, init) => {
+    if (p === '/api/local-agents') return { agents: [{ name: 'claude', label: 'Claude Code', found: true, ready: true, problem: '' }] };
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') {
+      s.fake.vaults = [vaultLink({ push: 'everything', mine: true, agent: agentOf(JSON.parse(init.body).agent_runs) })];
+      return s.fake.vaults[0];
+    }
+    return null;
+  };
+  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
+  await shell.refreshKeeping();
+  let [item] = shell.keeping().items;
+  assert.deepEqual([item.agent, item.agentRuns], ['claude', 'never']);
+
+  // asked first, naming what it may ask for and the risk; under the harness the question takes Cancel
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask');
+  assert.deepEqual(patches(), [], 'nothing changed');
+  assert.equal(shell.asked.at(-1), 'Let Claude Code ask to run more in C:\\Papers? In the chat of a file of this folder, Claude Code can then ask you to run a command, such as your build; nothing of it runs until you allow it there. A command you allow runs as you, with your files and the network.');
+
+  shell.answers.push(0);
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask');
+  const [on] = patches();
+  assert.deepEqual(on.body, { agent_runs: 'ask' });
+  assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'letting an agent ask is the computer\'s word');
+  assert.equal(on.headers['X-Gamma-Workspace'], 'mine');
+  assert.equal(shell.notice(), 'Claude Code may now ask you in the chat to run more on Papers.');
+  await shell.refreshKeeping();
+  [item] = shell.keeping().items;
+  assert.equal(item.agentRuns, 'ask');
+
+  // the same again changes nothing; another word is refused; Nothing more asks nothing and carries no word
+  const asks = shell.asked.length;
+  assert.equal(await shell.setAgentRuns(s.srv.id, 'v1', 'ask'), false);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'always'), /never or ask/);
+  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'never');
+  const off = patches().at(-1);
+  assert.deepEqual(off.body, { agent_runs: 'never' });
+  assert.equal(off.headers['X-Gamma-Shell'], undefined);
+  assert.equal(shell.asked.length, asks, 'nothing asked');
+  assert.equal(shell.notice(), 'Claude Code no longer asks to run more on Papers: it keeps to its confinement.');
+
+  // a work folder with no agent on has nothing to let it run
+  s.fake.vaults = [vaultLink({ push: 'everything', mine: true, agent: null })];
+  await shell.refreshKeeping();
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask'), /Turn an agent on first/);
+  assert.equal(patches().length, 2);
+});
+
 // What `POST /api/folder-links/preview` finds in the directory `picked`:
 // `pages` in the folder, `notes` in the directory, `refusal` why it may not be.
 const previewOf = (picked, { notes = 2, pages = 0, refusal = '', marker = null } = {}) => ({

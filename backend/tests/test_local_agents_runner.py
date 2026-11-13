@@ -99,6 +99,8 @@ def disk(tmp_path, monkeypatch):
         conn.execute("DELETE FROM agent_threads")
         conn.execute("DELETE FROM agent_conversations")
         conn.execute("DELETE FROM agent_turns")
+        conn.execute("DELETE FROM agent_policies")
+        conn.execute("DELETE FROM agent_grants")
     with folder_links._dirty_guard:
         folder_links._dirty.clear()
     assert not left, f"children left running: {[c.proc.pid for c in left]}"

@@ -180,8 +180,9 @@ def test_codex_refuses_every_approval_in_the_schema_s_shape(monkeypatch, work, l
     assert out[-1]["ok"]
     answers = [entry["answer"] for entry in read_log(log) if "answer" in entry]
     assert [a["id"] for a in answers] == [f"srv-{n}" for n in range(len(asked))]
+    legacy = {"decision": {"denied": {"rejection": "Gamma does not let an agent do that here."}}}  # a ReviewDecision
     assert [a.get("result") for a in answers[:6]] == [
-        {"decision": "decline"}, {"decision": "decline"}, {"decision": "denied"}, {"decision": "denied"},
+        {"decision": "decline"}, {"decision": "decline"}, legacy, legacy,
         {"permissions": {}, "scope": "turn"}, {"action": "decline"}]
     assert answers[6]["error"] == {"code": -32601, "message": "not supported"} and "result" not in answers[6]
 

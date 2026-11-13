@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  canSend, changesLine, chatPath, currentStep, endText, freshLine, isLive, liveTurn, stepNow, stepText, stripLine, turnBody,
-  turnLabel,
+  NOTE_MAX, answerBody, askPath, askPlace, askRisk, askTitle, canSend, changesLine, chatPath, currentStep, diffRows, endText,
+  freshLine, isLive, liveTurn, stepNow, stepText, stripLine, turnBody, turnLabel,
 } from "../src/chat/computer/computerChat.js";
 
 const agent = (over = {}) => ({
@@ -103,6 +103,56 @@ test("the strip: the agent and the folder, what it is at, what it waits for, why
   // The page's own word for the agent (vaultState computerAgent) until the side's read lands.
   assert.equal(stripLine({ name: "codex", label: "Codex", ready: true, problem: "", running: null, folder: "Thesis", paused: false }).text,
     "Codex on this computer · Thesis");
+});
+
+test("what the agent asks: the card's title, where a command runs, what allowing it means", () => {
+  const command = { id: "a1", kind: "command", command: "latexmk -pdf main.tex", cwd: "", reason: "Build the PDF", at: "" };
+  const files = { id: "a2", kind: "files", paths: ["outside"], diff: "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n same\n", at: "" };
+  assert.equal(askTitle(command, "Codex"), "Codex wants to run a command");
+  assert.equal(askTitle(command, "Claude Code"), "Claude Code wants to run a command");
+  assert.equal(askTitle(files, "Codex"), "Codex wants to change files outside its sandbox");
+  assert.equal(askTitle({ kind: "tool" }, "Codex"), "Codex wants to use a tool");
+  assert.equal(askPlace(""), "In the work folder");
+  assert.equal(askPlace("."), "In the work folder");
+  assert.equal(askPlace("sections"), "In sections");
+  assert.equal(askPlace("outside"), "In a folder outside the work folder");
+  assert.equal(askPlace("~"), "In your home folder");
+  assert.equal(askRisk(command), "It runs as you, with your files and the network.");
+  assert.equal(askRisk(files), "It changes files outside the work folder.");
+  assert.equal(askRisk({ kind: "tool" }), "");
+  assert.deepEqual(diffRows(files.diff), [
+    { kind: "head", text: "--- a/x" }, { kind: "head", text: "+++ b/x" }, { kind: "head", text: "@@ -1 +1 @@" },
+    { kind: "del", text: "-old" }, { kind: "ins", text: "+new" }, { kind: "same", text: " same" },
+  ]);
+  assert.deepEqual(diffRows(""), []);
+  assert.deepEqual(diffRows(undefined), []);
+});
+
+test("an answer posts the decision, and a decline's note when one was written", () => {
+  assert.equal(askPath("t 1", "a/1"), "/local-agents/chat/turns/t%201/asks/a%2F1");
+  assert.deepEqual(answerBody("once"), { decision: "once" });
+  assert.deepEqual(answerBody("chat", "ignored"), { decision: "chat" });
+  assert.deepEqual(answerBody("deny", "  use the cached copy "), { decision: "deny", note: "use the cached copy" });
+  assert.deepEqual(answerBody("deny", "   "), { decision: "deny" });
+  assert.equal(answerBody("deny", "x".repeat(NOTE_MAX + 10)).note.length, NOTE_MAX);
+});
+
+test("a turn that asks: its pill and the strip wait for the person, its steps say what was asked", () => {
+  const asks = [{ id: "a1", kind: "command", command: "latexmk", cwd: "", at: "" }];
+  const asking = agent({ state: "running", asks, steps: [{ kind: "run", program: "latexmk", status: "asked" }] });
+  assert.equal(turnLabel(asking, "Codex"), "Codex is waiting for you");
+  assert.deepEqual(stripLine({ ...ready, turn: { turn_id: "t1", state: "running", ahead: false } }, asking),
+    { text: "Waiting for you: Codex wants to run a command", kind: "asking" });
+  assert.equal(stripLine({ ...ready, paused: true }, asking).kind, "paused");
+  assert.equal(stripLine(ready, agent({ state: "running", asks: [] })).kind, "working", "no ask waiting");
+  assert.equal(turnLabel(agent({ asks }), "Codex"), "0 steps", "an ended turn's asks wait for nothing");
+  assert.equal(stepText({ kind: "run", program: "latexmk", status: "asked" }), "Asked to run latexmk");
+  assert.equal(stepText({ kind: "run", program: "latexmk", status: "allowed" }), "Allowed to run latexmk");
+  assert.equal(stepText({ kind: "run", status: "declined" }), "Not allowed to run a command");
+  assert.equal(stepText({ kind: "edit", path: "outside", status: "asked" }), "Asked to edit a file outside the folder");
+  assert.equal(stepText({ kind: "edit", path: "outside", status: "declined" }), "Not allowed to edit a file outside the folder");
+  assert.equal(stepText({ kind: "other", status: "asked" }), "Asked to go further");
+  assert.equal(stepText({ kind: "run", program: "latexmk", status: "completed" }), "Ran latexmk");
 });
 
 test("a message goes with text, no turn still to end, and an agent able to run", () => {

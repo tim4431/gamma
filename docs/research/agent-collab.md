@@ -653,7 +653,7 @@ agent), and a token cannot move them.
 | 1. An agent on this computer answers a Send | the host on the desktop app's own server (`gamma/local_agents/`: finding the agents, the two drivers, the claim and the run, the answers), the folder's agent switched on in the sync panel, "Send to Codex" in the Feedback dialog, the agent's progress, summary and changed files on the request | built: [dev/local_agents.md](../dev/local_agents.md), "As built (step 1)" below |
 | 2. `@codex` in a comment | the mention as a Send of its thread or of the file's open threads, the @ menu's agent row, a follow-up resuming the session that answered, the names settled without reserving them | built: [dev/local_agents.md](../dev/local_agents.md) "A mention in a comment", "As built (step 2)" below |
 | 3a. The chat's computer side | the switch and the strip, the agent's turns in the chat (its reply, its steps, what it changed), a selected passage sent with its source line, Stop, a turn that outlives its tab, its own conversations and History | built: [dev/local_agents.md](../dev/local_agents.md) "The chat's computer side", "As built (step 3a)" below |
-| 3b. Approvals | approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), what the agent may run set on the computer | plan: "The chat window gets a second side", "On the computer" |
+| 3b. Approvals | approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), what the agent may run set on the computer | built: [dev/local_agents.md](../dev/local_agents.md) "Asking in the chat", "As built (step 3b)" below |
 | 3c. The rest of the side | *Continue in a terminal*, the selection's source line as a chip, a Background tasks row, View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, the model and effort, a folder's computer chat, text as it is typed | plan: "The chat window gets a second side" |
 | 4. The remote | the computer announced to the servers its vaults name, presence in any window of the maker, work folders of another server, their requests and the chat relayed through the computer's channel | plan: "How the server sees a vault" |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
@@ -765,6 +765,39 @@ side can take; where 3a went otherwise than planned:
   *Revert* also needs a decision first: Gamma writes no file the disk made
   (file-explorer.md, decision 3), so it would be a turn asking the agent to
   undo, or the agent's own checkpoint (Claude Code's `rewind_files`).
+
+### As built (step 3b)
+
+[dev/local_agents.md](../dev/local_agents.md) "Asking in the chat" is the
+reference; where it went otherwise than planned:
+
+- **Asking is the chat's, never a Send's.** Nobody watches a Send, so it
+  keeps refusing. The panel's *Never | Ask in the chat | Ask on this
+  computer* is built as *Nothing more | Ask me in the chat*: the third,
+  a card on the computer's own screen, waits.
+- **Not `POST /api/ai/approvals/{id}`.** That route takes any token of the
+  account, keeps its approvals in a window's stream and offers *Always
+  allow*. The asks are the turn's, held by the runner, written in the
+  agent's message so any of the maker's windows draws the card from its
+  poll, and answered through their own maker-only route; the card is the
+  approval card's look, not its component, and has no *Always allow*.
+- **Allowed in this chat is Gamma's record.** Codex's `acceptForSession`
+  lives in one app-server process and Claude Code's session rules in one
+  CLI process, while a turn is one process; and an agent's own rule could
+  be a prefix (`Bash(latexmk *)`, a shell). Gamma keeps the exact
+  commands allowed per conversation and answers them itself.
+- **Claude Code asks through `--permission-prompt-tool stdio`**, the
+  control protocol the Agent SDK speaks (hidden from `--help`), with an ask
+  rule in `--settings` making every Bash call a prompt; a run that asks is
+  stream-json both ways. Every other prompt (an edit of a protected file,
+  any other tool) Gamma denies itself.
+- **Checked against the real CLIs** (Codex 0.167.0, Claude Code 2.1.318)
+  before the merge: a Claude Code Bash call asked through Gamma's handler
+  and run once allowed; its Edit of `.git/config` refused by Gamma with no
+  card; Codex asking to run `curl` outside its sandbox (its request id an
+  integer), allowed and run with the network. Still not run for real: a
+  Codex file-change approval, `untrusted`, and Claude Code's interrupt with
+  a prompt waiting.
 
 ### Declined
 

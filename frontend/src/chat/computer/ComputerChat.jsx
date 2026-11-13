@@ -18,6 +18,7 @@ import { Segmented } from "../../settings/SettingsKit";
 import { formatRelativeTime } from "../../library/libraryUtils.js";
 import { sendsOnEnter } from "../enterKey.js";
 import { SelChip } from "../ChatDock";
+import ComputerAsk from "./ComputerAsk.jsx";
 import {
   ActivityIcon, AlertCircleIcon, ArrowUpIcon, CheckIcon, CopyIcon, FileTextIcon, HistoryIcon, PencilIcon, PlusIcon, QuoteIcon,
   SearchIcon, StopIcon, TerminalIcon, TrashIcon,
@@ -140,8 +141,9 @@ function PersonMessage({ message }) {
 }
 
 // The agent's message: the turn's steps in one pill that unfolds to each,
-// the reply, what changed, and how the turn ended when it did not answer.
-function AgentMessage({ message, label, copied, onCopy }) {
+// a card for each thing it asks and waits on, the reply, what changed, and
+// how the turn ended when it did not answer.
+function AgentMessage({ message, label, copied, onCopy, onAnswer }) {
   const [open, setOpen] = useState(false);
   const live = isLive(message);
   const steps = message.steps || [];
@@ -180,6 +182,10 @@ function AgentMessage({ message, label, copied, onCopy }) {
               </Collapse>
             </div>
           ) : null}
+          {live ? (message.asks || []).map((ask) => (
+            <ComputerAsk key={ask.id} ask={ask} label={message.label || label}
+              onAnswer={(decision, note) => onAnswer(message.turn_id, ask.id, decision, note)} />
+          )) : null}
           {message.text ? <ChatMarkdown text={message.text} copyBlocks /> : null}
           {changes ? <div className="computerChanges">{changes}</div> : null}
           {ended ? (
@@ -256,7 +262,7 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
         ) : null}
         {messages.map((m, i) => (m.role === "user"
           ? <PersonMessage key={m.id || i} message={m} />
-          : <AgentMessage key={m.id || i} message={m} label={label} copied={copied === i}
+          : <AgentMessage key={m.id || i} message={m} label={label} copied={copied === i} onAnswer={chat.answer}
               onCopy={async () => { if (await copyText(m.text || "")) flashCopied(i); }} />))}
       </div>
       <form className="chatComposer" onSubmit={(e) => { e.preventDefault(); send(); }}
