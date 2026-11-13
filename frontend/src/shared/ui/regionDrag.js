@@ -8,9 +8,11 @@
 // coalesced to one `onMove` per frame (a high-rate pointer outpaces frames,
 // and each move re-renders the caller), a second finger cancels it (the
 // gesture became a pinch), under a pen another pointer is a palm and
-// changes nothing, a drag under `minPx` either way is a click and gives
-// nothing, and the click the release would deliver to whatever lies under
-// it is swallowed (shared/ui/press.js).
+// changes nothing, the pen plainly up without its lift (press.js
+// penLifted: hovering, or down again) ends the drag where the pen last was,
+// a drag under `minPx` either way is a click and gives nothing, and the
+// click the release would deliver to whatever lies under it is swallowed
+// (shared/ui/press.js).
 //
 //   beginRegionDrag(e, { box, onMove, onDone, minPx })
 //     e        the pointerdown
@@ -19,7 +21,7 @@
 //              the drag ends or is cancelled
 //     onDone(rect, box)     the rectangle on release, past minPx
 //   Returns whether a drag began.
-import { swallowClick } from "./press.js";
+import { penLifted, swallowClick } from "./press.js";
 import { MIN_DRAG_PX, dragRect, isClick } from "./regionGeometry.js";
 
 export function beginRegionDrag(e, { box, onMove, onDone, minPx = MIN_DRAG_PX }) {
@@ -32,7 +34,7 @@ export function beginRegionDrag(e, { box, onMove, onDone, minPx = MIN_DRAG_PX })
   const pen = e.pointerType === "pen";
   const sx = e.clientX, sy = e.clientY;
   const toRect = (cx, cy) => dragRect(sx, sy, cx, cy, rect);
-  let moveRaf = 0, moveX = 0, moveY = 0;
+  let moveRaf = 0, moveX = sx, moveY = sy;
   const detach = () => {
     cancelAnimationFrame(moveRaf);
     document.removeEventListener("pointerdown", onOther, true);
@@ -41,6 +43,7 @@ export function beginRegionDrag(e, { box, onMove, onDone, minPx = MIN_DRAG_PX })
     document.removeEventListener("pointercancel", onCancel);
   };
   function onMove_(ev) {
+    if (pen && penLifted(ev, pointerId)) { onUp({ pointerId, clientX: moveX, clientY: moveY }); return; }
     if (ev.pointerId !== pointerId) return;
     moveX = ev.clientX;
     moveY = ev.clientY;
@@ -56,7 +59,10 @@ export function beginRegionDrag(e, { box, onMove, onDone, minPx = MIN_DRAG_PX })
     onMove(null);
   }
   function onOther(ev) {
-    if (ev.pointerId !== pointerId && !pen) onCancel({ pointerId });
+    if (pen ? penLifted(ev, pointerId) : ev.pointerId !== pointerId) {
+      if (pen) onUp({ pointerId, clientX: moveX, clientY: moveY });
+      else onCancel({ pointerId });
+    }
   }
   function onUp(ev) {
     if (ev.pointerId !== pointerId) return;

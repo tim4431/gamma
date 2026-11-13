@@ -40,7 +40,7 @@ import {
   stretchRuler, turnRuler,
 } from "./ruler.js";
 import { toolShape } from "./shapeTool.js";
-import { clickAt, doublePress, swallowClick } from "../shared/ui/press.js";
+import { clickAt, doublePress, penLifted, swallowClick } from "../shared/ui/press.js";
 import { scrollBox } from "../shared/ui/placement.js";
 import { ARROWS, TransformHandles, arrowSign, pct } from "../markup/TransformHandles.jsx";
 import { usePageTools } from "../markup/PageTools.jsx";
@@ -1129,12 +1129,33 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     };
     const trackDown = (e) => {
       contacts.add(e.pointerId);
+      if (e.pointerType === "pen") lastPen = e.pointerId;
       if (pending && pending.id !== e.pointerId && !pending.pen) clearPending(true);
       if (e.pointerType === "pen") fingerHint = false;
       // A second finger makes a finger's stroke a pinch: the stroke goes.
       if (drawing?.pointerType === "touch" && e.pointerType === "touch" && drawing.id !== e.pointerId) {
         finish({ pointerId: drawing.id }, true);
       }
+    };
+    // A pen's lift that never came (shared/ui/press.js penLifted): seen on
+    // the document before any layer's own press, the pen hovering or going
+    // down again ends what its last contact held here — a drag as its lift
+    // would end it, where the pen last touched (`d.at`, noted by onDown and
+    // onMove), a page's drag and a tap as a cancel, the host's pointer, and
+    // its place among the contacts. Else fingers would stay palms on every
+    // page, this layer would ignore the next press, and the Pencil's
+    // gestures would wait for a stroke that is over.
+    let lastPen = null; // the pen pointer last down here, while it is in `contacts`
+    const note = (d, e) => { d.at = { clientX: e.clientX, clientY: e.clientY, timeStamp: e.timeStamp, shiftKey: !!e.shiftKey }; };
+    const penGone = (e) => {
+      if (penLifted(e, lastPen)) { contacts.delete(lastPen); lastPen = null; }
+      if (penLifted(e, hostOwned)) hostOwned = null;
+      if (pending?.pen && penLifted(e, pending.id)) clearPending(true);
+      const d = drawing;
+      if (d?.pointerType !== "pen" || !penLifted(e, d.id)) return;
+      if (d.mode === "page" || !d.at) { drawing = null; return; }
+      if (!hostClaims.get(d.id)?.taken) hostClaims.delete(d.id);
+      finish({ type: "pointerup", pointerId: d.id, pointerType: "pen", button: 0, buttons: 0, pressure: 0, ...d.at }, false);
     };
     // On the document: the page's own drag may end anywhere. Its touch was
     // cancelled (onTouch), so a tap's click is sent from here, past what a
@@ -1636,7 +1657,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
         }, drop);
     };
 
+    // A press, and on the pen drag it began, where the pen touched (penGone).
     const onDown = (e) => {
+      press(e);
+      if (drawing?.id === e.pointerId && drawing.pointerType === "pen") note(drawing, e);
+    };
+    const press = (e) => {
       // the touch whose hold opened Paste here is over once its pointer goes down again
       if (e.pointerId === pasteHold) pasteHold = null;
       if (e.target.closest?.(NOT_INK)) { hideCursor(); return; }
@@ -1763,6 +1789,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
       if (pending?.id === e.pointerId && Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > 8) clearPending(true);
       const d = drawing;
       if (!d || e.pointerId !== d.id || d.mode === "page") return;
+      note(d, e);
       e.preventDefault();
       if (d.mode === "erase") {
         sweepAdd(d, coalesced(e));
@@ -1963,6 +1990,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     };
     const onBlur = () => { hideCursor(); clearPending(true); contacts.clear(); if (drawing) finish({ pointerId: drawing.id }, true); };
     el.addEventListener("contextmenu", onContext);
+    document.addEventListener("pointerdown", penGone, true);
+    document.addEventListener("pointermove", penGone, true);
     document.addEventListener("pointerdown", trackDown, true);
     document.addEventListener("pointerup", trackUp, true);
     document.addEventListener("pointercancel", trackUp, true);
@@ -1983,6 +2012,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
       el.removeEventListener("lostpointercapture", onCancel);
       window.removeEventListener("blur", onBlur);
       el.removeEventListener("contextmenu", onContext);
+      document.removeEventListener("pointerdown", penGone, true);
+      document.removeEventListener("pointermove", penGone, true);
       document.removeEventListener("pointerdown", trackDown, true);
       document.removeEventListener("pointerup", trackUp, true);
       document.removeEventListener("pointercancel", trackUp, true);

@@ -96,6 +96,23 @@ test("touches while a pen is down are a palm; a pen landing mid-chord makes it o
   assert.deepEqual(fired, ["redo"], "a cancelled pen is up too");
 });
 
+test("a pen whose lift never came is forgotten once it hovers or touches again, so chords work", () => {
+  const pen = (type, pointerId, timeStamp, buttons) => ({ ...ev(pointerId, timeStamp, 300, 300, "pen"), type, buttons });
+  let [d, fired] = detector("tap");
+  d.down(pen("pointerdown", 9, 0, 1));
+  d.chord(2, 10);
+  assert.deepEqual(fired, [], "the pen is down: a palm");
+  d.move(pen("pointermove", 1, 400, 0));
+  d.chord(2, 500);
+  assert.deepEqual(fired, ["undo"], "the pen hovered: it is up");
+  [d, fired] = detector("tap");
+  d.down(pen("pointerdown", 9, 0, 1));
+  d.down(pen("pointerdown", 10, 400, 1));
+  d.up(pen("pointerup", 10, 450, 0));
+  d.chord(3, 500);
+  assert.deepEqual(fired, ["redo"], "its next contact came and went");
+});
+
 test("double mode: a second chord of the same size within 400 ms and 30 px fires once; off fires nothing but keeps tracking", () => {
   let [d, fired] = detector("double");
   d.chord(2, 0);

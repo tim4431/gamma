@@ -5,11 +5,11 @@
 // note editor brings; and the iPad app's shell over it (shared/lib/host.js),
 // played by a stand-in host: the Pencil's claim in the preset's look and the
 // stroke handed back, the hold and its answer, the theme message, the
-// Pencil gestures with their choices and phases, the haptics, the Apple
-// Pencil settings, the View menu's row for the shell's own bar, the edit
-// menu turned off over a PDF selection, and the files the system opened in
-// the app, an image as a picture. Chromium
-// in a tablet-sized touch context — emulation, not an iPad.
+// Pencil gestures with their choices and phases, the haptics, a Pencil
+// lift that never comes, the Apple Pencil settings, the View menu's row
+// for the shell's own bar, the edit menu turned off over a PDF selection,
+// and the files the system opened in the app, an image as a picture.
+// Chromium in a tablet-sized touch context — emulation, not an iPad.
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -275,6 +275,82 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
 
       // No install offer under the shell.
       assertEq(await page.getByText("Add to Home Screen").count(), 0, "no install offer");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // The Pencil's lift that WebKit never sends (shared/ui/press.js
+  // penLifted; docs/dev/ipad.md "The pen"): a pen drag the page held for
+  // it, an eraser pass or a text selection, left every finger on the PDF a
+  // palm, the page's marks deaf, the layer deaf to the Pencil and the
+  // double tap waiting, until the app was left. The Pencil hovering, or
+  // touching again, now ends it as its lift would.
+  await step("ipad shell: a Pencil lift that never comes ends at the Pencil's hover or next touch: fingers scroll and tap the PDF again, the double tap acts", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([["A page whose Pencil lift goes missing."]]), "lift.pdf", "application/pdf");
+    const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Lift paper", source_url: up.source_url } });
+    const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
+    await ctx.addInitScript(fakeShell);
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${paper.id}`);
+      await waitForPdf(page, 1);
+      await page.click("button[aria-label='Handwriting tools']");
+      await page.waitForSelector(".pdfInkBar .inkToolBtn.modeActive .inkToolInk");
+      const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label");
+      const pen = await armed();
+      const gesture = (action) => page.evaluate((action) => window.gammaNative.receive({ type: "pencil", gesture: "tap", action }), action);
+      // A finger's press and move on the page: a palm's (prevented) or a finger's.
+      const finger = () => page.locator('[data-page="1"]').evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const at = { clientX: box.left + 150, clientY: box.top + 200 };
+        const layer = el.querySelector(".inkLayer").parentElement;
+        const down = new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "touch", pointerId: 900, isPrimary: true, button: 0, buttons: 1, ...at });
+        layer.dispatchEvent(down);
+        layer.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, pointerType: "touch", pointerId: 900, isPrimary: true, button: 0, buttons: 0, ...at }));
+        const t = new Touch({ identifier: 5, target: layer, ...at });
+        const move = new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [t], targetTouches: [t], changedTouches: [t] });
+        layer.dispatchEvent(move);
+        return { palm: down.defaultPrevented, panBlocked: move.defaultPrevented, marksDeaf: document.querySelector(".pdfViewer").hasAttribute("data-pen-select") };
+      });
+      const free = JSON.stringify({ palm: false, panBlocked: false, marksDeaf: false });
+      const pencil = (type, id, x, buttons = 1) => page.locator('[data-page="1"]').evaluate((el, [type, id, x, buttons]) => {
+        const box = el.getBoundingClientRect();
+        (document.elementFromPoint(box.left + x, box.top + 300) || el).dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true,
+          pointerType: "pen", pointerId: id, isPrimary: true, button: type === "pointermove" ? -1 : 0, buttons, pressure: buttons ? 0.5 : 0,
+          clientX: box.left + x, clientY: box.top + 300 }));
+      }, [type, id, x, buttons]);
+      assertEq(JSON.stringify(await finger()), free, "a finger is a finger to begin with");
+
+      // The double tap arms the eraser; its pass goes down and moves, and its lift never comes.
+      await gesture("switchEraser");
+      await page.waitForSelector(".pdfInkBar button[title^='Eraser'].modeActive");
+      await pencil("pointerdown", 71, 100);
+      await pencil("pointermove", 71, 130);
+      assertEq(JSON.stringify(await finger()), JSON.stringify({ palm: true, panBlocked: true, marksDeaf: false }), "the pen is down: fingers are palms");
+      // The Pencil hovers: it is up, and the pass ended there.
+      await pencil("pointermove", 1, 400, 0);
+      assertEq(JSON.stringify(await finger()), free, "the hover ends the pass: fingers are fingers again");
+      await gesture("switchEraser");
+      await until(async () => (await armed()) === pen, { what: "the double tap acts again, back to the pen" });
+
+      // Without hover (an older Pencil), the Pencil's next touch ends it.
+      await gesture("switchEraser");
+      await page.waitForSelector(".pdfInkBar button[title^='Eraser'].modeActive");
+      await pencil("pointerdown", 72, 100);
+      await pencil("pointermove", 72, 130);
+      await pencil("pointerdown", 73, 500);
+      await pencil("pointerup", 73, 500, 0);
+      assertEq(JSON.stringify(await finger()), free, "the next touch ends the pass");
+
+      // Nothing armed: the Pencil's drag selects the text, and its lift never comes.
+      await page.click(".pdfInkBar button[aria-label='Hand']");
+      await until(async () => (await armed()) === "Hand", { what: "the hand armed" });
+      await pencil("pointerdown", 81, 60);
+      await pencil("pointermove", 81, 120);
+      await pencil("pointermove", 81, 180);
+      assertEq(JSON.stringify(await finger()), JSON.stringify({ palm: true, panBlocked: true, marksDeaf: true }),
+        "the pen is down: fingers are palms, and the page answers with its text alone");
+      await pencil("pointermove", 1, 400, 0);
+      assertEq(JSON.stringify(await finger()), free, "the hover ends the selection's drag");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

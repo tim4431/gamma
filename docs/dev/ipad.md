@@ -684,6 +684,27 @@ the palm there is the page's `onTouch`. An ended touch stays in the
 `ClaimQueue` for half a second as any unclaimed one does, so a stroke at
 that spot within that time is the page's own.
 
+**A lift that never comes.** Everything the page does with an unclaimed
+Pencil touch ends on that pointer's `pointerup` or `pointercancel`: an
+eraser pass, the lasso, a move, a Shapes drag, a stroke the shell did
+not take, the text selection and the rectangle with nothing armed, a press
+on a strip button. iPadOS's WebKit now and then sends neither for the
+Pencil. Without them a pen stayed down for the page: every finger on
+the PDF was a palm (no scroll, pinch or tap), the page's marks took no
+pointer while the text selection held them off (`data-pen-select`), the
+layer ignored the Pencil's next press, and the double tap waited for a
+stroke that was over, until the app was left. So whatever holds a pen's
+contact also ends it when the pen is plainly up (`penLifted`,
+`shared/ui/press.js`). The Pencil hovering is a pen move with no button
+pressed, which WebKit sends on an iPad with Pencil hover. The Pencil
+going down again counts too, since there is one pen to a screen and an
+iPad without hover has only that. It ends as its lift would, where the pen
+last touched: `InkLayer.jsx` `penGone` (the drag, the shell's pointer, the
+pen's place among the contacts), `pdf/penSelect.js`, `shared/ui/regionDrag.js`,
+`shared/ui/useDragOrder.js` and the finger chords' palm rule
+(`ink/fingerChords.js`). Which touches lose their lift, and why, is device
+check 38.
+
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
 tap as `pencil`, and the squeeze in its phases: `squeeze` `began` when it
 starts, `pencil` with `phase: "ended"` when it ends, or `squeeze`
@@ -1358,7 +1379,11 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   menu off, and a colour (which clears the selection) or a selection in
   the title turns it on. A scroll by touch closes the popup and brings it
   back where the selection is. A stand-in without `editMenu` is told
-  nothing, and its popup has no Copy. The stand-in also
+  nothing, and its popup has no Copy. An eraser pass whose lift never
+  comes holds fingers as palms until the Pencil hovers, after which the
+  double tap acts again, or until its next touch. A text selection whose
+  lift never comes holds the page's marks off until the Pencil hovers.
+  The stand-in also
   holds opened files, read in 1000-byte chunks. A PDF held when the page
   loads becomes its page at the library's top and opens. Files handed
   while the page is up, with `filesOpened`, follow: a Markdown note
@@ -1605,6 +1630,15 @@ Only an iPad can show these, and none has been run yet:
     the keyboard stays up through the focus change of a New block tap, that
     the bar sits on the real keyboard, and that a finger's sideways pan of
     the bar's tools works (`touch-action: pan-x`).
+38. The Pencil's lost lifts ("A lift that never comes"), first reported on
+    iPad Air (M2, M3) with Pencil hover: after the double tap arms the
+    eraser, after the Pencil taps a strip button, and with nothing armed.
+    Log `pointerdown`, `pointerup`, `pointercancel` and pen moves with
+    their `pointerId` and `buttons` (Safari's Web Inspector from a Mac) to
+    see which touches end without a lift, and whether the hover comes
+    with its own `pointerId`. Try with Scribble on and off, and in Safari
+    beside the app. Fingers must scroll and tap the PDF once the Pencil
+    hovers or touches again.
 
 ### Not built yet
 
