@@ -2,13 +2,13 @@
 // (docs/research/vaults.md "The words", "Reading a PDF where it is"), read by
 // vaultState.js: the chip among the page header's buttons, one icon for how
 // the page stands (vaultState's `kind`), with its card (where the file is,
-// Show in folder, Add to library…, Edit the file); and the banner over the
+// Show in folder, Add to library…, Feedback…, Edit the file); and the banner over the
 // page, in the missing-page notice's slot, for a note the vault could not
 // write and for an opened PDF whose file is gone (Locate…, Remove). The
 // actions are App's: it posts the shell's messages and opens the dialogs.
 import React from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { AlertCircleIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, PauseIcon, SquareCheckIcon, SyncIcon,
+import { AlertCircleIcon, BotIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, PauseIcon, SquareCheckIcon, SyncIcon,
   TrashIcon, UploadIcon } from "../shared/ui/Icons";
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
@@ -30,8 +30,9 @@ const CHIP_ICONS = { sync: SyncIcon, push: UploadIcon, disk: HardDriveIcon, paus
 // in the library, `onRemove()` (Remove from library) while it is, and
 // `onCopy()` (Save a copy to library…) for its PDF while it is not (in the
 // library, the copy would be its own page); `onChoose()`, when
-// given, opens Choose files… of its work folder.
-export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, canAdd, file = null, onRemove, onCopy, onChoose }) {
+// given, opens Choose files… of its work folder, and `onFeedback()`, when
+// given, the file's feedback view (docs/dev/feedback.md).
+export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, canAdd, file = null, onRemove, onCopy, onChoose, onFeedback }) {
   const chip = vaultChip(state);
   if (!chip) return null;
   const { vault, reader } = state;
@@ -96,6 +97,10 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
             {onChoose ? (
               <MenuItem icon={SquareCheckIcon} onClick={() => { onOpenChange(false); onChoose(); }}
                 title={t("Choose which files of its directory the work folder tracks")}>{t("Choose files…")}</MenuItem>
+            ) : null}
+            {onFeedback ? (
+              <MenuItem icon={BotIcon} onClick={() => { onOpenChange(false); onFeedback(); }}
+                title={t("The file's open comments, to read or send to an agent")}>{t("Feedback…")}</MenuItem>
             ) : null}
             {editsFile(state) ? (
               <MenuItem icon={CodeIcon} onClick={() => { onOpenChange(false); onEdit(); }}

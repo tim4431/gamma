@@ -1,6 +1,7 @@
 """Integration tokens on the HTTP API (auth.py): a bearer token is the account
 behind it, confined to the token's workspace, read-only unless made with
-the write scope, and never a session that manages tokens or accounts."""
+the write scope (a feedback token's answers aside), and never a session
+that manages tokens or accounts."""
 
 from fastapi.testclient import TestClient
 
@@ -78,3 +79,72 @@ def test_token_is_confined_and_is_no_session(guest):
     assert viewer.post("/api/integrations/tokens", json={"name": "r"}).status_code == 201
     listed = viewer.get("/api/integrations/tokens").json()["tokens"]
     assert listed[0]["scope"] == "read"
+
+
+def test_a_feedback_token_reads_as_a_read_token_in_its_own_workspace(guest):
+    """But for its replies and resolves on a work folder's files
+    (test_comments.py), a feedback token is a read token on the HTTP API:
+    its own workspace alone, whatever else its MCP connection reads."""
+    from gamma import workspaces
+
+    make_user("tok_answerer", "pw")
+    owner = login("tok_answerer", "pw")
+    ws = workspace_of("tok_answerer")
+    lab = workspaces.create("Answer lab", account_of("tok_answerer"), kind="shared")["id"]
+    page = make_page(owner, "Answered page")
+    token = create_token(account_of("tok_answerer"), ws, "Claude Code", 90, scope="feedback",
+                         workspaces=f'["{ws}", "{lab}"]')["token"]
+    c = _bearer(token)
+    assert c.get("/api/sync/whoami").json()["scope"] == "feedback"
+    assert c.get(f"/api/blocks/{page['id']}").json()["content"] == "Answered page"
+    r = c.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
+        {"op": "set", "id": page["id"], "content": "renamed"}]})
+    assert r.status_code == 403 and "read-only" in r.text
+    assert c.post("/api/pages", json={"title": "x"}).status_code == 403
+    assert _bearer(token, lab).get("/api/sync/whoami").status_code == 403
+
+
+def test_the_tokens_pane_makes_feedback_tokens(guest):
+    """``POST /api/integrations/tokens`` with ``scope: feedback``: like a
+    read token it may read several workspaces, all of them, and change
+    them later, and a viewer may make one (viewers comment), never a write
+    token; its HTTP API stays its first workspace's."""
+    from gamma import workspaces
+
+    make_user("tok_fb_admin", "pw", is_admin=1)
+    admin = login("tok_fb_admin", "pw")
+    make_user("tok_fb_viewer", "pw")
+    ws = workspace_of("tok_fb_viewer")
+    shared = admin.post("/api/workspaces", json={"name": "Feedback shared", "kind": "shared"}).json()
+    admin.put(f"/api/workspaces/{shared['id']}/members/tok_fb_viewer", json={"role": "viewer"}).raise_for_status()
+    viewer = login("tok_fb_viewer", "pw")
+    viewer.headers["X-Gamma-Workspace"] = shared["id"]
+    assert viewer.post("/api/integrations/tokens", json={"name": "w", "scope": "write"}).status_code == 403
+    made = viewer.post("/api/integrations/tokens", json={"name": "Claude Code", "scope": "feedback"})
+    assert made.status_code == 201, made.text
+    assert (made.json()["scope"], made.json()["workspace_id"], made.json()["workspaces"]) == (
+        "feedback", shared["id"], [shared["id"]])
+    assert viewer.post("/api/integrations/tokens", json={"name": "x", "scope": "answer"}).status_code == 422
+    # several workspaces, then all of them, then others: a write token's one-workspace rule is not its
+    several = viewer.post("/api/integrations/tokens", json={"name": "Agent", "scope": "feedback",
+                                                            "workspaces": [ws, shared["id"]]})
+    assert several.status_code == 201, several.text
+    assert several.json()["workspaces"] == [ws, shared["id"]] and several.json()["workspace_id"] == ws
+    every = viewer.post("/api/integrations/tokens", json={"name": "All", "scope": "feedback", "all_workspaces": True})
+    assert every.status_code == 201 and every.json()["all_workspaces"]
+    changed = viewer.patch(f"/api/integrations/tokens/{made.json()['id']}", json={"workspaces": [shared["id"], ws]})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["workspaces"] == [shared["id"], ws]
+    listed = {t["id"]: t for t in viewer.get("/api/integrations/tokens").json()["tokens"]}
+    assert listed[several.json()["id"]]["scope"] == "feedback" and listed[every.json()["id"]]["all_workspaces"]
+    # the HTTP API reads the first workspace alone, whatever else MCP reads
+    token = several.json()["token"]
+    assert _bearer(token).get("/api/sync/whoami").json()["scope"] == "feedback"
+    assert _bearer(token, shared["id"]).get("/api/sync/whoami").status_code == 403
+    lab = workspaces.create("Feedback lab", account_of("tok_fb_viewer"))["id"]
+    try:
+        assert viewer.patch(f"/api/integrations/tokens/{several.json()['id']}",
+                            json={"all_workspaces": True}).json()["all_workspaces"]
+        assert _bearer(token, lab).get("/api/sync/whoami").status_code == 403
+    finally:
+        workspaces.delete(lab)

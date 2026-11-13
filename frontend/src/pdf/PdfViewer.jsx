@@ -219,6 +219,12 @@ function showDoc(url) {
 // search effect): freed with the document when DOC_CACHE lets it go.
 const SEARCH_TEXT = new WeakMap();
 
+// Whether two per-page slices of the comment anchors read the same
+// (anchorsByPage), as sameHighlights.
+function sameAnchors(a, b) {
+  return a.length === b.length && a.every((x, i) => x.id === b[i].id && x.kind === b[i].kind
+    && x.threadCount === b[i].threadCount && x.position === b[i].position);
+}
 // Whether two per-page highlight slices read the same (hlsByPage): the
 // highlight objects are rebuilt on every edit, their positions are not.
 function sameHighlights(a, b) {
@@ -559,9 +565,12 @@ export async function openPdfDocument(url) {
 // commentMargin: what the comment cards beside the pages read (App's
 // CommentMarginContext value, comments/marginSlot.jsx: the threads, the
 // active card's `target`, the handlers), or null for no margin (a phone, a
-// page without comments). marginRef.current(hlId) says whether that
-// highlight's page has room for its card; onMarginLost() is called when the
-// active card's page no longer has (docs/dev/comments.md "The PDF margin").
+// page without comments). anchors: what the cards stand beside, the
+// highlights and the ink groups on the pages (app/treeDerived.js
+// commentAnchors: {id, kind, position, threadCount}). marginRef.current(id)
+// says whether that anchor's page has room for its card; onMarginLost() is
+// called when the active card's page no longer has (docs/dev/comments.md
+// "The PDF margin").
 // The zoom window (ink/ZoomWindow.jsx) docks under the scroller while the
 // page tools' ink.zoom is on one of the document's pages: zoomHeight is its
 // height in css px and onZoomHeight(px) sets it (inkZoomHeight);
@@ -596,7 +605,7 @@ export async function openPdfDocument(url) {
 // that one and opens its card (the Document menu's Review, `follow`; App
 // after a move started from the card, `done` what it did and scroll
 // false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, anchors = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -797,11 +806,32 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     return map;
   }, [highlights, displayedUrl, url]);
 
+  // The comment anchors grouped per page, for the document on screen, a
+  // page's slice kept while it reads the same, as the highlights are.
+  const anchorsPrevRef = useRef(new Map());
+  const anchorsByPage = useMemo(() => {
+    const map = new Map();
+    if (displayedUrl !== url) { anchorsPrevRef.current = map; return map; }
+    for (const a of anchors || []) {
+      const p = a.position?.pageNumber;
+      if (!p) continue;
+      if (!map.has(p)) map.set(p, []);
+      map.get(p).push(a);
+    }
+    for (const [p, list] of map) {
+      const old = anchorsPrevRef.current.get(p);
+      if (old && sameAnchors(old, list)) map.set(p, old);
+    }
+    anchorsPrevRef.current = map;
+    return map;
+  }, [anchors, displayedUrl, url]);
+
   // The comment margin (docs/dev/comments.md "The PDF margin"). While the
-  // document has a highlight with an open thread, or a new comment's card
-  // is open, each page with room for the card column stands beside it, the
-  // two centred together (comments/marginLayout.js); pages without room are
-  // centred and keep the badge and the popover.
+  // document has an anchor (a highlight, an ink group) with an open thread,
+  // or a new comment's card is open, each page with room for the card
+  // column stands beside it, the two centred together
+  // (comments/marginLayout.js); pages without room are centred and keep the
+  // badge and the popover.
   const [viewerW, setViewerW] = useState(0);
   useEffect(() => {
     const el = viewerRef.current;
@@ -815,11 +845,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const marginTarget = commentMargin?.target || null;
   const withMargin = useMemo(() => {
     if (!commentMargin) return false;
-    for (const list of hlsByPage.values()) {
-      if (list.some((h) => (h.threadCount || 0) > 0 || (marginTarget?.compose && h.id === marginTarget.blockId))) return true;
+    for (const list of anchorsByPage.values()) {
+      if (list.some((a) => a.threadCount > 0 || (marginTarget?.compose && a.id === marginTarget.blockId))) return true;
     }
     return false;
-  }, [hlsByPage, commentMargin, marginTarget]);
+  }, [anchorsByPage, commentMargin, marginTarget]);
   const withMarginRef = useRef(withMargin);
   withMarginRef.current = withMargin;
 
@@ -1337,16 +1367,17 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     for (let i = 0, y = 0; i < numPages; i++) { out.push(y); y += (pageHeights[i] || FALLBACK_H) * scale + PAGE_GAP; }
     return out;
   }, [withMargin, numPages, pageHeights, scale]);
-  const marginPageOf = (hlId) => (displayedUrl === url ? (highlights || []).find((h) => h.id === hlId)?.position?.pageNumber || 0 : 0);
-  // App asks, as it opens a highlight's thread, whether it opens as a card.
-  if (marginRef) marginRef.current = (hlId) => !!commentMargin && !!marginPageOf(hlId) && pageMargin(marginPageOf(hlId)) != null;
+  const marginPageOf = (id) => (displayedUrl === url ? (anchors || []).find((a) => a.id === id)?.position?.pageNumber || 0 : 0);
+  // App asks, as it opens an anchor's thread, whether it opens as a card.
+  if (marginRef) marginRef.current = (id) => !!commentMargin && !!marginPageOf(id) && pageMargin(marginPageOf(id)) != null;
   useEffect(() => () => { if (marginRef) marginRef.current = null; }, [marginRef]);
   // The active card's page lost its room (a zoom, a narrower pane): App
   // shows its thread in the popover instead.
   const targetPage = marginTarget ? marginPageOf(marginTarget.blockId) : 0;
   const targetRoom = !targetPage || pageMargin(targetPage) != null;
   // Its highlight is drawn stronger while it has a card (a thread resolved
-  // meanwhile takes the card away).
+  // meanwhile takes the card away); an ink group's emphasis is the ink
+  // layer's flash.
   const targetHl = targetPage ? hlsByPage.get(targetPage)?.find((h) => h.id === marginTarget.blockId) : null;
   const activeHl = targetHl && (marginTarget.compose || (targetHl.threadCount || 0) > 0) ? targetHl.id : null;
   const lostRef = useRef(onMarginLost);
@@ -2280,7 +2311,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           baseWidth={pageWidths[i] || 0} baseHeight={pageHeights[i] || 0}
           marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0} marginScale={withMargin ? scale : 0}
           activeHl={targetPage === i + 1 ? activeHl : null}
-          highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump}
+          highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} anchors={anchorsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump}
           // what a highlight, a link highlight or an outside link does on a
           // press, only when this viewer was told: else none, and the press
           // goes on to the page (a tab group's view, PagePane)
@@ -2501,9 +2532,10 @@ function NoteBadge({ hlId, text, hasNote = true, threads = 0, style, onClick, on
 // pages above; marginScale: the zoom, beside a margin only (0 otherwise:
 // a page outside margin mode takes no scale, so a zoom does not render it);
 // activeHl: the highlight whose card is the active one, drawn stronger.
+// anchors: the page's comment anchors, which its margin's cards stand beside.
 // zoom: the viewer's pageScale store; baseWidth × baseHeight: the page's
 // size at scale 1 as the viewer knows it, until pdf.js measures it.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, highlights, anchors, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -3122,7 +3154,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
           "--hl": reviewGhost.color, "--hl-dark": darkPageColor(reviewGhost.color), "--hl-dark-line": darkPageLine(reviewGhost.color),
         }} />
       )) : null}
-      {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={(baseH || 0) * marginScale} pageTop={pageTop} /> : null}
+      {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} anchors={anchors} pageH={(baseH || 0) * marginScale} pageTop={pageTop} /> : null}
       {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
       <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible}
         onPenDrag={readOnly ? undefined : penDrag} />

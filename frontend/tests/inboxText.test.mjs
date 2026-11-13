@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyMark, inFilter, inboxActor, inboxDays, inboxJump, inboxSentence, inboxSnippet, inboxUrl, isFolderShare,
+  applyMark, inFilter, inboxActor, inboxActorTitle, inboxDays, inboxJump, inboxSentence, inboxSnippet, inboxUrl, isFolderShare,
   isUnread, itemsToRing, lookedListing, mergeListing, reopenedListing, RING_AT_ONCE, sameListing,
 } from "../src/inbox/inboxText.js";
 
@@ -27,6 +27,20 @@ test("one sentence per kind, with the actor, the page and the workspace", () => 
   assert.equal(inboxSentence(item("a", at, { kind: "invited", page_id: "", block_id: "" })), "ann added you to Lab");
   assert.equal(inboxSentence(item("a", at, { actor: "", page_title: "" })), "Someone mentioned you in Untitled",
     "a deleted account and an untitled page");
+});
+
+test("an agent's write names the agent, its avatar's title the account whose connection it wrote through", () => {
+  const at = "2026-10-20T10:00:00.000000Z";
+  const by = (kind) => item("a", at, { kind, actor: "tim", agent: "Claude Code" });
+  assert.equal(inboxSentence(by("reply")), "Claude Code replied to a comment on Draft");
+  assert.equal(inboxSentence(by("resolved")), "Claude Code resolved your comment on Draft");
+  assert.equal(inboxSentence(by("comment")), "Claude Code commented on Draft");
+  assert.equal(inboxSentence(by("comment_mention")), "Claude Code mentioned you in a comment on Draft");
+  assert.equal(inboxActor(by("reply")), "Claude Code", "the row's avatar takes the agent's initial");
+  assert.equal(inboxActorTitle(by("reply")), "Claude Code, with tim's connection");
+  assert.equal(inboxActorTitle({ ...by("reply"), actor: "" }), "Claude Code, with Someone's connection", "the account gone");
+  assert.equal(inboxActor(item("a", at, { agent: "" })), "ann");
+  assert.equal(inboxActorTitle(item("a", at)), "ann", "a person's item, without an agent field too");
 });
 
 test("a request to join names the Gamma Cloud username asking, who has no account here", () => {

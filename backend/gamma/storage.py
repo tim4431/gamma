@@ -21,11 +21,11 @@ a migration over the directory beside a pages.db (gamma/migrations.py).
 
 On the desktop app's own server a name may instead be a **linked file**, a
 PDF read where it is on this computer (gamma/linked_files.py). ``open_path``
-and what reads through it find one, and ``readable`` asks "can this be read
-at all"; ``exists``, ``size``, ``stat``, ``touch`` and ``list`` stay "stored
-here", which is what keeps a linked file out of the quota, the orphan purge,
-backups, the off-site copy and a mirror. ``linked_stat`` is the one look at
-such a file, remembered for a moment.
+and what reads through it find one (``linked_path``), and ``readable`` asks
+"can this be read at all"; ``exists``, ``size``, ``stat``, ``touch`` and
+``list`` stay "stored here", which is what keeps a linked file out of the
+quota, the orphan purge, backups, the off-site copy and a mirror.
+``linked_stat`` is the one look at such a file, remembered for a moment.
 
 Docs: docs/dev/user_db.md "Stored files".
 """
@@ -48,6 +48,7 @@ from .documents.formats import EXTENSION_RE
 from .documents.model import page_document, stored_name
 from .logbuf import log
 from .server_settings import check_upload_allowed
+from .work_folders.library import work_folder_of
 
 
 # How a block names a stored file: ``/api/uploads/<name>`` anywhere in its
@@ -63,8 +64,12 @@ from .server_settings import check_upload_allowed
 # a mirror's file transfer, a .gamma export and a backup's file list read
 # references with. The highlights' names are **held** files, kept but not
 # shown: what travels with a page to another copy (a mirror, an export
-# through a share, which serves only what the pages show) leaves them out
-# (``held=False``). A name is the whole ``<stem>.<ext>`` run: what follows it
+# through a share, which serves only what the pages show, a publication)
+# leaves them out (``held=False``), and so the document of a work folder's
+# file read in place that is no library document: a build on this computer,
+# whose bytes are stored only while a comment thread on it is open
+# (gamma/feedback/kept.py), never leaves it, where a library file's stored
+# versions do. A name is the whole ``<stem>.<ext>`` run: what follows it
 # ("….png." ending a sentence, "?ws=…", "#page=2") is not part of it.
 UPLOAD_REF_RE = re.compile(r"/api/uploads/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})(?![0-9A-Za-z])")
 _DOC_STEM_RE = re.compile(r"^[0-9A-Za-z_-]{1,128}\Z")
@@ -80,9 +85,10 @@ UNSTORED = "unstored"
 def upload_refs(content: str, props, *, held: bool = True) -> set[str]:
     """The stored file names one block references. ``props`` is the
     properties dict or its stored JSON text. ``held=False`` leaves out the
-    files a highlight's position holds (``_position_ids``), and the stored
-    name of a ``doc`` that does not check (``_unread_doc_file``): only what
-    the block shows."""
+    files a highlight's position holds (``_position_ids``), the stored name
+    of a ``doc`` that does not check (``_unread_doc_file``) and the document
+    of a work folder's build (``_work_build``): only what the block shows
+    and may travel with it."""
     raw = props if isinstance(props, str) else json.dumps(props or {})
     names = set(UPLOAD_REF_RE.findall(content or "")) if "/api/uploads/" in (content or "") else set()
     if "/api/uploads/" in raw:
@@ -95,12 +101,19 @@ def upload_refs(content: str, props, *, held: bool = True) -> set[str]:
                 props = {}
         if isinstance(props, dict):
             view = page_document(props)
-            if view and _DOC_STEM_RE.match(view["hash"]):
+            if view and _DOC_STEM_RE.match(view["hash"]) and (held or not _work_build(props, view)):
                 names.add(view["file"])
             elif view is None and held:
                 names.update(_unread_doc_file(props.get("doc")))
             names.update(stored_name(doc, ".pdf") for doc in _position_ids(props, held))
     return names
+
+
+def _work_build(props: dict, view: dict) -> bool:
+    """Whether the block is a work folder's file read in place that is no
+    library document (gamma/work_folders/library.py): its document is a
+    build on this computer, held while it is stored but never sent."""
+    return bool(work_folder_of(props)) and props.get("library") is not True and view["at"] == "path"
 
 
 def _unread_doc_file(doc):
@@ -648,9 +661,9 @@ def stat(ws: str, name: str) -> tuple[int, float] | None:
 
 def open_path(ws: str, name: str) -> Path | None:
     """The path ``name`` reads from: the stored file's, else a linked file's
-    (``_linked``), None when there is neither."""
+    (``linked_path``), None when there is neither."""
     path = _path(ws, name)
-    return path if path.is_file() else _linked(ws, name)
+    return path if path.is_file() else linked_path(ws, name)
 
 
 def readable(ws: str, name: str) -> bool:
@@ -659,15 +672,17 @@ def readable(ws: str, name: str) -> bool:
     return find_upload_file(name, ws) is not None
 
 
-def _linked(ws: str, name: str) -> Path | None:
+def linked_path(ws: str, name: str) -> Path | None:
     """The file on this computer that holds ``name``, on the server that
     keeps links (gamma/linked_files.py): the first of its paths whose size
-    and time are as recorded, so what is read is what was hashed. One whose
-    stat moved reads as nothing and its listeners hear of it
+    and time are as recorded, so what is read is what was hashed, whether a
+    copy is stored too or not (the disk is the version the page shows: a
+    feedback thread's source line is read beside it, gamma/feedback). One
+    whose stat moved reads as nothing and its listeners hear of it
     (``linked_moved``); one that is gone reads as nothing and is the page's
-    missing file. Costs a query only for a name not in the directory, and
-    nothing where links are not kept. No hashing and no waiting here: this
-    runs on every read, HEAD and range request."""
+    missing file. Costs a query, and nothing where links are not kept. No
+    hashing and no waiting here: ``open_path`` asks it on every read, HEAD
+    and range request of a name not in the directory."""
     if not config.folder_links_enabled():
         return None
     with connect_vaults_db() as conn:

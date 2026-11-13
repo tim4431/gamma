@@ -79,11 +79,14 @@ this server a round of its own (``vault_sync.sync_page``, no scan): a page
 written in Gamma, once ``HOT_S`` passed since its last write
 (``ops.commit_listeners`` marks it, ``_dirty``, and nothing else), and a page
 open in a window whose file's stat moved. A mark stays until a round of its
-page ran.
+page ran. The same loop writes a work folder's feedback files
+(gamma/feedback/files.py) within a pass of a change to its threads, as every
+whole round of a work folder does after its sync (``status.feedback``).
 
 **Removing a vault** (``delete_link``) leaves its pages as they are: the PDFs
 it read in place are stored first, and one that cannot be stops the removal
-before anything is undone; then its marker goes, and with ``files=trash``
+before anything is undone; then its feedback files and its marker go, and
+with ``files=trash``
 the files its rounds made move to its trash. A vault whose disk is not there
 keeps its pages reading their files, missing, to be located. A work folder's
 files that are not in the library go to Recently deleted instead, and the
@@ -1360,7 +1363,9 @@ def _remove_vault(link: dict, files: str) -> None:
     """A vault's removal, the module doc's: on its disk, the PDFs and
     pictures read in place stored (``_store_in_place``; a vault of another
     server reads none), then its trash taking the files its pulls made
-    (``files=trash``) and its marker going. A vault whose disk is not there
+    (``files=trash``), its feedback files going whatever ``files`` says
+    (gamma/feedback/files.py: Gamma's own, never trashed) and its marker
+    going. A vault whose disk is not there
     is left as it is on disk: its pages go on reading their files, missing,
     so that they can be located. A directory that answers but is no longer
     the vault's (its marker gone, another's there) has the vault's PDFs
@@ -1370,6 +1375,8 @@ def _remove_vault(link: dict, files: str) -> None:
     stands for nothing since, and a link made there again must not read it
     as that folder's; one another program holds stops the removal, nothing
     done."""
+    from .feedback import files as feedback_files  # local: it reads the pages and the vaults' rows
+
     root = dest_of(link)
     try:
         vault_disk.check_marker(root, link["state"]["vault"])
@@ -1390,6 +1397,7 @@ def _remove_vault(link: dict, files: str) -> None:
         return
     if files == "trash":
         _trash_ours(link, root)
+    feedback_files.remove(root)
     (root / vault_disk.MARKER).unlink(missing_ok=True)
 
 
@@ -2066,6 +2074,23 @@ def _holding(link_id: str):
         _let_go(link_id, lock)
 
 
+@contextmanager
+def try_holding(link_id: str):
+    """The link's lock when nothing holds it, held for the block and let go
+    (``_let_go``): the block gets True; False, nothing held, while a round,
+    a page's round or a feedback pass holds it (a request file written at
+    once, gamma/feedback/files.py ``write_request``: the hot pass writes it
+    then)."""
+    lock = _lock(link_id)
+    if not lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        _let_go(link_id, lock)
+
+
 def _together(kept: dict | None, asked: dict) -> dict:
     """Two requests for a round as the one that runs: a force or a
     confirmation either asked for stays (the later force when both name one),
@@ -2127,7 +2152,7 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
     stays off. → its status (the API contract): ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked, refused?,
     capped?, held?, stopped?, offline?, shared?, upgraded_at?, push_off?,
-    folder_path}``, and ``paused_at`` kept as it was (``_write_status``); a
+    feedback?, folder_path}``, and ``paused_at`` kept as it was (``_write_status``); a
     round that the marker, the disk or the account (or another server)
     stopped counts as failed, so ``RETRY_S`` applies. A vault of this server
     whose maker has no role in its workspace any more fails at once, before
@@ -2138,8 +2163,12 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
     files are not chosen yet runs no round (``CHOOSE_FIRST``); one from
     before work folders is taken over first, and a vault that stopped being
     one is let go (gamma/work_folders/takeover.py): the status says since
-    when it is one (``work_folder_at``)."""
+    when it is one (``work_folder_at``). A work folder's round then writes
+    its feedback files (gamma/feedback/files.py), a held round too, unless
+    the marker, the disk or the account stopped it: ``feedback`` is that
+    write's summary."""
     from . import vault_sync, vault_upgrade  # local: they import this module
+    from .feedback import files as feedback_files
     from .work_folders import takeover
 
     if choosing(link):
@@ -2183,6 +2212,8 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
     if status.get("last_error"):
         status["failed_at"] = time.time()
         log.warning(f"[folders] {link['path']}: {status['last_error']}")
+    if work_folder_link(link) and not status.get("stopped") and not status.get("offline"):
+        status["feedback"] = feedback_files.write(link)
     _write_status(link["id"], status, cursor=result.cursor, state=result.state)
     return status
 
@@ -2192,8 +2223,10 @@ def _work_turn(link: dict) -> dict:
     taken over (``takeover.take_over``), a vault that is no longer one let
     go (``takeover.release``, its files library pages), its state then kept
     with or without ``TAKEN_OVER``: the commit point, so a round killed
-    before it does it again. → the link as the round reads it."""
+    before it does it again. A vault let go loses its feedback files
+    (gamma/feedback/files.py). → the link as the round reads it."""
     from . import vault_sync  # local: it imports this module
+    from .feedback import files as feedback_files
     from .work_folders import takeover
 
     work, taken = work_folder_link(link), link["state"].get(takeover.TAKEN_OVER)
@@ -2201,6 +2234,7 @@ def _work_turn(link: dict) -> dict:
         link = {**link, "state": takeover.take_over(link, vault_sync.remote_for(link))}
     elif taken and not work:
         takeover.release(link, vault_sync.remote_for(link), trash_files=False)
+        feedback_files.remove(dest_of(link))
         link = {**link, "state": {k: v for k, v in link["state"].items() if k != takeover.TAKEN_OVER}}
     else:
         return link
@@ -2465,16 +2499,21 @@ def hot_tick() -> None:
     stat), each have a round of their own (``run_page``) when an engine vault
     that is not resting (``_resting``) keeps them. A mark goes once a round
     covered it, or when no vault keeps its page; one whose vault was busy,
-    or whose file was still being written, stays for the next tick."""
+    or whose file was still being written, stays for the next tick. Then
+    the feedback files of the work folders a change marked ``HOT_S`` ago or
+    more are written (``_feedback_pass``)."""
     if not config.folder_links_enabled():
         return
+    from .feedback import files as feedback_files  # local: it reads the pages and the vaults' rows
+
     now = time.monotonic()
     with _dirty_guard:
         wanted = {key: at for key, at in _dirty.items() if now - at >= HOT_S}
     opened = collab.open_pages()
     for key in set(_looked) - set(opened):
         del _looked[key]
-    if not wanted and not opened:
+    feedback = feedback_files.due(HOT_S)
+    if not wanted and not opened and not feedback:
         return
     links = {link["id"]: link for link in all_links() if engine(link) and not link["remote_url"]}
     for key in opened:
@@ -2490,3 +2529,30 @@ def hot_tick() -> None:
             _settle((ws, page_id), at)
         elif not _resting(link) and run_page(link["id"], page_id):
             _settle((ws, page_id), at)
+    for ws, w in feedback:
+        _feedback_pass(ws, w, links, feedback_files)
+
+
+def _feedback_pass(ws: str, w: str, links: dict, files) -> None:
+    """The feedback files of the work folder ``w`` of ``ws`` written
+    (``files.write``) under its link's lock, among ``links``, its mark
+    settled once the pass covered it. No link, or one resting for a reason
+    other than a round (paused, failed, choosing its files), drops the
+    mark: its next whole round writes. A lock a round holds keeps the mark
+    for the next tick, as does a pass that left something for the next
+    (``left``: a file a reader held, the pictures' cap)."""
+    at = time.monotonic()
+    link = next((link for link in links.values()
+                 if link["workspace_id"] == ws and link["folder_id"] == w and work_folder_link(link)), None)
+    if link is None or choosing(link) or (_resting(link) and not _lock(link["id"]).locked()):
+        files.settle(ws, w, at)
+        return
+    lock = _lock(link["id"])
+    if not lock.acquire(blocking=False):
+        return
+    try:
+        written = files.write(link)
+    finally:
+        _let_go(link["id"], lock)
+    if not written.get("left"):
+        files.settle(ws, w, at)

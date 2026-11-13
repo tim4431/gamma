@@ -5,7 +5,7 @@
 // frontend/tests/inkEdits.test.mjs pins them. A change is {id, page,
 // before, after}: a group's block id, its surface (a PDF page's number, a
 // sheet's id) and its drawing before and after.
-import { findBlock, updateBlockTree } from "../shared/model/blockModel.js";
+import { findBlock, isInkGroup, updateBlockTree } from "../shared/model/blockModel.js";
 import {
   GROUP_SPLIT_BYTES, MAX_BYTES, MAX_STROKES, eraseAlong, hitStrokesAlong, inkBytes, newCanvasInk, newInk, pdfPositionOf, removeStrokes,
   strokeBytes,
@@ -43,6 +43,17 @@ export function withGroupBlocks(prev, missing) {
 // points: a sheet's canvas, or a PDF page's.
 export function freshInk(page, size) {
   return typeof page === "string" ? newCanvasInk(size.width, size.height) : newInk(page, size.width, size.height);
+}
+
+// The group the next stroke on `page` joins, as `blocks` hold it: the
+// surface's current one (`active`, {page, id}, useInkStrokes.js) while its
+// block is on the page and no comment thread closed it (`closedGroup(id)`,
+// comments/useInkThreads.js: one commented on keeps the drawing it was
+// commented on); null when the strokes start a new group.
+export function currentGroup(active, page, blocks, closedGroup = () => false) {
+  const id = active?.page === page ? active.id : null;
+  const found = id ? findBlock(blocks, id) : null;
+  return isInkGroup(found) && !closedGroup(id) ? found : null;
 }
 
 // Whether `count` strokes of `bytes` (ink.js strokeBytes) start the

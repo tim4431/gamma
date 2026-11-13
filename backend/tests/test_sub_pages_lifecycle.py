@@ -325,7 +325,7 @@ def test_step_48_indexes_what_went_with_a_page(data_dir):
         old.commit()
     try:
         with connect_pages_db("splOld48") as cx:
-            assert cx.execute("PRAGMA user_version").fetchone()[0] == 53  # the newest workspace step
+            assert cx.execute("PRAGMA user_version").fetchone()[0] == 54  # the newest workspace step
             assert ops._went_with(cx, "splTop48") == ["splKid48"]
             plan = " ".join(str(r[-1]) for r in cx.execute(  # _went_with's own statement
                 f"EXPLAIN QUERY PLAN {ops.WENT_WITH_SQL}", ("splTop48", TRASH)))

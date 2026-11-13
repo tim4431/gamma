@@ -3,8 +3,9 @@ inbox"): every producer — a mention in a note, in a comment, a reply, a
 comment on a page one follows, a resolve, a share, an invitation —; who
 follows a page (made it, edited it, commented on it, owns the personal
 library) and its Notify me; the mention diff (a re-save is silent, a
-new name in the same block notifies); no self, no guest, no non-member; a
-share-invited account's way in, and no other share's link handed out; a
+new name in the same block notifies); no self (but what one's own
+integration token writes, named by it, which follows nothing), no guest,
+no non-member; a share-invited account's way in, and no other share's link handed out; a
 half-typed name archived, a name moved by a split or a join followed; the
 AI's batch and a replayed one; the 25 cap; the filters and the paging; the settle on trash, deletion and lost
 access, but not for a workspace that failed; the way in and the title as
@@ -202,8 +203,8 @@ def test_comment_mentions_replies_and_resolves(own, edi, vie, out, lab):
     first = _comment(edi, page, "ibCom1", "what about this, @ib_vie?", lab)
     root = first["thread"]["id"]
     [item] = _items(vie, thread_id=root)
-    assert (item["kind"], item["actor"], item["comment_id"], item["block_id"]) == (
-        "comment_mention", "ib_edi", root, "ibCom1")
+    assert (item["kind"], item["actor"], item["comment_id"], item["block_id"], item["agent"]) == (
+        "comment_mention", "ib_edi", root, "ibCom1", "")
     # a reply: the thread's author and the people it mentions hear of it
     reply = _comment(own, page, "ibCom1", "fine by me", lab, thread_id=root)["comment"]["id"]
     assert _kinds(edi, comment_id=reply) == ["reply"] and _kinds(vie, comment_id=reply) == ["reply"]
@@ -411,6 +412,78 @@ def test_a_page_made_elsewhere_follows_nothing(lab):
         typed = create_page(conn, "Made by a person", {}, actor=by)["id"]
     assert [_follows(lab, page) for page in made] == [{}] * len(made)
     assert _follows(lab, typed) == {by: "all"}
+
+
+def _token(user, ws, name="Claude Code"):
+    """A client holding a new write token of ``user``'s for ``ws``."""
+    from fastapi.testclient import TestClient
+
+    from gamma.app import app
+    from gamma.integrations import create_token
+
+    c = TestClient(app)
+    c.headers["Authorization"] = f"Bearer {create_token(account_of(user), ws, name, 1, scope='write')['token']}"
+    return c
+
+
+def test_an_agents_comment_follows_nothing_and_a_sessions_still_does(own, edi, lab):
+    page = _page(edi, "Agent follows page", lab)
+    agent = _token("ib_own", lab)
+    root = _comment(agent, page, page, "a new thread by the agent", lab)["thread"]["id"]
+    _comment(agent, page, page, "and its reply", lab, thread_id=root)
+    assert _follows(lab, page) == {account_of("ib_edi"): "all"}
+    _comment(own, page, page, "typed", lab, thread_id=root)
+    assert _follows(lab, page) == {account_of("ib_edi"): "all", account_of("ib_own"): "all"}
+
+
+def test_the_person_hears_what_their_agent_writes(own, edi, lab):
+    """A token's write is someone else's to its own account: the person
+    hears of its reply in their thread, its new thread and reply on a page
+    they follow (in a personal library by default, elsewhere through their
+    follow), its mention and its resolve, each item naming the agent."""
+    page = _page(own, "Agent's page", lab)
+    agent = _token("ib_own", lab)
+    root = _comment(own, page, page, "lambda is never introduced", lab)["thread"]["id"]
+    reply = _comment(agent, page, page, "Defined in 3.1 (method.tex:112).", lab, thread_id=root)["comment"]["id"]
+    [item] = _items(own, comment_id=reply)
+    assert (item["kind"], item["actor"], item["agent"]) == ("reply", "ib_own", "Claude Code")
+    other = _comment(agent, page, page, "a thread of the agent's own", lab)["thread"]["id"]
+    assert _kinds(own, comment_id=other) == ["comment"] and _items(own, comment_id=other)[0]["agent"] == "Claude Code"
+    named = _comment(agent, page, page, "@ib_own please decide", lab, thread_id=other)["comment"]["id"]
+    assert _kinds(own, comment_id=named) == ["comment_mention"]
+    assert agent.post(f"/api/comments/{root}/resolve", json={"resolved": True}, headers=_in(lab)).status_code == 200
+    [done] = _items(own, kind="resolved", thread_id=root)
+    assert (done["actor"], done["agent"]) == ("ib_own", "Claude Code")
+    # a reopen tells no one, the agent's either
+    assert agent.post(f"/api/comments/{root}/resolve", json={"resolved": False}, headers=_in(lab)).status_code == 200
+    assert len(_items(own, kind="resolved", thread_id=root)) == 1
+    # a person's own comments still tell them nothing, and carry no agent
+    mine = _comment(own, page, page, "thanks", lab, thread_id=root)["comment"]["id"]
+    assert _items(own, comment_id=mine) == []
+    # in a personal library its owner follows every page: the agent's new thread there reaches them
+    home = make_page(own, "Agent's page at home")["id"]
+    at_home = _comment(_token("ib_own", workspace_of("ib_own")), home, home, "a thread at home")["thread"]["id"]
+    assert _kinds(own, thread_id=at_home) == ["comment"]
+
+
+def test_an_agents_reply_reaches_the_threads_people_and_the_pages_followers(own, edi, vie, lab):
+    """Who hears of an agent's reply, as of anyone's: the thread's authors
+    (``reply``), the page's followers at All comments (``comment``), not
+    one set to Replies and @mentions; the person, neither in the thread nor
+    a follower, hears nothing."""
+    page = _page(edi, "Agent's reply page", lab)
+    root = _comment(edi, page, page, "the editor's question", lab)["thread"]["id"]
+    _comment(vie, page, page, "the viewer's own thread", lab)  # the viewer follows the page now
+    make_user("ib_fan", "ibfanpw1234")
+    fan = login("ib_fan", "ibfanpw1234")
+    workspaces.set_member(lab, account_of("ib_fan"), "viewer", by=account_of("ib_own"))
+    assert fan.put(f"/api/pages/{page}/notify", json={"level": "replies"}, headers=_in(lab)).status_code == 200
+    agent = _token("ib_own", lab)
+    reply = _comment(agent, page, page, "answered", lab, thread_id=root)["comment"]["id"]
+    assert _kinds(edi, comment_id=reply) == ["reply"] and _kinds(vie, comment_id=reply) == ["comment"]
+    assert _items(fan, comment_id=reply) == [] and _items(own, comment_id=reply) == []
+    assert _items(vie, comment_id=reply)[0]["agent"] == "Claude Code"
+    assert _follows(lab, page).get(account_of("ib_own")) is None
 
 
 def test_who_leaves_a_workspace_follows_nothing_there(own, lab):

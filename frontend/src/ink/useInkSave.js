@@ -10,12 +10,21 @@ import { API, apiJson } from "../shared/lib/utils";
 import { createInkSaver } from "./inkSaver.js";
 import * as inkStore from "./inkStore";
 
-// focusedBlockId: the open page; leaving it saves what is pending.
+// focusedBlockId: the open page; leaving it saves what is pending (App's
+// leaveCurrentPage flushes first, before the page switches, so the flush
+// reads the page's own threads; the effect below is the fallback).
 // blocksRef, setStatus, liveSaved: the saver's (inkSaver.js), taken once:
 // the ref is read when a flush runs, and both callbacks are stable.
-export function useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved }) {
+// keeps(id): the saver's too, the latest one asked when a flush runs.
+// → {flushInk, scheduleInk, pending}, the saver's.
+export function useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved, keeps = () => false }) {
+  const keepsRef = useRef(keeps);
+  keepsRef.current = keeps;
   const saverRef = useRef(null);
-  if (!saverRef.current) saverRef.current = createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJson, API, keepaliveRoom });
+  if (!saverRef.current) {
+    saverRef.current = createInkSaver({ blocksRef, setStatus, liveSaved, inkStore, apiJson, API, keepaliveRoom,
+      keeps: (id) => keepsRef.current(id) });
+  }
   const { flushInk, scheduleInk, pending } = saverRef.current;
   useEffect(() => {
     // Going to the background flushes at once, with requests that outlive
@@ -41,5 +50,5 @@ export function useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved }) 
     // which needs no open tree).
     if (pending()) flushInk();
   }, [focusedBlockId, flushInk]); // eslint-disable-line react-hooks/exhaustive-deps
-  return { flushInk, scheduleInk };
+  return { flushInk, scheduleInk, pending };
 }

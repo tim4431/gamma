@@ -117,8 +117,10 @@ All state is SQLite + files on disk under a data directory (env
     `actor` (an account id; `cloud:<subject>` for a request to join), where it happened (`workspace_id`, `page_id`, `block_id` — a
     folder share's folder —, `thread_id`, `comment_id`, `''` where the kind
     has none), the `share_token` when the recipient reaches the page only
-    through a share (one naming it, or the one the event came through), a `snippet` of the text at the time, `at`, and the
-    recipient's `read_at` / `archived_at`; indexed per recipient and time,
+    through a share (one naming it, or the one the event came through), a `snippet` of the text at the time, `at`, the
+    recipient's `read_at` / `archived_at`, and `agent`, the display name of
+    the integration token whose write made the item (`''` for a person's;
+    step 54); indexed per recipient and time,
     per recipient's unread rows (partial) and per comment (partial). No
     unique index: the writers dedupe. A listing archives the items that
     lead nowhere any more, a daily sweep deletes old ones, and they go
@@ -135,8 +137,12 @@ All state is SQLite + files on disk under a data directory (env
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
   - `integration_tokens` — hashed assistant tokens per account, each of one
-    workspace (with a `scope`, read or write, and `workspaces`, what a read
-    token's MCP connection reads beside it: `''`, `'*'` or a JSON list), and `mcp_oauth` — the OAuth flow's
+    workspace (with a `scope` — `read`, `write`, or `feedback`, a read token
+    that may also reply to and resolve the threads on a work folder's files
+    ([comments.md](comments.md) "Who may comment"); free text, so a scope
+    this server does not know reads as `read` — and `workspaces`, what a read
+    or feedback token's MCP connection reads beside it: `''`, `'*'` or a JSON
+    list), and `mcp_oauth` — the OAuth flow's
     expiring records ([mcp.md](mcp.md));
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted
@@ -369,15 +375,23 @@ All state is SQLite + files on disk under a data directory (env
     export carry them with no code of their own; a page's chats go when the
     page is deleted for good (`ops.delete_page`), not while it is in
     Recently deleted; a deleted folder's are filed into `home`'s history;
-  - `comments` — the threads on notes, pages and highlights
+  - `comments` — the threads on notes, pages, highlights and handwriting
     ([comments.md](comments.md)): a row per comment with its thread (the
     root's id), its anchor block, the page it was on (a hint for the
     purges), the author's id and username at the time, the text, its
     times, the root's resolution, a tombstone mark and `orphaned_at` (its
-    block was deleted; swept seven days on). Kept beside the blocks, never
-    in them, so no block reader skips them; a backup and a Gamma export
-    carry them, a page deleted for good takes its own with it, and a
-    comment write touches no page;
+    block was deleted; swept seven days on), the integration token that
+    wrote it or resolved it (`agent`, `agent_id`, `resolved_agent`) and the
+    root's `anchor`, the place it was opened on (step 54). Kept beside the
+    blocks, never in them, so no block reader skips them; a backup and a
+    Gamma export carry them, a page deleted for good takes its own with
+    it, and a comment write touches no page;
+  - `feedback_requests` and `feedback_request_threads` — a work folder's
+    Sends and the threads each names, with when an agent or another
+    account answered each ([feedback.md](feedback.md) "Requests"). From
+    `db.PAGES_SCHEMA` as the file opens (no workspace step); a restore in
+    place copies them, no merge, export or mirror does, and a sweep beside
+    the comments' deletes the finished ones 90 days after their last state;
   - `page_follows` — who hears of every comment on a page
     ([comments.md](comments.md) "Following a page"): a row per page and
     account, `level` `all` or `replies`, `at`. A person who creates, edits
@@ -444,7 +458,9 @@ All state is SQLite + files on disk under a data directory (env
   kept translations `pdf_translations` / `pdf_translation_briefs`
   (`gamma/translate_store.py`, [translation.md](translation.md) "Kept
   translations"; asked of the model again, at its cost, when they are
-  gone) and the PDF text index `pdf_fts` / `pdf_fts_docs` (extracted PDF
+  gone), the region pictures of a work folder's comment threads
+  `feedback_pictures` (JPEG bytes by key, at most 48 MB, the oldest going
+  first; drawn again when asked, [feedback.md](feedback.md)) and the PDF text index `pdf_fts` / `pdf_fts_docs` (extracted PDF
   text per page — schema + queries `gamma/pdf_index.py`, extraction
   `routers/search.py`; extracted again by the next search), with its
   `pdf_fts_rows` side table mapping a paper to its rows' rowids, so a
@@ -760,7 +776,12 @@ track of the ones nothing uses.
   went over it, for that conflict's "theirs"
   ([zotero_sync.md](zotero_sync.md#pdfs)). Once the conflict is kept or the
   link is removed it is an ordinary file again; "theirs" makes it the
-  page's PDF.
+  page's PDF. And **an open thread holds the version it was opened on**:
+  the file its root's `anchor.doc_id` names (`feedback.anchors.held_file`,
+  `<doc_id>.pdf`) while the root is neither resolved nor orphaned, held
+  (in `names`, never in `shown`), so a work folder's build that a
+  comment was made on outlives the rebuilds after it until the thread is
+  resolved ([feedback.md](feedback.md) "The commented version kept").
 - **Unreferenced files are kept for 30 days.** When the last reference to a
   file goes (its block deleted, a page's PDF detached or replaced by a new
   version), the file stays on disk and is served as before. Its name is

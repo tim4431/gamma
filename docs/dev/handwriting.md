@@ -488,7 +488,9 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     tap-select.
 - The **selection menu** opens after a tap or a lasso ("Edit
   handwriting"), up to two rows of 36 px buttons. The first row never
-  changes: Color, Width and style, Copy, Convert, More and Delete.
+  changes: Color, Width and style, Copy, Convert, More, Comment (on a PDF
+  page, for a reader who may comment: "Comments on handwriting" below) and
+  Delete.
   - Color and Width and style open their option rows under whichever rows
     show, one at a time.
   - A blank tap, a press off the page or Escape dismisses the menu and
@@ -538,7 +540,7 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     group and the page has another, since New note would change nothing
     then.
   - A selection of pictures alone greys what acts on strokes alone: Color,
-    Width and style, Copy, Convert, Cut, New note and Select note.
+    Width and style, Copy, Convert, Comment, Cut, New note and Select note.
   - A row holds at most seven buttons, a hard cap for every later
     addition. Whether the second row is open is remembered for the
     session.
@@ -606,7 +608,33 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   - A merge that would put more strokes or bytes in the previous group
     than one file holds is refused on the pill, and the selection stays on
     this group.
+  - A group with a comment thread is never merged: "Not merged: this
+    handwriting has comments." As the target, it is passed over for the
+    next one before it, else after it.
   - Undo brings both groups and the block back together.
+- **Comments on handwriting** ([comments.md](comments.md) "In the app"):
+  a thread hangs on an ink group on a PDF page as it does on a highlight,
+  its card in the margin level with the group's top.
+  - *Comment* in the selection menu opens a new thread's card, its field
+    focused, and lets go of the selection. A selection of one whole group
+    is that group's. Any other (part of a group, strokes of several) is
+    first made a group of its own, as New note makes one ("ink split"),
+    and the card opens on it. If the comment is never written the split
+    stays: it is still the person's drawing.
+  - The lasso selecting one whole group that has open threads opens its
+    thread, its card the active one, and outlines the group. A press on
+    the group keeps the active card open, as one on its highlight does.
+  - A group with a thread, open or resolved, keeps the drawing it was
+    commented on: the next stroke on the page starts a new group, as one
+    past the split budget does; erased empty, it keeps its block (and the
+    thread), as a captioned group does; and Merge leaves it alone (above).
+  - Ink is never placed again after its PDF is rebuilt
+    ([highlight_relocation.md](highlight_relocation.md)). A thread on a
+    group drawn on another build than the one the page shows says "Drawn
+    on an earlier build" under its first comment.
+  - A sheet's groups have no Comment: their threads are a note's, from the
+    row's control. A viewer or a share visitor has no lasso: they open an
+    ink thread's card in the margin.
 - A **finger drag inside the selection** moves it, even in pen-only mode
   (the dashed box is a `touch-action: none` hit surface; fingers outside
   it scroll). A pen with a writing tool clears the selection and writes.
@@ -809,7 +837,8 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     finger** (which turns `inkPenOnly` off). It says so once a session,
     and never after a pen has drawn.
 - Strokes on one page join the **current group** until a stroke on
-  another page, or leaving the page. A group is one block in the notes: a
+  another page, or leaving the page, or a comment thread on the group
+  ("Comments on handwriting" above). A group is one block in the notes: a
   rounded pen marker, the strokes as a picture, and the block's text as
   its caption (children allowed).
   - The marker or the card scrolls the PDF to the group and outlines it
@@ -859,8 +888,9 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   strokes as an SVG picture
   ([handwriting_ai.md](handwriting_ai.md#what-the-user-sees)).
 - A group erased empty deletes its block, and undo brings it back. A
-  group whose block holds a caption or notes keeps its block, with an
-  empty drawing, so erasing strokes never deletes text.
+  group whose block holds a caption or notes, or that has a comment
+  thread, keeps its block, with an empty drawing, so erasing strokes never
+  deletes text or a thread.
 - Read-only views (workspace viewers, view shares) show ink without tools,
   and edit shares draw.
 - On an iPad this layer runs in Safari or the web app installed to the
@@ -2688,7 +2718,12 @@ reach.
       `LineWidthIcon`, aria-label and title "Width and style",
       `aria-expanded`, `modeActive` while its rows show), Copy, Convert,
       More (`ctlBtn`, `MoreIcon`, aria-label "More", title "More edits",
-      `aria-expanded`), Delete.
+      `aria-expanded`), Comment (`MessageSquareIcon`, title "Comment on the
+      selected handwriting", `onAction("comment")`), Delete.
+      - Comment shows on a PDF page (`pageNumber` a number) when the page
+        tools' `ink.canComment` says the reader may comment, which the layer
+        reads from the context itself; it greys with no strokes selected.
+        The row then holds seven buttons, its cap.
     - Color opens the `.inkEditOptions` row "Selected ink color":
       `ColorChoices` on `pickerColors(palette, …)`, the highlighter's
       colours when every selected stroke is a highlighter and the pen's
@@ -3704,15 +3739,18 @@ reach.
     - leaving the page forgets the rest.
 - `ink/useInkSave.js` over `ink/inkSaver.js`: the save.
   - The saver, `createInkSaver({blocksRef, setStatus, liveSaved, inkStore,
-    apiJson, API, keepaliveRoom}) → {flushInk, scheduleInk, pending}`, is
+    apiJson, API, keepaliveRoom, keeps}) → {flushInk, scheduleInk, pending}`, is
     handed the draft store, the API and the keepalive room rather than
     importing them. So `frontend/tests/inkSaver.test.mjs` drives it with
     fakes and mock timers. A real close is the scratch scenario
     `tests/e2e/tabClose.mjs`, apart from the browser suite.
-  - `useInkSave({focusedBlockId, blocksRef, setStatus, liveSaved}) →
+    - A group erased empty is `DELETE`d unless its block holds a caption
+      or notes, or `keeps(id)`: a group with a comment thread
+      (`comments/useInkThreads.js`), which is saved as an empty drawing.
+  - `useInkSave({focusedBlockId, blocksRef, setStatus, liveSaved, keeps}) →
     {flushInk, scheduleInk}` keeps one for the page's life over the real
-    ones. App calls it after the page's collab session, so its listeners
-    register after collab's.
+    ones, asking the latest `keeps` it was given. App calls it after the
+    page's collab session, so its listeners register after collab's.
   - It flushes on `visibilitychange` when a save is pending (with
     keepalive when hidden), on `pagehide` when one is pending or any draft
     is dirty (keepalive, `leaving`), and when the open page changes. A
@@ -3898,6 +3936,9 @@ reach.
   - `missingGroups(changes, present)` and `withGroupBlocks(prev, missing)`
     put back a group's block (`prev` the block tree).
   - `freshInk(page, size)` is a new group's file.
+  - `currentGroup(active, page, blocks, closedGroup)` is the group the next
+    stroke joins: the surface's current one while its block is on the page
+    and no comment thread closed it, else none.
   - `splitsGroup(before, bytes, count)` says when strokes start the
     surface's next group, and `pasteTooBig(page, strokes, size)` when no
     group can hold a paste.
@@ -3905,12 +3946,14 @@ reach.
     through the eraser filter.
 - `ink/useInkStrokes.js`: the strokes, `useInkStrokes({focusedBlockId,
   readOnly, inkStale, blocksRef, nbSheetsRef, applyInk, addSheetAfter,
-  noteSqueezeUse, undoableInkStatus, setStatus}) → {handleInkStroke,
+  noteSqueezeUse, undoableInkStatus, setStatus, closedGroup}) → {handleInkStroke,
   handleInkStrokes, handleHoldStatus}`, which App calls after the
   document.
   - The group the next stroke on a surface joins (`inkActiveRef`, `{page,
-    id}`). Leaving the page forgets it, so the next stroke starts a fresh
-    group.
+    id}`, through `inkEdits.js currentGroup`). Leaving the page forgets
+    it, so the next stroke starts a fresh group, and so does a group that
+    `closedGroup(id)` says has a comment thread
+    (`comments/useInkThreads.js`).
   - A new group is found through `blocksRef`, once a render has put its
     block in the tree.
   - `handleInkStroke(page, stroke, size, {label})` (the layers'
@@ -3947,7 +3990,7 @@ reach.
   blocksRef, inkOf, applyInk, flushInk, handleInkStrokes, pickInkTool,
   revealInkStrip, inkBySurface, pasteTarget, onBoxDeselect, showInNotes,
   transcribe, ai, stepBlocks, touchTextBox, setStatus,
-  undoableInkStatus}) → {inkSelection, inkClip, inkAiWork,
+  undoableInkStatus, onComment, threaded}) → {inkSelection, inkClip, inkAiWork,
   clearInkSelection, restoreInkSelection, handleInkSelect,
   handleInkMoveSelection, deleteInkSelection, selectionStill,
   handleInkAction, copyInkSelection, pasteInk, pasteAtCentre,
@@ -4027,6 +4070,18 @@ reach.
         "Not merged: this note has a caption or notes under it."
       - A merge that would put the target past `MAX_STROKES` is refused
         with the byte budget's pill.
+      - `threaded(id)` (App's, from `comments/useInkThreads.js`) says
+        which groups have a comment thread: the selection's is refused,
+        "Not merged: this handwriting has comments.", and none is a
+        target.
+    - `comment` (`commentInkSelection()`): a selection that is one whole
+      group (`wholeGroup`) lets go of the selection and calls
+      `onComment(id)`, App's `openThread(id, null, {compose: true, pdf:
+      true})` through `useInkThreads`. Any other is split first as `split`
+      does (`splitPlan`, `T("ink split")`), and once `applyInk` applied it
+      the selection goes and `onComment(newId)` runs on the next frame, the
+      new group's block drawn, so its card finds its place in the margin.
+      A refused split says its words and stops.
     - `reshape` (`{id, params}` → `reshapeInk`, the entry `T("ink shape
       edit")`).
     - `transcribe` ("Transcribe a selection", below).
@@ -4107,11 +4162,35 @@ reach.
     pictures' half of an edit and of Delete.
   - `duplicatePlan`, `splitPlan` and `mergePlan` give Duplicate, New note
     and Merge into note their changes and the strokes to select, or
-    `{refused}` with the pill's words.
+    `{refused}` with the pill's words. `mergePlan(sel, inkOf, tree,
+    surfaces, threaded)` refuses a group with a comment thread and takes
+    none as its target.
+  - `wholeGroup(sel, inkOf)` is the one group a selection takes every
+    stroke of, else null: Comment's and `useInkThreads`'s test.
   - `selectAllItems` is select all, and `transcribeGroups` and `inkChips`
     are Transcribe's groups and chips.
   - `clipOf`, `pasteShift` and `centredOn` are the clipboard and where a
     paste lands.
+- `comments/useInkThreads.js`: what a comment thread does to its ink group
+  ("Comments on handwriting" above), `useInkThreads({threadsByBlock,
+  countByBlock, loaded, inkSelection, inkOf, openThread, triggerFlash}) →
+  {closedGroup, keeps, onComment}`, which App calls after the selection.
+  - An effect on the selection: once for each selection that is one whole
+    group on a PDF page with open threads (`countByBlock`), it opens the
+    thread (`openThread(id, null, {pdf: true, toggle: false})`, its card
+    the active one) and outlines the group (`triggerFlash(id)`).
+  - `closedGroup(id)` is the predicate the group has a thread open or
+    resolved (`threadsByBlock`), stable for App's life and read over the
+    threads as they are when asked; `keeps(id)` is the same, and true
+    while the page's threads have not come (`loaded`), so nothing is
+    deleted on a guess. App hands them to `useInkStrokes` (`closedGroup`),
+    `useInkSave` (`keeps`) and `useInkSelection` (`threaded`), composed
+    before it, through arrows, and its `leaveCurrentPage` flushes the
+    pending ink before the page switches, so that flush reads the page's
+    own threads (the saver's own flush on leaving runs once the next
+    page's empty ones show).
+  - `onComment(id)` is `useInkSelection`'s: a new thread's card on the
+    group.
 - `ink/inkAi.js` (pure; `frontend/tests/inkAi.test.mjs`),
   `ink/inkAiClient.js` and `ink/inkSvg.js` (pure;
   `frontend/tests/inkSvg.test.mjs`): the Convert menu's request, the edits

@@ -31,17 +31,26 @@ def _origin(url):
     return url.scheme.lower(), host, url.port if url.port is not None else (443 if url.scheme == "https" else 80)
 
 
-def holders(workspaces: list[str], ids: list[str]) -> list[str]:
+def _ids(values) -> list[str]:
+    return [i for i in values if isinstance(i, str) and 0 < len(i) <= 128][:50]
+
+
+def holders(workspaces: list[str], ids: list[str], *, threads=(), requests=()) -> list[str]:
     """The workspaces, of those given, that hold a block (a page, a note, a
-    folder) of one of ``ids``."""
-    ids = [i for i in ids if isinstance(i, str) and 0 < len(i) <= 128][:50]
-    if not ids:
+    folder) of one of ``ids``, a comment thread of ``threads`` (its root's
+    id; a hidden one is held by none) or a Send request of ``requests``
+    (gamma/feedback/requests.py)."""
+    lookups = [(sql, wanted) for sql, wanted in (
+        ("SELECT 1 FROM unified_blocks WHERE id IN ({}) LIMIT 1", _ids(ids)),
+        ("SELECT 1 FROM comments WHERE id IN ({}) AND thread_id = id AND orphaned_at IS NULL LIMIT 1", _ids(threads)),
+        ("SELECT 1 FROM feedback_requests WHERE id IN ({}) LIMIT 1", _ids(requests))) if wanted]
+    if not lookups:
         return []
     found = []
     for ws in workspaces:
         with connect_pages_db(ws) as conn:
-            if conn.execute(f"SELECT 1 FROM unified_blocks WHERE id IN ({','.join('?' * len(ids))}) LIMIT 1",
-                            ids).fetchone():
+            if any(conn.execute(sql.format(",".join("?" * len(wanted))), wanted).fetchone()
+                   for sql, wanted in lookups):
                 found.append(ws)
     return found
 

@@ -89,6 +89,17 @@ export function isHighlightBlock(b) {
     && !isRecord(p.picture) && !isRecord(p.sheet));
 }
 
+// Where a comment thread on the block stands on the PDF, {page, position}
+// (its pdf_position and that position's page): a highlight or a link region
+// (isHighlightBlock), or an ink group drawn on a PDF page. null for any
+// other block: a note, a text box, a picture, and a group on a sheet, which
+// carries no position.
+export function pdfAnchorOf(b) {
+  const pos = b?.properties?.pdf_position;
+  if (!isRecord(pos) || !(isHighlightBlock(b) || isInkGroup(b))) return null;
+  return { page: pos.pageNumber ?? null, position: pos };
+}
+
 // A plain note: text and nothing else. A block's fold and the moment it was
 // made (`t0`) are bookkeeping, not content; any other property makes it
 // something more (a highlight, a box, a picture, a sheet, a Zotero note),

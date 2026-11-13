@@ -24,10 +24,12 @@ import pytest
 import pymupdf
 
 from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_label, make_page, make_user,
-                      workspace_of)
-from gamma import (ai_tools, app as app_mod, backups, config, db, db_maintenance, folder_links, gamma_sync, integrity, jobs,
-                   linked_files, offsite, pdf_index, pdf_meta, seed, storage, upload_gc, workspaces, ws_backup)
+                      thread_on, workspace_of)
+from gamma import (ai_tools, app as app_mod, backups, comments, config, db, db_maintenance, folder_links, gamma_sync,
+                   integrity, jobs, linked_files, offsite, pdf_index, pdf_meta, seed, storage, upload_gc, workspaces,
+                   ws_backup)
 from gamma.ai_context import pdf_path
+from gamma.feedback import kept
 from gamma.blocks_store import pages_for_docs
 from gamma.db import connect_data_db, connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.routers import pages as pages_mod, search as search_mod
@@ -453,6 +455,45 @@ def test_a_replacement_whose_highlights_could_not_be_placed_says_so(owner, ws, d
     _write(f, _lines([[(72, 500, OLD_LINE)]]), age=40)
     linked_files.follow(ws, f"{new}.pdf")
     assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": False, "mine": True}
+
+
+def test_an_opened_pdf_with_an_open_thread_keeps_each_version_it_shows_stored(owner, ws, disk, monkeypatch):
+    """A thread opened on an opened PDF stores the bytes it shows (the
+    repair of the links' sweep, when the worker could not); each new file
+    while it is open is stored as it comes, the old one served from the
+    store; once it is resolved the next is read in place alone."""
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(comments, "write_listeners", [kept.after_comment])
+    monkeypatch.setattr(linked_files, "_note_moved", lambda ws, name: None)
+    first, second, third = (_lines([[(72, 100 + 50 * n, OLD_LINE)]]) for n in range(3))
+    f = disk / "commented.pdf"
+    _write(f, first, age=30)
+    page = _opened(owner, f)["page"]
+    old, new, last = (storage.content_digest(data) for data in (first, second, third))
+    real = storage.store_pdf_stream
+
+    def busy(ws, stream):
+        raise HTTPException(status_code=507, detail="the workspace's storage is full")
+    monkeypatch.setattr(storage, "store_pdf_stream", busy)
+    thread = thread_on(owner, page, page, "check the whole file")
+    assert kept.wait() and not storage.exists(ws, f"{old}.pdf")
+    monkeypatch.setattr(storage, "store_pdf_stream", real)
+    linked_files.sweep()
+    assert storage.exists(ws, f"{old}.pdf") and storage.linked_path(ws, f"{old}.pdf") == f.resolve()
+
+    _write(f, second, age=20)
+    assert storage.linked_path(ws, f"{old}.pdf") is None                  # the disk is another version now
+    linked_files.follow(ws, f"{old}.pdf")
+    doc = _props(owner, page)["doc"]
+    assert doc["hash"] == new and doc["at"] == "path" and storage.exists(ws, f"{new}.pdf")
+    assert owner.get(f"/api/uploads/{old}.pdf").content == first
+    assert _rows(ws, page) == [(f"{new}.pdf", str(f.resolve()))]
+
+    owner.post(f"/api/comments/{thread['id']}/resolve", json={"resolved": True}).raise_for_status()
+    _write(f, third, age=10)
+    linked_files.follow(ws, f"{new}.pdf")
+    assert _props(owner, page)["doc"]["hash"] == last and not storage.exists(ws, f"{last}.pdf")
 
 
 def test_the_worker_takes_a_moved_name_off_the_queue(owner, ws, disk, monkeypatch):

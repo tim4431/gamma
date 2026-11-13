@@ -128,6 +128,8 @@ import {
   reviewUndone,
   placedToCheck,
   isHighlightBlock,
+  isInkGroup,
+  pdfAnchorOf,
   isPlainNote,
   makeNewBlock,
   mergeIntoAbove,
@@ -172,7 +174,7 @@ import { MarkupToolbar } from "../markup/MarkupToolbar";
 import { PageToolsContext } from "../markup/PageTools";
 import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
 import { keepIfSame, keepIfSameJson, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
-import { blocksById, pageHighlights, recordingList, sheetNumbersOf, stampedList } from "./treeDerived.js";
+import { blocksById, commentAnchors, pageHighlights, recordingList, sheetNumbersOf, stampedList } from "./treeDerived.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
 import { isPicture, normalizePicture, turnedBox } from "../markup/picture.js";
@@ -291,14 +293,18 @@ import { useWorkFolderActions } from "../explorer/useWorkFolderActions.jsx";
 import FolderList from "../explorer/FolderList.jsx";
 import { useFolderRows, useWorkSort } from "../explorer/useFolderRows.js";
 import { useSummaries } from "../explorer/useSummaries.js";
+import FeedbackHost from "../feedback/FeedbackHost.jsx";
+import { openFeedback } from "../feedback/useFeedback.js";
 import { documentView, viewerOf } from "../documents/documentView.js";
 import DocumentPane from "../documents/DocumentPane.jsx";
 import { createLibraryMatcher } from "../library/librarySearch";
 import { prefetchTrash } from "../library/trashList";
 import { batchText, bulkOutcomes, runBatch, runBulk } from "../library/pageBatch.js";
 import { useComments } from "../comments/useComments";
-import { abandonedCommentHighlight, isOpen, shortCount, threadAnchor, threadLink } from "../comments/comments.js";
+import { abandonedCommentHighlight, anchorWords, isOpen, shortCount, threadAnchor, threadLink, threadPlace } from "../comments/comments.js";
 import { preloadCommentMargin } from "../comments/marginSlot";
+import { ThreadPlaceContext } from "../comments/threadPlaceContext.js";
+import { useInkThreads } from "../comments/useInkThreads.js";
 import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
@@ -5168,12 +5174,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     requestAnimationFrame(open);
   }
   // A thread of this page, from the Comments window or a deep link: its
-  // block scrolled to, flashed, and the popover open on the thread. A
-  // note's thread brings the notes over a phone's PDF tab (showInNotes), so
-  // the note it is about shows under it.
+  // block scrolled to (a highlight or an ink group on the PDF), flashed,
+  // and the popover open on the thread. A note's thread brings the notes
+  // over a phone's PDF tab (showInNotes), so the note it is about shows
+  // under it.
   function showThread(thread) {
     if (thread.block_id !== focusedBlockId) {
-      if (isHighlightBlock(treeById.get(thread.block_id))) {
+      if (pdfAnchorOf(treeById.get(thread.block_id))) {
         scrollToBlock(thread.block_id);
         reveal(thread.block_id);
       } else showInNotes(thread.block_id);
@@ -5471,7 +5478,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     for (let i = 0; i < cached.length; i += 50) onFetchRefs(cached.slice(i, i + 50));
   }
 
+  // The emphasis of a jump: a highlight pulses (PdfViewer's flashHighlightId),
+  // an ink group is outlined by its layer (inkFlash).
   function triggerFlash(highlightId) {
+    if (isInkGroup(findBlock(blocksRef.current, highlightId))) {
+      setInkFlash({ id: highlightId, nonce: Date.now() });
+      return;
+    }
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     setFlashingId(null);
     requestAnimationFrame(() => {
@@ -7025,6 +7038,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // next document.
   function leaveCurrentPage() {
     flushPendingSave();
+    // the pending handwriting too, now, while the page's threads are still
+    // the ones its saver asks (a commented group erased empty keeps its
+    // block, comments/useInkThreads.js): the next render shows the next
+    // page's, and the saver's own flush on leaving would read those
+    if (inkPending()) flushInk();
     // its tree as it stands, unsent edits and all, for the view of it a
     // tab group shows next (PagePane), which then draws at once
     if (focusedBlockId && focusedBlock) keepPaneTree(focusedBlockId, { ...focusedBlock, content: pageTitle }, blocksRef.current);
@@ -7949,8 +7967,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // server 700 ms after the last edit, at most 5 s after the first unsaved
   // one, and at once when the tab is hidden, the page goes away or another
   // page opens. Called after the page's collab session, so its pagehide
-  // and visibilitychange listeners come after collab's.
-  const { flushInk, scheduleInk } = useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved });
+  // and visibilitychange listeners come after collab's. A group with a
+  // comment thread keeps its block when erased empty (inkThreads, below).
+  const { flushInk, scheduleInk, pending: inkPending } = useInkSave({ focusedBlockId, blocksRef, setStatus, liveSaved, keeps: (id) => inkThreads.keeps(id) });
   // The page's ink by surface (ink/useInkSurfaces.js): its groups, each
   // surface's, where a paste without a point goes, a surface's name in
   // messages.
@@ -7987,11 +8006,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setInkFingerUndo });
   // The strokes (ink/useInkStrokes.js): a stroke, or a paste's strokes,
   // into the surface's current group, and the pill a snapped stroke
-  // raises. A stroke while a held squeeze is open marks it used.
+  // raises. A stroke while a held squeeze is open marks it used. A group
+  // with a comment thread takes no more strokes (inkThreads, below).
   const { handleInkStroke, handleInkStrokes, handleHoldStatus } = useInkStrokes({ focusedBlockId, readOnly, inkStale,
     blocksRef, nbSheetsRef, applyInk, addSheetAfter,
     noteSqueezeUse: () => noteSqueezeUse(),
-    undoableInkStatus, setStatus });
+    undoableInkStatus, setStatus, closedGroup: (id) => inkThreads.closedGroup(id) });
   // The lasso selection and the handwriting clipboard
   // (ink/useInkSelection.js): the selection's edits and the selection
   // menu's actions, copy, cut and paste, Ctrl+D, select all, the ink half
@@ -8009,7 +8029,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onBoxDeselect: () => { textBoxes.actions.onBoxDeselect(); pictures.deselect(); }, showInNotes,
     transcribe: shareMode ? null : askToTranscribe,
     ai: shareMode ? null : { model: chatSendModel, addTask, updateTask, pageTitle },
-    stepBlocks, touchTextBox: textBoxes.touch, setStatus, undoableInkStatus });
+    stepBlocks, touchTextBox: textBoxes.touch, setStatus, undoableInkStatus,
+    onComment: (id) => inkThreads.onComment(id), threaded: (id) => inkThreads.closedGroup(id) });
+  // Comment threads on ink groups (comments/useInkThreads.js): the lasso
+  // selecting a whole group with open threads opens its card, and a group
+  // with a thread is closed to new strokes, the saver's deletion and a
+  // merge; its predicates never change identity, so the arrows the ink
+  // owners above hold read the latest threads.
+  const inkThreads = useInkThreads({ threadsByBlock: comments.threadsByBlock, countByBlock: comments.countByBlock,
+    loaded: comments.loaded, inkSelection, inkOf, openThread, triggerFlash });
   // The ruler (ink/useInkRuler.js): laid on the surface in view with its
   // row, Stamp line, and the layers' moves of it; it goes with the page,
   // and when the viewer stops showing its surface.
@@ -8648,12 +8676,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       eraserSize: inkEraserSize, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
       scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, lassoPictures: inkLassoPictures, clip: inkClip,
       keys: inkKeys, hoverPreview: inkHoverPreview, ruler: readOnly ? null : inkRuler, rulerUnits: inkRulerUnits,
-      zoom: readOnly ? null : inkZoom, aiWork: inkAiWork },
+      zoom: readOnly ? null : inkZoom, aiWork: inkAiWork, canComment: commentsOn && canComment },
     text: { armed: textArmed, style: textBoxStyle, zotero: zoteroLinked },
     actions: pageActions,
   }), [readOnly, inkTool, inkPenTool, inkPenWritesPdf, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
     inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkLassoPictures, inkHoverPreview, textArmed, textBoxStyle, zoteroLinked,
-    pageActions, inkRuler, inkRulerUnits, inkZoom, inkAiWork]);
+    pageActions, inkRuler, inkRulerUnits, inkZoom, inkAiWork, commentsOn, canComment]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
   // The page's recording blocks and every block stamped with the moment it
   // was written, each list kept while its contents are the same, so the
@@ -9833,6 +9861,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const prevHighlightsRef = useRef({ json: "", value: [] });
   const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock)),
     [blocks, treeBlocks, comments.countByBlock]);
+  // What the comment cards stand beside on the PDF, the highlights and the
+  // ink groups (treeDerived.js commentAnchors); the viewer keeps each
+  // page's slice while it reads the same.
+  const anchors = useMemo(() => commentAnchors(blocks, comments.countByBlock), [blocks, comments.countByBlock]);
+  // What became of a thread's place once the PDF was rebuilt (comments.js
+  // threadPlace), for every thread the comment surfaces draw
+  // (comments/threadPlaceContext.js).
+  const placeOf = useMemo(() => {
+    const hash = fileHash(doc);
+    return (thread) => threadPlace(thread, treeById.get(thread.block_id), hash);
+  }, [treeById, doc]);
   // The page's highlights to review after its PDF was replaced, in document
   // order: the pending ones (drawn dashed until accepted or moved), the
   // Document menu's Accept all, and with the lost ones (hollow) the review
@@ -9925,12 +9964,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setTimeout(attempt, 100);
         return;
       }
-      let scrollTarget = (highlights || []).find((x) => x.id === id);
+      let scrollTarget = anchors.find((x) => x.id === id);
       if (!scrollTarget) {
         // A highlight placed only by its page that was linked to one on the
         // PDF (attach mode) jumps to that one.
         const linked = findBlock(blocks, id)?.properties?.linked_highlight_id;
-        if (linked) scrollTarget = (highlights || []).find((x) => x.id === linked);
+        if (linked) scrollTarget = anchors.find((x) => x.id === linked);
       }
       if (scrollTarget && scrollToRef.current) {
         setPhonePanel(null); // the compact shell: the PDF, not a panel over it
@@ -9941,7 +9980,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       pendingJumpRef.current = null;
     };
     setTimeout(attempt, 100);
-  }, [pdfHidden, highlights, pdfJumpReq]);
+  }, [pdfHidden, anchors, pdfJumpReq]);
 
   // Jump to the last-read page when a document opens, the page the
   // account-synced per-paper map (read-pos pref) holds for it. Waits until
@@ -10752,7 +10791,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <VaultChip state={vaultState} open={openPopover === "vault"} canAdd={lib.organize}
                   onOpenChange={(v) => setOpenPopover(v ? "vault" : null)}
                   onReveal={() => askShell("reveal-on-disk", { page: focusedBlockId })}
-                  onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip} />
+                  onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip}
+                  onFeedback={work.chip.file && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined} />
                 {/* a work folder's file has a record only once it is in the library */}
                 {(isPdf(doc) || pageMeta) && (!focusedFile || openInLibrary) ? (
                   <span data-popover="meta" className="popoverAnchor">
@@ -11233,6 +11273,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   />
                 )}
                 {workFolder ? null : <ViewToggle view={homeView} onChange={changeHomeView} />}
+                {/* the work folder's feedback: this directory's open comments, to read or send to an agent (feedback/) */}
+                {workFolder && lib.organize ? (
+                  <button type="button" className="uiBtn sm" title={t("The open comments on this folder's files, to read or send to an agent")}
+                    onClick={() => openFeedback({ kind: "folder", id: folderFilter })}>{t("Feedback")}</button>
+                ) : null}
                 {selecting ? (
                   <>
                     <span className="homeSelectCount">{t("{n} selected", { n: selectionCount })}</span>
@@ -12200,8 +12245,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             pageId={focusedBlockId}
             notify={canFollow && commentsOn}
             onStatus={setStatus}
-            // what a thread is on: a highlight's quote, else the note's text
-            anchorText={(id) => { const b = treeById.get(id); return b ? blockQuote(b) || b.content || "" : ""; }}
+            // what a thread is on: a highlight's quote, else the note's text, else the handwriting's page
+            anchorText={(id) => anchorWords(treeById.get(id))}
+            // on a work folder's file, for a member who may edit: the feedback view (feedback/)
+            onFeedback={focusedFile && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
             onOpen={(thread) => {
               if (isPhone) { setNotesVisible(true); setPhonePanel("notes"); }
@@ -13232,6 +13279,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   return (
     <GammaNavContext.Provider value={gammaNav}>
     <PageToolsContext.Provider value={pageTools}>
+    <ThreadPlaceContext.Provider value={placeOf}>
     <RecordingContext.Provider value={recordingCtx}>
     <PaletteContext.Provider value={palette}>
     <MarkToolsContext.Provider value={textHighlighter.markTools}>
@@ -13663,7 +13711,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ) : null}
           {/* The viewer the page's view names (documents/DocumentPane.jsx). */}
           <DocumentPane view={docView} render={{ pdf: () => (
-            <PdfViewer url={pdfUrl} highlights={highlights}
+            <PdfViewer url={pdfUrl} highlights={highlights} anchors={anchors}
               citation={pdfCitation?.pageId === focusedBlockId ? pdfCitation : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
               smoothWheel={smoothWheel}
@@ -14067,6 +14115,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             folders={[{ id: "", name: t("All files") }, ...folderMenuIds.map((id) => ({ id, name: folderPath(libTree, id) }))]} />
         </LazyBoundary>
       ) : null}
+      {/* the feedback view, while an opener (the list bar, the Comments window, the vault chip) has it open */}
+      <FeedbackHost me={authUser?.user || ""} canSend={canWriteWorkspace} links={vault.links} onOpenThread={openThreadAt} />
       {vault.tracking ? (
         <LazyBoundary>
           <TrackDialog link={vault.tracking.link} fresh={vault.tracking.fresh} setStatus={setStatus}
@@ -14931,6 +14981,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </MarkToolsContext.Provider>
     </PaletteContext.Provider>
     </RecordingContext.Provider>
+    </ThreadPlaceContext.Provider>
     </PageToolsContext.Provider>
     </GammaNavContext.Provider>
   );

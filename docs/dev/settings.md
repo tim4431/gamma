@@ -643,13 +643,17 @@ AI:
   while browser sign-in is unavailable. **Connected assistants** lists each
   connection: how it signed in (browser sign-in — the `(OAuth)` suffix the
   provider mints — or token), what it reads ("Reads A, B", all workspaces, or
-  read and write for a token's workspace), the connected and expiry dates, an
-  icon-only **Choose workspaces** (read connections) that opens the
-  checklist under the row with Save and Cancel, and an icon-only Disconnect.
-  **Tokens (advanced)**, folded, makes a token by hand: its name, its scope as
-  a `Segmented` (read-only for assistants, read and write for an offline copy
-  of the open workspace on another Gamma, [mirror.md](mirror.md)) and, read
-  only, its workspaces. The checklist (`WorkspacePicker.jsx`, the page
+  read and write for a token's workspace; a feedback connection adds
+  "answers feedback"), the connected and expiry dates, an
+  icon-only **Choose workspaces** (read and feedback connections) that opens
+  the checklist under the row with Save and Cancel, and an icon-only
+  Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
+  its scope as a `Segmented` (read-only for assistants; read and answer
+  feedback for an agent or script that replies to and resolves the comments
+  on work folders' files, [feedback.md](feedback.md) "Tokens and MCP"; read
+  and write for an offline copy of the open workspace on another Gamma,
+  [mirror.md](mirror.md)) and, but for read and write, its workspaces. The
+  checklist (`WorkspacePicker.jsx`, the page
   picker's `.docPickerItem` rows) leads with **All workspaces, and those added
   later**; the pane shows it only to an account with more than one workspace,
   the MCP consent screen always. Each command box carries its copy button in

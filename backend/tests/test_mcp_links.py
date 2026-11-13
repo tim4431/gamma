@@ -3,8 +3,8 @@ from urllib.parse import urlencode
 
 import pytest
 
-from conftest import login, make_folder, make_page, make_user
-from gamma.db import connect_users_db, page_now
+from conftest import account_of, login, make_folder, make_page, make_user, thread_on
+from gamma.db import connect_pages_db, connect_users_db, page_now
 from test_mcp import call, connection, rpc
 
 
@@ -193,3 +193,35 @@ def test_a_page_share_link_may_name_a_page_inside_its_page(client, connection):
     # a share of the page inside reaches no page above it
     below = c.post(f"/api/share/{inside['id']}").json()
     assert read(client, credential["token"], url=f"http://localhost/?share={below['token']}&page={top['id']}")["isError"]
+
+
+def test_holders_find_a_thread_and_a_send_request(connection):
+    """The workspace of a call naming a comment thread (its root) or a Send
+    request (mcp_server._targets), as a block's: a reply or a hidden
+    thread is held by none."""
+    from gamma import comments, workspaces
+    from gamma.mcp_links import holders
+
+    c, ws, _ = connection
+    lab = workspaces.create("Holders lab", account_of("mcp-reader"))["id"]
+    try:
+        page = make_page(c, "Commented page")
+        root = thread_on(c, page["id"], page["id"], "a thread")
+        reply = c.post(f"/api/pages/{page['id']}/comments", json={
+            "block_id": page["id"], "thread_id": root["id"], "body": "a reply"}).json()["comment"]
+        gone = thread_on(c, page["id"], page["id"], "hidden soon")
+        with connect_pages_db(ws) as conn:
+            comments.orphan(conn, [page["id"]])  # a stand-in for its block's delete: every thread on it
+            conn.execute("UPDATE comments SET orphaned_at = NULL WHERE id IN (?, ?)", (root["id"], reply["id"]))
+            conn.execute("INSERT INTO feedback_requests (id, rev, work_folder, scope, scope_kind, by, at, state_at) "
+                         "VALUES ('holdersreq01', 1, 'w', 's', 'file', 'u', ?, ?)", (page_now(), page_now()))
+            conn.commit()
+        both = [lab, ws]
+        assert holders(both, [], threads=[root["id"]]) == [ws]
+        assert holders(both, [], requests=["holdersreq01"]) == [ws]
+        assert holders(both, [page["id"]], threads=["nosuchthread"]) == [ws]  # any lookup that finds it
+        assert holders(both, [], threads=[reply["id"], gone["id"]]) == []
+        assert holders(both, [], threads=[root["id"]], requests=["holdersreq01"]) == [ws]
+        assert holders(both, []) == [] and holders(both, ["x" * 129], threads=[""]) == []
+    finally:
+        workspaces.delete(lab)

@@ -20,6 +20,7 @@ from gamma import folder_links, gamma_sync, pdf_meta, storage, vault_disk, vault
 from gamma.blocks_store import FOLDERS
 from gamma.db import connect_pages_db
 from gamma.documents.model import stored_name
+from gamma.feedback import files as feedback_files
 from gamma.ops import commit_ops, restore_page, trash_page
 from gamma.vault_sync import LocalRemote
 from gamma.work_folders import marks, takeover
@@ -349,6 +350,25 @@ def test_a_page_its_selection_trashed_and_a_person_restored_stays_once_the_push_
         restore_page(v.ws, conn, page, actor=v.user)
     v.sync(ok=False)
     assert v.state(page) == "live" and "deleted_by_vault" not in v.props(page)
+
+
+def test_a_work_folder_let_go_at_its_round_loses_its_feedback_files(work):
+    """A vault whose push came down is released before its next round
+    (``folder_links._work_turn``): its pages unstamped, its mark off, and
+    the feedback files its rounds wrote gone (gamma/feedback/files.py)."""
+    v = work(library=True)
+    v.write("Note.md", "keep\n")
+    v.sync()
+    page = v.page_of("Note.md")
+    here = v.root / feedback_files.DIR
+    (here / "img").mkdir(parents=True)
+    (here / "open.json").write_text("{}\n", encoding="utf-8")
+    (here / "img" / "0123456789abcdef.jpg").write_bytes(b"\xff\xd8\xff")
+    v.link["state"][takeover.TAKEN_OVER] = "2026-01-01T00:00:00Z"
+    v.link["push"] = folder_links.PUSH_PDFS
+    link = folder_links._work_turn(v.link)
+    assert takeover.TAKEN_OVER not in link["state"] and not here.exists() and (v.root / vault_disk.MARKER).is_file()
+    assert "work_folder" not in v.props(page) and v.remote.mark() is None
 
 
 def test_a_directory_gone_and_back_files_its_pages_in_it_again(work):

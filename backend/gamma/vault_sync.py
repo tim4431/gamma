@@ -168,6 +168,7 @@ from .blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, block_kind, fetc
                            tree_rows, upload_refs, write_lock)
 from .db import connect_pages_db, connect_vaults_db, page_now, parse_stamp
 from .documents.model import document, document_at, in_place, page_document, pdf_file_hash, stored_name
+from .feedback import kept
 from .folder_sync import ID_KEY, ROOT
 from .logbuf import log
 from .markdown_import import block_class
@@ -738,9 +739,13 @@ class LocalRemote:
         and no other page's bytes a refusal (a vault's file is what the disk
         holds); then the row of the bytes before goes, as
         ``linked_files._catch_up``'s does: the path no longer holds them. A
-        work folder's file gets the size on its document, and one in the
-        library has each version stored as it comes, as a library document's
-        bytes are, reading it in place all the same."""
+        work folder's file gets the size on its document. A page that keeps
+        its bytes (``kept.keeps_bytes``: a work folder's file in the
+        library, as a library document's bytes are, or a page with an open
+        comment thread, whose outgoing version, stored at the thread's open
+        or at the replacement before, the relocation run reads) has each
+        version stored as it comes, reading it in place all the same;
+        OSError when it cannot be."""
         from .routers.pages import replace_attachment  # local: keep gamma.* free of the routers package
 
         self.may_write()
@@ -748,12 +753,14 @@ class LocalRemote:
             row = conn.execute("SELECT doc_id, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
         before, own = ((row[0] or ""), load_props(row[1])) if row else ("", {})
         extra = None
+        if kept.keeps_bytes(self.ws, page_id, own):
+            try:
+                stored = folder_links.LocalSink(self.ws, self.user_id).store(Path(path))
+            except gamma_sync.SyncError as e:
+                raise OSError(str(e)) from e
+            if stored != seen[0]:
+                raise OSError("the file changed while it was read")
         if work_folder_of(own):
-            if own.get("library") is True:
-                try:
-                    folder_links.LocalSink(self.ws, self.user_id).store(Path(path))
-                except gamma_sync.SyncError as e:
-                    raise OSError(str(e)) from e
             extra = {"doc": document(seen[0], name=filename, at="path", size=seen[1])}
         self.link_pdf(path, seen, page_id)
         try:

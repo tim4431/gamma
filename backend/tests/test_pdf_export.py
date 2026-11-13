@@ -424,6 +424,26 @@ def _plain(obj, drop=frozenset()):
     return str(obj)
 
 
+@pytest.mark.parametrize("rotate", [0, 90])
+def test_a_page_alone_carries_its_marks_as_the_export_writes_them(rotate):
+    """``page_with_ink``'s highlights (a feedback thread's region picture)
+    are written by the export's own mark writer: the one page's highlight
+    and area note are the exported file's, and a mark on another page stays
+    off it."""
+    from pypdf import PdfReader
+
+    marks = [{**m, "position": {**m["position"], "pageNumber": 2}} for m in _every_kind()["highlights"]]
+    elsewhere = {"position": _position(page=1), "color": "#ff0000", "note": "", "id": "off"}
+    exported, written = annotate_pdf(_blank_pdf(pages=2, rotate=rotate), [elsewhere, *marks])
+    alone, pages = page_with_ink(_blank_pdf(pages=2, rotate=rotate), 2, [], highlights=[elsewhere, *marks])
+    assert written == 3 and pages == 2
+
+    def annots(pdf_bytes, index):
+        page = PdfReader(io.BytesIO(pdf_bytes)).pages[index]
+        return [_plain(a) for a in page["/Annots"]]
+    assert annots(alone, 0) == annots(exported, 1) and len(annots(alone, 0)) == 2
+
+
 def test_a_zotero_copy_keeps_the_alpha_of_its_marks_out_of_ca():
     """Zotero blends /C toward white by /CA, so a Zotero copy's highlight
     and area note carry none, their alpha in /GammaAlpha, and differ from

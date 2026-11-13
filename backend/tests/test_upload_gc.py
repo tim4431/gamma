@@ -243,6 +243,62 @@ def test_only_an_open_zotero_file_conflict_holds_the_pdf_it_names(client):
     assert not {"keptresolved.pdf", "notafile.pdf", "../outside.pdf", ".pdf"} & refs
 
 
+def _anchor(doc_id, kind="area"):
+    return json.dumps({"v": 1, "kind": kind, "block": "b", "doc_id": doc_id, "page": 1, "rects": [], "quote": "",
+                       "box": None})
+
+
+def _threads(ws, rows):
+    """Comment rows written directly: ``(id, thread_id, anchor, resolved,
+    orphaned, deleted)``."""
+    stamp = page_now()
+    with closing(connect_pages_db(ws)) as conn:
+        conn.executemany(
+            "INSERT INTO comments (id, thread_id, block_id, page_id, author, body, created_at, updated_at, "
+            "resolved_at, deleted_at, orphaned_at, anchor) VALUES (?, ?, 'b', 'p', 'a', 'x', ?, ?, ?, ?, ?, ?)",
+            [(i, t, stamp, stamp, stamp if resolved else None, stamp if deleted else None,
+              stamp if orphaned else None, anchor) for i, t, anchor, resolved, orphaned, deleted in rows])
+        conn.commit()
+
+
+def test_an_open_thread_holds_the_version_it_was_opened_on_and_shows_none(client):
+    ws = make_user("gc_thread_rows", "pw-gc_thread_rows")
+    _threads(ws, [("tOpen", "tOpen", _anchor("heldOpen"), False, False, False),
+                  ("tTomb", "tTomb", _anchor("heldTomb"), False, False, True),       # a tombstone with replies
+                  ("tTombR", "tTomb", None, False, False, False),
+                  ("tDone", "tDone", _anchor("heldResolved"), True, False, False),
+                  ("tGone", "tGone", _anchor("heldOrphaned"), False, True, False),
+                  ("tReply", "tOpen", _anchor("heldByAReply"), False, False, False),  # only a root's anchor
+                  ("tNote", "tNote", _anchor("", kind="note"), False, False, False),
+                  ("tBad", "tBad", "{not json", False, False, False),
+                  ("tUnstored", "tUnstored", _anchor(storage.UNSTORED), False, False, False),
+                  ("tOld", "tOld", None, False, False, False)])                       # a root from before step 54
+    with closing(connect_pages_db(ws)) as conn:
+        refs, shown = upload_gc._references(conn)
+    assert {"heldopen.pdf", "heldtomb.pdf"} <= refs
+    assert not {"heldresolved.pdf", "heldorphaned.pdf", "heldbyareply.pdf", ".pdf", "unstored.pdf"} & refs
+    assert not {"heldopen.pdf", "heldtomb.pdf"} & shown
+
+
+def test_the_purge_never_takes_a_version_an_open_thread_holds(ann):
+    c, ws = ann
+    _page(c, "held")                                                  # the purge needs a library that reads right
+    name, _ = storage.store_file(ws, PDF + b"thread", ".pdf")
+    held = name.removesuffix(".pdf")
+    _age(ws, name, 31)
+    _threads(ws, [("gcThread", "gcThread", _anchor(held), False, False, False)])
+    upload_gc.reconcile(ws)
+    assert storage.exists(ws, name) and name not in _orphans(ws)      # held: its row cleared, the file kept
+    with closing(connect_pages_db(ws)) as conn:
+        conn.execute("UPDATE comments SET resolved_at = ? WHERE id = 'gcThread'", (page_now(),))
+        conn.commit()
+    upload_gc.reconcile(ws)
+    assert name in _orphans(ws) and storage.exists(ws, name)          # let go: kept its 30 days from now
+    _age(ws, name, 31)
+    upload_gc.reconcile(ws)
+    assert not storage.exists(ws, name)
+
+
 # --- the purge ------------------------------------------------------------------------
 
 def test_purge_deletes_only_what_is_still_unreferenced_after_30_days(ann):

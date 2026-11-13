@@ -27,6 +27,7 @@ import * as inkStore from "./inkStore";
 import {
   actionEdit, centredOn, clipOf, duplicatePlan, editPictures, inkChips, mergePlan, pasteShift, removePictures, selectAllItems,
   selectedPictures, selectedStrokes, selectionBox, selectionChanges, selectionStill as stillOf, splitPlan, transcribeGroups,
+  wholeGroup,
 } from "./selectionEdits.js";
 // Duplicate's 12 css px, as the selection's surface measures them, and the
 // surface's size, which the pictures an edit carries stay on
@@ -78,9 +79,12 @@ function writeInkClipboard(clip) {
 // touch, a box measured in the commit that shows it (Convert to text's).
 // setStatus: the status pill; undoableInkStatus(msg): the pill with Undo
 // on it, which steps the stroke history (useInkDocument.js).
+// onComment(groupId): a new comment thread on that group, the menu's
+// Comment; threaded(groupId): the group has a thread, so no merge takes
+// its strokes away nor adds to them (comments/useInkThreads.js).
 export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, inkOf, applyInk, flushInk,
   handleInkStrokes, pickInkTool, revealInkStrip, inkBySurface, pasteTarget, onBoxDeselect, showInNotes,
-  transcribe, ai, stepBlocks, touchTextBox, setStatus, undoableInkStatus }) {
+  transcribe, ai, stepBlocks, touchTextBox, setStatus, undoableInkStatus, onComment, threaded = () => false }) {
   // The lasso selection {page, items, pictures?}.
   const [inkSelection, setInkSelection] = useState(null);
   // The handwriting clipboard (docs/dev/handwriting.md "Copy, cut and
@@ -227,6 +231,7 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
     else if (action === "download-svg") downloadSvgSelection();
     else if (action === "split") splitInkSelection();
     else if (action === "merge") mergeInkSelection();
+    else if (action === "comment") commentInkSelection();
   }
   // The selected strokes with their box and space, null with none.
   function selectedInk() {
@@ -521,10 +526,32 @@ export function useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, in
   // after it) and this one emptied, one entry; a group whose block holds a
   // caption or notes is refused, since its block would stay behind empty.
   function mergeInkSelection() {
-    const plan = mergePlan(inkSelection, inkOf, blocksRef.current, inkBySurface);
+    const plan = mergePlan(inkSelection, inkOf, blocksRef.current, inkBySurface, threaded);
     if (!plan) return;
     if (plan.refused) { setStatus(plan.refused); return; }
     if (applyInk(plan.changes, { label: T("ink merge") })) handleInkSelect(inkSelection.page, plan.items, inkSelection.pictures);
+  }
+  // Comment: a thread on the selected handwriting, its card opened to
+  // write in and the selection let go. A selection of one whole group is
+  // that group's; any other becomes a group of its own first, as New note
+  // makes one, and that group's thread opens once the page has drawn it,
+  // so its card stands beside it. The split stays if the comment is never
+  // written: it is still the person's drawing.
+  function commentInkSelection() {
+    if (!onComment) return;
+    const sel = inkSelection, whole = wholeGroup(sel, inkOf);
+    if (whole) {
+      setInkSelection(null);
+      onComment(whole);
+      return;
+    }
+    const plan = splitPlan(sel, inkOf, makeId);
+    if (!plan) return;
+    if (plan.refused) { setStatus(plan.refused); return; }
+    if (!applyInk(plan.changes, { label: T("ink split") })) return;
+    setInkSelection(null);
+    const id = plan.items[0].id;
+    requestAnimationFrame(() => { if (live.current.focusedBlockId === focusedBlockId) onComment(id); });
   }
   return { inkSelection, inkClip, inkAiWork, clearInkSelection, restoreInkSelection, handleInkSelect, handleInkMoveSelection,
     deleteInkSelection, selectionStill, handleInkAction, copyInkSelection, pasteInk, pasteAtCentre,

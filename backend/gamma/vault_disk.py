@@ -45,7 +45,10 @@ kept by a hard link (a copy where there are none) for the bytes the history
 keeps, then renamed over the note, tried again while Windows says another
 program holds it; a caller with a journal holds that copy until its history
 has it. A new file
-(``write_new``) never replaces one that appeared meanwhile. The trash is
+(``write_new``) never replaces one that appeared meanwhile; a file of Gamma's
+own below ``.gamma/`` (the feedback files) is renamed over whatever is there
+(``write_own``), and its stale temporary files, which no scan meets, are
+swept by ``sweep_own``. The trash is
 ``.gamma/trash/<stamp>/<path>``, on the vault's volume so that a delete is a
 rename (``trash_path``, ``move``), where a file stays ``TRASH_DAYS`` at least
 (``trashed_at``); a path a file comes back to is made free the way every
@@ -799,6 +802,42 @@ def write_new(root: Path, rel: str, data: bytes, ready=None) -> Written:
         return Written(st.st_size, st.st_mtime_ns, str(st.st_ino))
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def write_own(root: Path, rel: str, data: bytes) -> bool:
+    """A file of Gamma's own below ``.gamma/`` (``rel`` starts with it: the
+    feedback files, gamma/feedback/files.py) holding ``data``: written
+    beside its place under a name the scan skips, flushed, then renamed
+    over whatever is there (``_rename_over``), the directories it needs
+    made; ``path`` refuses a link or a junction on the way. True once the
+    file holds ``data``; False when another program held it to the last
+    try (Windows), nothing written, for the caller to try again later.
+    ValueError for a path outside ``.gamma/``."""
+    if not rel.startswith(f"{MARKER_DIR}/"):
+        raise ValueError(f"{rel} is not below {MARKER_DIR}/")
+    _ours(root)
+    target = path(root, rel)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp, _st = _temp_beside(target, data)
+    try:
+        _rename_over(tmp, target)
+    except PermissionError:
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
+    return True
+
+
+def sweep_own(root: Path, rel_dir: str) -> int:
+    """Gamma's temporary files (``TEMP`` names) left in the vault's
+    directory ``rel_dir``, which the scan never enters (below ``.gamma/``),
+    ``STALE_TEMP_S`` old, removed (``clean_temps``): how many went; a
+    directory that is not there holds none."""
+    try:
+        names = os.listdir(path(root, rel_dir))
+    except FileNotFoundError:
+        return 0
+    return clean_temps(root, [f"{rel_dir}/{name}" for name in names if name.startswith(TEMP)])
 
 
 def clean_temps(root: Path, temps) -> int:

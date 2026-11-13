@@ -752,6 +752,24 @@ export async function settingsScenarios(env) {
       }
       await page.getByRole("button", { name: "Done", exact: true }).click();
       await secret.waitFor({ state: "detached" });
+      // A token that answers feedback: it reads the workspaces ticked too, and its row says so
+      await page.getByRole("button", { name: "Read and answer feedback", exact: true }).click();
+      await page.getByText(/replies to and resolves comments on your work folders' files/).waitFor();
+      assert(await tokenSpaces.isVisible(), "a feedback token reads the workspaces ticked");
+      await nameField.fill("Feedback script");
+      await page.getByRole("button", { name: "Create token", exact: true }).click();
+      await secret.waitFor();
+      const feedbackToken = (await user.api("/api/integrations/tokens")).tokens.find((item) => item.name === "Feedback script");
+      assertEq(feedbackToken?.scope, "feedback", "its scope");
+      await page.getByText(/Feedback script/).waitFor();
+      await page.getByText(/answers feedback/).waitFor();
+      assertEq(await page.getByRole("button", { name: "Choose workspaces", exact: true }).count(), 2, "its workspaces can be changed, as a read token's");
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await secret.waitFor({ state: "detached" });
+      await user.api(`/api/integrations/tokens/${feedbackToken.id}`, { method: "DELETE" });
+      await page.getByRole("button", { name: "Refresh connections", exact: true }).click();
+      await until(() => page.getByRole("button", { name: "Disconnect", exact: true }).count().then((n) => n === 1));
+      await page.getByRole("button", { name: "Read-only", exact: true }).click();
       // Change what the connection reads, without connecting again
       await page.getByRole("button", { name: "Choose workspaces", exact: true }).click();
       const editor = page.getByRole("group", { name: "Workspaces Codex test may read" });

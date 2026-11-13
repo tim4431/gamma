@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, email_invites
 from . import guests, hosted, inbox, jobs, migrations, offsite, reports, sync_engine, trash, upload_gc, version
 from . import workspaces, ws_backup, zotero_stream
+from .feedback import listeners as feedback_listeners, requests as feedback_requests
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -36,6 +37,7 @@ from .routers import (
     collab,
     comments as comments_router,
     export,
+    feedback as feedback_router,
     folders,
     imports,
     inbox as inbox_router,
@@ -295,6 +297,17 @@ async def read_only_gate(request: Request, call_next):
     return response
 
 
+def sweep_comments() -> None:
+    """The comments' sweep (gamma/comments.py), then the Sends'
+    (gamma/feedback/requests.py), on one timer: the lifespan's ``async
+    with`` is at Python's limit of nested blocks, so the two share a line.
+    The second runs whatever the first did; each logs its own failures."""
+    try:
+        comments.sweep()
+    finally:
+        feedback_requests.sweep()
+
+
 @asynccontextmanager
 async def every(seconds, fn, failed: str):
     """While the app runs: ``fn`` in a worker thread at startup, then every
@@ -362,7 +375,7 @@ def create_app() -> FastAPI:
                 every(hosted.SYNC_INTERVAL, hosted.tick, "[hosted] the plan sync failed"), \
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
-                every(comments.SWEEP_INTERVAL_S, comments.sweep, "[comments] sweep failed"), \
+                every(comments.SWEEP_INTERVAL_S, sweep_comments, "[comments] sweep failed"), \
                 every(email_invites.SWEEP_INTERVAL_S, email_invites.sweep, "[invites] sweep failed"), \
                 every(reports.SWEEP_INTERVAL_S, reports.tick, "[reports] round failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
@@ -452,6 +465,8 @@ def create_app() -> FastAPI:
     app.include_router(folders.router)
     app.include_router(collab.router)
     app.include_router(comments_router.router)
+    app.include_router(feedback_router.router)
+    feedback_listeners.register()  # what keeps the feedback files, requests and kept versions current
     app.include_router(reports_router.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)

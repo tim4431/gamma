@@ -10,7 +10,9 @@ Notion's Notify me), their thread resolved by someone else
 shared with them (``shared``), added to a shared workspace (``invited``),
 someone without an account here asking to join through a share they
 manage (``join_request``: its actor is ``cloud:<subject>``, its snippet the
-cloud username; gamma/join_requests.py).
+cloud username; gamma/join_requests.py). An item an integration token's
+write made carries the token's display name (``agent``), and its actor, the
+token's account, is told too: what an agent writes is no one's keystrokes.
 A notes-index scan could find a block that says ``@alice``, but not who
 typed it or when, and would notify again on every edit; so the producers
 write the row, after their own commit, through ``emit``, which never
@@ -54,9 +56,9 @@ SYNC_CLIENT = "sync"       # sync_engine.CLIENT: an offline copy's own writes, t
 LEVELS = ("all", "replies")  # a page's Notify me: All comments, or Replies and @mentions
 
 _COLUMNS = ("id, kind, actor, workspace_id, page_id, block_id, thread_id, comment_id, share_token, snippet, "
-            "at, read_at, archived_at")
+            "at, read_at, archived_at, agent")
 _INSERT = ("id, user_id, kind, actor, workspace_id, page_id, block_id, thread_id, comment_id, share_token, "
-           "snippet, at")
+           "snippet, at, agent")
 _WHERE = {"unread": "read_at IS NULL AND archived_at IS NULL", "all": "archived_at IS NULL",
           "archived": "archived_at IS NOT NULL"}
 
@@ -232,11 +234,13 @@ def _named_refs(ws: str, text: str) -> str:
 
 
 def emit(kind: str, recipients, actor: str, ws: str, *, page_id: str = "", block_id: str = "",
-         thread_id: str = "", comment_id: str = "", snippet: str = "", via: str = "") -> list[str]:
+         thread_id: str = "", comment_id: str = "", snippet: str = "", via: str = "", agent: str = "") -> list[str]:
     """Write one ``kind`` item for each of ``recipients`` (account ids) who
     may hear of it, then nudge their open page sockets; the ids written.
-    Run after the producer's own commit. The actor, guests and accounts
-    that are gone are left out; of the first ``REACH_CANDIDATES`` of the
+    Run after the producer's own commit. The actor (but for an ``agent``'s
+    write, the display name of the integration token that made it, which
+    the item carries), guests and accounts that are gone are left out; of
+    the first ``REACH_CANDIDATES`` of the
     rest, the first ``MAX_RECIPIENTS`` whom ``reach`` admits to the page
     are told. ``via``: the token of the share the event came through (the
     actor's share link, a share's own token for its invitees), which
@@ -248,14 +252,15 @@ def emit(kind: str, recipients, actor: str, ws: str, *, page_id: str = "", block
     told."""
     try:
         return _emit(kind, recipients, actor, ws, page_id=page_id, block_id=block_id, thread_id=thread_id,
-                     comment_id=comment_id, snippet=snippet, via=via)
+                     comment_id=comment_id, snippet=snippet, via=via, agent=agent)
     except Exception as e:  # noqa: BLE001 — what follows a write never fails it
         log.warning(f"[inbox] a {kind} item in workspace {ws} could not be written: {e}")
         return []
 
 
-def _emit(kind, recipients, actor, ws, *, page_id, block_id, thread_id, comment_id, snippet, via) -> list[str]:
-    ids = [u for u in dict.fromkeys(recipients) if u and u != actor]
+def _emit(kind, recipients, actor, ws, *, page_id, block_id, thread_id, comment_id, snippet, via,
+          agent="") -> list[str]:
+    ids = [u for u in dict.fromkeys(recipients) if u and (agent or u != actor)]
     if not ids:
         return []
     known = _accounts(ids)
@@ -267,7 +272,7 @@ def _emit(kind, recipients, actor, ws, *, page_id, block_id, thread_id, comment_
         token = reached.get(uid)
         if token is not None:
             rows.append((new_block_id(), uid, kind, actor, ws, page_id, block_id, thread_id, comment_id, token,
-                         text, now))
+                         text, now, agent))
     rows = rows[:MAX_RECIPIENTS]
     if not rows:
         return []
@@ -280,7 +285,7 @@ def _emit(kind, recipients, actor, ws, *, page_id, block_id, thread_id, comment_
                 "AND block_id = ?", (json.dumps([r[1] for r in rows]), ws, block_id))}
             rows = [r for r in rows if r[1] not in told]
         conn.executemany(f"INSERT INTO inbox_items ({_INSERT}) "
-                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
     for row in rows:
         collab.publish_account(row[1], NUDGE)
     return [r[1] for r in rows]
@@ -359,8 +364,10 @@ def from_comment(ws: str, event: dict) -> None:
     (less those just mentioned), ``comment`` to the page's other
     ``followers`` for a new thread or a reply (one item a person: the
     mention, else the reply, else this), ``resolved`` to the author of a
-    thread someone else resolved. A deleted comment's items go with it.
-    Never raises."""
+    thread someone else resolved. An integration token's write (the
+    event's ``agent``) is someone else's to its own account too: each of
+    these reaches the account when it would reach anyone else. A deleted
+    comment's items go with it. Never raises."""
     try:
         _from_comment(ws, event)
     except Exception as e:  # noqa: BLE001
@@ -372,10 +379,11 @@ def _from_comment(ws: str, event: dict) -> None:
     if kind in ("delete", "sweep"):
         forget(ws, event.get("comment_ids") or [])
         return
+    agent = event.get("agent") or ""
     where = {"page_id": event["page_id"], "block_id": event["block_id"], "thread_id": event["thread_id"],
-             "comment_id": event["comment_id"], "via": event.get("via") or ""}
+             "comment_id": event["comment_id"], "via": event.get("via") or "", "agent": agent}
     if kind == "resolve":
-        if event.get("thread_author") and event["thread_author"] != actor:
+        if event.get("thread_author") and (event["thread_author"] != actor or agent):
             with connect_pages_db(ws) as conn:
                 root = conn.execute("SELECT body FROM comments WHERE id = ?", (event["thread_id"],)).fetchone()
             emit("resolved", [event["thread_author"]], actor, ws, snippet=root[0] if root else "", **where)
@@ -437,7 +445,9 @@ def listing(user_id: str, *, filter: str = "unread", before: str = "", limit: in
     listings. Each is ``{id, kind, actor (a username, "" once gone),
     workspace_id, workspace_name, page_id, page_title (a folder share: the
     folder's name), block_id, thread_id, comment_id, share_token, snippet,
-    at, read_at, archived_at}``. The items that lead nowhere any more are
+    at, read_at, archived_at, agent}`` (``agent`` the display name of the
+    integration token whose write made it, "" for a person's). The items
+    that lead nowhere any more are
     archived first (``_settle``), so ``unread`` and the Unread tab agree.
     ValueError for another ``filter``."""
     if filter not in FILTERS:
@@ -481,7 +491,7 @@ def listing(user_id: str, *, filter: str = "unread", before: str = "", limit: in
                       "workspace_name": names.get(r[3], ""), "page_id": r[4],
                       "page_title": titles.get((r[3], target), ""), "block_id": r[5], "thread_id": r[6],
                       "comment_id": r[7], "share_token": r[8], "snippet": r[9], "at": r[10], "read_at": r[11],
-                      "archived_at": r[12]})
+                      "archived_at": r[12], "agent": r[13]})
     return {"items": items, "unread": count, "more": more}
 
 
