@@ -2,8 +2,8 @@
 "The routes"): which of Codex CLI and Claude Code the desktop app's own
 server finds here and whether each is ready, for the sync panel's agent row;
 and the chat's computer side (``/chat``, gamma/local_agents/chats.py): a
-page's conversation with the work folder's agent, its turns, Stop, New chat
-and History. Only a server that runs agents answers
+page's conversation with the work folder's agent, its turns, the answers to
+what they ask, Stop, New chat and History. Only a server that runs agents answers
 (``local_agents.enabled``); any other answers 404. A signed-in account's
 session only: an integration token and the guest are refused, as on the
 folder-links routes. The chat answers only the maker of the vault of the
@@ -84,6 +84,14 @@ class TurnBody(BaseModel):
 
 class PageBody(BaseModel):
     page: str
+
+
+class AnswerBody(BaseModel):
+    decision: str = ""
+    note: str = ""
+
+
+MAX_NOTE = 2000   # characters of what a decline tells the agent
 
 
 def _maker(request: Request, page: str) -> tuple[str, str, dict]:
@@ -234,6 +242,36 @@ def stop_turn(turn_id: str, request: Request):
     if turn["ws"] != ws:
         raise HTTPException(status_code=404, detail="No turn has that id.")
     return {"stopped": runner.stop_chat(ws, turn_id, conversation["id"])}
+
+
+@router.post("/chat/turns/{turn_id}/asks/{ask_id}")
+def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
+    """``{decision: once | chat | deny, note?}``: the person's answer to
+    what the turn's agent asks (an agent message's ``asks``) → ``{answered:
+    true}``; ``chat`` allows that command again in this conversation,
+    ``note`` (at most ``MAX_NOTE`` characters) is what a decline tells the
+    agent (``runner.answer_chat``). 404 for a turn of no conversation of
+    the account's or no such ask; 409 for one answered already or no longer
+    waited for, and a turn that ended; 400 for another decision, too long a
+    note, or ``chat`` on what is not a command."""
+    from ..local_agents import chats, events, runner, store
+
+    turn = store.get_turn(turn_id)
+    if turn is None:
+        raise HTTPException(status_code=404, detail="No turn has that id.")
+    ws, _ = _conversation_of(request, turn["conversation_id"])
+    if turn["ws"] != ws:
+        raise HTTPException(status_code=404, detail="No turn has that id.")
+    if body.decision not in events.DECISIONS:
+        raise HTTPException(status_code=400, detail="Answer once, chat or deny.")
+    note = body.note.strip()
+    if len(note) > MAX_NOTE:
+        raise HTTPException(status_code=400, detail=f"A note is at most {MAX_NOTE} characters.")
+    try:
+        runner.answer_chat(ws, turn_id, ask_id, body.decision, note)
+    except chats.ChatError as e:
+        raise _refused(e) from None
+    return {"answered": True}
 
 
 @router.post("/chat/new")

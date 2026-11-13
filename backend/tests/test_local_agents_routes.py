@@ -175,7 +175,8 @@ def test_the_links_and_a_page_carry_the_agent_without_running_anything(lab, disk
 
     links = _links(lab.owner)
     assert len(asked) == 1  # one query for the whole listing
-    assert links[f.id]["agent"] == {"name": "codex", "label": "Codex", "ready": True, "problem": "", "running": None}
+    assert links[f.id]["agent"] == {"name": "codex", "label": "Codex", "ready": True, "problem": "", "running": None,
+                                    "runs": "never"}
     assert links[second.id]["agent"]["label"] == "Claude Code"
     assert links[kept["id"]]["agent"] is None
     assert _links(lab.viewer)[f.id]["agent"]["name"] == "codex"

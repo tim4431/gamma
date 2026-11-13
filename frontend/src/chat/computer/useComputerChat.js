@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson, makeId } from "../../shared/lib/utils";
 import { t } from "../../shared/i18n/i18n.js";
-import { POLL_MS, chatPath, liveTurn, turnBody } from "./computerChat.js";
+import { POLL_MS, answerBody, askPath, chatPath, liveTurn, turnBody } from "./computerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const post = (body) => ({ method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
@@ -33,8 +33,8 @@ export function useChatSide(pageId, available) {
 }
 
 // The side's state for the page `pageId` ("" while the side is not shown:
-// nothing is read). `{computer, conversation, read, busy, send, stop,
-// newChat, history, readHistory, openHistory, deleteHistory}`:
+// nothing is read). `{computer, conversation, read, busy, send, answer,
+// stop, newChat, history, readHistory, openHistory, deleteHistory}`:
 //   computer      the strip's facts as the server read them ({agent, label,
 //                 ready, problem, folder, paused, turn}), null until read
 //   conversation  the page's active conversation ({id, title, agent,
@@ -43,7 +43,9 @@ export function useChatSide(pageId, available) {
 //                 page's
 //   read          whether the page's conversation has been read (or failed)
 //   busy          an action is on its way
-//   send(text, selections) → whether the turn was made; stop(turnId),
+//   send(text, selections) → whether the turn was made; answer(turnId,
+//   askId, decision, note) answers what the turn asks, throwing a
+//   refusal for the card to say; stop(turnId),
 //   newChat(), openHistory(id), deleteHistory(id) do what they say and read
 //   the conversation again; `history` the archived conversations
 //   ([{id, title, agent, updated_at, turns}], null until readHistory())
@@ -142,6 +144,17 @@ export function useComputerChat(pageId, setStatus, known = "") {
     keep(page, answer.conversation || null);
   }, (message) => t("Couldn't send to {agent}: {message}", { agent: label, message })), [act, keep, label]);
 
+  // The person's answer to what the turn asks: the card says a refusal
+  // itself (an ask answered already, or a turn that ended), and the
+  // conversation is read again either way, the ask leaving it.
+  const answer = useCallback(async (id, askId, decision, note = "") => {
+    try {
+      await apiJson(`${API}${askPath(id, askId)}`, post(answerBody(decision, note)));
+    } finally {
+      load();
+    }
+  }, [load]);
+
   const stop = useCallback((id) => act(async () => {
     await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/stop`, post({}));
   }, (message) => t("Couldn't stop {agent}: {message}", { agent: label, message })), [act, label]);
@@ -183,6 +196,6 @@ export function useComputerChat(pageId, setStatus, known = "") {
 
   return {
     computer: state.computer, conversation: state.conversation, read: state.read, busy,
-    send, stop, newChat, history, readHistory, openHistory, deleteHistory,
+    send, answer, stop, newChat, history, readHistory, openHistory, deleteHistory,
   };
 }

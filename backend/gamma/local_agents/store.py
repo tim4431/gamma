@@ -10,7 +10,14 @@ when the run read the thread, the reply it wrote and the request, so that a
 follow-up in the thread resumes that session. For the chat's computer side
 (gamma/local_agents/chats.py): one row a conversation (``agent_conversations``),
 the session its agent ran in last and the directory, what its next turn
-resumes, and one row a turn (``agent_turns``), its state and process.
+resumes, and one row a turn (``agent_turns``), its state and process. What
+a vault's agent may run (``agent_policies``, one row a link; none for
+``never``): ``ask``, its chat's turns may ask the person; and the commands
+a person allowed in a conversation (``agent_grants``), each exactly as it
+was asked, with the directory it runs in and the network host it
+reaches. Both are consent given for one directory and one agent: they go
+when the agent is turned off or changed (``set_agent``), the vault relinked
+(``forget_threads``) or removed, and a grant with its conversation.
 
 A run's or a turn's ``error`` is this computer's record of a failure, the
 agent's whole error and its stderr's tail: it may name the user's paths and
@@ -74,8 +81,12 @@ def agents_of(link_ids) -> dict[str, dict]:
 def set_agent(link_id: str, agent: str, *, by: str) -> None:
     """The vault ``link_id`` answers its Sends with ``agent`` from now on,
     turned on by the account ``by``; ``""`` turns it off (the row goes).
-    The same agent again keeps when it was first turned on."""
+    The same agent again keeps when it was first turned on; turned off or
+    changed, what it may run and the grants of its chats go."""
     with connect_vaults_db() as conn:
+        had = conn.execute("SELECT agent FROM agent_folders WHERE link_id = ?", (link_id,)).fetchone()
+        if not had or had[0] != agent:
+            _forget_consent(conn, link_id)
         if not agent:
             conn.execute("DELETE FROM agent_folders WHERE link_id = ?", (link_id,))
             return
@@ -85,13 +96,20 @@ def set_agent(link_id: str, agent: str, *, by: str) -> None:
                      (link_id, agent, by or "", page_now()))
 
 
+def _forget_consent(conn, link_id: str) -> None:
+    """What the vault's agent may run and the commands allowed in its
+    chats, forgotten. Inside the caller's connection."""
+    conn.execute("DELETE FROM agent_policies WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM agent_grants WHERE link_id = ?", (link_id,))
+
+
 def forget_links(live_ids: set[str]) -> int:
     """The agents of the links not in ``live_ids`` forgotten, and their
-    threads, conversations and ended turns (a vault gone while this server
-    was not looking) → how many agents."""
+    threads, conversations, policies, grants and ended turns (a vault gone
+    while this server was not looking) → how many agents."""
     live = json.dumps(sorted(live_ids))
     with connect_vaults_db() as conn:
-        for table in ("agent_threads", "agent_conversations"):
+        for table in ("agent_threads", "agent_conversations", "agent_policies", "agent_grants"):
             conn.execute(f"DELETE FROM {table} WHERE link_id NOT IN (SELECT value FROM json_each(?))", (live,))
         conn.execute("DELETE FROM agent_turns WHERE ended_at IS NOT NULL "
                      "AND link_id NOT IN (SELECT value FROM json_each(?))", (live,))
@@ -150,12 +168,73 @@ def _ids(raw: str) -> list[str]:
 
 
 def forget_threads(link_id: str) -> None:
-    """The threads the vault's agent answered forgotten, and the sessions
-    of its conversations: its directory moved (a session belongs to the
-    directory it ran in)."""
+    """The threads the vault's agent answered forgotten, the sessions of
+    its conversations, what it may run and their grants: its directory
+    moved (a session, and consent, belong to the directory)."""
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM agent_threads WHERE link_id = ?", (link_id,))
         conn.execute("DELETE FROM agent_conversations WHERE link_id = ?", (link_id,))
+        _forget_consent(conn, link_id)
+
+
+# --- what an agent may run ------------------------------------------------------------------
+
+RUNS = ("never", "ask")   # never: as it always did; ask: its chat's turns may ask the person
+
+
+def runs_of(link_id: str) -> str:
+    """What the vault's agent may run: ``ask`` or ``never``."""
+    return policies_of([link_id]).get(link_id, "never")
+
+
+def policies_of(link_ids) -> dict[str, str]:
+    """``{link id: runs}`` of ``link_ids``, ``never`` for those with no row,
+    in one query (a listing's)."""
+    ids = sorted(set(link_ids))
+    if not ids:
+        return {}
+    with connect_vaults_db() as conn:
+        rows = dict(conn.execute("SELECT link_id, runs FROM agent_policies WHERE link_id IN "
+                                 "(SELECT value FROM json_each(?))", (json.dumps(ids),)).fetchall())
+    return {link_id: rows.get(link_id) if rows.get(link_id) in RUNS else "never" for link_id in ids}
+
+
+def set_runs(link_id: str, runs: str, *, by: str) -> None:
+    """What the vault's agent may run, set by the account ``by``: ``never``
+    takes the row away, and the commands allowed in its chats with it.
+    ValueError for another value."""
+    if runs not in RUNS:
+        raise ValueError(f"an agent may run {' or '.join(RUNS)}")
+    with connect_vaults_db() as conn:
+        if runs == "never":
+            _forget_consent(conn, link_id)
+            return
+        conn.execute("INSERT INTO agent_policies (link_id, runs, set_by, set_at) VALUES (?, ?, ?, ?) "
+                     "ON CONFLICT(link_id) DO UPDATE SET runs = excluded.runs, set_by = excluded.set_by, "
+                     "set_at = excluded.set_at WHERE agent_policies.runs != excluded.runs",
+                     (link_id, runs, by or "", page_now()))
+
+
+def grant(conversation_id: str, command: str, *, link_id: str, cwd: str = ".", host: str = "") -> None:
+    """The person allowed ``command`` in the conversation (Allow in this
+    chat), run in ``cwd`` (as the runner keys it: ``.`` the folder) and
+    reaching the network ``host`` ("" for none): its next ask, exactly this
+    command there and to that host, is answered without asking."""
+    with connect_vaults_db() as conn:
+        conn.execute("INSERT INTO agent_grants (conversation_id, command, cwd, host, link_id, at) "
+                     "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(conversation_id, command, cwd, host) DO NOTHING",
+                     (conversation_id, command.strip(), cwd or ".", (host or "").strip(), link_id, page_now()))
+
+
+def granted(conversation_id: str, command: str, *, link_id: str, cwd: str = ".", host: str = "") -> bool:
+    """Whether the person allowed exactly ``command`` (whitespace around it
+    aside) in ``cwd`` to the network ``host`` in the conversation, in the
+    vault ``link_id``. Never a prefix, never another directory or host."""
+    with connect_vaults_db() as conn:
+        return conn.execute("SELECT 1 FROM agent_grants WHERE conversation_id = ? AND command = ? AND cwd = ? "
+                            "AND host = ? AND link_id = ?",
+                            (conversation_id, command.strip(), cwd or ".", (host or "").strip(),
+                             link_id)).fetchone() is not None
 
 
 # --- the runs ------------------------------------------------------------------------------
@@ -250,9 +329,10 @@ def ran_conversation(conversation_id: str, *, link_id: str, agent: str, session:
 
 
 def forget_conversation(conversation_id: str) -> None:
-    """A deleted conversation's session forgotten."""
+    """A deleted conversation's session and grants forgotten."""
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM agent_conversations WHERE conversation_id = ?", (conversation_id,))
+        conn.execute("DELETE FROM agent_grants WHERE conversation_id = ?", (conversation_id,))
 
 
 def add_turn(turn_id: str, *, ws: str, link_id: str, conversation_id: str, page_id: str, agent: str) -> None:

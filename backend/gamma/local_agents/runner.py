@@ -51,6 +51,19 @@ the conversation's session in the vault's directory as it is now
 steps (relative paths, a command's program), what changed, its end. Both
 kinds run their turn through ``_Turning``.
 
+A chat turn of a vault whose agent may ask (``store.runs_of`` ``ask``, read
+at the turn's start; a Send never asks) starts its agent with ``ask``. Each
+ask the agent makes is held for the turn under an id of Gamma's and written
+in the message (``asks``, its step ``asked``) until the person answers it
+(``answer_chat``: the step ``allowed`` or ``declined``), the agent
+withdraws it, ``ASK_TIMEOUT_S`` passes (Gamma declines it) or the turn
+stops (its agent declines what waits). A command the person allowed in
+this chat (``store.grant``) is answered at once when the agent asks exactly
+it again, in the same directory and to the same network host, never shown.
+What may run set back to never (``runs_never``) declines what waits, and
+whatever the turn asks after. The time an ask waits counts toward neither the
+turn's deadline nor its agent's silence.
+
 Locking: ``_lock`` guards the queues, the workers, the active runs and their
 stop events, and nothing else; no call into ``requests``, ``store``,
 ``catalog``, ``chats`` or a driver is made while it is held (the runner's
@@ -70,6 +83,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from ..blocks_store import new_block_id
 from ..db import account_names, connect_pages_db, connect_users_db, page_now
 from ..feedback import requests
 from ..feedback.entries import FeedbackError
@@ -91,6 +105,9 @@ BUILD_OUTPUTS = (".pdf", ".aux", ".log", ".synctex.gz", ".synctex", ".fls", ".fd
                  ".bak")
 MAX_ERROR = 16_000                # characters of a run's error record
 CHAT_EVERY_S = 0.5                # a chat turn's message is written at most this often
+ASK_TIMEOUT_S = 600               # an ask nobody answers this long is declined
+ASK_EXPIRED = "No answer within 10 minutes."
+RUNS_NEVER = "The owner no longer lets you ask to run commands in this folder."
 
 # The kinds of work a vault's queue holds: a Send's run, a chat's turn.
 SEND, CHAT = "send", "chat"
@@ -345,6 +362,34 @@ def stop_chat(ws: str, turn_id: str, conversation_id: str) -> bool:
     return True
 
 
+def answer_chat(ws: str, turn_id: str, ask_id: str, decision: str, note: str = "") -> None:
+    """The person's answer to the ask ``ask_id`` of the chat turn
+    ``turn_id`` (``_ChatTurn.answer``). ChatError 409 for a turn that holds
+    no ask any more (it ended, or waits for its slot), and as
+    ``_ChatTurn.answer`` says."""
+    with _lock:
+        run = _active.get((ws, CHAT, turn_id))
+        turning = run.get("chat") if run is not None else None
+    if turning is None:
+        raise chats.ChatError(409, "This turn has ended.")
+    turning.answer(ask_id, decision, note)
+
+
+def runs_never(link_id: str) -> None:
+    """What the vault ``link_id``'s agent may run was set back to never:
+    each chat turn of it running declines the asks that wait
+    (``_ChatTurn.decline_all``) and goes on; what it asks next is declined
+    unseen (``_ChatTurn._asked``)."""
+    with _lock:
+        turnings = [run["chat"] for (_, kind, _), run in _active.items()
+                    if kind == CHAT and run["link_id"] == link_id and run.get("chat") is not None]
+    for turning in turnings:
+        try:
+            turning.decline_all(RUNS_NEVER)
+        except Exception as e:  # noqa: BLE001 — the policy is set; the turn's end takes its cards
+            log.warning(f"[agents] declining the asks of chat turn {turning.turn_id}: {e}")
+
+
 def stop_link(link_id: str) -> None:
     """Stop the run of the vault ``link_id``, if one runs: its agent was
     turned off or changed, the vault paused, relinked, removed or its push
@@ -479,7 +524,7 @@ def _fail_left_open(turn: dict) -> None:
     if reply is not None and reply.get("state") in chats.BUSY:
         chats.write_reply(turn["ws"], turn["conversation_id"], turn["id"],
                           {"state": "failed", "error": f"Gamma stopped while {label} worked on this.",
-                           "ended_at": page_now()})
+                           "asks": [], "ended_at": page_now()})  # an ask left waiting goes: nobody answers it now
     store.end_turn(turn["id"], state="failed", error="Gamma stopped while the turn was open.")
 
 
@@ -636,19 +681,34 @@ def _said(event: dict, tracked: set[str] | None = None) -> str:
 _ABSOLUTE = re.compile(r"(?<![\w.~/:\\])(?:[A-Za-z]:[\\/]|\\\\[^\s\\]+\\|/(?=[A-Za-z]))[^\s\"'`<>|,;]*")
 
 
-def _redact(text: str, root: Path) -> str:
-    """``text`` with the paths below the folder made relative to it, the
-    home directory written ``~``, and any other absolute path "a file
-    outside the folder": what a member may read of an error."""
+# Where a base path ends in a text: a separator (then a path below it), a
+# quote, whitespace, a closing bracket or the text's end; never inside a
+# longer name (the folder paper is not paper-old, the home Tim not Timothy).
+_BASE_END = r"""(?:(?P<sep>[\\/])|(?=["'`\s)\]}>]|$))"""
+
+
+def _relative(text: str, root: Path | str, home: str | None = None) -> str:
+    """``text`` with the paths below the folder made relative to it and the
+    home directory (``home``, this user's by default) written ``~``, each
+    only where it is a whole path or a path's start (``_BASE_END``); any
+    other path as it is."""
     out = text or ""
-    for base, instead in ((str(root), ""), (str(Path.home()), "~")):
-        for form in dict.fromkeys((base, base.replace("\\", "/"))):
+    for base, instead in ((str(root), ""), (str(Path.home()) if home is None else home, "~")):
+        for form in dict.fromkeys((base.rstrip("\\/"), base.rstrip("\\/").replace("\\", "/"))):
             if len(form) <= 3:  # a drive or the filesystem's root names nothing of the user's
                 continue
-            for sep in ("\\", "/"):
-                out = out.replace(form + sep, f"{instead}/" if instead else "")
-            out = out.replace(form, instead or ".")
-    return _ABSOLUTE.sub("a file outside the folder", out)
+            out = re.sub(r"(?<![\w.~/\\:-])" + re.escape(form) + _BASE_END,
+                         lambda m, instead=instead: (f"{instead}/" if instead else "") if m.group("sep")
+                         else (instead or "."), out)
+    return out
+
+
+def _redact(text: str, root: Path | str, home: str | None = None) -> str:
+    """``text`` with the paths below the folder made relative to it, the
+    home directory written ``~`` (``_relative``), and any other absolute
+    path "a file outside the folder": what a member may read of an
+    error."""
+    return _ABSOLUTE.sub("a file outside the folder", _relative(text, root, home))
 
 
 def _span(seconds: float) -> str:
@@ -717,14 +777,14 @@ class _Turning:
         self._step_at: dict[str, int] = {}
 
     def _turn(self, argv: list[str], root: Path, text: str, session: str, *, schema: dict | None = None,
-              images=()) -> dict:
-        """One turn of the agent on ``text`` (``session`` one to resume),
-        watched, its events followed → its done. A turn before it is
-        closed first."""
+              images=(), ask: bool = False) -> dict:
+        """One turn of the agent on ``text`` (``session`` one to resume;
+        ``ask``, it may ask), watched, its events followed → its done. A
+        turn before it is closed first."""
         if self.turn is not None:
             self.turn.close()
         self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, schema=schema,
-                                 images=list(images), session=session)
+                                 images=list(images), session=session, ask=ask)
         if self.turn.pid:
             self._started(self.turn.pid)
         ended = threading.Event()
@@ -749,18 +809,33 @@ class _Turning:
 
     def _watch(self, turn, ended: threading.Event) -> None:
         """Stop the turn on the run's stop or at its deadline, counted from
-        the turn's start (not from the queue's wait); between, ``_tick``."""
-        deadline = time.monotonic() + _run_timeout()
+        the turn's start (not from the queue's wait, nor while an ask waits
+        for the person, ``_waiting``); between, ``_tick``."""
+        deadline = last = time.monotonic()
+        deadline += _run_timeout()
         while not ended.is_set():
+            now = time.monotonic()
+            if self._waiting():
+                deadline += now - last
+            last = now
             if self.stop.is_set():
                 turn.stop()
+                self._stopping()
                 return
-            if time.monotonic() >= deadline:
+            if now >= deadline:
                 self.timed_out = True
                 turn.stop()
+                self._stopping()
                 return
             self._tick()
             ended.wait(0.1)
+
+    def _waiting(self) -> bool:
+        """Whether the turn waits for the person now (an ask)."""
+        return False
+
+    def _stopping(self) -> None:
+        """Called on the watching thread once it stopped the turn."""
 
     def _tick(self) -> None:
         """Called on the watching thread every tenth of a second while the
@@ -1158,11 +1233,18 @@ class _ChatTurn(_Turning):
         self.tracked: set[str] = set()  # the vault's files, by path folded: what the vault's detail may name
         self.end = {"state": "failed", "error": "", "record": ""}
         self.gone = False               # its message is gone: nothing more is written in it
+        self.ask = False                # its agent may ask (the vault's policy at its start)
+        self.asks: dict[str, dict] = {}  # Gamma's id -> an ask that waits: {key, kind, command, cwd, host, step,
+        #                                   since, shown}
+        self.answered: set[str] = set()  # the asks that waited and wait no more
         self._io = threading.Lock()     # one write of the message at a time, the newest last
+        self._asking = threading.Lock()  # the asks and the steps, which the person's answer changes too
         self._written_at = 0.0
         self._dirty = False
 
     def go(self) -> None:
+        with _lock:
+            self.run["chat"] = self  # what answer_chat answers through
         try:
             self._work()
         except _Stop:
@@ -1174,6 +1256,7 @@ class _ChatTurn(_Turning):
         finally:
             if self.turn is not None:
                 self.turn.close()  # a turn whose events were never read still ends its process
+            self._stopping()
             self._close()
 
     def _close(self) -> None:
@@ -1250,6 +1333,7 @@ class _ChatTurn(_Turning):
         argv = catalog.command(self.agent)
         if argv is None:
             self._fail(f"{self.label} is not on this computer.")
+        self.ask = store.runs_of(self.link_id) == "ask"
 
         # 2. running
         self.root = Path(link["path"])
@@ -1275,19 +1359,19 @@ class _ChatTurn(_Turning):
         def told(with_earlier: bool) -> str:
             return prompt.build_chat(agent=self.agent, owner=owner, work_folder=folder, file=file,
                                      message=person.get("text") or "", selections=selections,
-                                     earlier=earlier if with_earlier else None)
+                                     earlier=earlier if with_earlier else None, ask=self.ask)
 
         # 4. the turn
         before = _snapshot(self.root)
         self._check_stop()
-        done = self._turn(argv, self.root, told(not session), session)
+        done = self._turn(argv, self.root, told(not session), session, ask=self.ask)
         if session and not done["ok"] and not self.steps and not self.stop.is_set() and not self.timed_out:
             # A session this computer no longer has (Claude Code has no
             # fallback of its own): afresh, with the earlier messages.
             log.info(f"[agents] {self.label} could not resume the session of chat turn {self.turn_id}: "
                      "starting a new one")
             self.asked, self.fresh, self.paragraphs = "", bool(earlier), []
-            done = self._turn(argv, self.root, told(True), "")
+            done = self._turn(argv, self.root, told(True), "", ask=self.ask)
 
         # 5. what it did, and its end
         changes, self.built = _changed_files(before, _snapshot(self.root))
@@ -1367,33 +1451,206 @@ class _ChatTurn(_Turning):
             self.paragraphs.append(str(event.get("text") or "").strip())
         elif kind == "tool":
             step = _step(event)
-            at = self._step_at.get(step["id"])
-            if at is not None:
-                self.steps[at]["status"] = step["status"]
-            elif len(self.steps) < store.MAX_STEPS:
-                self._step_at[step["id"]] = len(self.steps)
-                self.steps.append(step)
+            with self._asking:
+                at = self._step_at.get(step["id"])
+                if at is not None:
+                    if self.steps[at]["status"] != "declined":  # what the agent says of it then changes nothing
+                        self.steps[at]["status"] = step["status"]
+                elif len(self.steps) < store.MAX_STEPS:
+                    self._step_at[step["id"]] = len(self.steps)
+                    self.steps.append(step)
             if event.get("status") == "started":
                 with _lock:
                     self.run["detail"] = _said(event, self.tracked)
+        elif kind == "ask":
+            if self._asked(event):
+                self._show(force=True)
+                return None
+        elif kind == "ask_gone":
+            with self._asking:
+                ask_id = next((i for i, held in self.asks.items() if held["key"] == event.get("id")), None)
+                held = self.asks.pop(ask_id) if ask_id else None
+                if ask_id:
+                    self.answered.add(ask_id)
+            if held is not None:
+                self._settle(held, "failed")
         self._show()
         return None
 
+    # --- the asks ----------------------------------------------------------------------------
+
+    def _shown_path(self, path: str) -> str:
+        """A path as an ask shows it to the person who answers it: relative
+        inside the folder, under ``~`` in the home directory, else whole (an
+        ask is the maker's alone and leaves the message once answered, and
+        consent needs to see where)."""
+        if _inside(path):
+            return events.one_line(path, 500)
+        return events.one_line(_relative(path, self.root), 500)
+
+    def _grant_cwd(self, cwd: str) -> str:
+        """An ask's directory as a grant keys it: relative to the folder
+        (the folder itself, by its path or as ``.``, is ``.``), else
+        whole."""
+        return events.rel_path(str(cwd or "").strip() or ".", str(self.root)) or "."
+
+    def _asked(self, event: dict) -> bool:
+        """The agent asks: while the vault's agent may no longer ask
+        (``store.runs_of`` set back to never), Gamma declines it, never
+        shown; a command the person allowed in this conversation, exactly
+        it in the same directory and to the same network host, is answered
+        at once, never shown; any other ask is held, in the message
+        (``asks``) with its step ``asked`` → whether it was held."""
+        kind = event.get("kind") if event.get("kind") in events.ASK_KINDS else "tool"
+        command = str(event.get("command") or "").strip()
+        cwd, host = self._grant_cwd(event.get("cwd") or "."), str(event.get("host") or "").strip()
+        if store.runs_of(self.link_id) != "ask":
+            self.turn.answer(event["id"], "deny", RUNS_NEVER)
+            return False
+        if kind == "command" and command and store.granted(self.conversation_id, command, link_id=self.link_id,
+                                                           cwd=cwd, host=host):
+            self.turn.answer(event["id"], "once")
+            return False
+        ask_id = new_block_id()
+        shown = {"id": ask_id, "kind": kind}
+        if "command" in event:
+            # exactly as the agent gave it, nothing rewritten: the person sees
+            # what runs before it does
+            shown["command"] = str(event["command"] or "")
+        if "cwd" in event:
+            shown["cwd"] = self._shown_path(str(event["cwd"] or "."))
+        if host:
+            shown["host"] = events.one_line(host, 500)
+        if "paths" in event:
+            shown["paths"] = [self._shown_path(str(p)) for p in event["paths"]]
+        if "diff" in event:
+            shown["diff"] = events.cut_diff(str(event["diff"] or ""))
+        if event.get("reason"):
+            shown["reason"] = _relative(str(event["reason"]), self.root)[:events.MAX_REASON]
+        if kind == "tool":
+            shown["tool"] = events.one_line(str(event.get("tool") or ""), 100)
+        shown["at"] = page_now()
+        step_id = str(event.get("step") or "") or f"ask:{ask_id}"
+        if kind == "command":
+            step = _step({"id": step_id, "kind": "run", "command": command, "status": "asked"})
+        elif kind == "files":
+            step = _step({"id": step_id, "kind": "edit", "path": (event.get("paths") or [""])[0], "status": "asked"})
+        else:
+            step = _step({"id": step_id, "kind": "other", "status": "asked"})
+        with self._asking:
+            self.asks[ask_id] = {"key": event["id"], "kind": kind, "command": command, "cwd": cwd, "host": host,
+                                 "step": step_id, "since": time.monotonic(), "shown": shown}
+            at = self._step_at.get(step_id)
+            if at is not None:
+                self.steps[at]["status"] = "asked"
+            elif len(self.steps) < store.MAX_STEPS:
+                self._step_at[step_id] = len(self.steps)
+                self.steps.append(step)
+        return True
+
+    def answer(self, ask_id: str, decision: str, note: str = "") -> None:
+        """The person's answer to the ask ``ask_id`` (``events.DECISIONS``),
+        ``note`` what a decline tells the agent: it leaves the message, its
+        step reads allowed or declined, and Allow in this chat on a command
+        records the grant. ChatError 404 for an ask the turn never had, 409
+        for one that waits no more (answered, withdrawn, declined by Gamma)
+        or that the agent no longer takes, 400 for Allow in this chat on
+        anything but a command."""
+        with self._asking:
+            held = self.asks.get(ask_id)
+            if held is None:
+                raise chats.ChatError(409 if ask_id in self.answered else 404,
+                                      f"{self.label} no longer waits for that." if ask_id in self.answered
+                                      else "No question of this turn has that id.")
+            if decision == "chat" and held["kind"] != "command":
+                raise chats.ChatError(400, "Only a command can be allowed in this chat.")
+        if not self._decide(ask_id, decision, note):
+            raise chats.ChatError(409, f"{self.label} no longer waits for that.")
+
+    def _decide(self, ask_id: str, decision: str, note: str) -> bool:
+        """The ask answered with ``decision``, once → whether the agent took
+        the answer. Allow in this chat is kept (``store.grant``: the
+        command, its directory, its host) only while the vault's agent may
+        still ask and is still this turn's."""
+        with self._asking:
+            held = self.asks.pop(ask_id, None)
+            self.answered.add(ask_id)
+        if held is None:
+            return False
+        written = self.turn is not None and self.turn.answer(held["key"], decision, note)
+        if written and decision == "chat" and held["kind"] == "command" and held["command"]:
+            try:
+                if (store.runs_of(self.link_id) == "ask"
+                        and (store.agent_of(self.link_id) or {}).get("agent") == self.agent):
+                    store.grant(self.conversation_id, held["command"], link_id=self.link_id, cwd=held["cwd"],
+                                host=held["host"])
+            except Exception as e:  # noqa: BLE001 — this call is allowed; the next one asks again
+                log.warning(f"[agents] keeping a grant of chat turn {self.turn_id}: {e}")
+        self._settle(held, ("declined" if decision == "deny" else "allowed") if written else "failed")
+        return written
+
+    def decline_all(self, note: str) -> None:
+        """Every ask that waits declined with ``note`` (what may run was set
+        back to never), the turn going on: the cards leave the message,
+        their steps declined."""
+        with self._asking:
+            waiting = list(self.asks)
+        for ask_id in waiting:
+            self._decide(ask_id, "deny", note)
+
+    def _settle(self, held: dict, status: str) -> None:
+        """An ask that waits no more: its step ``status``, the message
+        written."""
+        with self._asking:
+            at = self._step_at.get(held["step"])
+            if at is not None and self.steps[at]["status"] == "asked":
+                self.steps[at]["status"] = status
+        self._show(force=True)
+
+    def _waiting(self) -> bool:
+        return bool(self.asks)
+
+    def _stopping(self) -> None:
+        """The turn stops or ended: its agent declines what waits (the
+        driver's stop), so the asks leave the message, their steps
+        declined."""
+        with self._asking:
+            left, self.asks = list(self.asks.values()), {}
+            self.answered.update(held["shown"]["id"] for held in left)
+            for held in left:
+                at = self._step_at.get(held["step"])
+                if at is not None and self.steps[at]["status"] == "asked":
+                    self.steps[at]["status"] = "declined"
+        if left:
+            try:
+                self._show(force=True)
+            except Exception as e:  # noqa: BLE001 — the turn's end writes it
+                log.warning(f"[agents] writing chat turn {self.turn_id}: {e}")
+
     def _tick(self) -> None:
         """What the turn heard within ``CHAT_EVERY_S`` of a write is written
-        once that passed, though nothing more comes."""
-        if self._dirty:
-            try:
+        once that passed, though nothing more comes; an ask nobody answered
+        within ``ASK_TIMEOUT_S`` is declined."""
+        now = time.monotonic()
+        with self._asking:
+            expired = [ask_id for ask_id, held in self.asks.items() if now - held["since"] >= ASK_TIMEOUT_S]
+        try:
+            for ask_id in expired:
+                self._decide(ask_id, "deny", ASK_EXPIRED)
+            if self._dirty:
                 self._show()
-            except Exception as e:  # noqa: BLE001 — the watch goes on: the next event or the end writes it
-                log.warning(f"[agents] writing chat turn {self.turn_id}: {e}")
+        except Exception as e:  # noqa: BLE001 — the watch goes on: the next event or the end writes it
+            log.warning(f"[agents] writing chat turn {self.turn_id}: {e}")
 
     def _progress(self) -> dict:
         """The message as the turn has it: its text (its paragraphs, or the
         done's own, without this computer's paths and ``prompt.inert``), its
-        steps and ``fresh``."""
+        steps, the asks that wait (``_asked``) and ``fresh``."""
         text = prompt.inert(_redact("\n\n".join(p for p in self.paragraphs if p), self.root)) if self.root else ""
-        return {"text": text[:chats.MAX_TEXT], "steps": [dict(s) for s in self.steps], "fresh": self.fresh}
+        with self._asking:
+            steps = [dict(s) for s in self.steps]
+            asks = [dict(held["shown"]) for held in self.asks.values()]
+        return {"text": text[:chats.MAX_TEXT], "steps": steps, "asks": asks, "fresh": self.fresh}
 
     def _show(self, *, force: bool = False, **more) -> None:
         """The message's text and steps (and ``more``) written, at most every

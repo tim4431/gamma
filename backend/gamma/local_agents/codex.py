@@ -14,6 +14,21 @@ events (``_item``), approvals are refused (``_REFUSALS``), and
 notifications and the server's requests can come before the response a
 request waits for.
 
+A turn with ``ask`` (a chat turn of a folder whose agent may ask) starts its
+thread with ``approvalPolicy`` ``on-request`` and ``approvalsReviewer``
+``user`` (both checked in the answer, as the sandbox is) in the same
+sandbox: Codex then asks to step outside it. A command's approval and a
+file change's become ``ask`` events, keyed by the request's JSON-RPC id (a
+file change's paths and diff are its item's, kept from ``item/started`` and
+``item/fileChange/patchUpdated``, its diff a unified one with a header a
+change, ``_diff``), a command's network host its own field. Gamma declines
+at once, never asking, a command approval of another kind than a command
+(input to a running terminal, a managed checkpoint) and a file change to a
+protected part of the folder (``events.protected``). The answer is ``accept``,
+``acceptForSession`` or ``decline`` (a note follows as a ``turn/steer``),
+and a stop answers ``cancel``. ``serverRequest/resolved`` for one Gamma did
+not answer withdraws it. Every other request is refused as without.
+
 No MCP server and no web search, whatever the user's config.toml says (a
 feedback run needs the folder alone, and nothing would ask before such a
 tool ran). Verified on this machine (codex-cli 0.167.0, three MCP servers
@@ -30,6 +45,7 @@ reports starting all the same fails the turn (``_dispatch``).
 import json
 import sys
 import tempfile
+import threading
 import time
 
 from .. import version
@@ -51,14 +67,26 @@ QUIET = ["item/agentMessage/delta", "item/commandExecution/outputDelta", "item/r
 # The server's requests and the answers that refuse them, in the shapes the
 # schema requires. approvalPolicy never makes them rare (an administrator's
 # requirements can still put it back to on-request: this machine's do).
+# The legacy two answer with a ReviewDecision, whose refusal says why.
+REFUSED = "Gamma does not let an agent do that here."
+_LEGACY_REFUSAL = {"decision": {"denied": {"rejection": REFUSED}}}
 _REFUSALS = {
     "item/commandExecution/requestApproval": {"decision": "decline"},
     "item/fileChange/requestApproval": {"decision": "decline"},
-    "applyPatchApproval": {"decision": "denied"},
-    "execCommandApproval": {"decision": "denied"},
+    "applyPatchApproval": _LEGACY_REFUSAL,
+    "execCommandApproval": _LEGACY_REFUSAL,
     "item/permissions/requestApproval": {"permissions": {}, "scope": "turn"},
     "mcpServer/elicitation/request": {"action": "decline"},
 }
+# What a turn with ``ask`` relays to the person: the request's ask kind.
+_ASKED = {"item/commandExecution/requestApproval": "command", "item/fileChange/requestApproval": "files"}
+# A command approval's kinds a person is asked: a command (older servers
+# send none). Input to a terminal already running (writeStdin: its params
+# carry the original command, not what would be typed) and a managed
+# checkpoint (humanCommand) are declined at once.
+_COMMAND_KINDS = (None, "command")
+_DECISIONS = {"once": "accept", "chat": "acceptForSession", "deny": "decline"}
+APPROVAL_POLICY = "on-request"   # a turn with ask: Codex asks to step outside its sandbox
 
 
 TurnFailed = events.TurnFailed
@@ -145,6 +173,28 @@ def _ask(child: procs.Child, request_id: int, method: str, params, deadline: flo
     return None
 
 
+def _diff(changes: list[dict], cwd: str) -> str:
+    """A file change's changes as one unified diff, each under a header
+    naming it (``--- a/<path>`` / ``+++ b/<path>``, ``/dev/null`` for an
+    added or a deleted file): an update's diff as Codex gives it, an added
+    or a deleted file's text (which Codex gives whole, not as a diff) a line
+    each after ``+`` or ``-``."""
+    out = []
+    for change in changes:
+        path = events.rel_path(str(change.get("path") or ""), cwd)
+        kind = change.get("kind") if isinstance(change.get("kind"), dict) else {}
+        text = str(change.get("diff") or "")
+        if kind.get("type") == "add":
+            out.append(f"--- /dev/null\n+++ b/{path}\n" + "".join(f"+{line}\n" for line in text.splitlines()))
+        elif kind.get("type") == "delete":
+            out.append(f"--- a/{path}\n+++ /dev/null\n" + "".join(f"-{line}\n" for line in text.splitlines()))
+        else:
+            moved = events.rel_path(str(kind.get("move_path") or ""), cwd) or path
+            body = text if not text or text.endswith("\n") else text + "\n"
+            out.append(body if text.startswith("--- ") else f"--- a/{path}\n+++ b/{moved}\n{body}")
+    return "".join(out)
+
+
 def _parse(line: str) -> dict | None:
     try:
         message = json.loads(line)
@@ -157,16 +207,19 @@ class CodexTurn(events.Turn):
     label = LABEL
 
     def __init__(self, argv: list[str], *, cwd: str, prompt: str, schema: dict | None, session: str,
-                 images: list[str]):
-        super().__init__(argv + ["app-server"], cwd=cwd)
+                 images: list[str], ask: bool = False):
+        super().__init__(argv + ["app-server"], cwd=cwd, ask=ask)
         self._prompt = prompt
         self._schema = schema
         self._resume = session
         self._images = list(images or ())[:MAX_IMAGES]
         self._next_id = 0
+        self._ids = threading.Lock()     # a steer is sent from the thread that answers
         self._thread = ""
         self._turn_id = ""
         self._pending: list[dict] = []   # events met while a request waited for its response
+        self._changes: dict[str, list] = {}   # a fileChange item's id -> its changes, for its ask
+        self._commands: dict[str, str] = {}   # a commandExecution item that started -> its command
         self._last_text = ""
         self._usage: dict = {}
         self._completed: dict | None = None
@@ -177,8 +230,9 @@ class CodexTurn(events.Turn):
         """Send a request; with ``wait``, its result, every other message
         dispatched meanwhile. TurnFailed for a JSON-RPC error or no answer
         within ``timeout`` seconds."""
-        self._next_id += 1
-        request_id = self._next_id
+        with self._ids:
+            self._next_id += 1
+            request_id = self._next_id
         message = {"id": request_id, "method": method}
         if params is not None:
             message["params"] = params
@@ -205,6 +259,15 @@ class CodexTurn(events.Turn):
         if not method:
             return  # the response to a request nobody waits for (turn/interrupt)
         if "id" in message:
+            if self.ask and method in _ASKED and self._ours(message.get("params") or {}):
+                refused = self._unaskable(message)
+                if refused is None:
+                    self._pending.append(self._relay(message))
+                    return
+                log.info(f"[agents] Codex asked {method} ({refused}): declined")
+                self._send(_refusal(message))
+                self._pending += self._declined(message.get("params") or {})
+                return
             log.info(f"[agents] Codex asked {method}: refused")
             self._send(_refusal(message))
             return
@@ -212,6 +275,14 @@ class CodexTurn(events.Turn):
         if method in ("item/started", "item/completed"):
             if self._ours(params):
                 self._pending += self._item(params.get("item") or {}, started=method == "item/started")
+        elif method == "item/fileChange/patchUpdated":
+            if self._ours(params) and params.get("itemId"):
+                self._changes[str(params["itemId"])] = list(params.get("changes") or [])
+        elif method == "serverRequest/resolved":
+            # Resolved without Gamma's answer (the turn interrupted): the ask goes.
+            ask_id = str(params.get("requestId"))
+            if params.get("threadId") in (None, self._thread) and self._unasked(ask_id) is not None:
+                self._pending.append({"type": "ask_gone", "id": ask_id})
         elif method == "turn/started":
             turn = params.get("turn") or {}
             if not self._turn_id and params.get("threadId") == self._thread and turn.get("id"):
@@ -246,11 +317,16 @@ class CodexTurn(events.Turn):
         status = "started" if started else ("completed" if item.get("status") == "completed" else "failed")
         if kind == "commandExecution":
             command = str(item.get("command") or "")
+            if started:
+                self._commands[item_id] = command
+            else:
+                self._commands.pop(item_id, None)
             if not started and item.get("exitCode") != 0:
                 status = "failed"
             return [events.tool(item_id, "run", f"Run {command}", status, command=command,
                                 output=None if started else str(item.get("aggregatedOutput") or ""))]
         if kind == "fileChange":
+            self._changes[item_id] = list(item.get("changes") or [])
             out = []
             for i, change in enumerate(item.get("changes") or []):
                 path = events.rel_path(str((change or {}).get("path") or ""), self.cwd)
@@ -266,11 +342,76 @@ class CodexTurn(events.Turn):
             return [{"type": "text", "text": self._last_text}] if self._last_text.strip() else []
         return []
 
+    def _unaskable(self, message: dict) -> str | None:
+        """Why Gamma declines an approval itself, never asking: a command
+        approval of another kind than a command (``_COMMAND_KINDS``), a file
+        change to a protected part of the folder (``events.protected``, the
+        rule Claude Code's edits are held to); None for one the person is
+        asked."""
+        params = message.get("params") or {}
+        if _ASKED[message["method"]] == "command":
+            kind = params.get("kind")
+            return None if kind in _COMMAND_KINDS else f"kind {kind}"
+        for change in self._changes.get(str(params.get("itemId") or "")) or []:
+            kind = change.get("kind") if isinstance(change, dict) and isinstance(change.get("kind"), dict) else {}
+            paths = (change.get("path"), kind.get("move_path")) if isinstance(change, dict) else ()
+            if any(path and events.protected(str(path), self.cwd) for path in paths):
+                return "a protected file"
+        return None
+
+    def _declined(self, params: dict) -> list[dict]:
+        """The steps of an approval Gamma declined itself, failed: the
+        command's when it started, or the file change's."""
+        item_id = str(params.get("itemId") or "")
+        if item_id in self._commands:
+            command = self._commands[item_id]
+            return [events.tool(item_id, "run", f"Run {command}", "failed", command=command, output=REFUSED)]
+        out = []
+        for i, change in enumerate(self._changes.get(item_id) or []):
+            path = events.rel_path(str(change.get("path") or ""), self.cwd) if isinstance(change, dict) else ""
+            if path:
+                out.append(events.tool(f"{item_id}:{i}", "edit", f"Edit {path}", "failed", path=path))
+        return out
+
+    def _relay(self, message: dict) -> dict:
+        """A command's or a file change's approval, held by its JSON-RPC id
+        (its exact type, which the answer echoes) → its ask event. A
+        command's network host is a field of its own, and named in its
+        reason."""
+        params = message.get("params") or {}
+        ask_id, item_id = str(message["id"]), str(params.get("itemId") or "")
+        self._asked(ask_id, message["id"])
+        reason = str(params.get("reason") or "").strip()
+        if _ASKED[message["method"]] == "command":
+            host = str((params.get("networkApprovalContext") or {}).get("host") or "").strip()
+            if host:
+                reason = f"{reason} (network: {host})" if reason else f"Network: {host}"
+            return events.ask(ask_id, "command", step=item_id, command=str(params.get("command") or ""),
+                              cwd=events.rel_path(str(params.get("cwd") or self.cwd), self.cwd), host=host,
+                              reason=reason)
+        changes = [c for c in self._changes.get(item_id) or [] if isinstance(c, dict)]
+        paths = [events.rel_path(str(c.get("path") or ""), self.cwd) for c in changes]
+        return events.ask(ask_id, "files", step=f"{item_id}:0" if changes else "", paths=[p for p in paths if p],
+                          diff=_diff(changes, self.cwd), reason=reason)
+
+    def _reply(self, held, decision: str, note: str) -> None:
+        self._send({"id": held, "result": {"decision": _DECISIONS[decision]}})
+        if decision == "deny" and note and self._turn_id:
+            # Codex's decline carries no words: they follow as input to the turn.
+            self._request("turn/steer", {"threadId": self._thread, "expectedTurnId": self._turn_id,
+                                         "input": [{"type": "text", "text": f"The owner declined that: {note}"}]},
+                          0, wait=False)
+
     def _flush(self):
         pending, self._pending = self._pending, []
         return pending
 
     def _on_stop(self) -> float:
+        for held in self._all_asks():  # a stop declines what waits, and cancel interrupts the turn
+            try:
+                self._send({"id": held, "result": {"decision": "cancel"}})
+            except EOFError:
+                return 0.0
         if not self._turn_id:
             return 0.0
         try:
@@ -298,6 +439,8 @@ class CodexTurn(events.Turn):
             raise TurnFailed(f"Codex did not say which MCP servers it would start: {e}") from None
         thread_params = {"cwd": self.cwd, "sandbox": "workspace-write", "approvalPolicy": "never",
                          "config": _quiet(config)}
+        if self.ask:
+            thread_params.update(approvalPolicy=APPROVAL_POLICY, approvalsReviewer="user")
         started = None
         if self._resume:
             try:
@@ -314,6 +457,11 @@ class CodexTurn(events.Turn):
         yield {"type": "session", "id": self._thread}
         if (started.get("sandbox") or {}).get("type") != "workspaceWrite":
             yield events.done(ok=False, error="Codex did not take the workspace sandbox.")
+            return
+        if self.ask and (started.get("approvalPolicy") != APPROVAL_POLICY
+                         or started.get("approvalsReviewer") != "user"):
+            # Another policy or reviewer (an administrator's, a subagent's) would not ask the person.
+            yield events.done(ok=False, error="Codex did not take Gamma's way of asking you.")
             return
         turn_params = {"threadId": self._thread,
                        "input": [{"type": "text", "text": self._prompt}]
@@ -346,7 +494,9 @@ class CodexTurn(events.Turn):
 
 
 def start(*, argv: list[str], cwd: str, prompt: str, schema: dict | None = None, session: str = "",
-          images: list[str] = ()) -> CodexTurn:
+          images: list[str] = (), ask: bool = False) -> CodexTurn:
     """Start Codex's app-server in ``cwd`` for one turn of ``prompt``
-    (``session`` a thread to resume); read the turn with ``events()``."""
-    return CodexTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, images=list(images))
+    (``session`` a thread to resume; ``ask``, it may ask to step outside its
+    sandbox); read the turn with ``events()``."""
+    return CodexTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, images=list(images),
+                     ask=ask)

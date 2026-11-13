@@ -465,7 +465,7 @@
   // A row's or a vault view's action (main.js keepingAction). Those that
   // change the vault or run a round leave the panel open on the new state;
   // the others ask first in a native dialog, or open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'check-agents'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents'];
   function runKept(i, action, value) {
     if (!STAYS_OPEN.includes(action)) closeMenu();
     gammaShell.keepingAction(i.kind, i.server, i.id, action, value).catch(() => {});
@@ -623,9 +623,35 @@
     claude: 'Claude Code answers this folder\'s Sends: it edits the files here and runs no commands.',
   };
 
+  // What a work folder's agent may run beyond its confinement: Nothing more
+  // ('never') / Ask me in the chat ('ask'), as two buttons.
+  function runsSeg(value, onPick) {
+    const seg = document.createElement('span');
+    seg.className = 'seg';
+    seg.id = 'vaultRuns';
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'What it may run');
+    for (const [word, text] of [['never', 'Nothing more'], ['ask', 'Ask me in the chat']]) {
+      const b = document.createElement('button');
+      b.dataset.runs = word;
+      b.textContent = text;
+      b.setAttribute('aria-pressed', String(value === word));
+      b.onclick = (e) => { e.stopPropagation(); if (value !== word) onPick(word); };
+      seg.appendChild(b);
+    }
+    return seg;
+  }
+
+  // What the agent on may run, and may ask for, under the row What it may run.
+  const RUNS_SAYS = {
+    codex: 'Codex runs commands in its sandbox, without network; with Ask, it can ask in the chat to go further (the network, files outside this folder).',
+    claude: 'Claude Code edits the files here and runs no commands; with Ask, it can ask in the chat to run one (your build).',
+  };
+
   // A work folder's agent row (its maker's alone): the segment, then as
   // visible lines the problem of the chosen agent and of each one that
-  // cannot be chosen, what the chosen one does, and what it does now.
+  // cannot be chosen, what the chosen one does, and what it does now; with
+  // an agent on, the row What it may run and its line.
   function agentRow(i) {
     const box = document.createElement('div');
     box.className = 'agentRow';
@@ -642,6 +668,10 @@
     for (const p of problems) line(p, true);
     line(AGENT_SAYS[i.agent] || AGENT_SAYS[''], false);
     if (i.agentRunning) line(`Now: ${i.agentLabel} is working · ${i.agentRunning}`, false);
+    if (i.agent) {
+      box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, (word) => runKept(i, 'agent-runs', word))]]));
+      if (RUNS_SAYS[i.agent]) line(RUNS_SAYS[i.agent], false);
+    }
     return box;
   }
 

@@ -1,8 +1,9 @@
 """A stand-in for Codex CLI (gamma/local_agents/codex.py), standard library
 only: ``--version``, ``login status`` and ``app-server`` (initialize,
 initialized, windowsSandbox/readiness, config/read, thread/start,
-thread/resume, turn/start, turn/interrupt; the item notifications, the
-final agentMessage and turn/completed), as codex-cli 0.167.0 answers them.
+thread/resume, turn/start, turn/steer, turn/interrupt; the item
+notifications, the approvals, serverRequest/resolved, the final
+agentMessage and turn/completed), as codex-cli 0.167.0 answers them.
 
 Scripted by the environment variable ``FAKE_AGENT``, a JSON object (every
 key optional):
@@ -17,6 +18,17 @@ key optional):
 - ``chat``: the final message of a chat turn (a turn with no output schema
   whose prompt carries a ``"message"``, gamma/local_agents/prompt.py
   ``build_chat``), plain text; by default ``Done: <the message>``;
+- ``ask``: what a turn whose thread asked for ``approvalPolicy``
+  ``on-request`` asks, in order: ``{"command", "reason"?, "host"?, "kind"?,
+  "cwd"?}`` a command's approval (``kind`` the approval's, ``command`` by
+  default; ``writeStdin`` asks of the command's item started already;
+  ``cwd`` relative to the working directory), ``{"path", "diff"?,
+  "change"?}`` a file change's (its item started first, with the change,
+  ``change`` its kind's type, ``update`` by default); each waits for its answer as long as the
+  turn lives (``withdraw``: that many seconds, then serverRequest/resolved
+  without one), is logged, then runs (accepted) or is declined (its item
+  ``declined``); a ``cancel`` ends the turn interrupted. The final message
+  names the last decision: ``Ran it.`` or ``Did not run it.``;
 - ``delay``: seconds before the turn ends (turn/interrupt ends it sooner);
 - ``fail``: ``exit`` (dies after turn/start, a line on stderr), ``garbage``
   (lines that are not JSON, then exits), ``no_answer`` (a final message
@@ -28,13 +40,15 @@ key optional):
   (starts its MCP server whatever the config says), ``mcp_early`` (the
   same, said before thread/start answers, with the new thread's id),
   ``read_only`` (the thread gets a read-only sandbox whatever was asked),
+  ``reviewer`` (the thread's approvals go to ``auto_review`` whatever was
+  asked),
   ``resume`` (thread/resume is an error: the thread is gone);
 - ``distinct``: each thread/start makes a thread of its own id (else every
   one is ``THREAD``);
 - ``log``: a file receiving one JSON line per thing seen: ``{"argv",
   "cwd", "env"}`` (the GAMMA_* and agent-session variable names it got),
   ``{"in": message}``, ``{"answer": message}`` (to a request it made),
-  ``{"grandchild": pid}``.
+  ``{"withdrew": id}``, ``{"grandchild": pid}``.
 """
 
 import json
@@ -57,9 +71,12 @@ sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 sys.stdin.reconfigure(encoding="utf-8")
 
 
+_logging = threading.Lock()   # the stdin reader and the turn both log: one whole line at a time
+
+
 def log(entry: dict) -> None:
     if FAKE.get("log"):
-        with open(FAKE["log"], "a", encoding="utf-8") as f:
+        with _logging, open(FAKE["log"], "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
 
 
@@ -109,7 +126,7 @@ def wait_for(predicate, timeout: float | None):
         handle(message)
 
 
-state = {"turn": None, "interrupted": False, "config": None}
+state = {"turn": None, "interrupted": False, "config": None, "policy": None}
 
 
 def handle(message: dict) -> None:
@@ -129,6 +146,7 @@ def handle(message: dict) -> None:
                                                                      f"{params.get('threadId')}"}})
     elif method in ("thread/start", "thread/resume"):
         state["config"] = params.get("config") or {}
+        state["policy"] = params.get("approvalPolicy")
         thread = params.get("threadId") or (f"{THREAD}-{uuid.uuid4().hex[:8]}" if FAKE.get("distinct") else THREAD)
         sandbox = {"workspace-write": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": False},
                    "read-only": {"type": "readOnly"}}.get(params.get("sandbox"), {"type": "readOnly"})
@@ -138,7 +156,7 @@ def handle(message: dict) -> None:
             notify("mcpServer/startupStatus/updated", {"name": SERVER, "status": "starting", "threadId": thread})
         send({"id": request_id, "result": {"thread": {"id": thread, "status": {"type": "idle"}, "turns": []},
                                             "sandbox": sandbox, "approvalPolicy": params.get("approvalPolicy"),
-                                            "approvalsReviewer": "user", "cwd": params.get("cwd") or os.getcwd(),
+                                            "approvalsReviewer": "auto_review" if FAIL == "reviewer" else "user", "cwd": params.get("cwd") or os.getcwd(),
                                             "model": "fake", "modelProvider": "fake"}})
         config = state["config"]
         server_off = (config.get("mcp_servers") or {}).get(SERVER, {}).get("enabled") is False
@@ -146,6 +164,8 @@ def handle(message: dict) -> None:
             notify("mcpServer/startupStatus/updated", {"name": SERVER, "status": "starting", "threadId": None})
     elif method == "turn/start":
         state["turn"] = {"id": request_id, "params": params, "thread": params.get("threadId")}
+    elif method == "turn/steer":
+        send({"id": request_id, "result": {"turnId": TURN}})
     elif method == "turn/interrupt":
         send({"id": request_id, "result": {}})
         if FAIL != "hang":
@@ -192,6 +212,60 @@ def complete(thread: str, status: str, error: str = "") -> None:
         "id": TURN, "status": status, "items": [], "error": {"message": error} if error else None}})
 
 
+def ask_one(thread: str, n: int, asked: dict, cwd: str) -> str | None:
+    """One approval asked and waited for → its decision, "withdrawn", or
+    None when the turn was interrupted or stdin ended meanwhile."""
+    request_id, item_id = 100 + n, f"ap{n}"   # an int id: the answer must echo it as one
+    if "command" in asked:
+        method = "item/commandExecution/requestApproval"
+        where = os.path.join(cwd, asked["cwd"]) if asked.get("cwd") else cwd
+        params = {"kind": asked.get("kind", "command"), "threadId": thread, "turnId": TURN, "itemId": item_id,
+                  "startedAtMs": 0, "environmentId": None, "command": asked["command"], "cwd": where,
+                  "reason": asked.get("reason"), "commandActions": []}
+        if asked.get("host"):
+            params["networkApprovalContext"] = {"host": asked["host"], "protocol": "https"}
+        body = {"type": "commandExecution", "id": item_id, "command": asked["command"], "cwd": where,
+                "commandActions": [], "status": "inProgress", "aggregatedOutput": None, "exitCode": None}
+        if asked.get("kind") == "writeStdin":  # input to a terminal that runs already
+            item("item/started", thread, body)
+    else:
+        method = "item/fileChange/requestApproval"
+        change_kind = asked.get("change", "update")
+        change = {"path": os.path.join(cwd, asked["path"]),
+                  "kind": {"type": "update", "move_path": None} if change_kind == "update" else {"type": change_kind},
+                  "diff": asked.get("diff", "")}
+        body = {"type": "fileChange", "id": item_id, "changes": [change], "status": "inProgress"}
+        item("item/started", thread, body)
+        params = {"threadId": thread, "turnId": TURN, "itemId": item_id, "startedAtMs": 0,
+                  "reason": asked.get("reason")}
+    send({"id": request_id, "method": method, "params": params})
+    answer = wait_for(lambda m: (m.get("id") == request_id and "method" not in m)
+                      or m.get("method") == "turn/interrupt", asked.get("withdraw"))
+    if answer is None:
+        if asked.get("withdraw") is None:
+            return None  # stdin ended
+        notify("serverRequest/resolved", {"threadId": thread, "requestId": request_id})
+        log({"withdrew": request_id})
+        return "withdrawn"
+    if answer.get("method") == "turn/interrupt":
+        handle(answer)
+        notify("serverRequest/resolved", {"threadId": thread, "requestId": request_id})
+        return None
+    log({"answer": answer})
+    notify("serverRequest/resolved", {"threadId": thread, "requestId": request_id})
+    decision = (answer.get("result") or {}).get("decision")
+    if decision in ("accept", "acceptForSession"):
+        if "command" in asked:
+            if asked.get("kind") != "writeStdin":
+                item("item/started", thread, body)
+            item("item/completed", thread, {**body, "status": "completed", "aggregatedOutput": "ok\n", "exitCode": 0})
+        else:
+            item("item/completed", thread, {**body, "status": "completed"})
+    else:
+        item("item/completed", thread, {**body, "status": "declined"})
+    return decision
+
+
 def run_turn() -> None:
     turn = state["turn"]
     thread, params = turn["thread"], turn["params"]
@@ -236,6 +310,13 @@ def run_turn() -> None:
                 "status": "inProgress", "aggregatedOutput": None, "exitCode": None}
         item("item/started", thread, body)
         item("item/completed", thread, {**body, "status": "completed", "aggregatedOutput": "ok\n", "exitCode": 0})
+    decisions = []
+    for n, asked in enumerate((FAKE.get("ask") or []) if state["policy"] == "on-request" else []):
+        decision = ask_one(thread, n, asked, cwd)
+        if decision is None or decision == "cancel":
+            complete(thread, "interrupted")
+            return
+        decisions.append(decision)
     if FAIL == "hang":
         if FAKE.get("grandchild"):
             child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
@@ -251,6 +332,8 @@ def run_turn() -> None:
         complete(thread, "interrupted")
         return
     text = answer_text(prompt_of(params), params.get("outputSchema"))
+    if decisions and not FAKE.get("chat"):
+        text = "Ran it." if decisions[-1] in ("accept", "acceptForSession") else "Did not run it."
     item("item/completed", thread, {"type": "agentMessage", "id": "am0", "text": text})
     complete(thread, "completed")
 

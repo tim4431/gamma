@@ -127,7 +127,7 @@ def forget_link(link_id: str) -> None:
     message too, without the vault."""
     with connect_vaults_db() as conn:
         for table in ("vault_files", "vault_dirs", "vault_history", "agent_folders", "agent_threads",
-                      "agent_conversations"):
+                      "agent_conversations", "agent_policies", "agent_grants"):
             conn.execute(f"DELETE FROM {table} WHERE link_id = ?", (link_id,))
         conn.execute("DELETE FROM agent_turns WHERE link_id = ? AND ended_at IS NOT NULL", (link_id,))
 

@@ -22,6 +22,7 @@ const FAKES = path.join(ROOT, "backend", "tests", "fake_agents");
 const PAGE = { width: 612, height: 792 };
 const SUMMARY = "Moved the legend and introduced the penalty's weight.";
 const CHAT_REPLY = "Tightened the sentence in sections/method.tex:3.";
+const BUILD = "latexmk -pdf main.tex";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -44,6 +45,8 @@ export async function localAgentScenarios(env) {
     GAMMA_AGENT_CODEX: JSON.stringify([PYTHON, path.join(FAKES, "fake_codex.py")]),
     GAMMA_AGENT_CLAUDE: JSON.stringify([PYTHON, path.join(FAKES, "fake_claude.py")]),
     FAKE_AGENT: JSON.stringify({ each: "fixed", summary: SUMMARY, delay: 8, log: agentLog, distinct: true, chat: CHAT_REPLY,
+      // a turn of a folder that lets it ask (3b) asks to run the build with the network
+      ask: [{ command: BUILD, reason: "The build fetches a font", host: "fonts.example" }],
       edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }] }),
   } });
   try {
@@ -473,6 +476,67 @@ export async function localAgentScenarios(env) {
       } finally { await ctx.close(); }
       assert(await user.api("/api/local-agents/chat/history?page=" + main.id).then((h) => h.conversations.length === 0),
         "the opened conversation is the active one again");
+    });
+
+    // Step 3b: asking in the chat (docs/dev/local_agents.md "Asking in the chat").
+    // What Codex was told of its asks, in order: the decisions, and a note's steer.
+    const decisions = () => heard().filter((e) => e.answer?.result?.decision !== undefined).map((e) => e.answer.result.decision);
+    const steers = () => heard().filter((e) => e.in?.method === "turn/steer").map((e) => e.in.params.input.map((p) => p.text).join(""));
+    const askAndAnswer = async (message, answer) => {
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(message);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        const card = dock.locator(".computerAsk");
+        await card.waitFor({ timeout: 20000 });
+        assertEq((await card.locator(".chatApprovalHead").innerText()).trim(), "Codex wants to run a command");
+        assertEq((await card.locator(".computerAskCommand code").innerText()).trim(), BUILD, "the command, whole");
+        assert((await card.innerText()).includes("The build fetches a font"), "its reason");
+        assert((await card.innerText()).includes("It runs as you, with your files and the network."), "what allowing means");
+        await until(async () => (await dock.locator(".computerStrip.asking").innerText().catch(() => "")).trim()
+          === "Waiting for you: Codex wants to run a command", { what: "the strip waits for the person" });
+        await answer(card);
+        await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 40000, what: "the turn ends" });
+        const replies = (await conversation()).messages.filter((m) => m.role === "agent" && m.text === CHAT_REPLY).length;
+        await until(async () => (await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).count()) === replies,
+          { what: "the turn's reply in the window" });
+        assertEq(await dock.locator(".computerAsk").count(), 0, "no card left");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    };
+
+    await step("local-agents: the maker lets Codex ask in the chat, and a command it asks to run waits on a card until allowed once", async () => {
+      const turned = await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "ask" } });
+      assertEq(turned.agent?.runs, "ask", "the folder lets its agent ask");
+      const before = decisions().length;
+      await askAndAnswer("build it", (card) => card.getByRole("button", { name: "Allow once", exact: true }).click());
+      assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["accept"]), "Codex heard accept");
+    });
+
+    await step("local-agents: declined with a note, Codex hears why; allowed in this chat, the same command runs unasked next time", async () => {
+      let before = decisions().length;
+      await askAndAnswer("build it again", async (card) => {
+        await card.getByRole("button", { name: "Decline…", exact: true }).click();
+        await card.getByRole("textbox").fill("use make instead");
+        await card.getByRole("button", { name: "Decline", exact: true }).click();
+      });
+      assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["decline"]), "Codex heard decline");
+      assert(steers().some((s) => s.includes("use make instead")), `the note went with it: ${JSON.stringify(steers())}`);
+
+      before = decisions().length;
+      await askAndAnswer("one more build", (card) => card.getByRole("button", { name: "Allow in this chat", exact: true }).click());
+      assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["acceptForSession"]), "allowed for the conversation");
+      // the next turn asks the same command: answered by Gamma, no card
+      before = decisions().length;
+      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { page: main.id, text: "and once more" } });
+      await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 40000, what: "the turn ends unasked" });
+      assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["accept"]), "Gamma answered the granted command");
+      const last = (await conversation()).messages.at(-1);
+      assert(!last.steps.some((s) => s.status === "asked") && !(last.asks || []).length, "nothing was put to the person");
+      await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "never" } });
     });
 
     await step("local-agents: turned off by its maker, the folder has no agent and the feedback document names none", async () => {

@@ -6,10 +6,11 @@ one reader, the maker of the vault of the work folder the page is a file of.
 A conversation is the page's active one for that account (``archived_at``
 NULL) or an archived one (History). Its messages are the person's
 (``{id, role: "user", text, selections: [{text, page, box}], at}``) and the
-agent's (``{id, role: "agent", agent, label, turn_id, state, text, steps,
-changes, changed, built, error, fresh, at, ended_at}``), the agent's
-written by the runner as its turn goes (gamma/local_agents/runner.py
-``_ChatTurn``), relative paths only. Every write takes the workspace's
+agent's (``{id, role: "agent", agent, label, turn_id, state, text, steps, asks,
+changes, changed, built, error, fresh, at, ended_at}``, ``asks`` what its
+agent asks the person and waits for), the agent's written by the runner as
+its turn goes (gamma/local_agents/runner.py ``_ChatTurn``), relative paths
+only. Every write takes the workspace's
 write lock and sets ``version`` above every version of the page's
 conversations of that account, and never below the clock
 (``_next_version``), so a client that polls with the version it holds
@@ -200,7 +201,7 @@ def begin(ws: str, *, page_id: str, user_id: str, link_id: str, agent: str, labe
         person = {"id": message_id or new_block_id(), "role": "user", "text": text, "selections": selections,
                   "at": now}
         reply = {"id": new_block_id(), "role": "agent", "agent": agent, "label": label, "turn_id": turn_id,
-                 "state": "queued", "text": "", "steps": [], "changes": [], "changed": 0, "built": False,
+                 "state": "queued", "text": "", "steps": [], "asks": [], "changes": [], "changed": 0, "built": False,
                  "error": "", "fresh": False, "at": now, "ended_at": None}
         conversation = _save(conn, conversation, [*conversation["messages"], person, reply])
         # Recorded before the commit: a server that stops between the two
