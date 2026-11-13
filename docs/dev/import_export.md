@@ -312,8 +312,13 @@ Import → Summary.
   uploads are known by their names in the zip, and step 41 converts a
   stroke file of an older backup, as a restore's copy does.
 - Staging (`gamma/import_staging.py`): a directory per review, bound to the
-  account and workspace, expiring after two hours (`TTL`; expired ones are
-  swept on the next upload). The review's job drops the upload when it
+  account and workspace, under the OS temp dir in a root of the instance's
+  own that only the server's account may open (0700: a root an earlier
+  version made is narrowed, and one another account made first is
+  refused), made with the first review, expiring after two hours (`TTL`;
+  `import_staging.sweep` removes expired ones before each upload and
+  hourly from the app lifespan, so a review whose dialog went away goes
+  though no upload follows). The review's job drops the upload when it
   fails or is stopped. The import job holds a claim (`running/`
   mkdir; a `DELETE` meanwhile answers 409) while it reads the upload, and
   removes the review when it ends — done, failed or stopped. An import is
@@ -323,8 +328,8 @@ Import → Summary.
   leave the disk with less than 1 GB free is refused (507,
   `import_staging.MIN_FREE_BYTES`). A review expires two hours after its
   last activity (a part, a claim, the dialog's keep-alive, the import's
-  start), so a long upload in parts does not run out. Until the next
-  upload's sweep removes it, an expired review comes back on a keep-alive
+  start), so a long upload in parts does not run out. Until a sweep
+  removes it, an expired review comes back on a keep-alive
   or the import's start (`import_staging.touch`); once swept, both answer
   404.
 - Selection ids are source ids (`page:<id>` / `chat:<id>` for a Gamma
@@ -2109,8 +2114,9 @@ fetch, `build_tree`, a progress report) and feeds each page to a per-format
 `_LogseqBuilder`, `_ZoteroBuilder`, `_GammaBuilder`. The builder accumulates zip parts, and
 `save(dest)` writes the download, returning its name and media type. The
 job saves to its file; `response()` saves to a temporary file and answers
-with it. `begin(conn, root_ids)` shows a builder the whole export set before
-the walk; the DB connection is closed by the time `save` runs. A generated
+with it ([Temporary downloads](#temporary-downloads)).
+`begin(conn, root_ids)` shows a builder the whole export set before the
+walk; the DB connection is closed by the time `save` runs. A generated
 part too big to hold (an annotated PDF) is `spool`ed to a temporary file
 and packed from there, and a bundled upload is packed straight from the
 uploads directory. The zip stores PDFs and already-compressed media as
@@ -2164,6 +2170,27 @@ upload links left as `/api/uploads/…`), `page_notes_pdf`, `annotated_pdf`
 download as bytes, with `sub_pages` the pages inside too). They raise `HTTPException` like the
 routes. The MCP `export_page` tool is their other caller ([mcp.md](mcp.md)
 "Export a page").
+
+### Temporary downloads
+
+An export answered in the request (`response()`, and `/export` and
+`/export-all` in `routers/ws_backups.py`) is written to a temporary file
+and sent from there (`gamma/downloads.py`). `temp_file` makes the file and
+removes it when its writer raises; `TempFileResponse` sends it and removes
+it once the answer ends: sent, refused for its Range (416, or 400 for a
+malformed one), a send that fails or a cancelled request. A FileResponse's
+background task runs only after a complete send, so it left the file, a
+copy of the library, behind in each of those. FileResponse has closed the
+file before it is removed, which Windows needs (its close is shielded from
+a cancel, so `requirements.txt` and `requirements-mobile.txt` pin
+starlette). A process killed mid-download leaves its file in the OS temp
+dir, named `gamma-download-*`: `downloads.sweep`, at startup and hourly
+from the app lifespan (`app.sweep_temp`), removes those older than a day
+(`STALE_S`; the temp dir may be another instance's too, sending one now).
+A job's file is no temporary one: it is the job's artifact
+([tasks.md](tasks.md)); and the admin's server-backup download writes no
+file, its zip streamed as it is made (`backups.stream_zip`,
+[migrations.md](migrations.md#backups-gammabackupspy)).
 
 ## Gamma-to-Gamma export
 

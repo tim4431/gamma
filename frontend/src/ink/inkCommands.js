@@ -8,11 +8,11 @@
 // The guards: inkOpen, the strip is open; inkTool, a tool other than the
 // hand is armed; inkSelected, the lasso holds a selection (strokes,
 // pictures or both) on a page that can be edited; inkClip, the
-// handwriting clipboard holds strokes. The
-// actions run the selection's with the render's state. Copy, cut and
-// select all answer whether they did anything, so a key that did nothing
-// stays the browser's; paste and duplicate answer nothing, so their key
-// stays claimed.
+// handwriting clipboard holds strokes, pictures or both. The actions run
+// the selection's with the render's state. Copy, cut and select all answer
+// whether they did anything, so a key that did nothing stays the
+// browser's; paste and duplicate answer nothing, so their key stays
+// claimed.
 export function inkCommandContext({ inkUi, inkTool, inkSelection, readOnly, inkClip },
   { copyInkSelection, pasteAtCentre, duplicateInkSelection, selectAllInk }) {
   return {

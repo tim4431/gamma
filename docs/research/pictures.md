@@ -247,8 +247,8 @@ and height, centred, selected:
 - **Paste** (Ctrl+V / ⌘V) with an image on the clipboard while no text
   field has the focus and a page or sheet is in view: the image is uploaded
   and placed at the centre of the surface in view. The handwriting
-  clipboard still wins when it holds strokes (`inkCommands.js`), and a
-  paste into a block editor stays the editor's.
+  clipboard still wins when it holds strokes or pictures
+  (`inkCommands.js`), and a paste into a block editor stays the editor's.
 - **Drop** an image file on a page or a sheet: at the drop point. The
   window-level drop that adds files to the library (`App.jsx`) yields to a
   drop on a surface, by a capture-phase handler on the page wrapper.
@@ -696,8 +696,11 @@ are in [dev/pictures.md](../dev/pictures.md#not-built-yet).
   more than half its turned frame inside the loop, as a stroke is taken by
   more than half its samples. *Pictures* in the lasso's row turns it off,
   on to start. Move, resize, turn, the flips, Delete and Duplicate carry
-  the pictures by the strokes' values; Copy, Cut and the stroke edits leave
-  them. A step is one undo though its halves live in two histories: each
-  entry carries a link, and either history steps the other's half while
-  that half is the newest entry there. The lasso has no Alt stretch, so
-  neither has this.
+  the pictures by the strokes' values; the stroke edits leave them. Copy,
+  Cut, Paste, Select all and a tap with the lasso took them later too,
+  through the handwriting clipboard (pictures.md "Copy, cut and paste").
+  A step is one undo though its halves live in two histories: each entry
+  carries a link, and either history steps the other's half while that
+  half is the newest entry there. The lasso's handle has no Alt stretch,
+  so the pictures it holds have none either. That is settled, not open:
+  the lasso never stretched with Alt.

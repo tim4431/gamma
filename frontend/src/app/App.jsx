@@ -8120,11 +8120,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // view cannot use; the page tools' ink.aiWork washes the handwriting
   // they are working on. The text boxes' onSelect and the document above
   // reach clearInkSelection through an arrow, read only when they run. The
-  // pictures the lasso takes, and Convert to text's box, are edited
-  // through stepBlocks.
+  // pictures the lasso takes, cut and pastes, and Convert to text's box,
+  // are edited through stepBlocks.
   const { inkSelection, inkClip, inkAiWork, clearInkSelection, restoreInkSelection, handleInkSelect, handleInkMoveSelection,
     deleteInkSelection, selectionStill, handleInkAction, copyInkSelection, pasteInk, pasteAtCentre,
-    duplicateInkSelection, selectAllInk } = useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, inkOf,
+    duplicateInkSelection, selectAllInk } = useInkSelection({ focusedBlockId, readOnly, inkUi, lassoPictures: inkLassoPictures, blocksRef, inkOf,
     applyInk, flushInk, handleInkStrokes, pickInkTool, revealInkStrip, inkBySurface, pasteTarget,
     onBoxDeselect: () => { textBoxes.actions.onBoxDeselect(); pictures.deselect(); }, showInNotes,
     transcribe: shareMode ? null : askToTranscribe,

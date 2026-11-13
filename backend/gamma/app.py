@@ -14,9 +14,9 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, email_invites
-from . import guests, hosted, inbox, jobs, migrations, offsite, reports, sync_engine, trash, upload_gc, version
-from . import workspaces, ws_backup, zotero_stream
+from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
+from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, offsite, reports, sync_engine
+from . import trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .feedback import listeners as feedback_listeners, requests as feedback_requests
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
@@ -308,6 +308,23 @@ def sweep_comments() -> None:
         feedback_requests.sweep()
 
 
+def sweep_temp() -> None:
+    """The leftover temporary files' sweeps, at startup and hourly: the
+    snapshots' work files a killed process left (gamma/ws_backup.py), the
+    import reviews past their TTL (gamma/import_staging.py) and the
+    downloads a killed process left (gamma/downloads.py). One timer for the
+    three, as for ``sweep_comments``'s two: the lifespan's ``async with`` is
+    at Python's limit of nested blocks. Each runs whatever the one before
+    did, and logs its own failure."""
+    for fn, failed in ((ws_backup.sweep_stale_temp, "[backups] temp sweep failed"),
+                       (import_staging.sweep, "[imports] staging sweep failed"),
+                       (downloads.sweep, "[downloads] sweep failed")):
+        try:
+            fn()
+        except Exception:
+            log.exception(failed)
+
+
 @asynccontextmanager
 async def every(seconds, fn, failed: str):
     """While the app runs: ``fn`` in a worker thread at startup, then every
@@ -379,7 +396,7 @@ def create_app() -> FastAPI:
                 every(email_invites.SWEEP_INTERVAL_S, email_invites.sweep, "[invites] sweep failed"), \
                 every(reports.SWEEP_INTERVAL_S, reports.tick, "[reports] round failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
-                every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
+                every(ws_backup.STALE_TEMP_S, sweep_temp, "[temp] sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
                 every(db_maintenance.EVERY_S, db_maintenance.tick, "[db] maintenance failed"), \
                 every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \

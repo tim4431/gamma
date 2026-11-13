@@ -426,3 +426,15 @@ def test_dropping_the_snapshots_waits_for_one_being_written(owner):
     assert made and made[0]["size_bytes"] > 0  # the snapshot answered before its folder went
     assert not drop.is_alive() and not ws_backup.store_dir(play).exists()
     assert owner.delete(f"/api/workspaces/{play}").status_code == 200
+
+
+def test_an_export_leaves_no_temporary_file(owner, tmp_path, monkeypatch):
+    """The zip /export and /export-all answer with goes once the answer
+    ends, a refused Range too (a FileResponse's background task runs only
+    after a full send) — gamma/downloads.py."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    for url in ("/api/export", "/api/export-all"):
+        assert owner.get(url, params={"uploads": 0}).status_code == 200
+        assert owner.get(url, headers={"Range": "bytes=99999999-"}).status_code == 416
+        assert owner.get(url, headers={"Range": "bytes=oops"}).status_code == 400
+    assert list(tmp_path.iterdir()) == []

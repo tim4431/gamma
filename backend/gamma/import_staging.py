@@ -4,11 +4,12 @@ Tokens are bound to an account and workspace. No library content is written
 until the import, which runs as a background job (``POST /api/jobs/import``,
 routers/imports.py): the job holds a filesystem claim while it reads the
 upload, keeps the report as its result and removes the upload once done.
-Cancelled and expired uploads are removed. The preview, a background job
-of its own (``POST /api/jobs/import-preview``), keeps the review it read
-beside the upload (``keep_review``), where a dialog that comes back reads
-it (``review``). The dialog that shows a review keeps it (``touch``), and
-one past its TTL that no upload has swept yet comes back.
+Cancelled and expired uploads are removed (``sweep``: before each upload,
+and hourly from the app lifespan). The preview, a background job of its
+own (``POST /api/jobs/import-preview``), keeps the review it read beside
+the upload (``keep_review``), where a dialog that comes back reads it
+(``review``). The dialog that shows a review keeps it (``touch``), and one
+past its TTL that no sweep has removed yet comes back.
 
 An upload arrives in one request (``create``) or, when it is larger than a
 proxy in front of the server lets one request carry, in parts
@@ -26,6 +27,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import tempfile
 import time
 from contextlib import contextmanager
@@ -40,10 +42,24 @@ MIN_FREE_BYTES = 1 << 30
 TOKEN_RE = re.compile(r"^[a-f0-9]{40}$")
 
 
-def _root():
+def _root_path():
     instance = hashlib.sha256(str(config.DATA_DIR).encode()).hexdigest()[:16]
-    root = Path(tempfile.gettempdir()) / f"gamma-import-reviews-{instance}"
-    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.gettempdir()) / f"gamma-import-reviews-{instance}"
+
+
+def _root():
+    """The instance's staging root, made on first use. The uploads are
+    libraries, for this account's eyes only: a root an earlier version made
+    is narrowed to 0700, and one another account made first (its name is
+    predictable) is refused."""
+    root = _root_path()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.name == "posix":
+        st = root.lstat()
+        if st.st_uid != os.getuid() or not stat.S_ISDIR(st.st_mode):
+            raise RuntimeError(f"{root} is not this account's own directory")
+        if st.st_mode & 0o077:
+            root.chmod(0o700)
     return root
 
 
@@ -57,16 +73,25 @@ def _expired(path):
     return time.time() - path.stat().st_mtime > TTL
 
 
-def _new(size, metadata):
-    """A new review's directory for an upload of ``size`` bytes, its
-    metadata written → ``(token, path)``. Expired reviews are swept first."""
-    root = _root()
-    for path in root.iterdir():
+def sweep():
+    """Remove the expired reviews: each upload does first, and the app
+    lifespan hourly, so a review its dialog left (closed, crashed) goes even
+    when no upload follows. Nothing staged, nothing made."""
+    if not _root_path().exists():
+        return
+    for path in _root().iterdir():
         try:
             if path.is_dir() and _expired(path):
                 _remove(path)
         except FileNotFoundError:
             pass
+
+
+def _new(size, metadata):
+    """A new review's directory for an upload of ``size`` bytes, its
+    metadata written → ``(token, path)``. Expired reviews are swept first."""
+    sweep()
+    root = _root()
     if shutil.disk_usage(root).free - size < MIN_FREE_BYTES:
         raise HTTPException(status_code=507, detail="the server's disk has no room for this upload")
     token = secrets.token_hex(20)
@@ -174,8 +199,8 @@ def get(token, user_id, ws, pending=False):
 
 def touch(token, user_id, ws):
     """Restart the review's TTL → ``get``'s answer: its dialog still shows
-    it, or its import starts. One past its TTL comes back until an upload's
-    sweep removes it (404 then)."""
+    it, or its import starts. One past its TTL comes back until a sweep
+    removes it (404 then)."""
     try:
         get(token, user_id, ws, pending=True)  # the caller's, and still here
     except HTTPException as e:

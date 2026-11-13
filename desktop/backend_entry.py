@@ -4,6 +4,11 @@ environment at import time), then runs uvicorn programmatically.
 
 Dev mode never uses this file — the shell runs `python -m uvicorn app:app`
 from the repo's backend/ directly.
+
+`gamma-server --draw-svg <side> <cap> [<x0> <y0> <x1> <y1>]` is the
+server's own child process that draws an SVG picture under a time limit
+(gamma/svg_draw.py, gamma/pdf_image.py `_svg_draw_command`): a frozen
+server has no Python to run the module with, so it runs itself.
 """
 
 import argparse
@@ -12,6 +17,9 @@ import sys
 
 
 def main():
+    if sys.argv[1:2] == ["--draw-svg"]:
+        from gamma import svg_draw
+        sys.exit(svg_draw.main(sys.argv[2:]))
     parser = argparse.ArgumentParser(description="Gamma desktop local server")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--data-dir", required=True)

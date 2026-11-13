@@ -19,13 +19,14 @@
 // reportProblem(), and for the handwriting group (docs/dev/handwriting.md
 // "Copy, cut and paste"): inkOpen (the markup strip is open), inkTool (a
 // tool other than the hand is armed), inkSelected (the lasso holds a
-// selection), inkClip (the handwriting clipboard holds strokes), inkCopy(),
-// inkCut(), inkPaste(), inkDuplicate(), inkSelectAll(), and translation (the
-// PDF's translated view, docs/dev/translation.md "The button"; null where the
-// translate button does not apply): {pages, shown, running, current,
-// docDone, as the viewer reports them, toggle(), page(), document()}, and
-// highlighter (the text highlighters, docs/dev/settings.md "Text
-// highlighters"; null where they do not apply): {toggle(), next()} }.
+// selection), inkClip (the handwriting clipboard holds strokes or
+// pictures), inkCopy(), inkCut(), inkPaste(), inkDuplicate(),
+// inkSelectAll(), and translation (the PDF's translated view,
+// docs/dev/translation.md "The button"; null where the translate button
+// does not apply): {pages, shown, running, current, docDone, as the viewer
+// reports them, toggle(), page(), document()}, and highlighter (the text
+// highlighters, docs/dev/settings.md "Text highlighters"; null where they
+// do not apply): {toggle(), next()} }.
 import { t } from "../shared/i18n/i18n.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 

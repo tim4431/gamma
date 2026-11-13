@@ -1,17 +1,17 @@
 // The lasso selection's edits (useInkSelection.js; docs/dev/handwriting.md
 // "Client"), pure: the selected strokes, the changes an edit makes across
 // the selection's groups, what each action of the selection menu does,
-// the clipboard's shape, and where a paste lands.
+// the clipboard's shape, and where a paste lands with its pictures.
 // frontend/tests/selectionEdits.test.mjs pins them. A selection is {page,
 // items: [{id, ids}], pictures?: [id]}: its surface, per group the block id
 // and the selected stroke ids, and the picture blocks the lasso took with
 // them (docs/dev/pictures.md "The lasso"), left out when none. `inkOf(id)`
 // is a group's strokes now (useInkDocument.js), null for one it does not
 // know.
-import { mirrorPicture, normalizePicture, transformPicture, turnedBox } from "../markup/picture.js";
-import { withPlaced } from "../markup/placed.js";
+import { mirrorPicture, movePicture, normalizePicture, onTop, transformPicture, turnedBox } from "../markup/picture.js";
+import { addPlaced, withPlaced } from "../markup/placed.js";
 import { t, T, tn } from "../shared/i18n/i18n.js";
-import { findBlock, removeBlockTree } from "../shared/model/blockModel.js";
+import { findBlock, removeBlockKeepChildren, removeBlockTree } from "../shared/model/blockModel.js";
 import { restyleBrush } from "./finishStroke.js";   // the selection's brush change, which bakes the widths again
 import { MAX_STROKES, appendStrokes, boundsOf, duplicateStrokes, flipStrokes, removeStrokes, restyleStrokes, transformStrokes, unionBox } from "./ink.js";
 import { reshapeInk } from "./shapes.js";   // a shape handle's drag, the stroke written again from its params
@@ -71,9 +71,12 @@ export function editPictures(tree, ids, fn) {
 }
 
 // Delete's half: `tree` without the pictures `ids`, the notes under them
-// too, as a picture's own Delete takes them.
-export function removePictures(tree, ids) {
-  return ids.reduce((out, id) => removeBlockTree(out, id), tree);
+// too, as a picture's own Delete takes them. Cut's (`keepNotes`) lifts
+// those notes into each picture's place, since a paste brings back only
+// the picture and its caption (clipOf).
+export function removePictures(tree, ids, keepNotes = false) {
+  const remove = keepNotes ? removeBlockKeepChildren : removeBlockTree;
+  return ids.reduce((out, id) => (findBlock(out, id) ? remove(out, id) : out), tree);
 }
 
 // An edit of the selection, group by group (`edit(ink, ids) → ink`): the
@@ -208,6 +211,14 @@ export function selectAllItems(groups, inkOf) {
   return (groups || [])
     .map((b) => ({ id: b.id, ids: (inkOf(b.id)?.strokes || []).map((s) => s.id) })).filter((item) => item.ids.length);
 }
+// And its pictures: the ids of the picture blocks a surface draws
+// (`shown`, as selectedPictures takes it), none locked.
+export function selectAllPictures(shown) {
+  return (shown || []).filter((b) => {
+    const pic = normalizePicture(b.properties?.picture);
+    return pic && !pic.locked;
+  }).map((b) => b.id);
+}
 
 // Transcribe: the selection's groups that have strokes, as {id, want (the
 // selected ids), ink}, and `whole`, whether it holds every stroke of each.
@@ -227,11 +238,42 @@ export function inkChips(groups, pageId) {
   }).filter((c) => c.strokes.length);
 }
 
-// The handwriting clipboard of the selected strokes (selectedStrokes):
-// {type: "gamma/ink", version: 2, space, box: {x1, y1, x2, y2}, strokes}.
-export function clipOf(picked) {
-  const [x1, y1, x2, y2] = picked.box;
-  return { type: "gamma/ink", version: 2, space: picked.space, box: { x1, y1, x2, y2 }, strokes: picked.strokes };
+// The handwriting clipboard of a selection: {type: "gamma/ink", version: 2,
+// space, box: {x1, y1, x2, y2}, strokes, pictures?}. The selected strokes
+// as the groups hold them and their file's space, null with none
+// (selectedStrokes); the selection's box with its pictures' turned frames
+// (selectionBox); and its pictures (selectedPictures among `shown`, the
+// surface's picture blocks) as [{picture, caption}], their upload named by
+// the picture's `url`, left out when none. null when it holds nothing.
+export function clipOf(sel, inkOf, shown) {
+  const box = selectionBox(sel, inkOf, shown);
+  if (!box) return null;
+  const picked = selectedStrokes(sel, inkOf), [x1, y1, x2, y2] = box;
+  const pictures = selectedPictures(sel, shown).map(({ id, pic }) => ({ picture: pic, caption: shown.find((b) => b.id === id).content || "" }));
+  return { type: "gamma/ink", version: 2, space: picked?.space ?? null, box: { x1, y1, x2, y2 }, strokes: picked?.strokes || [],
+    ...(pictures.length ? { pictures } : {}) };
+}
+
+// The pill of a copy, or (`cut`) a cut, of `clip`: "Copied 3 strokes.",
+// "Cut 1 picture.", "Copied 2 strokes and 1 picture."
+export function clipStatus(clip, cut) {
+  const n = clip.strokes.length, m = clip.pictures?.length || 0;
+  const strokes = n ? tn("{n} stroke", "{n} strokes", n) : "", pictures = m ? tn("{n} picture", "{n} pictures", m) : "";
+  const what = strokes && pictures ? t("{strokes} and {pictures}", { strokes, pictures }) : strokes || pictures;
+  return cut ? t("Cut {what}.", { what }) : t("Copied {what}.", { what });
+}
+
+// Paste's half in the tree: `tree` with the clipboard's pictures on
+// `surface` as new blocks `ids`, captions with them, each shifted by {dx,
+// dy} (pasteShift) and kept on the surface (`size` in points). They go in
+// the clipboard's order over the surface's pictures (onTop), their own `z`
+// left behind, so they stack among themselves as they did. The upload is
+// the one the copy named, as a Duplicate's is.
+export function pastePictures(tree, clip, surface, ids, { dx, dy }, size, t0) {
+  return (clip.pictures || []).reduce((out, { picture, caption }, i) => {
+    const pic = normalizePicture({ ...picture, z: 0 });
+    return pic ? addPlaced(out, surface, ids[i], { t0, picture: onTop(out, surface, movePicture(pic, dx, dy, size)) }, caption || "") : out;
+  }, tree);
 }
 
 // A paste's shift {dx, dy}: the clipboard box's top-left to `at`, then
