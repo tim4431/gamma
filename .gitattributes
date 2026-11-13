@@ -7,3 +7,6 @@
 android/gradlew text eol=lf
 # Jars (the Gradle wrapper's) are binary: no line-ending conversion
 *.jar binary
+# SyncTeX samples are read byte for byte (test_synctex.py turns a sample's
+# LF into CRLF to check that it reads alike), so LF as TeX writes them
+*.synctex text eol=lf
