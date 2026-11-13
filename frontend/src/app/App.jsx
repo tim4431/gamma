@@ -591,8 +591,10 @@ function CardCarousel({ label, children, className, guide }) {
 export default function App() {
   // Authorization must never mount library effects (saved-page restore,
   // autosave, navigation hotkeys). They can otherwise replace its URL.
-  const requestId = new URLSearchParams(window.location.search).get("gamma_oauth");
-  return requestId ? <McpAuthorization requestId={requestId} /> : <PageHostGate />;
+  const params = new URLSearchParams(window.location.search);
+  const requestId = params.get("gamma_oauth");
+  const userCode = params.get("gamma_device");
+  return requestId || userCode ? <McpAuthorization requestId={requestId} userCode={userCode} /> : <PageHostGate />;
 }
 
 // A page host (the share host's hostname per account, server-config's

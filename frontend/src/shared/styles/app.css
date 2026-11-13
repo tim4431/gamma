@@ -7611,6 +7611,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .mcpConsentPage { overflow: auto; }
 .mcpConsent p { line-height: 1.5; }
 .mcpCallback { overflow-wrap: anywhere; }
+.mcpDeviceCode strong { font-family: var(--font-mono); letter-spacing: 0.08em; white-space: nowrap; }
 .mcpPermissions { margin: 8px 0 16px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
 .mcpPermissions ul { padding-left: 18px; margin: 10px 0; line-height: 1.6; font-size: var(--fs-sm); }
 .mcpPermissions p { margin-bottom: 0; }

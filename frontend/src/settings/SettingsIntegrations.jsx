@@ -9,7 +9,6 @@ import { WorkspacePicker, accessBody } from "./WorkspacePicker";
 import { t } from "../shared/i18n/i18n.js";
 
 const dateOf = (value) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
-const timeOf = (value) => new Date(value).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 const ASSISTANTS = [["claude", t("Claude Code")], ["codex", t("Codex")], ["dsh", t("DeepSeek Harness")], ["other", t("Other")]];
 const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]];
 
@@ -49,9 +48,8 @@ export function IntegrationSettings({ workspaceId }) {
   const [data, setData] = React.useState(null);
   const [assistant, setAssistant] = React.useState("claude");
   const [platform, setPlatform] = React.useState(() => /Windows/i.test(navigator.userAgent) ? "windows" : "unix");
-  // What DeepSeek Harness and a new token may read; the open workspace to start.
+  // What a new token may read; the open workspace to start.
   const [access, setAccess] = React.useState({ all: false, ids: [workspaceId] });
-  const [setup, setSetup] = React.useState(null);  // {code, until}: a dsh setup command's one-time code
   const [editing, setEditing] = React.useState(null);  // {id, access}: a connection's workspaces, being changed
   const [name, setName] = React.useState(t("Script"));
   const [scope, setScope] = React.useState("read");
@@ -72,10 +70,7 @@ export function IntegrationSettings({ workspaceId }) {
       // A focus refresh started before a revocation must not restore its row.
       if (version !== loadVersion.current) return;
       const ids = new Set((value.tokens || []).map((item) => item.id));
-      if (known.current && [...ids].some((id) => !known.current.has(id))) {
-        guideEvents.emit("mcp.connected");
-        setSetup(null);  // its code is spent: the connection it made is listed
-      }
+      if (known.current && [...ids].some((id) => !known.current.has(id))) guideEvents.emit("mcp.connected");
       known.current = ids;
       setData(value); setLoadError("");
     } catch (err) {
@@ -83,7 +78,7 @@ export function IntegrationSettings({ workspaceId }) {
     }
   }, [endpoint]);
   React.useEffect(() => {
-    setData(null); setSecret(null); setSetup(null); setEditing(null); setMessage(""); setLoadError("");
+    setData(null); setSecret(null); setEditing(null); setMessage(""); setLoadError("");
     const load = () => refresh();
     load();
     window.addEventListener("focus", load);
@@ -106,10 +101,6 @@ export function IntegrationSettings({ workspaceId }) {
     setSecret(await post(endpoint, { name: name.trim(), scope, ...(scope !== "write" ? accessBody(access) : {}) }));
     await refresh();
   });
-  const makeSetup = () => run(async () => {
-    const value = await post(`${API}/integrations/setup-codes`, { name: t("DeepSeek Harness"), ...accessBody(access) });
-    setSetup({ code: value.code, until: Date.now() + value.expires_in * 1000 });
-  });
   const saveAccess = () => run(async () => {
     await apiJson(`${endpoint}/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(accessBody(editing.access)) });
@@ -124,18 +115,17 @@ export function IntegrationSettings({ workspaceId }) {
     setData((value) => value ? { ...value, tokens: value.tokens.filter((item) => item.id !== id) } : value);
     await refresh(t("Access revoked for the selected “{connectionName}” connection.", { connectionName }));
   });
-  const chooseAccess = (value) => { setAccess(value); setSetup(null); };
   const spaces = data?.workspaces || [];
   const names = new Map(spaces.map((w) => [w.id, w.name]));
   const picking = spaces.length > 1;
   const chosen = access.all || access.ids.length > 0;
-  const live = setup && Date.now() < setup.until;
   const platformPick = <div role="group" aria-label={t("Terminal platform")}>
     <Segmented value={platform} onChange={setPlatform} options={PLATFORMS} />
   </div>;
-  const picker = (label) => <WorkspacePicker workspaces={spaces} value={access} onChange={chooseAccess} disabled={busy} label={label} />;
+  const picker = (label) => <WorkspacePicker workspaces={spaces} value={access} onChange={setAccess} disabled={busy} label={label} />;
   // Claude Code, Codex and other assistants sign in through the browser,
-  // which needs a confirmed address; DeepSeek Harness connects with a token.
+  // which needs a confirmed address; DeepSeek Harness's setup command signs
+  // in for it, which needs none.
   const noSignIn = data && !data.oauth_available ? <div className="integrationDetails">
     <p>{t("Browser sign-in is not available for this Gamma address yet.")}</p>
     <p>{t("An administrator can enable it by confirming the public server URL in Settings → Server. DeepSeek Harness and tokens work without it.")}</p>
@@ -151,23 +141,17 @@ export function IntegrationSettings({ workspaceId }) {
     <p className="settingDesc">{t("Then disconnect it under Connected assistants: that ends its access.")}</p>
   </details>;
   const steps = !data ? null : assistant === "dsh" ? <>
-    {picking ? <Step n={1} title={t("Choose what it may read")}
-      hint={t("DeepSeek Harness reads these workspaces. You can change them here later.")}>
-      {picker(t("Workspaces DeepSeek Harness may read"))}
-    </Step> : null}
-    <Step n={picking ? 2 : 1} title={t("Run the setup command")}
-      hint={t("Quit DeepSeek Harness first, then run this in a terminal on the same computer. It adds the Gamma plugin to DeepSeek Harness and connects it to this server. The command works once.")}>
+    <Step n={1} title={t("Run this in a terminal")}
+      hint={t("Quit DeepSeek Harness first, then run this on the computer where you use it. It adds the Gamma plugin to DeepSeek Harness and opens Gamma's sign-in.")}>
       {platformPick}
-      {live ? <>
-        <CopyField key={`dsh-${platform}`} label={t("DeepSeek Harness setup command")} value={dshSetupCommand(data.mcp_url, setup.code, platform)}
-          action="Copy setup command" rows={platform === "windows" ? 3 : 4} />
-        <p className="settingDesc">{t("Valid until {time}. Requires {dsh}.", { time: timeOf(setup.until),
-          dsh: <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">{t("DeepSeek Harness")}</a> })}</p>
-      </> : <button className="uiBtn" disabled={busy || !chosen} onClick={makeSetup}>
-        {setup ? t("Show a new setup command") : t("Show the setup command")}
-      </button>}
+      <CopyField key={`dsh-${platform}`} label={t("DeepSeek Harness setup command")} value={dshSetupCommand(data.mcp_url, platform)}
+        action="Copy setup command" rows={platform === "windows" ? 3 : 4} />
+      <p className="settingDesc">{t("Requires {dsh}.", {
+        dsh: <a href="https://github.com/deepseek-ai/deepseek-harness" target="_blank" rel="noreferrer">{t("DeepSeek Harness")}</a> })}</p>
     </Step>
-    <Step n={picking ? 3 : 2} title={t("Open DeepSeek Harness")}
+    <Step n={2} title={t("Choose what it may read")}
+      hint={t("The command opens Gamma in your browser. Check that the page shows the code in your terminal, tick the workspaces it may read, and allow it. You can change them here later.")} />
+    <Step n={3} title={t("Open DeepSeek Harness")}
       hint={t("Ask about your papers, or paste a Gamma page or share link with your question. Gamma's tools appear as mcp__gamma__….")}>
       {removal(t("DeepSeek Harness"), t("Quit DeepSeek Harness, then run this in a terminal. It takes the Gamma plugin out of every DeepSeek Harness profile that has it and deletes the saved connection."),
         t("DeepSeek Harness remove command"), dshRemoveCommand(platform))}

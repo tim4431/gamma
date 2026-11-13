@@ -52,11 +52,12 @@ bundle whose `cordis.patch.yml` adds one row, `dsh-gamma.js`, which mounts the
 same `skills/gamma` skill and the Gamma MCP connection. In Gamma, open
 **Settings → AI → Integrations → DeepSeek Harness**:
 
-1. Tick the workspaces it may read. dsh's MCP client has no browser sign-in.
-2. Quit DeepSeek Harness, then run the setup command the tab shows, once. It
-   adds the plugin to the desktop app's profile (and to `web`, where `dsh web`
-   has made one), then exchanges its one-time code for a read-only token and
-   saves the connection in `~/.dsh/gamma.json`.
+1. Quit DeepSeek Harness, then run the setup command the tab shows. It adds
+   the plugin to the desktop app's profile (and to `web`, where `dsh web` has
+   made one), then signs in for dsh, whose MCP client has no browser sign-in.
+2. In the browser page it opens, check that the code matches the terminal's,
+   tick the workspaces it may read and allow it. The command saves the
+   read-only connection in `~/.dsh/gamma.json`.
 3. Open DeepSeek Harness. The plugin reads the saved connection every time
    dsh starts, from the app or the terminal.
 

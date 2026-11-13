@@ -1,14 +1,16 @@
 # Connect DeepSeek Harness on this computer to a Gamma server: add the Gamma
 # plugin to the dsh profiles here and save the connection, which the plugin
 # reads whenever dsh starts. Gamma's Settings > AI > Integrations > DeepSeek
-# Harness gives the command that runs this with a one-time setup code; the
-# code is exchanged for the connection's token, which is never shown.
+# Harness gives the command that runs this with the server's address; it
+# opens Gamma's sign-in in the browser, where the user allows the connection,
+# and collects its token, which is never shown.
 # -Remove undoes it: the plugin leaves every profile that has it, and the
 # saved connection is deleted.
 [CmdletBinding(DefaultParameterSetName = 'Connect')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Connect')][string]$ServerUrl,
-    [Parameter(Mandatory = $true, ParameterSetName = 'Connect')][string]$SetupCode,
+    # The one-time code a command from a Gamma without this sign-in carries.
+    [Parameter(ParameterSetName = 'Connect')][string]$SetupCode = '',
     [Parameter(Mandatory = $true, ParameterSetName = 'Remove')][switch]$Remove,
     # The profiles to add Gamma to (default: the desktop app's, and web where it
     # exists) or to remove it from (default: every one that has it).
@@ -81,7 +83,7 @@ if (-not [Uri]::TryCreate($ServerUrl, [UriKind]::Absolute, [ref]$gammaUri) -or $
     $gammaUri.Scheme -notin @('http', 'https')) {
     throw 'Copy the setup command from Gamma again: Settings > AI > Integrations > DeepSeek Harness.'
 }
-if ($SetupCode -notmatch '^[A-Za-z0-9_-]{20,128}$') {
+if ($SetupCode -and $SetupCode -notmatch '^[A-Za-z0-9_-]{20,128}$') {
     throw 'Copy the whole setup command from Gamma again.'
 }
 
@@ -125,16 +127,43 @@ if ($pending) {
     }
 }
 
-Write-Host 'Connecting to Gamma...'
 $gammaBase = $gammaUri.GetLeftPart([UriPartial]::Authority)
-try {
-    $claim = Invoke-RestMethod -Method Post -Uri "$gammaBase/api/integrations/claim" -ContentType 'application/json' `
-        -Body (ConvertTo-Json @{ code = $SetupCode })
-} catch {
-    $detail = $null
-    try { $detail = (ConvertFrom-Json $_.ErrorDetails.Message).detail } catch { }
-    if ($detail) { throw $detail }
-    throw "Could not reach Gamma at $gammaBase. $($_.Exception.Message)"
+function Invoke-Gamma([string]$Path, [hashtable]$Body) {
+    try {
+        return Invoke-RestMethod -Method Post -Uri "$gammaBase$Path" -ContentType 'application/json' `
+            -Body (ConvertTo-Json $Body)
+    } catch {
+        $detail = $null
+        try { $detail = (ConvertFrom-Json $_.ErrorDetails.Message).detail } catch { }
+        if ($detail) { throw $detail }
+        throw "Could not reach Gamma at $gammaBase. $($_.Exception.Message)"
+    }
+}
+
+Write-Host 'Connecting to Gamma...'
+if ($SetupCode) {
+    $claim = Invoke-Gamma '/api/integrations/claim' @{ code = $SetupCode }
+} else {
+    # The browser sign-in: the page shows the code printed here, and the
+    # user ticks the workspaces DeepSeek Harness may read and allows it.
+    $device = Invoke-Gamma '/api/integrations/device' @{ name = 'DeepSeek Harness' }
+    if ([string]$device.user_code -cnotmatch '^[A-Z]{4}-[A-Z]{4}$' -or
+        [string]$device.device_code -notmatch '^[A-Za-z0-9_-]{20,128}$') {
+        throw "Gamma at $gammaBase did not start a sign-in. Copy the command from Gamma again."
+    }
+    # The address is built here, never taken from the reply, since it is opened.
+    $signIn = "$gammaBase/?gamma_device=$($device.user_code)"
+    Write-Host "Allow DeepSeek Harness in Gamma, in your browser. Check that the page shows $($device.user_code)."
+    Write-Host "If no browser opens, go to $signIn"
+    try { Start-Process $signIn } catch { }
+    $interval = [Math]::Min([Math]::Max([int]$device.interval, 1), 10)
+    $until = (Get-Date).AddSeconds([int]$device.expires_in)
+    $claim = $null
+    while (-not $claim.token) {
+        if ((Get-Date) -gt $until) { throw 'The sign-in expired. Run the command again.' }
+        Start-Sleep -Seconds $interval
+        $claim = Invoke-Gamma '/api/integrations/device/token' @{ device_code = $device.device_code }
+    }
 }
 New-Item -ItemType Directory -Force -Path $dshHome | Out-Null
 # No byte-order mark: dsh reads the file as JSON.

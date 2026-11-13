@@ -2,10 +2,12 @@
 each connection names the workspaces it may read (a write token, its one
 workspace; gamma/integrations.py).
 
-A client that cannot sign in through the browser (DeepSeek Harness) is
-connected with a setup code: the signed-in browser asks for one, and the
-setup command the user runs claims it once for the connection's token, so
-the token is never shown or pasted.
+A client without browser sign-in of its own (DeepSeek Harness) is signed
+in by its setup command, the way a TV or a CLI signs in (OAuth's device
+flow, RFC 8628, in Gamma's own shape): the command asks for a sign-in, opens
+Gamma in the browser on it, where the user checks its code, ticks the
+workspaces and allows it, and collects the connection's token, so the token
+is never shown or pasted and the command holds no secret.
 """
 
 import secrets
@@ -22,7 +24,10 @@ from ..mcp_oauth import load, public_base, store
 from ..workspaces import list_for_user
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
-SETUP_SECONDS = 600
+DEVICE_SECONDS = 600
+DEVICE_INTERVAL = 2
+# A user code's letters: no vowels, so no words, and none read as a digit.
+CODE_LETTERS = "BCDFGHJKLMNPQRSTVWXZ"
 
 
 def _owner(request: Request) -> tuple[str, str]:
@@ -109,44 +114,124 @@ def revoke_token(token_id: str, request: Request):
     return {"ok": True}
 
 
-class SetupCreate(Access):
+# --- a setup command's sign-in --------------------------------------------------------
+# The records (mcp_oauth's store, ten minutes each): "device" by the
+# command's device code, the code it collects with; "device_user" by the
+# user code the browser opens; "device_consent" by the consent page's csrf;
+# then "device_ok" (the grant) or "device_denied" by the device code.
+
+def _user_code() -> str:
+    letters = "".join(secrets.choice(CODE_LETTERS) for _ in range(8))
+    return letters[:4] + "-" + letters[4:]
+
+
+def _user_key(code: str) -> str:
+    """A user code as stored: upper case, without its dash."""
+    return code.replace("-", "").strip().upper()
+
+
+class DeviceStart(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
 
-@router.post("/setup-codes", status_code=201)
-def new_setup_code(payload: SetupCreate, request: Request, response: Response):
-    """A one-time code a setup command exchanges for a read token
-    (``claim``): valid for ten minutes, while this session lasts."""
-    user_id, ws = _owner(request)
+@router.post("/device", status_code=201)
+def start_device(payload: DeviceStart, request: Request, response: Response):
+    """A sign-in for a setup command: no session, nothing granted yet. The
+    command opens ``/?gamma_device=<user_code>`` and asks ``device/token``
+    every ``interval`` seconds until the user allows or cancels it."""
+    ratelimit.check("integration-device:" + ratelimit.client_ip(request), 20, 600)
     name = payload.name.strip()
     if not name:
         raise HTTPException(422, "Give the connection a name.")
-    primary, value = grant(user_id, payload.wanted(ws))
-    code = secrets.token_urlsafe(32)
-    store("setup", "", code, {"user": user_id, "name": name, "workspace_id": primary, "workspaces": value,
-                              "session": token_digest(request.cookies.get(SESSION_COOKIE, ""))}, SETUP_SECONDS)
+    device_code, user_code = secrets.token_urlsafe(32), _user_code()
+    store("device", "", device_code, {"name": name}, DEVICE_SECONDS)
+    store("device_user", "", _user_key(user_code), {"device_code": device_code, "name": name}, DEVICE_SECONDS)
     response.headers["Cache-Control"] = "no-store"
-    return {"code": code, "expires_in": SETUP_SECONDS}
+    return {"device_code": device_code, "user_code": user_code, "expires_in": DEVICE_SECONDS,
+            "interval": DEVICE_INTERVAL}
 
 
-class Claim(BaseModel):
-    code: str = Field(min_length=20, max_length=128)
-
-
-@router.post("/claim")
-def claim(payload: Claim, request: Request, response: Response):
-    """Exchange a setup code for its connection's token, once. Needs no
-    session: the code is the credential, and the account's session that
-    asked for it must still be signed in."""
-    ratelimit.check("integration-claim:" + ratelimit.client_ip(request), 20, 600)
-    pending = load("setup", "", payload.code, consume=True)
+@router.get("/device/request")
+def device_request(user_code: str, request: Request, response: Response):
+    """The consent page's view of a waiting sign-in: who asks, the code to
+    check against the terminal's, and the account's workspaces."""
+    user_id, _ws = _owner(request)
+    key = _user_key(user_code[:16])
+    pending = load("device_user", "", key)
     if not pending:
-        raise HTTPException(400, "This setup command has expired or was used already. Copy a new one from Gamma.")
-    with connect_users_db() as conn:
-        sessions = conn.execute("SELECT token FROM sessions WHERE user_id = ?", (pending["user"],)).fetchall()
-    if not any(token_digest(s[0]) == pending["session"] for s in sessions):
-        raise HTTPException(400, "You signed out of Gamma since copying this command. Copy a new one.")
-    primary, value = grant(pending["user"], granted(pending["workspace_id"], pending["workspaces"]))
-    item = create_token(pending["user"], primary, pending["name"], 90, workspaces=value)
+        raise HTTPException(400, "This sign-in expired or was answered already. Run the setup command again.")
+    csrf = secrets.token_urlsafe(32)
+    store("device_consent", "", csrf, {"user_code": key, "user": user_id,
+                                       "session": token_digest(request.cookies.get(SESSION_COOKIE, ""))},
+          DEVICE_SECONDS)
     response.headers["Cache-Control"] = "no-store"
+    return {"client_name": pending["name"], "user_code": key[:4] + "-" + key[4:], "username": request.state.user,
+            "csrf": csrf, "workspaces": list_for_user(user_id), "default_workspace": request.state.default_ws,
+            "feedback_asked": False}
+
+
+class DeviceConsent(Access):
+    user_code: str = Field(max_length=16)
+    csrf: str = Field(max_length=128)
+    # whether it may also answer the comments on a work folder's files
+    feedback: bool = False
+    approve: bool
+
+
+@router.post("/device/consent")
+def device_consent(payload: DeviceConsent, request: Request):
+    """Allow a waiting sign-in, with the workspaces it may read, or cancel
+    it; once either way."""
+    user_id, ws = _owner(request)
+    session = token_digest(request.cookies.get(SESSION_COOKIE, ""))
+    key = _user_key(payload.user_code)
+    binding = load("device_consent", "", payload.csrf)
+    if not binding or binding["user_code"] != key or binding["user"] != user_id or binding["session"] != session:
+        raise HTTPException(403, "Consent expired or the signed-in account changed. Start again.")
+    scope = "feedback" if payload.feedback else "read"
+    primary, stored = grant(user_id, payload.wanted(ws), scope) if payload.approve else ("", "")
+    pending = load("device_user", "", key, consume=True)
+    load("device_consent", "", payload.csrf, consume=True)
+    if not pending:
+        raise HTTPException(400, "This sign-in expired or was answered already. Run the setup command again.")
+    if payload.approve:
+        store("device_ok", "", pending["device_code"], {"user": user_id, "workspace_id": primary,
+                                                        "workspaces": stored, "scope": scope, "session": session},
+              DEVICE_SECONDS)
+    else:
+        store("device_denied", "", pending["device_code"], {"user": user_id}, DEVICE_SECONDS)
+    return {"ok": True}
+
+
+class DevicePoll(BaseModel):
+    device_code: str = Field(min_length=20, max_length=128)
+
+
+@router.post("/device/token")
+def device_token(payload: DevicePoll, request: Request, response: Response):
+    """What the setup command asks while it waits: 202 ``pending``, then
+    the connection's token once, minted only now, so a connection appears
+    only once something has it. The session that allowed it must still be
+    signed in."""
+    ratelimit.check("integration-device-token:" + ratelimit.client_ip(request), 600, 600)
+    response.headers["Cache-Control"] = "no-store"
+    code = payload.device_code
+    allowed = load("device_ok", "", code, consume=True)
+    if not allowed:
+        if load("device_denied", "", code, consume=True):
+            load("device", "", code, consume=True)
+            raise HTTPException(403, "The connection was cancelled in Gamma.")
+        if load("device", "", code):
+            response.status_code = 202
+            return {"status": "pending"}
+        raise HTTPException(400, "This sign-in expired or was used already. Run the setup command again.")
+    pending = load("device", "", code, consume=True)
+    if not pending:
+        raise HTTPException(400, "This sign-in expired or was used already. Run the setup command again.")
+    with connect_users_db() as conn:
+        sessions = conn.execute("SELECT token FROM sessions WHERE user_id = ?", (allowed["user"],)).fetchall()
+    if not any(token_digest(s[0]) == allowed["session"] for s in sessions):
+        raise HTTPException(400, "You signed out of Gamma before the connection was made. Run the setup command again.")
+    primary, value = grant(allowed["user"], granted(allowed["workspace_id"], allowed["workspaces"]), allowed["scope"])
+    item = create_token(allowed["user"], primary, pending["name"], 90, scope=allowed["scope"], workspaces=value)
     return {"token": item["token"], "name": item["name"], "expires_at": item["expires_at"]}
