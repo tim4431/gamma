@@ -5,6 +5,8 @@ page + EDN + area images)."""
 import io
 import zipfile
 
+import pytest
+
 from conftest import doc_props, make_folder, make_page
 
 from gamma.markdown_export import build_tree, collect_and_rewrite, render_readable, slugify
@@ -445,6 +447,45 @@ def test_the_annotated_pdfs_marks_and_cards_leave_a_pictures_region_out():
     assert [m["id"] for m in _collect_marks(blocks)] == ["h1"]
     cards = _collect_cards(blocks, notes=True, threads={"r1": [["a thread"]]})
     assert len(cards) == 1 and cards[0]["position"] == pos
+
+
+def test_an_export_leaves_no_temporary_file(guest, tmp_path, monkeypatch):
+    """The file an export answers with goes once the answer ends: sent, or
+    refused for its Range (a FileResponse's background task runs only
+    after a full send) — gamma/downloads.py."""
+    import tempfile
+    optics = make_folder(guest, "temp/optics")
+    page = make_page(guest, "Temp export", properties={"folders": [optics]})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    for url in (f"/api/pages/{page['id']}/export", f"/api/folders/{optics}/export"):
+        assert guest.get(url).status_code == 200
+        assert guest.get(url, headers={"Range": "bytes=99999999-"}).status_code == 416
+        assert guest.get(url, headers={"Range": "bytes=oops"}).status_code == 400
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_an_export_whose_file_cannot_be_made_leaves_no_spool(guest, tmp_path, monkeypatch):
+    """A part spooled during the walk (an annotated PDF) goes when the
+    download's own file cannot be made (a full temp dir), as it does once
+    the file is written."""
+    import tempfile
+    from gamma.routers import export as export_router
+    optics = make_folder(guest, "spool/optics")
+    make_page(guest, "Spool export", properties={"folders": [optics]})
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    begin = export_router._Builder.begin
+
+    def begin_and_spool(self, conn, root_ids):
+        begin(self, conn, root_ids)
+        self.spool("annotated.pdf", b"%PDF")
+    monkeypatch.setattr(export_router._Builder, "begin", begin_and_spool)
+
+    def disk_full(suffix):
+        raise OSError("No space left on device")
+    monkeypatch.setattr(export_router, "temp_file", disk_full)
+    with pytest.raises(OSError):
+        guest.get(f"/api/folders/{optics}/export")
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_missing_page_404(guest):

@@ -19,6 +19,7 @@
 # fonts are not embedded renders without system fonts.
 
 fastapi==0.136.0
+starlette==1.9.0
 # Flet's newest cp313 build for the apps; 3.12.0 (the server's) has none.
 orjson==3.11.9
 # No [standard] extras: uvloop and httptools have no mobile wheels, and the
