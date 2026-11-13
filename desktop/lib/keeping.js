@@ -263,8 +263,18 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // pause it, locate it and remove it. A vault with no `dest` is another
 // account's, listed to a viewer of its workspace (`seen`): where its files
 // lie is its maker's reading, and the server refuses the viewer every
-// action on it.
-function vault(server, link, servers, roles = null) {
+// action on it. `mine`: the account made it (the list's own word), the one
+// who may turn on an agent for a work folder.
+//
+// A work folder's agent (docs/dev/local_agents.md): the agent on this
+// computer that answers its Sends (`agent`, a name, "" for none, with its
+// `agentLabel`), whether it is ready (`agentReady`: null while the server
+// still checks) and why not (`agentProblem`), and what it does now
+// (`agentRunning`: the request's detail while a run works, else ""), as the
+// link's `agent` says them. `agents` is what the server finds on this
+// computer (`GET /api/local-agents`' `agents`; null: a server that runs no
+// agents, which then offers none).
+function vault(server, link, servers, roles = null, agents = null) {
   const s = link.status || {};
   const scope = link.kind === 'file' ? 'file' : 'folder';
   const names = s.folder_path || [];
@@ -286,13 +296,37 @@ function vault(server, link, servers, roles = null) {
     away: Boolean(roles && !link.remote_url && !roles.some((w) => w.id === link.workspace_id)), seen: !link.dest,
     whole: scope === 'folder' && link.folder_id === 'root',
     work: scope === 'folder' && !link.remote_url && link.folder_id !== 'root' && pushWord(link.push) === 'everything',
-    library: Boolean(link.library), choosing: Boolean(link.choosing),
+    library: Boolean(link.library), choosing: Boolean(link.choosing), mine: Boolean(link.mine),
   };
+  const agent = link.agent || null;
+  const run = agent && agent.running;
+  Object.assign(item, {
+    agent: (agent && agent.name) || '', agentLabel: agent ? agent.label || AGENT_LABELS[agent.name] || agent.name : '',
+    agentReady: agent ? (agent.ready === undefined ? null : agent.ready) : null, agentProblem: (agent && agent.problem) || '',
+    agentRunning: run ? String(run.detail || 'Working') : '',
+    agents: item.work && Array.isArray(agents) ? agentChoices(agents) : null,
+  });
   const stated = scope === 'file' ? fileState(item, s) : folderState(item, s, left);
   return item.seen ? { ...stated, title: `${stated.title} ${SEEN}` } : stated;
 }
 
 const SEEN = 'Another account made this vault: it, or an editor of the workspace, acts on it.';
+
+// The agents a work folder may have, by name, in the order the panel
+// offers them (the server's catalog, gamma/local_agents/catalog.py).
+const AGENT_LABELS = { codex: 'Codex', claude: 'Claude Code' };
+
+// What the panel offers of the agents the server found: each known one,
+// `{name, label, found, ready, problem}`, one the server did not list read as
+// not on this computer.
+function agentChoices(agents) {
+  return Object.entries(AGENT_LABELS).map(([name, label]) => {
+    const a = agents.find((x) => x && x.name === name);
+    if (!a) return { name, label, found: false, ready: false, problem: `${label} is not on this computer.` };
+    return { name, label: a.label || label, found: a.found === undefined ? null : a.found,
+      ready: a.ready === undefined ? null : a.ready, problem: a.problem || '' };
+  });
+}
 
 // A vault of a workspace its maker is no longer in, as its row says it.
 function awayState(item) {
@@ -314,7 +348,8 @@ function directions(item) {
 const said = (text) => `${capital(text)}${/[.!?]$/.test(text) ? '' : '.'}`;
 
 // A directory's vault, worst first: a work folder whose files are not chosen
-// yet (Choose files… opens its dialog in Gamma), a round running, paused,
+// yet (Choose files… opens its dialog in Gamma), a round running, its agent
+// answering a Send (busy: the files may change meanwhile), paused,
 // stopped (its marker gone or another's: Locate… says where it is), held by
 // its guard (Go on), its directory not there, a problem, never synced, up to
 // date.
@@ -333,17 +368,23 @@ function folderState(item, s, left) {
     return { ...item, state: 'paused', text: `Paused · ${clock(s.paused_at)}`, title: 'Nothing is pulled or pushed until you resume it; Sync now runs one round.' };
   }
   if (item.away) return awayState(item);
-  if (item.stopped) return { ...item, state: 'error', text: 'Stopped', title: `${item.stopped} Locate… tells Gamma where the directory is now.` };
+  // A vault's own problem keeps its row while its agent works: the agent's run is said in the title.
+  const meanwhile = item.agentRunning ? ` ${item.agentLabel} is working on a Send meanwhile.` : '';
+  if (item.stopped) return { ...item, state: 'error', text: 'Stopped', title: `${item.stopped} Locate… tells Gamma where the directory is now.${meanwhile}` };
   if (item.held) {
     const { removals = 0, total = 0 } = item.held;
     return { ...item, state: 'held', text: `Held · ${removals} of ${total} files gone`,
-      title: `${plural(removals, 'file')} of ${total} went from this computer since the last sync, so nothing was pulled or pushed. Go on pushes the removals (their pages move to Recently deleted); or put the files back.` };
+      title: `${plural(removals, 'file')} of ${total} went from this computer since the last sync, so nothing was pulled or pushed. Go on pushes the removals (their pages move to Recently deleted); or put the files back.${meanwhile}` };
   }
   if (item.offline) {
     return { ...item, state: 'waiting', text: 'Directory not there',
-      title: `${s.last_error || `${item.dest} is not there.`} The vault syncs again once it is back; Locate… if it moved.` };
+      title: `${s.last_error || `${item.dest} is not there.`} The vault syncs again once it is back; Locate… if it moved.${meanwhile}` };
   }
-  if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: s.last_error };
+  if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: `${s.last_error}${meanwhile}` };
+  if (item.agentRunning) {
+    return { ...item, state: 'busy', agentBusy: true, text: `${item.agentLabel} is working · ${item.agentRunning}`,
+      title: `${item.agentLabel} is answering a Send of this folder on this computer: the files here may change meanwhile.` };
+  }
   if (!s.last_sync) return { ...item, state: 'new', text: 'Not synced yet', title: 'The first round runs in a moment.' };
   const { changed } = item;
   const sent = counts.sent || 0;
@@ -383,10 +424,11 @@ function fileState(item, s) {
 
 // Everything one local server keeps: its answers to the three reads
 // (`zotero`, its Zotero links: none from a server that has no such list),
-// and `roles`, the workspaces its account may open (vault).
-function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null } = {}, servers = []) {
+// `roles`, the workspaces its account may open, and `agents`, the agents it
+// finds on this computer (vault).
+function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null, agents = null } = {}, servers = []) {
   return [...mirrors.map((m) => clone(server, m, servers)), ...(zoteroLinks || []).map((z) => zotero(server, z)),
-    ...links.map((l) => vault(server, l, servers, roles))];
+    ...links.map((l) => vault(server, l, servers, roles, agents))];
 }
 
 // The sync button's reading of all of it: the worst state, a word or two,
@@ -401,7 +443,9 @@ function summarize(items) {
   if (!live.length) return { state: 'paused', text: 'Paused', title: `${what} on this computer: paused` };
   const state = live.reduce((worst, i) => (RANK[i.state] > RANK[worst] ? i.state : worst), 'ok');
   const n = live.filter((i) => i.state === state).length;
-  const text = {
+  // busy only because agents work (no round runs): say so, not "Syncing…"
+  const agentsOnly = state === 'busy' && live.filter((i) => i.state === 'busy').every((i) => i.agentBusy);
+  const text = agentsOnly ? 'Agent working' : {
     error: plural(n, 'problem'),
     conflicts: 'Conflicts',
     held: 'Held',
@@ -547,6 +591,34 @@ function goOnAsk(item) {
     buttons: ['Go on', 'Cancel'] };
 }
 
+// What each agent may do in a work folder's directory, as the panel and the
+// question before turning one on say it: Codex runs commands in its
+// sandbox; Claude Code gets no shell (docs/dev/local_agents.md "Trust").
+const AGENT_DOES = {
+  codex: 'it edits files in this directory and runs commands in its sandbox, without network',
+  claude: 'it edits files in this directory and runs no commands',
+};
+
+// The question before agent `name` works in a work folder's directory, the
+// computer's decision (main.js setAgent), with the Sends of the folder that
+// wait now (`waiting`, handed to it once it is on; null: not counted):
+// `{ message, detail, buttons }`, button 0 turning it on.
+function agentAsk(item, name, waiting = null) {
+  const label = AGENT_LABELS[name] || name;
+  const handed = waiting ? ` ${waiting === 1 ? '1 waiting Send' : `${waiting} waiting Sends`} will be handed to it.` : '';
+  return { message: `Let ${label} work in ${item.dest}?`,
+    detail: `${label} will answer the Sends you make on this folder: ${AGENT_DOES[name] || 'it edits files in this directory'}.${handed}`,
+    buttons: [`Turn on ${label}`, 'Cancel'] };
+}
+
+// What turning a work folder's agent on (`name`, with the `queued` Sends
+// handed to it) or off ("": `item.agentLabel` was on) came to, for the bar.
+function agentSaid(item, name, queued = 0) {
+  if (!name) return `${item.agentLabel || 'The agent'} no longer answers the Sends on ${item.name}: they wait for an agent you run yourself.`;
+  const label = AGENT_LABELS[name] || name;
+  return `${label} now answers the Sends on ${item.name}${queued ? `; ${queued} waiting ${queued === 1 ? 'was' : 'were'} handed to it` : ''}.`;
+}
+
 // What a round asked for came to, for the bar: its status as the round
 // left it (main.js followRound).
 function roundSaid(item, status) {
@@ -566,4 +638,4 @@ function roundSaid(item, status) {
 }
 
 module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, WHOLE_RULE, firstRound, removalAsk, forceAsk,
-  goOnAsk, roundSaid };
+  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid };

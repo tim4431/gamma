@@ -227,28 +227,39 @@ export const isEdited = (comment) => !comment.deleted && !!comment.updated_at &&
 
 // Who a comment reads as written by: the agent that wrote it through its
 // author's connection ("Claude Code"), else its author. `authorTitle` is
-// its avatar's title, which names the connection for an agent.
+// its avatar's title, which names the connection for an agent, or the
+// computer for an agent Gamma ran there (`agent_kind` "local",
+// docs/dev/local_agents.md: its author is the person who sent it the
+// comments).
 export const authorLabel = (comment) => comment.agent || comment.author;
-export const authorTitle = (comment) => (comment.agent
-  ? t("Written by {agent} with {who}'s connection", { agent: comment.agent, who: comment.author || t("Someone") })
-  : comment.author);
+export function authorTitle(comment) {
+  if (!comment.agent) return comment.author;
+  const who = comment.author || t("Someone");
+  return comment.agent_kind === "local"
+    ? t("Written by {agent} on {who}'s computer", { agent: comment.agent, who })
+    : t("Written by {agent} with {who}'s connection", { agent: comment.agent, who });
+}
 
 // A Send its requester withdrew: the server's `failed` with "withdrawn".
 export const isWithdrawn = (request) => request?.state === "failed" && request.detail === "withdrawn";
 
 // The chip of a thread a Send waits on (`thread.sent`, {request_id, state,
-// at, detail}), {state, label, title, tone} (`tone` the uiTag's): Sent
-// while the request waits for the agent, what the agent is at while it
-// works, Failed with its reason in the title. null for none, and for a Send
-// withdrawn: the thread is open, the person's to send again.
+// at, detail, state_by}), {state, label, title, tone} (`tone` the uiTag's):
+// Sent while the request waits for the agent, the agent working (named by
+// `state_by` when it says) with what it is at in the title, Failed with its
+// reason in the title. null for none, and for a Send withdrawn: the thread
+// is open, the person's to send again.
 export function sentChip(thread) {
   const sent = thread?.sent;
   if (!sent || isWithdrawn(sent)) return null;
-  const { state, detail } = sent;
+  const { state, detail, state_by: agent } = sent;
   if (state === "failed") {
     return { state, label: t("Failed"), title: detail ? t("Failed: {reason}", { reason: detail }) : t("Failed"), tone: "failed" };
   }
-  if (state === "running") return { state, label: t("The agent is working"), title: detail || t("The agent is working"), tone: "pending" };
+  if (state === "running") {
+    const label = agent ? t("{agent} is working", { agent }) : t("The agent is working");
+    return { state, label, title: detail || label, tone: "pending" };
+  }
   return { state, label: t("Sent"), title: t("Waiting for the agent"), tone: "pending" };
 }
 

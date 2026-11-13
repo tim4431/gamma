@@ -7,22 +7,26 @@
 // again and its source line, its first comment and the chip of a Send
 // waiting on it, a click opening the thread on its page; the line of
 // instruction and Send, which posts a request with an id this tab minted,
-// so a retry writes it once; and the work folder's requests below, the
-// newest first, with what became of each and Withdraw on the person's own.
+// so a retry writes it once, naming the folder's agent on this computer
+// when one answers the person's Sends (the document's `agent`,
+// docs/dev/local_agents.md), with its lines under it; and the work folder's
+// requests below, the newest first, with what became of each and Withdraw
+// on the person's own.
 // It reads the requests and the entries again every few seconds while it
 // is open, so an agent's answers show as they come. Loaded on first use
 // (feedback/FeedbackHost.jsx); its state is its own, and the pure part
 // feedbackView.js.
-import React, { useEffect, useRef, useState } from "react";
-import { t, tn } from "../shared/i18n/i18n.js";
+import React, { useEffect, useId, useRef, useState } from "react";
+import { t } from "../shared/i18n/i18n.js";
 import { API, apiJson, makeId, withWorkspace } from "../shared/lib/utils";
 import { Segmented, SubDialog } from "../settings/SettingsKit";
 import { FileTextIcon, HighlightIcon, MessageSquareIcon, PenIcon, RectSelectIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
 import { anchorSnippet, sentChip } from "../comments/comments.js";
-import { entryHeading, placedText, requestLine, sourceText } from "./feedbackText.js";
+import { entryHeading, placedText, requestLine, sendWords, sourceText, withdrawTitle } from "./feedbackText.js";
 import {
-  NOTE_MAX, POLL_MS, canWithdraw, firstComment, groupByFile, hasChoice, newestRequests, pictureOf, readScope, sendBody,
+  NOTE_MAX, POLL_MS, canWithdraw, firstComment, groupByFile, hasChoice, newestRequests, othersCount, pictureOf, readScope, sendAgent,
+  sendBody,
 } from "./feedbackView.js";
 import "./feedback.css";
 
@@ -61,18 +65,22 @@ function Entry({ entry, onOpen }) {
 }
 
 // One request's row: when it was sent and how many comments, what became
-// of it, and Withdraw on the person's own while it waits or runs.
+// of it with the agent's own words on a line under the note (its progress,
+// summary or reason, at most three lines, whole in its title), and Withdraw
+// on the person's own while it waits or runs.
 function RequestRow({ request, me, busy, onWithdraw }) {
-  const { line, state, kind } = requestLine(request);
+  const { line, state, detail, kind } = requestLine(request);
   return (
     <li className="feedbackRequest" data-request-id={request.id} data-state={kind}>
       <span className="feedbackRequestLine">
         <span>{line}</span>
         {request.note ? <span className="feedbackRequestNote" title={request.note}>{anchorSnippet(request.note, 120)}</span> : null}
+        {detail ? <span className="feedbackRequestDetail" title={detail}>{detail}</span> : null}
       </span>
       <span className="feedbackRequestState">{state}</span>
       {canWithdraw(request, me) ? (
-        <button type="button" className="uiBtn sm" disabled={busy} onClick={() => onWithdraw(request)}>{t("Withdraw")}</button>
+        <button type="button" className="uiBtn sm" disabled={busy} title={withdrawTitle(request) || undefined}
+          onClick={() => onWithdraw(request)}>{t("Withdraw")}</button>
       ) : null}
     </li>
   );
@@ -81,7 +89,8 @@ function RequestRow({ request, me, busy, onWithdraw }) {
 // `scope`: what it was opened on ({kind, id}); `me`: the signed-in username
 // (whose requests get Withdraw); `canSend`: the person may edit, so Send
 // shows; `links`: the desktop app's work-folder vaults by folder id
-// (vault/useVault.js), whose `paused` the notice reads; onOpenThread(threadId,
+// (vault/useVault.js), whose `paused` the notice reads and whose presence
+// says the folder is kept here (where an agent can be turned on); onOpenThread(threadId,
 // blockId, pageId) opens a thread on its page (App's openThreadAt).
 export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread, onClose }) {
   const [choice, setChoice] = useState("scope");
@@ -92,6 +101,9 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
   const [problem, setProblem] = useState("");
   // The Send's id, minted at the first attempt and kept until it is stored.
   const requestId = useRef("");
+  // The agent's lines under Send are a live region that says why the button
+  // is off, so a screen reader hears a change a poll brings.
+  const notesId = useId();
   const doc = read?.doc || null;
   const workFolder = doc?.work_folder || null;
   const target = readScope(scope, choice, workFolder);
@@ -156,6 +168,9 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
   const entries = doc?.entries || [];
   const n = entries.length;
   const paused = !!(w && links?.get(w)?.paused);
+  // Who answers the Send: the folder's agent on this computer, as the
+  // document says, or an agent the person runs (the generic button).
+  const words = sendWords(sendAgent(doc, !!(w && links?.get(w))), n, othersCount(entries, me));
   const choices = hasChoice(scope, workFolder) ? [
     ["scope", scope.kind === "file" ? t("This file") : t("This folder")],
     ["work_folder", workFolder.name || t("Work folder")],
@@ -186,9 +201,17 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
           <textarea className="feedbackNote" rows={2} maxLength={NOTE_MAX} value={note} disabled={busy}
             aria-label={t("Instruction for the agent (optional)")} placeholder={t("Instruction for the agent (optional)")}
             onChange={(e) => setNote(e.target.value)} />
-          <button type="button" className="uiBtn primary" disabled={!n || busy} onClick={send}>
-            {tn("Send {n} comment", "Send {n} comments", n)}
+          <button type="button" className="uiBtn primary" disabled={!n || busy || words.blocked} onClick={send}
+            aria-describedby={words.notes.length ? notesId : undefined}>
+            {words.button}
           </button>
+        </div>
+      ) : null}
+      {doc && canSend ? (
+        <div className="feedbackAgent" id={notesId} role="status">
+          {words.notes.map((line) => (
+            <p key={line.text} className="feedbackAgentNote" data-tone={line.tone}>{line.text}</p>
+          ))}
         </div>
       ) : null}
       {problem ? <p className="importWarning" role="alert">{problem}</p> : null}

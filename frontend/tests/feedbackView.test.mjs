@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  NOTE_MAX, canWithdraw, firstComment, groupByFile, hasChoice, newestRequests, pictureOf, readScope, sendBody,
+  AGENT_MAX, NOTE_MAX, canWithdraw, firstComment, groupByFile, hasChoice, namesAgent, newestRequests, othersCount, pictureOf, readScope,
+  sendAgent, sendBody,
 } from "../src/feedback/feedbackView.js";
 
 const W = { id: "w1", name: "paper" };
@@ -58,4 +59,32 @@ test("sendBody carries the minted id, the scope read and the trimmed note, cut t
   assert.deepEqual(sendBody("r1", "w1", "  fix these  "), { id: "r1", scope: "w1", note: "fix these" });
   assert.equal(sendBody("r1", "w1", "x".repeat(NOTE_MAX + 5)).note.length, NOTE_MAX);
   assert.equal(sendBody("r1", "w1", undefined).note, "");
+});
+
+test("sendAgent reads the document's agent on this computer: ready, not ready, checking, not this Send's, or one to turn on", () => {
+  const agent = (extra) => ({ agent: { name: "codex", label: "Codex", ready: true, problem: "", takes: true, why: "", ...extra }, agents_found: true });
+  assert.deepEqual(sendAgent(agent()), { mode: "ready", label: "Codex", problem: "", why: "" });
+  assert.equal(namesAgent(sendAgent(agent())), true);
+  assert.deepEqual(sendAgent(agent({ ready: false, problem: "Codex is not on this computer." })),
+    { mode: "not_ready", label: "Codex", problem: "Codex is not on this computer.", why: "" });
+  assert.equal(sendAgent(agent({ ready: null })).mode, "checking");
+  assert.equal(namesAgent(sendAgent(agent({ ready: null }))), true);
+  const other = sendAgent(agent({ takes: false, why: "Only the person who keeps this folder on this computer can send to Codex." }));
+  assert.equal(other.mode, "other");
+  assert.equal(other.why, "Only the person who keeps this folder on this computer can send to Codex.");
+  assert.equal(namesAgent(other), false);
+  assert.equal(sendAgent({ agent: null, agents_found: true }, true).mode, "offer", "kept here, an agent found");
+  assert.equal(sendAgent({ agent: null, agents_found: true }, false).mode, "", "not kept here");
+  assert.equal(sendAgent({ agent: null, agents_found: false }, true).mode, "", "no agent on this computer");
+  assert.equal(sendAgent({ entries: [] }, true).mode, "", "a server without local agents");
+  assert.equal(sendAgent(null).mode, "");
+  assert.equal(AGENT_MAX, 100);
+});
+
+test("othersCount counts the entries someone else opened", () => {
+  const e = (by) => ({ id: by, comments: by === null ? [] : [{ by, agent: "", body: "x" }] });
+  assert.equal(othersCount([e("tim"), e("ann"), e("tim"), e("ben")], "tim"), 2);
+  assert.equal(othersCount([e("tim")], "tim"), 0);
+  assert.equal(othersCount([], "tim"), 0);
+  assert.equal(othersCount(undefined, "tim"), 0);
 });

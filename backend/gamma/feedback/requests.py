@@ -9,7 +9,8 @@ workspace at the insert and at every change of state, under the write lock,
 so ``listing(after=…)`` shows a new request and a state change alike. Its
 state goes ``sent`` → ``running`` → ``done`` or ``failed``, set by an agent
 (an integration token of the feedback or write scope) or, to withdraw it,
-by its requester (``TRANSITIONS``). A thread it names is answered once a
+by its requester (``TRANSITIONS``); an agent on this computer takes a
+sent one with ``claim`` (docs/dev/local_agents.md). A thread it names is answered once a
 token or another account replies to it or resolves it after the request
 (``answered``, a comment listener): it shows as sent until then
 (``comments._sent``). After every write the pages of its threads hear
@@ -53,7 +54,19 @@ TRANSITIONS = {("sent", "running"): {"agent"}, ("sent", "done"): {"agent"}, ("se
                ("running", "failed"): {"agent", "requester"},
                ("failed", "running"): {"agent"}, ("failed", "done"): {"agent"}}
 
-_COLUMNS = "id, rev, work_folder, scope, scope_kind, by, by_name, at, note, state, state_at, state_by, detail"
+# What follows every committed write of a request (``_changed``): ``fn(ws,
+# request_id)``, each called in turn, an error logged and never raised
+# (gamma/local_agents/runner.py appends its own: it claims the Sends an
+# agent on this computer answers, and stops a run its request withdrew).
+change_listeners: list = []
+
+# How a Send was made (``feedback_requests.via``): a person in Gamma, an
+# integration token; "" for one made before step 58 or by a caller that
+# does not say (a test, a backup's copy).
+SESSION, TOKEN = "session", "token"
+VIA = ("", SESSION, TOKEN)
+
+_COLUMNS ="id, rev, work_folder, scope, scope_kind, by, by_name, at, note, state, state_at, state_by, detail"
 
 
 # --- reading ----------------------------------------------------------------------
@@ -159,17 +172,21 @@ def _next_rev(conn) -> int:
 
 
 def create(ws, conn, scope: Scope, *, by: str, by_name: str, note: str = "", threads=None,
-           request_id: str = "") -> dict:
+           request_id: str = "", via: str = "") -> dict:
     """A Send of the scope's open threads (``threads``: those of them, each
     an open thread in the scope, at most ``MAX_THREADS``; omitted, every
     one) with the line of instruction ``note``, by the account ``by``
     (``by_name`` its username) → ``{request, created}``. ``request_id``:
     the client's id (a block id's shape), minted when absent; a request of
     that id by the same account is answered as stored, ``created`` false.
-    Commits, then tells the threads' pages and the work folder's files.
-    FeedbackError 400 for nothing to send, a thread that is no open one
-    here, too many or an id of the wrong shape; 413 for a longer note; 409
-    for another account's id."""
+    ``via`` is how it was made (``VIA``: a person's session or an
+    integration token), stored for the agent on this computer, which takes
+    a session's alone. Commits, then tells the threads' pages and the work
+    folder's files. FeedbackError 400 for nothing to send, a thread that
+    is no open one here, too many or an id of the wrong shape; 413 for a
+    longer note; 409 for another account's id."""
+    if via not in VIA:
+        raise ValueError(f"via is one of {', '.join(VIA)}")
     note = note if isinstance(note, str) else ""
     if len(note) > MAX_NOTE:
         raise FeedbackError(413, f"an instruction holds at most {MAX_NOTE} characters")
@@ -198,9 +215,10 @@ def create(ws, conn, scope: Scope, *, by: str, by_name: str, note: str = "", thr
             raise FeedbackError(400, "Nothing to send: no open comments here.")
         request_id = request_id or new_block_id()
         now = page_now()
-        conn.execute(f"INSERT INTO feedback_requests ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', ?, '', '')",
+        conn.execute(f"INSERT INTO feedback_requests ({_COLUMNS}, via) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', ?, '', '', ?)",
                      (request_id, _next_rev(conn), scope.work_folder, scope.id,
-                      "file" if scope.kind == "file" else "folder", by, by_name or "", now, note, now))
+                      "file" if scope.kind == "file" else "folder", by, by_name or "", now, note, now, via))
         conn.executemany("INSERT INTO feedback_request_threads (request_id, thread_id) VALUES (?, ?)",
                          [(request_id, t) for t in chosen])
         conn.commit()
@@ -211,7 +229,32 @@ def create(ws, conn, scope: Scope, *, by: str, by_name: str, note: str = "", thr
     return {"request": get(conn, request_id), "created": True}
 
 
-def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_name: str, writer: str) -> dict:
+def claim(ws, conn, request_id: str, *, by_name: str, detail: str) -> dict | None:
+    """Take a sent request for an agent on this computer
+    (gamma/local_agents/runner.py): ``running`` with ``detail``, set by
+    ``by_name``, in one step under the write lock, so of two takers (or a
+    taker and a withdraw) one wins → the request, or None when it is no
+    longer sent (taken, withdrawn, answered, gone: nothing written). Commits,
+    then tells the threads' pages and the work folder's files."""
+    detail = (detail or "")[:MAX_DETAIL]
+    write_lock(conn)
+    try:
+        row = conn.execute("SELECT state FROM feedback_requests WHERE id = ?", (request_id,)).fetchone()
+        if not row or row[0] != "sent":
+            conn.rollback()
+            return None
+        conn.execute("UPDATE feedback_requests SET state = 'running', state_at = ?, state_by = ?, detail = ?, rev = ? "
+                     "WHERE id = ?", (page_now(), by_name or "", detail, _next_rev(conn), request_id))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    _changed(ws, conn, request_id)
+    return get(conn, request_id)
+
+
+def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_name: str, writer: str,
+              only_from: tuple[str, ...] = ()) -> dict:
     """Set the request's state as ``writer`` (``agent``: an integration
     token of the feedback or write scope; ``requester``: its requester's
     session, whose only change is a withdraw, ``failed`` with the detail
@@ -219,11 +262,13 @@ def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_nam
     token's display name, or the requester's username). An agent's same
     state with the same detail changes nothing, nor does a repeated
     withdraw; a requester repeating any other state is refused as any
-    change of theirs but the withdraw is. A write takes the next ``rev``.
-    Commits, then tells the threads' pages and the work folder's files.
-    FeedbackError 404 for no request, 400 for another state, 413 for a
-    longer detail, 409 for a change the writer may not make
-    (``TRANSITIONS``)."""
+    change of theirs but the withdraw is. ``only_from``: the states the
+    writer expects the request in (the local runner's writes pass
+    ``("running",)``, so a request withdrawn meanwhile is not overwritten).
+    A write takes the next ``rev``. Commits, then tells the threads' pages
+    and the work folder's files. FeedbackError 404 for no request, 400 for
+    another state, 413 for a longer detail, 409 for a stored state outside
+    ``only_from`` or a change the writer may not make (``TRANSITIONS``)."""
     if writer not in WRITERS:
         raise ValueError(f"writer is one of {', '.join(WRITERS)}")
     if state not in STATES:
@@ -236,6 +281,8 @@ def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_nam
         row = conn.execute("SELECT state, detail FROM feedback_requests WHERE id = ?", (request_id,)).fetchone()
         if not row:
             raise FeedbackError(404, "no such request")
+        if only_from and row[0] not in only_from:
+            raise FeedbackError(409, f"The request is {row[0]} now.")
         if (row[0], row[1]) == (state, detail) and (writer == "agent" or state == "failed"):
             conn.rollback()
             return get(conn, request_id)
@@ -252,9 +299,10 @@ def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_nam
 
 
 def _changed(ws: str, conn, request_id: str) -> None:
-    """After a request's write: the pages of its threads refetch them, and
-    its work folder's files are due, its request file written now where
-    this computer keeps the vault. Never raises."""
+    """After a request's write: the pages of its threads refetch them, its
+    work folder's files are due, its request file written now where this
+    computer keeps the vault, and the ``change_listeners`` hear it. Never
+    raises."""
     try:
         pages = [r[0] for r in conn.execute(
             "SELECT DISTINCT b.page_id FROM feedback_request_threads t JOIN comments c ON c.id = t.thread_id "
@@ -262,10 +310,23 @@ def _changed(ws: str, conn, request_id: str) -> None:
         w = conn.execute("SELECT work_folder FROM feedback_requests WHERE id = ?", (request_id,)).fetchone()[0]
     except Exception as e:  # noqa: BLE001 — the request is stored; what follows it never fails it
         log.warning(f"[feedback] after request {request_id} in workspace {ws}: {e}")
+        _tell(ws, request_id)
         return
     for page_id in pages:
         collab.publish(ws, page_id, {"t": "comments", "block_id": "", "thread_id": ""})
     _files_due(ws, w, request_id)
+    _tell(ws, request_id)
+
+
+def _tell(ws: str, request_id: str) -> None:
+    """Each of the ``change_listeners`` in turn, an error logged and never
+    raised."""
+    for listener in list(change_listeners):
+        try:
+            listener(ws, request_id)
+        except Exception as e:  # noqa: BLE001 — a listener never fails the write it hears of
+            log.warning(f"[feedback] request listener {getattr(listener, '__name__', listener)} on "
+                        f"{request_id} in workspace {ws}: {e}")
 
 
 def _files_due(ws: str, w: str, request_id: str = "") -> None:

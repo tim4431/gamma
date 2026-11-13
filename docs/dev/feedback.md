@@ -186,9 +186,10 @@ the names are the disk's. Separators are `/`.
  "picture":  "img/<key>.jpg" | null,
  "before":   "img/<key>.jpg" | null,
  "state":    "open" | "resolved",
- "sent":     {"request_id": "…", "state": "sent" | "running" | "failed", "at": "…", "detail": "…"} | null,
+ "sent":     {"request_id": "…", "state": "sent" | "running" | "failed", "at": "…", "detail": "…",
+              "state_by": "…"} | null,
  "link":     "<the thread's Gamma link>",
- "comments": [{"id", "by", "agent", "at", "body", "deleted"}]}
+ "comments": [{"id", "by", "agent", "at", "body", "deleted", "agent_kind"?}]}
 ```
 
 The keys come in that order, and a `where` key with no value is left out.
@@ -239,15 +240,22 @@ The keys come in that order, and a `where` key with no value is left out.
   `picture_url` and `before_url` after them (`entries.with_urls`).
 - **`sent`**: the newest Send waiting on the thread (`comments._sent`: a
   `feedback_request_threads` row not answered whose request is `sent`,
-  `running` or `failed`), `detail` only when the request has one; null
-  otherwise. The comment API's threads carry the same.
+  `running` or `failed`), `detail` and `state_by` (who set its state: a
+  token's display name, the label of an agent on this computer, the
+  requester's username) only when the request has them; null otherwise.
+  The comment API's threads carry the same, `state_by` "" while it is
+  sent.
 - **`link`**: `?ws=<ws>&page=<page_id>&block=<block_id>&thread=<id>`, the
   address the Inbox opens, prefixed by `link_base` (MCP's absolute base;
   "" in the files and over HTTP, where the link is the query alone).
 - **`comments`**: oldest first; `by` the author's username (the stored name
   once the account is gone), `agent` the token's display name or "", `at`
   the comment's `created_at`, `body` ("" with `deleted: true` for a
-  tombstone).
+  tombstone). A comment an agent on this computer wrote
+  ([local_agents.md](local_agents.md): its `agent_id` starts with
+  `local:`, `comments.LOCAL_AGENT`) adds `agent_kind: "local"`, as the
+  comment API's comment does; no other comment has the key, so every other
+  entry and file stays byte-identical.
 
 ### The order
 
@@ -381,7 +389,9 @@ request's detail. The picture lines read `Page {n}, the comment's region`
 commented on`, without the page for a region of a picture, and `The
 picture` / `The picture as it was commented on` for a thread on a picture's
 page. Bodies are quoted line by line with `> `, a body's own Markdown left
-as it is; a tombstone reads `*(deleted)*`. The last line of "How to answer"
+as it is; a tombstone reads `*(deleted)*`. A token's comment is signed
+`**Claude Code** (tim's connection)`, one with `agent_kind: "local"`
+`**Codex** (on tim's computer)`. The last line of "How to answer"
 names the JSON form the reader can reach (`open.json`, the `GET
 /api/feedback` query, or `read_feedback`). With no entries: the heading, `No
 open comments.` (or `No resolved comments.`), and "How to answer". The
@@ -573,28 +583,34 @@ workspace's pages.db (`db.FEEDBACK_SCHEMA`, additive: no migration step;
 
 | Table | Columns |
 |---|---|
-| `feedback_requests` | `id` (a block id's shape; the client may mint it, so a retried Send writes once), `rev` (the listing's cursor: the workspace's next number at the insert and at every change of state, under the write lock), `work_folder` (W), `scope` and `scope_kind` (`file` or `folder`: the page or folder id the person sent), `by` (the requester's account id) and `by_name`, `at`, `note` (at most 2000 characters), `state` (`sent`, `running`, `done`, `failed`), `state_at`, `state_by` (a token's display name, or the requester's username), `detail` (`failed`: the reason; `running`: a line of progress; at most 500 characters) |
+| `feedback_requests` | `id` (a block id's shape; the client may mint it, so a retried Send writes once), `rev` (the listing's cursor: the workspace's next number at the insert and at every change of state, under the write lock), `work_folder` (W), `scope` and `scope_kind` (`file` or `folder`: the page or folder id the person sent), `by` (the requester's account id) and `by_name`, `at`, `note` (at most 2000 characters), `state` (`sent`, `running`, `done`, `failed`), `state_at`, `state_by` (a token's display name, the label of an agent on this computer, or the requester's username), `detail` (`failed`: the reason; `running`: a line of progress; at most 500 characters), `via` (how it was made: `session` or `token`, `''` before migration step 58; not in the record) |
 | `feedback_request_threads` | `request_id`, `thread_id`, `answered_at` (a reply or a resolve after the request, by a token or another account) |
 
 A request record, as the API answers it: `{id, rev, work_folder: {id,
 name}, scope: {kind, id, name}, by, at, note, state, state_at, state_by,
 detail, threads: [{id, answered}]}`, `by` the username.
 
-- **`create(ws, conn, scope, *, by, by_name, note, threads, request_id)`**
-  → `{request, created}`, commits. `threads` omitted: every open thread in
-  the scope; given: each must be an open thread there (400 otherwise), at
-  most 500. 400 "Nothing to send: no open comments here." for none; 413 past
-  the note's length. A repeated `request_id` by the same account answers the
-  stored request with `created` false; another account's id is a 409.
+- **`create(ws, conn, scope, *, by, by_name, note, threads, request_id,
+  via)`** → `{request, created}`, commits. `threads` omitted: every open
+  thread in the scope; given: each must be an open thread there (400
+  otherwise), at most 500. 400 "Nothing to send: no open comments here." for
+  none; 413 past the note's length. A repeated `request_id` by the same
+  account answers the stored request with `created` false; another
+  account's id is a 409. `via` (`requests.VIA`) is how the Send was made,
+  stored in the row's `via` column and not in the record: `session` (a
+  person in Gamma) or `token` (an integration token), as the route says;
+  `''` for a Send from before migration step 58. An agent on this computer
+  takes a session's alone ([local_agents.md](local_agents.md#claiming-and-the-run)).
 - **`listing(conn, *, after, scope, state, limit)`** → `{requests, cursor}`:
   `rev > after`, oldest first, `limit` 50 by default and at most 100;
   `scope` a W's or a file's id filters by `work_folder` or `scope`; `cursor`
   is the last `rev` given, else `after`. So a new request and a state change
   alike show past a cursor. `get(conn, id)` is one.
-- **`set_state(ws, conn, id, state, *, detail, by_name, writer)`**:
-  `writer` is `agent` (an integration token of the `feedback` or `write`
-  scope) or `requester` (the session of `by`), and `TRANSITIONS` says who may
-  make which change:
+- **`set_state(ws, conn, id, state, *, detail, by_name, writer,
+  only_from=())`**: `writer` is `agent` (an integration token of the
+  `feedback` or `write` scope, or an agent on this computer) or
+  `requester` (the session of `by`), and `TRANSITIONS` says who may make
+  which change:
 
   | from \ to | running | done | failed |
   |---|---|---|---|
@@ -609,13 +625,29 @@ detail, threads: [{id, answered}]}`, `by` the username.
   detail `withdrawn` whatever they sent, and the withdraw is their only
   change (their `running` or `done`, repeated or not, is the 409). A
   write takes the next `rev`, sets `state_at`, `state_by` and `detail`.
+  `only_from` names the states the writer expects the request in, checked
+  under the lock: a stored state outside it is a 409 "The request is
+  {state} now.". Every write of an agent on this computer passes
+  `("running",)`, so a request withdrawn between two of them is never
+  overwritten; an outside agent's writes pass none and are unchanged.
+- **`claim(ws, conn, id, *, by_name, detail)`** → the request, or None:
+  an agent on this computer takes a `sent` request
+  ([local_agents.md](local_agents.md#claiming-and-the-run)), `running` with
+  `detail`, `state_by` its label, the next `rev` and `state_at`, in one
+  step under the write lock; a request that is no longer `sent` (taken,
+  withdrawn, answered, gone) is rolled back and None, so of two takers, or
+  a taker and a withdraw, one wins. Commits, then `_changed`.
 - **After every write** (`_changed`): `collab.publish(ws, page, {t:
   "comments", block_id: "", thread_id: ""})` to each page whose threads are
   in the request (open tabs refetch their threads and Sent chips),
   `files.mark_folder(ws, W)`, and for a work folder of this computer whose
   vault may write now (not paused, not choosing its files)
   `files.write_request(link, id)` at once, best effort: the hot pass
-  rewrites it on a failure.
+  rewrites it on a failure. Then each of `change_listeners` hears
+  `fn(ws, request_id)`, on the early-return path too, each in its own
+  `try` that logs and never raises: `local_agents.runner.on_request`, which
+  queues the Sends an agent on this computer answers and stops a run whose
+  request was withdrawn, is the one listener.
 - **Answered.** `answered(ws, event)`, the listener's part: a `reply` or a
   `resolve` sets `answered_at` on every row of the thread not answered whose
   request was made before the comment and whose requester is not the actor
@@ -759,16 +791,29 @@ pictures are drawn, off the event loop. `FeedbackError` becomes the
 
 | Method | Path | Answer |
 |---|---|---|
-| GET | `/api/feedback?scope=<id>&state=open\|resolved\|all&format=json\|md` | the document of a work folder, a directory or a file (`entries.document`, `owner` the requester's username, the entries with `picture_url` / `before_url`), or with `format=md` its Markdown (`text/markdown; charset=utf-8`, the pictures as their routes). 400 for a library page or folder, another state or format; 404 for no such folder or live page |
+| GET | `/api/feedback?scope=<id>&state=open\|resolved\|all&format=json\|md` | the document of a work folder, a directory or a file (`entries.document`, `owner` the requester's username, the entries with `picture_url` / `before_url`), or with `format=md` its Markdown (`text/markdown; charset=utf-8`, the pictures as their routes). On a server that runs agents (`local_agents.enabled`) the JSON adds `agent` and `agents_found` for the Feedback dialog (below the table); never the files' document. 400 for a library page or folder, another state or format; 404 for no such folder or live page |
 | GET | `/api/feedback/threads/{thread_id}?format=json\|md` | `{entry}` in any state, or its Markdown (the file's heading, then the item); 404 for a thread hidden, gone, a reply's id or not on a work folder's file |
 | GET | `/api/feedback/threads/{thread_id}/picture?at=now\|before&v=<key>` | `image/jpeg`, `Cache-Control: private, max-age=86400`; 404 when the entry has no such picture or it cannot be drawn now; 400 for another `at`. `v`, the picture's key, only busts a browser's cache |
-| POST | `/api/feedback/requests` | `{id?, scope, note?, threads?}` → 201 `{request}` (200 for a repeated `id` of the same account, answered as stored). `require_ws(write=True)`: a member who may edit, or a `write` token; never a `feedback` or `read` token, a viewer or a share visitor (a Send starts work on the owner's computer). 400 for a scope outside a work folder, nothing to send, a thread that is no open one in the scope or a malformed id; 404 for no such scope; 409 for another account's id; 413 past the note's length |
-| GET | `/api/feedback/requests?after=<rev>&scope=<id>&state=<s>&limit=<n>` | `{requests, cursor}` ("Requests and their states"); 400 for another state |
-| GET | `/api/feedback/requests/{id}` | `{request, entries}`, the entries of its threads as they are now (with their picture routes): what its file holds; 404 |
-| POST | `/api/feedback/requests/{id}/state` | `{state, detail?}` → `{request}`: an agent (a `feedback` or `write` token, in its own workspace) any change `TRANSITIONS` lets it make, the requester's session a withdraw (`failed`); 403 for a read token ("this token is read-only"), another member, a viewer or a share visitor; 404; 409 for a change refused; 413 past the detail's length; 423 while a delete holds the workspace |
+| POST | `/api/feedback/requests` | `{id?, scope, note?, threads?}` → 201 `{request}` (200 for a repeated `id` of the same account, answered as stored). `require_ws(write=True)`: a member who may edit, or a `write` token; never a `feedback` or `read` token, a viewer or a share visitor (a Send starts work on the owner's computer). 400 for a scope outside a work folder, nothing to send, a thread that is no open one in the scope or a malformed id; 403 for a token's Send to a work folder whose vault here has an agent on this computer ("An agent on this computer takes Sends made in Gamma, not with a token."); 404 for no such scope; 409 for another account's id; 413 past the note's length |
+| GET | `/api/feedback/requests?after=<rev>&scope=<id>&state=<s>&limit=<n>` | `{requests, cursor}` ("Requests and their states"); on a server that runs agents each record adds `local`, whether an agent on this computer holds it now; 400 for another state |
+| GET | `/api/feedback/requests/{id}` | `{request, entries}`, the entries of its threads as they are now (with their picture routes): what its file holds; the record's `local` as in the listing; 404 |
+| POST | `/api/feedback/requests/{id}/state` | `{state, detail?}` → `{request}`: an agent (a `feedback` or `write` token, in its own workspace) any change `TRANSITIONS` lets it make, the requester's session a withdraw (`failed`); 403 for a read token ("this token is read-only"), another member, a viewer or a share visitor; 404; 409 for a change refused, and for a token's change while an agent on this computer answers the request ("Codex on this computer is answering this request."); 413 past the detail's length; 423 while a delete holds the workspace |
 
 `picture_url` is `/api/feedback/threads/{id}/picture?at=now&v=<key>`,
 `before_url` the same with `at=before`.
+
+`doc.agent`, on the desktop app's own server only (`_agent_of`): null when
+the work folder has no agent on this computer; else `{name, label, ready,
+problem, takes, why}`, `ready` and `problem` as last asked
+(`local_agents.catalog.cached`: nothing runs, `ready` null while still
+checking), `takes` whether this account's Send would reach the agent now
+(the vault's maker, the vault writing its directory), and `why`, English,
+when not: "Only the person who keeps this folder on this computer can send
+to Codex." or "The work folder is paused on this computer: Codex starts
+once it syncs again.". `doc.agents_found` says whether this computer has
+either agent. Both are on this route alone: `open.json`, the request files
+and MCP's `read_feedback` stay as they are
+([local_agents.md](local_agents.md#the-routes)).
 
 ## Tokens and MCP
 
@@ -811,8 +856,20 @@ pictures are drawn, off the event loop. `FeedbackError` becomes the
 
 ## The seam
 
-Gamma starts no process. The owner builds the part that starts an agent
-(a watcher, a timer, a shell hook), and what it finds here is:
+On the desktop app's own server Gamma itself can be the connector: the
+vault's maker turns on Codex or Claude Code for a work folder in the sync
+panel, and from then on a Send of that folder made in Gamma by the maker is
+claimed by this server (`requests.claim`, `sent` to `running` in one
+step), worked by the agent in the vault's directory, answered with replies
+signed by its label and set `done` or `failed`
+([local_agents.md](local_agents.md)). While a folder has such an agent, a
+token's Send to it is refused (403), and so is a token's change of a
+request a run holds (409); the requests it has taken read `state_by`
+`Codex` or `Claude Code`, and an outside agent leaves them alone.
+
+Anywhere else, and for a folder with no agent on this computer, Gamma
+starts no process. The owner builds the part that starts an agent (a
+watcher, a timer, a shell hook), and what it finds here is:
 
 1. **A request appearing.** On this computer, a work folder's
    `.gamma/feedback/requests/<id>.json` ("The request file", `format:
@@ -854,7 +911,9 @@ Gamma starts no process. The owner builds the part that starts an agent
    `running` again (a retry) and then `done`; `done` is final. A request
    the person withdrew reads `failed` with the detail `withdrawn`, set by
    the requester's session (`state_by` their name): the connector stops on
-   it and may not change it. The table of changes and who makes each is
+   it and may not change it. A request `running`, `done` or `failed` that
+   the connector did not set is someone else's (its `state_by` names who
+   has it): it leaves it alone. The table of changes and who makes each is
    `TRANSITIONS`; a change refused is a 409. Gamma shows the state beside
    the request, with the detail.
 
@@ -932,7 +991,9 @@ guide's "Comments and inbox" says it for people.
   picture route, who reads.
 - `tests/test_feedback_requests.py`: who may send, a retry, "Nothing to
   send", every change of state by each writer, the cursor, `answered_at`,
-  the room publish, the listeners, the sweep.
+  the room publish, the listeners, the sweep, `claim`, `only_from` and the
+  `change_listeners`. An agent on this computer has its own suites,
+  `tests/test_local_agents_*.py` ([local_agents.md](local_agents.md#tests)).
 - `tests/test_feedback_pictures.py`, `test_feedback_kept.py`,
   `test_synctex.py`, `test_feedback_sources.py`, `test_feedback_files.py`,
   `test_feedback_tools.py`, and the gate `test_feedback_loop.py` (a work

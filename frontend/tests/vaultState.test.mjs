@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, bannerKey, baseName, carriesToServer, directionText, editsFile, isOpenedPdf, libraryWorkspaces,
+  addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, directionText, editsFile, isOpenedPdf, libraryWorkspaces,
   notesLocked, openedHere, readVault, vaultBanner, vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
@@ -179,4 +179,17 @@ test("App's page list (libraryUtils.pageBlocksOf) carries what isOpenedPdf reads
   assert.equal(isOpenedPdf("paper", rows), true);
   assert.equal(isOpenedPdf("stored", rows), false, "a page there whose PDF is stored");
   assert.equal(isOpenedPdf("notes", rows), false, "a page there that reads no file of its own");
+});
+
+test("a work folder's agent on this computer: named, its problem while it cannot run, what it is at while it works", () => {
+  const agent = (extra) => folder({ agent: { name: "codex", label: "Codex", ready: true, problem: "", running: null, ...extra } });
+  assert.deepEqual(agentLine(agent()), { line: "Agent: Codex on this computer", problem: "", working: "" });
+  assert.equal(agentLine(agent({ ready: false, problem: "Codex is not on this computer." })).problem, "Codex is not on this computer.");
+  assert.equal(agentLine(agent({ ready: null, problem: "" })).problem, "", "still checking");
+  assert.equal(agentLine(agent({ running: { request_id: "r1", detail: "Editing main.tex" } })).working, "Codex is working: Editing main.tex");
+  assert.equal(agentLine(agent({ running: { request_id: "r1", detail: "" } })).working, "Codex is working", "a member who cannot act on it");
+  assert.equal(agentLine(folder({ agent: null })), null);
+  assert.equal(agentLine(folder()), null);
+  assert.equal(agentLine(opened()), null);
+  assert.equal(agentLine(null), null);
 });

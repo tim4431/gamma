@@ -110,6 +110,7 @@ These describe the implementation unless explicitly marked as plans.
 | The note editor's @ menu: dates, people and page links as chips, reminders and their delivery | [Mentions and reminders](mentions.md) |
 | Comment threads on notes, pages, highlights, regions of a picture and handwriting: storage, who may comment, the API, following the blocks; each account's Inbox and its live delivery | [Comments](comments.md) |
 | Feedback: the comment threads on a work folder's files as entries an agent acts on, with the place each was opened on, the source line SyncTeX maps it to, a picture of its region, the version kept while it is open, Send and its requests, the files below `.gamma/feedback/`, the routes, the feedback token scope and the MCP tools, the seam for a connector | [Feedback](feedback.md) |
+| An agent on this computer: Codex CLI or Claude Code turned on for a work folder in the desktop app, which takes the maker's Sends, works in the folder's directory and answers each comment; finding the agents, the claim and the run, the prompt and the answer, the two drivers, the processes, what vaults.db keeps, the routes, trust | [Local agents](local_agents.md) |
 | LaTeX pairing, completion, caret behavior, preview, and pasted `\( \)` / `\[ \]` math | [LaTeX editing](latex_editing.md) |
 | Mermaid and SVG diagrams: rendering, sanitizing, sizing and editing | [Diagrams](diagrams.md) |
 | Interface translations and catalogs | [Internationalization](i18n.md) |

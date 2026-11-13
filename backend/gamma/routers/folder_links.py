@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from .. import config, folder_links, linked_files, workspaces
 from ..auth import require_personal_user_id, require_ws, ws_role
+from ..logbuf import log
 from ..markdown_import import MAX_MARKDOWN_BYTES
 from ..ops import OpError
 from ..work_folders import selection
@@ -70,6 +71,9 @@ class LinkPatch(BaseModel):
     pull: bool | None = None
     push: str | None = None
     library: bool | None = None
+    # A work folder's agent on this computer: "codex" or "claude" on, "" off
+    # (docs/dev/local_agents.md).
+    agent: str | None = Field(default=None, max_length=32)
     # A new token of the other server for a link to one, kept in place of the
     # link's own once that server takes it (one that may write to push).
     token: str = Field(default="", max_length=400)
@@ -139,14 +143,14 @@ def _account(request: Request) -> str:
     return require_personal_user_id(request, SIGN_IN)
 
 
-def _from_shell(request: Request) -> str:
+def _from_shell(request: Request, refused: str = "Only the desktop app itself may name a path on this computer.") -> str:
     """``_account`` for a route that takes a path: when the app started this
     server with a secret (``config.shell_secret``), a request without it is
-    a page speaking for itself, 403."""
+    a page speaking for itself, 403 with ``refused``."""
     user_id = _account(request)
     secret = config.shell_secret()
     if secret and not secrets.compare_digest(request.headers.get(SHELL_HEADER, "").encode(), secret.encode()):
-        raise HTTPException(status_code=403, detail="Only the desktop app itself may name a path on this computer.")
+        raise HTTPException(status_code=403, detail=refused)
     return user_id
 
 
@@ -213,16 +217,21 @@ def _not_chosen(e: selection.SelectionError):
     raise HTTPException(status_code=e.status, detail=e.detail)
 
 
-def _info(link: dict, can_act: bool = True) -> dict:
+def _info(link: dict, can_act: bool = True, agents: dict | None = None) -> dict:
     """The link as the API answers it: its direction in words, of a file
     link's state only the page's title and whether a work folder waits for
     its files to be chosen (``choosing``; and never a token: a link is read
-    here without it). For a member who cannot act on it (``_acts``) no place
-    on this computer: no path, and of its status no text a round wrote,
-    which may name one."""
+    here without it), and a work folder's ``agent`` on this computer
+    (``local_agents.info``, null for none; ``agents`` a listing's, asked
+    once for every link). For a member who cannot act on it (``_acts``) no
+    place on this computer: no path, of its status no text a round wrote,
+    which may name one, and no detail of its agent's run."""
+    from ..local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
+
     info = {k: v for k, v in link.items() if k != "state"}
     info.update(dest=str(folder_links.dest_of(link)), pull=bool(link["pull"]), push=folder_links.push_word(link["push"]),
                 choosing=folder_links.choosing(link))
+    info["agent"] = agents[link["id"]] if agents is not None else agent_info.agent_info(link, can_act=can_act)
     if link["kind"] == "file":
         info["title"] = link["state"].get("title", "")
     if not can_act:
@@ -260,17 +269,24 @@ def list_links(request: Request):
     ``page_id`` and the page's ``title``; ``dest`` is the directory or the
     file. ``library`` is a work folder's switch, ``choosing`` whether its
     files wait for its tracking dialog, ``mine`` whether the account made
-    the link (the tracking dialog's routes are its maker's alone). The
-    desktop app's sync panel lists
+    the link (the tracking dialog's routes are its maker's alone), ``agent``
+    a work folder's agent on this computer, ``{name, label, ready, problem,
+    running: {request_id, detail} | null}`` or null (``local_agents.info``:
+    nothing is run to know it). The desktop app's sync panel lists
     them all. A folder vault's ``status``: ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked?, refused?,
     capped?, held?, stopped?, offline?, shared?, upgraded_at?,
     work_folder_at?, push_off?, paused_at?, folder_path}``
     (``folder_links._vault_round``), ``shared`` the pages filed in it that a
     vault beside it, made before it, keeps (``[{page, title}]``)."""
+    from ..local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
+
     user_id = _account(request)
-    return {"links": [{**_info(link, _acts(link, user_id)), "mine": link["created_by"] == user_id}
-                      for link in folder_links.visible_links(user_id)]}
+    links = folder_links.visible_links(user_id)
+    acts = {link["id"]: _acts(link, user_id) for link in links}
+    agents = agent_info.listing(links, can_act=lambda link: acts[link["id"]])
+    return {"links": [{**_info(link, acts[link["id"]], agents), "mine": link["created_by"] == user_id}
+                      for link in links]}
 
 
 @router.post("", status_code=201)
@@ -517,10 +533,21 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
     its files are chosen, a token for a link of this server, one that other
     server refuses or that opens another workspace, or one that may not
     write for a link that pushes; 403 for any of them but by the link's
-    maker (``_made``), who may pause it whatever its role now (``_kept``)."""
+    maker (``_made``), who may pause it whatever its role now (``_kept``).
+    ``agent`` is a work folder's agent on this computer
+    (``folder_links.set_agent``; docs/dev/local_agents.md): ``codex`` or
+    ``claude`` turns it on, which the desktop app asks with its shell's
+    word (``_from_shell``: an agent that edits a directory is the
+    computer's decision), and the answer's ``queued`` says how many waiting
+    Sends it took; ``""`` turns it off, the maker's alone. 404 on a server
+    that runs no agents, 400 for a vault that is no work folder, an agent
+    Gamma does not know or one not ready (its problem). A resume hands the
+    agent the Sends made since it was turned on that wait."""
     changes = (payload.notes is not None or payload.push is not None or payload.pull is not None
-               or payload.library is not None or bool(payload.token))
+               or payload.library is not None or bool(payload.token) or payload.agent is not None)
     link = _made(request, link_id) if changes else _kept(request, link_id)
+    if payload.agent is not None:
+        _agent_allowed(request, link, payload.agent)
     try:
         if payload.notes is not None:
             link = folder_links.set_notes(link_id, payload.notes) or link
@@ -534,11 +561,57 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
             link = folder_links.set_library(link_id, payload.library) or link
         if payload.paused is not None:
             link = folder_links.set_paused(link_id, payload.paused) or link
+        if payload.agent is not None:
+            queued = folder_links.set_agent(link_id, payload.agent, by=_account(request))
+            link = folder_links.get_link(link_id) or link
     except folder_links.LinkError as e:
         raise _refused(e)
     if payload.paused is False:
         folder_links.run_in_background(link_id)
+        _hand_waiting(link)
+    if payload.agent is not None:
+        return {**_info(link), "queued": queued}
     return _info(link)
+
+
+def _agent_allowed(request: Request, link: dict, agent: str) -> None:
+    """The PATCH's gate for ``agent``, in order, past ``_made``: a server
+    that runs agents (404), a work folder (400); for an agent turned on or
+    changed, the shell's word (403), an agent Gamma knows (400) and one
+    ready now (400 with its problem: this asks it afresh, a process or two).
+    Turning it off needs nothing more."""
+    from .. import local_agents
+    from ..local_agents import catalog
+
+    if not local_agents.enabled():
+        raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
+    if not folder_links.work_folder_link(link):
+        raise HTTPException(status_code=400, detail="Only a work folder can have an agent.")
+    if not agent:
+        return
+    _from_shell(request, "Only the desktop app may turn on an agent for this folder.")
+    if agent not in catalog.AGENTS:
+        raise HTTPException(status_code=400, detail=f"Gamma knows no agent named {agent}.")
+    found = catalog.probe(agent, fresh=True)
+    if not found["ready"]:
+        raise HTTPException(status_code=400,
+                            detail=found["problem"] or f"{found['label']} is not ready on this computer.")
+
+
+def _hand_waiting(link: dict) -> None:
+    """A work folder that writes its directory again (resumed, its files
+    chosen): its agent takes the Sends that wait for it (``runner.waiting``).
+    An error is logged; the change it follows stands."""
+    from .. import local_agents
+    from ..local_agents import runner, store
+
+    if not local_agents.enabled() or not folder_links.work_folder_link(link):
+        return
+    try:
+        if store.agent_of(link["id"]) is not None:
+            runner.queue_folder(link["workspace_id"], link["id"])
+    except Exception as e:  # noqa: BLE001 — the vault's change is made; the Sends wait for the next chance
+        log.warning(f"[agents] the waiting Sends of vault {link['id']}: {e}")
 
 
 @router.post("/{link_id}/sync")
@@ -582,7 +655,8 @@ def relink(link_id: str, payload: Relink, request: Request):
     its disk mounted elsewhere), whose marker must be this vault's; a
     followed file's PDF that moved. → the link; a round follows. 400 for a
     place that is not the link's, or one ``folder_links.check_vault``
-    refuses; 403 but for the link's maker."""
+    refuses; 403 but for the link's maker. Its agent on this computer is
+    turned off (``_forget_agent``)."""
     _from_shell(request)
     _made(request, link_id)
     try:
@@ -591,7 +665,16 @@ def relink(link_id: str, payload: Relink, request: Request):
         raise _refused(e)
     if link is None:
         raise HTTPException(status_code=404, detail="no such link")
+    _forget_agent(link_id)
     return _info(link)
+
+
+def _forget_agent(link_id: str) -> None:
+    """A vault moved or removed forgets its agent on this computer, whose
+    run ``folder_links`` stopped: it was turned on for one directory."""
+    from ..local_agents import store
+
+    store.set_agent(link_id, "", by="")
 
 
 @router.get("/{link_id}/removal")
@@ -654,7 +737,8 @@ def save_selection(link_id: str, payload: SelectionSave, request: Request):
     guard → the link. 409 ``{detail, hash}`` when the ``.gammaignore`` on
     disk is not the one the dialog read (``base_hash``, "" for none); 400
     for more files than the vault reads, or a library switch refused; the
-    refusals of ``GET /{id}/tree``."""
+    refusals of ``GET /{id}/tree``. A work folder's agent then takes the
+    Sends made since it was turned on that wait."""
     _chooser(request, link_id)
     try:
         link = folder_links.save_selection(link_id, payload.selection.model_dump(), payload.base_hash, payload.library)
@@ -664,6 +748,7 @@ def save_selection(link_id: str, payload: SelectionSave, request: Request):
         raise _refused(e)
     if link is None:
         raise HTTPException(status_code=404, detail="no such link")
+    _hand_waiting(link)
     return _info(link)
 
 
@@ -679,12 +764,13 @@ def delete_link(link_id: str, request: Request, files: Literal["keep", "trash"] 
     marker, its ``.gamma/`` and its folder go when they were made for it.
     409 when a PDF read in place could not be stored, or another program
     holds the state file a folder kept before left: nothing was removed;
-    403 but for the link's maker."""
+    403 but for the link's maker. Its agent on this computer is turned off."""
     _made(request, link_id)
     try:
         folder_links.delete_link(link_id, files=files)
     except folder_links.LinkError as e:
         raise _refused(e, 409)
+    _forget_agent(link_id)
     return {"ok": True}
 
 

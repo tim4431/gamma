@@ -2,7 +2,8 @@
 // (docs/research/vaults.md "The words", "Reading a PDF where it is"), read by
 // vaultState.js: the chip among the page header's buttons, one icon for how
 // the page stands (vaultState's `kind`), with its card (where the file is,
-// Show in folder, Add to library…, Feedback…, Edit the file); and the banner over the
+// a work folder's agent on this computer and what it is at, Show in folder,
+// Add to library…, Feedback…, Edit the file); and the banner over the
 // page, in the missing-page notice's slot, for a note the vault could not
 // write and for an opened PDF whose file is gone (Locate…, Remove). The
 // actions are App's: it posts the shell's messages and opens the dialogs.
@@ -12,7 +13,7 @@ import { AlertCircleIcon, BotIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOp
   TrashIcon, UploadIcon } from "../shared/ui/Icons";
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
-import { addsToLibrary, directionText, editsFile, notesLocked, vaultChip } from "./vaultState.js";
+import { addsToLibrary, agentLine, directionText, editsFile, notesLocked, vaultChip } from "./vaultState.js";
 import "./vault.css";
 
 // The chip's icon, by what the page's standing is (vaultState's `kind`):
@@ -36,6 +37,7 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
   const chip = vaultChip(state);
   if (!chip) return null;
   const { vault, reader } = state;
+  const agent = agentLine(state);
   const path = vault ? vault.path : reader.path;
   const Icon = CHIP_ICONS[chip.kind];
   return (
@@ -65,6 +67,13 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
             <div className="popoverHint">{file.library
               ? t("A work folder's file, in the library too: its name on disk and its directory follow the file.")
               : t("A work folder's file, not in the library: its name and place follow the file.")}</div>
+          ) : null}
+          {agent ? (
+            <div className="popoverHint vaultAgent" data-agent={vault.agent.name || ""}>
+              <div>{agent.line}</div>
+              {agent.problem ? <div className="vaultAgentProblem">{agent.problem}</div> : null}
+              {agent.working ? <div>{agent.working}</div> : null}
+            </div>
           ) : null}
           {reader?.missing ? <div className="popoverHint">{t("The file is not there any more.")}</div> : null}
           {reader?.relocation_error ? (

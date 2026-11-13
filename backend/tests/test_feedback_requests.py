@@ -200,6 +200,84 @@ def test_a_states_refusals(lab):
     assert _ok(_state(lab, lab.editor, other, "failed"))["request"]["detail"] == "withdrawn"
 
 
+def test_a_claim_takes_only_a_sent_request(lab):
+    """``claim`` sets a sent request running for an agent on this computer
+    and takes the next rev; any other state is left as it is, None."""
+    request_id = _send(lab)["id"]
+    with connect_pages_db(lab.ws) as conn:
+        before = requests.get(conn, request_id)
+        got = requests.claim(lab.ws, conn, request_id, by_name="Codex", detail="Starting Codex")
+        assert (got["state"], got["state_by"], got["detail"]) == ("running", "Codex", "Starting Codex")
+        assert got["rev"] > before["rev"] and got["state_at"] >= before["state_at"]
+        assert requests.claim(lab.ws, conn, request_id, by_name="Claude Code", detail="again") is None
+        assert requests.get(conn, request_id) == got
+        assert requests.claim(lab.ws, conn, "noSuchRequest", by_name="Codex", detail="") is None
+    chips = {t["id"]: t["sent"] for t in _ok(lab.owner.get(f"/api/pages/{lab.main}/comments"))["threads"]}
+    assert chips[lab.t["one"]]["request_id"] == request_id and chips[lab.t["one"]]["state_by"] == "Codex"
+    for state in ("done", "failed"):
+        other = _request_in(lab, state)
+        with connect_pages_db(lab.ws) as conn:
+            rev = requests.get(conn, other)["rev"]
+            assert requests.claim(lab.ws, conn, other, by_name="Codex", detail="") is None
+            assert requests.get(conn, other)["rev"] == rev
+    withdrawn = _send(lab)["id"]
+    _ok(_state(lab, lab.owner, withdrawn, "failed"))
+    with connect_pages_db(lab.ws) as conn:
+        assert requests.claim(lab.ws, conn, withdrawn, by_name="Codex", detail="") is None
+
+
+def test_only_from_refuses_a_state_the_writer_did_not_expect(lab):
+    request_id = _send(lab)["id"]
+    with connect_pages_db(lab.ws) as conn:
+        with pytest.raises(requests.FeedbackError) as e:
+            requests.set_state(lab.ws, conn, request_id, "done", by_name="Codex", writer="agent", only_from=("running",))
+        assert e.value.status == 409 and requests.get(conn, request_id)["state"] == "sent"
+        requests.claim(lab.ws, conn, request_id, by_name="Codex", detail="Starting Codex")
+        got = requests.set_state(lab.ws, conn, request_id, "running", detail="Reading main.pdf", by_name="Codex",
+                                 writer="agent", only_from=("running",))
+        assert got["detail"] == "Reading main.pdf"
+    _ok(_state(lab, lab.owner, request_id, "failed"))  # withdrawn meanwhile
+    with connect_pages_db(lab.ws) as conn:
+        with pytest.raises(requests.FeedbackError) as e:
+            requests.set_state(lab.ws, conn, request_id, "done", detail="all fixed", by_name="Codex", writer="agent",
+                               only_from=("running",))
+        assert e.value.status == 409
+        assert (requests.get(conn, request_id)["state"], requests.get(conn, request_id)["detail"]) == (
+            "failed", "withdrawn")
+        assert requests.set_state(lab.ws, conn, request_id, "done", by_name="Codex", writer="agent")["state"] == "done"
+
+
+def test_the_change_listeners_hear_every_write(lab, monkeypatch):
+    """Each listener hears a Send, a claim and a change of state, after its
+    commit; one that raises stops neither the write nor the next listener.
+    ``_changed``'s early return (the request unreadable after its write)
+    still tells them."""
+    heard = []
+
+    def broken(ws, request_id):
+        raise RuntimeError("a broken listener")
+
+    def listener(ws, request_id):
+        with connect_pages_db(ws) as conn:
+            heard.append((ws, request_id, requests.get(conn, request_id)["state"]))
+
+    monkeypatch.setattr(requests, "change_listeners", [broken, listener])
+    request_id = _send(lab)["id"]
+    with connect_pages_db(lab.ws) as conn:
+        requests.claim(lab.ws, conn, request_id, by_name="Codex", detail="Starting Codex")
+        assert requests.claim(lab.ws, conn, request_id, by_name="Codex", detail="") is None  # nothing written
+    _ok(_state(lab, lab.agent, request_id, "done"))
+    assert heard == [(lab.ws, request_id, "sent"), (lab.ws, request_id, "running"), (lab.ws, request_id, "done")]
+    heard.clear()
+    _ok(_state(lab, lab.agent, request_id, "done"))  # the same again changes nothing
+    assert heard == []
+    told = []
+    monkeypatch.setattr(requests, "change_listeners", [lambda ws, rid: told.append(rid)])
+    with connect_pages_db(lab.ws) as conn:
+        requests._changed(lab.ws, conn, "noSuchRequest")
+    assert told == ["noSuchRequest"]
+
+
 def test_the_cursor_shows_new_requests_and_changes(lab):
     start = _ok(lab.reader.get("/api/feedback/requests", params={"after": 0, "limit": 100}))
     while start["requests"]:

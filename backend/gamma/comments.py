@@ -42,6 +42,7 @@ MAX_BODY = 20_000          # characters of one comment
 ORPHAN_KEEP_DAYS = 7       # a comment whose block went is deleted this long after
 SWEEP_INTERVAL_S = 3600    # the app lifespan runs ``sweep`` at startup and this often
 STATES = ("open", "resolved", "all")
+LOCAL_AGENT = "local:"     # the ``agent_id`` prefix of a comment an agent on this computer wrote (``local:codex``)
 
 # The stored columns, in the table's order.
 COLUMNS = ("id, thread_id, block_id, page_id, author, author_name, body, created_at, updated_at, "
@@ -72,7 +73,8 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     People are named by username: ``author`` falls back to the name stored
     with the comment once the account is gone, ``resolved_by`` to "";
     ``agent`` / ``resolved_agent`` are the display names of the tokens that
-    wrote or resolved them ("" for a person). ``made_on`` is the file the
+    wrote or resolved them ("" for a person), and a comment an agent on
+    this computer wrote carries ``agent_kind: "local"``. ``made_on`` is the file the
     thread was opened on (its anchor's ``doc_id``, "" for none), ``sent``
     the Send waiting on it (``_sent``) or None. The API and the feedback
     reader are its callers (the other readers leave comments out:
@@ -139,20 +141,22 @@ def has_open_thread(conn, page_id: str) -> bool:
 
 
 def _sent(conn, thread_ids) -> dict[str, dict]:
-    """``{thread id: {request_id, state, at, detail}}``: the newest Send
-    (gamma/feedback/requests.py) that names each of the threads
+    """``{thread id: {request_id, state, at, detail, state_by}}``: the
+    newest Send (gamma/feedback/requests.py) that names each of the threads
     ``thread_ids`` and waits on it — sent, running or failed, the thread
-    not answered since; threads with none left out."""
+    not answered since; threads with none left out. ``state_by`` names who
+    set its state ("" while it is sent)."""
     ids = sorted(set(thread_ids))
     if not ids:
         return {}
     out = {}
-    for thread_id, request_id, state, at, detail in conn.execute(
-            "SELECT t.thread_id, r.id, r.state, r.at, r.detail FROM feedback_request_threads t "
+    for thread_id, request_id, state, at, detail, state_by in conn.execute(
+            "SELECT t.thread_id, r.id, r.state, r.at, r.detail, r.state_by FROM feedback_request_threads t "
             "JOIN feedback_requests r ON r.id = t.request_id "
             "WHERE t.thread_id IN (SELECT value FROM json_each(?)) AND t.answered_at IS NULL "
             "AND r.state IN ('sent', 'running', 'failed') ORDER BY r.rev", (json.dumps(ids),)):
-        out[thread_id] = {"request_id": request_id, "state": state, "at": at, "detail": detail}
+        out[thread_id] = {"request_id": request_id, "state": state, "at": at, "detail": detail,
+                          "state_by": state_by}
     return out
 
 
@@ -182,8 +186,11 @@ def _threads(conn, rows, state: str | None) -> list[dict]:
 
 def _comment(row, names: dict) -> dict:
     deleted = bool(row[11])
-    return {"id": row[0], "thread_id": row[1], "author": names.get(row[4]) or row[5], "agent": row[_AGENT],
-            "body": "" if deleted else row[6], "created_at": row[7], "updated_at": row[8], "deleted": deleted}
+    out = {"id": row[0], "thread_id": row[1], "author": names.get(row[4]) or row[5], "agent": row[_AGENT],
+           "body": "" if deleted else row[6], "created_at": row[7], "updated_at": row[8], "deleted": deleted}
+    if (row[_AGENT_ID] or "").startswith(LOCAL_AGENT):
+        out["agent_kind"] = "local"  # an agent on the vault's computer wrote it (gamma/local_agents), not a token
+    return out
 
 
 def _names(user_ids) -> dict[str, str]:

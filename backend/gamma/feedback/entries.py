@@ -363,8 +363,15 @@ def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions
            "source": _source(ws, conn, item, live_sources), "picture": picture, "before": before,
            "state": "resolved" if thread["resolved_at"] else "open", "sent": _sent(thread.get("sent")),
            "link": f"{link_base}?ws={ws}&page={thread['page_id']}&block={thread['block_id']}&thread={thread['id']}",
-           "comments": [{"id": c["id"], "by": c["author"], "agent": c["agent"], "at": c["created_at"],
-                         "body": c["body"], "deleted": c["deleted"]} for c in thread["comments"]]}
+           "comments": [_comment(c) for c in thread["comments"]]}
+
+
+def _comment(c: dict) -> dict:
+    out = {"id": c["id"], "by": c["author"], "agent": c["agent"], "at": c["created_at"], "body": c["body"],
+           "deleted": c["deleted"]}
+    if c.get("agent_kind"):  # only a local agent's comment says so: every other entry stays as it was
+        out["agent_kind"] = c["agent_kind"]
+    return out
 
 
 def _sent(sent: dict | None) -> dict | None:
@@ -373,6 +380,8 @@ def _sent(sent: dict | None) -> dict | None:
     out = {"request_id": sent["request_id"], "state": sent["state"], "at": sent["at"]}
     if sent.get("detail"):
         out["detail"] = sent["detail"]
+    if sent.get("state_by"):
+        out["state_by"] = sent["state_by"]
     return out
 
 

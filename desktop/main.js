@@ -1384,6 +1384,66 @@ async function setLibrary(serverId, linkId, on) {
   return true;
 }
 
+// A work folder's agent (docs/dev/local_agents.md): `name` ('codex' or
+// 'claude') answers the Sends its maker makes on the folder, working in its
+// directory; '' turns it off. Turning one on, or another one, is the
+// computer's decision: asked first with the Sends waiting now (handed to it
+// once it is on; `confirmed` answers in tests, where the question takes
+// Cancel), and the PATCH carries the shell's word, which a page of Gamma
+// cannot. The server checks the agent meanwhile ("Checking Codex…") and
+// refuses one that is not ready with why. Turning it off asks nothing.
+async function setAgent(serverId, linkId, name, confirmed) {
+  const word = name || '';
+  if (word && !Object.prototype.hasOwnProperty.call(keeping.AGENT_LABELS, word)) throw new Error(`An agent is codex or claude, not ${word}`);
+  const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
+  if (!item.work) throw new Error('Only a work folder can have an agent.');
+  if (word === item.agent) return false;
+  const patch = (extra) => api(origin, `/api/folder-links/${link.id}`, {
+    method: 'PATCH', headers: { ...headers, ...JSON_TYPE, ...extra }, body: JSON.stringify({ agent: word }),
+  });
+  if (!word) {
+    await patch({});
+    showNotice(keeping.agentSaid(item, ''));
+    refreshKeeping().catch(() => {});
+    return true;
+  }
+  if (!confirmed) {
+    // The Sends the agent would be handed, counted by the server's own rule
+    // (the maker's, made in Gamma); not said when it does not answer.
+    const counted = await api(origin, `/api/local-agents/waiting?link=${encodeURIComponent(link.id)}`,
+      { signal: AbortSignal.timeout(5000) }).catch(() => null);
+    const waiting = counted && Number.isInteger(counted.waiting) ? counted.waiting : null;
+    const q = keeping.agentAsk(item, word, waiting);
+    if (await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: 1 }, 1) !== 0) return null;
+  }
+  busy = `Checking ${keeping.AGENT_LABELS[word]}…`;
+  pushState();
+  try {
+    const after = await patch(shellWord(origin));
+    showNotice(keeping.agentSaid(item, word, (after && after.queued) || 0));
+    return true;
+  } finally {
+    busy = null;
+    pushState();
+    refreshKeeping().catch(() => {});
+  }
+}
+
+// The agents on this computer looked for again (`?fresh=1`: the server runs
+// their version and sign-in checks, at most every few seconds), as a work
+// folder's view opens in the panel, then the panel read with what was found.
+// Quiet: the panel keeps what it had when the server does not answer.
+async function checkAgents(serverId) {
+  try {
+    const { origin, api } = await localServer(serverId);
+    await api(origin, '/api/local-agents?fresh=1', { signal: AbortSignal.timeout(60_000) });
+  } catch {
+    return false;
+  }
+  await refreshKeeping().catch(() => {});
+  return true;
+}
+
 // Choose files…: the server's window on the work folder, its tracking dialog
 // open (makeWorkFolder's navigation).
 async function chooseFiles(serverId, linkId) {
@@ -1642,11 +1702,14 @@ function refreshKeeping() {
       try {
         const { origin, api } = await localServer(srv.id);
         // (a server from before the Zotero links has no list of them: none; the session's
-        // workspaces say which vaults' workspaces the account is still in, unread when it does not answer)
-        const [m, f, z, who] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links'),
-          api(origin, '/api/zotero/links').catch(() => null), api(origin, '/api/session').catch(() => null)]);
+        // workspaces say which vaults' workspaces the account is still in, unread when it does not answer;
+        // the agents it finds on this computer, none from a server that runs no agents, which answers 404)
+        const [m, f, z, who, found] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links'),
+          api(origin, '/api/zotero/links').catch(() => null), api(origin, '/api/session').catch(() => null),
+          api(origin, '/api/local-agents', { signal: AbortSignal.timeout(5000) }).catch(() => null)]);
         const roles = who && Array.isArray(who.workspaces) ? who.workspaces : null;
-        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles }, servers);
+        const agents = found && Array.isArray(found.agents) ? found.agents : null;
+        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles, agents }, servers);
         // A server with a link that is not detached starts at launch; one
         // whose links all went or were detached no longer does. A list that
         // did not come leaves that as it was.
@@ -1668,8 +1731,10 @@ function refreshKeeping() {
 }
 
 // What a vault's row and its view in the panel do (VAULT_ACTIONS), `value`
-// the switch's new setting for `pull` and `library` (a bool) and `push` (a
-// word); `choose` opens a work folder's tracking dialog in Gamma.
+// the switch's new setting for `pull` and `library` (a bool), `push` (a
+// word) and `agent` (an agent's name, "" for none); `choose` opens a work
+// folder's tracking dialog in Gamma, and `check-agents` looks for the
+// agents on this computer again as a work folder's view opens.
 const VAULT_ACTIONS = {
   pause: (serverId, id) => pauseVault(serverId, id, true),
   resume: (serverId, id) => pauseVault(serverId, id, false),
@@ -1685,6 +1750,8 @@ const VAULT_ACTIONS = {
   remove: (serverId, id) => removeVault(serverId, id),
   choose: (serverId, id) => chooseFiles(serverId, id),
   library: (serverId, id, value) => setLibrary(serverId, id, Boolean(value)),
+  agent: (serverId, id, value) => setAgent(serverId, id, value),
+  'check-agents': (serverId) => checkAgents(serverId),
 };
 
 // What a panel row does: a clone or a Zotero link opens, pauses (detaches)
@@ -2816,7 +2883,7 @@ function registerIpc() {
   // Of a vault's actions, those that change it or run a round leave the sync
   // panel open on the new state (bar.html keptRow); the others ask first, or
   // open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'check-agents'];
   ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action, value) =>
     withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action, value), !STAYS_OPEN.includes(action))()));
   // A page's asks about this computer in Gamma's own menus (a folder's "Sync
@@ -3079,6 +3146,7 @@ if (process.env.GAMMA_SHELL_TEST) {
     pauseVault,
     setPull,
     setPush,
+    setAgent,
     forceVault,
     goOnVault,
     locateVault,
