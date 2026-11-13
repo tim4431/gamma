@@ -61,8 +61,12 @@ function ApprovalPreview({ tool, preview = {}, args = {} }) {
   </div> : null;
 }
 
-export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide }) {
+// `answered`: the decision given elsewhere, on the bar of the note the
+// card's edit is drawn in (editor/NoteReviewBar.jsx): the card says it as
+// if given here.
+export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide, answered = "" }) {
   const [sent, setSent] = useState(""); // the decision on its way, then taken
+  const taken = sent || answered;
   const [error, setError] = useState("");
   const [declining, setDeclining] = useState(false); // the "what to do instead" line is open
   const [note, setNote] = useState("");
@@ -72,7 +76,7 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
   // beside it (guide/tours/hints.js). It goes again with the card.
   useEffect(() => { guideEvents.emit("approval.shown", { tool: approval.tool }); }, [approval.id, approval.tool]);
   const decide = async (decision, said = "") => {
-    if (sent) return;
+    if (taken) return;
     setSent(decision);
     setError("");
     try {
@@ -84,14 +88,14 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
   };
   const instead = t("What should the assistant do instead? (optional)");
   return (
-    <div className={`chatApproval${sent ? " sent" : ""}`} role="group" data-guide="chat.approval" aria-label={t("Approval needed")}>
+    <div className={`chatApproval${taken ? " sent" : ""}`} role="group" data-guide="chat.approval" aria-label={t("Approval needed")}>
       <div className="chatApprovalCaption"><ShieldIcon size={14} />{t("Approval needed")} · {permission}</div>
       <div className="chatApprovalHead"><Icon size={16} /><span>{approvalTitle(approval, { titleOf, permission })}</span></div>
       <ApprovalPreview tool={approval.tool} preview={approval.preview} args={approval.args} />
       {error ? <div className="chatApprovalError" role="alert">{error}</div> : null}
-      {sent ? (
+      {taken ? (
         <div className="chatApprovalStatus" role="status">
-          {ALLOWING.has(sent) ? t("Allowed. The assistant goes on…") : t("Not allowed. The assistant goes on without it…")}
+          {ALLOWING.has(taken) ? t("Allowed. The assistant goes on…") : t("Not allowed. The assistant goes on without it…")}
         </div>
       ) : declining ? (
         <form className="chatApprovalDecline" onSubmit={(e) => { e.preventDefault(); decide("deny", note); }}>

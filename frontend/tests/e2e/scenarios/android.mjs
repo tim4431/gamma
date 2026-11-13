@@ -445,7 +445,7 @@ export async function androidScenarios(env) {
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "detached" });
       dialog = await openImport();
-      await dialog.getByText("Notability notes", { exact: true }).click();
+      await dialog.getByText("Notability & GoodNotes", { exact: true }).click();
       const chooser = page.waitForEvent("filechooser");
       const next = dialog.getByRole("button", { name: "Next", exact: true });
       if (await next.count()) await next.click();

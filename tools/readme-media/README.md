@@ -116,7 +116,7 @@ import goes through Gamma's real Notability reader. The repository's
 Notability samples are not cleared for publication, so a note is generated
 rather than shown.
 
-The story: the library home, ≡ View → Import… → Notability notes → Choose
+The story: the library home, ≡ View → Import… → Notability & GoodNotes → Choose
 files… (answered by `setFiles`, so no picker shows), the review with the note
 under "Library after import", Import to library, Import complete, Done; the
 new page opens with the pencil marks and their ink cards in Notes; then

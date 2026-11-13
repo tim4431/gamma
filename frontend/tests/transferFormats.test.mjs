@@ -101,7 +101,7 @@ test("Zotero's effective highlights follow file bundling while preserving the us
 });
 
 test("imports of embedded annotations carry the strip preference, and only Zotero reviews", () => {
-  for (const source of ["gamma", "markdown", "notion", "logseq", "notability", "goodnotes"]) {
+  for (const source of ["gamma", "markdown", "notion", "logseq", "noteapps"]) {
     const result = resolveImport(source, { hasPdf: true, strip: true });
     assert.equal(result.needsReview, false);
     assert.deepEqual(result.payload, { source });
@@ -118,7 +118,7 @@ test("imports of embedded annotations carry the strip preference, and only Zoter
 
 test("a .zip already chosen is offered only the sources that read an archive", () => {
   const archive = resolveImport("markdown", { hasPdf: true, archive: true });
-  assert.deepEqual(archive.formats.map(({ id }) => id), ["zotero", "markdown", "notability", "goodnotes", "notion", "gamma"]);
+  assert.deepEqual(archive.formats.map(({ id }) => id), ["zotero", "markdown", "noteapps", "notion", "gamma"]);
   assert.equal(archive.definition.id, "markdown");
   assert.equal(resolveImport("logseq", { archive: true }).definition.id, "zotero", "a source that reads no archive falls back");
 });
@@ -221,9 +221,11 @@ test("Notion's card names the images each switch leaves in the zip", () => {
       "No images or handwriting", "The .zip holds the Markdown alone"]);
 });
 
-test("each import source says what its picker takes, the note apps several files", () => {
-  assert.equal(importSource("notability").multiple, true);
-  assert.equal(importSource("goodnotes").accept, ".goodnotes,.zip,application/zip");
+test("each import source says what its picker takes, the note apps several files of either app", () => {
+  assert.equal(importSource("noteapps").multiple, true);
+  assert.equal(importSource("noteapps").accept, ".note,.ntb,.goodnotes,.zip,application/zip");
+  assert.equal(importSource("notability"), undefined); // one card for both apps
+  assert.equal(importSource("goodnotes"), undefined);
   assert.equal(importSource("markdown").multiple, undefined);
   assert.equal(importSource("markdown").accept, ".md,.markdown,.zip,text/markdown,application/zip");
   for (const id of ["zotero", "notion", "gamma"]) assert.equal(importSource(id).accept, ".zip,application/zip");

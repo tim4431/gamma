@@ -246,7 +246,7 @@ def ink_import():
         # running on: no dissolve between two pointer positions.
         hold(m['menu'], 0.6),
         # ≡ View → Import…, the Import dialog (its logos loaded off camera
-        # before the take), the Notability card and its instructions, Choose
+        # before the take), the Notability & GoodNotes card and its instructions, Choose
         # files… pressed, all at 1.3×. The file picker is answered by setFiles
         # and never shows.
         (m['menu'], m['choose'] + 0.08, 1.3),

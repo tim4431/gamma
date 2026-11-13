@@ -69,10 +69,10 @@ test("what an opened file becomes", () => {
   assert.equal(kind("notes.md"), "page");
   assert.equal(kind("notes.markdown"), "page");
   assert.equal(kind("README", "text/markdown"), "page");
-  assert.equal(kind("Lecture.note"), "notability");
-  assert.equal(kind("Lecture.ntb"), "notability");
-  assert.equal(kind("Lecture.goodnotes"), "goodnotes");
-  assert.equal(kind("Lecture.GOODNOTES"), "goodnotes");
+  assert.equal(kind("Lecture.note"), "noteapps");
+  assert.equal(kind("Lecture.ntb"), "noteapps");
+  assert.equal(kind("Lecture.goodnotes"), "noteapps");
+  assert.equal(kind("Lecture.GOODNOTES"), "noteapps");
   assert.equal(kind("vault.zip"), "archive");
   assert.equal(kind("export", "application/zip"), "archive");
   for (const name of ["photo.jpg", "photo.JPEG", "shot.png", "loop.gif", "web.webp", "IMG_0001.HEIC", "scan.heif", "plot.SVG"]) {
