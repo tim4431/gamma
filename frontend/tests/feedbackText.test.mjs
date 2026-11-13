@@ -30,14 +30,25 @@ test("a region's heading: its rect in the picture's pixels, a note under one, on
   assert.equal(entryHeading(entry("region", { note: "a thought" })), "Note on a region");
 });
 
-test("how the place was found: exactly, roughly, by estimate, not at all, not yet, on an earlier build", () => {
+test("a text file's range: its lines and quote, a note under one, one line alone", () => {
+  const lines = (where) => ({ id: "t3", file: "main.tex", format: "text", kind: "lines", where });
+  assert.equal(entryHeading(lines({ line: 118, end: 120, quote: "the loss is\ndefined as", placed: "exact" })),
+    "Lines 118–120 · “the loss is defined as”");
+  assert.equal(entryHeading(lines({ line: 17, quote: "This note measures how much it helps", placed: "exact" })),
+    "Line 17 · “This note measures how much it helps”", "a range of one line has no end");
+  assert.equal(entryHeading(lines({ line: 17, end: 17, quote: "x", note: "why" })), "Line 17 · note on “x”");
+  assert.equal(entryHeading(lines({ line: 4, end: 6, quote: "x", note: "why" })), "Lines 4–6 · note on “x”");
+  assert.equal(entryHeading(lines({ quote: "x" })), "A note", "no lines: no place");
+});
+
+test("how the place was found: exactly, roughly, by estimate, not at all, not yet, on an earlier version", () => {
   assert.equal(placedText({ placed: "exact" }), "placed exactly");
   assert.equal(placedText({ placed: "rough", match: 0.874 }), "placed roughly (87%)");
   assert.equal(placedText({ placed: "rough" }), "placed roughly");
   assert.equal(placedText({ placed: "estimate" }), "placed by estimate");
-  assert.equal(placedText({ placed: "lost" }), "not found in this build");
+  assert.equal(placedText({ placed: "lost" }), "not found in the current version", "the Markdown's words, for every format");
   assert.equal(placedText({ placed: "pending" }), "not placed yet");
-  assert.equal(placedText({ placed: "earlier" }), "drawn on an earlier build");
+  assert.equal(placedText({ placed: "earlier" }), "drawn on an earlier version");
   assert.equal(placedText({}), "", "a note, the whole file");
   assert.equal(placedText(undefined), "");
 });
@@ -47,7 +58,7 @@ test("a region's place: exactly, on an earlier version of the picture, or the fi
   assert.equal(placedText({ placed: "earlier" }, "region"), "drawn on an earlier version of the picture");
   assert.equal(placedText({ placed: "lost" }, "region"), "the file is no longer a picture");
   assert.equal(placedText({}, "region"), "");
-  assert.equal(placedText({ placed: "earlier" }, "ink"), "drawn on an earlier build", "the PDF's words for the other kinds");
+  assert.equal(placedText({ placed: "earlier" }, "ink"), "drawn on an earlier version", "the PDF's words for the other kinds");
 });
 
 test("the source: the file's name and its line or lines, the line recorded at the comment's opening said so", () => {

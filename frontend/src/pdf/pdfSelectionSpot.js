@@ -4,6 +4,7 @@
 // repeats lands where it was selected) and the box to render a picture of it
 // when its text layer is unreliable — a formula, a table
 // (ai_context.request_selections / selection_crops).
+import { textSpan } from "../shared/model/blockModel.js";
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
@@ -15,8 +16,12 @@ function boxOf(x0, y0, x1, y1, width, height) {
 
 // A stored highlight's spot, from its position ({pageNumber, width, height,
 // boundingRect: {x1, y1, x2, y2}}, the rect in the page's render size at
-// capture).
+// capture). A range of a text file (text_position) has no page: its spot
+// is its lines, {page: 0, box: null, line, end}, as the code view reports
+// a selection (ai_context.request_selections reads them).
 export function highlightSpot(position) {
+  const span = textSpan(position);
+  if (span) return { page: 0, box: null, line: span.line, end: span.end };
   const r = position?.boundingRect;
   const page = position?.pageNumber || 0;
   if (!page) return { page: 0, box: null };

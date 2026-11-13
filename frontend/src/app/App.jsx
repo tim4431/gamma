@@ -28,7 +28,7 @@ import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNa
 import { useTasks } from "../tasks/useTasks";
 import { useAppJobs } from "../tasks/useAppJobs";
 import { TaskBadge, TasksButton, TasksPanel } from "../tasks/TasksTray";
-import { progressText, taskTitle } from "../tasks/taskKinds.js";
+import { progressText, relocationSummary, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
@@ -128,6 +128,8 @@ import {
   closestPlacement,
   reviewUndone,
   placedToCheck,
+  roughMatchPercent,
+  textSpan,
   isInkGroup,
   isPlaceBlock,
   anchorOf,
@@ -3735,17 +3737,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The viewer's mouseup listener, set up once, reads the set through this.
   const pdfSelectionsRef = useRef(pdfSelections);
   useEffect(() => { pdfSelectionsRef.current = pdfSelections; }, [pdfSelections]);
+  // `spot`: {page, box} on a PDF, or a code view's lines {line, end, file}
+  // (page 0), which the chip names and the server reads as `lines`.
   function addPdfSelection(text, additive, spot) {
     const part = (text || "").trim();
     if (!part) return;
-    const item = { text: part, page: spot?.page || 0, box: spot?.box || null };
+    const item = { text: part, page: spot?.page || 0, box: spot?.box || null,
+      ...(spot?.line ? { line: spot.line, end: spot.end || spot.line, file: spot.file || "" } : {}) };
     if (!additive) {
       setPdfSelections([item]);
       return;
     }
     const held = pdfSelectionsRef.current;
     if (!held.some((s) => s.text === part) && held.length >= MAX_CHAT_PASSAGES) {
-      setStatus(t("A chat message takes at most {n} PDF passages — remove one to add another.", { n: MAX_CHAT_PASSAGES }));
+      setStatus(t("A chat message takes at most {n} passages — remove one to add another.", { n: MAX_CHAT_PASSAGES }));
       return;
     }
     setPdfSelections((prev) => (prev.some((s) => s.text === part) || prev.length >= MAX_CHAT_PASSAGES ? prev : [...prev, item]));
@@ -3906,7 +3911,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // is its one page).
       addChatPicture(regionPicture("area", focusedBlockId, h.position.pageNumber || 1, regionBox(h.position)));
     } else {
-      addPdfSelection(h.quote, additive, highlightSpot(h.position));
+      const spot = highlightSpot(h.position);
+      addPdfSelection(h.quote, additive, spot.line ? { ...spot, file: doc?.name } : spot);
     }
   }
   // Styled in-app dialogs replacing window.confirm / link decisions.
@@ -4398,6 +4404,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Committed on mouseup (not selectionchange) so the modifier key is known:
   // Ctrl+select APPENDS another passage, plain select replaces the set, and
   // a plain click in the PDF clears it. Clicking into the chat keeps it.
+  // Optionally the clearing click drops the PDF snapshots pending in the
+  // chat too (Settings → AI chat). Pasted images are never touched.
+  function clearPdfSelections() {
+    setPdfSelections([]);
+    if (chatImgAutoClearRef.current && pdfImagesRef.current.size) {
+      setChatImages((prev) => prev.filter((p) => !pdfImagesRef.current.has(pictureUrl(p))));
+    }
+  }
   const penSelectionRef = useRef(null);
   useEffect(() => {
     function onMouseUp(e) {
@@ -4418,6 +4432,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
         return;
       }
+      // The code view reports its own selections, with their lines
+      // (the surface's onChatSelection), and its own clears.
+      if (e.target.closest?.(".docTextView")) return;
       const additive = e.ctrlKey || e.metaKey;
       setTimeout(() => {
         const sel = window.getSelection();
@@ -4425,19 +4442,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (!text) {
           // Highlight clicks set the quote as the selection (in their own
           // click handler) — don't clear it from here.
-          if (!additive && !e.target.closest?.("[data-hl-id]")) {
-            setPdfSelections([]);
-            // Optionally the same gesture drops PDF snapshots pending in the
-            // chat (Settings → AI chat). Pasted images are never touched.
-            if (chatImgAutoClearRef.current && pdfImagesRef.current.size) {
-              setChatImages((prev) => prev.filter((p) => !pdfImagesRef.current.has(pictureUrl(p))));
-            }
-          }
+          if (!additive && !e.target.closest?.("[data-hl-id]")) clearPdfSelections();
           return;
         }
         const node = sel.anchorNode;
         const el = node?.nodeType === 3 ? node.parentElement : node;
-        if (!(viewerWrapRef.current && el && viewerWrapRef.current.contains(el))) return;
+        if (!(viewerWrapRef.current && el && viewerWrapRef.current.contains(el)) || el.closest(".docTextView")) return;
         addPdfSelection(text, additive, rangeSpot(sel.getRangeAt(0)));
       }, 10);
     }
@@ -4454,7 +4464,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!text) return;
       const node = sel.anchorNode;
       const el = node?.nodeType === 3 ? node.parentElement : node;
-      if (!(viewerWrapRef.current && el && viewerWrapRef.current.contains(el))) return;
+      if (!(viewerWrapRef.current && el && viewerWrapRef.current.contains(el)) || el.closest(".docTextView")) return;
       addPdfSelection(text, false, rangeSpot(sel.getRangeAt(0)));
     }
     penSelectionRef.current = readSelection;
@@ -4661,10 +4671,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // "Text highlighters"): the account's list, the one armed this session (a
   // selection the mouse or the pen lets go of is then marked at once in its
   // look), their strip buttons' menu and the edits. Arming one puts the
-  // pen's strip away; `highlighterColor` only seeds the first.
+  // pen's strip away; `highlighterColor` only seeds the first. They apply
+  // where the page's pane takes text highlights (viewers.js `tools`): the
+  // PDF once it has its address, the code view.
+  const highlightPane = viewerOf(doc?.format, doc) || "pdf";
+  const takesHighlights = !!VIEWERS[highlightPane]?.tools.includes("highlighter") && (highlightPane !== "pdf" || !!pdfUrl);
   const textHighlighter = useTextHighlighter({
     stored: highlightPresets, setStored: setHighlightPresets, seedColor: highlighterColor, palette, setPalette,
-    canHighlight: !readOnly && !!pdfUrl && !pdfHidden, inkOpen: inkUi.open, onArm: () => { if (inkUi.open) closeInkStrip(); },
+    canHighlight: !readOnly && takesHighlights && !pdfHidden, inkOpen: inkUi.open, onArm: () => { if (inkUi.open) closeInkStrip(); },
     openSettings: openSettingsPane, setStatus,
   });
   const [inkFlash, setInkFlash] = useState(null);
@@ -5233,7 +5247,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // A thread of this page, from the Comments window or a deep link: its
   // block scrolled to (a highlight or an ink group on the PDF, a region on
-  // the picture: its row and its place on the document), flashed, and the
+  // the picture, a range in the code view: its row and its place on the
+  // document), flashed, and the
   // popover open on the thread. A note's thread brings the notes over a
   // phone's PDF tab (showInNotes), so the note it is about shows under it.
   function showThread(thread) {
@@ -6468,7 +6483,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       updateTask(taskId, { state: "done", info: replace ? t("replaced") : t("attached") });
       // A replacement on a page with highlights: the server finds each
       // one's text in the new file and moves it there (its job rides in the
-      // answer; onJobFinished says what it found). A job that could not
+      // answer; onJobFinished says what it found; a text file's run is done
+      // by the answer, its counts as `relocation`). A run that could not
       // start comes back as relocation_error, its reason.
       if (bound?.job) tasks.adopt(bound.job);
       if (replace) attemptedMetaRef.current.delete(pageId); // its lookup was the old file's
@@ -6482,9 +6498,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setPdfHidden(false);
       setStatus(note || (!replace ? (src ? t("PDF attached.") : t("File attached."))
         : bound?.relocation_error
-          ? t("PDF replaced. Its highlights were not placed ({reason}): choose Find highlights in this PDF in the Document menu to place them.",
+          ? (src ? t("PDF replaced. Its highlights were not placed ({reason}): choose Find highlights in this PDF in the Document menu to place them.",
             { reason: t(bound.relocation_error) })
-          : src ? t("PDF replaced.") : t("File replaced.")));
+            : t("File replaced. Its highlights were not placed ({reason}): choose Find highlights in this file in the Document menu to place them.",
+              { reason: t(bound.relocation_error) }))
+          : src ? t("PDF replaced.")
+          : bound?.relocation ? `${t("File replaced.")} ${relocationSummary(bound.relocation)}` : t("File replaced.")));
     } catch (err) {
       if (err.status === 409 && err.data?.page_id) {
         // The library already holds this file on another page — the page is
@@ -8043,7 +8062,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // addHighlightAsBlock takes it). Returns the new highlight's id. `edit`
   // false: its note is not opened for typing (a comment is written instead).
   // `place`: the key the position is stored under, the PDF's unless a
-  // picture's region (addRegion).
+  // picture's region (addRegion) or a text file's lines (finishSelection).
   function addHighlight(highlight, { edit = true, place = POSITION_KEY.pdf } = {}) {
     if (readOnly) return "";
     const withId = { ...highlight, id: highlight.id || makeId() };
@@ -8058,7 +8077,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setBlocks(nextBlocks);
     // autosave effect will persist
     setStatus(t("Highlight saved."));
-    guideEvents.emit("highlight.created", { id: withId.id, kind: withId.position?.area || place === POSITION_KEY.image ? "area" : "text" });
+    guideEvents.emit("highlight.created", { id: withId.id,
+      kind: place === POSITION_KEY.text ? "lines" : withId.position?.area || place === POSITION_KEY.image ? "area" : "text" });
     return withId.id;
   }
   // A region drawn on the picture (the image viewer's tip): a highlight
@@ -8068,6 +8088,44 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function addRegion(position, { color, comment = false } = {}) {
     const id = addHighlight({ quote: "", position, color: highlightColor(color) || DEFAULT_HIGHLIGHT }, { edit: !comment, place: POSITION_KEY.image });
     if (comment && id) commentOnNewHighlight(id);
+  }
+  // A selection let go of in a viewer that takes highlights (the PDF's, the
+  // code view's onAnchor), its position stored under `place`: a highlight
+  // waiting to be moved takes its place; else the link dialog (the PDF's
+  // tip alone has Link), or a highlight in the armed highlighter's look or
+  // the popup's pick: a swatch (a palette colour, stored at its alpha) in
+  // the style picked with it, or a highlighter's. Nothing here changes a
+  // highlighter. A comment's passage is the wash, which marks it
+  // commented. Returns the new highlight's id.
+  function finishSelection(position, quote, hideTip, extras, place = POSITION_KEY.pdf) {
+    if (moveHighlightIdRef.current) {
+      moveHighlightTo(moveHighlightIdRef.current, position, quote, place);
+      hideTip?.();
+      return undefined;
+    }
+    if (extras?.link) {
+      setLinkDialog({ position, quote });
+      hideTip?.();
+      return undefined;
+    }
+    const armed = extras?.highlighter ? textHighlighter.armedPreset : null;
+    const color = armed ? highlightColor(armed.color) : highlightColor(extras?.color) || DEFAULT_HIGHLIGHT;
+    const style = extras?.comment ? "highlight" : armed ? armed.style : extras?.style || "highlight";
+    const id = addHighlight({ quote, note: extras?.commentText || "", position, color, style }, { edit: !extras?.comment, place });
+    hideTip?.();
+    if (extras?.comment && id) commentOnNewHighlight(id);
+    return id;
+  }
+  // The bar over a highlight the highlighter just made: what its menu does
+  // to that one highlight (a swatch its colour, its style kept; a
+  // highlighter its look).
+  function madeHighlightAction(id, action, value) {
+    if (action === "mark") changeHighlightMark(id, { color: highlightColor(value.color), style: value.style });
+    else if (action === "style") changeHighlightMark(id, { style: value });
+    else if (action === "save") textHighlighter.saveLook(value);
+    else if (action === "remove") deleteHighlight(id);
+    else if (action === "comment") openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
+    else if (action === "link") setLinkDialog({ position: null, quote: highlights.find((x) => x.id === id)?.quote || "", editBlockId: id });
   }
 
   // A page whose PDF Zotero holds and Gamma not yet (its `zotero_pdf`,
@@ -8398,8 +8456,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // usual way (null drops the key). A move started from the review card
   // opens it again on the highlight, "Moved", with what the move changed
   // for its undo (reviewStep), and the card's step before it when it had
-  // one, which that undo goes back to.
-  function moveHighlightTo(blockId, position, quote) {
+  // one, which that undo goes back to. `place`: the key the selection's
+  // position is stored under (a text file's lines: a lost or rough range
+  // put back by hand).
+  function moveHighlightTo(blockId, position, quote, place = POSITION_KEY.pdf) {
     setMoveHighlightId(null);
     const from = moveFromReviewRef.current;
     const fromReview = from?.id === blockId;
@@ -8409,14 +8469,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
       ...b,
       properties: applyPatch(b.properties, {
-        pdf_position: position,
+        [place]: position,
         quote: quote || (position.area ? null : b.properties?.quote),
       }),
     })));
     setStatus(t("Highlight moved."));
     triggerFlash(blockId);
     const step = fromReview ? reviewStep("moved", {
-      position: block.properties?.pdf_position, quote: block.properties?.quote || "", prior: from.prior,
+      position: block.properties?.[place], quote: block.properties?.quote || "", prior: from.prior,
     }, position) : null;
     if (step) pdfReviewRef.current?.(blockId, { done: step, scroll: false });
   }
@@ -8424,12 +8484,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Use closest match on a lost highlight's review card: it takes the place
   // the run found for its passage below the account's threshold, and that
   // place's text (closestPlacement: lost, closest, doc_id, approx, match
-  // and prev go), drawn solid. A tree edit like any other (ops, undo).
+  // and prev go), drawn solid. A lost range of a text file takes it from
+  // its menu, drawn dashed until accepted (its prev the lines it was lost
+  // at). A tree edit like any other (ops, undo).
+  const closestOf = (b) => closestPlacement(b?.properties?.[placeKeyOf(b)], b?.properties?.quote);
   function placeClosestMatch(blockId) {
-    if (readOnly || !closestPlacement(findBlock(blocks, blockId)?.properties?.pdf_position)) return;
+    if (readOnly || !closestOf(findBlock(blocks, blockId))) return;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => {
-      const placed = closestPlacement(b.properties?.pdf_position);
-      return placed ? { ...b, properties: applyPatch(b.properties, { pdf_position: placed.position, quote: placed.quote || null }) } : b;
+      const placed = closestOf(b);
+      return placed ? { ...b, properties: applyPatch(b.properties, { [placeKeyOf(b)]: placed.position, quote: placed.quote || null }) } : b;
     }));
     triggerFlash(blockId);
   }
@@ -8484,15 +8547,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // area placed by estimate: its review card, its menu), or the Document
   // menu's Accept all on every pending one of the page: the place stays, and
   // approx, match, prev and doc_id go (acceptedPosition), so it is drawn
-  // solid and its rectangles are the current PDF's. One
+  // solid and its rectangles are the current PDF's (a text file's range
+  // under its own key: its lines stay). One
   // tree edit like any other (ops, one undo step), however many it accepts.
   function acceptHighlightPlaces(ids) {
     const wanted = ids.filter((id) => findBlock(blocks, id));
     if (readOnly || !wanted.length) return;
     const accept = (b) => {
-      const position = b.properties?.pdf_position;
+      const key = placeKeyOf(b);
+      const position = b.properties?.[key];
       const accepted = acceptedPosition(position);
-      return accepted === position ? b : { ...b, properties: { ...b.properties, pdf_position: accepted } };
+      return accepted === position ? b : { ...b, properties: { ...b.properties, [key]: accepted } };
     };
     setBlocks((prev) => wanted.reduce((tree, id) => updateBlockTree(tree, id, accept), prev));
     if (wanted.length > 1) setStatus(tn("{n} highlight accepted where it was placed.", "{n} highlights accepted where they were placed.", wanted.length));
@@ -9176,7 +9241,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } : null,
     // The text highlighters, where the strip's apply: on or off, the next;
     // the pill names the one on.
-    highlighter: !readOnly && docView.viewer === "pdf" && !docView.hidden ? {
+    highlighter: !readOnly && !!docView.spec?.tools.includes("highlighter") && !docView.hidden ? {
       toggle: () => sayHighlighter(textHighlighter.toggle(null)),
       next: () => sayHighlighter(textHighlighter.next()),
     } : null,
@@ -10116,8 +10181,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A link visitor without an account signs in through the share's own gate.
   const commentSignIn = shareMode && shareInfo && !shareInfo.viewer && !publicPage
     ? () => { setThreadPop(null); setLoginError(""); setShareGate("login"); } : undefined;
-  // The PDF's comment margin (comments/marginSlot.jsx, docs/dev/comments.md
-  // "The PDF margin"): what its cards read, the popover's props with the
+  // The comment margin (comments/marginSlot.jsx, docs/dev/comments.md
+  // "The margin"): what its cards read, the popover's props with the
   // active card's target; none on a phone. The handlers reach App's latest
   // through a ref, so the value changes only with what the cards show.
   const marginFns = useRef(null);
@@ -10163,15 +10228,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const marginLost = () => setThreadPop((cur) => (cur?.margin ? { ...cur, margin: false, anchor: highlightEl(cur.blockId) } : cur));
   // The surface of the panes DocumentPane draws itself (documents/
   // viewerSurface.js): the document and where its bytes are read, the
-  // PDF's zoom, place, margin and ref contracts, the page's regions and
-  // anchors (`highlights` and `anchors` are the document's), a line link's
-  // mark on this page, and App's handlers; null handlers leave a control
-  // out (no region drag when read-only, no Ask AI on a share, Show in
-  // folder on the desktop alone).
+  // PDF's zoom, place, margin and ref contracts, the page's regions or text
+  // ranges and anchors (`highlights` and `anchors` are the document's, by
+  // its position key), a line link's mark on this page, and App's
+  // handlers; null handlers leave a control out (no region drag nor
+  // selection tip when read-only, no Ask AI on a share, Show in folder on
+  // the desktop alone).
   const { surface: viewerSurface, reportRef: viewerReport } = useViewerSurface({
     doc, fileUrl: documentFileUrl(doc, { asset: assetUrl }), pageId: focusedBlockId, readOnly, hidden: pdfHidden, phone: isPhone,
     scale: pdfScale, mark: pageTarget?.kind === "line" && pageTarget.pageId === focusedBlockId ? pageTarget : null,
-    regions: highlights, anchors, flashId: flashingId, regionMode: areaSelectMode && !shareMode,
+    regions: highlights, anchors, flashId: flashingId, regionMode: areaSelectMode && !shareMode, moveMode: !!moveHighlightId,
     commentMargin, marginRef: pdfMarginRef, scrollRef: scrollToRef, captureRef: pdfCaptureRef,
   }, {
     onZoomTo: zoomTo, onEffectiveScale: setPdfEffScale,
@@ -10183,6 +10249,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onRegionJump: highlightPressed,
     onRegionContext: setHighlightMenu,
     onRegionThread: commentsOn ? (hlId, anchor) => openThread(hlId, anchor, { toggle: false, pdf: true }) : null,
+    // the code view's selection: a range of lines (its tip's pick, the armed
+    // highlighter, Comment), the bar over one just made, and the chat's
+    // passage with its lines ("" a plain click, which clears the set)
+    onAnchor: readOnly ? null : (position, quote, extras) => finishSelection(position, quote, null, extras, POSITION_KEY.text),
+    onHighlightAction: readOnly ? null : madeHighlightAction,
+    onChatSelection: (text, additive, spot) => {
+      if (text) addPdfSelection(text, additive, spot);
+      else if (!additive) clearPdfSelections();
+    },
     onMarginLost: marginLost,
     onAskRegion: shareMode ? null : (position) => addChatPicture(regionPicture("area", focusedBlockId, 1, regionBox(position))),
     onReveal: IS_DESKTOP && focusedFile ? () => askShell("reveal-on-disk", { page: focusedBlockId }) : null,
@@ -10944,8 +11019,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           </MenuItem>
                         ) : null}
                         {/* the highlights drawn dashed or hollow after a replacement, to
-                            review: the first one's card; the dashed ones accepted as one edit */}
-                        {reviewHighlights.length ? (
+                            review: the first one's card (a PDF's: a text file's ranges are
+                            reviewed from their menus); the dashed ones accepted as one edit */}
+                        {reviewHighlights.length && isPdf(doc) ? (
                           <MenuItem icon={TextSearchIcon} onClick={reviewPending}
                             title={t("Show the first dashed or hollow highlight with what it matched and where it was before")}>
                             {tn("Review {n} highlight", "Review {n} highlights", reviewHighlights.length)}
@@ -10986,12 +11062,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   askShell("follow-file-on-disk", { page: focusedBlockId });
                                 }}>{t("Push from a file on this computer…")}</MenuItem>
                             ) : null}
-                            {isPdf(doc) ? (
+                            {isPdf(doc) || (doc?.format === "text" && pdfStored) ? (
                               <MenuItem icon={LocateIcon} disabled={loading || relocating || !pdfStored} onClick={relocateHighlights}
                                 title={!pdfStored ? t("This PDF is shown from its link and not stored on the server, so its highlights cannot be placed in it")
                                   : relocating ? t("This page's highlights are being placed — see Background tasks")
                                   : t("Find each highlight's text in this file and move the highlight there; one matched roughly is drawn dashed, one whose text is gone hollow")}>
-                                {t("Find highlights in this PDF")}
+                                {isPdf(doc) ? t("Find highlights in this PDF") : t("Find highlights in this file")}
                               </MenuItem>
                             ) : null}
                             {!pdfLinked ? <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the file…")}</MenuItem> : null}
@@ -11931,7 +12007,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onAddSheetAfter: readOnly ? undefined : addSheetAfter,
                   onEnterAttachMode: readOnly ? null : startAttachMode,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
-                  onMoveHighlight: readOnly || !isPdf(doc) ? null : startHighlightMove,
+                  onMoveHighlight: readOnly || !takesHighlights ? null : startHighlightMove,
                   onOpenLinkTarget: (b) => {
                     const p = b.properties || {};
                     if (p.link_page_id) {
@@ -13193,6 +13269,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // they are a flyout's (MarkMenuRows).
   const highlightRows = (id, close, nested = false) => {
     const h = highlights.find((x) => x.id === id);
+    // a text file's range: no link (the code view's tip has none), its
+    // closest match from here (no review card hangs on lines)
+    const range = !!textSpan(h?.position);
+    const closest = range && h.position.lost && !readOnly ? closestOf(findBlock(blocks, id)) : null;
     return (
       <>
         <MarkMenuRows own={{ style: h?.style || "highlight", color: h?.color }} line={!!h && !h.position?.area && !h.linkTarget}
@@ -13201,16 +13281,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onColor={(c) => changeHighlightMark(id, { color: highlightColor(c) })}
           onPreset={(p) => changeHighlightMark(id, { color: highlightColor(p.color), style: p.style })}
           onSave={readOnly ? null : () => textHighlighter.saveLook({ style: h?.style || "highlight", color: h?.color })} />
-        <button
-          role="menuitem"
-          className="ctxMenuItem"
-          onClick={() => {
-            setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: id, url: h?.linkTarget?.url || "" });
-            close();
-          }}
-        >
-          {h?.linkTarget ? t("Change link…") : t("Link to page…")}
-        </button>
+        {!range ? (
+          <button
+            role="menuitem"
+            className="ctxMenuItem"
+            onClick={() => {
+              setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: id, url: h?.linkTarget?.url || "" });
+              close();
+            }}
+          >
+            {h?.linkTarget ? t("Change link…") : t("Link to page…")}
+          </button>
+        ) : null}
         {h?.linkTarget?.url ? (
           <button
             role="menuitem"
@@ -13255,15 +13337,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {t("Accept")}
           </button>
         ) : null}
-        {!readOnly ? (
-          <button
-            role="menuitem"
-            className="ctxMenuItem"
-            onClick={() => { startHighlightMove(id); close(); }}
-          >
-            {t("Move to a selection…")}
+        {/* its place by hand: on a selection, or a lost range's closest match */}
+        {[
+          !readOnly && { key: "move", label: t("Move to a selection…"), title: range ? t("Select the lines where it belongs") : undefined,
+            run: () => startHighlightMove(id) },
+          closest && { key: "closest", label: t("Use the closest match ({n}%)", { n: roughMatchPercent(closest.position) }),
+            run: () => placeClosestMatch(id) },
+        ].filter(Boolean).map((row) => (
+          <button key={row.key} role="menuitem" className="ctxMenuItem" title={row.title} onClick={() => { row.run(); close(); }}>
+            {row.label}
           </button>
-        ) : null}
+        ))}
         {commentsOn ? (
           <button
             role="menuitem"
@@ -13371,7 +13455,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     zoom: paneTool("zoom"),
     ink: paneTool("ink") && !readOnly,
     record: paneTool("record") && !readOnly,
-    highlighter: paneTool("highlighter") && !readOnly && !!pdfUrl,
+    highlighter: paneTool("highlighter") && !readOnly,
     translate: paneTool("translate") && !shareMode && !!pdfUrl,
     paper: paneTool("paper") && notebook && !readOnly,
     notesView: paneTool("notesView") && notebook,
@@ -13822,7 +13906,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       )}
       {moveHighlightId && (
         <div className="attachModeBanner" data-move-highlight={moveHighlightId}>
-          {t("Select the text on the PDF where this highlight belongs")}
+          {t("Select the text where this highlight belongs")}
           <button onClick={() => setMoveHighlightId(null)}>{t("Cancel")}</button>
         </div>
       )}
@@ -14082,44 +14166,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               fileId={fileHash(doc)}
               pageId={focusedBlockId || ""}
               reviewRef={pdfReviewRef}
-              onSelectionFinished={readOnly ? undefined : (position, quote, hideTip, extras) => {
-                if (moveHighlightIdRef.current) {
-                  // a highlight waiting to be moved takes this selection's place
-                  moveHighlightTo(moveHighlightIdRef.current, position, quote);
-                  hideTip?.();
-                  return;
-                }
-                if (extras?.link) {
-                  setLinkDialog({ position, quote });
-                  hideTip?.();
-                  return;
-                }
-                // The armed highlighter's look, or the popup's pick: a swatch
-                // (a palette colour, stored at its alpha) in the style picked
-                // with it, or a highlighter's. Nothing here changes a
-                // highlighter. A comment's passage is the wash, which marks
-                // it commented.
-                const armed = extras?.highlighter ? textHighlighter.armedPreset : null;
-                const color = armed ? highlightColor(armed.color) : highlightColor(extras?.color) || DEFAULT_HIGHLIGHT;
-                const style = extras?.comment ? "highlight" : armed ? armed.style : extras?.style || "highlight";
-                const id = addHighlight({ quote, note: extras?.commentText || "", position, color, style }, { edit: !extras?.comment });
-                hideTip?.();
-                if (extras?.comment && id) commentOnNewHighlight(id);
-                return id;
-              }}
-              // the bar over a highlight the highlighter just made: what its menu does to
-              // that one highlight (a swatch its colour, its style kept; a highlighter its look)
-              onHighlightAction={readOnly ? undefined : (id, action, value) => {
-                if (action === "mark") changeHighlightMark(id, { color: highlightColor(value.color), style: value.style });
-                else if (action === "style") changeHighlightMark(id, { style: value });
-                else if (action === "save") textHighlighter.saveLook(value);
-                else if (action === "remove") deleteHighlight(id);
-                else if (action === "comment") {
-                  openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
-                } else if (action === "link") {
-                  setLinkDialog({ position: null, quote: highlights.find((x) => x.id === id)?.quote || "", editBlockId: id });
-                }
-              }}
+              onSelectionFinished={readOnly ? undefined : finishSelection}
+              // the bar over a highlight the highlighter just made
+              onHighlightAction={readOnly ? undefined : madeHighlightAction}
             />
           ), notebook: () => (
             <NotebookViewer key={focusedBlockId} place={tabScrollRef.current[focusedBlockId]?.place}

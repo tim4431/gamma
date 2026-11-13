@@ -368,6 +368,11 @@ off by default (a page with none inside exports as without it):
 - `notes_pdf`: the notes typeset as their own PDF, for any page; with
   `sub_pages`, one PDF of every page, each on a fresh sheet.
 
+A secrets file's text is kept from the model (`feedback.anchors.text_kept`),
+so its ranges' quotes are too: `markdown` leaves out the highlights of such a
+page and the result's text says so; `notes_pdf` leaves out every highlight
+when the export holds one.
+
 A PDF (`application/pdf`) or a zip (`application/zip`) is returned as an
 embedded resource (base64 blob) after a text line naming the file. Its `uri` is the HTTP export that gives the
 same file to a signed-in browser. Claude Code writes the blob to a file and
@@ -461,7 +466,8 @@ sign-in gets it from the same checkbox.
   writes through `comments.create` / `comments.resolve` as the comment API
   does, author the connection's account, and `comments.written` tells the
   page's room, the Inbox and the feedback files. The answer names the file
-  and the place, links the thread (`gamma_link(thread_id=)`, the address the
+  and the place (`anchors.place_words`; a range of a text file by the lines
+  it holds now, `anchors.following`), links the thread (`gamma_link(thread_id=)`, the address the
   Inbox opens) and carries `{thread_id, comment_id?, page_id, url}` as
   `structuredContent`, with `workspace_id` on a connection of several
   workspaces.

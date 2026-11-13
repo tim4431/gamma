@@ -15,7 +15,9 @@ lookups of "the page of this file" never count one.
 Code: `gamma/documents/formats.py` (the format registry),
 `gamma/documents/model.py` (the stored shape, its builder, its read and the
 predicates), `gamma/documents/text.py` (a document's text, "Text
-extraction" below), `gamma/normalize.py` `document_shape` and `page_documents`
+extraction" below), `gamma/documents/text_anchors.py` (a text file's
+highlight ranges placed again after it changes,
+[highlight_relocation.md](highlight_relocation.md#text-files)), `gamma/normalize.py` `document_shape` and `page_documents`
 (older rows rewritten, migration step 52), `db.BLOCK_HOT_COLUMNS["doc_id"]`
 (the generated column), and on the client `frontend/src/documents/`:
 `formats.js` and `pageDocument.js`, the twins, `viewers.js` (the viewer
@@ -26,8 +28,10 @@ its own ("Viewers" below). Tests:
 `test_shared_fixtures.py`, `test_migrations.py` (`test_v52_*`),
 `test_restore_consistency.py` (a backup from before step 52),
 `frontend/tests/documents.test.mjs`, `libraryUtils.test.mjs`,
-`viewerSurface.test.mjs`, `textLoad.test.mjs` and `textMark.test.mjs`, over the fixtures `tests/shared/formats.json`,
-`tests/shared/document.json` and `tests/shared/textdecode.json`
+`viewerSurface.test.mjs`, `textLoad.test.mjs`, `textMark.test.mjs`,
+`textAnchors.test.mjs` and `textMarks.test.mjs`, over the fixtures
+`tests/shared/formats.json`, `tests/shared/document.json`,
+`tests/shared/textdecode.json` and `tests/shared/textposition.json`
 ("Fixtures" below).
 
 ## Formats
@@ -273,7 +277,11 @@ Where a document is written:
   stamps and the `relocate-highlights` run happen only when the outgoing
   and the incoming documents are both PDFs; a picture replaced by a
   picture writes no stamp on its regions, which read as drawn on another
-  version by their own `hash` ([highlight_relocation.md](highlight_relocation.md)).
+  version by their own `hash` ([highlight_relocation.md](highlight_relocation.md));
+  a text file replaced by a text file stamps nothing either, and its
+  ranges are placed again by their quotes, in the replacement's request
+  up to 512 KiB, else by the job
+  ([highlight_relocation.md](highlight_relocation.md#text-files)).
 - **One library page per stored file**, for every format, keyed by hash
   and extension (`blocks_store.page_for_file(conn, hash, ext)`: the same
   bytes uploaded as `a.txt` and `a.log` are two stored files and two
@@ -407,7 +415,10 @@ computer for the model: a file whose leaf, lowercased, is one of
 `SECRET_NAMES` (`.env`, `.netrc`, `.npmrc`, `.pypirc`, `.htpasswd`,
 `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`), starts with `.env.` or ends
 with `.pem`, `.key`, `.p12` or `.pfx` is never indexed (it is recorded with
-no text), never put in a chat's context and never read by a tool. The
+no text), never put in a chat's context and never read by a tool, nor is
+the quote of a range or a selection of its lines: the chat, `read_page`,
+`read_block`, a thread's place and the feedback entries name its lines
+alone (`feedback.anchors.text_kept`). The
 index is keyed by the bytes and the rule by the name, so a search applies
 it again to every page a hit reaches (`search.hits.docs_of` leaves a
 secrets file's page out of the scope, `hits.build` gives it no hit): a file
@@ -626,11 +637,11 @@ the descriptor and never from the pane's id:
 
 | Field | Meaning |
 |---|---|
-| `tools` | the strip tools that apply (`app/viewerToolItems.js` ids), before App's own conditions: the PDF's `zoom, ink, record, highlighter, translate, selectMode`, the notebook's `zoom, ink, record, paper, notesView`, the picture's `zoom, selectMode` (the region toggle by finger), none for text, media and the file pane |
+| `tools` | the strip tools that apply (`app/viewerToolItems.js` ids), before App's own conditions: the PDF's `zoom, ink, record, highlighter, translate, selectMode`, the notebook's `zoom, ink, record, paper, notesView`, the picture's `zoom, selectMode` (the region toggle by finger), the code view's `highlighter` (the text highlighters, [settings.md](settings.md#text-highlighters)), none for media and the file pane |
 | `host` | the host renders it (DocumentPane's `render`: the PDF and the notebook, which take the host's state); every other pane DocumentPane draws from the surface |
 | `ink` | the markup strip, Record and the player hang on it (the PDF and the notebook) |
 | `regions` | it takes regions (`image_position`, [api.md](api.md) "The highlight shape"; the picture) |
-| `margin` | its threads stand in the comment margin, which App fetches as the page starts to open (the PDF and the picture) |
+| `margin` | its threads stand in the comment margin, which App fetches as the page starts to open (the PDF, the picture and the code view) |
 | `word`, `close` | its name in the View menu and the phone tab, and the × button's title (`T()` keys; "PDF" stays the untranslated format token) |
 
 `documents/documentView.js` is one rule for the open page (App) and a tab
@@ -666,7 +677,7 @@ DocumentPane's own shows, so a text or picture page opens at its own
 place; PagePane mounts it while the view is `shown` and draws the notes
 otherwise, so a closed pane unmounts there. Opening a page
 (`openBlock`): the pane its document gets is preloaded with the comment
-margin (a PDF's or a picture's) as the open starts; a page with a pane
+margin (a PDF's, a picture's or a text file's) as the open starts; a page with a pane
 seeds no empty note and starts no editor; a file page with nothing
 written yet, and no arrangement of its own, opens with the Notes window
 collapsed to its bar ("Click to start writing" in the tail once it
@@ -692,7 +703,7 @@ image view"); what they are:
 
 | Pane | Shows | Takes from the surface |
 |---|---|---|
-| `text` | the file's text read-only in CodeMirror, coloured by `codeLanguageName`, with line numbers, Find (CodeMirror's panel at the top; Ctrl+F in `.docTextView` is left to it by `app.search`), Wrap and Download in its bar, Ctrl+wheel for the text size (`useTextScale`, as the notes and the chat; no A−/A+ buttons, since none of them has any); a binary after all, a file the server refuses (404: a work folder's file on another computer), or no `fileUrl`, hands over to `FilePane`; a line link's lines marked (below) | `doc`, `fileUrl`, `phone`, `hidden`, `place {line}`, `onPlace`, `reportRef`, `mark`, `onMarkDone`, `onReveal` |
+| `text` | the file's text read-only in CodeMirror, coloured by `codeLanguageName`, with line numbers, Find (CodeMirror's panel at the top; Ctrl+F in `.docTextView` is left to it by `app.search`), Wrap and Download in its bar, Ctrl+wheel for the text size (`useTextScale`, as the notes and the chat; no A−/A+ buttons, since none of them has any); a binary after all, a file the server refuses (404: a work folder's file on another computer), or no `fileUrl`, hands over to `FilePane`; a line link's lines marked (below); the page's ranges of the file drawn over its text, a selection made into one or sent to the chat, and their comment cards in a column beside the text or their badges ("A range of a text file", below) | `doc`, `fileUrl`, `phone`, `hidden`, `readOnly`, `preview`, `place {line}`, `onPlace`, `reportRef`, `mark`, `onMarkDone`, `onReveal`, `regions`, `anchors`, `flashId`, `onRegionJump`, `onRegionContext`, `onRegionThread`, `commentMargin`, `marginRef`, `onMarginLost`, `scrollRef`, `onAnchor`, `onChatSelection`, `onHighlightAction` |
 | `image` | the picture at fit or at App's zoom, its regions drawn as the PDF draws areas (dashed with "Drawn on an earlier version of this picture" when `image_position.hash` is not the file's), the comment margin beside it or a badge per commented region, the region drag and its tip (Comment, Note, Ask AI); a picture that will not load, or no `fileUrl`, hands over to `FilePane`, and the next version of the file mounts a picture again | `doc`, `fileUrl`, `readOnly`, `hidden`, `scale`, `place {top, left, scale}`, `onPlace`, `reportRef`, `regions`, `anchors`, `flashId`, `regionMode`, `onRegion`, `onRegionJump`, `onRegionContext`, `onRegionThread`, `commentMargin`, `marginRef`, `onMarginLost`, `scrollRef`, `captureRef`, `onAskRegion`, `onReveal` |
 | `media` | `<audio>` or `<video>` with the browser's controls (a `.webm` a video until its metadata says it has no picture), paused when the pane closes | `doc`, `fileUrl`, `hidden`, `onReveal` |
 | `file` | the format's glyph, the name, the format and size (`doc.size`, else one HEAD's `Content-Length`), one sentence (a binary, a listed file, a document at an address, whose `fileUrl` is `""`, a file whose bytes are on another computer, a file that would not play or was binary after all), Download (not for a listed file, nor one with no `fileUrl`, nor one the HEAD answered 404; no HEAD is sent for those) and Show in folder where `onReveal` is given | `doc`, `fileUrl`, `onReveal`, `sentence` (the other panes' hand-over) |
@@ -710,11 +721,14 @@ place, onPlace, reportRef, regions, scale}`):
 | `readOnly`, `hidden`, `phone`, `preview` | the workspace's, `pdfHidden`, `isPhone`; `preview` a tab group's pane (presses only) |
 | `scale: {value, onZoomTo, onEffectiveScale}` | `pdfScale`, `zoomTo`, `setPdfEffScale`: the picture's zoom is the PDF's state, so the strip's buttons and the pill work unchanged |
 | `place`, `onPlace`, `reportRef` | where the page's pane last stood (`tabScrollRef`, the code view's `{line}`, the picture's `{top, left, scale}`), read once as the pane mounts; `onPlace` writes it back, and `captureScrollPos` calls `reportRef` before leaving a pane that is not the PDF's, as `navEntry` does for Back (below). A closed pane (`hidden`: still mounted, `display: none`, which drops the scroll) reports where it last stood in view, keeps its box and so its fit, and is put back there as it opens |
-| `regions`, `anchors`, `flashId`, `regionMode` | `highlights` and `anchors`, which are the document's (`pageHighlights` / `commentAnchors` with `positionKeyOf(doc)` and `fileHash(doc)`: a PDF's highlights or a picture's regions, so the jumps, the margin, the chat and the comment cleanup take a region with no branch); `flashingId`; `areaSelectMode` off a share |
+| `regions`, `anchors`, `flashId`, `regionMode` | `highlights` and `anchors`, which are the document's (`pageHighlights` / `commentAnchors` with `positionKeyOf(doc)` and `fileHash(doc)`: a PDF's highlights, a picture's regions or a text file's ranges, so the jumps, the margin, the chat and the comment cleanup take a region or a range with no branch); `flashingId`; `areaSelectMode` off a share |
 | `onRegion(position, {color, comment})` | `addRegion`: `addHighlight({quote: "", position, color}, {place: "image_position"})`, then `commentOnNewHighlight` for a comment (its abandoned-comment cleanup is the passage's); null when read-only |
 | `onRegionJump`, `onRegionContext`, `onRegionThread` | the PDF's highlight handlers (`highlightPressed`, the highlight menu, `openThread` with the margin) |
 | `commentMargin`, `marginRef`, `onMarginLost`, `scrollRef`, `captureRef` | the PDF's `commentMargin`, `pdfMarginRef`, `marginLost`, `scrollToRef`, `pdfCaptureRef`: one viewer mounts at a time, so one set of refs serves both |
 | `onAskRegion(position)` | the chat's picture of the region (`regionPicture("area", pageId, 1, regionBox(position))`); null on a share |
+| `onAnchor(position, quote, extras)` | the code view's selection made into a range: `finishSelection` with the `text_position` key (the PDF's `onSelectionFinished` body: a highlight, a comment's, the highlighter's, or a move's new place), returning the new range's id; null when read-only |
+| `onHighlightAction(id, action, value)` | `madeHighlightAction`, the PDF's bar over a highlight just made, for the bar over a range the highlighter made; null when read-only |
+| `onChatSelection(text, additive, {line, end, file})` | `addPdfSelection`: a selection of the code view for the chat, its lines labelled; `""` clears the set as a plain click in the PDF does |
 | `onReveal` | the desktop shell's `reveal-on-disk` for a work folder's file; null elsewhere |
 | `mark`, `onMarkDone` | `pageTarget` when it is a line link's (`{kind: "line", pageId, line, to, quote}`) on the open page, else null; `onMarkDone()` clears `pageTarget`, `onMarkDone(mark)` only while it is `mark` |
 
@@ -767,6 +781,86 @@ mark), and `openBlock` drops a target of another page than the one it
 opens, so a page opened again later opens at its own place. A tab group's
 pane (`PagePane`'s read-only surface) takes no mark: only the live page
 marks a line.
+
+**A range of a text file.** A highlight of a text file is a block with
+`text_position` ([api.md](api.md) "The highlight shape": its lines and
+columns in code points, the text around it, the version it was measured
+on). In the code view:
+
+- *A selection* is read off the DOM selection's two ends
+  (`view.posAtDOM`, which does not depend on CodeMirror tracking a
+  finger's selection into its state) and made a span by
+  `viewers/textAnchors.js` `spanOf`, the one source of a span; a span
+  touching a line the view cut at 10,000 characters (`textLoad.js`
+  `cutLinesOf`: its "…" is not the file's) is none. `viewers/TextTip.jsx`
+  opens the PDF's popup for it, cut to the marks (`TipMarks`: swatches,
+  highlighters, the fold, keys 1–9), Copy where the host's own edit menu
+  is off (the iPad's, turned off while the code's text is selected, as
+  over the PDF's), and Comment on this passage; a press makes the range
+  (`onAnchor`). A mouse selection's popup opens where the button was
+  released once the hand moves on (`pdf/selectionTip.js`), a finger's
+  once its selection is still for 350 ms (`selectionchange`; touch sends
+  no mouseup), and a scroll or a press elsewhere closes it. With a text
+  highlighter armed a release of the mouse or the pen makes the range at
+  once, the selection tinted its colour meanwhile, and the bar over it
+  follows where the host gives `onHighlightAction`. The same release (a
+  finger's selection, settled) tells the chat, with its lines and the
+  file's name (`onChatSelection`; Ctrl or ⌘ adds), and a plain click in
+  the text clears the chat's passages, except a click on a range, which
+  adds its quote instead. Read-only, the ranges draw and no popup opens;
+  a tab group's pane (`preview`) draws the ranges alone. The popup's frame
+  is `shared/ui/TipFrame.jsx`, the PDF's, so the chunk imports nothing of
+  pdf.js. No Link, Translate or Move.
+- *The marks* (`viewers/textMarks.js`): one state field of decorations,
+  fed the page's ranges (`regions`), the active card's and the flashing
+  one's ids and the file's stem, and rebuilt from them whenever the text
+  changes. A placed range is a mark over its text (`markSpec`: a wash, or
+  its line style; to check dashed, one measured on another version and
+  not placed again yet faint, a commented one stronger with a line at its
+  foot, a link's line, the active card's strong, a jump's flash); a lost
+  one, whose old lines now hold other text, is never a mark: a dashed tag
+  at the start of its old first line (the file's last when it is past
+  the end), its quote as the title; every range, placed or lost, puts the
+  line cue (a bar in its colour's line tone, dashed for a lost one) on
+  each of its lines, so a file can be scanned for its commented lines. A
+  click on a mark or a tag jumps to the range (`onRegionJump`: the quote
+  to the chat, the row in the notes) and makes its card the active one; a
+  right-click or a held finger opens its menu (`menuPress`).
+- *The layers beside the text* (`viewers/TextOverlay.jsx`), two because the
+  scroller scrolls both ways when lines do not wrap. The badges
+  (`.docTextOverlay`, inside CodeMirror's scroller over the content's
+  box) ride with the text: a `NoteBadge` at the end of a range's last
+  line, a lost one's beside its tag, for a note or for threads no card
+  shows. The comment column (`.docTextMarginHost`, beside the scroller)
+  stands at the view's right edge however far the text scrolls sideways,
+  its track moved with the vertical scroll alone, the cards level with
+  their ranges' first lines (`CommentMarginSlot`'s `topOf`); the content
+  keeps the column's room at its right while it stands, so wrapped text
+  never runs under it, and a long line scrolled sideways passes under the
+  gap. It stands with room for 360 px of text beside it, never on a
+  phone; `marginRef` answers App by that room, and a resize or a wrap
+  that takes it from the active card calls `onMarginLost`. Every place is
+  read in CodeMirror's measure phase, again as its geometry, viewport or
+  text changes.
+- *A jump* (`scrollRef`: a thread opened, a row's dot, the pending jump)
+  brings the range's first line into view, centred, unless it is in view
+  already, and flashes it; asked before the text of this version is in,
+  while the pane is closed or past the head read so far (the whole file
+  read first), it waits and runs once the text is there.
+- *A new version of the file* reloads the text at the same top line and
+  draws the ranges where their positions say. The client never places a
+  range itself: the server places them again on the replacement
+  ([highlight_relocation.md](highlight_relocation.md) "Text files") and
+  its writes arrive over the page's socket; until then a range measured
+  on the old version reads pending, drawn faint.
+- *Its menu and its row* are a highlight's, without the Link rows: Accept
+  for a dashed one (a text file has no review card), "Move to a
+  selection…" (the next selection in the code view is its place), "Use
+  the closest match ({n}%)" for a lost one that has a `closest`, Comment
+  and Properties ("Lines 118–120" with its chips). Its row in the notes
+  has the dot that jumps to it ("Jump to lines 118–120", or that it was
+  not found or matched roughly) and the Move button ("Move to a selection
+  in the file").
 
 **Back's place.** `navEntry` asks the pane's `reportRef` and keeps the
 page's place (`place`, the code view's `{line}`) beside the PDF's scroll.
@@ -821,6 +915,14 @@ pictures ([highlight_relocation.md](highlight_relocation.md)).
 - `tests/shared/blockkind.json`: a block whose one property is a document
   is a note; a region of a picture, and a range of a text file, are
   highlights.
+- `tests/shared/textposition.json`: a range of a text file's span, as
+  given and as stored (`trimmed`: a column past its line clamped, an end
+  at column 0 moved back past the line breaks), its columns in UTF-16 code
+  units as CodeMirror counts them, and the quote, prefix and suffix cut
+  from the lines (astral-plane characters, a tab, CJK, the file's two
+  ends, a line break alone). Read by `test_shared_fixtures.py`
+  (`highlights.span_text`, `clamp_span`) and `textAnchors.test.mjs`
+  (`contextOf`, `toCodePoints`, `toCodeUnits`).
 
 A rule that changes on one side is a case added to the fixture, which
 fails the side that drifts ([debugging.md](debugging.md)). Tests make

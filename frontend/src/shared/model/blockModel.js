@@ -25,7 +25,12 @@
 // quote}, closestPlace), which its card offers to apply (closestPlacement:
 // its place and quote, lost, closest and doc_id gone);
 // docs/dev/highlight_relocation.md. A highlight whose place on its page is
-// not known carries pageNumber alone.
+// not known carries pageNumber alone. A range of a text file is the third
+// place (text_position, isTextRangeBlock): {line, col, end, end_col,
+// prefix, suffix, hash}, 1-based lines, 0-based code-point columns, the
+// text around it and the version it was measured on, always written; a run
+// after the file changed writes the same flags beside it (textSpan,
+// docs/dev/api.md "The highlight shape").
 //
 // The tree is the DOCUMENT and nothing else: every change to it is an edit
 // the live session sends and the undo history records. What only this
@@ -36,6 +41,7 @@
 import { fenceInnerAt } from "../../editor/fences.js";
 import { findMathAtCursor } from "../../editor/latexCompletion.js";
 import { isWholeLine, parseLine, withoutFirstMarker } from "../../editor/mdLines.js";
+import { t } from "../i18n/i18n.js";
 import { blockStyle, withStyle } from "./markStyle.js";
 import { DEFAULT_HIGHLIGHT, normalizeColor } from "./palette.js";
 import { wallNow } from "./wallClock.js";
@@ -81,10 +87,11 @@ const placesPicture = (b) => {
 };
 
 // Where a block's place is stored, by the format of the page's document: a
-// PDF's places are pdf_position, a picture's regions image_position
-// (gamma/highlights.py). positionKeyOf reads a document's (pageDocument's
-// view, or null), the PDF's for a page without one.
-export const POSITION_KEY = Object.freeze({ pdf: "pdf_position", image: "image_position" });
+// PDF's places are pdf_position, a picture's regions image_position, a text
+// file's ranges text_position (gamma/highlights.py). positionKeyOf reads a
+// document's (pageDocument's view, or null), the PDF's for a page without
+// one.
+export const POSITION_KEY = Object.freeze({ pdf: "pdf_position", image: "image_position", text: "text_position" });
 export const positionKeyOf = (doc) => POSITION_KEY[doc?.format] || POSITION_KEY.pdf;
 
 // A block placed by `key` that no other kind claims: no ink group, text box,
@@ -107,10 +114,34 @@ export const isHighlightBlock = (b) => placedBy(b, "pdf_position");
 // pixels, `hash` the version it was drawn on.
 export const isRegionBlock = (b) => placedBy(b, "image_position");
 
-// A block with a place on its page's document, a PDF's highlight or a
-// picture's region: what the server's `kind` calls a highlight, and what
-// the rows, the thread popover and the notes lock treat alike.
-export const isPlaceBlock = (b) => isHighlightBlock(b) || isRegionBlock(b);
+// A range of a text file: a block with a text_position that no other kind
+// claims (gamma/highlights.py is_text_range), the twin of isRegionBlock on
+// a text document.
+export const isTextRangeBlock = (b) => placedBy(b, "text_position");
+
+// A block with a place on its page's document, a PDF's highlight, a
+// picture's region or a text file's range: what the server's `kind` calls a
+// highlight, and what the rows, the thread popover and the notes lock treat
+// alike.
+export const isPlaceBlock = (b) => isHighlightBlock(b) || isRegionBlock(b) || isTextRangeBlock(b);
+
+// A run of a text file's lines in words: "Lines 3–5", "Line 3" for one (a
+// range's row, the chat's chip of a selection and its cut note).
+export function linesLabel(line, end = line) {
+  return end > line ? t("Lines {from}–{to}", { from: line, to: end }) : t("Line {n}", { n: line });
+}
+
+// A text range's span {line, col, end, end_col}: whole numbers, `line` from
+// 1, `end` not before it, columns from 0 and `end_col` past `col` on a range
+// of one line (gamma/highlights.py text_span's rule); null for anything
+// else, a malformed position included (nothing validates it on write).
+export function textSpan(pos) {
+  if (!isRecord(pos)) return null;
+  const { line, col, end, end_col } = pos;
+  if (![line, col, end, end_col].every(Number.isInteger)) return null;
+  if (line < 1 || col < 0 || end < line || end_col < 0 || (end === line && end_col <= col)) return null;
+  return { line, col, end, end_col };
+}
 
 // Where a comment thread on the block stands on the PDF, {page, position}
 // (its pdf_position and that position's page): a highlight or a link region
@@ -125,11 +156,12 @@ export function pdfAnchorOf(b) {
 
 // Where a comment thread on the block stands on the page's document, by its
 // position key (positionKeyOf): a region's {page: null, position} for the
-// picture's key, pdfAnchorOf for any other (a stray second argument, a
-// map's index, reads as the PDF's). null for a block with no place under
-// that key.
+// picture's key, a text range's for the text file's, pdfAnchorOf for any
+// other (a stray second argument, a map's index, reads as the PDF's). null
+// for a block with no place under that key.
 export function anchorOf(b, key = "pdf_position") {
   if (key === POSITION_KEY.image) return isRegionBlock(b) ? { page: null, position: b.properties.image_position } : null;
+  if (key === POSITION_KEY.text) return isTextRangeBlock(b) ? { page: null, position: b.properties.text_position } : null;
   return pdfAnchorOf(b);
 }
 
@@ -164,22 +196,38 @@ export function blockCollapsed(b) {
 }
 
 // The block's place on its page's document under `key` (positionKeyOf: the
-// PDF page's pdf_position, a picture's image_position; any other value, a
-// map's index, reads as the PDF's), when it has one: a position with its
-// rectangles (not one of its page alone).
+// PDF page's pdf_position, a picture's image_position, a text file's
+// text_position; any other value, a map's index, reads as the PDF's), when
+// it has one: a position with its rectangles (not one of its page alone),
+// or a text range with a span (textSpan).
 export function blockPosition(b, key = "pdf_position") {
+  if (key === POSITION_KEY.text) {
+    const pos = b?.properties?.text_position;
+    return textSpan(pos) ? pos : null;
+  }
   const pos = b?.properties?.[key === POSITION_KEY.image ? key : POSITION_KEY.pdf];
   return pos?.boundingRect ? pos : null;
 }
 
 // Where the block's own place is stored, by the block (positionKeyOf's twin):
-// a region's image_position, else pdf_position.
-export const placeKeyOf = (b) => (isRegionBlock(b) ? POSITION_KEY.image : POSITION_KEY.pdf);
+// a region's image_position, a text range's text_position, else
+// pdf_position.
+export const placeKeyOf = (b) => (isRegionBlock(b) ? POSITION_KEY.image
+  : isTextRangeBlock(b) && !isHighlightBlock(b) ? POSITION_KEY.text : POSITION_KEY.pdf);
 
 // A place to check after the PDF was replaced, drawn dashed: approx, and
 // not lost (a lost highlight is drawn hollow whatever else it carries).
 export function placedToCheck(pos) {
   return Boolean(pos?.approx) && !pos.lost;
+}
+
+// A text range measured on another version than `fileHash`, the file shown,
+// which the server's run has not placed on it yet: not lost, its `hash`
+// another (one stored empty reads as the file's own). The server's rule
+// (gamma/feedback/entries.py _placed, "pending": whether to check or not);
+// false without a file to compare with.
+export function rangePending(pos, fileHash) {
+  return !!fileHash && isRecord(pos) && !pos.lost && typeof pos.hash === "string" && !!pos.hash && pos.hash !== fileHash;
 }
 
 // A passage matched roughly after its PDF was replaced: how alike its text
@@ -220,6 +268,10 @@ const placedRect = (r) => isObject(r) && ["x1", "y1", "x2", "y2"].every((k) => i
 // characters, cut wherever they end, inside a word too.
 export const PREV_MAX_QUOTE = 1000;
 export const PREV_MAX_RECTS = 200;
+// The longest quote of a text range, in code points, its prev's and its
+// closest's alike (gamma/highlights.py TEXT_QUOTE_MAX; textposition.json
+// quote_max).
+export const TEXT_QUOTE_MAX = 10000;
 
 // The best place a run found for a lost highlight's passage, which read too
 // unlike it to be applied (pdf_position.closest: below the account's "Apply
@@ -249,7 +301,25 @@ export function closestPlace(pos) {
 // review card): {position, quote}, the candidate's place and its text, so
 // lost, closest, doc_id, approx, match and prev go with the old position
 // and it is drawn solid; null when the position keeps no closest match.
-export function closestPlacement(pos) {
+// A lost text range (textSpan, a closest that names the version it was
+// found in) is placed there to check, as a run's rough match is: the
+// closest's span and hash, its own prefix and suffix (the next run respells
+// them), approx, the closest's match, and prev where it was, with `quote`,
+// the block's quote before (a menu's "Use the closest match"; Accept then
+// draws it solid). A range's quotes are kept whole, to TEXT_QUOTE_MAX: the
+// next run matches it by them, and the closest's is its quote from then on.
+export function closestPlacement(pos, quote = "") {
+  const own = textSpan(pos);
+  if (own) {
+    const c = pos.closest, span = textSpan(c);
+    if (!span || typeof c.hash !== "string" || !isNum(c.match) || c.match < 0 || c.match > 1) return null;
+    return {
+      position: { ...span, hash: c.hash, prefix: typeof pos.prefix === "string" ? pos.prefix : "",
+        suffix: typeof pos.suffix === "string" ? pos.suffix : "", approx: true, match: c.match,
+        prev: { hash: typeof pos.hash === "string" ? pos.hash : "", ...own, quote: String(quote || "").slice(0, TEXT_QUOTE_MAX) } },
+      quote: typeof c.quote === "string" ? c.quote.slice(0, TEXT_QUOTE_MAX) : "",
+    };
+  }
   const c = closestPlace(pos);
   return c ? { position: c.position, quote: c.quote } : null;
 }
@@ -574,10 +644,13 @@ export function addHighlightAsBlock(blocks, { id, quote = "", note = "", positio
 // `area: true` for the readers that branch on it (the stored shape does
 // not) and `onVersion`, whether it was drawn on `hash`, the picture the page
 // shows now (its stored `hash`; false when it was drawn on another version,
-// which the viewer draws dashed).
+// which the viewer draws dashed). A text range's is its own: whether it is
+// pending is rangePending's, against the text the view shows.
 export function blocksToHighlights(blocks, key = "pdf_position", hash = "") {
   const out = [];
-  const region = key === "image_position";
+  const region = key === POSITION_KEY.image, text = key === POSITION_KEY.text;
+  const placed = region ? isRegionBlock : text ? isTextRangeBlock : isHighlightBlock;
+  const shown = (pos) => (region ? { ...pos, area: true, onVersion: !!hash && pos.hash === hash } : pos);
   // A highlight "has a note" when the user typed anything on it: the block's
   // own content (the comment) or any non-empty block nested under it.
   function hasChildNote(b) {
@@ -585,7 +658,7 @@ export function blocksToHighlights(blocks, key = "pdf_position", hash = "") {
   }
   function walk(list) {
     for (const b of list || []) {
-      const pos = (region ? isRegionBlock(b) : isHighlightBlock(b)) ? blockPosition(b, key) : null;
+      const pos = placed(b) ? blockPosition(b, key) : null;
       if (pos) {
         out.push({
           id: b.id,
@@ -594,7 +667,7 @@ export function blocksToHighlights(blocks, key = "pdf_position", hash = "") {
           hasNote: (b.content || "").trim() !== "" || hasChildNote(b),
           color: blockColor(b),
           style: blockStyle(b),
-          position: region ? { ...pos, area: true, onVersion: !!hash && pos.hash === hash } : pos,
+          position: shown(pos),
         });
       }
       if (b.children?.length) walk(b.children);
@@ -855,10 +928,10 @@ export function insertBlocks(blocks, at, list) {
 
 // A copy of block `b` and everything under it with fresh ids, as Duplicate
 // makes it. The anchoring stays with the original: a copy with the same
-// position would draw the highlight, or a picture's region, twice
-// (linkHighlightToBlock's rule), and so would the Zotero annotation an
+// position would draw the highlight, a picture's region or a text range
+// twice (linkHighlightToBlock's rule), and so would the Zotero annotation an
 // import made it from. The quote is kept.
 export function freshCopy(b) {
-  const { pdf_position, image_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
+  const { pdf_position, image_position, text_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
   return { ...b, id: makeId(), properties: props, children: (b.children || []).map(freshCopy) };
 }

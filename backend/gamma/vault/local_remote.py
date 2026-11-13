@@ -472,16 +472,20 @@ class LocalRemote:
         any format), read where they are: their row first, so the relocation
         run reads the new file, then ``replace_attachment`` (a document
         other than a PDF names its format, extension and size to it: the
-        relocation run and the stamps are two PDFs' alone), the page reading
-        them in place from then on (``at`` ``path``, a page that stored its
-        PDF too), the disk winning and no other page's bytes a refusal (a
-        vault's file is what the disk holds); then the row of the bytes
-        before goes, as ``linked_files._catch_up``'s does: the path no longer
-        holds them. A work folder's file gets the size on its document. A
-        page that keeps its bytes (``kept.keeps_bytes``: a work folder's file
-        in the library, as a library document's bytes are, or a page with an
-        open comment thread, whose outgoing version, stored at the thread's
-        open or at the replacement before, the relocation run reads) has
+        stamps are two PDFs' alone, and a text file replaced by a text file
+        has its ranges placed again, gamma/documents/text_anchors.py,
+        reading ``path``: in that call, inside this round, up to
+        ``TEXT_INLINE_BYTES``, by the relocate-highlights job above it), the page
+        reading them in place from then on (``at`` ``path``, a page that
+        stored its PDF too), the disk winning and no other page's bytes a
+        refusal (a vault's file is what the disk holds); then the row of the
+        bytes before goes, as ``linked_files._catch_up``'s does: the path no
+        longer holds them. A work folder's file gets the size on its
+        document. A page that keeps its bytes (``kept.keeps_bytes``: a work
+        folder's file in the library, as a library document's bytes are, or
+        a PDF or a picture with an open comment thread, whose outgoing
+        version, stored at the thread's open or at the replacement before,
+        the relocation run reads) has
         each version stored as it comes, under its extension, reading it in
         place all the same; OSError when it cannot be."""
         from ..routers.pages import replace_attachment  # local: keep gamma.* free of the routers package

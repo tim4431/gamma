@@ -12,7 +12,7 @@
 // the person's own); `made_on` the file the thread was opened on, `sent`
 // the Send waiting on it (docs/dev/feedback.md).
 import { t } from "../shared/i18n/i18n.js";
-import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, pdfAnchorOf } from "../shared/model/blockModel.js";
+import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlock, pdfAnchorOf, textSpan } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
 import { peopleIn } from "../editor/mentions.js";
 import { AGENT_MAX } from "../feedback/feedbackView.js";
@@ -304,11 +304,17 @@ export function sendRefusal(send) {
 // What a thread is on, in the Comments window's words: the highlight's
 // quote, else the block's text, else for an ink group on a PDF page
 // "Handwriting on page 3", for a region of a picture "Region of the
-// picture"; "" for a block without words.
+// picture", for a range of a text file "Lines 118–120 of the file"; "" for
+// a block without words.
 export function anchorWords(block) {
   const words = blockQuote(block) || block?.content || "";
   if (words) return words;
   if (isRegionBlock(block)) return t("Region of the picture");
+  const span = isTextRangeBlock(block) ? textSpan(block.properties.text_position) : null;
+  if (span) {
+    return span.end > span.line ? t("Lines {from}–{to} of the file", { from: span.line, to: span.end })
+      : t("Line {n} of the file", { n: span.line });
+  }
   if (!isInkGroup(block)) return "";
   const page = pdfAnchorOf(block)?.page;
   return page ? t("Handwriting on page {n}", { n: page }) : "";
@@ -321,12 +327,19 @@ export function anchorWords(block) {
 // again, so it stands where that build had its content; a region of a
 // picture drawn on another version than `docHash`, its image_position's
 // `hash`: regions are never placed again either, and stay where they were
-// on the new picture), else "". `block` is the thread's as the tree holds
-// it now, `made_on` (the thread's) the file it was opened on.
+// on the new picture), else "". A range of a text file is "lost" or
+// "moved" by its text_position's flags, as a highlight is; one the server's
+// run has not placed on the file the page shows yet says nothing. `block`
+// is the thread's as the tree holds it now, `made_on` (the thread's) the
+// file it was opened on.
 export function threadPlace(thread, block, docHash) {
   if (isRegionBlock(block)) {
     const { hash } = block.properties.image_position;
     return hash && docHash && hash !== docHash ? "earlier" : "";
+  }
+  if (isTextRangeBlock(block) && !isHighlightBlock(block)) {
+    const pos = block.properties.text_position;
+    return pos.lost ? "lost" : pos.approx ? "moved" : "";
   }
   const pos = pdfAnchorOf(block)?.position;
   if (!pos) return "";
@@ -344,6 +357,16 @@ export function anchorTop(anchor, pageH) {
   for (const r of pos.rects || []) top = Math.min(top, r.y1);
   if (!Number.isFinite(top)) top = pos.boundingRect?.y1 || 0;
   return top * pageH / (pos.height || 1);
+}
+
+// The anchors a margin draws a card for, {id, top}: those with open threads
+// and the one a new comment is being written on (`composing`, its block
+// id), each at `topOf(anchor)` (anchorTop on a page, a line's top in the
+// code view; marginSlot.jsx).
+export function cardedAnchors(anchors, composing, topOf) {
+  const out = [];
+  for (const a of anchors) if (a.threadCount > 0 || a.id === composing) out.push({ id: a.id, top: topOf(a) });
+  return out;
 }
 
 // A text as one line of at most `max` characters: in the Comments window,

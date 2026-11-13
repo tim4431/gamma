@@ -64,6 +64,7 @@ export const GROUPS = [
   { id: "local-agents", files: ["localAgents.mjs"], s: 40 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "text-search", files: ["textSearch.mjs"], s: 26 },
+  { id: "text-anchors", files: ["textAnchors.mjs"], s: 45 },
   { id: "explorer", files: ["explorer.mjs"], s: 70 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
@@ -125,8 +126,9 @@ export const RULES = [
   // the panes a document of another format than PDF gets (the code view, the picture, the player,
   // the file pane; docs/dev/documents.md "Viewers"): a work folder's files are pages of theirs, a
   // tab group's pane reads one, a share's visitor sees one (the share steps are notes-pdf-share's);
-  // text-search: a line link marks its line in the code view
-  ["frontend/src/documents/viewers/**", ["viewers", "work-folders", "tab-groups", "notes-pdf-share", "text-search"]],
+  // text-search: a line link marks its line in the code view; text-anchors: the ranges drawn in it,
+  // its selection's popup and its comment column
+  ["frontend/src/documents/viewers/**", ["viewers", "work-folders", "tab-groups", "notes-pdf-share", "text-search", "text-anchors"]],
   ["frontend/src/documents/**", ALL], // the document a page carries decides its layout
   // the tab groups' pure model and the read view of a page in a group that is not live
   // (viewers: a code view read in a pane)
@@ -163,8 +165,9 @@ export const RULES = [
   ["frontend/src/recording/**", ["recording"]],
   // the row control, the thread popover, the Comments window, the page's threads over the socket;
   // feedback: an agent's comments, the Sent chip, the ink cards and the Feedback button;
-  // local-agents: the byline of a reply an agent on this computer wrote
-  ["frontend/src/comments/**", ["comments", "collab", "inbox", "feedback", "local-agents"]],
+  // local-agents: the byline of a reply an agent on this computer wrote; text-anchors: the code view's
+  // column and badges, a thread's place after its file changed
+  ["frontend/src/comments/**", ["comments", "collab", "inbox", "feedback", "local-agents", "text-anchors"]],
   // the bell, its panel and the jumps (a thread's opens through comments/); feedback: an agent's items
   ["frontend/src/inbox/**", ["inbox", "feedback"]],
   // the feedback view and Send (docs/dev/feedback.md "In the app"); local-agents: Send naming the
@@ -183,10 +186,11 @@ export const RULES = [
   // a note's link by path, opened through the work folder it is in (the e2e explorer group)
   ["frontend/src/editor/PathLink.jsx", ["sub-pages", "notes-pdf-share", "explorer"]],
   ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
-  // (text-search: a note's line link is a pill)
-  ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search"]],
-  // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link
-  ["frontend/src/chat/**", [...CHAT, "ink-zoom", "text-search"]],
+  // (text-search: a note's line link is a pill; text-anchors: a text range's row, its dot and its title)
+  ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"]],
+  // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link;
+  // text-anchors: a selection of lines as the chat's chip
+  ["frontend/src/chat/**", [...CHAT, "ink-zoom", "text-search", "text-anchors"]],
   // the Inbox notifications row
   ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox", "zotero-link"]],
   // the Zotero link's dialog, opened from Workspaces › Clones and Zotero links only (the Account row is SettingsZotero.jsx, below)
@@ -282,11 +286,13 @@ export const RULES = [
   ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents"]],
   ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents"]],
   ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
-  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer"]],
+  // (text-anchors: a text file's ranges placed again inside the round that replaced it)
+  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer", "text-anchors"]],
   // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
   // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
   // (local-agents: a request claimed and worked by an agent on this computer, the document's `agent`)
-  ["backend/gamma/feedback/**", ["feedback", "viewers", "local-agents"]],
+  // (text-anchors: a range of a text file's lines as an entry, placed again after a change)
+  ["backend/gamma/feedback/**", ["feedback", "viewers", "local-agents", "text-anchors"]],
   ["backend/gamma/routers/feedback.py", ["feedback", "local-agents"]],
   // an agent on this computer answering a Send (docs/dev/local_agents.md): finding the CLIs, the
   // drivers, the runner, what this computer keeps, and GET /api/local-agents
@@ -325,9 +331,13 @@ export const RULES = [
   ["backend/gamma/pdf_meta.py", PDF_VIEW],
   ["backend/gamma/pdf_text.py", PDF_VIEW],
   // the one reader of a document's text: the index's of every format, the chat's and the tools' of a text file
-  ["backend/gamma/documents/text.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]],
+  // (text-anchors: the lines a text file's ranges are placed again on)
+  ["backend/gamma/documents/text.py", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search", "text-anchors"]],
+  // a text file's ranges found again after it changed (the ladder, the inline run and the job's)
+  ["backend/gamma/documents/text_anchors.py", ["text-anchors"]],
   ["backend/gamma/search/**", ["notes-pdf-share", "quick-open", "folders", "sub-pages", "text-search"]], // the document text index
-  ["backend/gamma/highlight_relocate.py", ["notes-pdf-share"]], // the highlights found again in a replaced PDF
+  // the highlights found again in a replaced PDF, and the write a text file's run shares
+  ["backend/gamma/highlight_relocate.py", ["notes-pdf-share", "text-anchors"]],
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],

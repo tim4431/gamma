@@ -261,8 +261,20 @@ export function relocationSuperseded(job, jobs) {
 // and counted apart (changed), so the numbers add up to the page's
 // highlights; a dashed one says where to check it (its review card,
 // pdf/HighlightReview.jsx, and for several the Document menu's Review), a
-// hollow one how to fix it.
+// hollow one how to fix it. A text file's run (format "text": the inline
+// run's answer, or the job's result) words it for the file: a dashed range
+// is checked from its menu, a lost one is a hollow tag at its old line.
 export function relocationSummary(r) {
+  if (r.format === "text") {
+    return [
+      t("Highlights placed in the file: {moved} moved, {approx} matched roughly, {kept} stayed in place, {lost} not found.",
+        { moved: r.moved || 0, approx: r.approx || 0, kept: r.kept || 0, lost: r.lost || 0 }),
+      r.approx ? t("A dashed highlight moved: right-click it to accept it or move it.") : "",
+      r.changed ? tn("{n} that someone moved meanwhile was left as it is.",
+        "{n} that someone moved meanwhile were left as they are.", r.changed) : "",
+      r.lost ? t("A hollow tag marks a highlight whose text is gone: right-click it and choose Move to a selection or Use the closest match.") : "",
+    ].filter(Boolean).join(" ");
+  }
   return [
     t("Highlights placed in the PDF: {moved} moved, {approx} matched roughly or estimated, {kept} stayed in place, {lost} not found.",
       { moved: r.moved || 0, approx: r.approx || 0, kept: r.kept || 0, lost: r.lost || 0 }),

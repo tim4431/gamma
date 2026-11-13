@@ -69,6 +69,8 @@ this order and stops at the first hit; a block with none is a `note`.
 | `recording` | `recording` | an object | `{started, segments[], state, dur, by, at}` ([dev/recording.md](../dev/recording.md) "Model") |
 | `link_url`, `link_page_id` | `link` | either one non-empty | a link region on the PDF; `link_block_id` names a highlight on the target page ([dev/pdf_citations.md](../dev/pdf_citations.md)) |
 | `pdf_position` | `highlight` | an object | `{pageNumber, width, height, boundingRect, rects, area?}` plus the relocation keys `doc_id`, `lost`, `approx`, `match`, `prev`, `closest` ([dev/api.md](../dev/api.md) "The highlight shape") |
+| `image_position` | `highlight` | an object | a region of a picture, `{width, height, boundingRect, rects, hash}` in the picture's own pixels, `hash` the version it was drawn on ([dev/api.md](../dev/api.md) "The highlight shape") |
+| `text_position` | `highlight` | an object | a range of a text file, `{line, col, end, end_col, prefix, suffix, hash}`: 1-based lines (`end` inclusive), 0-based code-point columns, the text around it and the version it was measured on, plus the relocation keys `lost`, `approx`, `match`, `prev`, `closest` ([dev/api.md](../dev/api.md) "The highlight shape") |
 
 The precedence matters because the kinds overlap on purpose: an ink
 group and a link region carry a `pdf_position` too (so `ink` and `link`

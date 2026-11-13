@@ -6,9 +6,11 @@
 // tests it (tests/feedbackText.test.mjs).
 //
 // An entry is the reader's (GET /api/feedback): {id, file, format, page_id,
-// block_id, kind ("passage" | "area" | "ink" | "region" | "note" | "file"),
-// where: {page, quote, box, placed, note; a region's rect and size in the
-// picture's pixels}, source: {file, line, end, version} | null, picture,
+// block_id, kind ("passage" | "area" | "ink" | "region" | "lines" | "note" |
+// "file"), where: {page, quote, box, placed, note; a region's rect and size
+// in the picture's pixels; a text file's range its line, end and, placed
+// roughly, was: the quote it was commented on}, source: {file, line, end,
+// version} | null, picture,
 // before, state, sent, link, comments}. A request is a Send:
 // {id, rev, work_folder, scope, by, at, note, state ("sent" | "running" |
 // "done" | "failed"), state_at, state_by, detail, threads: [{id, answered}]}.
@@ -24,7 +26,9 @@ const QUOTE_MAX = 80;
 // "Page 3 · note on “…”" (a note under one), "Page 5 · area", "Page 2 ·
 // handwriting", "Region · 320×180 px at (40, 60)" (a region of a picture,
 // by its rect in the picture's pixels; "Note on a region · …" under one),
-// "A note" (a note with no place on a page) or "The whole file".
+// "Lines 118–120 · “…”" or "Line 118 · “…”" (a range of a text file; "Line
+// 118 · note on “…”" under one), "A note" (a note with no place on a page)
+// or "The whole file".
 export function entryHeading(entry) {
   const where = entry.where || {}, n = where.page;
   if (entry.kind === "file") return t("The whole file");
@@ -33,6 +37,14 @@ export function entryHeading(entry) {
     if (!r) return where.note ? t("Note on a region") : t("Region");
     const at = { w: r[2] - r[0], h: r[3] - r[1], x: r[0], y: r[1] };
     return where.note ? t("Note on a region · {w}×{h} px at ({x}, {y})", at) : t("Region · {w}×{h} px at ({x}, {y})", at);
+  }
+  if (entry.kind === "lines" && where.line) {
+    const quote = anchorSnippet(where.quote, QUOTE_MAX), from = where.line, to = where.end || where.line;
+    if (to > from) {
+      return where.note ? t("Lines {from}–{to} · note on “{quote}”", { from, to, quote })
+        : t("Lines {from}–{to} · “{quote}”", { from, to, quote });
+    }
+    return where.note ? t("Line {n} · note on “{quote}”", { n: from, quote }) : t("Line {n} · “{quote}”", { n: from, quote });
   }
   if (!n) return t("A note");
   if (entry.kind === "area") return t("Page {n} · area", { n });
@@ -44,7 +56,8 @@ export function entryHeading(entry) {
 // How an entry's place was found on the file the page shows now
 // (`where.placed`): exactly, roughly (with how alike the text is, a
 // `match` from 0 to 1, when it says), by estimate, not at all, not yet,
-// or on an earlier build (handwriting, which is never placed again); ""
+// or on an earlier version (handwriting, which is never placed again): the
+// Markdown's words for every format (gamma/feedback/markdown.py PLACED); ""
 // for an entry with no place. A region (`kind`) is placed exactly, drawn
 // on an earlier version of the picture (it stays where it was on the new
 // one), or lost when the file is no longer a picture.
@@ -62,15 +75,15 @@ export function placedText(where, kind = "") {
       : t("placed roughly");
   }
   if (placed === "estimate") return t("placed by estimate");
-  if (placed === "lost") return t("not found in this build");
+  if (placed === "lost") return t("not found in the current version");
   if (placed === "pending") return t("not placed yet");
-  if (placed === "earlier") return t("drawn on an earlier build");
+  if (placed === "earlier") return t("drawn on an earlier version");
   return "";
 }
 
 // An entry's source: "method.tex:118–120" (the file's name, then its line
 // or lines), followed by "(as commented)" when it is the line recorded as
-// the thread was opened rather than the current build's; "" for none.
+// the thread was opened rather than the current version's; "" for none.
 export function sourceText(source) {
   if (!source?.file) return "";
   const name = source.file.split("/").pop();

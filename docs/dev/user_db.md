@@ -272,8 +272,8 @@ All state is SQLite + files on disk under a data directory (env
     object there), `link` (a non-empty `link_url` or `link_page_id`,
     `highlights.is_link`), `highlight` (a `pdf_position`, `image_position`
     or `text_position` object: a place on a PDF page, a region of a
-    picture, a range of a text file; `highlights.is_highlight` and
-    `is_region` each read their own key), `note`, tested in that order
+    picture, a range of a text file; `highlights.is_highlight`,
+    `is_region` and `is_text_range` each read their own key), `note`, tested in that order
     (`db.BLOCK_HOT_COLUMNS`; `picture` since step 44, the region and the
     range since step 55, [migrations.md](migrations.md)). The filters read the column (its
     index); the block dict computes the same rule in Python from the
@@ -451,7 +451,10 @@ All state is SQLite + files on disk under a data directory (env
   (`ws_backup._normalize_copies`, which runs the `normalize.py` steps of
   migrations 26–30 and 33 on a copy stamped below the base, the workspace
   steps above the copy's version and the notes index's rebuild, in the
-  order [migrations.md](migrations.md) "Writing a step" gives). A
+  order [migrations.md](migrations.md) "Writing a step" gives; step 30's
+  `highlight_shape` reshapes `pdf_position` alone, so a region's
+  `image_position` and a text range's `text_position` pass through
+  untouched). A
   restore never replaces the live
   change log ([workspaces.md](workspaces.md) "Export and backups"). Backups
   copy it with the sqlite backup API, which is WAL-safe. Nothing may
@@ -771,7 +774,11 @@ track of the ones nothing uses.
   `pdf_position.doc_id` and `pdf_position.prev.doc_id` (a picture's
   region names the version it was drawn on in `image_position.hash`, which
   holds nothing: regions are never relocated, and the version a thread on
-  one needs is held by the thread's anchor). Those two name the
+  one needs is held by the thread's anchor; a range of a text file names
+  the version it was measured on in `text_position.hash`, and its `prev`
+  and `closest` a `hash` each, which hold nothing either: a range carries
+  its own quote and context, so the run that places it again reads the new
+  version alone and keeps no old one). Those two name the
   file a highlight's rectangles were measured on, after a replacement: a
   pending highlight's `prev` (and a lost one's `doc_id`) is its reference,
   the version it is matched from at every later replacement, and stays

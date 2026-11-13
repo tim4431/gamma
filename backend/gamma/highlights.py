@@ -1,4 +1,6 @@
-"""Where a block sits on a PDF page: ``properties.pdf_position``.
+"""Where a block sits on its page's document: ``properties.pdf_position``
+on a PDF page, ``image_position`` on a picture, ``text_position`` in a
+text file.
 
 One shape for every block a rectangle places on a PDF page — a highlight
 (text or area), a link region, an ink group::
@@ -82,11 +84,59 @@ nothing for it; the version a thread needs is held by its anchor,
 gamma/feedback/anchors.py). Regions are never relocated; readers scale by
 fractions (``region_box``). ``is_region`` is their test, the twin of
 ``is_highlight``; the ``kind`` column calls both ``highlight``.
+
+A range of a text file (a page whose document is ``format: "text"``: a
+source file, a log) is the same block again, with
+``properties.text_position``::
+
+    {"line": 118, "col": 4, "end": 120, "end_col": 37,
+     "prefix": "…", "suffix": "…", "hash": "9f2c…"}
+
+``line`` and ``end`` its first and last line (1-based, ``end`` inclusive,
+the words a feedback entry's ``source`` uses), ``col`` and ``end_col``
+columns in them (0-based, in code points of the decoded line, the line
+break not counted; ``end_col`` exclusive, so a range of one line has
+``end_col > col``), and ``properties.quote`` the selected text verbatim,
+its lines joined with ``\\n``, at most ``TEXT_QUOTE_MAX`` code points and
+never starting or ending in a line break: a selection that ends at column 0
+of a later line ends at the end of the line before, and one that starts at
+the end of a line starts at the next (``clamp_span``). ``prefix`` and
+``suffix`` are the file's text just before and just after the quote,
+``CONTEXT_CHARS`` code points each (line breaks kept as ``\\n``, shorter at
+the file's ends), and ``hash`` the stored stem of the version the range was
+measured on, always written, as a region's is: "measured on another
+version" is read (``hash`` differs from the page's ``file_hash``), ``hash``
+holds no file, and a replacement stamps nothing on a range. A range
+carries its own context, so the run that places it in a new version of
+the file reads nothing of the old one (gamma/documents/text_anchors.py).
+That run writes the PDF's words beside the place: ``lost``, ``approx``
+with ``match``, ``prev`` (``{hash, line, col, end, end_col, quote}``,
+``valid_text_prev``: where it was before the run that first drew it
+dashed, its quote whole) and a lost one's ``closest`` (``{line, col, end,
+end_col, match, quote, hash}``, ``valid_text_closest``: its best place
+under the threshold in the version ``hash`` names); the quotes of both at
+most ``TEXT_QUOTE_MAX``, not a PDF's ``PREV_MAX_QUOTE``, since a range is
+matched and placed by them. Readers never trust the columns alone: the
+quote at ``line``..``end`` decides, and a column past its line's end is
+clamped. Nothing validates the shape on write: ``text_span`` answers None
+for a malformed one, which the ``kind`` column still calls ``highlight``
+and the readers take for a note. A range may have a line ``style``, never
+an ``area``; a restore passes the position through untouched
+(``normalize.highlight_shape`` reshapes ``pdf_position`` alone), and a
+vault's Markdown file writes a range moved into a notes page as any
+highlight, a ``[!quote]`` callout, without a page (vault/sync.py ``_g``,
+vault/links.py ``_highlight_to_file`` and ``_head``).
+``is_text_range`` is its test, the twin of ``is_highlight`` and
+``is_region``; tests/shared/textposition.json holds the client
+(frontend/src/documents/viewers/textAnchors.js) to ``span_text``.
 """
 
 COORDS = ("x1", "y1", "x2", "y2")
 PREV_MAX_RECTS = 200      # rectangles a position's ``prev`` holds at most
 PREV_MAX_QUOTE = 1000     # characters of its quote (shared/model/blockModel.js PREV_MAX_QUOTE)
+TEXT_QUOTE_MAX = 10_000   # code points of a text range's quote (tests/shared/textposition.json quote_max)
+CONTEXT_CHARS = 40        # of text before and after a passage, kept to tell places apart (textposition.json context)
+TEXT_SPAN = ("line", "col", "end", "end_col")
 
 
 def _union(rects: list[dict]) -> dict:
@@ -229,7 +279,8 @@ def from_scaled(pos: dict, page=None) -> dict | None:
 
 def page_of(props: dict | None) -> int | None:
     """The PDF page a highlight, link region or ink group is on
-    (``pdf_position.pageNumber``), None for a block placed on none."""
+    (``pdf_position.pageNumber``), None for a block placed on none (a
+    region of a picture and a range of a text file are on no page)."""
     pos = (props or {}).get("pdf_position")
     page = pos.get("pageNumber") if isinstance(pos, dict) else None
     return page if _is_page(page) else None
@@ -256,8 +307,8 @@ def is_highlight(props: dict | None) -> bool:
     ``pdf_position`` that is no ink group, text box, picture or sheet
     (db.BLOCK_HOT_COLUMNS tests the other kinds first). The ``kind``
     column's ``highlight`` is wider: a region of a picture (``is_region``)
-    reads as one too, so a reader of ``pdf_position`` tests this, never the
-    kind."""
+    and a range of a text file (``is_text_range``) read as one too, so a
+    reader of ``pdf_position`` tests this, never the kind."""
     return _placed_block(props or {}, "pdf_position")
 
 
@@ -266,6 +317,129 @@ def is_region(props: dict | None) -> bool:
     ink group, text box, picture or sheet, the twin of ``is_highlight`` on
     an image document. A block with both positions is both."""
     return _placed_block(props or {}, "image_position")
+
+
+def is_text_range(props: dict | None) -> bool:
+    """A range of a text file: a block with a ``text_position`` that is no
+    ink group, text box, picture or sheet, the twin of ``is_region`` on a
+    text document; ``text_span`` says whether its place can be read."""
+    return _placed_block(props or {}, "text_position")
+
+
+def _whole(value) -> bool:
+    """A whole number as JSON has it: an int, or a float of a whole value
+    (``3.0``, which a browser reads as 3: blockModel.textSpan), never a bool."""
+    return (isinstance(value, int) and not isinstance(value, bool)) or (isinstance(value, float) and value.is_integer())
+
+
+def _span(line, col, end, end_col) -> tuple[int, int, int, int] | None:
+    if not all(map(_whole, (line, col, end, end_col))):
+        return None
+    line, col, end, end_col = int(line), int(col), int(end), int(end_col)
+    if line < 1 or col < 0 or end < line or end_col < 0 or (end == line and end_col <= col):
+        return None
+    return line, col, end, end_col
+
+
+def text_span(props: dict | None) -> tuple[int, int, int, int] | None:
+    """A text range's ``(line, col, end, end_col)``: whole numbers, ``line``
+    from 1, ``end`` not before it, columns from 0 and ``end_col`` past
+    ``col`` on a range of one line; None for a block that is no text range
+    or whose position is malformed (nothing validates it on write)."""
+    if not is_text_range(props):
+        return None
+    pos = props["text_position"]
+    return _span(*(pos.get(k) for k in TEXT_SPAN))
+
+
+def text_position(line: int, col: int, end: int, end_col: int, *, hash: str, prefix: str, suffix: str) -> dict:
+    """The stored shape of a text range measured on the version ``hash``."""
+    return {"line": line, "col": col, "end": end, "end_col": end_col, "prefix": prefix, "suffix": suffix,
+            "hash": hash}
+
+
+def valid_text_prev(value) -> dict | None:
+    """A text range's ``prev`` in its own form, or None for anything else:
+    a string ``hash``, a span as ``text_span`` reads one and a string
+    ``quote``, clipped to ``TEXT_QUOTE_MAX`` characters (the range's whole
+    quote, which a later run matches it by and a lost one goes back to)."""
+    if not isinstance(value, dict):
+        return None
+    span = _span(*(value.get(k) for k in TEXT_SPAN))
+    hash_, quote = value.get("hash"), value.get("quote")
+    if not (span and isinstance(hash_, str) and isinstance(quote, str)):
+        return None
+    return {"hash": hash_, **dict(zip(TEXT_SPAN, span)), "quote": quote[:TEXT_QUOTE_MAX]}
+
+
+def valid_text_closest(value) -> dict | None:
+    """A lost text range's ``closest`` in its own form, or None for anything
+    else: a span as ``text_span`` reads one, a ``match`` from 0 to 1, a
+    string ``quote``, clipped to ``TEXT_QUOTE_MAX`` characters (the quote
+    the range takes when it is placed there), and the string ``hash`` of
+    the version it was found in."""
+    if not isinstance(value, dict):
+        return None
+    span = _span(*(value.get(k) for k in TEXT_SPAN))
+    match, quote, hash_ = value.get("match"), value.get("quote"), value.get("hash")
+    if not (span and _fraction(match) and isinstance(quote, str) and isinstance(hash_, str)):
+        return None
+    return {**dict(zip(TEXT_SPAN, span)), "match": match, "quote": quote[:TEXT_QUOTE_MAX], "hash": hash_}
+
+
+def clamp_span(lines: list[str], span) -> tuple[int, int, int, int] | None:
+    """A span (``(line, col, end, end_col)`` or a dict of them) as it is
+    stored over ``lines``, the decoded file's: its lines within the file
+    (an end past the last line ends with it), each column at most its
+    line's length, an end at column 0 of a later line, or after line breaks
+    alone, moved back to the end of the line before, and a start at its
+    line's end, or before line breaks alone, moved on to the start of the
+    next line, so the span never ends or starts in a line break. None when
+    nothing is left between its two ends: a selection of a line break
+    alone, or a span past the file."""
+    line, col, end, end_col = (span[k] for k in TEXT_SPAN) if isinstance(span, dict) else span
+    n = len(lines)
+    if not lines or line > n:
+        return None
+    if end > n:
+        end, end_col = n, len(lines[n - 1])
+    col, end_col = min(col, len(lines[line - 1])), min(end_col, len(lines[end - 1]))
+    while end > line and end_col == 0:
+        end -= 1
+        end_col = len(lines[end - 1])
+    while line < end and col == len(lines[line - 1]):
+        line, col = line + 1, 0
+    return _span(line, col, end, end_col)
+
+
+def span_text(lines: list[str], span) -> tuple[str, str, str]:
+    """``(quote, prefix, suffix)`` of a span in the decoded file's ``lines``
+    (``clamp_span``'s, which a caller stores): the text between its two
+    ends, lines joined with ``\\n``, cut to ``TEXT_QUOTE_MAX`` code points
+    (and never ending in a line break), and the ``CONTEXT_CHARS`` code
+    points just before it and just after the quote, line breaks kept.
+    ``("", "", "")`` for a span with nothing in it. The client's
+    ``contextOf`` gives the same (tests/shared/textposition.json)."""
+    clamped = clamp_span(lines, span)
+    if clamped is None:
+        return "", "", ""
+    line, col, end, end_col = clamped
+    # only the lines the quote and its context reach are joined: a run respells ranges of a long file
+    first, room = line, col
+    while first > 1 and room < CONTEXT_CHARS:
+        first -= 1
+        room += len(lines[first - 1]) + 1
+    last, room = end, len(lines[end - 1]) - end_col
+    while last < len(lines) and room < CONTEXT_CHARS:
+        last += 1
+        room += len(lines[last - 1]) + 1
+    text = "\n".join(lines[first - 1:last])
+    start = sum(len(lines[i]) + 1 for i in range(first - 1, line - 1)) + col
+    stop = start + sum(len(lines[i]) + 1 for i in range(line - 1, end - 1)) - col + end_col
+    stop = min(stop, start + TEXT_QUOTE_MAX)
+    while stop > start and text[stop - 1] == "\n":
+        stop -= 1
+    return text[start:stop], text[max(0, start - CONTEXT_CHARS):start], text[stop:stop + CONTEXT_CHARS]
 
 
 def region_box(props: dict | None) -> tuple[float, float, float, float] | None:

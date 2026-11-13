@@ -322,7 +322,8 @@ FileResponse's ETag of its size and time: unlike a stored name, which is
 `immutable`, its path can hold other bytes tomorrow.
 
 **A version kept while its comments are open.** A page read in place
-that has an open comment thread keeps the bytes it shows stored
+whose PDF or picture has an open comment thread keeps the bytes it shows
+stored
 (`uploads/<hash>.pdf`, the name a `linked_files` row holds too), and the
 version each thread was opened on is held until the thread is resolved:
 the relocation run and the feedback reader go on reading it after the
@@ -331,7 +332,9 @@ stores the current bytes, a replacement while a thread is open stores the
 incoming ones first (`feedback.kept.keeps_bytes`, the one predicate with a
 library file's versions, "A work folder's round"), and the sweep below
 stores what was left unstored ([feedback.md](feedback.md) "The commented
-version kept").
+version kept"). A text file keeps no version: its ranges carry their own
+context and are placed again in the round itself, from the new bytes
+alone ([highlight_relocation.md](highlight_relocation.md#text-files)).
 
 **The sweep** (`linked_files.sweep`, from each tick): the opened pages to
 forget (below), the bytes of a page with an open thread not stored yet
@@ -880,7 +883,9 @@ are never measured, by the stat its read takes, not the scan's) is
 listed, size}` ([documents.md](documents.md) "The listed state"); one that
 crosses the limit either way, or is listed with a new size, takes one
 `set_doc`. New bytes replace the document (`replace_doc`, the versions
-stored where `feedback.kept.keeps_bytes` says); the same bytes under a new
+stored where `feedback.kept.keeps_bytes` says; a text file's highlight
+ranges placed again in that call, from the bytes at the path, when the
+file is at most 512 KiB, [highlight_relocation.md](highlight_relocation.md#text-files)); the same bytes under a new
 stat refresh the row and its linked row (`restat_doc`). A move relinks and
 refiles, the title and `file_name` following the new leaf; a new name that
 says another format or extension (`notes.txt` to `notes.log`, `a.txt` to
@@ -1230,10 +1235,12 @@ unmarked folder gets the round above, unchanged. In a work folder:
   their documents, and a kept folder's round meets no row of a class it does
   not compare.
 - **A library file's versions** are stored as they come (`LocalSink.store`
-  before `replace_attachment`), its document still at `path`; so are any
-  file's while a comment thread on it is open (`feedback.kept.keeps_bytes`,
-  the one predicate at the replacement; [feedback.md](feedback.md) "The
-  commented version kept").
+  before `replace_attachment`), its document still at `path`; so are a
+  PDF's or a picture's while a comment thread on it is open
+  (`feedback.kept.keeps_bytes`, the one predicate at the replacement;
+  [feedback.md](feedback.md) "The commented version kept"). A text file's
+  ranges are placed again inside the round instead
+  ([highlight_relocation.md](highlight_relocation.md#text-files)).
 - **The feedback files.** After its sync a whole round writes the work
   folder's `.gamma/feedback/` (`folder_links._vault_round`, the summary in
   `status.feedback`; [feedback.md](feedback.md) "The files"), a held round

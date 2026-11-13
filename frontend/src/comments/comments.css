@@ -166,7 +166,7 @@
   color: var(--text-muted);
 }
 
-/* --- The PDF margin (CommentMargin.jsx) ------------------------------------
+/* --- The margin (CommentMargin.jsx) ----------------------------------------
    A column beside the page, inside the page's box so it scrolls and zooms
    with it; its width and its distance from the page are marginLayout.js's,
    set inline. Each card stands where stackCards put it. At rest a card is

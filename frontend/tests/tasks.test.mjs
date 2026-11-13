@@ -204,6 +204,19 @@ test("a finished highlights run says how many moved, are dashed to check, stayed
     "Highlights placed in the PDF: 1 moved, 0 matched roughly or estimated, 0 stayed in place, 0 not found.");
 });
 
+test("a text file's run is worded for the file: a dashed range is checked from its menu, a lost one is a tag", () => {
+  const result = (fields) => ({ format: "text", highlights: 0, moved: 0, kept: 0, approx: 0, lost: 0, changed: 0, ...fields });
+  assert.equal(relocationSummary(result({ highlights: 10, moved: 5, kept: 1 })),
+    "Highlights placed in the file: 5 moved, 0 matched roughly, 1 stayed in place, 0 not found.");
+  assert.equal(relocationSummary(result({ highlights: 10, moved: 5, kept: 1, approx: 2, lost: 2, changed: 2 })), [
+    "Highlights placed in the file: 5 moved, 2 matched roughly, 1 stayed in place, 2 not found.",
+    "A dashed highlight moved: right-click it to accept it or move it.",
+    "2 that someone moved meanwhile were left as they are.",
+    "A hollow tag marks a highlight whose text is gone: right-click it and choose Move to a selection or Use the closest match.",
+  ].join(" "));
+  assert.doesNotMatch(relocationSummary(result({ approx: 1 })), /PDF|Document menu|Hover/);
+});
+
 test("a click opens the export and import dialogs again, or where the work is managed", () => {
   assert.equal(canOpen(job({})), true);
   assert.equal(kindOf(job({ kind: "import" })).open, "import");

@@ -925,11 +925,14 @@ classes" the class `file`.)
   still on disk and tracked is made again from the file at the next round,
   as any new file is.
 - **A library file's versions** are stored as they come, as a library
-  document's bytes are; so are a file's while a comment thread on it is
-  open (`feedback.kept.keeps_bytes`, the one predicate at the replacement:
-  the version a thread was opened on is held until it is resolved,
-  [feedback.md](feedback.md) "The commented version kept"); its document
-  still reads in place here.
+  document's bytes are; so are a PDF's or a picture's while a comment
+  thread on it is open (`feedback.kept.keeps_bytes`, the one predicate at
+  the replacement: the version a thread was opened on is held until it is
+  resolved, [feedback.md](feedback.md) "The commented version kept"); a
+  text file's are not, since its ranges carry their own context and are
+  placed again in the round itself
+  ([highlight_relocation.md](highlight_relocation.md#text-files)); its
+  document still reads in place here.
 - **The feedback files.** Every whole round writes the work folder's
   `.gamma/feedback/` after its sync (`open.json`, `open.md`, the pictures,
   a file per Send; the summary in `status.feedback`), and the hot loop

@@ -52,7 +52,7 @@ import { closestPlace, placedToCheck } from "../shared/model/blockModel.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
 import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
-import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
+import { TipFrame } from "../shared/ui/TipFrame.jsx";
 import { t } from "../shared/i18n/i18n.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { SCALE_VAR, installViewerZoom, scaledPx } from "../shared/lib/viewerZoom.js";
@@ -571,7 +571,7 @@ export async function openPdfDocument(url) {
 // commentAnchors: {id, kind, position, threadCount}). marginRef.current(id)
 // says whether that anchor's page has room for its card; onMarginLost() is
 // called when the active card's page no longer has (docs/dev/comments.md
-// "The PDF margin").
+// "The margin").
 // The zoom window (ink/ZoomWindow.jsx) docks under the scroller while the
 // page tools' ink.zoom is on one of the document's pages: zoomHeight is its
 // height in css px and onZoomHeight(px) sets it (inkZoomHeight);
@@ -827,7 +827,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     return map;
   }, [anchors, displayedUrl, url]);
 
-  // The comment margin (docs/dev/comments.md "The PDF margin"). While the
+  // The comment margin (docs/dev/comments.md "The margin"). While the
   // document has an anchor (a highlight, an ink group) with an open thread,
   // or a new comment's card is open, each page with room for the card
   // column stands beside it, the two centred together
@@ -3041,19 +3041,6 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
     </div>
   );
 });
-
-// Fixed-position frame for the selection popup: under the selection, or
-// above it when the popup (a long translation) would run past the bottom of
-// the window; kept inside the window. Placed again in the frame its size
-// changes (placement.js), so a growing translation never shows a frame of
-// itself still under the selection, past the window's bottom.
-function TipFrame({ anchor, children }) {
-  const ref = useRef(null);
-  const below = anchor.bottom + anchor.gap;
-  const pos = useFloatingPosition(ref, (el) => placeFloating(el.getBoundingClientRect(), { x: anchor.left, y: below, flipY: anchor.top - anchor.gap }),
-    [anchor.top, below, anchor.left]);
-  return <div ref={ref} style={{ position: "fixed", zIndex: 9999, ...(pos || { top: below, left: anchor.left, visibility: "hidden" }) }}>{children}</div>;
-}
 
 // A DOM node's element: a text node's parent.
 const elementOf = (node) => (node?.nodeType === 3 ? node.parentElement : node);

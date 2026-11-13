@@ -13,3 +13,10 @@ test("a highlight without a usable box keeps its page", () => {
     { page: 4, box: null });
   assert.deepEqual(highlightSpot(null), { page: 0, box: null });
 });
+
+test("a range of a text file's spot is its lines, with no page and no box", () => {
+  const position = { line: 118, col: 4, end: 120, end_col: 37, prefix: "", suffix: "", hash: "h1" };
+  assert.deepEqual(highlightSpot(position), { page: 0, box: null, line: 118, end: 120 });
+  assert.deepEqual(highlightSpot({ ...position, end: 118, end_col: 9 }), { page: 0, box: null, line: 118, end: 118 });
+  assert.deepEqual(highlightSpot({ ...position, line: 0 }), { page: 0, box: null }, "a malformed one has no lines");
+});

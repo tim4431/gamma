@@ -1729,7 +1729,8 @@ region that is `aria-busy` while it streams, so it is read once, whole.
   aborts the previous request. A click or selection inside the popup keeps
   it open and where it is (the viewer's selection sync ignores a mouse
   release in `.plainTip` and a selection anchored there).
-- `TipFrame` opens the popup by the point where the mouse was released
+- `TipFrame` (`shared/ui/TipFrame.jsx`, which the code view's popup shares)
+  opens the popup by the point where the mouse was released
   (under the selection for a touch or keyboard selection, or a release far
   from it; `pdf/selectionTip.js`) and flips it above when it would run past
   the window's bottom, in the frame a streaming translation grows it

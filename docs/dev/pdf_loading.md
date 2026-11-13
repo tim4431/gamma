@@ -198,7 +198,7 @@ margins, and starts at the viewer's left edge once it is wider than the
 viewer. While the document has a highlight with an open comment thread, a
 page with room for the comment column stands beside it instead, the two
 centred together, and a page without room stays centred
-([comments.md](comments.md#the-pdf-margin)). The column is inside the page
+([comments.md](comments.md#the-margin)). The column is inside the page
 box, so it scrolls and zooms with the page; the pages' columns stack as
 one, each page's cards under the ones above. The zoom anchor's horizontal
 arithmetic reads the same three layouts (`pageLeft`,

@@ -82,9 +82,9 @@ from . import item_types
 from .ai_permissions import permission_state
 from .ai_pictures import (parts as _parts, ink_picture_url, page_doc_id, parse_box, picture_url_of_page, read_stored,
                           render_region, store_picture, upload_name)
-from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, NOTE_IMAGE_RE, area_highlight, canonical_tool, chip_lines,
-                         handwriting_label, is_text_document, page_report_section, paths_text, pdf_path, picture_text,
-                         placed_label, quoted_paths, render_area_crops, under_sheet)
+from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, NOTE_IMAGE_RE, SECRET_TEXT, area_highlight, canonical_tool,
+                         chip_lines, handwriting_label, is_text_document, page_report_section, paths_text, pdf_path,
+                         picture_text, placed_label, quoted_paths, range_words, render_area_crops, under_sheet)
 from .block_index import fts_query, search_blocks
 from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_kind, block_to_dict, descend,
                            existing_in, fetch_subtree, filed_folders, filing, folder_chain, folder_inserts,
@@ -95,6 +95,7 @@ from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_
 from .comments import STATES as THREAD_STATES
 from .db import account_names, connect_data_db, connect_pages_db, connect_users_db
 from .documents.model import file_hash, is_listed, is_pdf, page_document, pdf_file_hash
+from .feedback import anchors
 from .highlights import is_ink
 from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
                   move_across_pages, tree_deletion)
@@ -1365,6 +1366,9 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         return error, None
     block, page_id, page_title = loaded
     rows = fetch_subtree(conn, block["id"])
+    page = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    view = page_document(load_props(page[0]) if page else {})
+    current, kept = file_hash(view) or "", anchors.text_kept(view)
     by_parent: dict = {}
     for row in rows:
         if row[0] != block["id"]:
@@ -1385,7 +1389,11 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
         bits = [f"[{block_id}]"]
         if quote:
             # how the reader marked it: a wash, or a line (the block's style)
-            bits.append(f'({_MARK_WORDS.get(props.get("style"), "highlight")}: "{quote[:200]}")')
+            mark, place = _MARK_WORDS.get(props.get("style"), "highlight"), range_words(props, current)
+            if kept and place:
+                bits.append(f"({mark} on {place}; {SECRET_TEXT[1:-1]})")
+            else:
+                bits.append(f'({mark}: "{quote[:200]}"' + (f"; {place})" if place else ")"))
         elif area := area_highlight(props):
             page, box = area
             per_page[page] = per_page.get(page, 0) + 1

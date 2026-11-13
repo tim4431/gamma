@@ -55,6 +55,39 @@ its windows, so the conversation's opening changed with every selection
 and nothing could cache. Everything below is about the PDF part of a page
 and applies unchanged.
 
+A selection in a text file's code view is a passage too, with its lines:
+the client sends `{text, page: 0, line, end}` and `request_selections`
+keeps `lines: [line, end]` on an item of page 0 (whole numbers, `1 <= line
+<= end <= MAX_SELECTION_LINE`, `end` defaulting to `line`). The question
+heads it `Selected passage (lines 118–120):` (`_passage_heading`; one
+sentence, "from the page's document", for a PDF and a text file alike).
+Since the page's section shows only a text file's head and the outline of
+the rest, `text_selection_context` reads a window around each passage for
+this message: `SELECTION_WINDOW_LINES` (20) lines before and after, numbered
+(`text_window`, which reads the store, then the linked path, and keeps a
+secrets file out), the windows sharing the same budget as a PDF's (at most
+`SELECTION_WINDOW_CHARS` a passage, within the passage budget), each headed
+`[lines a–b of <path>]`, and none when the head already shows the whole
+file; a share too small for the lines before a passage starts at the
+passage. The coverage entry's `selection.passages` holds one `{"lines",
+"window": [a, b]}` a passage, which labels the question.
+
+A range of a text file (a highlight with `text_position`) is told with its
+lines and how the last change of the file left it, beside its quote:
+`- Highlighted: "…" (lines 118–120)`, `(line 47; not found in the current
+file)`, `(line 23; placed roughly)`, `(line 31; lines of an earlier version
+of the file)` (measured on another version, the run not done) in the
+page's section, and read_block's `(highlight: "…"; line 52)`
+(`range_words`); the model reads on with `read_page(from_line=)`. A thread
+on one is named by the lines its block holds now and their state
+(`threads_section`, `anchors.following` and `place_words`: `line 52, “…”`,
+`line 47 (not found in the current version), “…”`, `line 31 of an earlier
+version, “…”`). On a secrets file a range's quote is never told: `-
+Highlighted (line 2; its text is kept from the model: a secrets file)`,
+read_block's `(highlight on line 2; …)`, a thread `on line 2`, and a
+passage selected in it is quoted as that sentence (its located entry
+`secret`, `final_prompt`).
+
 The passages themselves are quoted in the question. The selection gets the
 same single-paper budget as the head excerpt (`context_char_limit`, 60,000
 by default), because it is the part of the paper the question is about. One
@@ -183,7 +216,8 @@ Document: text file "sections/method.tex" (LaTeX; 2,310 lines, 94,120 bytes; rea
 - **Not shown.** A secrets file (`documents.text.is_secret`: `.env`,
   `.netrc`, `id_rsa`, a `.pem` or `.key` …) gives one sentence, "its text is
   kept from the model: a secrets file", here, in `read_page` and under a
-  chip; the viewer still shows it. A file whose bytes are no text (a NUL, or
+  chip, and so does a range or a selection of its lines (above); the viewer
+  still shows it. A file whose bytes are no text (a NUL, or
   too many bytes that are not UTF-8) says "(this file is not text)", one not
   on this server "(the file's text is not available on this server)".
 - **Coverage.** The entry carries `format: "text"`, `doc_id` the file's
@@ -212,7 +246,9 @@ The place is put in words by `feedback.anchors.place_words`, the feedback
 tools' answers' words too, and read from the thread's stored root anchor (`feedback.anchors.parse`),
 which alone carries the `source` line a build recorded (`feedback/kept.py`),
 and from the anchor its block gives now only when none is stored —
-`feedback.entries`' rule, so the context and the feedback tools agree.
+`feedback.entries`' rule, so the context and the feedback tools agree. A
+range of a text file is named by the lines it holds now
+(`anchors.following`), not those it was opened on.
 `include_notes` has no say: threads are not notes. `CONTEXT_INTRO` says
 the comments are the user's requests and the quoted passages document
 data. A reply to a thread changes the document part, which misses the
@@ -397,8 +433,7 @@ message, and it doesn't stop fabrication — the tools are the better lever.
 - A text file's chip shows the file's first lines, with no outline: a chip
   reads at most `CHIP_FILE_CHARS` from the file's start, never the whole
   file (`read_page` on its page reads on).
-- A selection of lines in the code view does not reach the chat (step 6
-  brings `text_position`), and a thread's place on a text file is the whole
-  file or a note until then. The composer takes no text files.
+- The composer takes no text files; a text file reaches a chat as a page,
+  a chip or a selection of its lines (below).
 - Grading is substring matching on de-markdowned/de-LaTeXed answers; the
   harness lives outside the repo (session scratchpad, `eval/`).
