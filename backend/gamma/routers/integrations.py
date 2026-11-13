@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 from .. import ratelimit
 from ..auth import SESSION_COOKIE, require_personal_user_id, require_ws, ws_role
 from ..db import connect_users_db
-from ..integrations import ALL, create_token, edit_grant, editing, grant, granted, set_workspaces, token_digest
+from ..integrations import (ALL, create_token, edit_grant, editing, grant, granted, set_asks, set_workspaces,
+                            token_digest)
 from ..mcp_oauth import load, public_base, store
 from ..workspaces import list_for_user
 
@@ -56,6 +57,11 @@ class Access(BaseModel):
         return ALL if self.edit_all else self.edit_workspaces or []
 
 
+class AccessChange(Access):
+    # whether each change it makes asks first; left out, as it was
+    asks: bool | None = None
+
+
 class TokenCreate(Access):
     name: str = Field(default="Codex", min_length=1, max_length=80)
     expires_in_days: int = Field(default=90, ge=1, le=365)
@@ -81,10 +87,10 @@ def list_tokens(request: Request, response: Response):
         base = str(request.base_url).rstrip("/")
         oauth_error = str(exc.detail)
     with connect_users_db() as conn:
-        rows = conn.execute("SELECT id, name, created_at, expires_at, scope, workspace_id, workspaces, edits "
+        rows = conn.execute("SELECT id, name, created_at, expires_at, scope, workspace_id, workspaces, edits, asks "
                             "FROM integration_tokens WHERE user_id = ? ORDER BY created_at DESC", (user_id,)).fetchall()
     tokens = [{**dict(zip(("id", "name", "created_at", "expires_at", "scope", "workspace_id"), r[:6])),
-               **_access(r[5], r[6], r[7])} for r in rows]
+               **_access(r[5], r[6], r[7]), "asks": bool(r[8])} for r in rows]
     spaces = [{"id": w["id"], "name": w["name"], "personal": w["personal"], "default": w["default"], "role": w["role"]}
               for w in list_for_user(user_id) if not w["deleting"]]
     return {"tokens": tokens, "workspaces": spaces, "workspace_id": ws, "mcp_url": base + "/mcp",
@@ -111,9 +117,11 @@ def new_token(payload: TokenCreate, request: Request, response: Response):
 
 
 @router.patch("/tokens/{token_id}")
-def change_access(token_id: str, payload: Access, request: Request):
+def change_access(token_id: str, payload: AccessChange, request: Request):
     user_id, ws = _owner(request)
     primary, value, edits = set_workspaces(user_id, token_id, payload.wanted(ws), payload.edits())
+    if payload.asks is not None:
+        set_asks(user_id, token_id, payload.asks)
     return {"id": token_id, "workspace_id": primary, **_access(primary, value, edits)}
 
 
@@ -186,6 +194,8 @@ class DeviceConsent(Access):
     csrf: str = Field(max_length=128)
     # whether it may also answer the comments on a work folder's files
     feedback: bool = False
+    # whether each change it makes where it edits asks first
+    asks: bool = True
     approve: bool
 
 
@@ -209,7 +219,7 @@ def device_consent(payload: DeviceConsent, request: Request):
     if payload.approve:
         store("device_ok", "", pending["device_code"], {"user": user_id, "workspace_id": primary,
                                                         "workspaces": stored, "edits": edits, "scope": scope,
-                                                        "session": session}, DEVICE_SECONDS)
+                                                        "asks": payload.asks, "session": session}, DEVICE_SECONDS)
     else:
         store("device_denied", "", pending["device_code"], {"user": user_id}, DEVICE_SECONDS)
     return {"ok": True}
@@ -247,5 +257,5 @@ def device_token(payload: DevicePoll, request: Request, response: Response):
     primary, value = grant(allowed["user"], granted(allowed["workspace_id"], allowed["workspaces"]), allowed["scope"])
     edits = edit_grant(allowed["user"], primary, value, editing(allowed.get("edits", "")))
     item = create_token(allowed["user"], primary, pending["name"], 90, scope=allowed["scope"], workspaces=value,
-                        edits=edits)
+                        edits=edits, asks=allowed.get("asks", True))
     return {"token": item["token"], "name": item["name"], "expires_at": item["expires_at"]}

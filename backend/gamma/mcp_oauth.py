@@ -228,6 +228,8 @@ class Consent(BaseModel):
     # (with all_workspaces), where the account edits
     edit_workspaces: list[str] = Field(default_factory=list, max_length=200)
     edit_all: bool = False
+    # whether each change it makes there asks first
+    asks: bool = True
     # whether it may also answer the comments on a work folder's files (a
     # feedback token), asked for or not
     feedback: bool = False
@@ -257,7 +259,7 @@ def consent(payload: Consent, request: Request):
         return _no_store({"redirect_url": construct_redirect_uri(str(params.redirect_uri), error="access_denied", state=params.state)})
     code = secrets.token_urlsafe(32)
     value = GammaCode(code=code, client_id=pending["client_id"], user_id=user_id, workspace_id=primary,
-                      workspaces=stored, edits=edits, session_hash=binding["session"],
+                      workspaces=stored, edits=edits, asks=payload.asks, session_hash=binding["session"],
                       scopes=[SCOPE] + ([FEEDBACK_SCOPE] if payload.feedback else []), expires_at=time.time() + 120,
                       code_challenge=params.code_challenge,
                       redirect_uri=params.redirect_uri, redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,

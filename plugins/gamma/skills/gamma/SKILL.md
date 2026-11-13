@@ -65,6 +65,8 @@ sessions, databases, or private files to work around a missing connection.
   change notes. Change notes only when the user asks, read a note with
   `read_block` before rewriting it whole (or use `append` / `patch`), and
   say what you changed with a link to it. Nothing can be deleted this way.
+  Gamma may ask the user before each change; a declined change is final, so
+  do not retry it another way.
 - When the user wants a file, call `export_page`: `markdown` returns the text
   to write where they asked; `pdf` (the annotated paper) and `notes_pdf` (the
   notes typeset) return an embedded PDF. Save it under the returned name unless

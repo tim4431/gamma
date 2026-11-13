@@ -12,7 +12,8 @@ workspace the account can open, now and later, or a JSON list of ids
 ``edits`` (``edit_grant``): ``""`` none, ``"*"`` every one it reads, now
 and later, or a JSON list of ids; only where the account itself may edit
 (an owner or editor), and only through MCP (gamma/mcp_server.py): the HTTP
-API stays read-only for such a token.
+API stays read-only for such a token. ``asks``: whether each such change
+waits for the person's yes first (mcp_server's elicitation), 1 by default.
 
 Only token hashes are stored. Recheck the account and workspace access on
 every request, so removing membership also removes integration access.
@@ -53,7 +54,7 @@ class Grant(NamedTuple):
 class Connection(NamedTuple):
     """An MCP connection (``resolve_connection``): ``user_id`` and
     ``workspaces`` first, as the pair it once was; ``editable`` the ones of
-    them whose notes it may change now."""
+    them whose notes it may change now, and whether each change asks first."""
     user_id: str
     workspaces: list
     scope: str
@@ -61,6 +62,7 @@ class Connection(NamedTuple):
     name: str
     username: str
     editable: tuple = ()
+    asks: bool = True
 
 
 def display_name(name: str) -> str:
@@ -138,10 +140,11 @@ def granted(row_ws: str, value: str) -> list[str] | str:
 
 
 def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource: str | None = None,
-                 scope: str = "read", workspaces: str = "", edits: str = "") -> dict:
+                 scope: str = "read", workspaces: str = "", edits: str = "", asks: bool = True) -> dict:
     """A new token of ``ws``; ``workspaces`` is the stored grant ``grant``
     made (``""``: that workspace alone), ``edits`` the one ``edit_grant``
-    made (``""``: it changes nothing)."""
+    made (``""``: it changes nothing), ``asks`` whether each change waits
+    for the person's yes."""
     if scope not in SCOPES:
         raise HTTPException(400, "scope must be read, write or feedback")
     now = int(time.time())
@@ -156,9 +159,9 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
         if count >= 20:
             raise HTTPException(400, "Revoke an existing connection before creating another (limit 20).")
         conn.execute("INSERT INTO integration_tokens (id, token_hash, user_id, workspace_id, name, "
-                     "created_at, expires_at, scope, workspaces, edits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "created_at, expires_at, scope, workspaces, edits, asks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (item["id"], token_digest(token), user_id, ws, name, item["created_at"],
-                      item["expires_at"], scope, workspaces, edits if scope != "write" else ""))
+                      item["expires_at"], scope, workspaces, edits if scope != "write" else "", int(bool(asks))))
         if oauth_resource:
             conn.execute("INSERT INTO mcp_oauth VALUES ('access', ?, ?, ?)",
                          (token_digest(token), json.dumps({"resource": oauth_resource}), item["expires_at"]))
@@ -184,6 +187,16 @@ def set_workspaces(user_id: str, token_id: str, workspaces, edits=()) -> tuple[s
     return ws, value, changes
 
 
+def set_asks(user_id: str, token_id: str, asks: bool) -> None:
+    """Whether one of the account's connections asks before each change it
+    makes (Settings, or the person's "don't ask again" on a question)."""
+    with connect_users_db() as conn:
+        found = conn.execute("UPDATE integration_tokens SET asks = ? WHERE id = ? AND user_id = ?",
+                             (int(bool(asks)), token_id, user_id)).rowcount
+    if not found:
+        raise HTTPException(404, "This connection is gone.")
+
+
 def forget_workspace(conn, ws: str) -> None:
     """A deleted workspace leaves every token, in the caller's transaction:
     one that read it alone goes, one that reads others too keeps them."""
@@ -206,7 +219,7 @@ def forget_workspace(conn, ws: str) -> None:
 
 def _row(token: str, resource: str | None):
     """The live token's ``(user_id, username, workspace_id, scope,
-    workspaces, id, name, edits)``, else None. ``resource`` is the MCP URL an OAuth
+    workspaces, id, name, edits, asks)``, else None. ``resource`` is the MCP URL an OAuth
     token must be bound to."""
     if not token.startswith("gamma_") or len(token) > 128:
         return None
@@ -217,7 +230,7 @@ def _row(token: str, resource: str | None):
             if not audience or json.loads(audience[0]).get("resource") != resource:
                 return None
         return conn.execute(
-            "SELECT t.user_id, u.username, t.workspace_id, t.scope, t.workspaces, t.id, t.name, t.edits "
+            "SELECT t.user_id, u.username, t.workspace_id, t.scope, t.workspaces, t.id, t.name, t.edits, t.asks "
             "FROM integration_tokens t "
             "JOIN users u ON u.id = t.user_id "
             "WHERE t.token_hash = ? AND t.expires_at > ? AND u.is_guest = 0",
@@ -250,12 +263,12 @@ def resolve_connection(token: str, resource: str | None = None) -> Connection | 
     """The MCP connection: every workspace the token may read that its
     account can still open, its own first (the default for a call that
     names none), with the token's scope, id and name, the account's
-    username, and those of them it may edit that the account still edits;
-    None when it reads none."""
+    username, those of them it may edit that the account still edits and
+    whether each change asks first; None when it reads none."""
     row = _row(token, resource)
     if not row:
         return None
-    user_id, username, primary, scope, value, token_id, name, edits = row
+    user_id, username, primary, scope, value, token_id, name, edits, asks = row
     wanted = granted(primary, value)
     if wanted == ALL:
         wanted = [w["id"] for w in list_for_user(user_id) if not w["deleting"]]
@@ -264,4 +277,5 @@ def resolve_connection(token: str, resource: str | None = None) -> Connection | 
     readable = [w for w in ordered if roles[w]]
     changing = editing(edits) if _scope(scope) != "write" else []
     editable = tuple(w for w in readable if roles[w] in EDITING_ROLES and (changing == ALL or w in changing))
-    return Connection(user_id, readable, _scope(scope), token_id, name, username, editable) if readable else None
+    return Connection(user_id, readable, _scope(scope), token_id, name, username, editable,
+                      bool(asks)) if readable else None

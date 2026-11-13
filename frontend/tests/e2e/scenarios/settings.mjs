@@ -777,12 +777,17 @@ export async function settingsScenarios(env) {
       // and let it edit the notes of the one it keeps, as a share's person is given Edit
       assertEq(await editor.getByRole("button", { name: "Edit", exact: true }).count(), 1, "a role for each workspace ticked");
       await editor.getByRole("button", { name: "Edit", exact: true }).click();
+      // it asks before each change unless told not to
+      const asking = page.getByRole("checkbox", { name: /Ask me before each change it makes/ });
+      assert(await asking.isChecked(), "a connection that edits asks first");
+      await asking.uncheck();
       await page.getByRole("button", { name: "Save", exact: true }).click();
       await editor.waitFor({ state: "detached" });
       connections = await user.api("/api/integrations/tokens");
       assertEq(JSON.stringify(connections.tokens[0].workspaces), JSON.stringify([user.ws]));
       assertEq(JSON.stringify(connections.tokens[0].edit_workspaces), JSON.stringify([user.ws]));
-      await page.getByText(/edits notes in /).waitFor();
+      assertEq(connections.tokens[0].asks, false);
+      await page.getByText(/edits notes in .* · changes without asking/).waitFor();
       // Separate authorizations can have the same name. Revoking one must
       // leave the other visible, without claiming the assistant lost access.
       const duplicate = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Codex test" } });

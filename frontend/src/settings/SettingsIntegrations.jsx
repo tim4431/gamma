@@ -5,7 +5,7 @@ import { CopyField, PaneHead, Section, Row, Segmented, Step } from "./SettingsKi
 import { LinkIcon, KeyIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
-import { WorkspacePicker, accessBody, accessOf } from "./WorkspacePicker";
+import { WorkspacePicker, accessBody, accessOf, edits as editsIn } from "./WorkspacePicker";
 import { t } from "../shared/i18n/i18n.js";
 
 const dateOf = (value) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -30,6 +30,7 @@ function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   const edits = item.edit_all ? t("edits notes wherever you edit")
     : editing.length ? t("edits notes in {workspaces}", { workspaces: editing.join(", ") }) : null;
   const parts = [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads, edits,
+    edits && item.asks === false ? t("changes without asking") : null,
     item.scope === "feedback" ? t("answers feedback") : null,
     item.created_at ? t("Connected {date}", { date: dateOf(item.created_at) }) : null, expiry].filter(Boolean);
   return <Row icon={oauth ? LinkIcon : KeyIcon} label={name}
@@ -53,7 +54,7 @@ export function IntegrationSettings({ workspaceId }) {
   const [platform, setPlatform] = React.useState(() => /Windows/i.test(navigator.userAgent) ? "windows" : "unix");
   // What a new token may read; the open workspace to start.
   const [access, setAccess] = React.useState({ all: false, ids: [workspaceId] });
-  const [editing, setEditing] = React.useState(null);  // {id, access}: a connection's workspaces, being changed
+  const [editing, setEditing] = React.useState(null);  // {id, access, asks}: a connection's workspaces, being changed
   const [name, setName] = React.useState(t("Script"));
   const [scope, setScope] = React.useState("read");
   const [secret, setSecret] = React.useState(null);
@@ -106,7 +107,7 @@ export function IntegrationSettings({ workspaceId }) {
   });
   const saveAccess = () => run(async () => {
     await apiJson(`${endpoint}/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(accessBody(editing.access)) });
+      body: JSON.stringify({ ...accessBody(editing.access), asks: editing.asks }) });
     setEditing(null);
     await refresh();
   });
@@ -229,10 +230,15 @@ export function IntegrationSettings({ workspaceId }) {
       </button>}>
       {data ? data.tokens.length ? data.tokens.map((item) => <React.Fragment key={item.id}>
         <ConnectionRow item={item} names={names} busy={busy} onRevoke={revoke}
-          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row) })} />
+          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row), asks: row.asks !== false })} />
         {editing?.id === item.id ? <div className="integrationDetails integrationEdit">
           <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy} roles={item.scope !== "write"}
             label={t("Workspaces {name} may read", { name: item.name })} onChange={(value) => setEditing({ ...editing, access: value })} />
+          {editsIn(editing.access) ? <label className="integrationAsk">
+            <input type="checkbox" checked={editing.asks} disabled={busy} onChange={(e) => setEditing({ ...editing, asks: e.target.checked })} />
+            <span>{t("Ask me before each change it makes")}
+              <span className="settingDesc">{t("The assistant shows Gamma's question in its own window. One that cannot show it changes nothing while this is on.")}</span></span>
+          </label> : null}
           <div className="integrationActions">
             <button className="uiBtn primary" disabled={busy || !(editing.access.all || editing.access.ids.length)} onClick={saveAccess}>{t("Save")}</button>
             <button className="uiBtn" disabled={busy} onClick={() => setEditing(null)}>{t("Cancel")}</button>

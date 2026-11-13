@@ -1,6 +1,7 @@
 """Exercise the real SDK transport, scoped credentials, and shared dispatch;
 a feedback connection's answering tools (gamma/feedback/agent.py)."""
 
+import json
 import re
 import time
 
@@ -593,6 +594,12 @@ def test_a_connection_edits_notes_only_where_it_may(client, connection):
         assert tools["create_block"]["annotations"]["readOnlyHint"] is False
         spaces = call(client, item["token"], "list_workspaces", {})["structuredContent"]["workspaces"]
         assert [w["editable"] for w in spaces] == [False, True, False]
+        # it asks before each change, and a client on the stateless transport cannot be asked
+        assert row["asks"] is True
+        unasked = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "McpAddedNote"})
+        assert unasked["isError"] and "cannot show its question" in unasked["content"][0]["text"]
+        assert patch(workspaces=[ws, lab, owned], edit_workspaces=[lab], asks=False).status_code == 200
+        assert next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["id"] == item["id"])["asks"] is False
         # a note added and appended to in the workspace it edits, as the account through the chat's tools
         made = call(client, item["token"], "create_block", {"parent_id": lab_page["id"], "content": "McpAddedNote"})
         assert not made["isError"], made
@@ -633,6 +640,61 @@ def test_a_connection_edits_notes_only_where_it_may(client, connection):
         for gone in (lab, owned):
             if gone:
                 workspaces.delete(gone)
+
+
+def _events(response):
+    """The JSON-RPC messages of an SSE answer."""
+    return [json.loads(line[5:]) for line in response.text.splitlines() if line.startswith("data:") and line[5:].strip()]
+
+
+def _initialize(client, token, capabilities):
+    return client.post("/mcp", headers={"Host": "localhost", "Authorization": f"Bearer {token}",
+                                        "Accept": "application/json, text/event-stream"},
+                       json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                           "protocolVersion": "2025-11-25", "capabilities": capabilities,
+                           "clientInfo": {"name": "asked", "version": "0"}}})
+
+
+def test_a_client_that_can_be_asked_gets_a_session_of_its_own(client, connection):
+    """A connection that edits and whose client can show a question
+    (elicitation) gets a stateful session at initialize, answering over SSE,
+    which only its own token may use; every other client stays on the
+    stateless JSON transport. The question itself goes out and comes back in
+    the browser suite's MCP group (a real server streams it)."""
+    c, ws, item = connection
+    other = c.post("/api/integrations/tokens", json={"name": "Other"}).json()
+    try:
+        # reading only: no session, whatever the client can show
+        plain = _initialize(client, item["token"], {"elicitation": {"form": {}}})
+        assert plain.status_code == 200 and "mcp-session-id" not in plain.headers
+        assert plain.headers["content-type"].startswith("application/json")
+        assert c.patch(f"/api/integrations/tokens/{item['id']}", json={"workspaces": [ws], "edit_workspaces": [ws]}).status_code == 200
+        # editing, but a client that cannot be asked: no session either
+        for capabilities in ({}, {"elicitation": {"url": {}}}):
+            unasked = _initialize(client, item["token"], capabilities)
+            assert unasked.status_code == 200 and "mcp-session-id" not in unasked.headers
+        opened = _initialize(client, item["token"], {"elicitation": {}})
+        assert opened.status_code == 200, opened.text
+        session = opened.headers["mcp-session-id"]
+        assert opened.headers["content-type"].startswith("text/event-stream")
+        assert _events(opened)[0]["result"]["serverInfo"]["name"] == "Gamma"
+        headers = {"Host": "localhost", "Accept": "application/json, text/event-stream", "Mcp-Session-Id": session,
+                   "MCP-Protocol-Version": "2025-11-25"}
+        mine = {**headers, "Authorization": f"Bearer {item['token']}"}
+        ready = client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        assert ready.status_code == 202, ready.text
+        listed = client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        assert listed.status_code == 200
+        assert "edit_block" in {t["name"] for t in _events(listed)[0]["result"]["tools"]}
+        # another token, or a session no token opened, finds none
+        theirs = {**headers, "Authorization": f"Bearer {other['token']}"}
+        assert client.post("/mcp", headers=theirs, json={"jsonrpc": "2.0", "id": 3, "method": "tools/list"}).status_code == 404
+        assert client.post("/mcp", headers={**mine, "Mcp-Session-Id": "f" * 32},
+                           json={"jsonrpc": "2.0", "id": 4, "method": "tools/list"}).status_code == 404
+        assert client.delete("/mcp", headers=mine).status_code == 200
+        assert client.post("/mcp", headers=mine, json={"jsonrpc": "2.0", "id": 5, "method": "tools/list"}).status_code == 404
+    finally:
+        c.delete(f"/api/integrations/tokens/{other['id']}")
 
 
 # --- answering feedback ---------------------------------------------------------------
