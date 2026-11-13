@@ -645,11 +645,13 @@ AI:
   connection: how it signed in (browser sign-in — the `(OAuth)` suffix the
   provider mints — or token), what it reads ("Reads A, B", all workspaces, or
   read and write for a token's workspace), where it edits notes ("edits
-  notes in Lab", "edits notes wherever you edit"), "answers feedback" for a
+  notes in Lab", "edits notes wherever you edit") and "changes without
+  asking" once it no longer asks first, "answers feedback" for a
   feedback connection, the connected and expiry dates, an
   icon-only **Choose workspaces** (read and feedback connections) that opens
   the checklist under the row, with View or Edit on each workspace ticked,
-  and Save and Cancel, and an icon-only
+  **Ask me before each change it makes** once one is Edit, and Save and
+  Cancel, and an icon-only
   Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
   its scope as a `Segmented` (read-only for assistants; read and answer
   feedback for an agent or script that replies to and resolves the comments

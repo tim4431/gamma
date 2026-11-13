@@ -521,6 +521,47 @@ the HTTP API still answers such a token's writes 403, as any read token's.
   where it edits ("edits notes in Lab", "edits notes wherever you edit").
   Not a scope: no client asks for it, the person gives it.
 
+#### Asking first
+
+A connection that edits asks the person before each change, by default
+(`integration_tokens.asks`, schema step 57), as the chat's Ask permission
+does: through the client, with MCP elicitation, in Gamma's words. Why this
+way and not the client's own prompt or a step-up sign-in:
+[research/mcp-elicitation.md](../research/mcp-elicitation.md).
+
+- **The question** (`GammaMCP._ask`). The call is planned first with the
+  tool's approval preview (`ai_tools.approval_preview`, the chat card's), in
+  a worker thread; a call that could change nothing gets its answer and asks
+  nobody. Then `elicit_form` sends the client the question (`_question`):
+  who asks, what and where ("Codex wants to add a note to “Paper”, under
+  “Methods”:"), the change as a word diff (`[-removed-]{+added+}`) and the
+  page's URL, with one field, `remember` ("Don't ask again for this
+  connection"). Accept runs the call with the preview's digest
+  (`run_agent_tool(approved=)`), as the chat's gate does; accept with
+  `remember` also turns asking off for the connection (`set_asks`). Decline
+  or cancel, or no answer within the chat card's ten minutes
+  (`ai_permissions.APPROVAL_TIMEOUT`), changes nothing, and the model hears
+  `DECLINED` or `UNANSWERED`, worded as the chat's.
+- **Two transports** (`GammaMCP.__call__`). The question needs a stateful
+  session answered over SSE: the SDK's JSON mode drops a server request made
+  during a call, and a stateless request has no session for the answer to
+  come back to. So every client stays on the stateless JSON manager, and a
+  second, stateful manager (SSE, 30 minutes idle, at most 1,000 sessions)
+  takes the `initialize` of a connection that edits somewhere whose client
+  can show a form (`capabilities.elicitation` empty or with `form`:
+  `_opens_session`, reading the body once and handing it on). The session's
+  id is noted as that token's (`owners`, from the response's
+  `Mcp-Session-Id`); a request naming a session answers only the token that
+  opened it, else 404, which tells a client to open another.
+- **When it cannot ask.** A client on the stateless transport (it cannot
+  show a question, or it connected before the connection could edit) gets
+  `CANNOT_ASK`: nothing changed, and the steps to restart it or to turn
+  asking off. So does one whose `elicit_form` fails.
+- **Where it is set.** On the consent page, **Ask me before each change it
+  makes** under the workspaces once one is Edit (ticked; its summary says
+  which way); in a connection's **Choose workspaces**, the same box; the
+  connection's row adds "changes without asking" once it is off.
+
 ## Self-hosted and remote connections
 
 Open Gamma at its public HTTPS address, then sign in as an administrator and
@@ -633,7 +674,8 @@ GET    /api/integrations/tokens                 the account's connections, its w
 POST   /api/integrations/tokens       {"name":"Codex","expires_in_days":90,"scope":"read","workspaces":[…],"edit_workspaces":[…]}
                                       scope: read (the default), feedback or write (the current workspace alone)
 PATCH  /api/integrations/tokens/{id}  {"workspaces":[…]} or {"all_workspaces":true}   a read or feedback token,
-                                      with "edit_workspaces":[…] (of those) or "edit_all":true: the ones it may edit
+                                      with "edit_workspaces":[…] (of those) or "edit_all":true: the ones it may edit,
+                                      and "asks": whether each change asks first (left out: as it was)
 DELETE /api/integrations/tokens/{id}
 ```
 
@@ -822,7 +864,10 @@ grant only of workspaces it reads and the account edits, every one of them,
 the four tools listed only where it edits and none of them a deletion, a
 note added and appended to as client `ai`, a rewrite refused until a read
 in an earlier call, a workspace it only reads refused, a deleted one
-leaving the grant; `test_mcp_oauth.py` the consent's grant); a feedback
+leaving the grant; `test_mcp_oauth.py` the consent's grant); asking first
+(a stateless client refused until asking is off; a stateful session only for
+a client that edits and can be asked, answering over SSE, refused to another
+token and gone once deleted); a feedback
 connection's answering tools (listed for it alone, refused to a read
 connection even right after a feedback one listed them, a reply with its
 stamp, the room and the Inbox told, a retried id written once, a resolve
@@ -850,4 +895,7 @@ schema upgrades. Browser scenarios cover sign-in, ticking a second workspace,
 approval, cancellation, and MCP reads, each assistant's tab, a token's
 workspaces and changing them, the account-wide list and revocation, and the
 DeepSeek Harness setup command, shown at once, and its sign-in allowed in the
-browser and collected once.
+browser and collected once; a workspace marked Edit, and asking turned off,
+in a connection's editor and on the consent page; and Gamma's question about
+a change streamed to a client over a real session and answered: allowed,
+declined, allowed with "don't ask again", then not asked.

@@ -81,6 +81,7 @@ export default function McpConsent({ requestId, userCode }) {
   const [details, setDetails] = React.useState(null);
   const [access, setAccess] = React.useState({ all: false, ids: [] });
   const [feedback, setFeedback] = React.useState(false);
+  const [asks, setAsks] = React.useState(true);  // where it edits, whether each change asks first
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [done, setDone] = React.useState(null);  // a setup command's answer: "allowed" or "cancelled"
@@ -99,7 +100,7 @@ export default function McpConsent({ requestId, userCode }) {
   }, [device, requestId, userCode]);
   const decide = async (approve) => {
     setBusy(true); setError("");
-    const body = { csrf: details.csrf, ...accessBody(access), feedback, approve };
+    const body = { csrf: details.csrf, ...accessBody(access), feedback, asks, approve };
     try {
       const result = await apiJson(`${API}/integrations/${device ? "device" : "oauth"}/consent`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -132,6 +133,10 @@ export default function McpConsent({ requestId, userCode }) {
       <label>{t("Workspaces it may read")}</label>
       <WorkspacePicker workspaces={details.workspaces} value={access} onChange={setAccess} disabled={busy}
         label={t("Workspaces it may read")} roles />
+      {editing ? <label className="mcpFeedback">
+        <input type="checkbox" checked={asks} disabled={busy} onChange={(e) => setAsks(e.target.checked)} />
+        {" "}{t("Ask me before each change it makes")}
+      </label> : null}
       <label className="mcpFeedback">
         <input type="checkbox" checked={feedback} disabled={busy} onChange={(e) => setFeedback(e.target.checked)} />
         {" "}{t("Also let it answer my comments on work-folder files (reply and resolve)")}
@@ -140,6 +145,8 @@ export default function McpConsent({ requestId, userCode }) {
         <strong>{editing ? t("Read and edit notes") : feedback ? t("Read and answer feedback") : t("Read-only access")}</strong>
         <ul><li>{t("Read pages, notes, highlights, and PDF text.")}</li>
           {editing ? <li>{t("Create, edit and move notes in the workspaces marked Edit. Never deletes anything, or changes pages, folders or settings.")}</li> : null}
+          {editing ? <li>{asks ? t("Asks you before each change, in the assistant's own window; one that cannot ask changes nothing.")
+            : t("Changes notes without asking you first.")}</li> : null}
           {feedback ? <li>{t("Answer comments on your work folders' files: reply and resolve.")}</li> : null}
           {editing || feedback ? null : <li>{t("Cannot edit or delete your library.")}</li>}</ul>
         <p className="loginConflictHint">{t("Content the assistant reads is shared with its provider.")}</p>

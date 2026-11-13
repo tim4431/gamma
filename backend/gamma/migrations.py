@@ -1910,6 +1910,16 @@ def _v56_integration_edits(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v57_integration_asks(conn: sqlite3.Connection) -> None:
+    """``integration_tokens`` gains ``asks``: whether a connection that may
+    edit notes asks the person before each change (gamma/mcp_server.py
+    ``_ask``), 1 on every token so far. Re-runnable: the column is added only
+    where ``_columns()`` lacks it. No workspace is touched."""
+    if "asks" not in _columns(conn, "integration_tokens"):
+        conn.execute("ALTER TABLE integration_tokens ADD COLUMN asks INTEGER NOT NULL DEFAULT 1")
+    conn.commit()
+
+
 def _v52_page_documents(ws: str, pages: sqlite3.Connection, data) -> None:
     """A block's document becomes one property, ``doc``
     (gamma/documents/model.py, docs/dev/documents.md):
@@ -2040,6 +2050,7 @@ STEPS = [
     (53, "work_folders", _v53_folder_links_library),
     (54, "feedback", _v54_inbox_agent),
     (56, "integration_edits", _v56_integration_edits),
+    (57, "integration_asks", _v57_integration_asks),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

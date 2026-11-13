@@ -196,6 +196,74 @@ export async function mcpScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  await step("mcp: a connection that edits asks before each change through the client, and makes only the changes allowed", async () => {
+    // A client that can show a question (elicitation) and a connection that
+    // edits alice's workspace, asking first (the default).
+    const agent = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "Asked agent", edit_workspaces: [alice.ws] } });
+    const page = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Asked page" } });
+    const post = (body, session) => fetch(`${server.base}/mcp`, { method: "POST", headers: {
+      Authorization: `Bearer ${agent.token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-11-25", ...(session ? { "Mcp-Session-Id": session } : {}) }, body: JSON.stringify(body) });
+    // The JSON-RPC messages of an SSE answer, as they come.
+    async function* messages(response) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
+        for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
+          const data = buffer.slice(0, end).split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5)).join("");
+          buffer = buffer.slice(end + 2);
+          if (data.trim()) yield JSON.parse(data);
+        }
+      }
+    }
+    const notes = async () => (await alice.api(`/api/blocks/${page.id}/children`)).children.map((b) => b.content);
+    try {
+      const opened = await post({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25",
+        capabilities: { elicitation: { form: {} } }, clientInfo: { name: "asked-e2e", version: "0" } } });
+      const session = opened.headers.get("mcp-session-id");
+      assert(session, "a client that can be asked gets a session");
+      for await (const message of messages(opened)) { assertEq(message.result?.serverInfo?.name, "Gamma"); break; }
+      assertEq((await post({ jsonrpc: "2.0", method: "notifications/initialized" }, session)).status, 202);
+      // One change: Gamma's question comes on the call's stream, the answer goes back in the session.
+      let id = 10;
+      const change = async (content, answer) => {
+        const call = messages(await post({ jsonrpc: "2.0", id: ++id, method: "tools/call", params: {
+          name: "create_block", arguments: { parent_id: page.id, content } } }, session));
+        let { value: message } = await call.next();
+        let question = null;
+        if (message.method === "elicitation/create") {
+          question = message.params;
+          assertEq((await post({ jsonrpc: "2.0", id: message.id, result: answer }, session)).status, 202);
+          ({ value: message } = await call.next());
+        }
+        assertEq(message.id, id, "the call's own result");
+        return { question, result: message.result };
+      };
+      const allowed = await change("Asked note", { action: "accept", content: { remember: false } });
+      assert(allowed.question, "Gamma asks first");
+      assert(allowed.question.message.includes("Asked agent wants to add a note to “Asked page”"), allowed.question.message);
+      assert(allowed.question.message.includes("{+Asked note+}"), "the question shows the change");
+      assert(allowed.question.requestedSchema.properties.remember, "and offers not asking again");
+      assert(!allowed.result.isError, JSON.stringify(allowed.result));
+      const declined = await change("Declined note", { action: "decline" });
+      assert(declined.question && declined.result.isError && declined.result.content[0].text.startsWith("declined"), JSON.stringify(declined.result));
+      assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note"]), "only the change allowed was made");
+      // "Don't ask again": this change goes through, and the next one is not asked about.
+      const remembered = await change("Remembered note", { action: "accept", content: { remember: true } });
+      assert(remembered.question && !remembered.result.isError, JSON.stringify(remembered.result));
+      assertEq((await alice.api("/api/integrations/tokens")).tokens.find((t) => t.id === agent.id).asks, false);
+      const unasked = await change("Unasked note", null);
+      assert(!unasked.question && !unasked.result.isError, "no question once it changes without asking");
+      assertEq(JSON.stringify(await notes()), JSON.stringify(["Asked note", "Remembered note", "Unasked note"]));
+    } finally {
+      await alice.api(`/api/integrations/tokens/${agent.id}`, { method: "DELETE" });
+    }
+  });
+
   await step("mcp: a saved library page cannot dismiss authorization", async () => {
     const ctx = await alice.context(browser);
     try {

@@ -18,6 +18,7 @@ class GammaCode(AuthorizationCode):
     workspace_id: str
     workspaces: str = ""  # the stored grant (integrations.grant): "", "*" or a JSON list
     edits: str = ""  # the ones of them it may edit (integrations.edit_grant)
+    asks: bool = True  # whether each change there asks first
     session_hash: str
 
 
@@ -76,7 +77,8 @@ class Provider:
             edits = edit_grant(value["user_id"], primary, stored, editing(value.get("edits", "")))
             issued = create_token(value["user_id"], primary,
                                   (client.client_name or "MCP assistant")[:65] + " (OAuth)", 90,
-                                  oauth_resource=self.resource, scope=scope, workspaces=stored, edits=edits)
+                                  oauth_resource=self.resource, scope=scope, workspaces=stored, edits=edits,
+                                  asks=value.get("asks", True))
         except HTTPException as exc:
             raise TokenError("invalid_grant", str(exc.detail)) from exc
         return OAuthToken(access_token=issued["token"], expires_in=TTL, scope=" ".join(value["scopes"]))
