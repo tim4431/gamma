@@ -185,6 +185,9 @@ export const RULES = [
   ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
   // (text-search: a note's line link is a pill)
   ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search"]],
+  // the chat's computer side: the switch, the strip, a turn of the agent on this computer, Stop, New chat and History
+  ["frontend/src/chat/computer/**", ["local-agents"]],
+  ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "local-agents"]], // the switch to that side
   // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link
   ["frontend/src/chat/**", [...CHAT, "ink-zoom", "text-search"]],
   // the Inbox notifications row
@@ -206,6 +209,8 @@ export const RULES = [
   ["frontend/src/collaboration/zoteroLink.css", ["zotero-link"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
+  // (local-agents: the agent the maker's comments name and the chat's computer side talks to)
+  ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents"]],
   ["frontend/src/vault/**", ["vaults", "work-folders"]],
   // the pages the listing does not carry, merged into every page list the app has
   ["frontend/src/explorer/knownPages.js", ALL],

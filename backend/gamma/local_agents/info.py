@@ -1,15 +1,17 @@
 """What a work folder's vault says of its agent on this computer, for the
 folder-links API's links (``_info``) and a page's chip
 (``folder_links.page_vault``): ``{name, label, ready, problem, running}``,
-``running`` the request it answers now (``{request_id, detail}``) or null,
-and null for a vault with no agent, one that is no work folder, and on a
-server that runs no agents.
+``running`` what it works on now, ``{kind: "send", request_id, detail}``
+for a Send or ``{kind: "chat", request_id: null, detail}`` for a turn of
+the chat's computer side, or null; and null for a vault with no agent, one
+that is no work folder, and on a server that runs no agents.
 
 A read path: nothing here runs a process. Whether the agent is ready is
 ``catalog.cached``'s (a stale answer starts one probe in the background), a
 listing asks the store once for all its vaults' agents (``store.agents_of``),
-and a run is the runner's while it holds the request (``runner.running``).
-A member who cannot act on the vault reads no detail: it may name its files.
+and a run is the runner's while it holds the request or runs the turn
+(``runner.at_work``). A member who cannot act on the vault reads no detail:
+it may name its files.
 """
 
 from ..db import connect_pages_db
@@ -23,18 +25,10 @@ def _detail(ws: str, request_id: str) -> str:
     return row[1] if row and row[0] == "running" else ""
 
 
-def _runs(link_ids: set[str]) -> dict[str, dict]:
-    """``{link id: run}`` of the runs these vaults' agents are working on
-    now."""
-    return {run["link_id"]: run for run in store.open_runs()
-            if run["link_id"] in link_ids and runner.running(run["ws"], run["request_id"])}
-
-
 def listing(links, *, can_act=lambda link: True) -> dict[str, dict | None]:
     """``{link id: its agent's info or None}`` of ``links``, in one query of
-    the store for them all (and one of the runs when any has an agent);
-    ``can_act(link)``: whether the asking account may read the run's
-    detail."""
+    the store for them all; ``can_act(link)``: whether the asking account
+    may read the run's detail."""
     from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
     links = list(links)
@@ -43,7 +37,7 @@ def listing(links, *, can_act=lambda link: True) -> dict[str, dict | None]:
         return out
     work = [link for link in links if folder_links.work_folder_link(link)]
     rows = store.agents_of([link["id"] for link in work]) if work else {}
-    runs = _runs(set(rows)) if rows else {}
+    runs = runner.at_work(rows) if rows else {}
     for link in work:
         row = rows.get(link["id"])
         if row is None:
@@ -51,9 +45,11 @@ def listing(links, *, can_act=lambda link: True) -> dict[str, dict | None]:
         found = catalog.cached(row["agent"])
         run = runs.get(link["id"])
         running = None
-        if run is not None:
-            running = {"request_id": run["request_id"],
-                       "detail": _detail(run["ws"], run["request_id"]) if can_act(link) else ""}
+        if run is not None and run["kind"] == runner.CHAT:
+            running = {"kind": runner.CHAT, "request_id": None, "detail": run["detail"] if can_act(link) else ""}
+        elif run is not None:
+            running = {"kind": runner.SEND, "request_id": run["id"],
+                       "detail": _detail(run["ws"], run["id"]) if can_act(link) else ""}
         out[link["id"]] = {"name": row["agent"], "label": catalog.label(row["agent"]), "ready": found["ready"],
                            "problem": found["problem"], "running": running}
     return out

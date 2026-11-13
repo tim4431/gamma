@@ -242,7 +242,7 @@ import { ZoteroPdfCard, ZoteroReadonlyBadge } from "../collaboration/ZoteroPage.
 import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
-import { addsToLibrary, carriesToServer, isOpenedPdf, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
+import { addsToLibrary, carriesToServer, computerAgent, isOpenedPdf, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -4876,6 +4876,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // comment (`@codex`, vaultState.js mentionAgent): the comment fields'
   // `links.agent`, never MentionContext, which reaches the notes.
   const commentAgent = useMemo(() => (IS_DESKTOP ? mentionAgent(vaultState) : null), [vaultState]);
+  // The same agent for the chat's computer side (vaultState.js computerAgent).
+  const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null), [vaultState]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept
@@ -12470,6 +12472,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
+          computer={chatComputer}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {

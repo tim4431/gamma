@@ -1346,7 +1346,8 @@ def _purged(ws: str, conn, pages: list[str], rows: list, *, client: str, sweep: 
 
 def _purge(conn, page_id: str, actor: str) -> list:
     """``delete_page``'s part for one page, in the caller's transaction:
-    its subtree, comments, followers, op log and chats go, and a page that
+    its subtree, comments, followers, op log and chats (its computer chats
+    too) go, and a page that
     was not in Recently deleted is touched ``deleted``. Returns the
     subtree's ``fetch_subtree`` rows."""
     rows = fetch_subtree(conn, page_id)
@@ -1357,6 +1358,7 @@ def _purge(conn, page_id: str, actor: str) -> list:
     conn.execute("DELETE FROM page_ops WHERE page_id = ?", (page_id,))
     conn.execute("DELETE FROM chats WHERE bucket = ?", (page_id,))
     conn.execute("DELETE FROM chat_history WHERE bucket = ?", (page_id,))
+    conn.execute("DELETE FROM computer_chats WHERE page_id = ?", (page_id,))
     if not trashed:
         touch_page(conn, page_id, actor, "deleted")
     return rows

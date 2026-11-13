@@ -121,6 +121,16 @@ test('a work folder\'s agent: who made it, the agent and how it stands, the agen
   assert.match(held.title, /Codex is working on a Send meanwhile\.$/);
   assert.equal(keeping.summarize([failing]).state, 'error');
 
+  // a turn of a page's chat works the folder too: busy, said as the chat's, not a Send's
+  const chatting = { name: 'codex', label: 'Codex', ready: true, problem: '', running: { kind: 'chat', request_id: null, detail: 'Editing sections/intro.tex' } };
+  const chat = work({ mine: true, agent: chatting }, found);
+  assert.deepEqual([chat.state, chat.text, chat.agentChat], ['busy', 'Codex is working · Editing sections/intro.tex', true]);
+  assert.equal(chat.title, 'Codex is working in the chat of a file of this folder on this computer: the files here may change meanwhile.');
+  assert.equal(keeping.summarize([chat]).text, 'Agent working');
+  assert.match(work({ mine: true, agent: chatting, status: { last_sync: now, last_error: 'The disk is full.' } }, found).title,
+    /^The disk is full\. Codex is working in the chat meanwhile\.$/);
+  assert.equal(running.agentChat, false, 'a Send\'s run, kind "send" or none, is no chat');
+
   // a server that runs no agents offers none; one that lists only some reads the others as not here; only a work folder offers them
   assert.equal(work({ mine: true }, null).agents, null);
   assert.deepEqual(work({ mine: true }, [found[0]]).agents[1], { name: 'claude', label: 'Claude Code', found: false, ready: false, problem: 'Claude Code is not on this computer.' });

@@ -966,6 +966,18 @@ measure. The reply keeps it as `shortened` and shows the pill
 model's window when the window fit shrank the budget (`budget` below
 `asked`, "Fitting the window" above).
 
+### The computer side
+
+On a work folder's file whose vault the account made, with an agent on
+(the desktop app's own server), the chat's header starts with a switch,
+**Gamma AI | Codex**, drawn even when Gamma AI is off or unset. The
+Codex side is not Gamma AI's: it talks to the agent on this computer, has
+its own conversations, strip, transcript and composer, and goes through
+none of this document's machinery (no provider, model, tools, Plan mode,
+approvals or chat buckets). It is [local_agents.md](local_agents.md)
+"The chat's computer side"; this side's PDF passages are the same App
+state on both.
+
 ### The composer
 
 The composer is one rounded box: the context chips on top, the message at

@@ -270,7 +270,8 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // computer that answers its Sends (`agent`, a name, "" for none, with its
 // `agentLabel`), whether it is ready (`agentReady`: null while the server
 // still checks) and why not (`agentProblem`), and what it does now
-// (`agentRunning`: the request's detail while a run works, else ""), as the
+// (`agentRunning`: the detail of its run while one works, else "";
+// `agentChat` when that run is a turn of a page's chat, not a Send), as the
 // link's `agent` says them. `agents` is what the server finds on this
 // computer (`GET /api/local-agents`' `agents`; null: a server that runs no
 // agents, which then offers none).
@@ -303,7 +304,7 @@ function vault(server, link, servers, roles = null, agents = null) {
   Object.assign(item, {
     agent: (agent && agent.name) || '', agentLabel: agent ? agent.label || AGENT_LABELS[agent.name] || agent.name : '',
     agentReady: agent ? (agent.ready === undefined ? null : agent.ready) : null, agentProblem: (agent && agent.problem) || '',
-    agentRunning: run ? String(run.detail || 'Working') : '',
+    agentRunning: run ? String(run.detail || 'Working') : '', agentChat: Boolean(run && run.kind === 'chat'),
     agents: item.work && Array.isArray(agents) ? agentChoices(agents) : null,
   });
   const stated = scope === 'file' ? fileState(item, s) : folderState(item, s, left);
@@ -349,7 +350,8 @@ const said = (text) => `${capital(text)}${/[.!?]$/.test(text) ? '' : '.'}`;
 
 // A directory's vault, worst first: a work folder whose files are not chosen
 // yet (Choose files… opens its dialog in Gamma), a round running, its agent
-// answering a Send (busy: the files may change meanwhile), paused,
+// answering a Send or working in a page's chat (busy: the files may change
+// meanwhile), paused,
 // stopped (its marker gone or another's: Locate… says where it is), held by
 // its guard (Go on), its directory not there, a problem, never synced, up to
 // date.
@@ -369,7 +371,8 @@ function folderState(item, s, left) {
   }
   if (item.away) return awayState(item);
   // A vault's own problem keeps its row while its agent works: the agent's run is said in the title.
-  const meanwhile = item.agentRunning ? ` ${item.agentLabel} is working on a Send meanwhile.` : '';
+  const meanwhile = item.agentRunning
+    ? ` ${item.agentLabel} is working ${item.agentChat ? 'in the chat' : 'on a Send'} meanwhile.` : '';
   if (item.stopped) return { ...item, state: 'error', text: 'Stopped', title: `${item.stopped} Locate… tells Gamma where the directory is now.${meanwhile}` };
   if (item.held) {
     const { removals = 0, total = 0 } = item.held;
@@ -383,7 +386,7 @@ function folderState(item, s, left) {
   if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: `${s.last_error}${meanwhile}` };
   if (item.agentRunning) {
     return { ...item, state: 'busy', agentBusy: true, text: `${item.agentLabel} is working · ${item.agentRunning}`,
-      title: `${item.agentLabel} is answering a Send of this folder on this computer: the files here may change meanwhile.` };
+      title: `${item.agentLabel} is ${item.agentChat ? 'working in the chat of a file of this folder' : 'answering a Send of this folder'} on this computer: the files here may change meanwhile.` };
   }
   if (!s.last_sync) return { ...item, state: 'new', text: 'Not synced yet', title: 'The first round runs in a moment.' };
   const { changed } = item;
