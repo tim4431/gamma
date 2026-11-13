@@ -3,7 +3,9 @@
 server finds here and whether each is ready, for the sync panel's agent row;
 and the chat's computer side (``/chat``, gamma/local_agents/chats.py): a
 page's conversation with the work folder's agent, its turns, the answers to
-what they ask, Stop, New chat and History. Only a server that runs agents answers
+what they ask, Stop, New chat and History, the command line the desktop
+shell opens the conversation with in a terminal, and the source lines of
+the composer's selections. Only a server that runs agents answers
 (``local_agents.enabled``); any other answers 404. A signed-in account's
 session only: an integration token and the guest are refused, as on the
 folder-links routes. The chat answers only the maker of the vault of the
@@ -32,8 +34,9 @@ _fresh_at = 0.0       # when the last re-probe asked for began (monotonic)
 
 @router.get("")
 def list_agents(request: Request, fresh: int = 0):
-    """``{agents: [{name, label, found, version, ready, problem, at}]}``,
-    Codex then Claude Code, as last asked (``catalog.cached``: nothing runs,
+    """``{agents: [{name, label, found, version, ready, problem, models,
+    at}]}`` (``models`` what each offers, ``[{id, label, efforts, effort,
+    default}]``), Codex then Claude Code, as last asked (``catalog.cached``: nothing runs,
     and an answer missing or stale is asked in the background, ``found``
     and ``ready`` null meanwhile). ``fresh=1`` asks each agent anew
     (``--version`` and its status command), at most once every
@@ -80,10 +83,17 @@ class TurnBody(BaseModel):
     text: str = ""
     selections: list | None = None
     id: str = ""
+    model: str = ""
+    effort: str = ""
 
 
 class PageBody(BaseModel):
     page: str
+
+
+class SourcesBody(BaseModel):
+    page: str
+    selections: list = []
 
 
 class AnswerBody(BaseModel):
@@ -133,27 +143,32 @@ def _refused(e) -> HTTPException:
 
 
 def _computer(ws: str, link: dict, conversation: dict | None) -> dict:
-    """What the strip says: ``{agent, label, ready, problem, folder, paused,
-    turn}``, ``agent`` the work folder's agent here (null for none),
-    ``ready`` and ``problem`` as last asked (``catalog.cached``: nothing
+    """What the strip says: ``{agent, label, ready, problem, models, folder,
+    paused, turn, session}``, ``agent`` the work folder's agent here (null for none),
+    ``ready``, ``problem`` and ``models`` (what it offers, ``[{id, label,
+    efforts, effort, default}]``) as last asked (``catalog.cached``: nothing
     runs; ``ready`` null while it is asked), ``folder`` the work folder's
     name, ``paused`` whether the vault is paused or choosing its files,
     ``turn`` where the conversation's turn stands in the runner
-    (``runner.chat_state``) or null."""
+    (``runner.chat_state``) or null, ``session`` whether a terminal can
+    continue the conversation (``_session_of``; the id itself goes only to
+    the shell, ``terminal``)."""
     from .. import folder_links
     from ..db import connect_pages_db
     from ..local_agents import catalog, chats, runner, store
 
     row = store.agent_of(link["id"])
     name = row["agent"] if row and row["agent"] in catalog.AGENTS else None
-    found = catalog.cached(name) if name else {"ready": False, "problem": ""}
+    found = catalog.cached(name) if name else {"ready": False, "problem": "", "models": []}
     with connect_pages_db(ws) as conn:
         named = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (link["folder_id"],)).fetchone()
     reply = chats.busy(conversation)
     return {"agent": name, "label": catalog.label(name) if name else "", "ready": found["ready"],
-            "problem": found["problem"], "folder": (named[0] if named else "") or folder_links.dest_of(link).name,
+            "problem": found["problem"], "models": found.get("models") or [],
+            "folder": (named[0] if named else "") or folder_links.dest_of(link).name,
             "paused": bool(link["status"].get(folder_links.PAUSED)) or folder_links.choosing(link),
-            "turn": runner.chat_state(ws, reply["turn_id"]) if reply else None}
+            "turn": runner.chat_state(ws, reply["turn_id"]) if reply else None,
+            "session": bool(_session_of(link, name, conversation))}
 
 
 @router.get("/chat")
@@ -179,9 +194,11 @@ def start_turn(body: TurnBody, request: Request):
     """A turn: the person's message (``text``, its ``selections`` ``[{text,
     page, box}]``) and the agent's queued one written in the page's active
     conversation (one is started when it has none), the turn queued for the
-    vault's agent → 202 ``{conversation, turn: {id, state}}``. A repeated
-    ``id`` (the person's message's) answers the turn it made. 400 for no
-    text or too long a one; 409 while a turn of the conversation is queued
+    vault's agent with the ``model`` and ``effort`` asked for ("" or none:
+    the agent's default) → 202 ``{conversation, turn: {id, state}}``. A
+    repeated ``id`` (the person's message's) answers the turn it made. 400
+    for no text or too long a one, and a model or an effort the agent did
+    not list (``catalog.refused_choice``); 409 while a turn of the conversation is queued
     or running, while the folder has no agent, is paused or chooses its
     files, or the agent is not ready (its problem); 403 when the maker is
     no editor or the server or the workspace takes no writes."""
@@ -206,6 +223,10 @@ def start_turn(body: TurnBody, request: Request):
     found = catalog.cached(name)
     if found["ready"] is False:
         raise HTTPException(status_code=409, detail=found["problem"] or f"{label} is not ready on this computer.")
+    model, effort = body.model.strip(), body.effort.strip()
+    refusal = catalog.refused_choice(name, found.get("models") or [], model, effort)
+    if refusal:
+        raise HTTPException(status_code=400, detail=refusal)
     if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):
         raise HTTPException(status_code=403, detail=f"Only an owner or an editor of this workspace can talk to {label}.")
     refused = hosted.read_only()
@@ -219,12 +240,13 @@ def start_turn(body: TurnBody, request: Request):
     try:
         conversation, reply, new = chats.begin(ws, page_id=body.page, user_id=user_id, link_id=link["id"],
                                                agent=name, label=label, text=text,
-                                               selections=chats.selections_of(body.selections), message_id=body.id)
+                                               selections=chats.selections_of(body.selections), message_id=body.id,
+                                               model=model, effort=effort)
     except chats.ChatError as e:
         raise _refused(e) from None
     if new:
         runner.queue_chat(ws, link["id"], reply["turn_id"], conversation_id=conversation["id"], page_id=body.page,
-                          agent=name)
+                          agent=name, user_id=user_id, model=model, effort=effort)
     return {"conversation": chats.shown(conversation), "turn": {"id": reply["turn_id"], "state": reply["state"]}}
 
 
@@ -272,6 +294,72 @@ def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
     except chats.ChatError as e:
         raise _refused(e) from None
     return {"answered": True}
+
+
+@router.get("/chat/terminal")
+def terminal(request: Request, page: str = ""):
+    """``{cwd, argv, agent, label}``: how the desktop shell opens the page's
+    active conversation in a terminal (Continue in a terminal), asked by the
+    shell itself, never taken from a page: ``cwd`` the vault's directory,
+    ``argv`` the agent's command line (``catalog.command``) resuming the
+    conversation's session (Codex's ``resume <thread>``, Claude Code's
+    ``--resume <session>``), the session the conversation's agent ran in
+    last, in the vault's directory as it is now, and of the form a session
+    has (``events.SESSION``). 404 for a conversation with no such session;
+    409 while a turn of it is queued or running (two writers on one session
+    are unsafe), and when the folder has no agent or it is not on this
+    computer."""
+    from ..db import connect_pages_db
+    from ..local_agents import catalog, chats, events, store
+
+    ws, user_id, link = _maker(request, page)
+    row = store.agent_of(link["id"])
+    if row is None or row["agent"] not in catalog.AGENTS:
+        raise HTTPException(status_code=409, detail="No agent is on for this work folder on this computer.")
+    name, label = row["agent"], catalog.label(row["agent"])
+    with connect_pages_db(ws) as conn:
+        conversation = chats.active(conn, page, user_id)
+    if chats.busy(conversation) is not None:
+        raise HTTPException(status_code=409, detail=f"{label} is still working: stop it first.")
+    session = _session_of(link, name, conversation)
+    if not session:
+        raise HTTPException(status_code=404, detail="This conversation has no session to continue.")
+    argv = catalog.command(name)
+    if argv is None:
+        raise HTTPException(status_code=409, detail=f"{label} is not on this computer.")
+    resume = ["resume", session] if name == "codex" else ["--resume", session]
+    return {"cwd": link["path"], "argv": argv + resume, "agent": name, "label": label}
+
+
+def _session_of(link: dict, name: str | None, conversation: dict | None) -> str:
+    """The session of the conversation a terminal can continue: the one the
+    vault's agent ``name`` ran it in last, in the vault's directory as it is
+    now, of the form a session has (``events.SESSION``); "" for none."""
+    from ..local_agents import events, store
+
+    ran = store.conversation_of(conversation["id"]) if conversation is not None and name else None
+    if (ran is None or ran["agent"] != name or ran["cwd"] != link["path"] or ran["link_id"] != link["id"]
+            or not events.SESSION.match(ran["session"] or "")):
+        return ""
+    return ran["session"]
+
+
+@router.post("/chat/sources")
+def selection_sources(body: SourcesBody, request: Request):
+    """``{sources: [{file, line, end?} | null]}``: the line of the work
+    folder's sources each of the page's ``selections`` (``[{text, page,
+    box}]``, at most ``chats.MAX_SELECTIONS``) maps to, in their order
+    (``chats.sources_of``; null where nothing answers), for the composer's
+    chips. Runs no process. 400 for more selections."""
+    from ..db import connect_pages_db
+    from ..local_agents import chats
+
+    ws, _, _ = _maker(request, body.page)
+    if len(body.selections) > chats.MAX_SELECTIONS:
+        raise HTTPException(status_code=400, detail=f"At most {chats.MAX_SELECTIONS} selections at a time.")
+    kept = [(chats.selections_of([item]) or [None])[0] for item in body.selections]
+    with connect_pages_db(ws) as conn:
+        return {"sources": chats.sources_of(ws, conn, body.page, kept)}
 
 
 @router.post("/chat/new")

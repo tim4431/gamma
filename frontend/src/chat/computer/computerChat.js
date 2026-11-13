@@ -9,7 +9,8 @@
 // A person's message is {id, role: "user", text, selections: [{text,
 // page}], at}; the agent's {id, role: "agent", agent, label, turn_id,
 // state: "queued" | "running" | "done" | "failed" | "stopped", text, steps,
-// changes: [path], changed: n, built, error, fresh, at, ended_at}, `changes`
+// changes: [path], changed: n, built, error, fresh, model, effort, at,
+// ended_at}, `model` and `effort` what the turn ran with, `changes`
 // the folder's relative paths it named (at most 200), `changed` how many
 // files changed in all, `error` the server's English sentence, `fresh`
 // when a follow-up could not resume the agent's session. While the folder
@@ -37,15 +38,73 @@ export function chatPath(page, version = null) {
   return `/local-agents/chat?${version == null ? query : `${query}&version=${encodeURIComponent(version)}`}`;
 }
 
+// The PDF passages selected (App's pdfSelections, {text, page, box}) as the
+// server takes them, whose box lets it find their source line.
+const passages = (selections) =>
+  (selections || []).filter((s) => s?.text).map((s) => ({ text: s.text, page: s.page || null, box: s.box || null }));
+
 // What a message posts (POST /api/local-agents/chat/turns): the id the
 // client minted (the same on a retry, so the turn is made once), the page,
-// the text trimmed, and the PDF passages selected (App's pdfSelections,
-// {text, page, box}), whose box lets the server find their source line.
-export function turnBody(id, page, text, selections = []) {
+// the text trimmed, the PDF passages selected, and the model and effort
+// chosen for the conversation ({model, effort}, neither sent when it is
+// the agent's default).
+export function turnBody(id, page, text, selections = [], choice = null) {
   return {
-    id, page, text: String(text || "").trim(),
-    selections: (selections || []).filter((s) => s?.text).map((s) => ({ text: s.text, page: s.page || null, box: s.box || null })),
+    id, page, text: String(text || "").trim(), selections: passages(selections),
+    ...(choice?.model ? { model: choice.model } : {}), ...(choice?.effort ? { effort: choice.effort } : {}),
   };
+}
+
+// How many passages one ask for their source lines may carry (the
+// server's cap).
+export const SOURCES_MAX = 20;
+
+// What the passage chips post to learn their source lines (POST
+// /api/local-agents/chat/sources); the answer's `sources` are in the same
+// order, each {file, line, end?} or null.
+export const sourcesBody = (page, selections) => ({ page, selections: passages(selections).slice(0, SOURCES_MAX) });
+
+// A passage's source line as its chip notes it ("sections/method.tex:3"),
+// "" while it is not known or there is none.
+export function sourceNote(source) {
+  if (!source?.file) return "";
+  return source.line ? `${source.file}:${source.line}` : source.file;
+}
+
+// When the conversation's newest ended turn ended (its agent message's
+// `ended_at`), null before any: the passages' source lines are asked
+// again after it, since the agent may have moved them.
+export function lastEnded(conversation) {
+  return (conversation?.messages || []).findLast((m) => m.role === "agent" && m.ended_at)?.ended_at || null;
+}
+
+// The model and effort a conversation goes on with: the person's choice
+// for it in this tab (`picked`), else what its newest turn ran with (the
+// agent's message keeps `model` and `effort`, null for the default; one
+// from before it kept them says nothing), each kept only while the agent
+// still lists it; "" is the agent's default. `shown` is the model the chip
+// names: the one chosen, else the agent's default, else its first.
+export function modelChoice(models, conversation = null, picked = null) {
+  const listed = models || [];
+  const ran = (conversation?.messages || []).findLast((m) => m.role === "agent" && ("model" in m || "effort" in m));
+  const said = picked || (ran ? { model: ran.model || "", effort: ran.effort || "" } : null);
+  const model = listed.some((m) => m.id === said?.model) ? said.model : "";
+  const shown = listed.find((m) => m.id === model) || listed.find((m) => m.default) || listed[0] || null;
+  const effort = said?.effort && (shown?.efforts || []).includes(said.effort) ? said.effort : "";
+  return { model, effort, shown };
+}
+
+// What the model chip reads: the model's name and the effort chosen
+// ("GPT-5.5 · high").
+export const modelDisplay = (choice) => [choice?.shown?.label || choice?.shown?.id || "", choice?.effort || ""].filter(Boolean).join(" · ");
+
+// Whether the strip's menu offers Continue in a terminal: the server says
+// the conversation has a session a terminal can continue (`info.session`),
+// and no turn is still to end (it refuses one while it is). The shell asks
+// the server for the session itself and says why when there is none.
+export function canContinue(info, conversation) {
+  if (!info?.agent || info.turn || liveTurn(conversation)) return false;
+  return info.session === true;
 }
 
 // The path an answer to an ask posts to, and what it posts: the decision

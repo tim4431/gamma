@@ -2,7 +2,8 @@
 // icon, its title, the line under it, what can be done with it and where it
 // opens. The server's kinds are gamma/jobs.py's, each started by its own
 // POST /api/jobs/<route> — `retry` names the route and body that start the
-// same work again. The local kinds are this tab's own work. Pure:
+// same work again; `stop` the route that stops it when that is not the
+// job's cancel. The local kinds are this tab's own work. Pure:
 // tests/tasks.test.mjs.
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { fmtBytes } from "../shared/lib/format.js";
@@ -12,7 +13,8 @@ import { elapsed, fmtElapsed, isActive } from "./taskModel.js";
 const named = (value) => value || t("Untitled");
 
 // `icon`: a key of TasksTray.jsx's icon table. `open`: what a click on the
-// row opens — "export" / "import" (the dialog, on this job), "settings:<pane>".
+// row opens — "export" / "import" (the dialog, on this job), "settings:<pane>",
+// "computer" (the page's chat on the computer side).
 // `quiet`: a failure that does not dot the tray button (a paper without
 // findable metadata is routine).
 export const TASK_KINDS = {
@@ -129,6 +131,22 @@ export const TASK_KINDS = {
     icon: "cloudDownload", open: "handoff",
     title: ({ params }) => t("Get “{host}” in your browser", { host: named(params.host) }),
   },
+  // A turn of the work folder's agent in the chat's computer side, queued
+  // or running on this computer (docs/dev/local_agents.md "The chat's
+  // computer side"), read-only: a click opens the page's chat on that side,
+  // and Stop is the turn's own. The server's title is "<agent> · <page
+  // title>".
+  "computer-turn": {
+    icon: "terminal", open: "computer",
+    title: ({ title, params }) => {
+      const agent = params?.label || "";
+      // the page's own title (params.title, "" for an untitled page); the row's title from an older server
+      const page = typeof params?.title === "string" ? params.title : title;
+      return t("{agent} on this computer: {title}", { agent, title: named(page) });
+    },
+    stop: ({ workspace, params }) => `/local-agents/chat/turns/${encodeURIComponent(params?.turn || "")}/stop${
+      workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
+  },
   // This tab's own work (App.jsx adds and updates these rows).
   download: { icon: "download" },
   upload: { icon: "upload" },
@@ -166,6 +184,7 @@ const PHASES = {
   matching: t("Finding each highlight's text"),
   keeping: t("Keeping a final copy"),
   deleting: t("Deleting — can no longer be stopped"),
+  asking: t("Waiting for you"),
 };
 
 // "12 of 40 pages", "120 MB of 2.1 GB", "" when there are no counts.
@@ -275,6 +294,11 @@ export function relocationSummary(r) {
 }
 
 export const canOpen = (task) => !task.local && Boolean(kindOf(task).open);
+
+// The path (under /api) a job's Stop posts to when its kind has a stop of
+// its own (a computer turn's, in the workspace it runs in), else "": the
+// job's cancel.
+export const stopPath = (task) => (!task.local && kindOf(task).stop?.(task)) || "";
 
 // The row's buttons, in order: "stop" while it can be stopped, then for a
 // finished one "download" (its file), "retry" and "dismiss".

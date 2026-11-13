@@ -58,6 +58,7 @@ const folderAccessFor = require('./lib/folderAccess');
 const microphone = require('./lib/microphone');
 const { pages: shellPages, isShellPage, trustedShellSender } = require('./lib/shellSecurity');
 const windowControls = require('./lib/windowControls');
+const terminal = require('./lib/terminal');
 
 const BAR_H = 38;
 // The shell's word to its local servers on the routes that take a path on
@@ -1665,6 +1666,36 @@ async function relocateFile(wsId, pageId) {
   return page;
 }
 
+// A page's "Continue in a terminal" (its computer chat's strip): the agent's
+// session of the conversation the page shows, resumed in a terminal in the
+// work folder (lib/terminal.js). The page names only itself: what runs and
+// where is the open server's answer (GET /api/local-agents/chat/terminal,
+// the vault's maker's alone), asked through the shell's own session, as the
+// sync panel asks. The terminal is the person's, with their own settings.
+// The notice says what opened, or why not; under the test harness the
+// terminal is only recorded (`terminals`).
+const terminals = [];
+async function terminalFromPage(wsId, pageId) {
+  try {
+    if (current.type !== 'local') throw new Error('A conversation goes on in a terminal only from a server on this computer.');
+    const at = await localServer(current.id);
+    const answer = await at.api(at.origin, `/api/local-agents/chat/terminal?page=${encodeURIComponent(pageId)}`, {
+      headers: { 'X-Gamma-Workspace': wsId },
+    });
+    const run = terminal.terminalCommand(process.platform, answer.cwd, answer.argv, (name) => terminal.onPath(name));
+    let there = false;
+    try { there = fs.statSync(answer.cwd).isDirectory(); } catch {}
+    if (!there) throw new Error(`${answer.cwd} is not on this computer any more.`);
+    terminals.push(run);
+    if (!process.env.GAMMA_SHELL_TEST) terminal.openTerminal(run);
+    showNotice(`Opened ${answer.label || 'the agent'}’s conversation in a terminal.`);
+    return run;
+  } catch (e) {
+    showNotice(String(e && e.message || e));
+    return null;
+  }
+}
+
 // A window got the focus: each running local server's vaults look at their
 // disks now (POST /api/folder-links/hint: the server's tick, in the
 // background), at most every HINT_MS. Best effort.
@@ -2916,7 +2947,8 @@ function registerIpc() {
   // A page's asks about this computer in Gamma's own menus (a folder's "Sync
   // with this computer…", a page's "Push from a file on this computer…", its
   // file shown in its folder, its missing file located, an opened PDF carried
-  // to another server's library), passed on by the
+  // to another server's library, its computer chat continued in a terminal),
+  // passed on by the
   // page preload: only from the content view's page of the open server,
   // with plain ids, one action at a time (oneAsk: none while a picker, a
   // question or the vault dialog is up), and at most one a second, so a page
@@ -2939,6 +2971,7 @@ function registerIpc() {
     'shell:reveal-from-page': ['Could not show the file.', revealOnDisk],
     'shell:relocate-from-page': ['Could not locate the file.', relocateFile],
     'shell:carry-from-page': ['Could not add the page to the other server\'s library.', carryToServer],
+    'shell:terminal-from-page': ['Could not open a terminal.', terminalFromPage],
   };
   for (const [channel, [message, run]] of Object.entries(PAGE_ASKS)) {
     ipcMain.on(channel, (event, wsId, id) => {
@@ -3183,6 +3216,8 @@ if (process.env.GAMMA_SHELL_TEST) {
     relocateFile,
     carryPage,
     carryToServer,
+    terminalFromPage,
+    terminals,
     asked,
     answers,
     // main.test.js: the window shows server `srv`, `view` standing in for its

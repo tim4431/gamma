@@ -14,6 +14,12 @@ events (``_item``), approvals are refused (``_REFUSALS``), and
 notifications and the server's requests can come before the response a
 request waits for.
 
+A turn with ``stream`` (a chat turn) keeps ``item/agentMessage/delta``,
+each a ``delta`` event before its message's whole ``text``; a turn with a
+``model`` starts (or resumes) its thread with it, one with an ``effort``
+asks it of ``turn/start``. What Codex offers is ``inspect``'s: the models
+of ``model/list`` on a short-lived app-server, which uses no model.
+
 A turn with ``ask`` (a chat turn of a folder whose agent may ask) starts its
 thread with ``approvalPolicy`` ``on-request`` and ``approvalsReviewer``
 ``user`` (both checked in the answer, as the sandbox is) in the same
@@ -96,9 +102,15 @@ class RequestError(TurnFailed):
     """Codex answered a request with a JSON-RPC error."""
 
 
-def _initialize() -> dict:
+DELTA = "item/agentMessage/delta"   # what a turn with ``stream`` does not opt out of
+MAX_MODEL_PAGES = 5
+MODELS_S = 15                       # how long model/list may take, its pages together
+
+
+def _initialize(stream: bool = False) -> dict:
+    quiet = [method for method in QUIET if not (stream and method == DELTA)]
     return {"clientInfo": {"name": "gamma", "title": "Gamma", "version": version.VERSION or "dev"},
-            "capabilities": {"optOutNotificationMethods": QUIET}}
+            "capabilities": {"optOutNotificationMethods": quiet}}
 
 
 def _quiet(config: dict) -> dict:
@@ -125,29 +137,76 @@ def sandbox_ready(argv: list[str]) -> tuple[bool, str]:
     request is let through: its turn says what is wrong. Never raises."""
     if not CHECK_SANDBOX:
         return True, ""
+    ready, problem, _ = inspect(argv, models=False)
+    return ready, problem
+
+
+def inspect(argv: list[str], *, models: bool = True) -> tuple[bool, str, list[dict]]:
+    """One short-lived app-server, which uses no model: whether Codex's
+    Windows sandbox is set up (``sandbox_ready``; elsewhere it is) and, with
+    ``models``, the models it offers (``model/list``, its pages followed,
+    the hidden ones left out, ``_models``) → ``(ready, problem, models)``.
+    Models it could not list are none. Never raises."""
     try:
         child = procs.spawn(argv + ["app-server"], cwd=tempfile.gettempdir())
     except (OSError, ValueError) as e:
-        return False, f"Codex could not start: {e}"
+        return (False, f"Codex could not start: {e}", []) if CHECK_SANDBOX else (True, "", [])
+    silent = (False, "Codex did not answer Gamma on this computer.", []) if CHECK_SANDBOX else (True, "", [])
     try:
         deadline = time.monotonic() + INITIALIZE_S
         if _ask(child, 1, "initialize", _initialize(), deadline) is None:
-            return False, "Codex did not answer Gamma on this computer."
+            return silent
         child.send(json.dumps({"method": "initialized"}) + "\n")
-        answer = _ask(child, 2, "windowsSandbox/readiness", None, deadline)
-        if answer is None:
-            return False, "Codex did not answer Gamma on this computer."
-        if "error" in answer:
-            return True, ""
-        status = (answer.get("result") or {}).get("status")
-        return (True, "") if status == "ready" else (False, SANDBOX_PROBLEM)
+        if CHECK_SANDBOX:
+            answer = _ask(child, 2, "windowsSandbox/readiness", None, deadline)
+            if answer is None:
+                return silent
+            if "error" not in answer and (answer.get("result") or {}).get("status") != "ready":
+                return False, SANDBOX_PROBLEM, []
+        return True, "", _list_models(child, min(deadline, time.monotonic() + MODELS_S)) if models else []
     except Exception as e:  # noqa: BLE001 — never raises
-        log.warning(f"[agents] Codex's sandbox check: {e}")
-        return False, "Codex did not answer Gamma on this computer."
+        log.warning(f"[agents] asking Codex on this computer: {e}")
+        return silent
     finally:
         child.close_stdin()
         child.wait(2)
         procs.kill_tree(child, grace=1.0)
+
+
+def _list_models(child: procs.Child, deadline: float) -> list[dict]:
+    """``model/list``'s every page (at most ``MAX_MODEL_PAGES``) as
+    ``_models`` keeps them; [] when Codex refuses it or does not answer."""
+    found, cursor = [], None
+    for page in range(MAX_MODEL_PAGES):
+        answer = _ask(child, 10 + page, "model/list", {"cursor": cursor} if cursor else {}, deadline)
+        if answer is None or "error" in answer:
+            if answer is not None:
+                log.info(f"[agents] Codex did not list its models: {(answer.get('error') or {}).get('message')}")
+            return []
+        result = answer.get("result") or {}
+        found += [m for m in result.get("data") or [] if isinstance(m, dict)]
+        cursor = result.get("nextCursor")
+        if not isinstance(cursor, str) or not cursor:
+            break
+    return _models(found)
+
+
+def _models(data: list[dict]) -> list[dict]:
+    """Codex's models (``{model, displayName, hidden, isDefault,
+    supportedReasoningEfforts, defaultReasoningEffort}``) as Gamma keeps
+    them (``events.model``), the hidden ones left out, each once."""
+    out, seen = [], set()
+    for item in data:
+        if item.get("hidden") is True:
+            continue
+        efforts = [e.get("reasoningEffort") for e in item.get("supportedReasoningEfforts") or []
+                   if isinstance(e, dict)]
+        kept = events.model(item.get("model") or item.get("id"), item.get("displayName"), efforts,
+                            item.get("defaultReasoningEffort"), item.get("isDefault"))
+        if kept and kept["id"] not in seen:
+            seen.add(kept["id"])
+            out.append(kept)
+    return out[:events.MAX_MODELS]
 
 
 def _ask(child: procs.Child, request_id: int, method: str, params, deadline: float) -> dict | None:
@@ -207,11 +266,13 @@ class CodexTurn(events.Turn):
     label = LABEL
 
     def __init__(self, argv: list[str], *, cwd: str, prompt: str, schema: dict | None, session: str,
-                 images: list[str], ask: bool = False):
+                 images: list[str], ask: bool = False, stream: bool = False, model: str = "", effort: str = ""):
         super().__init__(argv + ["app-server"], cwd=cwd, ask=ask)
         self._prompt = prompt
         self._schema = schema
         self._resume = session
+        self.stream = stream
+        self._model, self._effort = model, effort
         self._images = list(images or ())[:MAX_IMAGES]
         self._next_id = 0
         self._ids = threading.Lock()     # a steer is sent from the thread that answers
@@ -275,6 +336,9 @@ class CodexTurn(events.Turn):
         if method in ("item/started", "item/completed"):
             if self._ours(params):
                 self._pending += self._item(params.get("item") or {}, started=method == "item/started")
+        elif method == DELTA:
+            if self.stream and self._ours(params) and params.get("delta"):
+                self._pending.append({"type": "delta", "text": str(params["delta"])})
         elif method == "item/fileChange/patchUpdated":
             if self._ours(params) and params.get("itemId"):
                 self._changes[str(params["itemId"])] = list(params.get("changes") or [])
@@ -339,7 +403,8 @@ class CodexTurn(events.Turn):
             return [events.tool(item_id, "search", f"Search {item.get('query') or 'the web'}", status)]
         if kind == "agentMessage" and not started:
             self._last_text = str(item.get("text") or "")
-            return [{"type": "text", "text": self._last_text}] if self._last_text.strip() else []
+            # With stream, even an empty message ends what its deltas built.
+            return [{"type": "text", "text": self._last_text}] if self._last_text.strip() or self.stream else []
         return []
 
     def _unaskable(self, message: dict) -> str | None:
@@ -423,7 +488,7 @@ class CodexTurn(events.Turn):
     # --- the turn -----------------------------------------------------------------
 
     def _run(self):
-        self._request("initialize", _initialize(), INITIALIZE_S)
+        self._request("initialize", _initialize(self.stream), INITIALIZE_S)
         self._send({"method": "initialized"})
         if CHECK_SANDBOX:
             try:
@@ -441,6 +506,8 @@ class CodexTurn(events.Turn):
                          "config": _quiet(config)}
         if self.ask:
             thread_params.update(approvalPolicy=APPROVAL_POLICY, approvalsReviewer="user")
+        if self._model:
+            thread_params["model"] = self._model
         started = None
         if self._resume:
             try:
@@ -470,7 +537,9 @@ class CodexTurn(events.Turn):
                                          "networkAccess": False}}
         if self._schema is not None:
             turn_params["outputSchema"] = self._schema
-        turn = self._request("turn/start", turn_params, START_S).get("turn") or {}
+        if self._effort:
+            turn_params["effort"] = self._effort
+        turn =self._request("turn/start", turn_params, START_S).get("turn") or {}
         self._turn_id = self._turn_id or str(turn.get("id") or "")
         while True:
             yield from self._flush()
@@ -494,9 +563,11 @@ class CodexTurn(events.Turn):
 
 
 def start(*, argv: list[str], cwd: str, prompt: str, schema: dict | None = None, session: str = "",
-          images: list[str] = (), ask: bool = False) -> CodexTurn:
+          images: list[str] = (), ask: bool = False, stream: bool = False, model: str = "",
+          effort: str = "") -> CodexTurn:
     """Start Codex's app-server in ``cwd`` for one turn of ``prompt``
     (``session`` a thread to resume; ``ask``, it may ask to step outside its
-    sandbox); read the turn with ``events()``."""
+    sandbox; ``stream``, its text as it is written; ``model`` its thread's,
+    ``effort`` its turn's); read the turn with ``events()``."""
     return CodexTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, images=list(images),
-                     ask=ask)
+                     ask=ask, stream=stream, model=model, effort=effort)

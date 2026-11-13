@@ -23,10 +23,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtBytes, makeId } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
-import { cancelJob, clearJobs, dismissJob, downloadJob, getJob, listJobs, startJob, uploadJob } from "./tasksApi";
+import { cancelJob, clearJobs, dismissJob, downloadJob, getJob, listJobs, startJob, stopAt, uploadJob } from "./tasksApi";
 import { addLocalRow, afterFollow, followed, isActive, isFinished, localRow, mergeTasks, newlyFinished, trayBadge }
   from "./taskModel.js";
-import { quietKinds } from "./taskKinds.js";
+import { quietKinds, stopPath } from "./taskKinds.js";
 import { guideEvents } from "../guide/events.js";
 
 const FAST_MS = 1500;
@@ -222,8 +222,16 @@ export function useTasks({ enabled, onFinished, follow = false }) {
     }
   }, [addLocal, updateLocal, removeLocal, adopt]);
 
+  // A kind with a stop of its own (a computer turn) answers no job: the row
+  // reads Stopping… until the listing drops it.
   const cancel = useCallback(async (task) => {
     if (task.local) { stopLocal(task.id); return; }
+    const path = stopPath(task);
+    if (path) {
+      await stopAt(path);
+      know({ ...task, stopping: true });
+      return;
+    }
     know(await cancelJob(task.id));
   }, [stopLocal, know]);
 

@@ -1,9 +1,10 @@
 """A stand-in for Codex CLI (gamma/local_agents/codex.py), standard library
 only: ``--version``, ``login status`` and ``app-server`` (initialize,
-initialized, windowsSandbox/readiness, config/read, thread/start,
-thread/resume, turn/start, turn/steer, turn/interrupt; the item
-notifications, the approvals, serverRequest/resolved, the final
-agentMessage and turn/completed), as codex-cli 0.167.0 answers them.
+initialized, windowsSandbox/readiness, model/list, config/read,
+thread/start, thread/resume, turn/start, turn/steer, turn/interrupt; the
+item notifications, the approvals, serverRequest/resolved, the final
+agentMessage and its deltas, and turn/completed), as codex-cli 0.167.0
+answers them.
 
 Scripted by the environment variable ``FAKE_AGENT``, a JSON object (every
 key optional):
@@ -30,6 +31,10 @@ key optional):
   ``declined``); a ``cancel`` ends the turn interrupted. The final message
   names the last decision: ``Ran it.`` or ``Did not run it.``;
 - ``delay``: seconds before the turn ends (turn/interrupt ends it sooner);
+- ``deltas``: the pieces ``item/agentMessage/delta`` sends of the final
+  message when ``initialize`` did not opt out of them (its words by
+  default), ``typing`` seconds between two;
+- ``models``: what ``model/list`` lists (``MODELS`` by default, two a page);
 - ``fail``: ``exit`` (dies after turn/start, a line on stderr), ``garbage``
   (lines that are not JSON, then exits), ``no_answer`` (a final message
   that is not JSON), ``not_signed_in``, ``sandbox_not_ready``, ``hang``
@@ -41,7 +46,7 @@ key optional):
   same, said before thread/start answers, with the new thread's id),
   ``read_only`` (the thread gets a read-only sandbox whatever was asked),
   ``reviewer`` (the thread's approvals go to ``auto_review`` whatever was
-  asked),
+  asked), ``models`` (``model/list`` is an error),
   ``resume`` (thread/resume is an error: the thread is gone);
 - ``distinct``: each thread/start makes a thread of its own id (else every
   one is ``THREAD``);
@@ -126,7 +131,24 @@ def wait_for(predicate, timeout: float | None):
         handle(message)
 
 
-state = {"turn": None, "interrupted": False, "config": None, "policy": None}
+state = {"turn": None, "interrupted": False, "config": None, "policy": None, "quiet": []}
+
+
+def _model(model: str, name: str, efforts: list[str], effort: str, default: bool = False, hidden: bool = False):
+    return {"id": model, "model": model, "displayName": name, "description": f"{name}, a stand-in",
+            "hidden": hidden, "isDefault": default, "defaultReasoningEffort": effort,
+            "supportedReasoningEfforts": [{"reasoningEffort": e, "description": e} for e in efforts]}
+
+
+MODELS = [_model("gpt-fake", "GPT Fake", ["low", "medium", "high"], "medium", default=True),
+          _model("gpt-fake-hidden", "Hidden", ["low"], "low", hidden=True),
+          _model("gpt-fake-mini", "GPT Fake Mini", ["low", "medium"], "low")]
+MODEL_PAGE = 2   # model/list's page: the listing takes two
+
+
+def chunks(text: str) -> list[str]:
+    """The deltas of a message: ``deltas`` when scripted, else its words."""
+    return FAKE.get("deltas") or re.findall(r"\s*\S+", text) or [text]
 
 
 def handle(message: dict) -> None:
@@ -134,8 +156,18 @@ def handle(message: dict) -> None:
     if method is None or request_id is None:
         return  # a notification (initialized) or an answer nobody waits for
     if method == "initialize":
+        state["quiet"] = ((params.get("capabilities") or {}).get("optOutNotificationMethods") or [])
         send({"id": request_id, "result": {"userAgent": "fake-codex/0.0", "codexHome": "", "platformFamily": "",
                                             "platformOs": ""}})
+    elif method == "model/list":
+        if FAIL == "models":
+            send({"id": request_id, "error": {"code": -32603, "message": "fake codex: no models today"}})
+            return
+        models = FAKE.get("models", MODELS)
+        start = int(params.get("cursor") or 0)
+        more = start + MODEL_PAGE < len(models)
+        send({"id": request_id, "result": {"data": models[start:start + MODEL_PAGE],
+                                            "nextCursor": str(start + MODEL_PAGE) if more else None}})
     elif method == "windowsSandbox/readiness":
         send({"id": request_id, "result": {"status": "notConfigured" if FAIL == "sandbox_not_ready" else "ready"}})
     elif method == "config/read":
@@ -334,6 +366,14 @@ def run_turn() -> None:
     text = answer_text(prompt_of(params), params.get("outputSchema"))
     if decisions and not FAKE.get("chat"):
         text = "Ran it." if decisions[-1] in ("accept", "acceptForSession") else "Did not run it."
+    item("item/started", thread, {"type": "agentMessage", "id": "am0", "text": ""})
+    if "item/agentMessage/delta" not in state["quiet"]:
+        for piece in chunks(text):
+            notify("item/agentMessage/delta", {"threadId": thread, "turnId": TURN, "itemId": "am0", "delta": piece})
+            wait_for(lambda m: False, float(FAKE.get("typing") or 0))
+            if state["interrupted"]:
+                complete(thread, "interrupted")
+                return
     item("item/completed", thread, {"type": "agentMessage", "id": "am0", "text": text})
     complete(thread, "completed")
 

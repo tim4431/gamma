@@ -2,8 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  NOTE_MAX, answerBody, askPath, askPlace, askRisk, askTitle, canSend, changesLine, chatPath, currentStep, diffRows, endText,
-  freshLine, isLive, liveTurn, stepNow, stepText, stripLine, turnBody, turnLabel,
+  NOTE_MAX, SOURCES_MAX, answerBody, askPath, askPlace, askRisk, askTitle, canContinue, canSend, changesLine, chatPath, currentStep,
+  diffRows, endText, freshLine, isLive, lastEnded, liveTurn, modelChoice, modelDisplay, sourceNote, sourcesBody, stepNow, stepText, stripLine,
+  turnBody, turnLabel,
 } from "../src/chat/computer/computerChat.js";
 
 const agent = (over = {}) => ({
@@ -165,4 +166,62 @@ test("a message goes with text, no turn still to end, and an agent able to run",
   assert.equal(canSend({ ...ready, paused: true }, conversation, "next"), false);
   assert.equal(canSend({ ...ready, ready: false }, conversation, "next"), false);
   assert.equal(canSend({ ...ready, ready: null }, conversation, "next"), true, "still checking: the server decides");
+});
+
+test("a message carries the model and effort chosen, neither when it is the agent's default", () => {
+  assert.deepEqual(turnBody("t1", "p1", "x", [], { model: "gpt-5.5", effort: "high" }),
+    { id: "t1", page: "p1", text: "x", selections: [], model: "gpt-5.5", effort: "high" });
+  assert.deepEqual(turnBody("t1", "p1", "x", [], { model: "", effort: "low" }), { id: "t1", page: "p1", text: "x", selections: [], effort: "low" });
+  assert.deepEqual(turnBody("t1", "p1", "x", [], { model: "", effort: "" }), { id: "t1", page: "p1", text: "x", selections: [] });
+});
+
+test("the model chip: the person's pick, else what the conversation ran with, else the agent's default", () => {
+  const models = [
+    { id: "gpt-5.5", label: "GPT-5.5", efforts: ["low", "medium", "high"], effort: "medium", default: true },
+    { id: "gpt-5.5-mini", label: "GPT-5.5 mini", efforts: [], effort: "", default: false },
+  ];
+  const none = modelChoice(models);
+  assert.deepEqual({ model: none.model, effort: none.effort, shown: none.shown.id }, { model: "", effort: "", shown: "gpt-5.5" });
+  assert.equal(modelDisplay(none), "GPT-5.5");
+  const ran = { messages: [person, agent({ model: "gpt-5.5-mini", effort: "" }), agent({ id: "m4", model: "gpt-5.5", effort: "high" })] };
+  const kept = modelChoice(models, ran);
+  assert.deepEqual([kept.model, kept.effort], ["gpt-5.5", "high"], "the newest turn's");
+  assert.equal(modelDisplay(kept), "GPT-5.5 · high");
+  // a turn run with the defaults says so (null, null); one from before turns kept them says nothing
+  const back = modelChoice(models, { messages: [...ran.messages, agent({ id: "m6", model: null, effort: null })] });
+  assert.deepEqual([back.model, back.effort], ["", ""], "the defaults, not an older turn's effort");
+  assert.equal(modelChoice(models, { messages: [...ran.messages, agent({ id: "m8" })] }).effort, "high");
+  assert.equal(lastEnded(ran), null);
+  assert.equal(lastEnded({ messages: [agent({ ended_at: "2026-11-13T10:00:00Z" }), agent({ id: "m9", ended_at: null })] }),
+    "2026-11-13T10:00:00Z", "the newest ended turn's");
+  const picked = modelChoice(models, ran, { model: "gpt-5.5-mini", effort: "high" });
+  assert.deepEqual([picked.model, picked.effort, picked.shown.id], ["gpt-5.5-mini", "", "gpt-5.5-mini"], "an effort the model lacks goes");
+  const gone = modelChoice(models, null, { model: "o9", effort: "low" });
+  assert.deepEqual([gone.model, gone.effort, gone.shown.id], ["", "low", "gpt-5.5"], "a model no longer listed is the default");
+  assert.deepEqual(modelChoice([], ran), { model: "", effort: "", shown: null });
+  assert.equal(modelDisplay(modelChoice([])), "");
+  const first = modelChoice([{ id: "sonnet", label: "", efforts: [] }]);
+  assert.equal(modelDisplay(first), "sonnet", "no default: the first, by its id when it has no name");
+});
+
+test("a passage chip asks for its source line and notes it", () => {
+  const many = Array.from({ length: SOURCES_MAX + 3 }, (_, i) => ({ text: `q${i}`, page: 1, box: [0, 0, 1, 1] }));
+  const body = sourcesBody("p1", [{ text: "a", page: 2, box: [0.1, 0.2, 0.3, 0.4], extra: 1 }, { text: "" }, ...many]);
+  assert.equal(body.page, "p1");
+  assert.equal(body.selections.length, SOURCES_MAX);
+  assert.deepEqual(body.selections[0], { text: "a", page: 2, box: [0.1, 0.2, 0.3, 0.4] });
+  assert.equal(sourceNote({ file: "sections/method.tex", line: 3, end: 5 }), "sections/method.tex:3");
+  assert.equal(sourceNote({ file: "main.tex" }), "main.tex");
+  assert.equal(sourceNote(null), "");
+});
+
+test("the strip's menu offers the terminal when the server says there is a session and no turn is to end", () => {
+  const sessioned = { ...ready, session: true };
+  assert.equal(canContinue(sessioned, { messages: [person, agent()] }), true);
+  assert.equal(canContinue(sessioned, { messages: [person, agent({ state: "failed" })] }), true);
+  assert.equal(canContinue(ready, { messages: [person, agent()] }), false, "no session the server knows of");
+  assert.equal(canContinue({ ...ready, session: false }, { messages: [person, agent()] }), false);
+  assert.equal(canContinue(sessioned, { messages: [person, agent(), person, agent({ id: "m4", state: "running" })] }), false);
+  assert.equal(canContinue({ ...sessioned, turn: { state: "queued" } }, { messages: [person, agent()] }), false);
+  assert.equal(canContinue(null, { messages: [person, agent()] }), false);
 });

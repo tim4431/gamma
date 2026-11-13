@@ -7,8 +7,10 @@ A conversation is the page's active one for that account (``archived_at``
 NULL) or an archived one (History). Its messages are the person's
 (``{id, role: "user", text, selections: [{text, page, box}], at}``) and the
 agent's (``{id, role: "agent", agent, label, turn_id, state, text, steps, asks,
-changes, changed, built, error, fresh, at, ended_at}``, ``asks`` what its
-agent asks the person and waits for), the agent's written by the runner as
+changes, changed, built, error, fresh, model, effort, at, ended_at}``,
+``asks`` what its agent asks the person and waits for, ``model`` and
+``effort`` what the turn asked for, null for the agent's default; its
+``text`` grows as the agent writes it), the agent's written by the runner as
 its turn goes (gamma/local_agents/runner.py ``_ChatTurn``), relative paths
 only. Every write takes the workspace's
 write lock and sets ``version`` above every version of the page's
@@ -154,6 +156,31 @@ def selections_of(raw) -> list[dict]:
     return out
 
 
+def sources_of(ws: str, conn, page_id: str, selections: list[dict | None]) -> list[dict | None]:
+    """The line each of ``selections`` (as ``selections_of`` keeps one,
+    None for one that is not) maps to in the work folder's sources
+    (``feedback.sources.source_for``: ``{file, line, end?}``), None where
+    its page or box is not known or nothing answers. Reads the synctex the
+    build left; runs no process."""
+    from ..blocks_store import load_props
+    from ..feedback import sources
+    from ..logbuf import log
+
+    row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    props = load_props(row[0]) if row else {}
+    out = []
+    for chosen in selections:
+        source = None
+        if chosen and chosen.get("page") and chosen.get("box"):
+            try:
+                source = sources.source_for(ws, conn, page_id, props, {
+                    "kind": "passage", "page": chosen["page"], "rects": [chosen["box"]]})
+            except Exception as e:  # noqa: BLE001 — a selection without its line is searched for
+                log.warning(f"[agents] the source of a selection on page {page_id}: {e}")
+        out.append(source)
+    return out
+
+
 def title_of(text: str) -> str:
     """A conversation's title: its first message's first line, cut."""
     line = next((line.strip() for line in (text or "").splitlines() if line.strip()), "")
@@ -171,10 +198,13 @@ def _turn_of(conversation: dict, message_id: str) -> dict | None:
 
 
 def begin(ws: str, *, page_id: str, user_id: str, link_id: str, agent: str, label: str, text: str,
-          selections: list[dict], message_id: str = "") -> tuple[dict, dict, bool]:
+          selections: list[dict], message_id: str = "", model: str = "",
+          effort: str = "") -> tuple[dict, dict, bool]:
     """A turn begins: the person's message and the agent's ``queued`` one
-    written in the page's active conversation (one is started, titled by
-    the message, when it has none) and the turn recorded on this computer
+    (with the ``model`` and ``effort`` the turn asks for, None for the
+    agent's default) written in the page's active conversation (one is
+    started, titled by the message, when it has none) and the turn
+    recorded on this computer
     (``store.add_turn``), in one step under the write lock → ``(the
     conversation, the agent's message, whether the turn is new)``. A
     ``message_id`` the active conversation has already answers the turn it
@@ -202,7 +232,8 @@ def begin(ws: str, *, page_id: str, user_id: str, link_id: str, agent: str, labe
                   "at": now}
         reply = {"id": new_block_id(), "role": "agent", "agent": agent, "label": label, "turn_id": turn_id,
                  "state": "queued", "text": "", "steps": [], "asks": [], "changes": [], "changed": 0, "built": False,
-                 "error": "", "fresh": False, "at": now, "ended_at": None}
+                 "error": "", "fresh": False, "model": model or None, "effort": effort or None, "at": now,
+                 "ended_at": None}
         conversation = _save(conn, conversation, [*conversation["messages"], person, reply])
         # Recorded before the commit: a server that stops between the two
         # finds the turn open at its start (runner.recover) and fails it.

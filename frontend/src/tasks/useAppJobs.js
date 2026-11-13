@@ -10,6 +10,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
 import { guideEvents } from "../guide/events.js";
+import { showComputerSide } from "../chat/computer/useComputerChat.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
@@ -28,6 +29,8 @@ export function useAppJobs({
   workspaceId, refreshQuota, fetchHomeBlocks,
   // the session read again: the workspaces a finished delete leaves
   refreshSession,
+  // the page `id` open (in this workspace) with its chat shown
+  openPageChat,
 }) {
   const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
   // An export being started, for the dialog's Export button to show busy
@@ -131,7 +134,9 @@ export function useAppJobs({
   }
 
   // A row of Background tasks clicked: the export or import dialog on that
-  // job again, or the Settings pane where the work is managed.
+  // job again, the Settings pane where the work is managed, or a computer
+  // turn's page with its chat on the computer side (a turn of another
+  // workspace opens its page there).
   function openTask(task) {
     const open = kindOf(task).open;
     setOpenPopover(null);
@@ -147,6 +152,13 @@ export function useAppJobs({
       // publisher, and Gamma Connector knows the tab by that address.
       window.open(`${API}/ai/handoffs/${encodeURIComponent(task.params?.request || "")}/go`,
                   "_blank", "noopener");
+    } else if (open === "computer") {
+      const page = task.params?.page || "";
+      if (!page) return;
+      showComputerSide(page);
+      if (task.workspace && workspaceId && task.workspace !== workspaceId) {
+        window.location.href = `${window.location.pathname}?page=${encodeURIComponent(page)}&ws=${encodeURIComponent(task.workspace)}`;
+      } else openPageChat?.(page);
     } else if (open?.startsWith("settings:")) {
       setSettingsOpen(open.slice("settings:".length));
     }

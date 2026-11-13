@@ -10,8 +10,9 @@
 //   (PAGE_ASKS): a folder's "Sync with this computer…", a page's "Push
 //   from a file on this computer…", its file shown in its folder, its
 //   missing file located, an opened PDF carried to another server's
-//   library. The shell checks each and asks the user for the directory, the
-//   file or the server. Gamma stays a black box.
+//   library, its computer chat continued in a terminal. The shell checks
+//   each and asks the user for the directory, the file or the server, or
+//   its own server for the terminal's command. Gamma stays a black box.
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -95,6 +96,7 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     'reveal-on-disk': ['shell:reveal-from-page', 'page'],
     'relocate-file': ['shell:relocate-from-page', 'page'],
     'carry-to-server': ['shell:carry-from-page', 'page'],
+    'continue-in-terminal': ['shell:terminal-from-page', 'page'],
   };
   window.addEventListener('message', (e) => {
     const d = e.data;

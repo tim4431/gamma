@@ -48,8 +48,12 @@ the turn's, its maker an editor, the agent ready, writes taken), resumes
 the conversation's session in the vault's directory as it is now
 (``store.conversation_of``; a refused resume starts afresh once, said
 ``fresh``), and writes the agent's message as the turn goes: its text, its
-steps (relative paths, a command's program), what changed, its end. Both
-kinds run their turn through ``_Turning``.
+steps (relative paths, a command's program), what changed, its end. Its
+agent streams (``delta``): the message's last paragraph grows as the agent
+writes it, and the whole message, when it comes, takes its place. It runs
+the model and effort its turn asked for (``queue_chat``). Both kinds run
+their turn through ``_Turning``. ``chat_turns`` lists an account's turns
+that are queued or running, for Background tasks.
 
 A chat turn of a vault whose agent may ask (``store.runs_of`` ``ask``, read
 at the turn's start; a Send never asks) starts its agent with ``ask``. Each
@@ -127,8 +131,10 @@ _lock = threading.Lock()
 _queues: dict[str, collections.deque] = {}     # link id -> (ws, kind, id) waiting, oldest first
 _workers: dict[str, threading.Thread] = {}     # link id -> the thread taking its queue
 _queued: set[tuple[str, str, str]] = set()     # (ws, kind, id) in some queue
-_active: dict[tuple[str, str, str], dict] = {}  # (ws, kind, id) -> {link_id, stop, reason, claimed, agent, slot, detail}
-_chats: dict[str, dict] = {}                   # a chat turn's id -> {conversation_id, page_id, agent}, until it ends
+# (ws, kind, id) -> {link_id, stop, reason, claimed, agent, slot, detail}, a chat turn's also {chat, since}
+_active: dict[tuple[str, str, str], dict] = {}
+# a chat turn's id -> {ws, conversation_id, page_id, agent, user_id, model, effort, at}, until it ends
+_chats: dict[str, dict] = {}
 _slots = threading.BoundedSemaphore(MAX_RUNS)
 _registered = False
 
@@ -223,11 +229,14 @@ def _enqueue(link_id: str, key: tuple) -> None:
         worker.start()
 
 
-def queue_chat(ws: str, link_id: str, turn_id: str, *, conversation_id: str, page_id: str, agent: str) -> None:
-    """A chat turn (``chats.begin`` wrote it ``queued``) waits in the vault
-    ``link_id``'s queue, behind what is there."""
+def queue_chat(ws: str, link_id: str, turn_id: str, *, conversation_id: str, page_id: str, agent: str,
+               user_id: str = "", model: str = "", effort: str = "") -> None:
+    """A chat turn of ``user_id`` (``chats.begin`` wrote it ``queued``),
+    asking for ``model`` and ``effort`` ("" for the agent's default), waits
+    in the vault ``link_id``'s queue, behind what is there."""
     with _lock:
-        _chats[turn_id] = {"conversation_id": conversation_id, "page_id": page_id, "agent": agent}
+        _chats[turn_id] = {"ws": ws, "conversation_id": conversation_id, "page_id": page_id, "agent": agent,
+                           "user_id": user_id, "model": model, "effort": effort, "at": page_now()}
         _enqueue(link_id, (ws, CHAT, turn_id))
 
 
@@ -323,6 +332,29 @@ def chat_state(ws: str, turn_id: str) -> dict | None:
                 ahead = queue.index(key) > 0 or any(r["link_id"] == link_id for r in _active.values())
                 return {"turn_id": turn_id, "state": "queued", "ahead": ahead}
     return None
+
+
+def chat_turns(user_id: str) -> list[dict]:
+    """The chat turns of ``user_id`` this server holds, queued or running,
+    oldest first: ``{ws, turn_id, conversation_id, page_id, agent, state:
+    "queued" | "running", asking, stopping, queued_at, started_at}``,
+    ``asking`` whether an ask of it waits for the person, ``stopping``
+    whether its stop is set (Background tasks' rows, routers/jobs.py)."""
+    out = []
+    with _lock:
+        for turn_id, chat in _chats.items():
+            if chat.get("user_id") != user_id:
+                continue
+            run = _active.get((chat["ws"], CHAT, turn_id))
+            running = run is not None and run["claimed"]
+            turning = run.get("chat") if run is not None else None
+            out.append({"ws": chat["ws"], "turn_id": turn_id, "conversation_id": chat["conversation_id"],
+                        "page_id": chat["page_id"], "agent": chat["agent"],
+                        "state": "running" if running else "queued",
+                        "asking": bool(turning is not None and turning.asks),
+                        "stopping": bool(run is not None and run["stop"].is_set()),
+                        "queued_at": chat.get("at") or "", "started_at": (run or {}).get("since", "")})
+    return sorted(out, key=lambda t: t["queued_at"])
 
 
 def stop_chat(ws: str, turn_id: str, conversation_id: str) -> bool:
@@ -777,14 +809,16 @@ class _Turning:
         self._step_at: dict[str, int] = {}
 
     def _turn(self, argv: list[str], root: Path, text: str, session: str, *, schema: dict | None = None,
-              images=(), ask: bool = False) -> dict:
+              images=(), ask: bool = False, stream: bool = False, model: str = "", effort: str = "") -> dict:
         """One turn of the agent on ``text`` (``session`` one to resume;
-        ``ask``, it may ask), watched, its events followed → its done. A
-        turn before it is closed first."""
+        ``ask``, it may ask; ``stream``, its text as it is written; its
+        ``model`` and ``effort``), watched, its events followed → its done.
+        A turn before it is closed first."""
         if self.turn is not None:
             self.turn.close()
         self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, schema=schema,
-                                 images=list(images), session=session, ask=ask)
+                                 images=list(images), session=session, ask=ask, stream=stream, model=model,
+                                 effort=effort)
         if self.turn.pid:
             self._started(self.turn.pid)
         ended = threading.Event()
@@ -1016,7 +1050,7 @@ class _Run(_Turning):
         from ..vault import store as vault_store
 
         # 2. the agent, asked afresh, and whether this server writes
-        found = catalog.probe(self.agent, fresh=True)
+        found = catalog.probe(self.agent, fresh=True, models=False)
         self._check_stop()
         if not found["ready"]:
             self._fail(found["problem"] or f"{self.label} is not ready on this computer.")
@@ -1223,10 +1257,12 @@ class _ChatTurn(_Turning):
         self.turn_id = turn_id
         self.conversation_id, self.page_id = chat["conversation_id"], chat["page_id"]
         self.agent, self.label = chat["agent"], catalog.label(chat["agent"])
+        self.model, self.effort = chat.get("model") or "", chat.get("effort") or ""
         self.root: Path | None = None
         self.asked = ""                 # the session the turn asked to resume
         self.fresh = False              # a follow-up whose agent remembers none of the earlier turns
         self.paragraphs: list[str] = []
+        self.live = False               # the last paragraph is the message its deltas build
         self.changes: list[str] = []
         self.changed = 0
         self.built = False
@@ -1323,7 +1359,7 @@ class _ChatTurn(_Turning):
             self._fail(f"{self.label} is no longer this folder's agent.")
         if not workspaces.at_least(workspaces.role_of(self.ws, link["created_by"]), "editor"):
             self._fail(f"Only an owner or an editor of this workspace can talk to {self.label}.")
-        found = catalog.probe(self.agent, fresh=True)
+        found = catalog.probe(self.agent, fresh=True, models=False)
         self._check_stop()
         if not found["ready"]:
             self._fail(found["problem"] or f"{self.label} is not ready on this computer.")
@@ -1340,6 +1376,7 @@ class _ChatTurn(_Turning):
         self.tracked = {path.casefold() for path in vault_store.files(self.link_id)}
         with _lock:
             self.run["claimed"] = True
+            self.run["since"] = page_now()
         store.turn_running(self.turn_id)
         self._show(force=True, state="running")
         self._check_stop()
@@ -1364,14 +1401,16 @@ class _ChatTurn(_Turning):
         # 4. the turn
         before = _snapshot(self.root)
         self._check_stop()
-        done = self._turn(argv, self.root, told(not session), session, ask=self.ask)
+        chosen = {"ask": self.ask, "stream": True, "model": self.model, "effort": self.effort}
+        done = self._turn(argv, self.root, told(not session), session, **chosen)
         if session and not done["ok"] and not self.steps and not self.stop.is_set() and not self.timed_out:
             # A session this computer no longer has (Claude Code has no
             # fallback of its own): afresh, with the earlier messages.
             log.info(f"[agents] {self.label} could not resume the session of chat turn {self.turn_id}: "
                      "starting a new one")
-            self.asked, self.fresh, self.paragraphs = "", bool(earlier), []
-            done = self._turn(argv, self.root, told(True), "", ask=self.ask)
+            with self._asking:
+                self.asked, self.fresh, self.paragraphs, self.live = "", bool(earlier), [], False
+            done = self._turn(argv, self.root, told(True), "", **chosen)
 
         # 5. what it did, and its end
         changes, self.built = _changed_files(before, _snapshot(self.root))
@@ -1384,8 +1423,9 @@ class _ChatTurn(_Turning):
                 self._fail(f"{self.label} took longer than {_span(_run_timeout())} and was stopped.", record)
             first = events.one_line(_redact(done.get("error") or "", self.root), 500)
             self._fail(f"{self.label} could not finish: {first or 'it stopped unexpectedly.'}", record)
-        if not self.paragraphs and (done.get("text") or "").strip():
-            self.paragraphs.append(done["text"].strip())  # a reply its done alone carries
+        if not any(p.strip() for p in self.paragraphs) and (done.get("text") or "").strip():
+            with self._asking:
+                self.paragraphs, self.live = [done["text"].strip()], False  # a reply its done alone carries
         self.end = {"state": "done", "error": "", "record": record}
 
     def _where(self, link: dict, person: dict) -> tuple[str, str, list[dict]]:
@@ -1394,8 +1434,7 @@ class _ChatTurn(_Turning):
         quote, source}``, ``source`` the line its passage maps to in the
         sources (``feedback.sources.source_for``) when its box is known, else
         None."""
-        from ..blocks_store import load_props
-        from ..feedback import entries, sources
+        from ..feedback import entries
         from ..vault import store as vault_store
         from ..work_folders.marks import Tree
 
@@ -1405,18 +1444,9 @@ class _ChatTurn(_Turning):
                 scope = entries.resolve_scope(conn, self.page_id, tree)
             except FeedbackError:
                 self._fail("This page is no longer a file of the work folder.")
-            row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (self.page_id,)).fetchone()
-            props = load_props(row[0]) if row else {}
-            selections = []
-            for chosen in person.get("selections") or []:
-                source = None
-                if chosen.get("page") and chosen.get("box"):
-                    try:
-                        source = sources.source_for(self.ws, conn, self.page_id, props, {
-                            "kind": "passage", "page": chosen["page"], "rects": [chosen["box"]]})
-                    except Exception as e:  # noqa: BLE001 — a selection without its line is searched for
-                        log.warning(f"[agents] the source of a selection on page {self.page_id}: {e}")
-                selections.append({"page": chosen.get("page"), "quote": chosen.get("text") or "", "source": source})
+            chosen = person.get("selections") or []
+            selections = [{"page": c.get("page"), "quote": c.get("text") or "", "source": source}
+                          for c, source in zip(chosen, chats.sources_of(self.ws, conn, self.page_id, chosen))]
         file = entries.paths_of(vault_store.files(link["id"])).get(self.page_id) or scope.name
         return file, tree.names.get(scope.work_folder, "") or Path(link["path"]).name, selections
 
@@ -1447,8 +1477,20 @@ class _ChatTurn(_Turning):
                                        session=event["id"], cwd=str(self.root))
             except Exception as e:  # noqa: BLE001 — the next turn starts a new session
                 log.warning(f"[agents] recording the session of chat turn {self.turn_id}: {e}")
+        elif kind == "delta":
+            with self._asking:
+                if not self.live:
+                    self.paragraphs.append("")
+                    self.live = True
+                self.paragraphs[-1] += str(event.get("text") or "")
         elif kind == "text":
-            self.paragraphs.append(str(event.get("text") or "").strip())
+            # The whole message, in place of what its deltas built.
+            text = str(event.get("text") or "").strip()
+            with self._asking:
+                if self.live:
+                    self.paragraphs[-1], self.live = text, False
+                elif text:
+                    self.paragraphs.append(text)
         elif kind == "tool":
             step = _step(event)
             with self._asking:
@@ -1643,13 +1685,15 @@ class _ChatTurn(_Turning):
             log.warning(f"[agents] writing chat turn {self.turn_id}: {e}")
 
     def _progress(self) -> dict:
-        """The message as the turn has it: its text (its paragraphs, or the
-        done's own, without this computer's paths and ``prompt.inert``), its
+        """The message as the turn has it: its text (its paragraphs, the last
+        one growing with its deltas, or the done's own, without this
+        computer's paths and ``prompt.inert``), its
         steps, the asks that wait (``_asked``) and ``fresh``."""
-        text = prompt.inert(_redact("\n\n".join(p for p in self.paragraphs if p), self.root)) if self.root else ""
         with self._asking:
+            paragraphs = [p.strip() for p in self.paragraphs]
             steps = [dict(s) for s in self.steps]
             asks = [dict(held["shown"]) for held in self.asks.values()]
+        text = prompt.inert(_redact("\n\n".join(p for p in paragraphs if p), self.root)) if self.root else ""
         return {"text": text[:chats.MAX_TEXT], "steps": steps, "asks": asks, "fresh": self.fresh}
 
     def _show(self, *, force: bool = False, **more) -> None:

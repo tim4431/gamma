@@ -10,7 +10,12 @@ of that path, ``{"tool"}`` another tool; ``blocked``, a path, is its
 ``blocked_path``) and waits for each answer as long as stdin is open,
 withdrawing it (``control_cancel_request``) when an interrupt comes
 meanwhile; an interrupt ends the turn in an ``error_during_execution``
-result. It reads stdin to its end after the result. The final message names
+result. It reads stdin to its end after the result, and exits at once when
+stdin ends before any user message (what listing the models does). Its
+``initialize`` answers ``models`` (``MODELS``, or the scripted ``models``).
+With ``--include-partial-messages`` its final text comes first as
+``stream_event`` deltas (``deltas``, else its words, ``typing`` seconds
+apart; a subagent's and a thinking delta beside them). The final message names
 the last Bash decision: ``Ran it.`` or ``Did not run it.``.
 
 Scripted by ``FAKE_AGENT`` as tests/fake_agents/fake_codex.py is: ``edits``
@@ -89,6 +94,35 @@ def answer_of(prompt: str):
             "summary": FAKE.get("summary", "Fixed the comments.")}
 
 
+def _model(value: str, name: str, efforts: list[str] | None) -> dict:
+    return {"value": value, "resolvedModel": f"claude-{value}-fake", "displayName": name,
+            "description": f"{name}, a stand-in", "supportsEffort": efforts is not None,
+            "supportedEffortLevels": efforts or [], "supportsAutoMode": True}
+
+
+MODELS = [_model("default", "Default (recommended)", ["low", "medium", "high"]),
+          _model("sonnet", "Sonnet", ["low", "medium", "high", "max"]), _model("haiku", "Haiku", None)]
+
+
+def stream_text(session: str, text: str) -> None:
+    """A text block's partial messages (``--include-partial-messages``):
+    its deltas, ``deltas`` when scripted, else its words, ``typing``
+    seconds between two."""
+    def event(body: dict) -> None:
+        out({"type": "stream_event", "event": body, "parent_tool_use_id": None, "uuid": uuid.uuid4().hex,
+             "session_id": session})
+
+    event({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
+    for piece in FAKE.get("deltas") or re.findall(r"\s*\S+", text) or [text]:
+        event({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": piece}})
+        time.sleep(float(FAKE.get("typing") or 0))
+    # a subagent's text and a thinking delta are no part of the reply
+    out({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0,
+                                           "delta": {"type": "text_delta", "text": "SUBAGENT"}},
+         "parent_tool_use_id": "toolu_task", "session_id": session})
+    event({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "hmm"}})
+
+
 inbox: queue.Queue = queue.Queue()
 INTERRUPTED = object()
 
@@ -127,7 +161,8 @@ def wait_for(predicate, timeout: float | None):
         subtype = (message.get("request") or {}).get("subtype")
         if subtype == "initialize":
             out({"type": "control_response", "response": {"subtype": "success", "request_id": message["request_id"],
-                                                          "response": {"commands": [], "models": [],
+                                                          "response": {"commands": [],
+                                                                       "models": FAKE.get("models", MODELS),
                                                                        "pending_permission_requests": []}}})
         elif subtype == "interrupt":
             out({"type": "control_response", "response": {"subtype": "success", "request_id": message["request_id"],
@@ -179,7 +214,9 @@ def turn(args: list[str]) -> int:
     if stream:
         threading.Thread(target=_reader, daemon=True).start()
         message = wait_for(lambda m: m.get("type") == "user", None)
-        content = ((message or {}).get("message") or {}).get("content") or []
+        if message is None:  # stdin closed with no message (asking the models): nothing to do
+            return 0
+        content = (message.get("message") or {}).get("content") or []
         prompt = "".join(part.get("text", "") for part in content if part.get("type") == "text")
     else:
         prompt = sys.stdin.read()
@@ -255,7 +292,12 @@ def turn(args: list[str]) -> int:
         assistant(session, "msg_3", {"type": "tool_use", "id": "toolu_out", "name": "StructuredOutput",
                                      "input": structured})
         tool_result(session, "toolu_out", "Structured output provided successfully")
+    if "--include-partial-messages" in args:
+        stream_text(session, result)
     assistant(session, "msg_3", {"type": "text", "text": result})
+    if "--include-partial-messages" in args:
+        out({"type": "stream_event", "event": {"type": "content_block_stop", "index": 0}, "parent_tool_use_id": None,
+             "session_id": session})
     line = {"type": "result", "subtype": "success", "is_error": False, "result": result, "session_id": session,
             "num_turns": 3, "usage": {"input_tokens": 10, "output_tokens": 5}}
     if schema and structured is not None:
