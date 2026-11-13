@@ -1,7 +1,7 @@
 """A synced vault of a folder on another Gamma server (docs/research/vaults.md
 "In steps" 5, "What happens to what exists": a NAS): the remote a round of
-gamma/vault_sync.py reads and writes Gamma through, ``HttpRemote``, in place
-of ``vault_sync.LocalRemote``'s reads and writes in-process. It speaks to that
+gamma/vault/sync.py reads and writes Gamma through, ``HttpRemote``, in place
+of ``local_remote.LocalRemote``'s reads and writes in-process. It speaks to that
 server with the link's token (``gamma_sync.Server``), through the routes the
 browser uses: the listing of the vault's folder (``GET
 /api/blocks/root/children?within=<folder>``: its pages, whether the library
@@ -32,12 +32,16 @@ What a vault over HTTP does otherwise than one of this server:
   between, else the next pull reads the page again.
 - **Conflicts.** The file wins, as here. The text Gamma loses cannot go into
   the other server's conflict table, so it is kept in this computer's vault
-  history (``vault_store.keep``) under the page's notes before the plan goes
+  history (``store.keep``) under the page's notes before the plan goes
   (a plan whose answer is lost has taken it), and the round counts it
   (``counts.conflicts``).
-- **PDFs** are stored there (a NAS cannot read this disk): a new paper's
-  bytes are uploaded before its page is made, a new version's before the
-  attachment is replaced, and pictures a note links are uploads there too.
+- **Files** are stored there (a NAS cannot read this disk): a new paper's
+  bytes are uploaded before its page is made (``POST /api/uploads``), a work
+  folder's file of any other format under its own extension (``POST
+  /api/upload-file``, in parts past ``upload_parts.PART_BYTES``), a new
+  version's before the attachment is replaced, and pictures a note links are
+  uploads there too. A file listed without its bytes (past the keep limit)
+  is a page there with no file.
 - **Not seen from here**: the carets in that server's rooms (a shape op may
   land on a block someone is typing in, which that editor merges), and the
   relocation run, which a token cannot start: the highlights a callout
@@ -52,25 +56,26 @@ What a vault over HTTP does otherwise than one of this server:
 """
 
 import json
-import mimetypes
 import urllib.parse
 from dataclasses import replace
 from pathlib import Path
 
-from . import gamma_sync, migrations, vault_store, workspaces
-from .auth import CLIENT_HEADER
-from .blocks_store import FOLDERS, LABELS, PARENT_PAGE, TREES, filing, folder_inserts, label_inserts, top_of
-from .blocks_store import with_sub_pages
-from .documents.model import document_at, own_hash, page_document
-from .folder_sync import ROOT
-from .ops import MAX_OPS, OpError
-from .sync_engine import FormatMismatch
-from .sync_tree import snapshot_from_tree
-from .vault_disk import Stopped
-from .vault_sync import (CLIENT, PLAN_TRIES, Changed, Edit, Gone, Info, Layout, Page, Refused, Waiting, info_stamps,
-                         left_out, set_page)
-from .work_folders import marks
-from .work_folders.library import work_folder_of
+from .. import gamma_sync, migrations, upload_parts, workspaces
+from ..auth import CLIENT_HEADER
+from ..blocks_store import FOLDERS, LABELS, PARENT_PAGE, TREES, filing, folder_inserts, label_inserts, top_of
+from ..blocks_store import with_sub_pages
+from ..documents import formats
+from ..documents.model import document_at, own_hash, page_document, stored_name
+from ..folder_sync import ROOT
+from ..ops import MAX_OPS, OpError
+from ..sync_engine import FormatMismatch
+from ..sync_tree import snapshot_from_tree
+from ..work_folders import marks
+from ..work_folders.library import work_folder_of
+from . import store
+from .disk import Stopped
+from .remote import (CLIENT, PLAN_TRIES, Changed, Edit, Gone, Info, Layout, Page, Refused, Waiting, doc_info,
+                     info_stamps, left_out, set_doc, set_page)
 
 FEED_LIMIT = 2000      # the change feed's entries a request reads (routers/sync.py MAX_LIMIT)
 _aliases: dict = {}    # (server, workspace, page) -> (its seq, its aliases): a page's own block read once a seq
@@ -91,6 +96,15 @@ def _decoded(data: bytes) -> dict | None:
     except ValueError:
         return None
     return value if isinstance(value, dict) else {}
+
+
+def _stored(props: dict) -> dict:
+    """``props`` as a page there takes them: a document with a hash at
+    ``store`` (the round builds a work folder's file read in place, and
+    nothing is read in place there: its bytes were uploaded first), one
+    listed without its bytes as it is."""
+    doc = props.get("doc")
+    return {**props, "doc": document_at(doc, "store")} if doc and doc.get("hash") else dict(props)
 
 
 def _refusal(status: int, answer: dict, path: str, method: str = "GET") -> Exception:
@@ -160,7 +174,7 @@ def _filed(pages: list, inside: set | None, parents: dict) -> list:
 class HttpRemote:
     """The workspace ``link["workspace_id"]`` of the server ``server`` (with
     the link's token), the vault's folder ``link["folder_id"]`` in it: the
-    interface of ``vault_sync.LocalRemote`` over HTTP (the module doc). The
+    interface of ``local_remote.LocalRemote`` over HTTP (the module doc). The
     library is listed once, and the page of each block a note links read
     once, until this remote writes (``_wrote``)."""
 
@@ -171,7 +185,7 @@ class HttpRemote:
         self._writer = None     # whether the token may write there: asked once (``may_write``)
         self._format_ok = False  # the server's pages have this one's shape: asked once (``_check_format``)
         self._listed = None     # the listing, until this remote writes
-        self._sent = set()      # the PDFs this remote uploaded
+        self._sent = set()      # the files this remote uploaded
         self._held_by = {}      # block id -> its page, as read: a note's links ask it of each block they name
 
     # --- asking ----------------------------------------------------------------------------
@@ -311,7 +325,7 @@ class HttpRemote:
         sub-pages); with ``page_id`` that page alone, when it is one of them.
         The pages of the vaults of this computer that may take a page from it
         in that workspace are left out, as on this server
-        (``vault_sync.left_out``), and those of a vault beside it reported
+        (``remote.left_out``), and those of a vault beside it reported
         (``Layout.shared``), and so is a file of another work folder filed
         there too; the folder's mark is the layout's ``work``. ``Stopped``
         when the vault's folder is gone there."""
@@ -338,10 +352,11 @@ class HttpRemote:
             if work_folder_of(props) not in ("", self.folder):
                 continue
             top_props = summaries.get(top_of(parents, pid), {}).get("properties")
+            view = page_document(props)
             pages[pid] = Info(pid, summaries[pid].get("content") or "Untitled", seq, filing(top_props, FOLDERS),
-                              own_hash(page_document(props)), False,
+                              own_hash(view), False,
                               [names[i] for i in filing(props, LABELS) if i in names], self._aliases_of(pid, seq),
-                              parents.get(pid, ""), **info_stamps(props))
+                              parents.get(pid, ""), **info_stamps(props), **doc_info(view))
         below = {f: entry for f, entry in folders.items() if (inside is None or f in inside) and f != top}
         return Layout(pages, below, listed["cursor"], listed["labels_seq"], shared, self.mark())
 
@@ -510,22 +525,22 @@ class HttpRemote:
         texts = [c["mine"] for c in conflicts if c.get("mine") and c["mine"] not in kept]
         if not texts:
             return
-        rows = vault_store.files(self.link_id)
+        rows = store.files(self.link_id)
         path = next((p for p, r in rows.items() if r["page_id"] == page_id and r["kind"] == "notes"), page_id)
         for text in texts:
-            vault_store.keep(self.link_id, path, text.encode("utf-8"), always=True)
+            store.keep(self.link_id, path, text.encode("utf-8"), always=True)
             kept.add(text)
 
     def create(self, page_id: str, title: str, props: dict, tree: list, labels=()) -> int:
         """A new page ``page_id`` with its blocks: the page, then its blocks
         (a crash or a refusal between leaves a page with none, which the
         journal keeps as the note's page, its blocks merged into it from no
-        base: ``Round._made``). A PDF it names was uploaded first
-        (``link_pdf``), and is stored there, never read in place (its
-        document at ``store``). → its seq. OpError 409 when a block holds the
-        id."""
+        base: ``Round._made``). A document it names was uploaded first
+        (``link_doc``), and is stored there, never read in place (its
+        document at ``store``); one listed without its bytes stays so. → its
+        seq. OpError 409 when a block holds the id."""
         self.may_write()
-        props = {**props, "doc": document_at(props["doc"], "store")} if props.get("doc") else dict(props)
+        props = _stored(props)
         if labels:
             props[LABELS] = self.label_ids(labels)
         self._call("POST", "/api/pages", {"id": page_id, "title": title, "properties": props})
@@ -539,7 +554,16 @@ class HttpRemote:
         return page.seq if page else 0
 
     def set_page(self, page_id: str, *, title=None, props=None) -> tuple[int, int]:
-        return set_page(self, page_id, title=title, props=props)
+        """``remote.set_page``; a document among ``props`` is stored there,
+        as ``create`` has it (``_stored``)."""
+        return set_page(self, page_id, title=title, props=_stored(props) if props else props)
+
+    def set_doc(self, page_id: str, doc: dict) -> tuple[int, int]:
+        """One ``set`` of the page's document, through ``_send_plan``: one
+        with a hash at ``store`` (a file that shrank below the keep limit,
+        a rename that changed its format: the round builds it read in
+        place, which nothing is there), a listed one as it is."""
+        return set_doc(self, page_id, _stored({"doc": doc})["doc"])
 
     def label_ids(self, names) -> list:
         """The labels of ``names``' ids, made there where missing."""
@@ -608,10 +632,10 @@ class HttpRemote:
 
     # --- files -------------------------------------------------------------------------------
 
-    def _upload(self, path: Path, route: str, content_type: str) -> dict:
+    def _upload(self, path: Path, route: str, content_type: str, filename: str = "", **slice_) -> dict:
         self._check_format()
         try:
-            return self.server.upload(path, route, content_type)
+            return self.server.upload(path, route, content_type, filename, **slice_)
         except gamma_sync.Unreachable as e:
             raise Unreachable(str(e)) from e
         except gamma_sync.Denied as e:
@@ -619,20 +643,64 @@ class HttpRemote:
         except gamma_sync.Changed as e:
             raise Waiting(str(e)) from e
 
-    def link_pdf(self, path: str, seen: tuple, page_id: str) -> None:
-        """The bytes ``seen`` at ``path`` stored there (a NAS reads no file of
-        this disk), once a round; ``Waiting`` for a file that changed while it
-        was sent."""
-        self.may_write()
-        if seen[0] in self._sent:
-            return
-        stored = self._upload(Path(path), "/api/uploads", "application/pdf").get("doc_id")
-        if stored != seen[0]:
-            raise Waiting("the file changed while it was sent")
-        self._sent.add(stored)
+    def _upload_parts(self, path: Path, name: str) -> str:
+        """A file past ``upload_parts.PART_BYTES`` (a proxy caps a request's
+        body) sent in parts, as the browser sends one (``/api/uploads/parts``,
+        ``kind`` ``file``: an older server that takes every upload for a PDF
+        echoes none, and is refused). → the stored name."""
+        size = path.stat().st_size
+        opened = self._call("POST", "/api/uploads/parts", {"size": size, "name": name, "kind": "file"})
+        if opened.get("kind") != "file":
+            raise Refused("the other server is older than this app and stores only PDFs: update it")
+        token, part = opened["token"], int(opened.get("part_bytes") or upload_parts.PART_BYTES)
+        try:
+            for offset in range(0, size, part):
+                self._upload(path, f"/api/uploads/parts/{_q(token)}", "application/octet-stream", name, field="part",
+                             offset=offset, length=min(part, size - offset), fields={"offset": offset})
+            answer = self._call("POST", f"/api/uploads/parts/{_q(token)}/finish")
+        except BaseException:
+            self._asked("DELETE", f"/api/uploads/parts/{_q(token)}")
+            raise
+        return str(answer.get("url") or "").rsplit("/", 1)[-1]
 
-    def unlink_pdf(self, path: str, name: str) -> None:
+    def link_doc(self, path: str, seen: tuple, page_id: str, ext: str) -> None:
+        """The bytes ``seen`` at ``path`` stored there under ``ext`` (a NAS
+        reads no file of this disk), once a round: a ``.pdf`` as a PDF, any
+        other extension through ``/api/upload-file`` named by it, so the
+        file keeps its extension (``photo.jpeg`` stays ``.jpeg``, and a
+        blocked one, sent as ``.bin``, is never refused), in parts past
+        ``upload_parts.PART_BYTES``; ``Waiting`` for a file that changed
+        while it was sent."""
+        self.may_write()
+        name = stored_name(seen[0], ext)
+        if name in self._sent:
+            return
+        if ext == ".pdf":
+            stored = self._upload(Path(path), "/api/uploads", "application/pdf").get("doc_id")
+            got = stored_name(stored, ext) if stored else ""
+        else:
+            got = self._upload_file(Path(path), seen[1], ext)
+        if got != name:
+            raise Waiting("the file changed while it was sent")
+        self._sent.add(name)
+
+    def _upload_file(self, path: Path, size: int, ext: str) -> str:
+        """A file of another format than PDF stored there under ``ext``, named
+        ``file<ext>`` so the server keeps the extension, in parts past
+        ``upload_parts.PART_BYTES``. → the stored name."""
+        if size > upload_parts.PART_BYTES:
+            return self._upload_parts(path, f"file{ext}")
+        answer = self._upload(path, "/api/upload-file", "application/octet-stream", f"file{ext}")
+        return str(answer.get("url") or "").rsplit("/", 1)[-1]
+
+    def unlink_doc(self, path: str, name: str) -> None:
         pass             # nothing is read in place there
+
+    def restat_doc(self, path: str, seen: tuple, name: str) -> None:
+        pass
+
+    def drop_pageless(self, root: Path) -> None:
+        pass
 
     def relink(self, old: str, new: str) -> None:
         pass
@@ -640,18 +708,23 @@ class HttpRemote:
     def spare(self, path: str, name: str, page_id: str) -> None:
         pass             # no page there reads a file of this disk
 
-    def replace_pdf(self, page_id: str, path: str, seen: tuple, filename: str) -> dict:
-        """The page takes the bytes ``seen`` as its PDF, stored there first:
-        that server's own replacement (``PUT /api/pages/{id}/attachment``), its
-        relocation run included. Bytes another page there carries are the
-        file's problem (409)."""
-        self.link_pdf(path, seen, page_id)
+    def replace_doc(self, page_id: str, path: str, seen: tuple, filename: str, *, format: str = "pdf",
+                    ext: str = ".pdf") -> dict:
+        """The page takes the bytes ``seen`` as its document (of ``format``,
+        under ``ext``), stored there first: that server's own replacement
+        (``PUT /api/pages/{id}/attachment``: a PDF by its ``doc_id``, any
+        other file by its stored name, ``file``, which a server before the
+        file class never reads, its format check refusing the vault first),
+        its relocation run included. Bytes another page there carries are
+        the file's problem (409)."""
+        self.link_doc(path, seen, page_id, ext)
+        body = {"doc_id": seen[0]} if format == "pdf" else {"file": stored_name(seen[0], ext)}
         answer = self._call("PUT", f"/api/pages/{_q(page_id)}/attachment",
-                            {"doc_id": seen[0], "original_filename": filename, "keep_old_days": gamma_sync.KEEP_OLD_DAYS})
+                            {**body, "original_filename": filename, "keep_old_days": gamma_sync.KEEP_OLD_DAYS})
         self._wrote(page_id)
         return answer
 
-    def store_pdf(self, path: Path, page_id: str) -> str:
+    def store_doc(self, path: Path, page_id: str) -> str:
         return self.doc_of(page_id)      # stored there already
 
     def place_highlights(self, page_id: str) -> bool:
@@ -661,19 +734,21 @@ class HttpRemote:
         return {}
 
     def link_file(self, path: Path, name: str = "") -> str:
-        """A picture of the vault a note links, stored there: its upload name,
-        kept on its row for the links of the rounds after (a picture pull
-        wrote, ``name``, is stored there already)."""
+        """A file of the vault a note links, stored there under the extension
+        it is stored by here (``formats.vault_extension``, as ``link_doc``
+        names a file: a ``.jpeg`` stays ``.jpeg``, the name its page's row
+        takes in a work folder), in parts past ``upload_parts.PART_BYTES``:
+        its upload name (a picture pull wrote, ``name``, is stored there
+        already), which ``link_doc`` for the file's page, made later this
+        round, then sends no second time. The round keeps it on a kept
+        folder's picture row for the links of the rounds after
+        (``Round._picture``); the remote writes no row."""
         if name:
             return name
         self.may_write()
-        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        answer = self._upload(path, "/api/upload-file", content_type)
-        name = str(answer.get("url") or "").rsplit("/", 1)[-1]
-        st = path.stat()
-        vault_store.put(self.link_id, path.relative_to(self.root).as_posix(), kind="picture", hash=name, size=st.st_size,
-                        mtime_ns=st.st_mtime_ns, file_id=str(st.st_ino))
-        return name
+        got = self._upload_file(path, path.stat().st_size, formats.vault_extension(path.name))
+        self._sent.add(got)
+        return got
 
     def tell(self) -> None:
         self.touched.clear()     # that server's rooms hear the ops themselves

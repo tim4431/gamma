@@ -1,6 +1,7 @@
 import React from "react";
 import { FileIcon, FolderIcon } from "../shared/ui/Icons";
 import { fmtBytes } from "../shared/lib/format.js";
+import { formatLabel } from "../library/libraryUtils.js";
 import { reducedMotion } from "../shared/ui/motion.js";
 import { byName, rowItemIds, treeItemIds, treeSize } from "./importReview";
 import { t } from "../shared/i18n/i18n.js";
@@ -101,7 +102,7 @@ function FileRow({ file, library, selected, onSelect, complete, link, boxOf }) {
         : <small>{fmtBytes(file.size)}{file.status === "not_imported" ? t(" · Not imported") : ""}{file.hint ? ` · ${file.hint}` : ""}</small>}
       {library && file.warnings?.length ? <small className="importWarning">{file.warnings.map(w => w.reason).join(" ")}</small> : null}
     </div>
-    {library ? <span className="importKind">{file.kind === "pdf" ? "PDF" : file.kind === "chat" ? t("Chat") : t("Page")}</span>
+    {library ? <span className="importKind">{file.kind === "chat" ? t("Chat") : formatLabel(file.kind) || t("Page")}</span>
       : file.chip ? <span className="importKind">{file.chip}</span> : null}
   </div>;
 }

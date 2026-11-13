@@ -61,6 +61,7 @@ export const GROUPS = [
   { id: "vaults", files: ["vaults.mjs"], s: 20 },
   { id: "work-folders", files: ["workFolders.mjs"], s: 30 },
   { id: "feedback", files: ["feedback.mjs"], s: 60 },
+  { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
   { id: "trash", files: ["trash.mjs"], s: 5 },
@@ -118,10 +119,15 @@ export const RULES = [
   ["frontend/src/shared/illustrations/**", GUIDES],
   ["frontend/src/shared/**", ALL],
   ["frontend/src/app/**", ALL],
+  // the panes a document of another format than PDF gets (the code view, the picture, the player,
+  // the file pane; docs/dev/documents.md "Viewers"): a work folder's files are pages of theirs, a
+  // tab group's pane reads one, a share's visitor sees one (the share steps are notes-pdf-share's)
+  ["frontend/src/documents/viewers/**", ["viewers", "work-folders", "tab-groups", "notes-pdf-share"]],
   ["frontend/src/documents/**", ALL], // the document a page carries decides its layout
   // the tab groups' pure model and the read view of a page in a group that is not live
+  // (viewers: a code view read in a pane)
   ["frontend/src/workspace/tabLayout.js", ["tab-groups"]],
-  ["frontend/src/workspace/PagePane.jsx", ["tab-groups"]],
+  ["frontend/src/workspace/PagePane.jsx", ["tab-groups", "viewers"]],
   ["frontend/src/workspace/**", ALL], // the frames every page stands in
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
@@ -245,13 +251,15 @@ export const RULES = [
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings"]],
   // synced vaults and PDFs read where they are: the routes a page reads and the engine behind them
   // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js);
-  // feedback: a work folder's rounds write its feedback files and keep the commented version
+  // feedback: a work folder's rounds write its feedback files and keep the commented version;
+  // viewers: the engine's class `file` makes a page of every file a work folder tracks
   ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback"]],
   ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders"]],
   ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
-  ["backend/gamma/vault_*.py", ["vaults", "work-folders", "feedback"]],
+  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers"]],
   // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
-  ["backend/gamma/feedback/**", ["feedback"]],
+  // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
+  ["backend/gamma/feedback/**", ["feedback", "viewers"]],
   ["backend/gamma/routers/feedback.py", ["feedback"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
   // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md)

@@ -20,8 +20,9 @@ gamma-sync client ("The client"), which pulls a folder and pushes PDFs.
 
 Besides vaults, the same server reads a PDF where it lies on this computer
 (*Open with*, *Open a PDF…*), the page reading the file in place instead of
-a stored copy ("A PDF read where it is"). A vault's PDFs are read the same
-way.
+a stored copy ("A file read where it is"). A vault's PDFs are read the same
+way, and so is every file of a work folder, whatever its format ("The
+classes").
 
 The design and its reasons are in the research notes
 [vaults.md](../research/vaults.md) (the synced vault, the lens, the
@@ -35,20 +36,28 @@ Code:
   its notes file for Gamma's file editor, the file vault's round and its
   in-process sink (`LocalSink`), the tick and the hot loop.
 - `gamma/routers/folder_links.py`: `/api/folder-links*`.
-- `gamma/vault_sync.py`: a folder vault's rounds (`Round`, `sync`,
-  `sync_page`) and the remote of this server's workspace (`LocalRemote`).
-- `gamma/vault_disk.py`: the directory as files: the marker, the scan, the
-  evidence of a move, the write that replaces a note, the vault's trash.
-- `gamma/vault_store.py`: vaults.db's rows of a vault: the bases, the
-  journal, tombstones, directories, history.
-- `gamma/vault_merge.py`: the three-way merge of a note changed on disk.
+- `gamma/vault/`: the engine, a package whose `__init__` imports nothing
+  (`folder_links` imports it inside its functions to break a cycle):
+  - `sync.py`: a folder vault's rounds (`Round`, `sync`, `sync_page`).
+  - `kinds.py`: the class registry, what a file is to a vault by its name
+    and what a round does with each class ("The classes").
+  - `remote.py`: what a round reads and writes Gamma through and what both
+    remotes share (`Page`, `Info`, `Layout`, `Edit`, the refusals,
+    `CLIENT`, `set_page`, `remote_for`, `left_out`).
+  - `local_remote.py`: the remote of this server's workspace
+    (`LocalRemote`), in-process.
+  - `http_remote.py`: the remote of a folder on another Gamma server
+    (`HttpRemote`), over HTTP.
+  - `disk.py`: the directory as files: the marker, the scan, the evidence
+    of a move, the write that replaces a note, the vault's trash.
+  - `store.py`: vaults.db's rows of a vault: the bases, the journal,
+    tombstones, directories, history.
+  - `merge.py`: the three-way merge of a note changed on disk.
+  - `links.py`: links, pictures and highlights, block by block, between
+    the file's text and Gamma's.
+  - `upgrade.py`: a folder kept on disk before synced vaults, taken onto
+    the engine.
 - `gamma/md_lens.py`: the lens between a Markdown file and a page's blocks.
-- `gamma/vault_links.py`: links, pictures and highlights, block by block,
-  between the file's text and Gamma's.
-- `gamma/vault_upgrade.py`: a folder kept on disk before synced vaults,
-  taken onto the engine.
-- `gamma/vault_http.py`: the remote of a folder on another Gamma server
-  (`HttpRemote`).
 - `gamma/linked_files.py`: PDFs read where they are, *Opened files*.
 - `gamma/storage.py` `open_path`, `readable`, `is_linked`, `linked_stat`,
   `linked_moved`: a stored name served from a file on this computer.
@@ -81,11 +90,13 @@ Tests:
   `backend/tests/test_md_lens_corpus.py` (the gate, "The lens"), with the
   Obsidian-style corpus in `backend/tests/vault_fixtures/`.
 - `backend/tests/test_vault_disk.py`, `test_vault_store.py`,
-  `test_vault_merge.py`, `test_vault_links.py`: the pure and the disk
-  layers.
-- `backend/tests/test_vault_sync.py` (rounds), `test_vault_routes.py` (the
-  routes), `test_vault_upgrade.py` (kept folders), `test_vault_http.py` (a
-  vault of another server).
+  `test_vault_merge.py`, `test_vault_links.py`, `test_vault_kinds.py` (the
+  registry: a class by name, a row's and a page's class): the pure and the
+  disk layers.
+- `backend/tests/test_vault_sync.py` (rounds), `test_vault_files.py` (the
+  class `file` of a work folder), `test_vault_routes.py` (the routes),
+  `test_vault_upgrade.py` (kept folders), `test_vault_http.py` (a vault of
+  another server).
 - `backend/tests/test_linked_files.py` (PDFs read where they are),
   `test_folder_links.py` (vaults' rows, refusals, the tick, Sync now
   answered with its round running, `running` read from the round's lock,
@@ -114,7 +125,7 @@ Gamma's server is the **remote**, the directory or the file here is
 | **sync** | push, then pull, each where its switch is on: the disk's changes are read first |
 | **up to date** | nothing to pull or push |
 | **conflict** (冲突) | a block changed on both sides since the last sync: the file's text won, Gamma's is kept |
-| **untracked** | a file in the directory a vault does not read: one its `.gammaignore` leaves out (with none, any kind but notes, PDFs and pictures), or one it takes of a kind Gamma does not read yet |
+| **untracked** | a file in the directory a vault does not read: one its `.gammaignore` leaves out (with none, any kind but notes, PDFs and pictures), or in a kept folder one it takes of a kind Gamma does not read there; a work folder reads every file it takes |
 | **work folder** (工作文件夹) | a vault of a folder of this server that pushes everything: the files its directory holds and it tracks are pages that follow the disk ([work folders](work_folders.md)) |
 | **Choose files…** (选择文件…) | what a work folder tracks, chosen in a dialog and kept as its `.gammaignore` |
 | **force pull**, **force push** | one side made the other's, after a count and a confirmation |
@@ -188,7 +199,7 @@ rule.
 
 **The marker**, `.gamma/vault.json`, is `{"format": "gamma-vault-1", "id":
 <random hex>, "notes_folder": ""}`. It is written once, when
-the vault is made (`vault_disk.make_marker`), in a hidden directory (the
+the vault is made (`vault.disk.make_marker`), in a hidden directory (the
 hidden attribute on Windows, the dot elsewhere); no round changes it. Its
 id is the row's `state.vault`, and each round checks it before and after
 its scan: it is what tells an unplugged disk or an empty mount point from
@@ -205,7 +216,7 @@ after the folder (`obsidian_export.vault_name`; a name the scan would leave
 out, `~$Plan`, takes a `_` before it). A page appears once, under its first
 filing below the vault's folder, the filing of its top page for a page
 inside a page. A page filed below two vaults of this server is one
-vault's (`vault_sync.remote_for`): a vault leaves out the pages of another
+vault's (`vault.remote.remote_for`): a vault leaves out the pages of another
 that may take them, one that pushes or, when this one only pulls too, an
 older one that only pulls. Such a vault inside its folder takes them
 whatever its age; one beside it (a page filed in both) takes them when it
@@ -215,7 +226,7 @@ a copy in its directory and nothing into Gamma. A page's notes are `<dir>/<title
 notes go beside its PDF under the PDF's stem, or into `notes_folder`. The
 PDF pull copies out of Gamma goes beside the notes under their stem, else
 into the folder's directory under the title. Every name is made free in its
-directory ignoring case (`vault_disk.free_name`, the one naming rule:
+directory ignoring case (`vault.disk.free_name`, the one naming rule:
 ` 2`, ` 3`…), against what the disk holds and what the rows hold, since a
 file missing for one scan still holds its path. The notes file is the
 page's blocks with text and its highlights, in the dialect "The lens" and
@@ -245,19 +256,23 @@ tables ([user_db.md](user_db.md) has the columns):
 - `vault_dirs`: a vault's directories, each with its folder and its file id.
 - `vault_history`: bytes a write replaced, zlib-compressed.
 
-Each `vault_store` function opens its own short connection and commits; none
+Each `vault.store` function opens its own short connection and commits; none
 runs while a workspace's pages.db write lock is held, so a slow disk under
 vaults.db never holds every writer of a workspace.
 
-## A PDF read where it is
+## A file read where it is
 
-A page whose PDF stays at a path on this computer has its document read in
+A page whose file stays at a path on this computer has its document read in
 place (`doc.at` is `path`, `documents.model.in_place`; the document's shape
 is in `gamma/documents/model.py`, [documents.md](documents.md)) and a
-stored name like any other,
-`<hash>.pdf` (`stored_name`), its hash the SHA-256 prefix the bytes would
-get if stored; a `linked_files` row says which path holds that name.
-Nothing is copied, and nothing is ever written into the file or beside it.
+stored name like any other, `<hash><ext>` (`stored_name`: `.pdf` for a
+PDF, a work folder's file under its own extension, `formats.vault_extension`,
+a blocked one as `.bin`), its hash the SHA-256 prefix the bytes would get if
+stored; a `linked_files` row says which path holds that name
+(`linked_files._put_row` with the document's `ext`). Nothing is copied, and
+nothing is ever written into the file or beside it. *Opened files* and the
+follow worker below are PDFs' alone; a vault's round reads any file so
+(`linked_files.hash_any`: the hash and the first bytes, no header check).
 
 **The read.** `storage.open_path` answers a name from the uploads directory,
 else from a linked file (`linked_path`, only where vaults are kept): the
@@ -290,9 +305,12 @@ and taking it elsewhere stay that account's. The
 highlights are placed again, the open viewers switch on the ops, and a
 replacement whose relocation run could not start keeps the reason on the
 row for the page's card. A page in Recently deleted waits; a row whose page
-now carries another PDF goes. A vault's PDF (its page has a `vault_files`
-row of kind `pdf`) is its round's alone: one replacer per file
-(`_in_vault`).
+now carries another PDF goes. A vault's file (its page has a `vault_files`
+row of a class read in place, `pdf` or `file`) is its round's alone: one
+replacer per file (`_in_vault`). The round also refreshes the row of a file
+touched with the same bytes (`linked_files.restat`, from
+`Round._push_file`), which otherwise read as nothing until its bytes
+changed.
 
 **The upload route** (`GET /api/uploads/<name>`): a name with no file,
 whose linked file the worker has in hand, waits for the worker up to
@@ -603,7 +621,7 @@ case, so a change under `docs/` runs it too.
 
 ## Links and highlights
 
-`vault_links` turns one block's text between the file's space, where the
+`vault.links` turns one block's text between the file's space, where the
 lens works, and Gamma's. Gamma holds a link to a page or a block as
 `[[id]]` (`![[id]]` embeds a block) and a picture as its upload's address;
 the file says `[[Title]]`, `[[dir/Title|alias]]`, `[text](<a b.md>)`,
@@ -690,7 +708,7 @@ rectangles come back if the text does.
 
 ## A round
 
-`vault_sync.sync(link)` is a folder vault's whole round, `Round.run`: open
+`vault.sync.sync(link)` is a folder vault's whole round, `Round.run`: open
 the vault, push, then pull, each where its switch is on, and ask again for
 any relocation run that waits. A round reads and writes Gamma through a
 **remote**, the small interface of what it needs there: the pages below
@@ -700,11 +718,11 @@ its blocks (`create`), the trash, filing, folders, titles, PDFs, and the
 conflicts the file won, written in the transaction of the ops.
 `LocalRemote` writes this server's workspace in-process as the account
 that made the vault, and asks before each write whether that account may
-still edit there (`folder_links.may_edit`); `vault_http.HttpRemote` does
+still edit there (`folder_links.may_edit`); `vault.http_remote.HttpRemote` does
 the same over HTTP for a folder of another server ("A vault on another
 server").
 
-**Opening.** The marker is checked (`vault_disk.check_marker`): none, or
+**Opening.** The marker is checked (`vault.disk.check_marker`): none, or
 another id, **stops** the vault (`status.stopped`); a directory that does
 not answer is **offline** (`status.offline`). The marker file's file id
 is kept in the state at the first round (`marker_file`), and another one
@@ -715,17 +733,19 @@ its `.gammaignore`, else the default ("A work folder's round"). Then the
 journal is settled (below), then the scan, and Gamma's temporary files
 older than `STALE_TEMP_S` (60 s) are swept.
 
-**The scan** (`vault_disk.scan`, `walk`) walks the directory with
+**The scan** (`vault.disk.scan`, `walk`) walks the directory with
 `os.scandir`, one stat a file, and follows no symbolic link or junction;
-nothing below one is read or written either (`vault_disk.path` refuses
+nothing below one is read or written either (`vault.disk.path` refuses
 it). It leaves out dot directories, `node_modules`, temporary names
 (Gamma's `.gamma-*` and `*.gamma-sync-part`, Office's `~$*`, LibreOffice's
 `.~lock.*`, macOS's `._*`) and `.gammaignore` itself, whatever the rules
 say, then what the vault's `.gammaignore` leaves out (`Scan.excluded`, a
-directory left out never entered; [work folders](work_folders.md)). Notes
-(`.md`, `.markdown`) and papers (`.pdf`) are listed, pictures listed for
-the links and counted, and the files of no class that the rules take
-counted as untracked (the default takes none: it leaves them out). A link
+directory left out never entered; [work folders](work_folders.md)). The
+files of a class that makes pages (`vault.kinds.class_of`, by the name
+alone: notes and PDFs; in a work folder's scan, `work`, every file the
+rules take) are listed; in a kept folder pictures are listed for the links
+and counted, and the files of no class that the rules take counted as
+untracked (the default takes none: it leaves them out). A link
 or a junction, a name Windows refuses, and two names in one directory that
 differ only by case, are reported (`status.refused`) and left, unless the
 rules leave them out first (a link is decided as a directory). A cloud
@@ -754,8 +774,10 @@ the effect did not happen (`drop`). A push names its first op batch with the
 token (`page_ops.batch_id`, `apply_batches(batch_id=)`), and the ids of the
 blocks a plan makes start with it. A round that finds a pending settles it
 by what the page and the file say. A push (`_plan_landed`) promotes when
-its batch is in the page's log, else drops, so the file is read again. Its
-pending records `at`, the seq the plan was made at, and `wrote`, what the
+its batch is in the page's log, else drops, so the file is read again; a
+document's push read in place (`_doc_landed`) when the page's document is
+the pending's bytes, a listed file's (no hash to say) when it is listed at
+the pending's size. A note's pending records `at`, the seq the plan was made at, and `wrote`, what the
 plan left on each block it wrote (`_wrote`: the text set or inserted, none
 for a block deleted). Over HTTP the log is read from `at`, and the first
 batch after it is the plan's if it landed (`commit_plan` writes it right
@@ -786,21 +808,93 @@ the vault's: one refused op does not stop the rest. Only the marker
 (`Stopped`), the disk (`Offline`) and the account (`Refused`) stop a round,
 which then counts as failed, so `RETRY_S` applies.
 
+**The classes** (`vault.kinds`). A file is of one class, decided by its
+name alone and never by its bytes (`class_of`: `documents.formats.format_of`
+with no head read): `notes` for the `markdown` format, `pdf` for a `.pdf`;
+in a kept folder `picture` for an `image` and none for any other file,
+which a vault counts and does not read; in a work folder's round
+(`class_of(…, work=True)`, `Round.work`) `file` for every other file,
+pictures included ([work folders](work_folders.md) "The round in a work
+folder"). A row keeps its class as `kind`, the stored word (`by_kind` finds
+a row's or a tombstone's class, `main` a page's: `pdf` when it has a PDF
+row, else `notes`, else `file`); a row that is there takes its class anew
+with the next pending (`store.put_pending`), so a kept folder's picture row
+at a path a work folder reads as a file becomes that file's page's row,
+once. One object stands for each class, `NOTES`, `PDF`, `PICTURE` and
+`FILE`, and says what its rows are to a round (`compared`: its rows meet
+the scan, which a picture's never do, and only under the class the path
+has now; a picture's row goes once its file is gone, so a directory gone
+with its notes and pictures goes as a folder, and the guard counts no
+picture as a file; `in_place`: its bytes are a `linked_files` row read where they
+are, a PDF's and a file's; `in_library`: a work folder's library switch
+stamps its new pages, notes' and PDFs'; `makes_pages`) and does the round's
+steps for its files where they differ by class: `read`, `known` (the shape
+`pair_moves` compares), `weight` (the progress bytes), `pending_text` (the
+journal's text), `new`, `change`, `moved`, `left`, `swept`, `link_name`
+(the upload a note's link to it reads), `pull` and `place`. The round
+dispatches to the class (`Round._read`, `_push_file`, `_push_new`, `_left`,
+`_sweep`, `_pull_page`, `_place` …); a step that is one class's alone stays
+a `Round` method the class calls (`_write_notes`, `_copy_pdf`,
+`_merge_into`, `_push_doc`). Pairing a PDF with its notes stays the round's:
+it is between two classes. The remotes' document calls take the document,
+not a PDF: `link_doc(path, seen, page_id, ext)`, `unlink_doc`,
+`restat_doc`, `replace_doc(…, format=, ext=)`, `store_doc`, `set_doc` (one
+`set` of the page's document, the vault's client, for a file that crossed
+the keep limit or whose new name says another format), `drop_pageless`.
+
+The class `file` reads a file of any format once it has settled
+(`gamma_sync.settled` without the `%%EOF` test), hashes it in place
+(`linked_files.hash_any`), and reads its format off its name, else its
+first bytes (`kinds.file_format`: a PDF by its bytes alone is `binary`,
+since a PDF is a PDF by its name) and its extension off its name
+(`formats.vault_extension`, a blocked one `.bin`). Its page's document is
+the file (`{format, name, hash, ext, at: path, size}`), titled by the leaf
+(`main.tex`, `fig.png`), filed in its directory's folder, stamped as a work
+folder's file and never in the library by the switch. A file past the keep
+limit (`config.vault_keep_bytes`, `GAMMA_VAULT_KEEP_MB`, 64; PDFs and notes
+are never measured, by the stat its read takes, not the scan's) is
+**listed**: its first bytes read for the format, nothing hashed, no `linked_files` row, its document `{…, hash: "", at:
+listed, size}` ([documents.md](documents.md) "The listed state"); one that
+crosses the limit either way, or is listed with a new size, takes one
+`set_doc`. New bytes replace the document (`replace_doc`, the versions
+stored where `feedback.kept.keeps_bytes` says); the same bytes under a new
+stat refresh the row and its linked row (`restat_doc`). A move relinks and
+refiles, the title and `file_name` following the new leaf; a new name that
+says another format or extension (`notes.txt` to `notes.log`, `a.txt` to
+`a.png`) settles the document again with the same hash, the linked row
+under the new name first (`Round._file_doc`); a rename that changes the
+class (`a.txt` to `a.md`) never pairs: a removal and a new page. Gone, it is
+a tombstone and its page goes to Recently deleted as any file's; left out or
+left by a mirror's trash, it stays where it is (an in-place tombstone), and
+the sweep spares it under its extension. Pull writes nothing for it, never
+a note beside it (its notes are Gamma's own), and `place` records the title
+and filing without moving the file. A note's link to a file names its
+stored address, as to a picture before (`![](/api/uploads/<hash>.png)`): the
+file's row serves it (`FILE.link_name`), a file new this round that a note
+links before its page is made is read in place by `Round._picture`, its row
+the page's once the page is made (`link_file` names the row as the page's
+row is named), and `drop_pageless` takes the page-less rows a page's row
+serves now. A kept folder keeps the picture class and its page-less rows:
+making every attachment of a vault a library page would fill the library.
+
 ### Push
 
 Push compares the scan with the rows (`Round._classify`, which reads and
 hashes the new and changed files and writes nothing):
 
-- **Changed**: a stat that moved, or the racy rule (`vault_disk.moved`): a
+- **Changed**: a stat that moved, or the racy rule (`vault.disk.moved`): a
   file whose time is within `RACY_S` (2 s) of when its base was read counts
   as moved at the next scan, since exFAT and SMB keep coarse times and a
   save in the same tick would leave the same stat. Then the hash decides; a
-  file of the base's bytes only takes the new stat. A note is read once it
-  has rested `SETTLE_NOTE_S` (1 s) and statted again after the read (one
-  that moved meanwhile waits); a PDF once it has settled, hashed in place
+  file of the base's bytes only takes the new stat, its linked row's stat
+  with it for a file read in place (`restat_doc`: a PDF or a work folder's
+  file touched goes on being served). Each class reads its
+  own (`Kind.read`): a note once it has rested `SETTLE_NOTE_S` (1 s,
+  `vault.kinds`) and statted again after the read (one that moved
+  meanwhile waits); a PDF once it has settled, hashed in place
   (`linked_files.hash_file`) with its trailer's `/ID`. A note that is not
   UTF-8 is that file's problem.
-- **Moved** (`vault_disk.pair_moves`), by evidence, in order: the same
+- **Moved** (`vault.disk.pair_moves`), by evidence, in order: the same
   file id with the same size or hash, the same PDF `/ID` or a note's text
   alike (`ID_SIMILAR`, 0.3, with the id, never the id alone: ext4 gives a
   freed inode to the next file); a hash no other file on either side has; a
@@ -815,7 +909,7 @@ hashes the new and changed files and writes nothing):
 - **A directory renamed** (`_dir_renames`): gone from where it was and
   found elsewhere by its file id, else holding at least half of its files
   under the same names and sizes, is one folder renamed or moved and one
-  rewrite of the rows below it (`vault_store.repath`), never a refiling per
+  rewrite of the rows below it (`vault.store.repath`), never a refiling per
   file. Where Gamma meanwhile moved the folder below the one the disk moved
   it into, the disk's places win.
 - **New**, **missing**, **removed** (below). A file the scan leaves out for
@@ -843,7 +937,7 @@ writes anything, `status.held = {removals, total}`, until `?confirm=1`
 another tool or a disk going away file by file look like this.
 
 **Removed files.** A page all of whose files went goes to Recently
-deleted, each row kept as a **tombstone** (`vault_store.bury`: its path the
+deleted, each row kept as a **tombstone** (`vault.store.bury`: its path the
 place it would have in the vault's trash, `was` where it lived), written
 before the page is trashed. The PDF gone and the notes left: the page stays
 and reads a missing file. The notes gone and the PDF left: the plain blocks
@@ -854,9 +948,11 @@ or below.
 
 **New files.** A file that came back, a page in Recently deleted's or one
 whose file went to the vault's trash, brings its page back
-(`vault_disk.came_back`: where it lived with the same bytes or a text alike,
+(`vault.disk.came_back`: where it lived with the same bytes or a text alike,
 or anywhere with the same file id and a size or text alike; a hash alone
-elsewhere is no evidence, since a template's copies share one). So a branch
+elsewhere is no evidence, since a template's copies share one; a work
+folder's file listed past the keep limit, which has no hash, is back where
+it lived by its file id or its size). So a branch
 switched and switched back loses nothing. Otherwise:
 
 - a new note is a new page, titled by its stem or its front matter's
@@ -883,7 +979,7 @@ again once it changes, never each round.
 **A changed note** is parsed, matched with its base (`md_lens.match`, and
 each block only moved, whose text is one base block's and no other's), each
 block's text read into Gamma's (identity first), and merged into its page
-(`vault_merge.merge_page`). The target starts from **the page as it is, not
+(`vault.merge.merge_page`). The target starts from **the page as it is, not
 from the file**, and takes only what the file changed since the base:
 
 - a block whose text the file changed takes the change, merged word by
@@ -931,7 +1027,7 @@ page says what the file says, front matter too, so that pull writes the
 rest.
 
 **PDFs.** A PDF with new bytes is its page's, read where it is (the disk
-wins; `LocalRemote.replace_pdf`: its `linked_files` row first, then
+wins; `LocalRemote.replace_doc`: its `linked_files` row first, then
 `replace_attachment` with `at="path"` and `check_held=False`, the
 highlights relocated). A library page's PDF filed in the vault keeps its
 stored copy, and the copy pull wrote is followed: its first new bytes make
@@ -968,7 +1064,7 @@ seq) writes it:
    reported until a force pull. A PDF of the disk's that Gamma replaced is
    that file's problem: pull never writes over it.
 3. **The notes.** The page projected (`md_lens.project`), each block's text
-   in the file's space (identity first, `vault_links` for a changed one), a
+   in the file's space (identity first, `vault.links` for a changed one), a
    highlight keeping or taking its anchor, then `md_lens.shape` over the
    base. `Unwritable` is the file's `problem` ("not written to disk" on the
    page) and nothing is written; the next change tries again.
@@ -984,7 +1080,7 @@ seq) writes it:
    once a round, where the vault pushes everything; elsewhere it is kept and
    reported, never pushed, and not written until a force pull. A cloud
    placeholder is never written over.
-6. **The write** (`vault_disk.replace_note`; `write_new` for a new file,
+6. **The write** (`vault.disk.replace_note`; `write_new` for a new file,
    which never replaces a file that appeared meanwhile): the bytes written
    to a temporary name beside the note that the scan skips, flushed, the
    stat taken from the open file (a rename keeps the time, size and file
@@ -1014,7 +1110,7 @@ A file moved on disk, where the vault pushes everything, files its page in
 the new directory's folder **in the same place of its filing list** as the
 old one, and names the page by the new stem (a note with a `title:` key
 keeps its title); a sub-page's file moved makes it a library page. The rows
-move first, in one transaction (`vault_store.repath_files`: names swapped
+move first, in one transaction (`vault.store.repath_files`: names swapped
 go through names no file has), each holding a `moved` pending until its
 page is filed and named, which a round that dies leaves to the next. The
 rows record the filing, so pull never moves the file back.
@@ -1025,14 +1121,14 @@ deleted for good), moves its files to the vault's trash (`_left`,
 then the file moves (`.gamma/trash/<UTC stamp>/<path>`, on the vault's
 volume so that a delete is a rename). A PDF read in place is stored first
 when its page lives on, its document at `store` with its hash and name
-(`LocalRemote.store_pdf`). A note changed on disk that push has not read yet
+(`LocalRemote.store_doc`). A note changed on disk that push has not read yet
 stays where it is, kept, so that push brings the page back with it; a PDF
 changed on disk whose page left stays where it is, no longer synced, and is
 reported. A page brought back brings its files back from the trash under a
 free name. A file is swept from the trash only once its page is purged and
 the trash has held it `TRASH_DAYS` (30) at least, after any other page that
 reads those bytes in place has them stored (`LocalRemote.spare`). Nothing
-of a vault but its trash is ever deleted for good (`vault_disk.purge`).
+of a vault but its trash is ever deleted for good (`vault.disk.purge`).
 
 ### A work folder's round
 
@@ -1049,15 +1145,27 @@ unmarked folder gets the round above, unchanged. In a work folder:
 
 - **The layout** leaves out a page whose `work_folder` names another work
   folder than the vault's own (a library file of it filed here too).
+- **Every file the selection takes is a page**: a note, a PDF, or a file
+  of any other format, pictures included (the class `file`, "The classes":
+  its document the file, read where it is or listed past the keep limit).
+  The scan lists them all (`vault.disk.scan(…, work=True)`: no picture or
+  untracked count), and the cap counts the same files.
 - **New pages** are its files: `work_folder`, `file_name` (the file's leaf,
-  the PDF's for a paper), `library: true` while the vault's switch says so,
-  and the PDF's `doc.size` (`Round._create`, `_new_pdf`). The front
-  matter's `parent:` makes no sub-page.
+  the PDF's for a paper), `library: true` while the vault's switch says so
+  for a note or a PDF (`Kind.in_library`; a file of another format never
+  joins the library by it), and `doc.size` on every document (`Round._create`,
+  `_new_pdf`, `_new_file`). A file of another format is titled by its leaf
+  (`main.tex`, `fig.png`), a PDF by its stem. The front matter's `parent:`
+  makes no sub-page. New files are made PDFs first, then the other
+  formats, then the notes, so a note made in the same round links a
+  picture's row.
 - **A move or rename on disk** (`_moved`) files the page first in the new
   directory's folder, whatever moved, then in its folders outside every
   work folder, and sets `file_name`; the title follows the stem only for a
   file not in the library (a library file's title is the paper's, free)
-  whose note has no `title:`. `parent_page` goes.
+  whose note has no `title:`, and the leaf for a file of another format.
+  `parent_page` goes. A new name that says another format or extension
+  settles the file's document again, the hash kept.
 - **The folder tree follows the disk.** The op path refuses a person's
   rename, move, delete or new folder below the work folder's root (its
   rule, [work folders](work_folders.md) "The op rule"), so `_pull_dirs`,
@@ -1068,15 +1176,28 @@ unmarked folder gets the round above, unchanged. In a work folder:
   files.
 - **Pull** moves or renames a file only for a note that follows Gamma (no
   document, where the vault pulls): the `.md` alone, never a PDF beside it,
-  then `file_name`. Anything else's title and filing are only recorded. A
+  then `file_name`. Anything else's title and filing are only recorded, and
+  no note is written beside a file of another format (its notes are
+  Gamma's own). A
   note made in Gamma in one of its directories (the server stamps it) is
   written at `<dir>/<title>.md`, then named (`_file_named`, the rows' seq
   following where level). Pull copies no PDF out (`_copy_pdf` runs only in
-  kept folders): a stored PDF filed here is reported "a PDF filed here in
-  Gamma is not written into the directory".
+  kept folders, for a PDF document: `Info.format`): a stored PDF filed here
+  is reported "a PDF filed here in Gamma is not written into the
+  directory". A picture a note made in Gamma links is written where the
+  rules track it (`_new_files`) with no row: the next whole round reads it
+  as a new file, a page.
 - **The trash.** A note a person trashed where the vault pulls goes to
   `.gamma/trash` as above; any other file of a page that left stays where it
   is, its row an in-place tombstone (below).
+- **Removal and release.** Removing the work folder stores its PDFs read
+  in place, as before, and nothing for a file of another format: Gamma
+  copies nothing of a directory but what was asked to be kept (a library
+  file's versions, a commented version), which is stored already
+  ([work folders](work_folders.md) "Removing a work folder"). A work folder
+  let go (`takeover.release`) forgets its `file` rows: their pages keep
+  their documents, and a kept folder's round meets no row of a class it does
+  not compare.
 - **A library file's versions** are stored as they come (`LocalSink.store`
   before `replace_attachment`), its document still at `path`; so are any
   file's while a comment thread on it is open (`feedback.kept.keeps_bytes`,
@@ -1092,7 +1213,8 @@ unmarked folder gets the round above, unchanged. In a work folder:
   own, deleted directly, never through the trash.
 
 **The selection.** `.gammaignore` at the vault's root says what it tracks;
-none is the default, notes, PDFs and pictures (`ignore_rules.DEFAULT_TEXT`).
+none is the default, notes, PDFs and pictures (`ignore_rules.DEFAULT_TEXT`),
+so a taken-over vault's pictures become pages.
 `Round._read_rules` reads it once a round, a page's round too. The state's
 `selection` holds the hash of the text the last whole round read (`""` for
 none): a file gone since **stops** the vault ("its .gammaignore is gone: put
@@ -1111,7 +1233,7 @@ A file the selection leaves out while it is on disk is **deselected**
 
 - in a work folder, a page whose files all left goes to Recently deleted
   first (`deleted_by_vault`), then each row becomes an **in-place
-  tombstone** (`vault_store.bury_in_place`: `path` is `KEPT` + the path,
+  tombstone** (`vault.store.bury_in_place`: `path` is `KEPT` + the path,
   `was` the path, no pending): **the file is never moved**. A round that
   dies between the two leaves a live row the next deselects again, or a
   tombstone of a live page, which `_restore_file` sends back. One of a
@@ -1190,7 +1312,7 @@ app counts and confirms first, and only the vault's maker may ask.
   directory as it is; then the linked files' sweep. One tick runs at a time,
   and one asked for meanwhile runs again after it.
 - **The hot loop** (`folder_links.hot_tick`, every `HOT_S`, 2 s): a page
-  of a vault of this server gets a round of its own (`vault_sync.sync_page`)
+  of a vault of this server gets a round of its own (`vault.sync.sync_page`)
   once `HOT_S` passed since its **last** write in Gamma (trailing: an
   `ops.commit_listeners` entry marks it and does nothing else, and a
   vault's own writes and the folder and label trees mark nothing), and a
@@ -1333,7 +1455,7 @@ another page still carries or shows it. A run that cannot start reports
 ## Conflicts
 
 A clash the file won is a `sync_conflicts` row of kind `file_won`
-(`vault_sync.CONFLICT`), written in the transaction of the push's ops, in
+(`vault.remote.CONFLICT`), written in the transaction of the push's ops, in
 Gamma's space: `mine` Gamma's text, `theirs` the file's, `result` what the
 block took (the file's), `base`. The same open clash is not written twice
 for one block. No conflict copy is ever written into the vault: the file
@@ -1399,8 +1521,8 @@ As built:
 - **The file wins** a clash, and Gamma's text is kept as a conflict.
 - **Pull-only is a promise**: a vault that does not push writes nothing into
   Gamma; what changes on disk is kept and reported until a force pull.
-- **One replacer per file**: a vault's PDF is its round's, a reader's the
-  worker's.
+- **One replacer per file**: a vault's file read in place (a PDF, a work
+  folder's file of any format) is its round's, a reader's the worker's.
 - **Refusals** are one function, `folder_links.check_vault`, asked when a
   vault is made or changed and before each round (a refused round is
   `status.stopped`). It refuses: a place that is Gamma's data directory,
@@ -1448,7 +1570,7 @@ As built:
   chips, and may pause it, sync it, read the removal counts, relink and
   remove it; its conflicts stay a member's. It learns nothing new of a
   workspace it left: a round of its vault there fails at once with
-  `vault_sync.NO_ACCESS`, before `check_vault`, whose reasons read the
+  `vault.local_remote.NO_ACCESS`, before `check_vault`, whose reasons read the
   workspace as it is now and name other vaults' places, and the folder's
   names stay the last ones (`_folder_names`). A maker who may no longer
   edit the workspace, a viewer now, is told only that its vault is
@@ -1463,8 +1585,10 @@ As built:
   of the status, `push_off` is then a fixed sentence. The routes that take
   a path want the shell's secret ("The routes").
 - **Removing the vault** (`delete_link`) leaves its pages as they are. The
-  PDFs and pictures it reads in place are stored first (`GET /removal`
-  counts them and their size), and one that cannot be stored stops the
+  PDFs it reads in place, and a kept folder's pictures, are stored first
+  (`GET /removal` counts them and their size; a work folder's files of other
+  formats are stored by nothing, "A work folder's round"), and one that
+  cannot be stored stops the
   removal before anything is undone; its live pages' documents are then at
   `store`, and a page in Recently deleted reads in place still, its copy
   stored (`_store_in_place`). Then, with `files=keep`, the marker
@@ -1485,7 +1609,7 @@ names no marker (`folder_links.older`), its directory holding the
 gamma-sync client's state file (`.gamma-sync.json`). Migration step 50
 ([migrations.md](migrations.md)) gave `folder_links` its `pull` column (1;
 0 on file links) and let `push` say 2. Its first round takes it onto the
-engine (`vault_upgrade.upgrade`), as a vault that pulls, with push off or
+engine (`vault.upgrade.upgrade`), as a vault that pulls, with push off or
 PDFs as its arrow was and notes files as it had them; push may then be
 turned on for everything. Four steps, each left as it was or done by a kill
 at any point, the row's state being the commit point:
@@ -1494,12 +1618,12 @@ at any point, the row's state being the commit point:
    holds it: `.gamma/` is all a round writes beside the files, and the
    status says so from then on (`upgraded_at`).
 2. The state file's files and directories into vaults.db in one
-   transaction (`vault_store.take`), each file with the stat the client
+   transaction (`vault.store.take`), each file with the stat the client
    recorded or, when it is as recorded (the size, and the time within a
    second), its own. A PDF keeps its page and identity (`ours`); one changed
    on disk whose page's PDF Gamma replaced too is kept as the client kept it
    (`BOTH_PDF`) until it changes or a force decides. A note gets a base
-   that names none of its blocks (`vault_sync._unknown`): one as the client
+   that names none of its blocks (`vault.sync._unknown`): one as the client
    wrote it keeps its hash, so the first pull writes it once more by the
    lens, its old bytes to the history, and its base is known from then on;
    one changed on disk keeps none, so it is kept and reported (`UNKNOWN`)
@@ -1578,7 +1702,15 @@ What differs from a vault of this server:
 - **PDFs are stored there**: a new paper's bytes are uploaded before its
   page is made (its document at `store` there, never `path`), a new
   version's before the attachment is replaced, and a picture a note links
-  is an upload there too.
+  is an upload there too. A work folder's files the same, any format,
+  through `/api/upload-file` named by their extension, in parts past
+  `upload_parts.PART_BYTES` (a proxy caps a request's body), each sent
+  once a round (a file a note links before its page is made is not sent
+  again by the page); a document the round builds read in place (a file
+  back under the keep limit, a rename that says another format) is stored
+  there all the same (`http_remote._stored`), and a new version may change
+  the format, as here: the replacement route keeps the page's format for
+  every writer but the vault's client.
 - **Not seen from here**: the carets in that server's rooms (a shape op may
   land on a block someone is typing in, which that editor merges), and the
   relocation run, which a token cannot start: the highlights a callout
@@ -1587,7 +1719,7 @@ What differs from a vault of this server:
   folder there. The vaults on this computer of that workspace keep the
   rules of this server's: two that overlap and both push are refused
   (`_named_overlap`), and the layout leaves out the pages of another such
-  vault that may take them, by `vault_sync.left_out` over that server's
+  vault that may take them, by `vault.remote.left_out` over that server's
   folder tree, reporting the shared ones. The hot loop does not run for it.
 - **The account.** That server not answering, answering with no JSON a
   success, a 5xx, a 404, 408 or 429 (a sign-in portal's page, a proxy with

@@ -654,6 +654,51 @@ def test_a_note_in_a_vault_leaves_a_page_s_pdf_to_the_reader(owner, ws, disk):
     assert _props(owner, page)["doc"]["hash"] == storage.content_digest(new)
 
 
+def test_a_work_folders_file_of_any_format_is_its_rounds_alone(owner, ws, disk):
+    """A ``file`` row (gamma/vault/kinds.py) holds the page's document as a
+    PDF's does: the follow worker leaves it to the round."""
+    f, data, doc = _disk_pdf(disk, "a-files-row.pdf", "LF a work folder's file")
+    page = _opened(owner, f)["page"]
+    rows = _rows(ws, page)
+    _in_a_vault(page, "file")
+    assert linked_files._in_vault(page)
+    _write(f, _pdf("LF the round's"), age=20)
+    linked_files.follow(ws, f"{doc}.pdf")
+    assert _props(owner, page)["doc"]["hash"] == doc and _rows(ws, page) == rows
+
+
+def test_hash_any_hashes_a_file_of_any_format_with_its_head(disk):
+    f = disk / "any.txt"
+    _write(f, b"hello")
+    digest, size, mtime_ns, file_id, head = linked_files.hash_any(f)
+    st = os.stat(f)
+    assert (digest, size, mtime_ns, file_id, head) == (storage.content_digest(b"hello"), 5, st.st_mtime_ns, str(st.st_ino), b"hello")
+    with pytest.raises(ValueError, match="%PDF"):
+        linked_files.hash_file(f)
+    p, data, doc = _disk_pdf(disk, "any.pdf", "LF hashed either way")
+    assert linked_files.hash_file(p) == linked_files.hash_any(p)[:4] and linked_files.hash_any(p)[0] == doc
+    assert linked_files.hash_any(p)[4][:5] == b"%PDF-"
+
+
+def test_a_row_under_another_extension_is_restated_and_its_bytes_stored_as_they_are(ws, disk):
+    from test_vault_sync import PNG
+    f = disk / "fig.png"
+    _write(f, PNG)
+    seen = linked_files.hash_any(f)[:4]
+    name = f"{seen[0]}.png"
+    linked_files._put_row(ws, str(f), seen, "lf-png-page", ext=".png")
+    try:
+        assert _rows(ws, "lf-png-page") == [(name, str(f))] and storage.open_path(ws, name) == f
+        os.utime(f, (time.time() - 40, time.time() - 40))
+        assert storage.open_path(ws, name) is None                     # the stat moved: served as nothing
+        linked_files.restat(ws, name, str(f), linked_files.hash_any(f)[:4])
+        assert storage.open_path(ws, name) == f
+        assert linked_files.store_page_bytes(ws, "lf-png-page", name, seen[0]) is True
+        assert storage.exists(ws, name) and storage.find_upload_file(name, ws).read_bytes() == PNG
+    finally:
+        linked_files._drop_row(ws, name, str(f))
+
+
 def test_a_new_file_of_bytes_the_library_holds_is_still_the_page_s(owner, ws, disk):
     f, data, doc = _disk_pdf(disk, "converged.pdf", "LF before it converged")
     page = _opened(owner, f)["page"]

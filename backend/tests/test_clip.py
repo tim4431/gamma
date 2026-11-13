@@ -84,6 +84,23 @@ def _filed(props):
             [names[label] for label in props.get("labels", [])])
 
 
+def test_a_clip_starts_a_lookup_for_a_library_pdf_alone(guest, meta_calls):
+    """``_maybe_start_metadata``: a page's own library PDF names a work; a
+    document of another format (a figure) and a copy name none, so no lookup
+    of a picture by its title."""
+    from gamma.documents.model import document
+    from gamma.routers.clip import ClipRequest, _maybe_start_metadata
+
+    ws, actor = workspace_of(guest_name()), account_of(guest_name())
+    req = ClipRequest(source_url="https://example.org/x", fetch_metadata=True)
+    _maybe_start_metadata(ws, actor, req, {"id": "figure", "properties": {
+        "doc": document("f" * 24, name="fig.png", format="image", ext=".png")}})
+    _maybe_start_metadata(ws, actor, req, {"id": "copy", "properties": doc_props(url=f"/api/uploads/{'c' * 24}.pdf")})
+    _maybe_start_metadata(ws, actor, req, {"id": "paper", "properties": doc_props("d" * 24, name="p.pdf")})
+    _maybe_start_metadata(ws, actor, req, {"id": "web", "properties": {"web_meta": {"doi": "10.1/x"}}})
+    assert meta_calls == [(actor, "paper"), (actor, "web")]
+
+
 def test_clip_url_creates_filed_page_and_stores_pdf(guest, upstream, meta_calls):
     url = "https://example.org/papers/clip-one.pdf"
     r = guest.post("/api/clip", json={

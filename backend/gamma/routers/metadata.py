@@ -84,6 +84,7 @@ METADATA_LOOKUP = os.environ.get("GAMMA_METADATA_LOOKUP", "").strip().lower() no
 # Why a work folder's file that is not in the library gets no lookup
 # (docs/dev/work_folders.md "The library rule": no paper until it is added).
 NO_RECORD = "A work folder's file has no record: add it to the library to look one up."
+NO_PAPER = "This page's document is no PDF: it has no paper's record to look up."
 
 
 def _http_get(url: str, accept: str = "", timeout: int = 20, headers: dict | None = None) -> bytes:
@@ -1259,6 +1260,8 @@ def metadata_status(request: Request):
     plus those that carry
     ``properties.meta`` without one (a note about a paper whose PDF you don't
     own — it still cites; ``has_file`` is false, index fields stay unknown).
+    A page whose document is no PDF (a figure, a data file) and that carries
+    no record is no paper: left out.
     Text/index state comes from the FTS index (data.db) — pages=0 rows are
     recorded extraction failures, ver != INDEX_VERSION means stale; papers the
     index never saw report text_chars = null (unknown until indexed)."""
@@ -1277,8 +1280,8 @@ def metadata_status(request: Request):
     for block_id, content, props_json, updated_at in rows:
         props = json.loads(props_json or "{}")
         view = page_document(props)
-        if not view and not props.get("meta"):
-            continue  # a plain note page: nothing to fetch metadata or text for
+        if not is_pdf(view) and not props.get("meta"):
+            continue  # a plain note page, a figure or a data file: nothing to fetch metadata or text for
         if not library_document(props):
             continue  # an opened PDF, a work folder's file: no paper of the library
         doc_id = own_hash(view) if is_pdf(view) else ""
@@ -1425,17 +1428,22 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     time someone opens the share popover. Raises HTTPException(404) when
     nothing was found (after negative-caching it), 409 (``NO_RECORD``) for a
     work folder's file that is not in the library: a figure or a build is
-    no paper until it is added."""
+    no paper until it is added; 409 (``NO_PAPER``) for a page whose document
+    is no PDF (a picture, a data file: nothing names a work, and its title
+    is no paper's), where a page with no document (a web clip) is looked up
+    by what it carries, as before."""
     content, props = _load_page(ws, block_id)
+    view = page_document(props)
     if work_folder_of(props) and not library_document(props):
         raise HTTPException(status_code=409, detail=NO_RECORD)
+    if view is not None and not is_pdf(view):
+        raise HTTPException(status_code=409, detail=NO_PAPER)
     if props.get("meta") and not force:
         return {"meta": props["meta"], "bibtex": bibtex_mod.page_entry(props),
                 "ppt_cite": props.get("ppt_cite", ""), "cite_key": props.get("cite_key", ""),
                 "source": props["meta"].get("source", ""), "cached": True,
                 "title_updated": False, "page_title": content}
 
-    view = page_document(props)
     doc_id = own_hash(view) if is_pdf(view) else ""
     source_url = source_address(view)
     web = props.get("web_meta") if isinstance(props.get("web_meta"), dict) else {}
@@ -1791,7 +1799,8 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
     while it is queued or running adds its papers to it and answers that
     job. A paper nothing is found for is counted, not fatal; a stop lands
     between two papers. A page that is no library document (an opened PDF,
-    a work folder's file not in the library: ``library_document``) is left
+    a work folder's file not in the library: ``library_document``), and one
+    whose document is no PDF and that carries no record (a figure), is left
     out and counted (the result's ``skipped``)."""
     user_id = require_user_id(request)
     ws = require_ws(request, write=True)
@@ -1805,7 +1814,8 @@ def metadata_batch(payload: MetaBatchRequest, request: Request):
                 f"AND id IN ({', '.join('?' for _ in chunk)})", chunk).fetchall()
             for block_id, content, props_json in rows:
                 props = json.loads(props_json or "{}")
-                if not library_document(props):
+                view = page_document(props)
+                if not library_document(props) or (view is not None and not is_pdf(view) and not props.get("meta")):
                     skipped += 1
                     continue
                 meta = props.get("meta") or {}

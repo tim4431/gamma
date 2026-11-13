@@ -3,10 +3,13 @@ classified"): 20,000 files of one work folder beside 500 library pages
 leave the library listing as fast as it was (the listing index holds what
 the library lists), a directory of 10,000 files reads its first page of
 rows at once, the directories' counts come from one indexed read, the op
-rule's read of a folder tree of 2,000 directories stays small, and the
+rule's read of a folder tree of 2,000 directories stays small, the
 feedback document of 50 open threads among the files reads at once
-(docs/dev/feedback.md). The rows are inserted directly, as a vault's would
-stand.
+(docs/dev/feedback.md), and migration step 55's rebuild of the kind column
+over the files is timed once. The rows are inserted directly, as a vault's
+would stand. The one real round is a work folder's first over 2,000 small
+files of mixed formats, every file a page (docs/dev/work_folders.md "The
+round in a work folder"), timed once and reported.
 
 Timed like tests/test_perf.py, and marked ``perf`` with it: ``python -m
 pytest tests/test_work_folder_scale.py -m perf -q`` from backend/, alone, on
@@ -17,27 +20,38 @@ itself without the files."""
 import json
 import os
 import secrets
+import sqlite3
+import time
+import uuid
 from types import SimpleNamespace
 
 import pytest
 
 from conftest import account_of, login, make_folder, make_page, make_user, mark_work_folder, workspace_of
-from gamma import comments
+from gamma import comments, folder_links, migrations, pdf_meta, storage
 from gamma.blocks_store import BLOCK_COLUMNS, FOLDERS, touch_page
-from gamma.db import connect_pages_db, page_now
+from gamma.db import BLOCK_HOT_INDEXES, PAGES_SCHEMA, connect_pages_db, connect_vaults_db, page_now
 from gamma.feedback import entries
 from gamma.routers import blocks as blocks_router
+from gamma.vault import disk as vault_disk, store as vault_store, sync as vault_sync
+from gamma.vault.local_remote import LocalRemote
 from gamma.work_folders.marks import Tree
+from test_migrations import KIND_55, kind_before_55
 from test_perf import budget, measure
+from test_vault_files import PNG
+from test_vault_sync import _pdf
 
 pytestmark = pytest.mark.perf
 
 USER, PASSWORD = "wfs_owner", "pw-wfs-1"
+VAULT_USER = "wfs_vault"     # the account whose work folder is really synced: its pages apart from USER's 20,000
 LIBRARY_PAGES = 500
 FILES = 20_000
 BIG = 10_000          # the files of the largest directory; the rest in DIRS of 1,000
 DIRS = 10
 TREE_DIRS = 2_000     # the directories of the folder tree the op rule reads
+MIXED = 2_000         # the files of the first round timed, in 20 directories
+MIXED_DIRS = 20
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -171,3 +185,111 @@ def test_the_feedback_document_of_50_open_threads_reads_at_once(big, request):
     doc = read(None)
     assert doc["count"] == 50 and {e["kind"] for e in doc["entries"]} == {"file"}
     budget(request, measure(read), 300)
+
+
+STEP_55_MS = 10_000
+
+
+def test_step_55_rebuilds_the_kind_column_over_the_files(big, request, tmp_path):
+    """Migration step 55 on a pages.db of release 54's shape holding W's
+    rows: ``kind`` and the five generated columns after it dropped and
+    added again with their seven indexes (normalize.block_columns), timed
+    once, since a rerun does nothing. The copy is built from the fixture's
+    rows under the old statement."""
+    with connect_pages_db(big.ws) as conn:
+        live = conn.execute("PRAGMA database_list").fetchone()[2]
+    table = next(s for s in PAGES_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS unified_blocks"))
+    old = sqlite3.connect(str(tmp_path / "pages-54.db"))
+    old.execute(kind_before_55(table))
+    for stmt in BLOCK_HOT_INDEXES:
+        old.execute(stmt)
+    old.execute("ATTACH DATABASE ? AS live", (live,))
+    old.execute(f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) SELECT {BLOCK_COLUMNS} FROM live.unified_blocks")
+    old.commit()
+    old.execute("DETACH DATABASE live")
+    rows = old.execute("SELECT COUNT(*) FROM unified_blocks").fetchone()[0]
+    assert rows > FILES
+    t0 = time.perf_counter()
+    migrations._v55_positions("ws", old, None)
+    ms = (time.perf_counter() - t0) * 1000
+    assert KIND_55 in old.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
+    assert old.execute("SELECT COUNT(*) FROM unified_blocks WHERE kind = 'page'").fetchone()[0] >= FILES
+    print(f"\n{request.node.name}: step 55 over {rows} rows in {ms:.0f} ms, budget {STEP_55_MS} ms")
+    assert ms < STEP_55_MS, ms
+
+
+FIRST_ROUND_MS = 60_000
+
+
+def _mixed(n: int) -> tuple[str, bytes]:
+    """The ``n``th file of the mixed work folder: eight formats in turn, each
+    file's bytes its own (a note, a PDF, LaTeX, JSON, a PNG, CSV, Python, a
+    blob)."""
+    match n % 8:
+        case 0:
+            return f"note-{n:04d}.md", f"# Note {n}\n\nsome text of note {n}\n\n- a point\n- another\n".encode()
+        case 1:
+            return f"paper-{n:04d}.pdf", _pdf(f"paper {n}")
+        case 2:
+            return f"section-{n:04d}.tex", f"\\section{{Part {n}}}\nSome text of part {n}.\n".encode()
+        case 3:
+            return f"data-{n:04d}.json", json.dumps({"n": n, "values": list(range(n % 7))}).encode()
+        case 4:
+            return f"fig-{n:04d}.png", PNG + n.to_bytes(2, "big")
+        case 5:
+            return f"table-{n:04d}.csv", f"x,y\n{n},{n * 2}\n{n + 1},{n * 2 + 2}\n".encode()
+        case 6:
+            return f"run-{n:04d}.py", f"print({n})\n".encode()
+        case _:
+            return f"blob-{n:04d}.bin", b"\x00\x01" + n.to_bytes(4, "big") + secrets.token_bytes(64)
+
+
+def test_a_first_round_over_2000_mixed_files(request, tmp_path, monkeypatch):
+    """A work folder's first round over 2,000 small files of eight formats in
+    20 directories, a ``.gammaignore`` tracking every file: every file a page
+    whose document is read where it is, the PDFs and the other files linked
+    (one create per file, each its own transaction), then the quiet round
+    after it. Timed once, since a second first round would be the quiet one;
+    reported, the bound generous."""
+    monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
+    monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)
+    monkeypatch.setattr(storage, "_stats", {})
+    make_user(VAULT_USER, PASSWORD)
+    c, ws, user = login(VAULT_USER, PASSWORD), workspace_of(VAULT_USER), account_of(VAULT_USER)
+    folder = make_folder(c, "wfs-mixed")
+    mark_work_folder(c, folder)
+    root = tmp_path / "mixed"
+    root.mkdir()
+    (root / ".gammaignore").write_text("# every file\n", encoding="utf-8")
+    then = time.time() - 10
+    for n in range(MIXED):
+        leaf, data = _mixed(n)
+        path = root / f"d{n % MIXED_DIRS}" / leaf
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(data)
+        os.utime(path, (then, then))
+    marker = vault_disk.make_marker(root)
+    link = {"id": uuid.uuid4().hex, "workspace_id": ws, "folder_id": folder, "path": str(root), "pull": 1,
+            "push": folder_links.PUSH_ALL, "created_by": user, "state": {"vault": marker["id"]}, "kind": "folder",
+            "remote_url": "", "library": 0}
+    remote = LocalRemote(ws, folder, user)
+    try:
+        t0 = time.perf_counter()
+        result = vault_sync.sync(link, remote=remote)
+        first = (time.perf_counter() - t0) * 1000
+        assert result.status["last_error"] == "" and result.status["counts"]["sent"] == MIXED, result.status
+        link["state"] = result.state
+        t0 = time.perf_counter()
+        result = vault_sync.sync(link, remote=remote)
+        quiet = (time.perf_counter() - t0) * 1000
+        assert result.status["last_error"] == "" and result.status["counts"]["sent"] == 0, result.status
+        pages = remote.layout().pages
+        assert len(pages) == MIXED and sum(1 for p in pages.values() if p.format == "pdf") == MIXED // 8
+        print(f"\n{request.node.name}: first round over {MIXED} files in {first:.0f} ms, the quiet one {quiet:.0f} ms,"
+              f" budget {FIRST_ROUND_MS} ms")
+        assert first < FIRST_ROUND_MS, first
+    finally:
+        vault_store.forget_link(link["id"])
+        with connect_vaults_db() as conn:
+            conn.execute("DELETE FROM linked_files WHERE ws = ? AND substr(path, 1, ?) = ?",
+                         (ws, len(str(root)), str(root)))

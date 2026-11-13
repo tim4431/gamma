@@ -16,6 +16,13 @@ export const BLOCKED_EXTENSIONS = new Set([
   ".ps1", ".psm1", ".reg", ".lnk", ".jar", ".app",
 ]);
 
+// The image rows' media types (the server's IMAGE_MEDIA_TYPES): the
+// pictures /upload-image takes.
+export const IMAGE_MEDIA_TYPES = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+  ".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon", ".svg": "image/svg+xml",
+};
+
 // The extensions a format is known by, a text one with the language its
 // contents are read as; any other extension is binary.
 const TABLE = {
@@ -31,8 +38,8 @@ const TABLE = {
     shell: [".sh", ".bash", ".zsh"], r: [".r"], julia: [".jl"], lua: [".lua"], sql: [".sql"], perl: [".pl"],
     haskell: [".hs"], scala: [".scala"], diff: [".diff", ".patch"], rst: [".rst"], typst: [".typ"],
   },
-  image: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"],
-  audio: [".mp3", ".wav", ".webm", ".m4a", ".ogg", ".opus"],
+  image: Object.keys(IMAGE_MEDIA_TYPES),
+  audio: [".mp3", ".wav", ".webm", ".m4a", ".ogg", ".opus", ".flac", ".aac"],
   video: [".mp4", ".mov", ".m4v"],
   binary: [".bin", ".ink", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt", ".odt", ".ods",
     ".zip", ".gz", ".tgz", ".tar", ".7z", ".whl", ".h5", ".hdf5"],

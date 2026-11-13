@@ -9,11 +9,13 @@
 // is sent again from the byte the server says it holds (its 409 carries
 // `received`), up to RETRIES times in a row, while an answer from the
 // server (400, 413, 507) is final. Resolves to what the single request
-// answers (a PDF's {doc_id, source_url, size, already_existed}); rejects
-// like xhrUpload (`aborted: true` after the stop button or `signal`),
-// having told the server to drop the unfinished upload. The web app's PDF
-// ingest (App.jsx resolvePdfSource, uploadPdf), the import review
-// (transfers/importApi.js) and a restore's zip (tasks/tasksApi.js) go
+// answers (a PDF's {doc_id, source_url, size, already_existed}, any other
+// file's {url, name, size, already_existed}); rejects like xhrUpload
+// (`aborted: true` after the stop button or `signal`), having told the
+// server to drop the unfinished upload. The web app's PDF ingest (App.jsx
+// resolvePdfSource, uploadPdf), its documents of any other format
+// (uploadAnyFile: transfers/documentUploads.js, the file chips), the import
+// review (transfers/importApi.js) and a restore's zip (tasks/tasksApi.js) go
 // through here; the browser extension speaks the protocol itself
 // (extension/worker.js uploadBlob).
 import { keepaliveFetch } from "./keepalive.js";
@@ -40,6 +42,15 @@ export function uploadFile(file, { url, parts, fields = {}, name = file.name, di
 
 export function uploadPdf(file, filename, options = {}) {
   return uploadFile(file, { url: `${API}/uploads`, parts: `${API}/uploads/parts`, name: filename }, options);
+}
+
+// Any file but an executable, stored under its content hash and the name's
+// extension (`POST /upload-file`; past PART_BYTES in parts opened with
+// `kind: "file"`, so the server stores them the same way) → {url, name, size,
+// already_existed}. `name` is the name sent (the file's own by default).
+export function uploadAnyFile(file, { name = file.name, ...options } = {}) {
+  return uploadFile(file, { url: `${API}/upload-file`, parts: `${API}/uploads/parts`, fields: { kind: "file" }, name },
+    options);
 }
 
 function stopped() {

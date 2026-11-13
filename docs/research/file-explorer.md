@@ -11,9 +11,9 @@ local agents (Claude Code, Codex) as structured documents. The owner
 offered a rewrite from the bottom up and asked first whether the idea is
 possible at all.
 
-Status: **a plan; steps 0, 1 and 2 are built** ("As built (step 0)", "As
-built (step 1)" and "As built (step 2)" under "In steps"), the rest is
-not. This note surveys what
+Status: **a plan; steps 0, 1, 2 and 3 are built** ("As built (step 0)" to
+"As built (step 3)" under "In steps"), the rest is not. This note surveys
+what
 the stored model and the code assumed before step 0, weighs three shapes a
 file could take, and lays the chosen one out in layers from the bottom,
 with the steps, the decisions still open and the risks. It was revised on
@@ -1070,6 +1070,178 @@ whole list:
     bar, the Comments window and the VaultChip card; it polls while open.
 17. The Markdown files are in English (they are for agents); everything a
     person reads in the app is translated.
+
+**As built (step 3).** Built as its row says
+([dev/synced_vaults.md](../dev/synced_vaults.md) "The classes",
+[dev/work_folders.md](../dev/work_folders.md),
+[dev/documents.md](../dev/documents.md) "Writing a document" and
+"Viewers", [dev/feedback.md](../dev/feedback.md)). The vault engine is the
+package `gamma/vault/` (`kinds` the class registry, one object per row
+kind, `class_of` deciding by name and never by bytes; `remote` what both
+remotes and the round share; `local_remote` and `http_remote`; `sync` the
+round; `disk`, `store`, `merge`, `links` and `upgrade` as they were), no
+module named `vault_*.py` left and no shim; the remotes' calls are
+`link_doc`, `unlink_doc`, `replace_doc`, `store_doc` and `set_doc`. The
+class `file` is every file a work folder's selection takes that is no
+note or PDF, pictures included: a page titled by its leaf, filed in its
+directory, its document read where it is (`at: "path"`, with `size`) or,
+past `GAMMA_VAULT_KEEP_MB` (64), listed (`at: "listed"`, no hash, no
+bytes); a touch with the same bytes refreshes the stat; a rename
+re-settles the format and extension. In the library a stored file of any
+format is a page (`POST /pages/by-file`, `attach {file}`, `by-docs
+files`), one page per stored file by hash and extension
+(`page_for_file`), its format settled on the server (`stored_format`),
+`PUT /attachment` keeping the page's format; the record, Zotero, the
+clipper and the AI's PDF tools stay the PDF's. The client's viewer registry
+is `documents/viewers.js` (`FORMAT_VIEWER`, `VIEWERS`: each pane's tools,
+ink, regions and words, which App reads and never a viewer's id);
+`DocumentPane` mounts the code view (`viewers/TextViewer.jsx`, CodeMirror
+read-only, a head-first load, language chunks from `language-data`), the
+picture (`viewers/FileViews.jsx` `ImageViewer`: regions, the comment
+margin, `viewerZoom`), the player and the file pane from one surface
+(`documents/viewerSurface.js`), each a lazy chunk. A region is a highlight
+block with `image_position` (`{width, height, boundingRect, rects, hash}`,
+the picture's own pixels); the kind column's `highlight` case reads
+`pdf_position`, `image_position` or `text_position`, rebuilt by migration
+step 55 (`positions`), which moves the workspace format to 55. Step 2's
+feedback takes regions: the anchor gains `ext` and the kind `region`, the
+entry `where: {box, rect, size, placed}`, the pictures a region's crop and,
+for a thread on a picture's page, the whole picture
+(`ai_pictures.image_region`, the chat's picture of a picture page too).
+Where it differs from the plan above, the whole list:
+
+1. The class `file` exists only in a work folder's round. A kept folder
+   (Gamma its source) keeps the picture class and its page-less rows:
+   making every attachment of an Obsidian-style vault a library page would
+   fill the library. Pictures in every existing work folder, and in every
+   vault taken over in step 1 (whose default selection tracks pictures),
+   become pages at the first step-3 round, their old picture rows becoming
+   those pages' rows once.
+2. The library switch adds notes and PDFs only; a work folder's pictures
+   and other files never join the library by it.
+3. A file page is titled by its whole name (`main.tex`, `fig.png`), so
+   `main.tex` and `main.pdf` differ in tabs and quick open; a PDF keeps its
+   stem.
+4. The listed state is a fourth `at`, `listed` (no hash, `size` kept), and
+   it moves the workspace format with step 55 (an older server's op path
+   refuses it, and its kind column reads a region as a note). The file's
+   time is not stored: its pane and the list view show the page's
+   `updated_at`, which the vault moves when the document changes.
+5. The keep limit (`GAMMA_VAULT_KEEP_MB`) applies to the class `file`
+   only, never to PDFs or notes; it is an environment setting, not an
+   admin setting yet. The tracking dialog's preview answers `large` and
+   `keep_bytes` in place of `unread` (nothing is unread now).
+6. Notes link a file page by its stored address, as before
+   (`![](/api/uploads/<hash>.png)`), not as a mention of its page; links by
+   path are step 5's. `LinkContext.pages` stays notes. In a work folder the
+   link context reads file rows and the scan's files with no row yet, so a
+   note that links a picture new in the same round keeps its link; the
+   page-less rows a file page's row now serves are dropped after the push
+   phase.
+7. Removing a work folder stores nothing for a file page (the PDFs read in
+   place are stored as step 1 built): a trashed file page reads its file as
+   missing unless it was in the library or had an open thread. Releasing a
+   vault forgets its file rows; their pages keep their documents.
+8. "One page per document" holds for every format in the library, keyed by
+   hash and extension (equal bytes under two extensions are two stored
+   files); the record, Zotero and the clipper stay library PDFs. `PUT
+   /attachment` keeps the page's format (400 otherwise); the vault's
+   replacement may change it (`replace_attachment(keep_format=False)`),
+   and highlights are relocated only between two PDFs. `by-file` answers
+   `{page, created}`; an Untitled page attached a file of any format is
+   titled by the file's name, `auto_title` set for a PDF alone; a stored
+   PNG asked for its record is 409 `NO_PAPER`; a listed file's Add to
+   library or Save a copy is 409 `TOO_LARGE`.
+9. `FileChip.KINDS` stays as the chip's tooltip words, finer than formats;
+   no decision reads it. The chip's lookup is keyed by stored name
+   (`by-docs files`, a Markdown name answered by its note page too), and
+   `uploadFilesAsLines` sends every non-picture file through
+   `uploadAnyFile` (parts past 32 MiB); `.avif` and `.bmp` are inline
+   pictures now that they have rows, `.tiff` and `.heic` chips.
+10. The image view's zoom is `viewerZoom.js`, the PDF's and the notebook's,
+    not the Lightbox's, and its fit leaves room for the comment margin
+    (`marginLayout.fitBeside`). Its DOM is `.imgLayer` (the zoom layer at
+    the scroller's origin) holding `.imgBox` (the picture's box), as the
+    PDF's layer and page wrap, since the pinch math needs the layer at the
+    origin.
+11. One region drag (`shared/ui/regionDrag.js`) for the PDF's area and the
+    picture's region; on a picture a mouse or pen drag draws with no key
+    held, a finger only with the strip's toggle. The tip after a drag: a
+    swatch makes the region in that colour, Note in the palette's first,
+    Comment opens a thread, Ask AI asks the chat.
+12. The code view's Wrap is session state (wrapped by default on a
+    phone), not a stored preference; its search is CodeMirror's panel (the
+    search commands decline inside `.docTextView`), and the search panel's
+    "this page" does not reach a code view (step 4 indexes files). A−/A+
+    buttons were not built: `useTextScale` has no setter and no other text
+    panel has them; Ctrl+wheel scales the text. A file the server refuses
+    (a work folder's file on another computer) hands over to the file pane
+    as a binary does.
+13. `image_position.hash` is always written and holds nothing; "made on
+    another version" is derived on both sides, so a replacement writes no
+    op on regions. Step 2's anchor holds the commented version. On the
+    client `blockPosition(b, key)` reads any key but `image_position` as
+    the PDF's.
+14. Step 55 rebuilds the kind column with `text_position` already (step
+    6's), to save a second rebuild.
+15. The feedback document gives a thread on a picture's page the whole
+    picture, and a region on another version its current crop (`placed:
+    "earlier"` with a `picture`; "the picture was rebuilt" when a `before`
+    stands beside it), where step 2's rules gave neither. `pictures.Region`
+    names the stored file (`<hash><ext>`), a PDF's key still hashed by its
+    stem so no work folder redraws its `img/` at the upgrade;
+    `image_region` answers `render_page`'s 4-tuple; a region drawn on
+    another version is drawn like the others on the current picture.
+16. A sniffed PDF: attached in the library it is stored again as `.pdf`
+    and becomes a PDF; in a work folder (no `.pdf` name) it is a binary.
+17. A dropped directory uploads every file but the never-tracked ones and
+    blocked extensions, asking first past 100 (`transfers/fileRouting.js`,
+    the pure rules; `documentUploads.js` the calls). A single uploaded
+    document opens its page as a Markdown import does, not with a viewer
+    URL.
+18. `/upload-file` keeps a name's extension only when it is an image row
+    of the declared media type (`photo.jpeg` with `image/jpeg`); `.ico` is
+    `image/x-icon`. `settled(path, tail=None)` skips the `%%EOF` test for a
+    file; the same-bytes restat and `drop_pageless` are remote calls
+    (`restat_doc`, `drop_pageless`), no-ops over HTTP; `_new_files` in a
+    work folder writes a linked picture with no journal and no row, so the
+    next whole round makes its page; the HTTP remote's upload memo is
+    keyed by stored name.
+19. The engine's split keeps `_token`, `_why` and `_refused` in `sync.py`
+    and `NO_ACCESS` in `local_remote.py`; the copy-out of a page's stored
+    PDF stays in `Round._pull_page` before the class dispatch, gated on
+    `info.format == "pdf"`; `Round._place` dispatches to `Kind.place`;
+    `Kind.left` runs per class, notes before PDFs; `class_of` decides on
+    the leaf (`a/b/.md` is no note), its `work` keyword defaulting to
+    False; a file's move with a new format is re-settled in `Round._moved`,
+    where the page is known live; `FILE.pull` records seq, title and folder
+    so the next round counts the page unchanged.
+20. The ink-threads' and regions' words on the client: `showThread` lands
+    on the block (`landOnBlock`), which scrolls the PDF to a highlight's
+    passage too; `DocumentPane` is keyed by the page while a pane of its
+    own shows, so a picture to picture switch mounts fresh; a region's row
+    crop retries while the picture loads; the Document menu reads "Show
+    the file" for a non-PDF document; the attach command is "Attach a
+    document…" on a page with a document of any format; the 409 on attach
+    says "That file is already in the library as {title}". `NoteBadge`
+    lives in `comments/` (prop `onMenu`), so the picture's chunk never
+    imports pdf.js. `documentFileUrl(doc, {share, asset})` takes the host's
+    `assetUrl` rather than importing it (node tests the model).
+21. The review of a backup's merge and an import labels a page by its
+    document's format (`image`, `text`, `pdf`), the client showing the
+    format's word.
+22. The browser group is `viewers`; its share step is in the group
+    `notes-pdf-share` (there is no `share` group); `clip.mp4` is WAV bytes
+    so the pane's pause can be asserted on a playing element.
+23. Not built in step 3: text in search and the chat (step 4); the AI's
+    area pictures of a region in `read_block` and the context
+    (`ai_context.area_highlight` stays PDF); exports writing a work
+    folder's file at its path; a region crop in the readable exports (a
+    region exports as a note); editing a text file; Opened files of
+    formats other than PDF; a listed file's head as text; a region's own
+    rows in the highlight menu (the PDF's rows show); the AI title for a
+    non-PDF document (`docId` is the PDF's); an admin setting for the keep
+    limit.
 
 ## Still to decide
 

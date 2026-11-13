@@ -5,9 +5,10 @@
 // tests it (tests/feedbackText.test.mjs).
 //
 // An entry is the reader's (GET /api/feedback): {id, file, format, page_id,
-// block_id, kind ("passage" | "area" | "ink" | "note" | "file"), where:
-// {page, quote, box, placed, note}, source: {file, line, end, version} |
-// null, picture, before, state, sent, link, comments}. A request is a Send:
+// block_id, kind ("passage" | "area" | "ink" | "region" | "note" | "file"),
+// where: {page, quote, box, placed, note; a region's rect and size in the
+// picture's pixels}, source: {file, line, end, version} | null, picture,
+// before, state, sent, link, comments}. A request is a Send:
 // {id, rev, work_folder, scope, by, at, note, state ("sent" | "running" |
 // "done" | "failed"), state_at, state_by, detail, threads: [{id, answered}]}.
 import { anchorSnippet, isWithdrawn } from "../comments/comments.js";
@@ -19,11 +20,18 @@ const QUOTE_MAX = 80;
 
 // An entry's heading: "Page 3 · “the loss is defined as”" (a passage),
 // "Page 3 · note on “…”" (a note under one), "Page 5 · area", "Page 2 ·
-// handwriting", "A note" (a note with no place on a page) or "The whole
-// file".
+// handwriting", "Region · 320×180 px at (40, 60)" (a region of a picture,
+// by its rect in the picture's pixels; "Note on a region · …" under one),
+// "A note" (a note with no place on a page) or "The whole file".
 export function entryHeading(entry) {
   const where = entry.where || {}, n = where.page;
   if (entry.kind === "file") return t("The whole file");
+  if (entry.kind === "region") {
+    const r = where.rect;
+    if (!r) return where.note ? t("Note on a region") : t("Region");
+    const at = { w: r[2] - r[0], h: r[3] - r[1], x: r[0], y: r[1] };
+    return where.note ? t("Note on a region · {w}×{h} px at ({x}, {y})", at) : t("Region · {w}×{h} px at ({x}, {y})", at);
+  }
   if (!n) return t("A note");
   if (entry.kind === "area") return t("Page {n} · area", { n });
   if (entry.kind === "ink") return t("Page {n} · handwriting", { n });
@@ -35,9 +43,17 @@ export function entryHeading(entry) {
 // (`where.placed`): exactly, roughly (with how alike the text is, a
 // `match` from 0 to 1, when it says), by estimate, not at all, not yet,
 // or on an earlier build (handwriting, which is never placed again); ""
-// for an entry with no place.
-export function placedText(where) {
+// for an entry with no place. A region (`kind`) is placed exactly, drawn
+// on an earlier version of the picture (it stays where it was on the new
+// one), or lost when the file is no longer a picture.
+export function placedText(where, kind = "") {
   const placed = where?.placed;
+  if (kind === "region") {
+    if (placed === "exact") return t("placed exactly");
+    if (placed === "earlier") return t("drawn on an earlier version of the picture");
+    if (placed === "lost") return t("the file is no longer a picture");
+    return "";
+  }
   if (placed === "exact") return t("placed exactly");
   if (placed === "rough") {
     return typeof where.match === "number" ? t("placed roughly ({match})", { match: `${Math.round(where.match * 100)}%` })

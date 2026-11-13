@@ -15,8 +15,8 @@
 // everything a function returns is already translated.
 // Pure: tests/blockProps.test.mjs.
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
-import { blockPosition, closestPlace, getParentInfo, isHighlightBlock, isInkGroup, isLinkBlock, isNum, isRecord, placedToCheck,
-  roughMatchPercent, sameJson } from "../shared/model/blockModel.js";
+import { blockPosition, closestPlace, getParentInfo, isHighlightBlock, isInkGroup, isLinkBlock, isNum, isPlaceBlock, isRecord,
+  isRegionBlock, placedToCheck, roughMatchPercent, sameJson } from "../shared/model/blockModel.js";
 import { DEFAULT_HIGHLIGHT, LINK_COLOR, colorName, hexColor, normalizeColor, parseColor } from "../shared/model/palette.js";
 import { STYLE_NAMES, isLineStyle } from "../shared/model/markStyle.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
@@ -66,9 +66,11 @@ export const KINDS = {
 // a page (under root or the trash), a folder or a label (in their trees),
 // from the flags or the dict's parent_id / page_id; then ink (an ink_url
 // key), text_box, picture, sheet, recording (an object there), link (a
-// link_url or link_page_id that is set), highlight (a pdf_position object),
-// note. The per-kind predicates each test one step; chained, they are the
-// server's rule (tests/shared/blockkind.json pins both).
+// link_url or link_page_id that is set), highlight (a pdf_position,
+// image_position or text_position object: a place on a PDF page, a region
+// of a picture, a range of a text file), note. The per-kind predicates each
+// test one step; chained, they are the server's rule
+// (tests/shared/blockkind.json pins both).
 export function blockKind(b, { isPage = false, isFolder = false, isLabel = false } = {}) {
   if (isPage || b?.parent_id === "root" || b?.parent_id === "trash") return "page";
   if (isFolder || b?.page_id === "folders") return "folder";
@@ -80,8 +82,8 @@ export function blockKind(b, { isPage = false, isFolder = false, isLabel = false
   if (isRecordingBlock(b)) return "recording";
   if (isLinkBlock(b)) return "link";
   // Ink, text box, picture and sheet are ruled out above, so this is the
-  // pdf_position object test alone.
-  if (isHighlightBlock(b)) return "highlight";
+  // position object test alone.
+  if (isPlaceBlock(b) || isRecord(b?.properties?.text_position)) return "highlight";
   return "note";
 }
 
@@ -97,10 +99,12 @@ export function effectiveKind(live, server) {
 // laid out as a note.
 const onHighlight = (b, kind) => !unset(b?.properties?.linked_highlight_id) && (kind === "highlight" || kind === "note");
 
-// The kind's word, refined: a note on a highlight, an area highlight.
+// The kind's word, refined: a note on a highlight, an area highlight, a
+// region of a picture.
 export function kindLabel(b, kind = blockKind(b)) {
   if (onHighlight(b, kind)) return t("Note on a highlight");
   if (kind === "highlight" && b?.properties?.pdf_position?.area) return t("Area highlight");
+  if (kind === "highlight" && !isHighlightBlock(b) && isRegionBlock(b)) return t("Region of the picture");
   return t(ownEntry(KINDS, kind)?.label || KINDS.note.label);
 }
 
@@ -130,6 +134,13 @@ export const CATALOG = {
   "pdf_position.match": { section: "kind", type: "number", label: T("Match"), hint: T("How alike its text and the text found for it read, 0 to 1.") },
   "pdf_position.prev": { section: "kind", type: "json", label: T("Before replacement"), hint: T("Where it was before the PDF was replaced.") },
   "pdf_position.closest": { section: "kind", type: "json", label: T("Closest match"), hint: T("The best place found for a lost passage, too unlike it to apply.") },
+  // regions of a picture
+  image_position: { section: "kind", type: "json", label: T("Region"), hint: T("Where this sits on the picture, in the picture's own pixels as it was drawn.") },
+  "image_position.width": { section: "kind", type: "number", label: T("Picture width"), hint: T("The width of the picture the region was drawn on, in its own pixels.") },
+  "image_position.height": { section: "kind", type: "number", label: T("Picture height"), hint: T("The height of the picture the region was drawn on, in its own pixels.") },
+  "image_position.boundingRect": { section: "kind", type: "json", label: T("Frame"), hint: T("The box drawn, from the picture's top-left corner, in its pixels.") },
+  "image_position.rects": { section: "kind", type: "json", label: T("Boxes"), hint: T("The one box of the region, the same as its frame.") },
+  "image_position.hash": { section: "kind", type: "mono", label: T("Drawn on"), hint: T("The stored picture the region was drawn on; another than the page's means it was drawn on an earlier version.") },
   link_url: { section: "kind", type: "url", label: T("Links to"), hint: T("The web or document address this region opens.") },
   link_page_id: { section: "kind", type: "page", label: T("Links to page"), hint: T("The Gamma page this region opens.") },
   link_block_id: { section: "kind", type: "block", label: T("Lands on"), hint: T("The highlight on the linked page this region scrolls to.") },
@@ -642,13 +653,14 @@ function kindRows(kind, block, p, ctx, server) {
   const used = new Set();
   const take = (...keys) => keys.forEach((k) => used.add(k));
   if (kind === "highlight" || kind === "link") {
-    take("color", "style", "quote", "pdf_position", "link_url", "link_page_id", "link_block_id");
+    take("color", "style", "quote", "pdf_position", "image_position", "link_url", "link_page_id", "link_block_id");
     const color = colorSummary(p.color);
     rows.push(makeRow(s, ["color"], { type: "color", value: p.color, display: color }));
     if (isLineStyle(p.style)) rows.push(makeRow(s, ["style"], { type: "text", value: p.style, display: plain(t(STYLE_NAMES[p.style])) }));
     else if (!unset(p.style)) rows.push(valueRow(s, ["style"], p.style, ctx)); // one no build writes, as stored
     if (!unset(p.quote)) rows.push(valueRow(s, ["quote"], p.quote, ctx));
     if (isRecord(p.pdf_position)) rows.push(placeRow(s, block, p.pdf_position, ctx, color.css, server));
+    if (isRecord(p.image_position)) rows.push(valueRow(s, ["image_position"], p.image_position, ctx));
     if (!unset(p.link_url)) rows.push(valueRow(s, ["link_url"], p.link_url, ctx));
     if (!unset(p.link_page_id)) rows.push(valueRow(s, ["link_page_id"], p.link_page_id, ctx));
     if (!unset(p.link_block_id)) {

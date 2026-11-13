@@ -44,7 +44,7 @@ not a move per block. The ops are ``sync_tree.diff(page, target, page_id,
 with_base=False)``: no ``set`` carries a ``base``, the merge being done.
 
 Trees are ``md_lens``'s, ``{id, content, children}``, in Gamma space: the
-caller turns the file's text into Gamma's (``vault_links``) and gives the base
+caller turns the file's text into Gamma's (``links``) and gives the base
 its blocks' text in Gamma. A file block may carry ``props``, for when it is new
 (a quote callout read as a highlight).
 """
@@ -56,8 +56,8 @@ from dataclasses import dataclass
 
 from fractional_indexing import FIError, generate_key_between, generate_n_keys_between, validate_order_key
 
-from . import md_lens, sync_tree
-from .blocks_store import new_block_id
+from .. import md_lens, sync_tree
+from ..blocks_store import new_block_id
 
 ALIKE = 0.6     # how alike a new block of the file must read to a dropped one Gamma changed to be it
 

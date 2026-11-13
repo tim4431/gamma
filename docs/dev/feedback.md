@@ -10,12 +10,13 @@ from outside Gamma: the place it was opened on, kept with it; a reader that
 turns the threads of a work folder, a directory or a file into entries with
 their file, place, source line, picture and comments, served as JSON and
 Markdown over HTTP, over MCP and as files in the repository; the version of
-the PDF a thread was opened on, kept while the thread is open; Send, the
-person's "go"; and a token scope that answers feedback and can do nothing
-else. Backend: the package `gamma/feedback/` and `gamma/routers/feedback.py`.
-The plan is [research/file-explorer.md](../research/file-explorer.md)
-section 7 (step 2 of "In steps"); the surveys behind the SyncTeX reader and
-the pictures are research notes.
+the file (a build's PDF, a figure) a thread was opened on, kept while the
+thread is open; Send, the person's "go"; and a token scope that answers
+feedback and can do nothing else. Backend: the package `gamma/feedback/` and
+`gamma/routers/feedback.py`. The plan is
+[research/file-explorer.md](../research/file-explorer.md) section 7 (step 2
+of "In steps"; step 3 adds a picture's regions and the whole picture); the
+surveys behind the SyncTeX reader and the pictures are research notes.
 
 | Module | What |
 |---|---|
@@ -57,12 +58,13 @@ A root comment keeps where its thread was opened, `comments.anchor`, JSON
 
 ```text
 {"v": 1,
- "kind":   "passage" | "area" | "ink" | "note" | "file",
+ "kind":   "passage" | "area" | "ink" | "region" | "note" | "file",
  "block":  "<the block the place is read from>",
  "doc_id": "<24 hex>" | "",          # the file the place was measured on
- "page":   3 | null,                 # the 1-based PDF page
- "rects":  [[x1, y1, x2, y2], …],    # fractions of the page as shown, top-left origin, 4 dp, at most 200
- "quote":  "…",                      # at most 1000 characters; "" for an area, ink, a note, the file
+ "ext":    ".pdf" | ".png" | …,      # the page's document's extension when the thread opened; "" for none
+ "page":   3 | null,                 # the 1-based PDF page; null for a region of a picture
+ "rects":  [[x1, y1, x2, y2], …],    # fractions of the page (or the picture) as shown, top-left origin, 4 dp, at most 200
+ "quote":  "…",                      # at most 1000 characters; "" for an area, ink, a region, a note, the file
  "box":    [x0, y0, x1, y1] | null,  # the region picture's crop, fractions, 4 dp
  "source": {…}}                      # added after the commit by the kept worker; absent until then
 ```
@@ -81,17 +83,26 @@ A root comment keeps where its thread was opened, `comments.anchor`, JSON
   file.
 - **ink**: an ink group with a `pdf_position` (a group on a PDF page, not on
   a sheet); `rects` is its bounding rectangle as fractions.
+- **region**: a highlight or link block with an `image_position`, a region
+  of the picture the page shows ([documents.md](documents.md); a block with
+  both positions is on the PDF page). `doc_id` is the version it was drawn
+  on (`image_position.hash`, else the page's), `page` null, `rects` its
+  one rectangle as fractions of that version (`highlights.region_box`),
+  `quote` "".
 - **note**: anything else. The nearest ancestor below the page that is a
-  highlight, a link region or an ink group with a position gives the place:
-  `kind` becomes that ancestor's and `block` its id (the annotated export's
-  rule for a note under a highlight). Without one the thread is a `note` on
-  the block itself, with the page's `doc_id` and no page. Text boxes,
-  pictures, sheets and recordings are notes.
-- **box**, the picture's crop (the module's constants): an area's rectangle
-  padded by `AREA_PAD`; a passage's rectangles' union grown to at least
-  `PASSAGE_MIN_W × PASSAGE_MIN_H` of the page and padded by `PASSAGE_PAD`
-  (the chat's selection crop, `ai_context._crop_box`); ink by
-  `ink_view.grow_box`, the rule `view_ink`'s crop uses, so the two never
+  highlight, a link region, an ink group or a region with a position gives
+  the place: `kind` becomes that ancestor's and `block` its id (the
+  annotated export's rule for a note under a highlight). Without one the
+  thread is a `note` on the block itself, with the page's `doc_id` and no
+  page. Text boxes, pictures, sheets and recordings are notes.
+- **ext**: the page's document's extension when the thread opened, so
+  `doc_id` and `ext` together name the stored file the place was measured
+  on (`held_file`); "" for a page without a document.
+- **box**, the picture's crop (the module's constants): an area's or a
+  region's rectangle padded by `AREA_PAD`; a passage's rectangles' union
+  grown to at least `PASSAGE_MIN_W × PASSAGE_MIN_H` of the page and padded
+  by `PASSAGE_PAD` (the chat's selection crop, `ai_context._crop_box`); ink
+  by `ink_view.grow_box`, the rule `view_ink`'s crop uses, so the two never
   differ; all clamped to the page; null for a note and the file. A position
   with no frame (a Logseq import) has no rects and no box.
 
@@ -101,10 +112,11 @@ is backfilled for a root from before migration step 54
 ([migrations.md](migrations.md)): its place is read from its block. The
 module's pure helpers: `parse(text)` (a stored anchor as an object, None
 for NULL or a malformed one; a dict passes through), `held_file(text)`
-(`"<doc_id>.pdf"` through `storage.stored_pdf_stem`, "" for none: the hold,
-"The commented version kept") and `top(anchor)` (the place's top: the
-highest rectangle's, else the box's, else 0: the order of a page's
-threads).
+(`stored_name(doc_id, ext)`, the stem through `storage.stored_pdf_stem`,
+"" for none: the hold, "The commented version kept"; an anchor written
+before step 3 has no `ext` and holds a PDF, one whose `ext` is no
+extension holds nothing) and `top(anchor)` (the place's top: the highest
+rectangle's, else the box's, else 0: the order of a page's threads).
 
 ## The entry and the document
 
@@ -149,7 +161,7 @@ gives the ids, oldest first: what a Send names when it names none.
 when given, else the names of the folders from the page's `folders[0]` up
 to W (W left out) joined with `/`, then its `file_name`; a page without a
 `file_name` (a note page) is named by its title. `paths` is `{page id:
-path}` from the vault's rows on this computer (`paths_of(vault_store.files(link_id))`:
+path}` from the vault's rows on this computer (`paths_of(vault.store.files(link_id))`:
 each page at its PDF row's path, else its notes row's; tombstones, a row
 with `was` or an in-place one, left out), what the files' writer passes so
 the names are the disk's. Separators are `/`.
@@ -162,8 +174,9 @@ the names are the disk's. Separators are `/`.
  "format":   "pdf",                        # the document's format; "markdown" for a note page without one
  "page_id":  "…",
  "block_id": "…",                          # the block the thread hangs on
- "kind":     "passage" | "area" | "ink" | "note" | "file",
- "where":    {"page": 3, "quote": "…", "box": […], "placed": "exact", "match": 0.82, "note": "…"},
+ "kind":     "passage" | "area" | "ink" | "region" | "note" | "file",
+ "where":    {"page": 3, "quote": "…", "box": […], "rect": [x1, y1, x2, y2], "size": [w, h],
+              "placed": "exact", "match": 0.82, "note": "…"},
  "source":   {"file": "sections/method.tex", "line": 118, "end": 120, "version": "current"} | null,
  "picture":  "img/<key>.jpg" | null,
  "before":   "img/<key>.jpg" | null,
@@ -183,12 +196,16 @@ The keys come in that order, and a `where` key with no value is left out.
   - `page`: a passage, an area, ink, and a note under one;
   - `quote`: a passage's, the highlight's text now when the block is there,
     else the anchor's;
-  - `box`: an area's or ink's. Their `page`, `box` and rectangles are the
-    anchor's place while the file is still the anchor's (a block dragged
-    on the same build does not move the thread: its picture and its source
-    line are read at that place too), else the block's position now as
-    fractions (the relocation on a new build). A passage's follow its
-    highlight;
+  - `box`: an area's, ink's or a region's. Their `page`, `box` and
+    rectangles are the anchor's place while the file is still the anchor's
+    (a block dragged on the same build does not move the thread: its
+    picture and its source line are read at that place too), else the
+    block's position now as fractions (the relocation on a new build). A
+    passage's follow its highlight; a region's are the anchor's always
+    (nothing places a region again);
+  - `rect` and `size`, a region's: its rectangle and its picture's size in
+    the picture's own pixels, whole (`image_position` as drawn, the version
+    `image_position.hash` names); left out when the block is gone;
   - `note`: the text of the block the thread hangs on (at most `MAX_NOTE`,
     1000 characters) when it is a note, a text box, a picture's caption or a
     note under a place;
@@ -202,13 +219,17 @@ The keys come in that order, and a `where` key with no value is left out.
     `earlier` (an ink anchor whose file is
     not the page's current one: ink is never placed again, so an ink thread
     on a later build leads with its `before` picture). The vocabulary is
-    [highlight_relocation.md](highlight_relocation.md)'s. Nothing for the
-    file.
-- **`source`**: live (`version: "current"`) when the place is on the page's
-  current file (`placed` is `exact`, `rough` or `estimate`) and the SyncTeX
-  map answers on this computer ("SyncTeX"); else the one recorded at the
-  thread's open (`anchor.source`, `version: "commented"`); else null. `end`
-  comes only when it differs from `line`.
+    [highlight_relocation.md](highlight_relocation.md)'s. For a region:
+    `exact` when the version it was drawn on is the page's current picture,
+    `earlier` when another (it stays where it was; the viewer draws it
+    dashed), `lost` when the page's document is no longer a picture.
+    Nothing for the file.
+- **`source`**: live (`version: "current"`) when the place is on a PDF
+  page of the page's current file (`placed` is `exact`, `rough` or
+  `estimate`) and the SyncTeX map answers on this computer ("SyncTeX");
+  else the one recorded at the thread's open (`anchor.source`, `version:
+  "commented"`); else null. `end` comes only when it differs from `line`. A
+  region of a picture has none.
 - **`picture`** and **`before`**: "The pictures". HTTP and MCP add
   `picture_url` and `before_url` after them (`entries.with_urls`).
 - **`sent`**: the newest Send waiting on the thread (`comments._sent`: a
@@ -227,8 +248,9 @@ The keys come in that order, and a `where` key with no value is left out.
 
 Files by name (case folded, then as it is); in a file the whole file's
 threads first, then by `where.page`, `anchors.top`, the box's left edge
-(else the rectangles'), the threads without a page (notes) after those with
-one; ties by `created_at`, then id.
+(else the rectangles'), the threads without a page after those with one: a
+picture's regions by top and left edge, then the notes; ties by
+`created_at`, then id.
 
 ### The document
 
@@ -336,30 +358,40 @@ names the owner, the newest activity and, past the cut, `{n} more not
 listed`. Item headings: `Page {n} · “{quote, at most 80 characters}”` (a
 passage), `Page {n} · area`, `Page {n} · handwriting`, `Page {n} · note on
 “{quote}”` (a note under a passage, `note on an area` and `note on
-handwriting` under those), `A note` (one without a place), `The whole
+handwriting` under those), `Region · {w}×{h} px at ({x1}, {y1})` (a region
+of a picture, by `where.rect`; `Note on a region · …` under one; `Region`
+alone when the block is gone), `A note` (one without a place), `The whole
 file`.
 `placed` reads `placed exactly` / `placed roughly ({match})` / `placed by
 estimate` / `not found in this build` / `not placed yet` / `drawn on an
-earlier build`, and an item with a `before` picture adds `the figure was
-rebuilt` (an area) or `the PDF was rebuilt` (a passage); a resolved item says
-so. The source line reads `lines a–b` when `end` is there and `(as
-commented)` when its `version` is `commented`; a `sent` line reads `waiting
-since`, `being worked on` or `failed`, with the request's detail. Bodies are
-quoted line by line with `> `, a body's own Markdown left as it is; a
-tombstone reads `*(deleted)*`. The last line of "How to answer" names the
-JSON form the reader can reach (`open.json`, the `GET /api/feedback` query,
-or `read_feedback`). With no entries: the heading, `No open comments.` (or
-`No resolved comments.`), and "How to answer". The renderer has no i18n:
-the files are for agents, in English, the one text Gamma writes
-untranslated ([i18n.md](i18n.md)); everything a person reads in the app is
-translated.
+earlier build`, and for a region `placed exactly` / `drawn on an earlier
+version of the picture` / `the file is no longer a picture`; an item with a
+`before` picture adds `the figure was rebuilt` (an area), `the PDF was
+rebuilt` (a passage) or `the picture was rebuilt` (a thread on a picture's
+page); a resolved item says so. The source line reads `lines a–b` when
+`end` is there and `(as commented)` when its `version` is `commented`; a
+`sent` line reads `waiting since`, `being worked on` or `failed`, with the
+request's detail. The picture lines read `Page {n}, the comment's region`
+(`now` when a `before` follows) and `Page {n}, the region as it was
+commented on`, without the page for a region of a picture, and `The
+picture` / `The picture as it was commented on` for a thread on a picture's
+page. Bodies are quoted line by line with `> `, a body's own Markdown left
+as it is; a tombstone reads `*(deleted)*`. The last line of "How to answer"
+names the JSON form the reader can reach (`open.json`, the `GET
+/api/feedback` query, or `read_feedback`). With no entries: the heading, `No
+open comments.` (or `No resolved comments.`), and "How to answer". The
+renderer has no i18n: the files are for agents, in English, the one text
+Gamma writes untranslated ([i18n.md](i18n.md)); everything a person reads
+in the app is translated.
 
 ## The pictures
 
 `gamma/feedback/pictures.py`: the passage, area or handwriting a thread
-hangs on, cut out of its PDF page as the page shows it. Only a passage, an
-area, ink and a note under one get pictures; a note alone and the whole file
-none.
+hangs on, cut out of its PDF page as the page shows it; the region of a
+picture a thread hangs on, cut out of the picture; the whole picture for a
+thread on a picture's page. A passage, an area, ink, a region and a note
+under one of those get pictures, and the page's thread when the page shows
+a picture; a note alone and a PDF's whole file none.
 
 - **`picture`**, the region as the person sees it now: `pictures.now(conn,
   page_id, props, anchor, memo=)` when `placed` is `exact`, `rough` or
@@ -371,31 +403,44 @@ none.
   included, the lost ones not, drawn as annotations through
   `pdf_export.page_with_ink(highlights=…)` (`_mark_annotation`, a
   `/Highlight` or a `/Square` for an area; [ai.md](ai.md) "Highlights
-  drawn").
+  drawn"). On a picture it is the current version cut at the region's box
+  (the whole picture, `[0, 0, 1, 1]`, for the page's thread) with the page's
+  regions drawn as the viewer draws them (an outline in the colour's line
+  tone over a 25 % wash), whatever version the region was drawn on
+  (`placed: earlier` too: a region stays where it was on the new picture).
 - **`before`**, the region as it was commented on: `pictures.made(anchor,
   color)` when the root keeps an anchor whose `doc_id` is not the page's
   current file and that version is still stored (`storage.exists(ws,
-  "<doc_id>.pdf")`, "The commented version kept"); else null. It is the
-  held version's page with its pictures, text boxes and ink as they are
-  (page coordinates do not move) and the anchor's rectangles alone, in the
-  thread's block's colour; a handwriting group is drawn as the page's ink,
-  with no mark over it (a wash over a drawing's bounding box would not be
-  the region as commented on), its key still naming the anchor. A root
-  from before step 54 has no `before`.
-- **A region** is `Region(file_hash, page, box, drawn)`, `drawn` the marks'
+  anchors.held_file(anchor))`, "The commented version kept"); else null. It
+  is the held version's page with its pictures, text boxes and ink as they
+  are (page coordinates do not move) and the anchor's rectangles alone, in
+  the thread's block's colour; a handwriting group is drawn as the page's
+  ink, with no mark over it (a wash over a drawing's bounding box would not
+  be the region as commented on), its key still naming the anchor. On a
+  picture it is the held version cut at the box with the thread's own
+  rectangle drawn, stronger; the whole held picture for the page's thread.
+  A root from before step 54 has no `before`.
+- **A region** is `Region(file, page, box, drawn)`: `file` the stored file
+  it is cut from (`<hash><ext>`: a PDF, or the picture itself), `page` its
+  1-based PDF page (0 for a picture), `box` the crop, `drawn` the marks'
   signature: each highlight by id, colour, kind, style and rectangles, each
   ink group by its content-addressed file, each picture and text box by its
-  place and content, the embedded originals they replace; for `made`, the
-  anchor alone. It is computed once per file and page in a pass (`memo`) and
-  shared by the page's threads. **The key**, `pictures.key(region)`, is 16
-  hex digits of the SHA-256 of `[PICTURE_V, file_hash, page, box,
-  RENDER_MAX_SIDE, drawn]`: the same inputs give the same key, a mark moved
-  on that page another, a mark on another page none. Names are
+  place and content, the embedded originals they replace; on a picture each
+  region by id, colour, rectangle and whether it was drawn on this version;
+  for `made`, the anchor alone. It is computed once per file and page in a
+  pass (`memo`) and shared by the page's threads. **The key**,
+  `pictures.key(region)`, is 16 hex digits of the SHA-256 of `[PICTURE_V,
+  file, page, box, RENDER_MAX_SIDE, drawn]`, a PDF going in by its stem so
+  step 2's keys stand: the same inputs give the same key, a mark moved on
+  that page another, a mark on another page none. Names are
   `img/<key>.jpg`.
 - **How**: one one-page PDF per `(file, page, drawn)`, then
   `pdf_text.render_page(data, 1, RENDER_MAX_SIDE, box)`: the longer side
-  1568 px, a zoom of at most 4, JPEG quality 85, never re-encoded. A page
-  past the end, an unreadable or encrypted file or a half-written build
+  1568 px, a zoom of at most 4, JPEG quality 85, never re-encoded. A
+  picture goes through `ai_pictures.image_region(ws, file, box, marks)`
+  ([ai.md](ai.md) "Pictures"): the same side and zoom, a crop of at least
+  48 of the picture's own pixels a side. A page past the end, an unreadable
+  or encrypted file, a picture that does not decode or a half-written build
   gives None: no picture, and the next pass tries again.
 - **The cache**: `cached(ws, conn, page_id, region)` reads data.db
   `feedback_pictures` by key, else renders and keeps, the oldest going first
@@ -466,11 +511,12 @@ and most editors do).
 ## The commented version kept
 
 A page whose document is read in place (`documents.model.in_place`: a work
-folder's build, an Opened file, a vault's PDF) has no stored copy of its
-bytes, and the next build at its path takes them away. While such a page
-has an open thread it keeps the bytes it shows stored
-(`uploads/<hash>.pdf`), so the version the thread was opened on stays
-readable: the relocation run places the highlights again from it
+folder's build or figure, an Opened file, a vault's PDF) has no stored copy
+of its bytes, and the next build at its path takes them away. While such a
+page has an open thread it keeps the bytes it shows stored
+(`uploads/<hash><ext>`: a PDF's `.pdf`, a figure's `.png`), so the version
+the thread was opened on stays readable: the relocation run places a PDF's
+highlights again from it
 ([highlight_relocation.md](highlight_relocation.md)), and the reader draws
 the `before` picture from it. `gamma/feedback/kept.py`:
 
@@ -481,10 +527,11 @@ the `before` picture from it. `gamma/feedback/kept.py`:
   (`upload_gc.claim`); then, when the page is a file and the anchor's
   `doc_id` is its current file, records the source line of the place on the
   root's anchor (`anchor.source`), which the next build's SyncTeX file no
-  longer describes. A thread opened on another server's page records none.
+  longer describes. A thread opened on another server's page records none,
+  nor does one on a picture.
 - **At every replacement while it holds** (`keeps_bytes(ws, page_id,
   props)`: the page is a library file, or has an open thread) the incoming
-  bytes are stored first (`vault_sync.LocalRemote.replace_pdf`,
+  bytes are stored first (`vault.local_remote.LocalRemote.replace_doc`,
   `linked_files._take_bytes`), so the outgoing ones, stored at the open or at
   the replacement before, are the run's reference and get the replacement's
   short life (`upload_gc.retain`). Every build shown while a thread is open
@@ -493,12 +540,15 @@ the `before` picture from it. `gamma/feedback/kept.py`:
   a crash between the commit and the worker left unstored; the files'
   writer calls it on every pass and `linked_files.sweep` for Opened files. A
   quota refusal is logged once per change of state.
-- **The hold**: an open root's `anchor.doc_id` is a held reference
-  (`anchors.held_file`, read by `upload_gc._references` into `names`, never
-  `shown`; [user_db.md](user_db.md) "What counts as a reference"). A resolve
-  releases it (`upload_gc.schedule`), a reopen claims it again (a version
-  purged meanwhile stays gone; the card's Before says so); a delete, an
-  orphaning or the sweep is left to `upload_gc.reconcile`.
+- **The hold**: an open root's `anchor.doc_id` and `anchor.ext` name a held
+  reference (`anchors.held_file`, read by `upload_gc._references` into
+  `names`, never `shown`; [user_db.md](user_db.md) "What counts as a
+  reference"). A resolve releases it (`upload_gc.schedule`), a reopen
+  claims it again (a version purged meanwhile stays gone; the card's Before
+  says so); a delete, an orphaning or the sweep is left to
+  `upload_gc.reconcile`. A region's `image_position.hash` is no reference
+  of its own: the version a thread on it was commented on is held by the
+  anchor alone.
 - **What leaves the computer**: a stored copy of a work-folder file that is
   not a library document is named by no mirror, share export or publication
   (`storage.upload_refs(held=False)`); backups and the off-site copy carry it
@@ -616,7 +666,7 @@ directory ([synced_vaults.md](synced_vaults.md), [work_folders.md](work_folders.
 ```
 
 - **When.** (a) Every whole round of a work-folder link (`folder_links._vault_round`,
-  after `vault_sync.sync`, under the link's lock), when the round's status
+  after `vault.sync.sync`, under the link's lock), when the round's status
   has no `stopped` or `offline` and the vault is not choosing its files;
   the summary goes into `status["feedback"]`; so a new work folder's first
   round makes the directory, with an empty document, before any thread.
@@ -630,12 +680,12 @@ directory ([synced_vaults.md](synced_vaults.md), [work_folders.md](work_folders.
   folder (a burst of writes is one pass, once the last is `HOT_S` old). So
   a comment, a reply, a resolve, a relocation or a Send reaches `open.json`
   within about 2–4 s.
-- **What `write` does**, in order: `vault_disk.check_marker` (a copy of the
+- **What `write` does**, in order: `vault.disk.check_marker` (a copy of the
   directory or an empty mount never gets files); the paths from the vault's
   rows and the maker's username; `entries.document`, sources on, and the
   request files due this pass; `kept.repair` for the entries' pages; the
   pictures the entries name that `img/` lacks, drawn through
-  `pictures.cached` and written with `vault_disk.write_own`, at most
+  `pictures.cached` and written with `vault.disk.write_own`, at most
   `PICTURES_PER_WRITE` (20) a write (a picture not written yet is null in
   this write's document, and the next pass fills it; one that cannot be
   drawn now, a build being written, waits for the next whole round);
@@ -646,7 +696,7 @@ directory ([synced_vaults.md](synced_vaults.md), [work_folders.md](work_folders.
   `rev`) deleted once their request is done, failed or gone; `img/` pruned
   of the pictures named by neither this `open.json`, the one it replaced
   nor any request file; Gamma's own stale temporary files in `feedback/`,
-  `img/` and `requests/` swept (`vault_disk.sweep_own`; the vault's scan
+  `img/` and `requests/` swept (`vault.disk.sweep_own`; the vault's scan
   never enters `.gamma/`). The summary is `{"open": n}`, with `"left": m`
   when `m` pictures or files wait for the next pass (the cap, a reader's
   hold), which the hot pass reads to keep the mark; errors are caught into
@@ -828,7 +878,11 @@ guide's "Comments and inbox" says it for people.
 
 - A library page's threads are not feedback (above).
 - Ink threads are not placed again after a rebuild: an ink entry reads
-  `placed: "earlier"` and leads with its `before` picture.
+  `placed: "earlier"` and leads with its `before` picture. A region of a
+  picture is never placed again either ([highlight_relocation.md](highlight_relocation.md)
+  "Regions of a picture"): it stays where it was, its entry reads `placed:
+  "earlier"` with the current version's crop as `picture` and the held
+  version's as `before`.
 - The source is recorded at the thread's open and read live on this
   computer only; the NAS, a clone or a vault of another server show the
   recorded ones.
@@ -848,16 +902,27 @@ guide's "Comments and inbox" says it for people.
 - Every build shown while a thread is open is stored: a thesis rebuilt
   fifty times in an afternoon stores fifty copies, released a day after
   they are replaced and their highlights placed.
+- A picture past Pillow's decompression bound (`Image.MAX_IMAGE_PIXELS`,
+  about 89 Mpx) or past `STORED_MAX_BYTES` draws no picture, and there is no
+  setting for either. The chat's region picture of a picture page shows
+  nothing until the image branch of `/api/ai/page-image` answers.
 
 ## Tests
 
-- `tests/test_feedback_anchors.py`: the anchor of each kind.
-- `tests/test_feedback_entries.py`: every kind's `where` and `placed`, the
-  file's name from the vault's rows and from the tree, the order, `sent`, a
+- `tests/test_feedback_anchors.py`: the anchor of each kind, a region's and
+  the extension held.
+- `tests/test_feedback_entries.py`: every kind's `where` and `placed`, a
+  picture's regions and the whole picture through a rebuild, the file's
+  name from the vault's rows and from the tree, the order, `sent`, a
   tombstone, the cut, the scopes and their refusals, the states, a root from
   before step 54, the source live or as commented, the pictures' keys; the
   Markdown of a fixed document byte for byte, the empty form and the
   picture modes.
+- `tests/test_ai_image_region.py`: the picture a page shows as the server
+  draws it (`ai_pictures.image_region`) and the page-image route of a
+  picture page; `tests/test_feedback_images.py`, step 3's gate: a work
+  folder's PNG, a region and a thread on it and on the page, their
+  pictures in `.gamma/feedback/`, and a rebuild of the picture.
 - `tests/test_feedback_routes.py`: JSON and Markdown, one thread, the
   picture route, who reads.
 - `tests/test_feedback_requests.py`: who may send, a retry, "Nothing to

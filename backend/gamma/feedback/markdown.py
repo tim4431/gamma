@@ -23,7 +23,9 @@ INTRO = ("Each item is a comment thread on a file of this work folder. Answer it
          "changed and where, resolve it when it is done (see \"How to answer\" at the end).")
 PLACED = {"exact": "placed exactly", "rough": "placed roughly ({match})", "estimate": "placed by estimate",
           "lost": "not found in this build", "pending": "not placed yet", "earlier": "drawn on an earlier build"}
-REBUILT = {"area": "the figure was rebuilt", "passage": "the PDF was rebuilt"}
+REGION_PLACED = {"exact": "placed exactly", "earlier": "drawn on an earlier version of the picture",
+                 "lost": "the file is no longer a picture"}
+REBUILT = {"area": "the figure was rebuilt", "passage": "the PDF was rebuilt", "file": "the picture was rebuilt"}
 STATE_WORDS = {"open": "open comment", "resolved": "resolved comment", "all": "comment"}
 
 
@@ -40,13 +42,17 @@ def _line(text: str, cap: int) -> str:
 def heading(entry: dict) -> str:
     """What an item is on: ``Page 3 · “the loss is defined as”``,
     ``Page 5 · area``, ``Page 2 · handwriting``, ``Page 3 · note on “…”``,
-    ``A note``, ``The whole file``."""
+    ``Region · 320×180 px at (40, 60)``, ``Note on a region · …``, ``A
+    note``, ``The whole file``."""
     kind, where = entry["kind"], entry["where"]
     if kind == "file":
         return "The whole file"
     if kind == "note":
         return "A note"
     on = "note on " if where.get("note") else ""
+    if kind == "region":
+        what, rect = "Note on a region" if on else "Region", where.get("rect")
+        return f"{what} · {rect[2] - rect[0]}×{rect[3] - rect[1]} px at ({rect[0]}, {rect[1]})" if rect else what
     page = f"Page {where['page']} · " if where.get("page") else ""
     if kind == "passage":
         quote = _line(where.get("quote", ""), HEADING_QUOTE)
@@ -60,7 +66,8 @@ def _facts(entry: dict) -> list[str]:
     where = entry["where"]
     facts = [f"id: `{entry['id']}`", entry["kind"]]
     if where.get("placed"):
-        facts.append(PLACED[where["placed"]].format(match=where.get("match", "")))
+        words = REGION_PLACED if entry["kind"] == "region" else PLACED
+        facts.append(words[where["placed"]].format(match=where.get("match", "")))
     if entry.get("before") and entry["kind"] in REBUILT:
         facts.append(REBUILT[entry["kind"]])
     if entry.get("state") == "resolved":
@@ -89,14 +96,18 @@ def _pictures(entry: dict, mode: str) -> list[str]:
     if mode == "tool":
         return [f"Picture: read_feedback(thread_id=\"{entry['id']}\")"]
     page = entry["where"].get("page")
-    at = f"Page {page}, the" if page else "The"
+    if entry["kind"] == "file":
+        what, was = "The picture", "The picture as it was commented on"
+    else:
+        at = f"Page {page}, the" if page else "The"
+        what, was = f"{at} comment's region", f"{at} region as it was commented on"
     if mode == "urls":
         now, before = entry.get("picture_url") or now, entry.get("before_url") or before
     lines = []
     if now:
-        lines.append(f"![{at} comment's region{' now' if before else ''}]({now})")
+        lines.append(f"![{what}{' now' if before else ''}]({now})")
     if before:
-        lines.append(f"![{at} region as it was commented on]({before})")
+        lines.append(f"![{was}]({before})")
     return lines
 
 

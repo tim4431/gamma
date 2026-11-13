@@ -4,7 +4,7 @@
 // the memos that call them, and the refs that keep a result by identity
 // (shared/lib/keepIfSame.js), stay in App.
 import { isRecordingBlock } from "../recording/recording.js";
-import { blocksToHighlights, flattenBlocks, isInkGroup, isLinkBlock, pdfAnchorOf } from "../shared/model/blockModel.js";
+import { anchorOf, blocksToHighlights, flattenBlocks, isInkGroup, isLinkBlock } from "../shared/model/blockModel.js";
 
 // Block id → block, over a flattened tree (App's treeById).
 export const blocksById = (list) => new Map(list.map((b) => [b.id, b]));
@@ -23,14 +23,16 @@ export const recordingList = (blocks) =>
 export const stampedList = (blocks) =>
   flattenBlocks(blocks).filter((b) => Number.isFinite(b.properties?.t0)).map((b) => ({ id: b.id, t0: b.properties.t0 }));
 
-// The viewer's highlights (blockModel.js blocksToHighlights) with what App
-// adds to them: a highlight's count of open comment threads, from
+// The viewer's highlights (blockModel.js blocksToHighlights: the PDF's
+// under pdf_position, a picture's regions under image_position, `key` the
+// page's document's positionKeyOf and `hash` its file) with what App adds
+// to them: a highlight's count of open comment threads, from
 // `countByBlock` (block id → count; the note badge shows for them too), and
 // a link block's target (App's highlights). `treeBlocks` is the tree
 // flattened.
-export function pageHighlights(blocks, treeBlocks, countByBlock) {
+export function pageHighlights(blocks, treeBlocks, countByBlock, key = "pdf_position", hash = "") {
   const byId = blocksById(treeBlocks);
-  return blocksToHighlights(blocks).map((h) => {
+  return blocksToHighlights(blocks, key, hash).map((h) => {
     const b = byId.get(h.id), p = b?.properties || {};
     const threads = countByBlock.get(h.id) || 0;
     const out = threads ? { ...h, threadCount: threads } : h;
@@ -39,17 +41,19 @@ export function pageHighlights(blocks, treeBlocks, countByBlock) {
   });
 }
 
-// What a comment card stands beside on the PDF (the viewer's `anchors`,
-// docs/dev/comments.md "The PDF margin"): every block pdfAnchorOf places by
-// its rectangles (a position with a bounding box, as the viewer draws a
-// highlight), in document order, {id, kind: "highlight" | "ink", position,
-// threadCount}. `threadCount` is its open threads from `countByBlock`, 0
-// for none: a new comment's card stands on its anchor before any thread.
-export function commentAnchors(blocks, countByBlock) {
+// What a comment card stands beside on the page's document (the viewer's
+// `anchors`, docs/dev/comments.md "The PDF margin"): every block anchorOf
+// places under `key` by its rectangles (a position with a bounding box, as
+// the viewer draws a highlight or a region), in document order, {id, kind:
+// "highlight" | "ink", position, threadCount}; a region's kind is
+// "highlight", its position in the picture's pixels. `threadCount` is its
+// open threads from `countByBlock`, 0 for none: a new comment's card stands
+// on its anchor before any thread.
+export function commentAnchors(blocks, countByBlock, key = "pdf_position") {
   const out = [];
   const walk = (list) => {
     for (const b of list || []) {
-      const at = pdfAnchorOf(b);
+      const at = anchorOf(b, key);
       if (at?.position.boundingRect) {
         out.push({ id: b.id, kind: isInkGroup(b) ? "ink" : "highlight", position: at.position,
           threadCount: countByBlock.get(b.id) || 0 });

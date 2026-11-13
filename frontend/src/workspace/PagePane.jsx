@@ -4,9 +4,12 @@
 // zoom that view would open it at, so a press that makes the group live
 // changes nothing on screen but the tools that come with editing. A page
 // with a PDF shows the PDF with its highlights and its handwriting, text
-// boxes and pictures; a page in its notebook view shows its sheets; any
-// other page, or one whose PDF is closed, its notes, as the notes tree
-// draws them (BlockTree's `preview`: the editor's look, nothing to edit).
+// boxes and pictures; a page with a document of another format its pane
+// (documents/DocumentPane.jsx's own viewers, read-only: the code, the
+// picture with its regions, the player, the file pane); a page in its
+// notebook view shows its sheets; any other page, or one whose document
+// pane is closed, its notes, as the notes tree draws them (BlockTree's
+// `preview`: the editor's look, nothing to edit).
 // The docked Notes window shows a page's notes through the same view
 // (`dock`) while the page live has its notes in its own group.
 //
@@ -15,9 +18,10 @@
 // clickPos}}), on the title its title editor ({title: true}); the notes'
 // folds in the view go with it (`folds`), so the live notes fold alike.
 // The view reports where it stands as it moves, in the shapes App's stores
-// keep: the PDF's scroll ({top, left, scale}, onScroll) and zoom setting
-// (onZoom), the notes' top row ({id, offset}, onNotesPlace), and a page's
-// place on its sheets ({place}, onScroll), whichever view shows them. The
+// keep: the PDF's and the picture's scroll ({top, left, scale}, onScroll)
+// and zoom setting (onZoom), the code view's top line ({line}, onScroll),
+// the notes' top row ({id, offset}, onNotesPlace), and a page's place on
+// its sheets ({place}, onScroll), whichever view shows them. The
 // tree is read once per page shown, from what the page held when it was last live
 // if this session had it (keepPaneTree), then from the server, laid over
 // with its unsent edits (`overlay`, the collab session's).
@@ -34,17 +38,19 @@ import { inkBySheet, sheetsOf } from "../notebook/notebook.js";
 import { BlockTree } from "../editor/BlockTree";
 import { refLabelsByBlock } from "../editor/refLabels.js";
 import { FileChipContext } from "../transfers/FileChip";
-import { blocksToHighlights, flattenBlocks, isFolded, isInkGroup, isLinkBlock } from "../shared/model/blockModel.js";
+import { blocksToHighlights, flattenBlocks, isFolded, isInkGroup, positionKeyOf } from "../shared/model/blockModel.js";
+import { pageHighlights } from "../app/treeDerived.js";
 import { filingChips } from "../library/libraryUtils.js";
-import { documentViewerUrl, isPdf, pageDocument } from "../documents/pageDocument.js";
+import { documentFileUrl, documentViewerUrl, fileHash, isPdf, pageDocument } from "../documents/pageDocument.js";
 import { documentView, viewerOf } from "../documents/documentView.js";
 import DocumentPane from "../documents/DocumentPane.jsx";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, assetUrl } from "../shared/lib/utils";
 import { InfoIcon, LabelIcon, MessageSquareIcon, NotebookIcon, PaperclipIcon, TrashIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 const PRESS_SLOP = 8;
 const EMPTY = Object.freeze([]);
+const NO_COUNTS = new Map(); // a view shows no comment counts
 const noop = () => {};
 
 // The trees of pages this session had open, as they were when left: a view
@@ -102,9 +108,9 @@ export default function PagePane({ pageId, title, dock = false, overlay, scroll,
   }, [pageId]); // eslint-disable-line react-hooks/exhaustive-deps
   const doc = useMemo(() => pageDocument(page.block), [page.block]);
   const url = isPdf(doc) ? documentViewerUrl(doc) : "";
-  const sheets = useMemo(() => (viewerOf(doc?.format) ? EMPTY : sheetsOf(page.children)), [doc, page.children]);
+  const sheets = useMemo(() => (viewerOf(doc?.format, doc) ? EMPTY : sheetsOf(page.children)), [doc, page.children]);
   // What shows, by the live page's rule (documents/documentView.js): a
-  // closed PDF is not mounted here, and the dock shows the notes.
+  // closed pane is not mounted here, and the dock shows the notes.
   const view = documentView({ doc, url, sheets: sheets.length, notebook: notebookView, hidden: pdfHidden, dock });
 
   // A press (down and up within a few pixels) makes the page live; a drag,
@@ -170,13 +176,16 @@ export default function PagePane({ pageId, title, dock = false, overlay, scroll,
   let body;
   if (page.error) body = <div className="pagePaneHint">{t("Could not open this page: {message}", { message: page.error })}</div>;
   else if (!page.id) body = <div className="pagePaneHint" aria-busy="true" />;
-  else if (view.shown) {
+  else if (view.shown && view.spec?.host) {
     body = <DocumentPane view={view} render={{
       pdf: () => <PdfView pageId={pageId} url={url} children_={page.children} marks={marks} zoomIn={zoomIn} scroll={scroll} startPage={startPage}
         shared={shared} onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />,
       notebook: () => <BookView pageId={pageId} sheets={sheets} marks={marks} zoomIn={zoomIn} place={scroll?.place}
         onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />,
     }} />;
+  } else if (view.shown) {
+    body = <FileView view={view} pageId={pageId} doc={doc} children_={page.children} zoomIn={zoomIn} scroll={scroll}
+      onScroll={onScroll} onZoom={onZoom} reportRef={reportRef} zoomRef={zoomRef} />;
   } else {
     body = <NotesView pageId={pageId} block={page.block} children_={page.children} title={title} dock={dock} doc={doc}
       hasSheets={sheets.length > 0} notebookView={notebookView} marks={marks} url={url} notesPlace={notesPlace} shared={shared}
@@ -205,13 +214,7 @@ function PdfView({ pageId, url, children_, marks, zoomIn, scroll, startPage, sha
   const zoomTo = (z) => { setZoom(z); onZoom?.(pageId, z); };
   const effRef = useRef(1);
   const restoreRef = useRef(scroll?.top != null ? scroll : startPage > 1 ? { page: startPage } : null);
-  const highlights = useMemo(() => {
-    const byId = new Map(flattenBlocks(children_).map((b) => [b.id, b]));
-    return blocksToHighlights(children_).map((h) => {
-      const b = byId.get(h.id), p = b?.properties || {};
-      return isLinkBlock(b) ? { ...h, linkTarget: { url: p.link_url || "", pageId: p.link_page_id || "", blockId: p.link_block_id || "" } } : h;
-    });
-  }, [children_]);
+  const highlights = useMemo(() => pageHighlights(children_, flattenBlocks(children_), NO_COUNTS), [children_]);
   const scroller = () => wrapRef.current?.querySelector(".pdfViewer");
   const onLoadState = (loadUrl, st) => {
     if (loadUrl !== url || (st.phase !== "layout" && st.phase !== "rendered")) return;
@@ -248,6 +251,31 @@ function PdfView({ pageId, url, children_, marks, zoomIn, scroll, startPage, sha
       <PdfViewer url={url} highlights={highlights} marks={marks} pdfScaleValue={zoom}
         onEffectiveScale={(s) => { effRef.current = s; }} onZoomTo={zoomTo} onLoadState={onLoadState}
         darkPage={shared?.darkPage} hideEmbeddedAnnots={shared?.hideEmbeddedAnnots} pageId={pageId} />
+    </div>
+  );
+}
+
+// A page's document of any other format in the pane the live page uses
+// (DocumentPane's own viewers), read-only and with no margin or tool: at
+// the zoom App opens the page at (the picture's) and at its place
+// (`scroll`: the picture's {top, left, scale}, the code view's {line}),
+// reporting where it stands through onScroll and keeping a zoom chosen here
+// as the page's own (onZoom). The picture's regions are the page's, under
+// image_position (app/treeDerived.js pageHighlights), drawn as made on the
+// version the page shows now.
+function FileView({ view, pageId, doc, children_, zoomIn, scroll, onScroll, onZoom, reportRef, zoomRef }) {
+  const [zoom, setZoom] = useState(zoomIn);
+  zoomRef.current = zoom;
+  const [place] = useState(scroll);
+  const fileUrl = documentFileUrl(doc, { asset: assetUrl });
+  const regions = useMemo(() => pageHighlights(children_, flattenBlocks(children_), NO_COUNTS, positionKeyOf(doc), fileHash(doc)), [children_, doc]);
+  const surface = useMemo(() => ({
+    doc, fileUrl, pageId, readOnly: true, preview: true, place, onPlace: (p) => onScroll?.(pageId, p), reportRef, regions,
+    scale: { value: zoom, onZoomTo: (z) => { setZoom(z); onZoom?.(pageId, z); }, onEffectiveScale: noop },
+  }), [doc, fileUrl, pageId, place, onScroll, reportRef, regions, zoom, onZoom]);
+  return (
+    <div className="viewerWrap pagePaneViewer">
+      <DocumentPane view={view} surface={surface} />
     </div>
   );
 }

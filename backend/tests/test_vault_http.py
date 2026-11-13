@@ -1,4 +1,4 @@
-"""A synced vault of a folder on another Gamma server (gamma/vault_http.py
+"""A synced vault of a folder on another Gamma server (gamma/vault/http_remote.py
 ``HttpRemote``, docs/research/vaults.md "In steps" 5), over a TestClient that
 stands in for that server (test_folder_links.py ``over_http``): pull with a
 token that may read, push of everything with one that may write (a note
@@ -22,7 +22,9 @@ import pytest
 
 from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, mark_work_folder,
                       work_props, workspace_of)
-from gamma import folder_links, gamma_sync, vault_http, vault_store, vault_sync
+from gamma import folder_links, gamma_sync
+from gamma.vault import http_remote as vault_http, kinds, store as vault_store, sync as vault_sync
+from gamma.vault.local_remote import LocalRemote
 from gamma import ops as ops_module
 from gamma.auth import CLIENT_HEADER
 from gamma.blocks_store import block_kind, new_block_id
@@ -46,7 +48,7 @@ def owner(client):
 
 @pytest.fixture(autouse=True)
 def settled(monkeypatch):
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
 
@@ -91,11 +93,11 @@ def _remote_vault(c, server, folder, root, token, **body):
 
 
 def _layout(folder):
-    return vault_sync.LocalRemote(workspace_of(OWNER), folder, account_of(OWNER)).layout()
+    return LocalRemote(workspace_of(OWNER), folder, account_of(OWNER)).layout()
 
 
 def _texts(page_id) -> list:
-    blocks = vault_sync.LocalRemote(workspace_of(OWNER), "root", account_of(OWNER)).page(page_id).blocks
+    blocks = LocalRemote(workspace_of(OWNER), "root", account_of(OWNER)).page(page_id).blocks
     return sorted(b["content"] for i, b in blocks.items() if i != page_id and block_kind(b["parent"], page_id, b["props"]) == "note")
 
 
@@ -130,7 +132,7 @@ def test_a_vault_of_another_server_pushes_everything_with_a_token_that_may_write
     status = _sync(owner, link["id"])
     assert status["counts"]["sent"] == 1 and _texts(page) == ["a line from disk", "gamma words"]
     batches = owner.get(f"/api/pages/{page}/ops", params={"since": 0}).json()["batches"]
-    assert batches[-1]["client"] == vault_sync.CLIENT and batches[-1]["batch"]
+    assert batches[-1]["client"] == vault_http.CLIENT and batches[-1]["batch"]
 
     # new notes, a new directory, a new PDF (stored there: a NAS reads no file here), a picture a note links
     _put(root / "New note.md", "fresh text\n")
@@ -276,7 +278,149 @@ def test_only_one_vault_pushes_into_a_page_of_another_server_and_one_above_leave
 
 # --- a server that misbehaves, a first set -------------------------------------------------------
 
-HTML_413 = b"<html><head><title>413 Request Entity Too Large</title></head><body>nginx</body></html>"
+def _doc(c, page_id) -> dict:
+    return c.get(f"/api/blocks/{page_id}").json()["properties"]["doc"]
+
+
+def test_a_work_folder_of_another_server_stores_its_files_under_their_extensions(owner, disk, over_http, monkeypatch):
+    """A work folder's files of other formats are stored there through
+    ``/api/upload-file`` named by their extension (``.jpeg`` kept, a blocked
+    one as ``.bin``), a large one in parts; a picture a note links is read
+    the same, its row the round's (``link_file`` writes none)."""
+    monkeypatch.setattr(vault_http.upload_parts, "PART_BYTES", 64)
+    folder = make_folder(owner, "VH work files")
+    mark_work_folder(owner, folder)
+    root = disk / "VH work files"
+    big = b"\x00" + bytes(range(256)) * 2
+    for rel, data in (("photo.jpeg", PNG), ("run.bat", "@echo off\r\n"), ("main.tex", "\\relax\n"), ("blob.dat", big),
+                      ("N.md", "see ![[photo.jpeg]]\n"), (".gammaignore", "# every file\n")):
+        _put(root / rel, data)
+    link = _remote_vault(owner, over_http, folder, root, _token("write"), push="everything")
+    pages = {info.title: info for info in _layout(folder).pages.values()}
+    assert {"photo.jpeg", "run.bat", "main.tex", "blob.dat", "N"} <= set(pages)
+    jpeg, bat, tex, blob = (_doc(owner, pages[t].id) for t in ("photo.jpeg", "run.bat", "main.tex", "blob.dat"))
+    assert (jpeg["format"], jpeg["ext"], jpeg["at"]) == ("image", ".jpeg", "store")
+    assert owner.get(f"/api/uploads/{jpeg['hash']}.jpeg").content == PNG
+    assert (bat["format"], bat["ext"]) == ("text", ".bin") and owner.get(f"/api/uploads/{bat['hash']}.bin").content == b"@echo off\r\n"
+    assert (tex["format"], tex["ext"]) == ("text", ".tex") and owner.get(f"/api/uploads/{tex['hash']}.tex").content == b"\\relax\n"
+    assert blob["ext"] == ".dat" and owner.get(f"/api/uploads/{blob['hash']}.dat").content == big      # in parts
+    rows = vault_store.files(link["id"])
+    assert {rows[p]["kind"] for p in ("photo.jpeg", "run.bat", "main.tex", "blob.dat")} == {"file"}
+    assert _texts(pages["N"].id) == [f"see ![](/api/uploads/{jpeg['hash']}.jpeg)"]
+    _quiet(owner, link["id"])
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_a_work_folders_file_changed_on_disk_is_replaced_there_by_its_stored_name(owner, disk, over_http):
+    folder = make_folder(owner, "VH work replace")
+    mark_work_folder(owner, folder)
+    root = disk / "VH work replace"
+    _put(root / "main.tex", "\\relax\n")
+    _put(root / ".gammaignore", "# every file\n")
+    link = _remote_vault(owner, over_http, folder, root, _token("write"), push="everything")
+    page = _page_of(link, "main.tex")
+    _put(root / "main.tex", "\\relax\n\\bye\n", age=5)
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and status["kept"] == [] and status["counts"]["sent"] == 1, status
+    doc = _doc(owner, page)
+    assert doc["hash"] == gamma_sync.doc_of(root / "main.tex") and doc["ext"] == ".tex" and doc["at"] == "store"
+    assert owner.get(f"/api/uploads/{doc['hash']}.tex").content == b"\\relax\n\\bye\n"
+    _quiet(owner, link["id"])
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_a_work_folders_file_a_changed_note_links_is_sent_once_and_in_parts(owner, disk, faulty, monkeypatch):
+    """A note edited to link a file new in the same round sent the file whole
+    in one request, past the parts a proxy's cap asks for, and the file's
+    page made later that round sent it a second time."""
+    url, _rules, log = faulty
+    monkeypatch.setattr(vault_http.upload_parts, "PART_BYTES", 64)
+    folder = make_folder(owner, "VH work linked")
+    mark_work_folder(owner, folder)
+    root = disk / "VH work linked"
+    _put(root / "N.md", "see\n")
+    _put(root / ".gammaignore", "# every file\n")
+    link = _remote_vault(owner, url, folder, root, _token("write"), push="everything")
+    data = bytes(range(256)) * 2
+    _put(root / "data.zip", data, age=5)
+    _put(root / "N.md", "see [[data.zip]]\n", age=5)
+    log.clear()
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and status["kept"] == [], status
+    doc = _doc(owner, _page_of(link, "data.zip"))
+    assert owner.get(f"/api/uploads/{doc['hash']}.zip").content == data
+    assert ("POST", "/api/upload-file") not in log and log.count(("POST", "/api/uploads/parts")) == 1
+    _quiet(owner, link["id"])
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_a_work_folders_file_of_another_server_is_stored_there_whatever_shape_the_round_gives_it(owner, disk, over_http,
+                                                                                                  monkeypatch):
+    """A rename to another extension and a file back under the keep limit
+    sent the round's document, read in place, which nothing is there: the
+    page read as a build of this computer, and a mirror of that workspace
+    stopped carrying the file."""
+    monkeypatch.setenv("GAMMA_VAULT_KEEP_MB", "1")
+    folder = make_folder(owner, "VH work shapes")
+    mark_work_folder(owner, folder)
+    root = disk / "VH work shapes"
+    big = b"\x00" + os.urandom(1024 * 1024)
+    _put(root / "a.txt", "text\n")
+    _put(root / "weights.ckpt", big)
+    _put(root / ".gammaignore", "# every file\n")
+    link = _remote_vault(owner, over_http, folder, root, _token("write"), push="everything")
+    a, weights = _page_of(link, "a.txt"), _page_of(link, "weights.ckpt")
+    listed = _doc(owner, weights)
+    assert (listed["at"], listed["hash"], listed["size"]) == ("listed", "", len(big))
+    os.rename(root / "a.txt", root / "a.log")
+    small = b"\x00small"
+    _put(root / "weights.ckpt", small, age=5)
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and status["kept"] == [], status
+    doc = _doc(owner, a)
+    assert (doc["ext"], doc["at"], doc["name"]) == (".log", "store", "a.log")
+    assert owner.get(f"/api/uploads/{doc['hash']}.log").content == b"text\n"
+    doc = _doc(owner, weights)
+    assert (doc["at"], doc["hash"], doc["size"]) == ("store", gamma_sync.doc_of(root / "weights.ckpt"), len(small))
+    assert owner.get(f"/api/uploads/{doc['hash']}.ckpt").content == small
+    _put(root / "weights.ckpt", big, age=3)
+    _sync(owner, link["id"])
+    assert _doc(owner, weights)["at"] == "listed"
+    _quiet(owner, link["id"])
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_a_work_folders_file_of_another_server_may_change_its_format_and_a_pdf_by_its_bytes_stays_a_binary(owner, disk,
+                                                                                                           over_http):
+    """The replacement route kept the page's format for every writer, so a
+    file whose bytes sniffed otherwise than before was refused for good
+    (400 each round until renamed), and a PDF under another name was stored
+    again as a ``.pdf`` and refused the same way."""
+    folder = make_folder(owner, "VH work formats")
+    mark_work_folder(owner, folder)
+    root = disk / "VH work formats"
+    _put(root / "output", "all fine\n")
+    _put(root / "paper", _pdf("one"))
+    _put(root / ".gammaignore", "# every file\n")
+    link = _remote_vault(owner, over_http, folder, root, _token("write"), push="everything")
+    output, paper = _page_of(link, "output"), _page_of(link, "paper")
+    assert (_doc(owner, output)["format"], _doc(owner, output)["ext"]) == ("text", ".bin")
+    assert (_doc(owner, paper)["format"], _doc(owner, paper)["ext"]) == ("binary", ".bin")
+    binary, two = b"\x00\x01\x02binary now", _pdf("two")
+    _put(root / "output", binary, age=5)
+    _put(root / "paper", two, age=5)
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and status["kept"] == [] and status["counts"]["sent"] == 2, status
+    doc = _doc(owner, output)
+    assert (doc["format"], doc["ext"]) == ("binary", ".bin") and owner.get(f"/api/uploads/{doc['hash']}.bin").content == binary
+    doc = _doc(owner, paper)
+    assert (doc["format"], doc["ext"]) == ("binary", ".bin") and owner.get(f"/api/uploads/{doc['hash']}.bin").content == two
+    assert not owner.get(f"/api/uploads/{doc['hash']}.pdf").status_code == 200
+    _quiet(owner, link["id"])
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+HTML_413 =b"<html><head><title>413 Request Entity Too Large</title></head><body>nginx</body></html>"
 
 
 @pytest.fixture
@@ -902,7 +1046,7 @@ def test_a_vault_reads_its_folders_pages_whether_the_library_lists_them_or_not(o
     folder = make_folder(owner, f"VH within {honoured}")
     make_page(owner, f"VH elsewhere {honoured}")
     mark_work_folder(owner, folder)
-    vault_sync.LocalRemote(workspace_of(OWNER), folder, account_of(OWNER)).create(
+    LocalRemote(workspace_of(OWNER), folder, account_of(OWNER)).create(
         new_block_id(), f"VH file {honoured}", work_props(folder, "file.md"),
         [{"id": new_block_id(), "content": "a file's words", "properties": {}, "children": []}])
     real, asked = gamma_sync.Server._send, []
@@ -946,5 +1090,5 @@ def test_each_request_names_the_vaults_client(owner, disk, over_http, monkeypatc
     assert owner.get(f"/api/blocks/{page}").json()["trashed"]
     writes = {(m, p) for m, p, _c in sent if m != "GET"}
     assert {("POST", "/api/pages"), ("PUT", f"/api/blocks/{page}/children"), ("DELETE", f"/api/blocks/{page}")} <= writes
-    assert {c for m, p, c in sent if m != "GET" and not p.startswith("/api/uploads")} == {vault_sync.CLIENT}
+    assert {c for m, p, c in sent if m != "GET" and not p.startswith("/api/uploads")} == {vault_http.CLIENT}
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()

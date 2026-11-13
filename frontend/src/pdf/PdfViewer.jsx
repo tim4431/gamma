@@ -9,7 +9,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 // most of a warm reopen.
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { createPortal } from "react-dom";
 import { BookIcon, CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, LocateIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
@@ -28,7 +27,7 @@ import { createPageScale } from "./pageScale.js";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
-import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
+import { useCopied } from "../shared/ui/Widgets";
 import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
 import { MenuButton } from "../shared/ui/Menus";
@@ -43,6 +42,8 @@ import { nativeHost, postToHost } from "../shared/lib/host.js";
 import { commentOnlyHighlight } from "../comments/comments.js";
 import { marginLeft as besideMargin, pageLeft } from "../comments/marginLayout.js";
 import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../comments/marginSlot";
+import NoteBadge from "../comments/NoteBadge.jsx";
+import { beginRegionDrag } from "../shared/ui/regionDrag.js";
 import { useRecentIn } from "../guide/recent.js";
 import { darkPageColor, darkPageLine, lineColor, pickerColors } from "../shared/model/palette.js";
 import { isLineStyle } from "../shared/model/markStyle.js";
@@ -52,7 +53,7 @@ import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
 import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
-import { t, tn } from "../shared/i18n/i18n.js";
+import { t } from "../shared/i18n/i18n.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { SCALE_VAR, installViewerZoom, scaledPx } from "../shared/lib/viewerZoom.js";
 import { installSmoothWheel } from "../shared/lib/smoothWheel.js";
@@ -2444,88 +2445,6 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
   );
 }
 
-// Speech-bubble badge on a highlight that carries a typed note. The hover
-// tooltip renders the note's markdown + KaTeX — a native title attribute is
-// plain-text only. Portaled to <body> with fixed coordinates so the pinch
-// transform on .pdfZoomLayer (an ancestor transform makes position:fixed
-// resolve against it, not the viewport) can never misplace it.
-// .pdfNoteTip's CSS max-width is min(NOTE_TIP_W, 100vw - 2·VIEWPORT_PAD) —
-// keep these in sync with app.css.
-const NOTE_TIP_W = 520;
-const VIEWPORT_PAD = 8;
-// `threads`: the highlight's open comment threads. Such a badge is drawn in
-// the accent and its click (a tap too) also opens them (`onThread(badge)`),
-// besides the jump; its tip counts them under the note.
-function NoteBadge({ hlId, text, hasNote = true, threads = 0, style, onClick, onContextMenu, onThread }) {
-  const [tip, setTip] = useState(null);
-  const btnRef = useRef(null);
-  const tipRef = useRef(null);
-  const timerRef = useRef(0);
-  // A press that was not the mouse's (shared/lib/pointer.js). Touch has no
-  // hover, so a tap opens the tip instead of jumping to the note — the
-  // notes panel it would jump to isn't even on screen in the phone layout.
-  const tapped = () => lastPointer() !== "mouse";
-  const place = () => {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const below = r.top < window.innerHeight * 0.45;
-    // Clamp so the tip's max width fits: .pdfNoteTip caps at NOTE_TIP_W px
-    // (app.css) plus VIEWPORT_PAD of breathing room on each side.
-    setTip({
-      left: Math.max(VIEWPORT_PAD, Math.min(r.left - 12, window.innerWidth - NOTE_TIP_W - 2 * VIEWPORT_PAD)),
-      ...(below ? { top: r.bottom + 6 } : { bottom: window.innerHeight - r.top + 6 }),
-    });
-  };
-  const show = () => {
-    if (tapped()) return; // a tap fires compatibility mouse events too
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(place, 120);
-  };
-  // Hide on a short delay so the pointer can cross the gap into the tip;
-  // entering the tip cancels it — the tip scrolls, so it must survive hover.
-  const hide = () => { clearTimeout(timerRef.current); timerRef.current = setTimeout(() => setTip(null), 200); };
-  const hideNow = () => { clearTimeout(timerRef.current); setTip(null); };
-  const hold = () => clearTimeout(timerRef.current);
-  useEffect(() => () => clearTimeout(timerRef.current), []);
-  const menu = menuPress((e) => { hideNow(); onContextMenu(e); });
-  // Tapped-open tip: no pointer leaves a touch screen, so it closes on the
-  // next tap outside it (or on the badge again).
-  useEffect(() => {
-    if (!tip || !tapped()) return;
-    const away = (e) => {
-      if (tipRef.current?.contains(e.target) || btnRef.current?.contains(e.target)) return;
-      hideNow();
-    };
-    document.addEventListener("pointerdown", away, true);
-    return () => document.removeEventListener("pointerdown", away, true);
-  }, [tip]);
-  return (
-    <>
-      <span className="pdfNoteAnchor" style={style}>
-        <button ref={btnRef} type="button" className={`pdfNoteBadge${threads ? " hasThread" : ""}`} data-hl-id={hlId}
-          aria-label={threads ? tn("{n} comment", "{n} comments", threads) : t("Show highlight note")}
-          {...menu}
-          onMouseEnter={show} onMouseLeave={hide}
-          onClick={(e) => {
-            if (tapped() && !threads) { e.stopPropagation(); clearTimeout(timerRef.current); if (tip) setTip(null); else place(); return; }
-            hideNow(); onClick(e);
-            if (threads) onThread?.(btnRef.current);
-          }}
-        >
-          <MessageSquareIcon size={10} />
-        </button>
-      </span>
-      {tip ? createPortal(
-        <div ref={tipRef} className="pdfNoteTip" style={tip} onMouseEnter={hold} onMouseLeave={hide}>
-          {hasNote ? (text ? <ChatMarkdown text={text} /> : t("This highlight has a note")) : null}
-          {threads ? <div className="pdfNoteTipThreads">{tn("{n} comment", "{n} comments", threads)}</div> : null}
-        </div>,
-        document.body
-      ) : null}
-    </>
-  );
-}
-
 // marginLeft: the page's left edge beside its comment margin, or null for
 // none (centred, with the badge and the popover); pageTop: the page's top,
 // px from the first page's top, where its margin's column goes on from the
@@ -2767,85 +2686,30 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
 
   // Rectangle drag (screenshot-style area note): a mouse drag with the area
   // key held alone (Ctrl, ⌘ on a Mac, by default: areaKey), or any drag
-  // while the rectangle mode (areaMode) is on. Pointer
-  // events cover mouse and touch with one path; document-level move/up
-  // listeners so the drag survives leaving the page box; rects are clamped
-  // to it. Tiny drags are clicks — ignored, so Ctrl+click on highlights
-  // (additive chat quote) keeps working.
+  // while the rectangle mode (areaMode) is on. The pointer's part is the
+  // one region drag the picture's view shares (shared/ui/regionDrag.js):
+  // the rect clamped to the page box, a second finger cancelling, tiny
+  // drags clicks — ignored, so Ctrl+click on highlights (additive chat
+  // quote) keeps working.
   const [marquee, setMarquee] = useState(null); // live drag rect, current-render px
   function beginAreaDrag(e) {
     if (readOnly || !onAreaSelected) return;
     if (e.target.closest?.(".commentMargin")) return; // a comment card beside the page
-    if (e.button !== 0 || !e.isPrimary) return;
     const viaKey = e.pointerType === "mouse" && heldAlone(e, areaKey);
     if (!areaMode && !viaKey) return;
     const wrap = wrapRef.current;
     if (!wrap) return;
-    e.preventDefault(); // keep the text layer from starting a selection
-    const pointerId = e.pointerId, pen = e.pointerType === "pen";
-    const box = wrap.getBoundingClientRect();
-    const sx = e.clientX, sy = e.clientY;
-    const clamp = (v, max) => Math.max(0, Math.min(max, v));
-    const toRect = (cx, cy) => ({
-      x1: clamp(Math.min(sx, cx) - box.left, box.width),
-      y1: clamp(Math.min(sy, cy) - box.top, box.height),
-      x2: clamp(Math.max(sx, cx) - box.left, box.width),
-      y2: clamp(Math.max(sy, cy) - box.top, box.height),
-    });
-    const detach = () => {
-      cancelAnimationFrame(moveRaf);
-      document.removeEventListener("pointerdown", onOther, true);
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp, true);
-      document.removeEventListener("pointercancel", onCancel);
-    };
-    // High-rate pointers outpace frames, and each setMarquee re-renders the
-    // whole page (highlight rects, link boxes) — coalesce to one per frame.
-    let moveRaf = 0, moveX = 0, moveY = 0;
-    function onMove(ev) {
-      if (ev.pointerId !== pointerId) return;
-      moveX = ev.clientX;
-      moveY = ev.clientY;
-      if (moveRaf) return;
-      moveRaf = requestAnimationFrame(() => {
-        moveRaf = 0;
-        setMarquee(toRect(moveX, moveY));
-      });
-    }
-    function onCancel(ev) {
-      if (ev.pointerId !== pointerId) return;
-      detach();
-      setMarquee(null);
-    }
-    // A second finger makes the drag a pinch: the area goes. Under a pen
-    // it is a palm.
-    function onOther(ev) {
-      if (ev.pointerId !== pointerId && !pen) onCancel({ pointerId });
-    }
-    function onUp(ev) {
-      if (ev.pointerId !== pointerId) return;
-      detach();
-      setMarquee(null);
-      const r = toRect(ev.clientX, ev.clientY);
-      if (r.x2 - r.x1 < 6 || r.y2 - r.y1 < 6) return;
-      // Swallow the click this drag would otherwise deliver to whatever sits
-      // under the mouse (highlight overlays, link boxes). The timeout clears
-      // the trap if no click follows (drag released outside the window).
-      const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
-      document.addEventListener("click", swallow, { capture: true, once: true });
-      setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
+    beginRegionDrag(e, {
+      box: () => wrap.getBoundingClientRect(),
+      onMove: setMarquee,
       // The region doubles as a chat attachment: its page and box go along,
       // and the server draws it from the document (with the handwriting on
       // it when asked) — nothing is captured off the screen.
-      onAreaSelected({
+      onDone: (r, box) => onAreaSelected({
         pageNumber, rect: r, width: box.width, height: box.height,
         tip: { left: box.left + r.x1, top: box.top + r.y2 + 8 },
-      });
-    }
-    document.addEventListener("pointerdown", onOther, true);
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp, true);
-    document.addEventListener("pointercancel", onCancel);
+      }),
+    });
   }
   // A pen with no ink tool armed does what a mouse does on the page. Its
   // press comes from its ink layer (InkLayer.jsx onPenDrag), which holds the
@@ -3137,7 +3001,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
                 top: `calc(${pctY(r.y1, storedH)} - 8px)`,
               }}
               onClick={(e) => { if (!onHighlightJump) return; e.stopPropagation(); onHighlightJump(h.id, e.ctrlKey || e.metaKey); }}
-              onContextMenu={openMenu}
+              onMenu={openMenu}
             />
           );
         }

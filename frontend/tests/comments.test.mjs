@@ -163,6 +163,9 @@ test("what a thread is on, in words: the quote, the text, else a caption-less in
   assert.equal(anchorWords({ id: "g", content: "the arrow", properties: { ink_url: "/api/uploads/a.ink", pdf_position: pos } }), "the arrow",
     "a caption");
   assert.equal(anchorWords({ id: "g", content: "", properties: { ink_url: "/api/uploads/a.ink" } }), "", "a group on a sheet");
+  const region = { width: 1200, height: 800, boundingRect: { x1: 10, y1: 20, x2: 300, y2: 200 }, rects: [{ x1: 10, y1: 20, x2: 300, y2: 200 }], hash: "i1" };
+  assert.equal(anchorWords({ id: "r", content: "", properties: { image_position: region } }), "Region of the picture");
+  assert.equal(anchorWords({ id: "r", content: "the legend", properties: { image_position: region } }), "the legend", "a region's note");
   assert.equal(anchorWords(undefined), "", "a block the page does not show");
 });
 
@@ -181,12 +184,17 @@ test("the Send chip: Sent while the request waits, the agent at work, Failed wit
   assert.equal(sentChip(page()[0]), null);
 });
 
-test("what became of a thread's place after a rebuild: a highlight moved or lost, ink drawn on an earlier build", () => {
+test("what became of a thread's place after a rebuild: a highlight moved or lost, ink or a region drawn on an earlier build", () => {
   const pos = (extra = {}) => ({ pageNumber: 1, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [], ...extra });
   const hl = (extra) => ({ id: "h", content: "", properties: { quote: "q", pdf_position: pos(extra) } });
   assert.equal(threadPlace({ made_on: "a" }, hl(), "b"), "", "a highlight placed again exactly");
   assert.equal(threadPlace({ made_on: "a" }, hl({ approx: true, match: 0.8 }), "b"), "moved");
   assert.equal(threadPlace({ made_on: "a" }, hl({ approx: true, lost: true }), "b"), "lost");
+  const region = (hash) => ({ id: "r", content: "", properties: { image_position: { width: 12, height: 8, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [], hash } } });
+  assert.equal(threadPlace({ made_on: "a" }, region("i0"), "i1"), "earlier", "drawn on another version of the picture");
+  assert.equal(threadPlace({ made_on: "a" }, region("i1"), "i1"), "", "the version it was drawn on, whatever the thread says");
+  assert.equal(threadPlace({ made_on: "a" }, region("i0"), ""), "", "a page that shows no file");
+  assert.equal(threadPlace({ made_on: "a" }, region(""), "i1"), "", "a region that names no version");
   const ink = { id: "g", content: "", properties: { ink_url: "/api/uploads/a.ink", pdf_position: pos() } };
   assert.equal(threadPlace({ made_on: "a" }, ink, "b"), "earlier");
   assert.equal(threadPlace({ made_on: "b" }, ink, "b"), "", "the build it was drawn on");

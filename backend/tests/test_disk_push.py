@@ -1,5 +1,5 @@
 """PDFs that change on disk pushed to Gamma (gamma/gamma_sync.py ``Push``,
-gamma/vault_sync.py, gamma/folder_links.py, PUT /pages/{id}/attachment's
+gamma/vault/sync.py, gamma/folder_links.py, PUT /pages/{id}/attachment's
 ``keep_old_days``): a vault that pushes its PDFs, a page that follows a file,
 on this server and on another one read with a token, and the rules that keep
 a push safe — only whole files, only bytes Gamma does not show, the disk
@@ -17,7 +17,8 @@ import pymupdf
 import pytest
 
 from conftest import account_of, doc_props, login, make_folder, make_page, make_user, workspace_of
-from gamma import config, folder_links, gamma_sync, upload_gc, vault_store
+from gamma import config, folder_links, gamma_sync, upload_gc
+from gamma.vault import store as vault_store
 from gamma.integrations import create_token
 from test_folder_links import _create, _sync, disk, over_http  # noqa: F401 — the disk and over_http fixtures
 

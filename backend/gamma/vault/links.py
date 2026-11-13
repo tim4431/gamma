@@ -48,16 +48,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from .blocks_store import BLOCK_ID_RE
-from .documents.formats import IMAGE_MEDIA_TYPES, media_type
-from .markdown_export import _BLOCK_REF_RE
-from .markdown_import import _FENCE_LINE_RE, _fence_marks, shuts_fence
-from .markdown_zip_links import (_IMAGE_SIZE_RE, _LINK_RE, _MD_EXTS, _WIKILINK_RE, _norm_heading, _split_ext,
+from ..blocks_store import BLOCK_ID_RE
+from ..documents.formats import IMAGE_MEDIA_TYPES, media_type
+from ..markdown_export import _BLOCK_REF_RE
+from ..markdown_import import _FENCE_LINE_RE, _fence_marks, shuts_fence
+from ..markdown_zip_links import (_IMAGE_SIZE_RE, _LINK_RE, _MD_EXTS, _WIKILINK_RE, _norm_heading, _split_ext,
                                  named_block, resolve_path)
-from .md_lens import _ESCAPED_ANCHOR_RE, _opcodes, flatten
-from .note_markup import LITERAL_SPANS
-from .obsidian_export import anchor_marker
-from .storage import UPLOAD_REF_RE
+from ..md_lens import _ESCAPED_ANCHOR_RE, _opcodes, flatten
+from ..note_markup import LITERAL_SPANS
+from ..obsidian_export import anchor_marker
+from ..storage import UPLOAD_REF_RE
 
 FORMATS = ("shortest", "relative", "absolute")   # Obsidian's ``newLinkFormat``
 # Where a vault with no ``.obsidian/app.json`` keeps a pasted picture: the

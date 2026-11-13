@@ -21,6 +21,15 @@ test("an entry's heading: a passage by its quote, a note under one, an area, han
   assert.equal(entryHeading({ id: "t2", kind: "passage" }), "A note", "no place on a page");
 });
 
+test("a region's heading: its rect in the picture's pixels, a note under one, one with no frame", () => {
+  assert.equal(entryHeading(entry("region", { rect: [40, 60, 360, 240], size: [1200, 800], placed: "exact" })),
+    "Region · 320×180 px at (40, 60)");
+  assert.equal(entryHeading(entry("region", { rect: [40, 60, 360, 240], note: "the legend" })),
+    "Note on a region · 320×180 px at (40, 60)");
+  assert.equal(entryHeading(entry("region", {})), "Region");
+  assert.equal(entryHeading(entry("region", { note: "a thought" })), "Note on a region");
+});
+
 test("how the place was found: exactly, roughly, by estimate, not at all, not yet, on an earlier build", () => {
   assert.equal(placedText({ placed: "exact" }), "placed exactly");
   assert.equal(placedText({ placed: "rough", match: 0.874 }), "placed roughly (87%)");
@@ -31,6 +40,14 @@ test("how the place was found: exactly, roughly, by estimate, not at all, not ye
   assert.equal(placedText({ placed: "earlier" }), "drawn on an earlier build");
   assert.equal(placedText({}), "", "a note, the whole file");
   assert.equal(placedText(undefined), "");
+});
+
+test("a region's place: exactly, on an earlier version of the picture, or the file is no longer a picture", () => {
+  assert.equal(placedText({ placed: "exact" }, "region"), "placed exactly");
+  assert.equal(placedText({ placed: "earlier" }, "region"), "drawn on an earlier version of the picture");
+  assert.equal(placedText({ placed: "lost" }, "region"), "the file is no longer a picture");
+  assert.equal(placedText({}, "region"), "");
+  assert.equal(placedText({ placed: "earlier" }, "ink"), "drawn on an earlier build", "the PDF's words for the other kinds");
 });
 
 test("the source: the file's name and its line or lines, the line recorded at the comment's opening said so", () => {

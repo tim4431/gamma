@@ -1,6 +1,8 @@
 """The picture of a feedback thread's region (docs/dev/feedback.md "The
 pictures"): the passage, area or handwriting a thread hangs on, cut out of
-its PDF page as the page shows it.
+its PDF page as the page shows it; the region of a picture a thread hangs
+on, cut out of the picture; the whole picture for a thread on a picture's
+page.
 
 ``now`` is the region as the person sees it now: the page's current file
 with its pictures, text boxes and handwriting stamped in
@@ -8,27 +10,35 @@ with its pictures, text boxes and handwriting stamped in
 rectangles were measured on that file drawn over them as annotations
 (``pdf_export.page_with_ink``'s ``highlights``: a dashed one included, a
 lost one or one still placed in another file not; a link region, a Gamma
-navigation aid, never). ``made`` is the region as it was commented on: the
+navigation aid, never); on a picture, the current version cut at the
+region's box with the page's regions drawn (``ai_pictures.image_region``),
+whatever version the region was drawn on, since a region stays where it
+was on a new version. ``made`` is the region as it was commented on: the
 version the thread was opened on (held while it is open,
 gamma/feedback/kept.py), its page with the pictures, text boxes and
 handwriting as they are (page coordinates do not move) and the thread's
-own rectangles alone, in its colour. A note on its own and the whole file
-have no picture.
+own rectangles alone, in its colour; on a picture, that version cut at the
+box with the thread's own region drawn. A note on its own has no picture,
+nor the whole file but a picture's.
 
-A region is ``(file_hash, page, box, drawn)``, ``box`` the crop (fractions
-of the page as shown, top-left origin, the anchor's: gamma/feedback/anchors.py)
-and ``drawn`` what is drawn on the page: each highlight by its id, colour,
-kind, style and rectangles, each ink group by its content-addressed file,
-each picture and text box by its place and content, the embedded originals
-they replace. So ``key`` is the picture's content key: the same inputs give
-the same key, a mark moved on that page another, a mark on another page
-none. The picture is ``pdf_text.render_page``'s JPEG (the longer side
-``RENDER_MAX_SIDE``, a zoom of at most 4, quality 85), never re-encoded and
-never an upload: ``cached`` keeps it in data.db ``feedback_pictures`` by
-key, at most ``CACHE_BYTES`` in all, the oldest going first; in a work
-folder its file ``.gamma/feedback/img/<key>.jpg`` is the cache too
-(gamma/feedback/files.py). One page's PDF is built once per ``(file, page,
-drawn)`` and cut for each thread on it.
+A region is ``(file, page, box, drawn)``: ``file`` the stored file it is
+cut from (``<hash><ext>``: a PDF, or the picture itself), ``page`` its
+1-based PDF page (0 for a picture), ``box`` the crop (fractions of the page
+or the picture as shown, top-left origin, the anchor's:
+gamma/feedback/anchors.py) and ``drawn`` what is drawn on it: each
+highlight by its id, colour, kind, style and rectangles, each ink group by
+its content-addressed file, each picture and text box by its place and
+content, the embedded originals they replace; on a picture, each region by
+its id, colour, rectangle and whether it was drawn on this version. So
+``key`` is the picture's content key: the same inputs give the same key, a
+mark moved on that page another, a mark on another page none. The picture
+is ``pdf_text.render_page``'s JPEG (the longer side ``RENDER_MAX_SIDE``, a
+zoom of at most 4, quality 85), never re-encoded and never an upload:
+``cached`` keeps it in data.db ``feedback_pictures`` by key, at most
+``CACHE_BYTES`` in all, the oldest going first; in a work folder its file
+``.gamma/feedback/img/<key>.jpg`` is the cache too (gamma/feedback/files.py).
+One page's PDF is built once per ``(file, page, drawn)`` and cut for each
+thread on it.
 """
 
 import hashlib
@@ -37,26 +47,27 @@ import threading
 from collections import OrderedDict
 from typing import NamedTuple
 
-from .. import highlights, storage
+from .. import ai_pictures, highlights, storage
 from ..blocks_store import block_to_dict, fetch_subtree, load_props
 from ..db import connect_data_db, page_now
-from ..documents.model import page_document, pdf_file_hash, stored_name
+from ..documents.model import file_hash, is_image, page_document, pdf_file_hash
 from ..highlights import COORDS, is_ink
 from ..pdf_export import still_embedded
 from ..pdf_text import RENDER_MAX_SIDE, render_page
 from . import anchors
 
 PICTURE_V = 1                      # what a picture draws: bumped when that changes, which moves every key
-KINDS = ("passage", "area", "ink")  # the anchors with a region (a note under one takes its kind)
+KINDS = ("passage", "area", "ink", "region")  # the anchors with a region (a note under one takes its kind)
 CACHE_BYTES = 48 * 1024 * 1024     # data.db's pictures at most, the oldest going first
 PAGE_PDFS = 4                      # the one-page PDFs kept for the next threads of their page
+WHOLE = (0.0, 0.0, 1.0, 1.0)       # the box of a whole picture
 
 
 class Region(NamedTuple):
-    file_hash: str   # the PDF it is cut from
-    page: int        # its 1-based page
-    box: tuple       # the crop, fractions of the page as shown, four decimals
-    drawn: tuple     # what is drawn on the page (the module docstring)
+    file: str        # the stored file it is cut from, <hash><ext>: a PDF, or the picture itself
+    page: int        # its 1-based PDF page; 0 for a picture
+    box: tuple       # the crop, fractions of the page or the picture as shown, four decimals
+    drawn: tuple     # what is drawn on it (the module docstring)
 
 
 _pages: OrderedDict = OrderedDict()   # (ws, page id, file, page, drawn) → one-page PDF bytes, the newest last
@@ -69,12 +80,19 @@ def now(conn, page_id: str, props: dict, anchor: dict | None, *, memo: dict | No
     page ``page_id`` (``props`` its properties, in the pages.db ``conn``)
     shows it now: on its current file, at the anchor's place while the
     anchor was measured on that file, else at the block's place now when
-    that is measured on it. None for a note alone or the file, a block lost
-    or still placed in another file, handwriting on another build (ink is
-    never placed again) and a page without a PDF. ``memo``, a dict shared by
-    the calls of one pass, reads each page's marks once."""
-    current = pdf_file_hash(page_document(props))
-    if not current or not anchor or anchor.get("kind") not in KINDS:
+    that is measured on it. On a picture, the current version at the
+    region's box, or the whole picture for a thread on the page. None for a
+    note alone or a PDF's file, a block lost or still placed in another
+    file, handwriting on another build (ink is never placed again) and a
+    page without a PDF or a picture. ``memo``, a dict shared by the calls of
+    one pass, reads each page's marks once."""
+    view = page_document(props)
+    if not anchor or not view or not file_hash(view):
+        return None
+    if is_image(view):
+        return _picture_now(conn, page_id, view, anchor, memo)
+    current = pdf_file_hash(view)
+    if not current or anchor.get("kind") not in KINDS or anchor["kind"] == "region":
         return None
     if anchor.get("doc_id") == current:
         page, box = anchor.get("page"), anchor.get("box")
@@ -87,32 +105,55 @@ def now(conn, page_id: str, props: dict, anchor: dict | None, *, memo: dict | No
         page, box = place
     if not _is_page(page) or not _is_box(box):
         return None
-    return Region(current, page, _round(box), _drawn(conn, page_id, current, page, memo))
+    return Region(view["file"], page, _round(box), _drawn(conn, page_id, current, page, memo))
+
+
+def _picture_now(conn, page_id: str, view: dict, anchor: dict, memo: dict | None) -> Region | None:
+    """``now`` on a picture: a region's thread at the anchor's box, the
+    page's at the whole picture; None for a note alone."""
+    if anchor.get("kind") == "region":
+        box = anchor.get("box")
+    elif anchor.get("kind") == "file":
+        box = WHOLE
+    else:
+        return None
+    if not _is_box(box):
+        return None
+    return Region(view["file"], 0, _round(box), _regions(conn, page_id, view["hash"], memo))
 
 
 def made(anchor: dict | None, color: str = "") -> Region | None:
     """The region of the thread anchored ``anchor`` as it was commented
-    on: on the version it was opened on (``anchor.doc_id``), drawing its
-    rectangles alone in ``color`` (its block's, the viewer's yellow
-    without one); a handwriting group is drawn as the page's ink is. None
-    for a note alone, the file and an anchor with no version or no box.
+    on: on the version it was opened on (``anchors.held_file``), drawing
+    its rectangles alone in ``color`` (its block's, the viewer's yellow
+    without one); a handwriting group is drawn as the page's ink is; on a
+    picture (the anchor's kind says: a ``region``, or a ``file`` whose
+    version is no PDF, whatever extension the picture is stored under), the
+    region's rectangle, or the whole picture for a thread on the page. None
+    for a note alone, a PDF's file and an anchor with no version or no box.
     Whether that version is still stored is the caller's to ask
     (``storage.exists``)."""
-    if not anchor or anchor.get("kind") not in KINDS:
+    file = anchors.held_file(anchor) if anchor else ""
+    if not file:
         return None
-    doc = storage.stored_pdf_stem(anchor.get("doc_id"))
-    page, box = anchor.get("page"), anchor.get("box")
-    if not doc or not _is_page(page) or not _is_box(box):
-        return None
+    kind, box = anchor["kind"], anchor.get("box")
     rects = tuple(_round(r) for r in anchor.get("rects") or () if _is_box(r))
-    return Region(doc, page, _round(box), (("anchor", anchor["kind"], color or "", rects),))
+    if kind == "region" or kind == "file" and not file.endswith(".pdf"):
+        if kind == "file":
+            box = WHOLE
+        return Region(file, 0, _round(box), (("anchor", kind, color or "", rects),)) if _is_box(box) else None
+    page = anchor.get("page")
+    if kind not in KINDS or kind == "file" or not _is_page(page) or not _is_box(box):
+        return None
+    return Region(file, page, _round(box), (("anchor", kind, color or "", rects),))
 
 
 def key(region: Region) -> str:
     """The picture's content key: 16 hex digits of the SHA-256 of what
     makes it (``PICTURE_V``, the file, the page, the box, the size, what is
-    drawn)."""
-    made_of = [PICTURE_V, region.file_hash, region.page, list(_round(region.box)), RENDER_MAX_SIDE, region.drawn]
+    drawn). A PDF goes in by its stem, so the keys of step 2 stand."""
+    file = region.file[:-4] if region.file.endswith(".pdf") else region.file
+    made_of = [PICTURE_V, file, region.page, list(_round(region.box)), RENDER_MAX_SIDE, region.drawn]
     text = json.dumps(made_of, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
@@ -121,8 +162,11 @@ def render(ws: str, conn, page_id: str, region: Region) -> bytes | None:
     """The picture of ``region`` of the page ``page_id`` as JPEG bytes;
     None when it cannot be drawn now: its file is not readable here (a
     build being written, a version no longer stored), the page is past the
-    file's end, or the file does not open (encrypted, broken). The next
-    pass tries again."""
+    file's end, or the file does not open (encrypted, broken, no picture).
+    The next pass tries again."""
+    if region.page == 0:
+        image = ai_pictures.image_region(ws, region.file, region.box, _image_marks(region))
+        return image[0] if image else None
     data = _page_pdf(ws, conn, page_id, region)
     if not data:
         return None
@@ -219,6 +263,47 @@ def _marked(props: dict, pos, file_hash: str, page: int) -> bool:
             and not still_embedded(props))
 
 
+def _blocks(conn, page_id: str, memo: dict) -> list:
+    """The page's blocks as dicts, read once per page with a ``memo``."""
+    blocks = memo.get(("blocks", page_id))
+    if blocks is None:
+        blocks = memo[("blocks", page_id)] = [block_to_dict(row) for row in fetch_subtree(conn, page_id)]
+    return blocks
+
+
+def _regions(conn, page_id: str, current: str, memo: dict | None) -> tuple:
+    """What is drawn on the picture of the page ``page_id`` whose current
+    version is ``current``: each region (``highlights.region_box``) by its
+    id, colour, rectangle and whether it was drawn on this version, sorted;
+    read once per page with a ``memo``."""
+    memo = {} if memo is None else memo
+    found = memo.get(("regions", page_id, current))
+    if found is not None:
+        return found
+    items = []
+    for b in _blocks(conn, page_id, memo):
+        props = b["properties"]
+        box = highlights.region_box(props)
+        if box:
+            items.append(("region", b["id"], props.get("color") or "", (box,),
+                          props["image_position"].get("hash") == current))
+    drawn = memo[("regions", page_id, current)] = tuple(sorted(items))
+    return drawn
+
+
+def _image_marks(region: Region) -> list[tuple]:
+    """The marks ``region.drawn`` names on a picture, as
+    ``ai_pictures.image_region`` draws them: ``(box, color, strong)``, the
+    thread's own rectangle (``made``) the strong one."""
+    marks = []
+    for item in region.drawn:
+        if item[0] == "region":
+            marks += [(rect, item[2], False) for rect in item[3]]
+        elif item[0] == "anchor":
+            marks += [(rect, item[2], True) for rect in item[3]]
+    return marks
+
+
 def _drawn(conn, page_id: str, file_hash: str, page: int, memo: dict | None) -> tuple:
     """What is drawn on page ``page`` of the file ``file_hash`` of the page
     ``page_id`` (the module docstring), sorted; read once per file and page
@@ -229,9 +314,7 @@ def _drawn(conn, page_id: str, file_hash: str, page: int, memo: dict | None) -> 
     found = memo.get(("drawn", page_id, file_hash, page))
     if found is not None:
         return found
-    blocks = memo.get(("blocks", page_id))
-    if blocks is None:
-        blocks = memo[("blocks", page_id)] = [block_to_dict(row) for row in fetch_subtree(conn, page_id)]
+    blocks = _blocks(conn, page_id, memo)
     items = []
     for b in blocks:
         props = b["properties"]
@@ -282,12 +365,12 @@ def _page_pdf(ws: str, conn, page_id: str, region: Region) -> bytes | None:
     be built."""
     from ..ink_view import page_with_handwriting  # local: ink_view reaches the page readers, which import comments
 
-    cache_key = (ws, page_id, region.file_hash, region.page, region.drawn)
+    cache_key = (ws, page_id, region.file, region.page, region.drawn)
     with _pages_lock:
         if cache_key in _pages:
             _pages.move_to_end(cache_key)
             return _pages[cache_key]
-    path = storage.find_upload_file(stored_name(region.file_hash, ".pdf"), ws)
+    path = storage.find_upload_file(region.file, ws)
     if path is None:
         return None
     data, _pages_in_file = page_with_handwriting(ws, conn, page_id, region.page, path=path, marks=_marks_of(region))

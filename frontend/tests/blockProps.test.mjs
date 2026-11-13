@@ -46,12 +46,33 @@ test("the shown kind is the server's while the properties agree, else this tab's
   assert.equal(effectiveKind({ properties: {} }, null), "note");
 });
 
-test("kindLabel refines a note on a highlight and an area highlight", () => {
+const region = { width: 1200, height: 800, boundingRect: { x1: 10, y1: 20, x2: 300, y2: 200 }, rects: [{ x1: 10, y1: 20, x2: 300, y2: 200 }], hash: "i1" };
+
+test("kindLabel refines a note on a highlight, an area highlight and a region of a picture", () => {
   assert.equal(kindLabel(block({ linked_highlight_id: "h1", pdf_position: { pageNumber: 3 } })), "Note on a highlight");
   assert.equal(kindLabel(block({ pdf_position: { ...pos, area: true } })), "Area highlight");
   assert.equal(kindLabel(block({ pdf_position: pos })), "Highlight");
   assert.equal(kindLabel(block({ pdf_position: pos, link_page_id: "p" })), "Link region");
+  assert.equal(kindLabel(block({ image_position: region })), "Region of the picture");
+  assert.equal(kindLabel(block({ image_position: region, pdf_position: pos })), "Highlight", "a place on the PDF first");
   assert.equal(kindLabel(block({}), "page"), "Page");
+});
+
+test("a region's keys fill the highlight section: its colour, and its place on the picture as stored", () => {
+  const r = block({ color: "#ffe5648c", image_position: region, quote: "" });
+  const sections = propertySections(r, { ctx: { now: NOW } });
+  assert.deepEqual(ids(sections), ["highlight", "block", "technical"]);
+  assert.equal(section(sections, "highlight").title, "Region of the picture");
+  assert.deepEqual(section(sections, "highlight").rows.map((x) => x.key), ["color", "image_position"]);
+  assert.equal(row(sections, "image_position").type, "json");
+  assert.equal(row(sections, "image_position").label, "Region");
+  assert.equal(row(sections, "image_position").copy, jsonText(region));
+  for (const key of ["image_position", "image_position.width", "image_position.height", "image_position.boundingRect",
+    "image_position.rects", "image_position.hash"]) {
+    assert.equal(CATALOG[key].section, "kind", key);
+  }
+  assert.equal(blockKind(block({ image_position: region })), "highlight");
+  assert.equal(blockKind(block({ text_position: { from: 1 } })), "highlight", "a range of a text file, defined before its writer");
 });
 
 test("a highlight's keys fill its section, Timing, Block and Technical", () => {

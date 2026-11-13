@@ -104,6 +104,9 @@ EXTENSIONS: dict[str, Ext] = {
     ".jpeg": Ext("image", media="image/jpeg", inline=True),
     ".gif": Ext("image", media="image/gif", inline=True),
     ".webp": Ext("image", media="image/webp", inline=True),
+    ".avif": Ext("image", media="image/avif", inline=True),
+    ".bmp": Ext("image", media="image/bmp", inline=True),
+    ".ico": Ext("image", media="image/x-icon", inline=True),
     ".svg": Ext("image", media="image/svg+xml", sandboxed=True),
     # Audio an <audio> element plays straight from /api/uploads/ (a
     # recording's segments, an audio file chip), so it is served inline.
@@ -113,9 +116,11 @@ EXTENSIONS: dict[str, Ext] = {
     ".m4a": Ext("audio", media="audio/mp4", inline=True),
     ".ogg": Ext("audio", media="audio/ogg", inline=True),
     ".opus": Ext("audio", media="audio/ogg", inline=True),
+    ".flac": Ext("audio", media="audio/flac", inline=True),
+    ".aac": Ext("audio", media="audio/aac", inline=True),
     ".mp4": Ext("video", media="video/mp4"),
-    ".mov": Ext("video"),
-    ".m4v": Ext("video"),
+    ".mov": Ext("video", media="video/quicktime"),
+    ".m4v": Ext("video", media="video/x-m4v"),
     ".bin": Ext("binary"),
     ".ink": Ext("binary", media="application/json"),  # handwriting groups (gamma/ink.py)
     ".docx": Ext("binary", media="application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
@@ -181,6 +186,15 @@ def stored_extension(name: str) -> str:
     return ext or ".bin"
 
 
+def vault_extension(name: str) -> str:
+    """The extension a work folder's file is stored and served under
+    (gamma/vault/kinds.py): ``stored_extension``, with a blocked one
+    giving ``.bin`` rather than an error, since the vault takes every file
+    it is given and the store never serves a ``.bat`` under its own name."""
+    ext = extension_of(name)
+    return ".bin" if not ext or ext in BLOCKED_EXTENSIONS else ext
+
+
 def media_type(ext: str) -> str | None:
     """The media type a stored file with extension ``ext`` (lowercase, with
     the dot) is served as, or None when Gamma never stores that kind of
@@ -192,12 +206,42 @@ def media_type(ext: str) -> str | None:
     return (row.media if row else None) or "application/octet-stream"
 
 
+def _leaf(name: str) -> str:
+    """A name's last path segment, stripped and lowercased: what ``NAMES`` is keyed by."""
+    return str(name or "").replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+
+
 def format_of(name: str, head: bytes | None = None) -> tuple[str, str | None]:
     """``(format, language)`` of a file named ``name``: its whole name
     (``NAMES``), else its extension (``EXTENSIONS``), else what its first
     bytes say when ``head`` is given (``sniff``), else ``("binary",
     None)``."""
-    leaf = str(name or "").replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+    leaf = _leaf(name)
+    if leaf in NAMES:
+        return NAMES[leaf]
+    row = EXTENSIONS.get(extension_of(name))
+    if row:
+        return row.format, row.language
+    if head is not None:
+        return sniff(head)
+    return "binary", None
+
+
+def stored_format(name: str, ext: str, head: bytes | None) -> tuple[str, str | None]:
+    """``(format, language)`` of a file stored under ``ext`` with the shown
+    name ``name`` (an attach, by-file, the vault's file class): the
+    extension's row, unless it is ``.bin`` (a name without one, a blocked
+    one) or one the table does not know; else the whole name (``NAMES``:
+    ``Makefile`` stored as ``.bin``); else the name's own extension's row
+    (an upload stored under its media type's extension, ``shot`` as
+    ``.png``, is an image whatever its name says); else ``sniff(head)``
+    when ``head`` is given; else ``("binary", None)``. A sniffed ``pdf`` at
+    another extension is the caller's to settle: the attach stores a
+    ``.pdf`` copy, the vault reads it as binary."""
+    row = EXTENSIONS.get(ext) if ext != ".bin" else None
+    if row:
+        return row.format, row.language
+    leaf = _leaf(name)
     if leaf in NAMES:
         return NAMES[leaf]
     row = EXTENSIONS.get(extension_of(name))
@@ -211,7 +255,7 @@ def format_of(name: str, head: bytes | None = None) -> tuple[str, str | None]:
 def language_of(name: str, ext: str) -> str | None:
     """The language a text document's name or extension says (``NAMES``,
     then a text row of ``EXTENSIONS``), else None."""
-    known = NAMES.get(str(name or "").replace("\\", "/").rsplit("/", 1)[-1].strip().lower())
+    known = NAMES.get(_leaf(name))
     if known:
         return known[1]
     row = EXTENSIONS.get(ext)

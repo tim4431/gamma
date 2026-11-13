@@ -14,8 +14,8 @@ from ..auth import link_ratelimit, require_ws, require_ws_writer, resolve_ws, sh
 from .. import linked_files, pdf_meta, upload_parts
 from ..blocks_store import load_props
 from ..db import connect_pages_db
-from ..documents.formats import (ALLOWED_IMAGE_TYPES, IMAGE_EXTENSIONS, INLINE_EXTENSIONS, SANDBOXED_EXTENSIONS,
-                                 media_type, stored_extension)
+from ..documents.formats import (ALLOWED_IMAGE_TYPES, IMAGE_EXTENSIONS, IMAGE_MEDIA_TYPES, INLINE_EXTENSIONS,
+                                 SANDBOXED_EXTENSIONS, extension_of, media_type, stored_extension)
 from ..documents.model import page_document, stored_name, upload_url
 from ..server_settings import workspace_quota
 from ..storage import (
@@ -149,11 +149,16 @@ def upload_image(request: Request, file: UploadFile = File(...)):
 def upload_file(request: Request, file: UploadFile = File(...)):
     """Store any file except executables (``formats.BLOCKED_EXTENSIONS``)
     under its content hash for a block to reference as
-    ``[name](/api/uploads/<hash>.<ext>)`` — a file block. The extension comes
-    from the uploaded name (``.bin`` when it has none; images: from the
-    declared type, same path as /upload-image). A PDF stored this way gets
-    the same ``<hash>.pdf`` name the PDF ingest mints, so it can later be
-    opened as a document page without a second upload (``POST
+    ``[name](/api/uploads/<hash>.<ext>)`` — a file block, or for a page to
+    carry as its document (``POST /pages/by-file``, the attachment's
+    ``file``). The extension comes from the uploaded name (``.bin`` when it
+    has none); an image's from its declared type (same path as
+    /upload-image) unless the name's own extension is an image row of that
+    type, which it keeps (``photo.jpeg`` stays ``.jpeg``: a document's
+    stored name is its hash and extension, and a mirror pushing a
+    ``<hash>.jpeg`` must land it under the same name). A PDF stored this
+    way gets the same ``<hash>.pdf`` name the PDF ingest mints, so it can
+    later be opened as a document page without a second upload (``POST
     /blocks/by-doc/{hash}``). A recording's segment (``.webm``, ``.m4a``,
     ``.ogg``, ``.opus``) must open as that audio container. → ``{url, name,
     size, already_existed}``."""
@@ -161,7 +166,8 @@ def upload_file(request: Request, file: UploadFile = File(...)):
     link_ratelimit(request, "upload", LINK_UPLOADS_PER_5_MIN, 300)
     name = display_filename(file.filename, "file")
     if file.content_type in ALLOWED_IMAGE_TYPES:
-        ext = IMAGE_EXTENSIONS[file.content_type]
+        own = extension_of(name)
+        ext = own if IMAGE_MEDIA_TYPES.get(own) == file.content_type else IMAGE_EXTENSIONS[file.content_type]
     else:
         try:
             ext = stored_extension(name)

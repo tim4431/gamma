@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from gamma import vault_disk
+from gamma.vault import disk as vault_disk, kinds
 from gamma.documents.formats import EXTENSIONS
 from gamma.work_folders import ignore_rules
 from gamma.work_folders.ignore_rules import (ALL, DEFAULT, DEFAULT_TEXT, EMPTY, HEADER, MAX_BYTES, MIXED, NAME, NONE,
@@ -222,7 +222,7 @@ def test_rules_know_their_text_and_whether_gamma_wrote_them():
 def test_the_default_tracks_the_classes_a_vault_reads_and_walks_every_directory():
     for ext in [*EXTENSIONS, ".JPEG", ".Md", ".exe", ".tar.gz", ""]:
         for path in (f"x{ext}", f"a/b/x{ext}"):
-            assert DEFAULT.tracks(path) == bool(vault_disk.kind_of(path)), path
+            assert DEFAULT.tracks(path) == (kinds.class_of(path) is not None), path
     assert DEFAULT.tracks("a/b", True) and DEFAULT.tracks("node_modules.md") and not DEFAULT.tracks(".env")
 
 

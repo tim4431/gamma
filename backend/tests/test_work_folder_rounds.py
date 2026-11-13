@@ -1,4 +1,4 @@
-"""A work folder's rounds (gamma/vault_sync.py, docs/dev/work_folders.md,
+"""A work folder's rounds (gamma/vault/sync.py, docs/dev/work_folders.md,
 docs/dev/synced_vaults.md "A work folder's round"): a vault whose folder
 carries the mark (conftest ``mark_work_folder``) stamps the pages it makes,
 files and names them by their files on every move on disk, follows a
@@ -16,13 +16,14 @@ import uuid
 import pytest
 
 from conftest import account_of, doc_props, login, make_folder, make_page, make_user, mark_work_folder, workspace_of
-from gamma import folder_links, gamma_sync, pdf_meta, storage, vault_disk, vault_store, vault_sync
+from gamma import folder_links, gamma_sync, pdf_meta, storage
+from gamma.vault import disk as vault_disk, kinds, store as vault_store, sync as vault_sync
 from gamma.blocks_store import FOLDERS
 from gamma.db import connect_pages_db
 from gamma.documents.model import stored_name
 from gamma.feedback import files as feedback_files
 from gamma.ops import commit_ops, restore_page, trash_page
-from gamma.vault_sync import LocalRemote
+from gamma.vault.local_remote import LocalRemote
 from gamma.work_folders import marks, takeover
 from test_vault_sync import Vault, _pdf, insert
 
@@ -38,7 +39,7 @@ def owner(client):
 @pytest.fixture(autouse=True)
 def quick(monkeypatch):
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)

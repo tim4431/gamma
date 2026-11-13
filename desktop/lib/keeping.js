@@ -217,7 +217,7 @@ function size(n) {
 }
 
 // A directory vault's round as it runs (`status.progress`,
-// gamma/vault_sync.py Round._report: the files push takes and then the
+// gamma/vault/sync.py Round._report: the files push takes and then the
 // pages pull looks at, the bytes of the PDFs push takes, the file at hand):
 // "Syncing 30 / 120", or "Syncing…" before it knows, or when its round says
 // nothing of itself.

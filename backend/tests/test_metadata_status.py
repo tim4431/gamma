@@ -82,6 +82,25 @@ def test_status_lists_a_work_folders_file_once_it_is_in_the_library():
     assert figure not in papers and papers[paper]["doc_id"] == "m" * 24
 
 
+def test_status_leaves_out_a_document_that_is_no_pdf_unless_it_has_a_record(guest):
+    """A library page whose document is a picture is no paper: not listed,
+    and the hand lookup refuses it (409); with a record it lists as a page
+    citing a paper does, with no file."""
+    from gamma.documents.model import document
+
+    figure = make_page(guest, "A figure", properties={
+        "doc": document("f" * 24, name="fig.png", format="image", ext=".png")})
+    cited = make_page(guest, "A figure of a paper", properties={
+        "doc": document("g" * 24, name="fig.png", format="image", ext=".png"),
+        "meta": {"title": "Remote Paper", "doi": "10.1/fig"}})
+    r = guest.get("/api/metadata/status")
+    ids = {p["id"] for p in r.json()["papers"]}
+    assert figure["id"] not in ids and cited["id"] in ids
+    assert _paper(r, cited["id"])["doc_id"] == "" and _paper(r, cited["id"])["has_file"] is False
+    r = guest.post("/api/metadata/fetch", json={"block_id": figure["id"]})
+    assert r.status_code == 409 and r.json()["detail"] == "This page's document is no PDF: it has no paper's record to look up."
+
+
 def test_status_reads_index_state(guest):
     doc = "b" * 24
     page = make_page(guest, "Indexed paper", properties=doc_props(doc))

@@ -65,6 +65,28 @@ test("commentAnchors: the highlights and the ink groups on PDF pages, in documen
   assert.deepEqual(commentAnchors([], new Map()), []);
 });
 
+test("pageHighlights and commentAnchors under the image key: a picture's regions, with their threads, on the shown version or not", () => {
+  const region = (hash) => ({ width: 1200, height: 800, boundingRect: { x1: 10, y1: 20, x2: 300, y2: 200 },
+    rects: [{ x1: 10, y1: 20, x2: 300, y2: 200 }], hash });
+  const picture = [
+    { id: "r1", content: "", properties: { image_position: region("i1"), color: "#ffe066aa" }, children: [
+      { id: "n1", content: "a note", properties: {}, children: [] },
+    ] },
+    { id: "r0", content: "", properties: { image_position: region("i0") }, children: [] },
+    { id: "h1", content: "", properties: { pdf_position: at(1), quote: "a quote" }, children: [] },
+    { id: "g1", content: "", properties: { ink_url: "/api/uploads/a.ink", image_position: region("i1") }, children: [] },
+  ];
+  const flatPicture = flattenBlocks(picture);
+  const out = pageHighlights(picture, flatPicture, new Map([["r1", 1]]), "image_position", "i1");
+  assert.deepEqual(out.map((h) => [h.id, h.threadCount, h.hasNote, h.position.area, h.position.onVersion]),
+    [["r1", 1, true, true, true], ["r0", undefined, false, true, false]]);
+  assert.deepEqual(pageHighlights(picture, flatPicture, new Map()).map((h) => h.id), ["h1"], "the PDF key: the PDF's alone");
+  const anchors = commentAnchors(picture, new Map([["r0", 2]]), "image_position");
+  assert.deepEqual(anchors.map((a) => [a.id, a.kind, a.threadCount]), [["r1", "highlight", 0], ["r0", "highlight", 2]]);
+  assert.equal(anchors[0].position, picture[0].properties.image_position, "the block's own position");
+  assert.deepEqual(commentAnchors(picture, new Map()).map((a) => a.id), ["h1"], "the PDF key: the PDF's alone");
+});
+
 test("keepIfSameJson: the kept list while the next one reads the same, the next one once it differs", () => {
   const ref = { current: { json: "", value: [] } };
   const first = keepIfSameJson(ref, stampedList(tree));

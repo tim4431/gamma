@@ -2,14 +2,16 @@
 entry and the document") and its Markdown (gamma/feedback/markdown.py): the
 threads of a work folder, a directory or a file as entries — every kind's
 place and how it stands after a rebuild (exact, rough, estimate, lost,
-pending, earlier), the file's name from the vault's rows and from the
-folder tree, the order, a Send waiting, a tombstone, the cut past
-``MAX_ENTRIES``, the state filters, the scopes and their refusals, a root
-from before step 54 read from its block, the source live or as commented
-(the SyncTeX map stood in for: gamma/feedback/sources.py has its own
-tests) and the pictures' keys; then the Markdown of a fixed document byte
-for byte, its empty form and its picture modes."""
+pending, earlier), a picture's regions and the whole picture, the file's
+name from the vault's rows and from the folder tree, the order, a Send
+waiting, a tombstone, the cut past ``MAX_ENTRIES``, the state filters, the
+scopes and their refusals, a root from before step 54 read from its block,
+the source live or as commented (the SyncTeX map stood in for:
+gamma/feedback/sources.py has its own tests) and the pictures' keys; then
+the Markdown of a fixed document byte for byte, its empty form and its
+picture modes."""
 
+import io
 import json
 import sys
 from types import SimpleNamespace
@@ -19,7 +21,8 @@ import pytest
 import gamma.feedback
 from conftest import (account_of, login, make_folder, make_page, make_user, mark_work_folder, thread_on, work_props,
                       workspace_of)
-from gamma import storage, vault_store
+from gamma import storage
+from gamma.vault import store as vault_store
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
 from gamma.db import connect_pages_db
@@ -30,6 +33,7 @@ from gamma.ops import commit_ops
 
 USER, PASSWORD = "fbe_own", "pw-fbe-1"
 FRAME = {"width": 600, "height": 800}
+COORDS = ("x1", "y1", "x2", "y2")
 
 
 def _pdf(pages: int, text: str) -> bytes:
@@ -39,6 +43,25 @@ def _pdf(pages: int, text: str) -> bytes:
     for n in range(pages):
         doc.new_page(width=600, height=800).insert_text((72, 72), f"{text}, page {n + 1}", fontsize=11)
     return doc.tobytes()
+
+
+def _png(width: int, height: int, color="white") -> bytes:
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(out, "PNG")
+    return out.getvalue()
+
+
+def _picture(hash: str, **more) -> dict:
+    return document(hash, name="fig.png", format="image", ext=".png", **more)
+
+
+def _region(*rect, hash: str, **more) -> dict:
+    """An ``image_position`` over ``rect`` of a 1200 × 800 picture, drawn on
+    its version ``hash``."""
+    box = dict(zip(COORDS, rect))
+    return {"width": 1200, "height": 800, "boundingRect": box, "rects": [box], "hash": hash, **more}
 
 
 def _pos(page, *rects, area=False, **more) -> dict:
@@ -217,10 +240,10 @@ def test_placed_after_a_rebuild(paper):
     for k in ("E", "L", "P", "I"):
         assert got[t[k]]["picture"] is None  # not on this build
     for k in t:  # every thread was opened on the stored earlier build
-        assert got[t[k]]["before"] and regions[entries.key_of(got[t[k]]["before"])][1].file_hash == old
+        assert got[t[k]]["before"] and regions[entries.key_of(got[t[k]]["before"])][1].file == f"{old}.pdf"
     assert got[t["E"]]["where"]["box"] == anchors.parse(_anchor_of(p.ws, t["E"]))["box"]  # still measured on it
     # the picture of a rough placement is the new build's (no file here to draw it from: a key all the same)
-    assert regions[entries.key_of(got[t["R"]]["picture"])][1].file_hash == new
+    assert regions[entries.key_of(got[t["R"]]["picture"])][1].file == f"{new}.pdf"
 
 
 def _anchor_of(ws, thread_id):
@@ -256,6 +279,72 @@ def test_an_area_dragged_on_the_same_build_keeps_the_threads_place(paper, syncte
     assert [place["rects"] for pid, place in synctex.asked if pid == page and place["kind"] == "area"] == [anchor["rects"]]
     assert area["source"] == {"file": "main.tex", "line": 7, "version": "current"}
     assert (passage["where"]["page"], passage["where"]["quote"], passage["where"]["placed"]) == (2, "moved words", "exact")
+
+
+def test_a_pictures_regions_the_whole_picture_and_their_order(paper):
+    """A region of a picture: its place in the picture's own pixels and as
+    fractions, exact while the picture is the version it was drawn on, with
+    the current version's crop and the page's regions drawn; a note under
+    one takes its place; the page's thread gets the whole picture; the
+    order in the file: the whole picture, the regions by top, the notes.
+    A rebuild leaves the regions where they were, drawn on an earlier
+    version, with the held version's crop as ``before``; a file that is no
+    longer a picture loses them."""
+    p = paper
+    name, _ = storage.store_file(p.ws, _png(1200, 800), ".png")
+    png = name[:-4]
+    with connect_pages_db(p.ws) as conn:
+        page = create_page(conn, "fig.png", work_props(p.M, "fig.png", doc=_picture(png)), actor=p.account,
+                           client=DISK_CLIENT)["id"]
+    _ops(p.own, page, [_insert("fbgR", page, image_position=_region(120, 80, 360, 240, hash=png), color="#ff0000"),
+                       _insert("fbgS", page, image_position=_region(600, 400, 900, 600, hash=png)),
+                       _insert("fbgT", page, "a note on the page")])
+    _ops(p.own, page, [_insert("fbgN", "fbgR", "why red?")])
+    t = {k: thread_on(p.own, page, block, body)["id"] for k, block, body in (
+        ("T", "fbgT", "the note"), ("S", "fbgS", "the lower region"), ("R", "fbgR", "the region"),
+        ("N", "fbgN", "under the region"), ("file", page, "the whole picture"))}
+
+    def read():
+        regions: dict = {}
+        with connect_pages_db(p.ws) as conn:
+            got = entries.entries(p.ws, conn, entries.resolve_scope(conn, page), regions=regions)
+        return [e["id"] for e in got], {e["id"]: e for e in got}, regions
+
+    order, by, regions = read()
+    assert order == [t[k] for k in ("file", "R", "N", "S", "T")]
+    R, N, S, F = (by[t[k]] for k in ("R", "N", "S", "file"))
+    assert (R["format"], R["kind"], R["where"]) == ("image", "region", {
+        "box": [0.095, 0.095, 0.305, 0.305], "rect": [120, 80, 360, 240], "size": [1200, 800], "placed": "exact"})
+    assert list(R["where"]) == ["box", "rect", "size", "placed"]
+    assert (N["kind"], N["block_id"], N["where"]) == ("region", "fbgN", {**R["where"], "note": "why red?"})
+    assert (R["source"], R["before"], S["where"]["rect"]) == (None, None, [600, 400, 900, 600])
+    assert R["picture"] == N["picture"] and regions[entries.key_of(R["picture"])][1] == pictures.Region(
+        name, 0, (0.095, 0.095, 0.305, 0.305),
+        (("region", "fbgR", "#ff0000", ((0.1, 0.1, 0.3, 0.3),), True), ("region", "fbgS", "", ((0.5, 0.5, 0.75, 0.75),), True)))
+    assert (F["kind"], F["where"], F["before"]) == ("file", {}, None)
+    assert regions[entries.key_of(F["picture"])][1].box == (0.0, 0.0, 1.0, 1.0)
+    assert by[t["T"]]["picture"] is None and by[t["T"]]["kind"] == "note"
+
+    new = "d" * 24   # the picture rebuilt: not stored here, read in place on the person's computer
+    commit_ops(p.ws, page, [{"op": "set", "id": page, "props": {"doc": _picture(new, at="path")}}], actor=p.account,
+               client=DISK_CLIENT)
+    order, by, regions = read()
+    R, F = by[t["R"]], by[t["file"]]
+    assert R["where"]["placed"] == "earlier" and R["where"]["rect"] == [120, 80, 360, 240]
+    now, before = (regions[entries.key_of(R[k])][1] for k in ("picture", "before"))
+    assert (now.file, now.page, now.box, now.drawn[0][4]) == (f"{new}.png", 0, (0.095, 0.095, 0.305, 0.305), False)
+    assert before == pictures.Region(name, 0, (0.095, 0.095, 0.305, 0.305),
+                                     (("anchor", "region", "#ff0000", ((0.1, 0.1, 0.3, 0.3),)),))
+    whole = regions[entries.key_of(F["before"])][1]
+    assert (whole.file, whole.box, whole.drawn) == (name, (0.0, 0.0, 1.0, 1.0), (("anchor", "file", "", ()),))
+    assert regions[entries.key_of(F["picture"])][1].file == f"{new}.png"
+
+    commit_ops(p.ws, page, [{"op": "set", "id": page, "props": {
+        "doc": document(new, name="fig.tex", format="text", ext=".tex", at="path")}}], actor=p.account, client=DISK_CLIENT)
+    order, by, regions = read()
+    R, F = by[t["R"]], by[t["file"]]
+    assert (R["format"], R["where"]["placed"], R["picture"]) == ("text", "lost", None) and R["before"]
+    assert (F["picture"], F["before"]) == (None, None)
 
 
 def test_a_root_from_before_step_54_is_read_from_its_block(paper):
@@ -543,3 +632,17 @@ def test_the_markdowns_headings_and_facts():
     assert "- id: `x` · passage · placed roughly (0.82) · resolved\n- note: “a note”\n" in text
     assert "- sent: failed: no build (sent 2026-01-02 03:04)" in text
     assert "> **someone** · \n> *(deleted)*\n\n> **tim** · \n> two\n>\n> lines\n" in text
+    # a picture's regions and the whole picture
+    region = {"box": [0.095, 0.095, 0.305, 0.305], "rect": [40, 60, 360, 240], "size": [1200, 800], "placed": "exact"}
+    assert markdown.heading(item("region", region)) == "Region · 320×180 px at (40, 60)"
+    assert markdown.heading(item("region", {**region, "note": "n"})) == "Note on a region · 320×180 px at (40, 60)"
+    assert markdown.heading(item("region", {"placed": "lost"})) == "Region"
+    text = markdown.render_entry(item("region", {**region, "placed": "earlier"}, picture="img/a.jpg", before="img/b.jpg"),
+                                 pictures="files")
+    assert "- id: `x` · region · drawn on an earlier version of the picture\n" in text
+    assert "![The comment's region now](img/a.jpg)\n![The region as it was commented on](img/b.jpg)\n" in text
+    assert "the file is no longer a picture" in markdown.render_entry(item("region", {"placed": "lost"}))
+    text = markdown.render_entry(item("file", {}, picture="img/a.jpg", before="img/b.jpg"), pictures="files")
+    assert "- id: `x` · file · the picture was rebuilt\n" in text
+    assert "![The picture now](img/a.jpg)\n![The picture as it was commented on](img/b.jpg)\n" in text
+    assert "![The picture](img/a.jpg)\n\n" in markdown.render_entry(item("file", {}, picture="img/a.jpg"), pictures="files")

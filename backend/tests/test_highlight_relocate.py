@@ -2167,6 +2167,27 @@ def test_a_pdf_shown_from_a_url_alone_starts_no_run(guest):
     assert _props(guest, hl)["pdf_position"]["doc_id"] == storage.UNSTORED
 
 
+def test_a_pdf_replaced_by_the_vault_with_an_image_starts_no_run(guest):
+    """A work folder's file whose bytes sniff differently now (the vault's
+    file class replaces through ``replace_attachment`` with the new format):
+    the document changes, no highlight is stamped and no run starts; the old
+    format's positions stay as they were."""
+    from conftest import account_of, guest_name, workspace_of
+    from gamma.routers.pages import replace_attachment
+
+    page_id, _old, (hl,) = _page_with(guest, _pdf([[(72, 100, LINE_A)]]), [(LINE_A, _position(1, _line_rect(72, 100, LINE_A)))])
+    before = _props(guest, hl)["pdf_position"]
+    ws, account = workspace_of(guest_name()), account_of(guest_name())
+    png = storage.store_file(ws, b"\x89PNG\r\n\x1a\n" + b"p" * 64, ".png")[0]
+    done = replace_attachment(ws, page_id, png[:-4], name="fig.png", format="image", ext=".png", size=72,
+                              actor=account, owner=account, check_zotero=False)
+    assert done["results"] and done["placed"] == [] and done["job"] is None and done["relocation_error"] == ""
+    assert done["props"]["doc"] == {"format": "image", "name": "fig.png", "hash": png[:-4], "ext": ".png",
+                                    "at": "store", "size": 72}
+    assert _props(guest, hl)["pdf_position"] == before
+    assert not any(j["params"].get("doc_id") == png[:-4] for j in guest.get("/api/jobs").json()["jobs"])
+
+
 def test_the_manual_run_after_a_skipped_one_reads_the_old_file(guest, monkeypatch):
     # an area over a picture, which the next version draws on its second page
     a = _pdf([[(72, 100, LINE_A), ("image", (72, 200, 172, 300), BLUE)]])

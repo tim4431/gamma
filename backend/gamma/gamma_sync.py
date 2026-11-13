@@ -14,7 +14,7 @@ file, before each ``sync`` pulls; ``push`` does the same for one PDF
 anywhere on disk (a manuscript compiled again from its TeX). The page
 keeps its notes and highlights; notes files are never pushed. The desktop
 app keeps its synced vaults with an engine of its own
-(gamma/vault_sync.py), which pushes notes too; it takes this file's server
+(gamma/vault/sync.py), which pushes notes too; it takes this file's server
 client, ``Push`` and ``settled``, which is why this file lives in the gamma
 package. It imports nothing from it, and keeps its own state in the
 directory: the app's server keeps a vault's in its data directory.
@@ -185,7 +185,7 @@ class Server:
         ``headers`` beside the client's own: ``(status, the answer's bytes)``
         whatever the status, for a caller that reads a refusal's own body
         (the desktop app's synced vault of another server,
-        gamma/vault_http.py). ``Unreachable`` as for ``get_json``."""
+        gamma/vault/http_remote.py). ``Unreachable`` as for ``get_json``."""
         headers, body = {**self._headers(), **(headers or {})}, None
         if obj is not None:
             body = json.dumps(obj).encode("utf-8")
@@ -198,18 +198,26 @@ class Server:
         server stores already are stored once."""
         return self.upload(path, "/api/uploads", "application/pdf")
 
-    def upload(self, path: Path, route: str, content_type: str) -> dict:
+    def upload(self, path: Path, route: str, content_type: str, filename: str = "", *, field: str = "file",
+               offset: int = 0, length: int | None = None, fields: dict | None = None) -> dict:
         """The file at ``path`` sent to ``route`` as its one multipart part
-        ``file``, streamed from disk: the server's JSON answer."""
+        ``field`` (``file``), streamed from disk, named ``filename`` (its
+        own name: the server stores a file under that name's extension):
+        the server's JSON answer. ``offset`` and ``length`` send a slice of
+        it (an upload in parts, ``/api/uploads/parts/{token}``), ``fields``
+        text fields before the file's part."""
         boundary = f"gamma-sync-{os.urandom(12).hex()}"
-        name = path.name.replace('"', "%22").replace("\r", "%0D").replace("\n", "%0A")
-        head = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\n'
-                f"Content-Type: {content_type}\r\n\r\n").encode("utf-8")
+        name = (filename or path.name).replace('"', "%22").replace("\r", "%0D").replace("\n", "%0A")
+        head = "".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'
+                       for key, value in (fields or {}).items())
+        head += (f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{name}"\r\n'
+                 f"Content-Type: {content_type}\r\n\r\n")
+        head = head.encode("utf-8")
         tail = f"\r\n--{boundary}--\r\n".encode("ascii")
-        size = path.stat().st_size
+        size = path.stat().st_size - offset if length is None else length
         headers = {**self._headers(), "Content-Type": f"multipart/form-data; boundary={boundary}",
                    "Content-Length": str(len(head) + size + len(tail))}
-        return self._json("POST", route, headers, _parts(head, path, size, tail))
+        return self._json("POST", route, headers, _parts(head, path, size, tail, offset))
 
     def download(self, path, target: Path) -> None:
         """GET ``path`` into ``target``, written beside it and moved into
@@ -233,13 +241,14 @@ class Server:
             part.unlink(missing_ok=True)
 
 
-def _parts(head: bytes, path: Path, size: int, tail: bytes):
-    """A multipart body: ``head``, the first ``size`` bytes of ``path``,
+def _parts(head: bytes, path: Path, size: int, tail: bytes, offset: int = 0):
+    """A multipart body: ``head``, ``size`` bytes of ``path`` from ``offset``,
     ``tail``. A file that shrank meanwhile is ``Changed``, never a short
     body."""
     yield head
     left = size
     with open(path, "rb") as f:
+        f.seek(offset)
         while left:
             chunk = f.read(min(left, CHUNK))
             if not chunk:
@@ -412,13 +421,15 @@ def doc_of(path: Path) -> str:
     return digest.hexdigest()[:DOC_CHARS]
 
 
-def settled(path: Path) -> str:
+def settled(path: Path, tail: bytes | None = b"%%EOF") -> str:
     """"" when the file is whole and may be sent: written at least SETTLE_S
     ago (a time ahead of this clock, a share's whose clock runs ahead, counts
     as long ago: the tests after it say whether it is whole), open for
     reading (Windows refuses while its writer holds it), and ending as a PDF
-    ends, with "%%EOF" in its last EOF_TAIL bytes. Otherwise why not yet; a
-    compile writes its PDF over a second or more."""
+    ends, with ``tail`` ("%%EOF") in its last EOF_TAIL bytes; ``tail`` None
+    skips that test for a file of any format (a synced vault's work folder
+    file), the two before it staying. Otherwise why not yet; a compile
+    writes its PDF over a second or more."""
     try:
         written = path.stat().st_mtime
     except OSError:
@@ -428,10 +439,10 @@ def settled(path: Path) -> str:
     try:
         with open(path, "rb") as f:
             f.seek(max(0, f.seek(0, os.SEEK_END) - EOF_TAIL))
-            tail = f.read()
+            end = f.read()
     except OSError as e:
         return f"cannot be read: {e}"
-    return "" if b"%%EOF" in tail else NOT_WHOLE
+    return "" if tail is None or tail in end else NOT_WHOLE
 
 
 def moved(path: Path, entry) -> bool:

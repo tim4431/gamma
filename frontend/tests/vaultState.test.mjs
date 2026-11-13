@@ -83,6 +83,13 @@ test("the notes lock: a folder vault that does not pull and pushes everything, n
   assert.equal(notesLocked({ vault: { scope: "file", pull: false, push: "pdfs" }, reader: null }), false);
   assert.equal(notesLocked(opened()), false);
   assert.equal(notesLocked(null), false);
+  // the page's document: a work folder's picture or text file has no notes file, so its notes are Gamma's
+  const locked = folder({ pull: false });
+  assert.equal(notesLocked(locked, { format: "pdf", at: "path" }), true);
+  assert.equal(notesLocked(locked, null), true, "a note page");
+  assert.equal(notesLocked(locked, { format: "image", at: "path" }), false);
+  assert.equal(notesLocked(locked, { format: "text", at: "path" }), false);
+  assert.equal(notesLocked(locked, { format: "binary", at: "listed" }), false);
 });
 
 test("the notes file is edited here only where the vault pushes everything and the page has one", () => {

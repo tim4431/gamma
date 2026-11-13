@@ -234,10 +234,11 @@ paste).
 
 **The anchor.** A root keeps where its thread was opened (`anchor`, JSON;
 [feedback.md](feedback.md) "The anchor"): its kind (`passage`, `area`,
-`ink`, `note` or `file`), the block the place is read from (a note under a
-highlight takes the highlight's), the file the place was measured on, the
-PDF page, the rectangles and quote as fractions of the page then, and the
-region picture's crop. `comments.create` computes it from the rows, under
+`ink`, `region`, `note` or `file`), the block the place is read from (a
+note under a highlight takes the highlight's), the file the place was
+measured on and its extension, the PDF page (none for a region of a
+picture), the rectangles and quote as fractions of the page or the picture
+then, and the region picture's crop. `comments.create` computes it from the rows, under
 its lock; the source line SyncTeX maps it to is added after the commit
 (`gamma/feedback/kept.py`). It never changes with the block: it is the
 place as commented, which the feedback reader compares with the block now.
@@ -804,9 +805,17 @@ each highlight's open threads are cards in a column, level with the
 highlight's first line, and so are an ink group's, level with the
 drawing's top (`pdfAnchorOf`, `commentAnchors`; the ink side is in
 [handwriting.md](handwriting.md) "What the user sees", Comments on
-handwriting). Only the PDF
-has the margin: a note's threads, the page's own and the notes pane's
-controls keep the popover, and the notes pane has no comments section.
+handwriting). The image view has the margin too: a region of a picture
+(`image_position`, [api.md](api.md) "The highlight shape"; the region tool
+is [documents.md](documents.md) "Viewers") takes threads as a highlight
+does, its card level with the region's top
+(`commentAnchors` with the page's position key; `anchorTop` reads the
+frame the same way), and the picture, one page, is shifted left for the
+column as a PDF page is (`marginLayout.fitBeside`). A note's threads, the
+page's own and the notes pane's controls keep the popover, and the notes
+pane has no comments section. On the server a thread on a region is a
+`region` anchor and a feedback entry of that kind ([feedback.md](feedback.md)
+"The anchor").
 
 **When it shows.** While the document has a highlight with an open thread,
 or a new thread's card is open, every page with room for the column

@@ -82,8 +82,9 @@ def test_attach_stored_pdf_sets_attachment_and_automatic_title(guest):
     assert r.status_code == 200, r.text
     body = r.json()
     props = body["properties"]
-    # the stored copy's address is derived from its hash, and the name is a leaf
-    assert props["doc"] == {"format": "pdf", "name": "My Paper.pdf", "hash": doc_id, "ext": ".pdf", "at": "store"}
+    # the stored copy's address is derived from its hash, the name is a leaf, the size the stored file's
+    assert props["doc"] == {"format": "pdf", "name": "My Paper.pdf", "hash": doc_id, "ext": ".pdf", "at": "store",
+                            "size": len(PDF_BYTES + b"a")}
     assert not any(k in props for k in ("doc_id", "source_url", "original_filename"))
     # "Untitled" was automatic → the file name, marked for the metadata worker
     assert body["content"] == "My Paper.pdf" and props["auto_title"] == "My Paper.pdf"
@@ -213,7 +214,7 @@ def test_replace_keeps_a_pdf_read_in_place_there_unless_it_comes_from_an_address
     r = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new, "original_filename": "thesis.pdf"})
     assert r.status_code == 200, r.text
     assert r.json()["properties"]["doc"] == {"format": "pdf", "name": "thesis.pdf", "hash": new, "ext": ".pdf",
-                                             "at": "path"}
+                                             "at": "path", "size": len(PDF_BYTES + b"in-place")}
     # read in place, it is no library page of those bytes
     assert guest.get(f"/api/blocks/by-doc/{new}").status_code == 404
     url = "https://example.org/thesis.pdf"
@@ -275,7 +276,8 @@ def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
     assert body["id"] == page["id"] and body["content"] == "My paper"
     props = body["properties"]
     # the stored copy's address is derived, never stored (documents.model.document)
-    assert props["doc"] == {"format": "pdf", "name": "main-v2.pdf", "hash": new, "ext": ".pdf", "at": "store"}
+    assert props["doc"] == {"format": "pdf", "name": "main-v2.pdf", "hash": new, "ext": ".pdf", "at": "store",
+                            "size": len(PDF_BYTES + b"r2")}
     assert guest.get(f"/api/blocks/{page['id']}").json()["properties"] == props
     # the highlight keeps its place, now naming the file it was measured on
     # (gamma/highlight_relocate.py; the run that would move it cannot read these bytes)
@@ -301,7 +303,8 @@ def test_replace_a_proxied_pdf_with_an_upload_drops_its_address(guest):
     assert r.json()["properties"]["doc"]["url"] == "https://example.org/paper.pdf"
     new = _upload_pdf(guest, PDF_BYTES + b"r3")
     props = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new}).json()["properties"]
-    assert props["doc"] == {"format": "pdf", "name": "", "hash": new, "ext": ".pdf", "at": "store"}
+    assert props["doc"] == {"format": "pdf", "name": "", "hash": new, "ext": ".pdf", "at": "store",
+                            "size": len(PDF_BYTES + b"r3")}
 
 
 def test_replace_refuses_a_pdf_another_page_carries(guest):
@@ -483,7 +486,7 @@ def test_pdf_file_block_promotes_to_a_document_page(guest, no_grace):
     assert guest.get(f"/api/blocks/by-doc/{doc_id}").status_code == 404
     other = _upload_pdf(guest, PDF_BYTES + b"other")
     r = guest.post("/api/pages/by-docs", json={"doc_ids": [doc_id, other, "", "nope"]})
-    assert r.status_code == 200 and r.json() == {"pages": {}}
+    assert r.status_code == 200 and r.json() == {"pages": {}, "files": {}}
     # promote: same hash, no re-upload, filed in the asking page's folder
     rydberg = make_folder(guest, "Projects/Rydberg")
     r = guest.post(f"/api/blocks/by-doc/{doc_id}", json={
@@ -501,8 +504,9 @@ def test_pdf_file_block_promotes_to_a_document_page(guest, no_grace):
     again = guest.post(f"/api/blocks/by-doc/{doc_id}", json={"default_title": "",
                                                              "folder": make_folder(guest, "Elsewhere")}).json()
     assert again["id"] == page["id"] and again["properties"]["folders"] == [rydberg]
-    r = guest.post("/api/pages/by-docs", json={"doc_ids": [doc_id, other]})
-    assert r.json() == {"pages": {doc_id: {"id": page["id"], "title": "Supplement.pdf"}}}
+    r = guest.post("/api/pages/by-docs", json={"doc_ids": [doc_id, other], "files": [f"{doc_id}.pdf", f"{other}.pdf"]})
+    assert r.json() == {"pages": {doc_id: {"id": page["id"], "title": "Supplement.pdf"}},
+                        "files": {f"{doc_id}.pdf": {"id": page["id"], "title": "Supplement.pdf"}}}
     # the same file referenced by a file block AND carried by a page survives either going away
     ref = guest.post("/api/blocks", json={"parent_id": page["id"], "content": f"[Supplement.pdf]({up['url']})"}).json()
     assert guest.delete(f"/api/blocks/{ref['id']}").status_code == 200
@@ -567,7 +571,7 @@ def test_markdown_file_block_promotes_to_a_note_page(guest):
     up = _upload_file(guest, "Qubit controlled squeezing (2).md", md, "text/markdown").json()
     filename = up["url"].rsplit("/", 1)[-1]
     stem = filename[:-3]
-    assert guest.post("/api/pages/by-docs", json={"doc_ids": [stem]}).json() == {"pages": {}}
+    assert guest.post("/api/pages/by-docs", json={"doc_ids": [stem]}).json() == {"pages": {}, "files": {}}
     rydberg = make_folder(guest, "Projects/Rydberg")
     r = guest.post("/api/pages/from-file", json={"filename": filename, "folder": rydberg,
                                                  "original": "Qubit controlled squeezing (2).md"})
@@ -580,8 +584,10 @@ def test_markdown_file_block_promotes_to_a_note_page(guest):
     assert page["properties"]["markdown_import"] == stem and "doc" not in page["properties"]
     tree = guest.get(f"/api/blocks/{page['id']}/subtree").json()["block"]["children"]
     assert [b["content"] for b in tree] == ["# Setup", "- first point", "- second point"] or tree[0]["content"].startswith("#")
-    # the lookup now names the page, and a second promotion returns it unchanged
-    assert guest.post("/api/pages/by-docs", json={"doc_ids": [stem]}).json() == {"pages": {stem: {"id": page["id"], "title": "Squeezing notes"}}}
+    # the lookup now names the page, by hash and by stored name, and a second promotion returns it unchanged
+    found = {"id": page["id"], "title": "Squeezing notes"}
+    assert guest.post("/api/pages/by-docs", json={"doc_ids": [stem], "files": [filename]}).json() == {
+        "pages": {stem: found}, "files": {filename: found}}
     again = guest.post("/api/pages/from-file", json={"filename": filename, "folder": "Elsewhere"}).json()
     assert again["created"] is False and again["page"]["id"] == page["id"]
     # editing the page leaves the stored file byte-identical
@@ -595,6 +601,191 @@ def test_markdown_file_block_promotes_to_a_note_page(guest):
     up2 = _upload_file(guest, "Plain notes.md", b"just text\n", "text/markdown").json()
     made = guest.post("/api/pages/from-file", json={"filename": up2["url"].rsplit("/", 1)[-1], "original": "Plain notes.md"}).json()
     assert made["page"]["content"] == "Plain notes"
+
+
+# --- documents of any format: attach {file}, by-file, by-docs files ---------------------------
+
+PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x01" * 64
+
+
+def _stored(client, name, data, ctype="application/octet-stream") -> str:
+    """The stored name (``<hash><ext>``) of ``data`` uploaded as ``name``."""
+    r = _upload_file(client, name, data, ctype)
+    assert r.status_code == 200, r.text
+    return r.json()["url"].rsplit("/", 1)[-1]
+
+
+def _attach(client, page_id, body, method="post"):
+    return getattr(client, method)(f"/api/pages/{page_id}/attachment", json=body)
+
+
+def test_attach_a_stored_file_of_any_format(guest):
+    """``{file}`` names a stored file by its name; the format is settled on
+    the server from the name, the extension and the first bytes
+    (formats.stored_format), ``size`` is written, and one library page owns
+    one stored file. A PDF's title is automatic, any other's is the name
+    alone."""
+    cases = [
+        ("fig.png", PNG, "image/png", ".png", "image"),
+        ("main.tex", b"\\documentclass{article}\n", "application/x-tex", ".tex", "text"),
+        ("Makefile", b"all:\n\tmake\n", "application/octet-stream", ".bin", "text"),
+        ("notes.foo", b"plain words of an unknown extension\n", "application/octet-stream", ".foo", "text"),
+        ("blob.dat", b"\x00\x01\x02binary\x00bytes", "application/octet-stream", ".dat", "binary"),
+    ]
+    for name, data, ctype, ext, format in cases:
+        stored = _stored(guest, name, data, ctype)
+        assert stored.endswith(ext), (name, stored)
+        page = guest.post("/api/pages", json={}).json()
+        r = _attach(guest, page["id"], {"file": stored, "original_filename": f"dir/{name}"})
+        assert r.status_code == 200, (name, r.text)
+        props = r.json()["properties"]
+        assert props["doc"] == {"format": format, "name": name, "hash": stored[:-len(ext)], "ext": ext,
+                                "at": "store", "size": len(data)}, name
+        assert r.json()["content"] == name and "auto_title" not in props, name
+        assert guest.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"] == props["doc"]
+        other = guest.post("/api/pages", json={}).json()
+        r = _attach(guest, other["id"], {"file": stored})
+        assert r.status_code == 409 and r.json()["page_id"] == page["id"], name
+        assert guest.post("/api/pages/by-docs", json={"files": [stored]}).json()["files"] == {
+            stored: {"id": page["id"], "title": name}}, name
+
+
+def test_a_pdf_under_another_extension_is_attached_as_a_pdf_copy(guest):
+    """An arXiv download named by its id is stored as ``<hash>.12345v2``; its
+    bytes say PDF, so the attach stores the same bytes as ``<hash>.pdf`` and
+    the page carries a PDF, title automatic."""
+    data = PDF_BYTES + b"arxiv"
+    stored = _stored(guest, "2301.12345v2", data)
+    assert stored.endswith(".12345v2")
+    page = guest.post("/api/pages", json={}).json()
+    r = _attach(guest, page["id"], {"file": stored, "original_filename": "2301.12345v2"})
+    assert r.status_code == 200, r.text
+    doc = r.json()["properties"]["doc"]
+    assert doc == {"format": "pdf", "name": "2301.12345v2", "hash": stored.rsplit(".", 1)[0], "ext": ".pdf",
+                   "at": "store", "size": len(data)}
+    assert r.json()["properties"]["auto_title"] == "2301.12345v2"
+    assert (ws_uploads_dir(workspace_of(guest_name())) / f"{doc['hash']}.pdf").read_bytes() == data
+    assert guest.get(f"/api/blocks/by-doc/{doc['hash']}").json()["id"] == page["id"]
+
+
+def test_a_stored_files_address_is_no_pdf_to_attach(guest):
+    """A non-PDF upload's address as ``source_url`` is refused rather than
+    shown as a PDF from there; ``file`` comes alone, names a stored file the
+    workspace holds, and never a Markdown file (a note is made from it)."""
+    stored = _stored(guest, "fig.png", PNG, "image/png")
+    page = guest.post("/api/pages", json={}).json()
+    r = _attach(guest, page["id"], {"source_url": f"/api/uploads/{stored}"})
+    assert r.status_code == 400 and r.json()["detail"] == "Attach a stored file by its name (file)"
+    assert _attach(guest, page["id"], {"file": stored, "doc_id": "a" * 24}).status_code == 400
+    assert _attach(guest, page["id"], {"file": "not-a-stored-name"}).status_code == 400
+    assert _attach(guest, page["id"], {"file": "a" * 24 + ".png"}).status_code == 404
+    md = _stored(guest, "notes.md", b"# hi\n", "text/markdown")
+    r = _attach(guest, page["id"], {"file": md})
+    assert r.status_code == 400 and r.json()["detail"] == "A Markdown file becomes a note (POST /pages/from-file)"
+    assert "doc" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+
+
+def test_a_replacement_keeps_the_pages_format(guest):
+    """PUT replaces a picture by a picture (no relocation run, no stamp on
+    its regions, which read as drawn on another version by their own hash)
+    and refuses another format: detach first. A page without a document
+    takes any."""
+    v1, v2 = PNG + b"keep-v1", PNG + b"keep-v2"
+    png, png2 = _stored(guest, "fig.png", v1, "image/png"), _stored(guest, "fig.png", v2, "image/png")
+    page = guest.post("/api/pages", json={"title": "Figure"}).json()
+    assert _attach(guest, page["id"], {"file": png, "original_filename": "fig.png"}).status_code == 200
+    box = {"x1": 1, "y1": 1, "x2": 5, "y2": 5}
+    region = {"width": 10, "height": 10, "boundingRect": box, "rects": [box], "hash": png[:-4]}
+    block = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "",
+                                            "properties": {"image_position": region}}).json()
+    r = _attach(guest, page["id"], {"file": png2, "original_filename": "fig.png"}, "put")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["properties"]["doc"]["hash"] == png2[:-4] and body["properties"]["doc"]["size"] == len(v2)
+    assert "job" not in body and "relocation_error" not in body
+    assert guest.get(f"/api/blocks/{block['id']}").json()["properties"]["image_position"] == region
+    tex = _stored(guest, "main.tex", b"\\relax\n")
+    r = _attach(guest, page["id"], {"file": tex}, "put")
+    assert r.status_code == 400 and r.json()["detail"] == "This page's document is image; detach it first"
+    pdf = _upload_pdf(guest, PDF_BYTES + b"not-an-image")
+    assert _attach(guest, page["id"], {"doc_id": pdf}, "put").status_code == 400
+    assert guest.get(f"/api/blocks/{page['id']}").json()["properties"]["doc"]["hash"] == png2[:-4]
+    empty = guest.post("/api/pages", json={}).json()
+    assert _attach(guest, empty["id"], {"file": tex}, "put").status_code == 200
+
+
+def test_by_file_makes_one_library_page_per_stored_file(guest):
+    """``POST /pages/by-file``: the page that owns the stored file, else a
+    new one, keyed by hash and extension; a PDF goes the by-doc way, a
+    Markdown file is a note's (400)."""
+    data = PNG + b"byfile"
+    stored = _stored(guest, "fig.png", data, "image/png")
+    folder = make_folder(guest, "Figures/2026")
+    r = guest.post("/api/pages/by-file", json={"file": stored, "name": "dir/fig.png", "folder": folder})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    page = body["page"]
+    assert body["created"] is True and page["parent_id"] == "root" and page["content"] == "fig.png"
+    assert page["properties"]["doc"] == {"format": "image", "name": "fig.png", "hash": stored[:-4], "ext": ".png",
+                                         "at": "store", "size": len(data)}
+    assert page["properties"]["folders"] == [folder] and "auto_title" not in page["properties"]
+    again = guest.post("/api/pages/by-file", json={"file": stored, "name": "fig.png",
+                                                   "folder": make_folder(guest, "Elsewhere")}).json()
+    assert again["created"] is False and again["page"]["id"] == page["id"]
+    assert again["page"]["properties"]["folders"] == [folder]
+    # the same bytes under another extension are another stored file, and another page
+    txt = _stored(guest, "fig.txt", data)
+    assert txt[:-4] == stored[:-4]
+    other = guest.post("/api/pages/by-file", json={"file": txt, "name": "fig.txt"}).json()
+    assert other["created"] is True and other["page"]["id"] != page["id"]
+    assert other["page"]["properties"]["doc"]["format"] == "text"
+    r = guest.post("/api/pages/by-docs", json={"files": [stored, txt, "nope", f"{stored[:-4]}.gif"]})
+    assert r.json() == {"pages": {}, "files": {stored: {"id": page["id"], "title": "fig.png"},
+                                              txt: {"id": other["page"]["id"], "title": "fig.txt"}}}
+    md = _stored(guest, "notes.md", b"# hi\n", "text/markdown")
+    r = guest.post("/api/pages/by-file", json={"file": md, "name": "notes.md"})
+    assert r.status_code == 400 and "from-file" in r.json()["detail"]
+    pdf_data = PDF_BYTES + b"byfile-pdf"
+    pdf = _stored(guest, "paper.pdf", pdf_data, "application/pdf")
+    r = guest.post("/api/pages/by-file", json={"file": pdf, "name": "paper.pdf"})
+    assert r.status_code == 200 and r.json()["created"] is True
+    pdf_page = r.json()["page"]
+    assert pdf_page["properties"]["auto_title"] == "paper.pdf" and pdf_page["properties"]["doc"]["size"] == len(pdf_data)
+    assert guest.get(f"/api/blocks/by-doc/{pdf[:-4]}").json()["id"] == pdf_page["id"]
+    assert guest.post("/api/pages/by-file", json={"file": "a" * 24 + ".png"}).status_code == 404
+    assert guest.post("/api/pages/by-file", json={"file": "../x"}).status_code == 400
+
+
+def test_by_file_files_in_the_library_never_in_a_work_folder(guest):
+    from conftest import mark_work_folder
+    w = make_folder(guest, "byfile-W")
+    mark_work_folder(guest, w)
+    stored = _stored(guest, "data.json", b'{"k": 1}\n', "application/json")
+    r = guest.post("/api/pages/by-file", json={"file": stored, "name": "data.json", "folder": w})
+    assert r.status_code == 403 and r.json().get("conflict") == "locked", r.text
+
+
+def test_an_images_own_extension_is_kept_and_media_are_served_with_their_types(guest):
+    """``/upload-file`` keeps ``.jpeg`` for an image/jpeg (a document's stored
+    name is its hash and extension, and a mirror pushing one lands it under
+    the same name); a name without an extension, or with another image's,
+    takes the declared type's. A ``.mov`` and a ``.m4v`` are served as video;
+    a range of a stored file is answered (a player's seek, the code view's
+    head)."""
+    jpeg = _upload_file(guest, "photo.jpeg", b"\xff\xd8\xff" + b"j" * 40, "image/jpeg").json()["url"]
+    assert jpeg.endswith(".jpeg")
+    jpg = _upload_file(guest, "photo.jpg", b"\xff\xd8\xff" + b"j" * 40, "image/jpeg").json()["url"]
+    assert jpg.endswith(".jpg") and jpg[:-4] == jpeg[:-5]
+    assert _upload_file(guest, "shot", b"\x89PNG fake", "image/png").json()["url"].endswith(".png")
+    assert _upload_file(guest, "pic.gif", b"\x89PNG fake2", "image/png").json()["url"].endswith(".png")
+    for name, ctype in (("clip.mov", "video/quicktime"), ("clip.m4v", "video/x-m4v")):
+        url = _upload_file(guest, name, b"\x00\x00\x00\x1cftypqt  " + name.encode() + b"v" * 40).json()["url"]
+        r = guest.get(url)
+        assert r.status_code == 200 and r.headers["content-type"].startswith(ctype), name
+    png = _upload_file(guest, "fig.png", PNG + b"range", "image/png").json()["url"]
+    r = guest.get(png, headers={"Range": "bytes=0-7"})
+    assert r.status_code == 206 and r.content == PNG[:8]
+    assert r.headers["content-range"] == f"bytes 0-7/{len(PNG) + 5}"
 
 
 # --- root listing preview ---------------------------------------------------------------

@@ -80,14 +80,37 @@ const placesPicture = (b) => {
   return Boolean(p) && !isInkGroup(b) && !isRecord(p.text_box) && isRecord(p.picture);
 };
 
-// A highlight or a link region: a block with a pdf_position that is no ink
-// group, text box, picture or sheet (the server's `kind` highlight, and
-// link on the page; gamma/highlights.py is_highlight).
-export function isHighlightBlock(b) {
+// Where a block's place is stored, by the format of the page's document: a
+// PDF's places are pdf_position, a picture's regions image_position
+// (gamma/highlights.py). positionKeyOf reads a document's (pageDocument's
+// view, or null), the PDF's for a page without one.
+export const POSITION_KEY = Object.freeze({ pdf: "pdf_position", image: "image_position" });
+export const positionKeyOf = (doc) => POSITION_KEY[doc?.format] || POSITION_KEY.pdf;
+
+// A block placed by `key` that no other kind claims: no ink group, text box,
+// picture or sheet.
+const placedBy = (b, key) => {
   const p = b?.properties;
-  return Boolean(p && isRecord(p.pdf_position) && !isInkGroup(b) && !isRecord(p.text_box)
+  return Boolean(p && isRecord(p[key]) && !isInkGroup(b) && !isRecord(p.text_box)
     && !isRecord(p.picture) && !isRecord(p.sheet));
-}
+};
+
+// A highlight or a link region on a PDF page: a block with a pdf_position
+// that is no ink group, text box, picture or sheet (gamma/highlights.py
+// is_highlight; the server's `kind` highlight is wider: isPlaceBlock).
+export const isHighlightBlock = (b) => placedBy(b, "pdf_position");
+
+// A region of a picture: a block with an image_position that no other kind
+// claims (gamma/highlights.py is_region), the twin of isHighlightBlock on
+// an image document. Its shape is pdf_position's without a page:
+// {width, height, boundingRect, rects: [one], hash}, in the picture's own
+// pixels, `hash` the version it was drawn on.
+export const isRegionBlock = (b) => placedBy(b, "image_position");
+
+// A block with a place on its page's document, a PDF's highlight or a
+// picture's region: what the server's `kind` calls a highlight, and what
+// the rows, the thread popover and the notes lock treat alike.
+export const isPlaceBlock = (b) => isHighlightBlock(b) || isRegionBlock(b);
 
 // Where a comment thread on the block stands on the PDF, {page, position}
 // (its pdf_position and that position's page): a highlight or a link region
@@ -98,6 +121,16 @@ export function pdfAnchorOf(b) {
   const pos = b?.properties?.pdf_position;
   if (!isRecord(pos) || !(isHighlightBlock(b) || isInkGroup(b))) return null;
   return { page: pos.pageNumber ?? null, position: pos };
+}
+
+// Where a comment thread on the block stands on the page's document, by its
+// position key (positionKeyOf): a region's {page: null, position} for the
+// picture's key, pdfAnchorOf for any other (a stray second argument, a
+// map's index, reads as the PDF's). null for a block with no place under
+// that key.
+export function anchorOf(b, key = "pdf_position") {
+  if (key === POSITION_KEY.image) return isRegionBlock(b) ? { page: null, position: b.properties.image_position } : null;
+  return pdfAnchorOf(b);
 }
 
 // A plain note: text and nothing else. A block's fold and the moment it was
@@ -130,12 +163,18 @@ export function blockCollapsed(b) {
   return b?.properties?.collapsed ?? false;
 }
 
-// The block's place on its PDF page, when it has one: a position with its
+// The block's place on its page's document under `key` (positionKeyOf: the
+// PDF page's pdf_position, a picture's image_position; any other value, a
+// map's index, reads as the PDF's), when it has one: a position with its
 // rectangles (not one of its page alone).
-export function blockPosition(b) {
-  const pos = b?.properties?.pdf_position;
+export function blockPosition(b, key = "pdf_position") {
+  const pos = b?.properties?.[key === POSITION_KEY.image ? key : POSITION_KEY.pdf];
   return pos?.boundingRect ? pos : null;
 }
+
+// Where the block's own place is stored, by the block (positionKeyOf's twin):
+// a region's image_position, else pdf_position.
+export const placeKeyOf = (b) => (isRegionBlock(b) ? POSITION_KEY.image : POSITION_KEY.pdf);
 
 // A place to check after the PDF was replaced, drawn dashed: approx, and
 // not lost (a lost highlight is drawn hollow whatever else it carries).
@@ -511,28 +550,34 @@ export function addChildBlock(blocks, id) {
 // --- highlights: a new highlight block, and the viewer's highlights ---
 
 // The tree with a new highlight block last at the top level, made of what
-// the viewer took from a selection: its `quote` (empty for an area),
-// `note` (the block's text), `position` (its pdf_position), `color` in
-// any spelling normalizeColor reads (a picker's, a swatch's), the default
-// when it reads none, and `style` (markStyle.js: a line is stored, the
-// wash and an area store none).
-export function addHighlightAsBlock(blocks, { id, quote = "", note = "", position, color, style }) {
+// the viewer took from a selection: its `quote` (empty for an area or a
+// region), `note` (the block's text), `position` (its place, written under
+// `place`: pdf_position, or image_position for a picture's region), `color`
+// in any spelling normalizeColor reads (a picker's, a swatch's), the
+// default when it reads none, and `style` (markStyle.js: a line is stored,
+// the wash, an area and a region store none).
+export function addHighlightAsBlock(blocks, { id, quote = "", note = "", position, color, style, place = "pdf_position" }) {
   const block = makeNewBlock({
     id: id || makeId(),
     content: note || "",
-    properties: withStyle({ color: normalizeColor(color) || DEFAULT_HIGHLIGHT, quote: quote || "", pdf_position: position }, style),
+    properties: withStyle({ color: normalizeColor(color) || DEFAULT_HIGHLIGHT, quote: quote || "", [place]: position }, style),
   });
   return [...(blocks || []), block];
 }
 
-// The viewer's highlights (PdfViewer's `highlights`), one for each
-// highlight block with a position, in document order: {id, quote, note,
-// hasNote, color, style, position}, `quote` blockQuote's, `note` the
-// block's own text, `color` blockColor's (stored #rrggbbaa, or the
-// default), `style` markStyle.js blockStyle's and `position`
-// blockPosition's.
-export function blocksToHighlights(blocks) {
+// The viewer's highlights (PdfViewer's `highlights`, the image view's
+// regions), one for each block placed under `key` (positionKeyOf) with a
+// position, in document order: {id, quote, note, hasNote, color, style,
+// position}, `quote` blockQuote's, `note` the block's own text, `color`
+// blockColor's (stored #rrggbbaa, or the default), `style` markStyle.js
+// blockStyle's and `position` blockPosition's. A region's position carries
+// `area: true` for the readers that branch on it (the stored shape does
+// not) and `onVersion`, whether it was drawn on `hash`, the picture the page
+// shows now (its stored `hash`; false when it was drawn on another version,
+// which the viewer draws dashed).
+export function blocksToHighlights(blocks, key = "pdf_position", hash = "") {
   const out = [];
+  const region = key === "image_position";
   // A highlight "has a note" when the user typed anything on it: the block's
   // own content (the comment) or any non-empty block nested under it.
   function hasChildNote(b) {
@@ -540,7 +585,8 @@ export function blocksToHighlights(blocks) {
   }
   function walk(list) {
     for (const b of list || []) {
-      if (isHighlightBlock(b) && blockPosition(b)) {
+      const pos = (region ? isRegionBlock(b) : isHighlightBlock(b)) ? blockPosition(b, key) : null;
+      if (pos) {
         out.push({
           id: b.id,
           quote: blockQuote(b),
@@ -548,7 +594,7 @@ export function blocksToHighlights(blocks) {
           hasNote: (b.content || "").trim() !== "" || hasChildNote(b),
           color: blockColor(b),
           style: blockStyle(b),
-          position: blockPosition(b),
+          position: region ? { ...pos, area: true, onVersion: !!hash && pos.hash === hash } : pos,
         });
       }
       if (b.children?.length) walk(b.children);
@@ -808,10 +854,11 @@ export function insertBlocks(blocks, at, list) {
 }
 
 // A copy of block `b` and everything under it with fresh ids, as Duplicate
-// makes it. The PDF anchoring stays with the original: a copy with the same
-// position would draw the highlight twice (linkHighlightToBlock's rule), and
-// so would the Zotero annotation an import made it from. The quote is kept.
+// makes it. The anchoring stays with the original: a copy with the same
+// position would draw the highlight, or a picture's region, twice
+// (linkHighlightToBlock's rule), and so would the Zotero annotation an
+// import made it from. The quote is kept.
 export function freshCopy(b) {
-  const { pdf_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
+  const { pdf_position, image_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
   return { ...b, id: makeId(), properties: props, children: (b.children || []).map(freshCopy) };
 }

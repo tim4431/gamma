@@ -8,8 +8,9 @@ import { fmtBytes } from "./format.js";
 import { keepaliveFetch } from "./keepalive.js";
 import { dispositionName, saveBlob } from "./saveFile.js";
 import { sha256Hex } from "./sha256.js";
-import { formatOf } from "../../documents/formats.js";
 import { pdfProxyUrl } from "../../documents/pageDocument.js";
+// An incoming file is a PDF (re-exported below): the library's routing rule.
+import { isPdfFile } from "../../transfers/fileRouting.js";
 // The paper metadata source wording (re-exported below), a module of its own
 // so the node tests import it without the browser.
 import { isUnverifiedPaperMeta, metaSourceInfo } from "./metaSource.js";
@@ -288,14 +289,6 @@ async function copyRich(html, plain) {
   return legacyCopy(plain, html);
 }
 
-// An incoming file's format, by its type or its name (documents/formats.js).
-const isPdfFile = (f) => f.type === "application/pdf" || formatOf(f.name || "").format === "pdf";
-const isMarkdownFile = (f) => formatOf(f.name || "").format === "markdown"
-  || /^(?:text\/markdown|text\/x-markdown)$/i.test(f.type || "");
-// The file pickers' filter for the files the library takes in as pages (the
-// Add menu's Upload files…, "Start your library").
-const PAGE_FILE_ACCEPT = ".pdf,.md,.markdown,application/pdf,text/markdown";
-
 // FastAPI errors come as {"detail": "..."} — show the human message, not raw JSON.
 // The thrown Error carries `status` and the parsed JSON body as `data`, so
 // callers can act on structured conflicts (e.g. a 409 naming another page).
@@ -415,4 +408,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isUnverifiedPaperMeta, metaSourceInfo, apiJson, apiError, proxyRefusal, noteDeletingWorkspace, setShareView, getShareToken, withShare, withWorkspace, blockLinkUrl, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };

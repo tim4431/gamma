@@ -17,7 +17,7 @@ no line takes a file back from under one. It differs from git in one way:
 matching is always case-insensitive, with patterns and paths NFC, so one file
 reads the same on every system and ``*.pdf`` takes ``Paper.PDF``. Only the
 root's file is read, and the scan's own rules come before it whatever it says
-(gamma/vault_disk.py ``walk``).
+(gamma/vault/disk.py ``walk``).
 
 **No file** is ``DEFAULT``: notes, PDFs and pictures, the classes a vault has
 always read. ``read`` tells a file that is not there from one that cannot be
@@ -59,7 +59,9 @@ NAME = ".gammaignore"
 GITIGNORE = ".gitignore"
 HEADER = "# What Gamma tracks in this folder, in .gitignore's syntax. Edit it here or with Choose files… in Gamma."
 # What a vault tracks when its directory holds no .gammaignore: every
-# directory walked, its notes, PDFs and pictures (gamma/vault_disk.py kind_of).
+# directory walked, its notes, PDFs and pictures, the three classes a vault
+# has always read (gamma/vault/kinds.py class_of; in a work folder a picture
+# is a file with a page of its own).
 DEFAULT_TEXT = "*\n!*/\n" + "".join(f"!*{ext}\n" for kind in ("markdown", "pdf", "image")
                                     for ext, row in EXTENSIONS.items() if row.format == kind)
 

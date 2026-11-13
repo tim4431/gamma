@@ -1230,6 +1230,27 @@ bubble comes from the first; `view_pdf_page`, `view_ink`, `view_image` and
 `clip_region` chips carry `picture`, the URL the expanded chip shows; and
 the view tools' results tell the model it may embed that URL in its reply
 as a markdown image, which `ChatMarkdown` renders.
+
+**A picture page's region.** When the page's document is a picture
+([documents.md](documents.md) "The viewers"), `render_region` (the
+page-image route, the chat's region and view pictures, `picture_at`) draws
+it through `ai_pictures.image_region(ws, file, box, marks)`: `page` is 1
+(any other is "no such page"), `ink` does nothing. The function reads the
+stored file (an upload or a work folder's file read in place, at most
+`STORED_MAX_BYTES`), an SVG through its one-page PDF
+(`pdf_image.svg_pdf`), a raster with Pillow (the EXIF orientation applied,
+an animation's first frame, transparency on white), cuts the box (at
+least `REGION_MIN_PX`, 48, of the picture's own pixels a side) and scales
+it so the longer side is `RENDER_MAX_SIDE`, zooming at most
+`IMAGE_MAX_ZOOM` (4). Each mark `(box, color, strong)` is drawn as the
+viewer draws a region: an outline in the colour's line tone
+(`colors.line_color`), 2 px, 3 for a strong one, over a wash of the colour
+at a quarter of its alpha. The answer is `render_page`'s shape, `(bytes,
+"image/jpeg", width, height)`; None for a file not here, one that does not
+decode, a decompression bomb (`Image.MAX_IMAGE_PIXELS`) or one that changed
+under the read. The feedback reader's pictures of a region and of the
+whole picture are drawn by it ([feedback.md](feedback.md) "The pictures");
+the labels say "the picture" where a PDF's say "PDF page N".
 `GET /api/ai/selection-crop/{doc_id}` draws the selection pill's picture in
 saved replies. `ai_pictures.picture_at` gives the bytes of any of these
 pictures from the URL the chat shows it by: a stored upload as stored, a
@@ -1258,7 +1279,8 @@ stores a region or a handwriting view for the notes to embed
 
 Tests: `backend/tests/test_ai_pictures.py` (normalize, the routes, the
 request's pictures and budget, the earlier turns', the label lines, the
-view/clip/delete tools, the GC), `frontend/tests/chatPictures.test.mjs`,
+view/clip/delete tools, the GC), `backend/tests/test_ai_image_region.py`
+(a picture page's region and the route), `frontend/tests/chatPictures.test.mjs`,
 and the e2e step "a picked picture is stored and attached by URL".
 
 ## The library agent

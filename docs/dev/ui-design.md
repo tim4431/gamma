@@ -441,21 +441,30 @@ view by.
 Each viewer supplies only the two commits, since anchoring depends on its
 layout. The PDF's re-bases scroll and lets its zoom-anchor effect re-place
 the point (`pdf/PdfViewer.jsx`). The notebook's names the sheet and the
-fraction of it to hold ([notebooks.md](notebooks.md)).
+fraction of it to hold ([notebooks.md](notebooks.md)). The picture's
+(`documents/viewers/FileViews.jsx` `ImageViewer`) holds the point of the
+picture under the cursor or under the fingers' midpoint, in the picture's
+own pixels, and puts it back there at the new scale; a fit ("page-width",
+the PDF's word) is `comments/marginLayout.js fitBeside`: the whole picture
+within the pane, never enlarged by fitting, and beside the comment column
+while the document has cards, which the PDF's fit-width never leaves room
+for. A resize at fit refits.
 
 **How the committed scale reaches the content.** A commit renders the
 viewer, never its pages or sheets:
 
 - The viewer writes the scale as `--viewer-scale` (`SCALE_VAR` in
-  `viewerZoom.js`) on its content layer, `.pdfZoomLayer` or `.nbColumn`.
+  `viewerZoom.js`) on its content layer, `.pdfZoomLayer`, `.nbColumn` or
+  `.imgLayer`.
 - `registerScaleVar` (`viewerZoom.js`, run as the first viewer installs
   its gestures) registers it with `CSS.registerProperty` as a `<number>`
   that does not inherit. An inherited custom property restyles every
   element under the layer each time it changes, every text-layer span and
   ink path, which costs more than the renders it saves.
 - What sizes with the zoom picks the variable up with
-  `--viewer-scale: inherit`: a page box, a sheet, a built text layer, a
-  translation layer. Anything else that reads it gets 1, silently.
+  `--viewer-scale: inherit`: a page box, a sheet, a picture's box
+  (`.imgBox`), a built text layer, a translation layer. Anything else that
+  reads it gets 1, silently.
 - Each of those carries an inline style written by script: React's `style`
   or the text layer's build. WebKit's matched-properties cache gives an
   element with no inline style, or only one parsed from markup, the value
@@ -1250,9 +1259,19 @@ own controls.
   or a pen reaches it through a visible way in, rule 1 under [Adding a
   control](#adding-a-control): the selection popup's ⋯ (`MenuButton`), and
   a failed paragraph's mark.
+- **One region drag.** The pointer's part of an area drag is
+  `shared/ui/regionDrag.js` `beginRegionDrag`, which the PDF page and the
+  picture's view share: the primary pointer alone, document-level move and
+  up listeners so the drag survives leaving the box, the rectangle clamped
+  to the box and coalesced to one update per frame, under 6 px either way a
+  click (`regionGeometry.js`), the click after the release swallowed
+  (`press.js swallowClick`). Each viewer keeps its own gate: the PDF's area
+  key and rectangle mode (`PdfPage.beginAreaDrag`), the picture's mouse,
+  pen and region-mode finger.
 - **A second finger** turns a one-finger gesture into a pinch: it cancels
-  an area drag (`beginAreaDrag` takes the primary pointer only) as it
-  cancels a finger's ink stroke ([handwriting.md](handwriting.md)).
+  an area drag (`beginRegionDrag` takes the primary pointer only) as it
+  cancels a finger's ink stroke ([handwriting.md](handwriting.md)). Under a
+  pen another touch is a palm and changes nothing.
 - **The highlight tip.** The selection listeners subscribe once while
   annotating is allowed, not on every App render, so the pending
   `selectionchange` timer (350 ms) of a touch selection survives. The tip
@@ -1285,6 +1304,77 @@ own controls.
   scrolled (App's `notesPlaceRef`, `captureScrollPos`), and its tab lands
   there again, without the landing's flash. A text-only page also syncs
   that row in `read-pos` (`{page: 0, block}`), what a reload lands on.
+
+### The code view
+
+A text document's pane (`documents/viewers/TextViewer.jsx`,
+[documents.md](documents.md) "Viewers"): a read-only CodeMirror view in
+its own chunk.
+
+- **Read-only, not disabled.** `EditorState.readOnly` and
+  `EditorView.editable.of(false)`, never a contenteditable with `readOnly`:
+  a tap would raise the virtual keyboard. The content carries `tabindex="0"`
+  and an `aria-label`, so it takes the focus for Ctrl+F, Ctrl+A and copy;
+  the selection is the browser's own (no `drawSelection`), as in the block
+  editor, so no selection colours are needed.
+- **Colours.** The grammar's tokens are mapped to the `.hljs-*` classes
+  app.css colours for every theme (`viewers/hljsTags.js`, the notes' and
+  the chat's fenced code), so the view brings no colour and no
+  `EditorView.darkTheme`; its chrome, gutters, panel, field and buttons are
+  the tokens (`viewers/viewers.css`).
+- **Keys and touch.** Ctrl+F is CodeMirror's own search panel, at the top
+  (the pane's foot holds the × and the full-screen box; the scroller pads
+  its bottom 56 px for them); App's `app.search` declines inside
+  `.docTextView`, so the panel opens alone. A finger has no Ctrl+F, so the
+  bar carries **Find** (rule 1 under [Adding a control](#adding-a-control)),
+  beside **Wrap** (on by default in the phone layout; session state) and
+  **Download**. Ctrl+wheel over the text is the text size, through
+  `useTextScale` on the scroller (`--text-scale`), not a page zoom. Escape
+  closes the panel.
+- **The head first.** A file opens with one Range request of its first
+  2 MiB (`viewers/textLoad.js`), cut at its last whole line (a file that is
+  one line, a minified bundle, shows that line) and at 10,000 characters a
+  line; a bar at the foot says what shows and **Show all** reads the rest,
+  up to 16 MiB. A byte-order mark picks the encoding; invalid
+  UTF-8 shows as � with a line saying so; a NUL in the first bytes means the
+  file was no text, and the pane hands over to the file pane.
+- **The bar's word** is the Format column's (`formatLabel`: MATLAB, INI),
+  not the grammar's name.
+- **Place.** The top line (`{line}`) is what the view reports and opens at,
+  so a tab group's pane and the live page stand at the same line; a closed
+  pane opens again at the line it showed.
+
+### The image view
+
+A picture's pane (`ImageViewer` in `documents/viewers/FileViews.jsx`): one
+page of a PDF viewer in all but rendering.
+
+- **Zoom and fit** as [above](#zoom-gestures-in-a-viewer): the shared
+  gestures, the zoom column's buttons through App's `zoomTo`, a fit that
+  leaves room for the comment column. No inversion in a dark theme; a
+  checkerboard of the surface tones under a transparent picture.
+- **What a drag does.** A picture has no text to select, so a mouse or a
+  pen drag draws a region with no key held; a finger pans, and draws only
+  with the strip's region toggle (`viewer.selectMode`, the PDF's text /
+  rectangle toggle, which reads "Draw a region with a finger" here); two
+  fingers always pinch. Never from a comment card, a note badge or the tip,
+  and not at all when the page is read-only (a share, a tab group's pane).
+  The rubber band is `.regionMarquee`; on release the tip (the PDF
+  selection popup's look, `TipMarks area`) offers the colours, Comment,
+  Note and Ask AI, and the drawn box stays until it is answered or
+  dismissed (a press outside, Escape).
+- **Regions** are drawn as the PDF draws areas, in percent of the box, with
+  the `commented` and `active` looks, dashed with a title when drawn on an
+  earlier version of the picture, flashed once by a jump; each carries
+  `data-hl-id`, so the thread popover, the margin's outside-press rule and
+  the comment card find it as they find a highlight. Threads stand in the
+  same margin (`CommentMarginSlot`, page 1) while the column has room, else
+  a note badge (`comments/NoteBadge.jsx`, the PDF's) opens the popover.
+- **A replaced picture** keeps the scale and the scroll fractions; its
+  regions stay where they were, dashed. One that would not load shows the
+  file pane until the next version of the file, which gets a picture with
+  its zoom and gestures again.
+- **A closed pane** keeps its fit and zoom, and opens again where it stood.
 
 ### Adding a control
 
@@ -1815,7 +1905,10 @@ page's notes refuse what the single-block action refuses
 | File | Owns |
 |---|---|
 | `app/App.jsx` | routing, block-tree editor state, docks, the page's live session glue, AI chat glue (decomposition in progress) |
-| `documents/formats.js`, `documents/pageDocument.js`, `documents/documentView.js`, `documents/DocumentPane.jsx` | a page's document ([documents.md](documents.md)): a file name's format and language (twin of `gamma/documents/formats.py`), the one read of what a block carries (`pageDocument`, the view, and its predicates `ownHash`, `fileHash`, `isPdf`, `pdfFileHash`, `inPlace`, `sourceAddress`; `documentViewerUrl`, `copyDocument`), which viewer a page shows and whether it shows (`documentView`, App's `docView` and `PagePane`'s), and the pane that draws the viewer it names from the host's render functions |
+| `documents/formats.js`, `documents/pageDocument.js`, `documents/documentView.js`, `documents/viewers.js`, `documents/DocumentPane.jsx` | a page's document ([documents.md](documents.md)): a file name's format and language (twin of `gamma/documents/formats.py`), the one read of what a block carries (`pageDocument`, the view, and its predicates `ownHash`, `fileHash`, `isPdf`, `pdfFileHash`, `inPlace`, `isListed`, `sourceAddress`; `documentViewerUrl`, `documentFileUrl`, `copyDocument`), which viewer a page shows and whether it shows (`documentView`, App's `docView` and `PagePane`'s), the viewer registry and what each pane brings to the frame (`viewers.js`), and the pane that draws the viewer it names: the PDF and the notebook from the host's render functions, every other format from its own lazily loaded viewers, given one surface object |
+| `documents/viewers/TextViewer.jsx`, `documents/viewers/FileViews.jsx`, `documents/viewers/textLoad.js`, `documents/viewers/hljsTags.js`, `documents/viewers/viewers.css` | the code view ([above](#the-code-view)), the picture ([above](#the-image-view)), the player and the file pane; the file's head and its decoding; the grammar tokens mapped to the notes' `.hljs-*` palette; their layout and the CodeMirror chrome on the tokens |
+| `shared/ui/regionDrag.js`, `shared/ui/regionGeometry.js` | the one region drag of the PDF page and the picture ([The PDF viewer](#the-pdf-viewer)), and its arithmetic: the drag's rectangle, the click threshold, the picture's frame, a region's stored `image_position` and the fractions it is drawn by |
+| `comments/NoteBadge.jsx` | the speech-bubble badge at a highlight's or a region's edge: a note's hover tip, the threads' count, the popover's anchor where no margin card shows them |
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)), and `PersonAvatar`, the avatar of someone not on the page by username (a share's owner, a person to mention, a comment's author, an Inbox item's actor) |
 | `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `collaboration/conflictKinds.js`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, what each kind of conflict row says (pure), Settings → Workspaces → Clones and Zotero links ([mirror.md](mirror.md)) |
 | `app/boot.js`, `app/theme.js` | the first load's reads, sent as `main.jsx` starts and taken once by the code that would ask for them (`startBootReads`, `takeBootRead`: the server's config, the session), and the account's theme and language put on from the session's `profile` (`adoptAccountLook`, `languageSeen`; [settings.md](settings.md), [i18n.md](i18n.md)); the theme list (`THEMES`, `DARK_THEMES`, `themeScheme`) and `applyTheme`, which changes every colour in one frame ([Motion](#motion)) |

@@ -7,7 +7,7 @@ replacement comes through `PUT /pages/{id}/attachment` (the Document menu's
 Zotero link bringing its item's file
 ([zotero_sync.md](zotero_sync.md#pdfs)), or in the desktop app from a file
 on this computer that changed: a synced vault's PDF, a vault of one file,
-or a PDF read where it is ([synced_vaults.md](synced_vaults.md#a-pdf-read-where-it-is)).
+or a PDF read where it is ([synced_vaults.md](synced_vaults.md#a-file-read-where-it-is)).
 
 A highlight's place (`pdf_position`, [api.md](api.md) "The highlight
 shape") is a page and rectangles that hold only for the file it was made
@@ -205,7 +205,7 @@ the outgoing bytes were never stored, and the path holds the new ones.
 While a thread on such a page is open, every build it shows is stored
 (`feedback/kept.py`, [feedback.md](feedback.md) "The commented version
 kept"): the bytes at the thread's open, then the incoming ones first at
-each replacement (`vault_sync.LocalRemote.replace_pdf`,
+each replacement (`vault.local_remote.LocalRemote.replace_doc`,
 `linked_files._take_bytes`). So the outgoing file the stamps name is in
 the store, which `find_upload_file` reads before a linked path, the run
 places an area by the text inside it however many builds follow, and the
@@ -498,6 +498,35 @@ estimate (`approx` without `match`) stays one until the person accepts or
 moves it. Its text or picture found again, read under its reference, places
 it with no `match`. Its neighbours all staying at its reference put it back
 there, still `approx` with its `prev`.
+
+## Regions of a picture
+
+A region of a picture (a block with an `image_position`, drawn on a page
+whose document is an image; [documents.md](documents.md) "Regions of a
+picture") is never relocated. A picture has no text to find a passage by
+and no page of glyphs to ride along with, and a figure rebuilt by a script
+is most often the same drawing at the same size, or at another size with
+the same layout. So a region's position is the picture's own pixels as it
+was drawn (`width`, `height`, one rectangle) and the stem of the version
+it was drawn on (`hash`); every reader scales by fractions, so a figure
+rebuilt at another size keeps the region's relative place; and "drawn on
+another version" is derived, `hash` against the page's current file, never
+written: the viewer draws such a region dashed, the feedback reader says
+`placed: "earlier"` ([feedback.md](feedback.md)), and a picture rebuilt to
+the bytes a region was drawn on reads as current again. The version a
+comment thread was opened on is held by the thread's anchor, not by the
+region (`storage._position_ids` names nothing for it).
+
+A replacement therefore writes nothing on regions: `PUT /attachment` of an
+image by an image writes no stamps and starts no job (`page_highlights`
+reads `pdf_position` alone), and the vault's file class replaces the
+document only (`replace_doc`). The gate is in `replace_attachment`: the
+stamps and the relocation run only when the outgoing and the incoming
+documents are both PDFs (`is_pdf(old) and format == "pdf"`). A format
+change through the vault (a file whose sniffed format changed, say an
+unknown name whose bytes turned out a PDF) starts no run either; positions
+of the old format stay on their blocks, drawn by no viewer and listed in
+the notes.
 
 ## The thresholds
 

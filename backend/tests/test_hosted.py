@@ -248,7 +248,7 @@ def test_read_only_refuses_writes_but_lets_people_leave_with_their_data(plan, ad
     r = admin.post("/api/block-search", json={"q": "read-only", "pages": [page["id"]]})
     assert r.status_code == 200, r.text
     assert admin.post("/api/pdf-search", json={"q": "read-only", "pages": [page["id"]]}).status_code == 200
-    assert admin.post("/api/pages/by-docs", json={"doc_ids": ["nope"]}).json() == {"pages": {}}
+    assert admin.post("/api/pages/by-docs", json={"doc_ids": ["nope"]}).json() == {"pages": {}, "files": {}}
     r = admin.post("/api/jobs/workspace-export", json={"uploads": False})
     assert r.status_code == 200, r.text
     assert admin.get(f"/api/pages/{page['id']}/export?mode=readable").status_code == 200

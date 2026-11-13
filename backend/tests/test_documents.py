@@ -16,7 +16,7 @@ from gamma.blocks_store import get_or_create_doc_page, page_for_doc, pages_for_d
 from gamma.db import connect_pages_db, safe_doc_id
 from gamma.documents import formats
 from gamma.documents.model import (check_document, copy_document, document, document_at, document_props,
-                                   document_title, file_hash, in_place, is_pdf, own_hash, page_document,
+                                   document_title, file_hash, in_place, is_listed, is_pdf, own_hash, page_document,
                                    parse_upload_url, pdf_file_hash, source_address, stored_name, upload_url, url_hash)
 
 USER, PASSWORD = "docs_owner", "pw-docs-1"
@@ -113,6 +113,30 @@ def test_document_rule_7_the_size_and_the_name():
     assert list(document("u1", "https://x.test/p.pdf", size=3)) == ["format", "name", "hash", "ext", "at", "url", "size"]
 
 
+def test_document_rule_8_a_listed_file_has_no_bytes_here():
+    """A work folder's file too large to keep (config.vault_keep_bytes): at
+    ``listed``, no hash and no address, its size named, never a PDF or a
+    Markdown file (no limit measures them), never a copy. Its view has no
+    address and no stored name, so nothing reads, stores or looks it up."""
+    listed = document("", name="weights.ckpt", at="listed", format="binary", ext=".ckpt", size=5_000_000)
+    assert listed == {"format": "binary", "name": "weights.ckpt", "hash": "", "ext": ".ckpt", "at": "listed", "size": 5_000_000}
+    assert list(listed) == ["format", "name", "hash", "ext", "at", "size"]
+    for bad in ({"hash": "d1"}, {"url": "https://x.test/w.ckpt"}, {"url": "/api/uploads/d1.ckpt"}, {"size": None},
+                {"copy": True}, {"format": "pdf", "ext": ".pdf"}, {"format": "markdown", "ext": ".md"}):
+        with pytest.raises(ValueError):
+            document(**{"name": "w", "at": "listed", "format": "binary", "ext": ".ckpt", "size": 1, **bad})
+    view = page_document({"doc": listed})
+    assert (view["at"], view["hash"], view["file"], view["url"], view["size"]) == ("listed", "", "", "", 5_000_000)
+    assert is_listed(view) and not in_place(view) and not is_pdf(view)
+    assert (own_hash(view), file_hash(view), pdf_file_hash(view), source_address(view)) == ("", "", "", "")
+    text = page_document({"doc": document("", name="run.log", at="listed", format="text", ext=".log", size=3)})
+    assert text["language"] == "plaintext"
+    for other in (None, page_document(doc_props("d1")), page_document(doc_props("d1", at="path"))):
+        assert not is_listed(other)
+    with pytest.raises(ValueError):  # nothing to copy: a duplicate of a listed page writes no doc
+        copy_document(view)
+
+
 def test_check_document_rebuilds_what_a_writer_supplies():
     assert check_document({"hash": "d1"}) == document("d1")
     assert check_document({"url": "/api/uploads/d1.pdf"}) == document("d1", copy=True)
@@ -188,6 +212,37 @@ def test_names_and_addresses():
     assert document_title("", "https://x.test/q.pdf", "d1") == "q.pdf"
     assert document_title("", "/api/uploads/d1.pdf", "d1") == "d1.pdf"  # the raw address, as attach always titled
     assert document_title("", "", "d1") == "d1"
+
+
+def test_vault_extension_stores_a_blocked_name_as_bin():
+    """The vault's variant of stored_extension: every name answers, a
+    blocked or missing extension as .bin, and the two agree on the rest."""
+    for name in ("main.tex", "fig.PNG", "Makefile", ".gitignore", "2301.12345v2", "odd.abcdefghijklm", "trailing."):
+        assert formats.vault_extension(name) == formats.stored_extension(name), name
+    for blocked in ("run-local.bat", "Setup.EXE", "a.ps1"):
+        assert formats.vault_extension(blocked) == ".bin"
+        with pytest.raises(ValueError):
+            formats.stored_extension(blocked)
+
+
+def test_stored_format_reads_the_stored_extension_then_the_name_then_the_bytes():
+    """The format of a stored file is settled on the server (an attach, a
+    by-file, the vault's file class): its stored extension's row unless
+    that is .bin or unknown, else the whole name, else the name's own
+    extension, else the first bytes, else binary."""
+    assert formats.stored_format("shot", ".png", None) == ("image", None)       # named by its media type
+    assert formats.stored_format("photo.jpeg", ".jpg", None) == ("image", None)
+    assert formats.stored_format("Makefile", ".bin", None) == ("text", "makefile")
+    assert formats.stored_format("notes.txt", ".bin", None) == ("text", "plaintext")
+    assert formats.stored_format("2301.12345v2", ".12345v2", b"%PDF-1.7\n") == ("pdf", None)
+    assert formats.stored_format("data.xyz", ".xyz", None) == ("binary", None)
+    assert formats.stored_format("data.xyz", ".xyz", b"a,b\n1,2\n") == ("text", "plaintext")
+    assert formats.stored_format("blob.bin", ".bin", b"\x00\x01") == ("binary", None)
+    assert formats.stored_format("run-local.bat", ".bin", b"@echo off\n") == ("text", "plaintext")
+    assert formats.stored_format("", ".bin", None) == ("binary", None)
+    # the extension's row wins over the name: a .bin is the one exception, since it names nothing
+    assert formats.stored_format("Makefile", ".py", None) == ("text", "python")
+    assert formats.stored_format("paper.pdf", ".png", None) == ("image", None)
 
 
 # --- the writers ----------------------------------------------------------------------
@@ -373,14 +428,20 @@ def test_a_name_that_ends_in_a_newline_is_no_stem_or_extension():
         safe_doc_id("d1\n")
 
 
-def test_the_serving_views_are_storages_tables_of_before():
+def test_the_serving_tables():
+    """The serving tables: every image row's media type is allowed and served inline, every audio row
+    inline, a video served with its own type, SVG and HTML sandboxed, every executable blocked."""
     assert formats.IMAGE_MEDIA_TYPES == {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-                                         ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml"}
+                                         ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
+                                         ".bmp": "image/bmp", ".ico": "image/x-icon", ".svg": "image/svg+xml"}
     assert formats.IMAGE_EXTENSIONS == {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
-                                        "image/webp": ".webp", "image/svg+xml": ".svg"}
-    assert formats.ALLOWED_IMAGE_TYPES == {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
-    assert formats.INLINE_EXTENSIONS == {".pdf", ".txt", ".md", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-                                         ".webm", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
+                                        "image/webp": ".webp", "image/avif": ".avif", "image/bmp": ".bmp",
+                                        "image/x-icon": ".ico", "image/svg+xml": ".svg"}
+    assert formats.ALLOWED_IMAGE_TYPES == {"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp",
+                                           "image/x-icon", "image/svg+xml"}
+    assert formats.INLINE_EXTENSIONS == {".pdf", ".txt", ".md", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico",
+                                         ".webm", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".flac", ".aac"}
+    assert formats.media_type(".mov") == "video/quicktime" and formats.media_type(".m4v") == "video/x-m4v"
     assert formats.SANDBOXED_EXTENSIONS == {".svg", ".html"}
     assert formats.BLOCKED_EXTENSIONS == {
         ".exe", ".com", ".scr", ".pif", ".bat", ".cmd", ".msi", ".msix", ".appx",

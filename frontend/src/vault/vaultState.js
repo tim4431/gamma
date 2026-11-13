@@ -11,7 +11,7 @@
 // "" for a member who cannot act on the vault: where its files lie is the
 // reading of whoever made it. Pure: tests/vaultState.test.mjs.
 import { t, tn } from "../shared/i18n/i18n.js";
-import { inPlace } from "../documents/pageDocument.js";
+import { inPlace, isPdf } from "../documents/pageDocument.js";
 
 // The answer, kept only when it says something: null for a page of no vault
 // that reads no file here.
@@ -88,9 +88,13 @@ export function bannerKey(pageId, banner) {
 // note edited here would part from the file, which is where the notes are
 // written. Highlights and chat stay open (BlockTree's `notesLocked`). One
 // that pushes only PDFs never reads a notes file into Gamma, and a vault of
-// one file keeps only its PDF on disk: their notes are Gamma's.
-export function notesLocked(state) {
+// one file keeps only its PDF on disk: their notes are Gamma's. So are the
+// notes of a page whose document is no PDF (`doc`, the page's
+// pageDocument): a work folder's picture or text file has no notes file,
+// the vault never writes one, and its notes stay open.
+export function notesLocked(state, doc = null) {
   const vault = state?.vault;
+  if (doc && !isPdf(doc)) return false;
   return !!vault && vault.scope !== "file" && !vault.pull && vault.push === "everything";
 }
 

@@ -1,4 +1,4 @@
-"""A synced vault's rounds (gamma/vault_sync.py): real directories in tmp_path
+"""A synced vault's rounds (gamma/vault/sync.py): real directories in tmp_path
 and a real workspace, every step of push and pull (docs/dev/synced_vaults.md
 "A round"), a kill at each point of the journal followed by a round that
 converges with nothing lost and nothing doubled, the echo (a second round
@@ -22,8 +22,9 @@ import pytest
 
 from conftest import (_tree_block, account_of, doc_props, login, make_folder, make_page, make_user,
                       mark_work_folder, thread_on, workspace_of)
-from gamma import (comments, config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage,
-                   vault_disk, vault_merge, vault_store, vault_sync)
+from gamma import comments, config, folder_links, gamma_sync, jobs, linked_files, md_lens, pdf_meta, storage
+from gamma.vault import disk as vault_disk, kinds, local_remote, merge as vault_merge, store as vault_store
+from gamma.vault import sync as vault_sync
 from gamma.blocks_store import LABELS, block_kind, new_block_id, newest_change_seq, write_lock
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.feedback import kept
@@ -31,7 +32,7 @@ from gamma.ops import commit_ops, move_across_pages, restore_page, trash_page
 from gamma.routers import pages as pages_mod
 from gamma.routers.pages import replace_attachment
 from gamma.trash import purge as purge_page
-from gamma.vault_sync import LocalRemote
+from gamma.vault.local_remote import LocalRemote
 
 OWNER = "vs_owner"
 
@@ -52,7 +53,7 @@ def quick(monkeypatch):
     missing file removed at its second scan, no manifest walk holding a PDF
     open, no stat remembered."""
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)
@@ -579,7 +580,7 @@ def test_a_file_put_back_brings_its_page_back_from_recently_deleted(vault):
 
 
 def test_a_note_still_being_written_waits(vault, monkeypatch):
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 60)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 60)
     v = vault()
     v.write("Fresh.md", "just saved\n")
     status = v.sync()
@@ -1268,7 +1269,7 @@ def test_a_push_names_its_first_batch_with_the_journals_token(vault, monkeypatch
     """Crash safety: ``ops.apply_batches(batch_id=)`` names
     the first of a push's batches (``MAX_OPS`` each) with its pending's token,
     which is what the journal looks for after a crash (``landed``)."""
-    monkeypatch.setattr(vault_sync, "MAX_OPS", 2)
+    monkeypatch.setattr(local_remote, "MAX_OPS", 2)
     v = vault()
     v.write("B.md", "a\n")
     v.sync()
@@ -1280,7 +1281,7 @@ def test_a_push_names_its_first_batch_with_the_journals_token(vault, monkeypatch
     v.sync()
     with connect_pages_db(v.ws) as conn:
         named = conn.execute("SELECT batch_id FROM page_ops WHERE page_id = ? AND client = ? ORDER BY seq",
-                             (page, vault_sync.CLIENT)).fetchall()
+                             (page, local_remote.CLIENT)).fetchall()
     assert named[-2:] == [(tokens[-1],), ("",)] and v.remote.landed(page, tokens[-1])
     assert v.texts(page) == ["a", "b", "c", "d", "e"]
 
@@ -1397,7 +1398,7 @@ def test_a_kill_after_shape_ops_only_leaves_a_page_to_pull(vault, monkeypatch):
 
 def _quick_again(monkeypatch):
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)
@@ -1475,11 +1476,11 @@ def test_an_account_that_may_no_longer_edit_stops_the_vault_not_a_file(vault, mo
     v = vault()
     v.write("A.md", "a\n")
     v.sync()
-    monkeypatch.setattr(vault_sync.workspaces, "role_of", lambda ws, user: "viewer")
+    monkeypatch.setattr(local_remote.workspaces, "role_of", lambda ws, user: "viewer")
     v.write("A.md", "a, edited\n")
     status = v.sync(ok=False)
     assert "may no longer edit" in status["last_error"] and v.texts(v.page_of("A.md")) == ["a"]
-    monkeypatch.setattr(vault_sync.workspaces, "role_of", lambda ws, user: None)
+    monkeypatch.setattr(local_remote.workspaces, "role_of", lambda ws, user: None)
     status = vault_sync.sync(v.link, remote=v.remote, direction="pull").status
     assert "no access" in status["last_error"]
 
@@ -1501,7 +1502,7 @@ def test_a_vault_with_no_marker_stops_and_one_whose_disk_is_gone_is_offline(vaul
     w = vault("w")
     w.write("M.md", "m\n")
     w.sync()
-    monkeypatch.setattr(vault_disk, "walk", lambda root, rules=None: (_ for _ in ()).throw(vault_disk.Offline("gone")))
+    monkeypatch.setattr(vault_disk, "walk", lambda root, rules=None, **kw: (_ for _ in ()).throw(vault_disk.Offline("gone")))
     for _ in range(2):
         status = w.sync(ok=False)
         assert status["offline"] and w.state(w.page_of("M.md")) == "live"
@@ -1519,8 +1520,8 @@ def test_a_cloud_placeholder_is_never_read_or_removed(vault, monkeypatch):
     page = v.page_of("Cloud.md")
     real = vault_disk.scan
 
-    def placeholders(root, vault_id, rules=None):
-        found = real(root, vault_id, rules)
+    def placeholders(root, vault_id, rules=None, **kw):
+        found = real(root, vault_id, rules, **kw)
         for f in found.files.values():
             f.placeholder = True
         return found
@@ -1562,7 +1563,7 @@ def test_vaults_db_is_never_written_inside_the_pages_write_lock(vault, monkeypat
             except sqlite3.OperationalError as e:
                 raise AssertionError("vaults.db written inside the pages lock") from e
         return real()
-    for module in (vault_store, vault_sync, linked_files):
+    for module in (vault_store, local_remote, linked_files):
         monkeypatch.setattr(module, "connect_vaults_db", checked)
     v.write("L.md", "a\n\nb\n")
     v.write("L.pdf", _pdf("l"), age=10)
@@ -2113,6 +2114,27 @@ def test_a_picture_pasted_in_gamma_goes_to_the_attachment_folder_and_is_read_the
     v.quiet()
 
 
+def test_a_pictures_row_goes_with_its_file_and_its_directory_with_them(vault):
+    """A picture's row is no file the scan compares, so it outlived its file:
+    a directory deleted with its note and the picture the note linked stayed a
+    folder in Gamma for good, and the guard counted the row as a file."""
+    v = vault()
+    v.write("figs/N.md", "look: ![[a.png]]\n")
+    v.write("figs/a.png", PNG)
+    v.write("keep.md", "k\n")
+    v.sync()
+    page = v.page_of("figs/N.md")
+    assert v.rows()["figs/a.png"]["kind"] == "picture" and "figs" in vault_store.dirs(v.link["id"])
+    v.sync()
+    assert v.link["state"]["total"] == 2
+    shutil.rmtree(v.root / "figs")
+    v.sync()
+    v.sync()
+    assert v.state(page) == "trashed" and "figs/a.png" not in v.rows()
+    assert "figs" not in vault_store.dirs(v.link["id"])
+    assert "figs" not in {name for _parent, name in v.layout().folders.values()}
+
+
 def test_a_page_round_reads_a_picture_put_in_the_vault_since_the_last_scan(vault):
     """A page's round has no scan, so a picture its note now links stayed as
     typed until that block changed."""
@@ -2568,7 +2590,7 @@ def test_pull_alone_never_trashes_a_note_changed_on_disk_and_a_purge_takes_none_
 def test_a_note_saved_as_a_round_starts_whose_page_went_for_good_is_a_page_again(vault, monkeypatch):
     """Push waited for the note still being written; pull found its page gone
     for good, moved the file to the trash and swept it in the same round."""
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 60)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 60)
     v = vault()
     v.write("keep.md", "keep\n", age=120)
     v.write("n.md", "a note\n", age=120)
@@ -2580,7 +2602,7 @@ def test_a_note_saved_as_a_round_starts_whose_page_went_for_good_is_a_page_again
     v.write("n.md", "a note\n\nwords saved a moment ago\n")
     v.sync(ok=False)
     assert v.text("n.md") == "a note\n\nwords saved a moment ago\n"
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     v.sync()
     assert v.texts(v.page_of("n.md")) == ["a note", "words saved a moment ago"]
     v.quiet()
@@ -2654,7 +2676,7 @@ def test_a_note_whose_time_is_ahead_of_this_clock_is_read_and_holds_back_no_remo
     """A note saved through a share whose clock runs ahead waited as one still
     being written until this clock passed its time: not pushed, not pulled,
     and every removal of a note in the vault waited with it."""
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 1.0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 1.0)
     v = vault()
     v.write("n.md", "first line\n\nsecond line\n", age=30)
     v.write("sub/gone.md", "a note the person deletes\n", age=30)

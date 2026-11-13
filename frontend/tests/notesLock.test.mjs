@@ -35,6 +35,16 @@ test("a highlight may go, move and nest only where no note is touched", () => {
   assert.equal(touchesLocked(t, "gone", "delete"), true, "a row not in the tree");
 });
 
+test("a region of a picture is as open as a highlight: its row keeps its editor, and the arrows reach it", () => {
+  const region = (id, children = []) => ({ id, content: "", properties: { image_position: { width: 1, height: 1, boundingRect: { x1: 0, y1: 0, x2: 1, y2: 1 }, rects: [], hash: "i1" } }, children });
+  assert.equal(lockedRow(region("r")), false);
+  assert.equal(lockedRow({ id: "p", content: "", properties: { picture: {}, image_position: {} }, children: [] }), true, "a picture is a picture");
+  const t = [region("r1"), note("n1"), region("r2", [note("n2")])];
+  assert.equal(touchesLocked(t, "r1", "delete"), false);
+  assert.equal(touchesLocked(t, "r2", "delete"), true, "it holds a note");
+  assert.equal(hopTarget(t, "r1", 1, null).id, "r2", "past n1");
+});
+
 test("the arrows hop over the locked rows to the next highlight, or nowhere", () => {
   const t = tree();
   assert.equal(hopTarget(t, "h1", 1, null).id, "h2", "past n1, into its child");

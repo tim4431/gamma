@@ -3,10 +3,11 @@ build read in place has its bytes stored once a thread is opened on it,
 each rebuild while the thread is open stores the incoming build, so the
 relocation run reads the outgoing one from the store and places an area by
 its text again and again; the thread's version is held until its resolve,
-which gives it the replacement's day, and a reopen claims it back; the
-repair stores what the quota refused; the place's source line is recorded
-on the anchor at the thread's open; the owner's copy of a page (a Gamma
-export, a backup merge) carries the versions its open threads hold."""
+which gives it the replacement's day, and a reopen claims it back; a work
+folder's picture is kept the same way; the repair stores what the quota
+refused; the place's source line is recorded on the anchor at the thread's
+open; the owner's copy of a page (a Gamma export, a backup merge) carries
+the versions its open threads hold."""
 
 import io
 import json
@@ -19,15 +20,16 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from PIL import Image
 
 from conftest import (account_of, doc_props, login, make_folder, make_page, make_user, mark_work_folder, thread_on,
                       workspace_of)
-from gamma import (comments, folder_links, gamma_sync, jobs, linked_files, pdf_meta, storage, upload_gc, vault_disk,
-                   vault_store, vault_sync, ws_backup)
+from gamma import comments, folder_links, gamma_sync, jobs, linked_files, pdf_meta, storage, upload_gc, ws_backup
+from gamma.vault import disk as vault_disk, kinds, store as vault_store
 from gamma.blocks_store import new_block_id
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.feedback import anchors, kept
-from gamma.vault_sync import LocalRemote
+from gamma.vault.local_remote import LocalRemote
 from test_highlight_relocate import H, W, _pdf as _lines, _position
 from test_vault_sync import Vault, insert
 
@@ -49,7 +51,7 @@ def quick(monkeypatch):
     the kept version alone; the upload checks run when a test flushes, with
     no grace."""
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)
@@ -166,6 +168,45 @@ def test_an_open_thread_keeps_each_build_stored_and_the_relocation_reads_them(wo
     owner.post(f"/api/comments/{thread['id']}/resolve", json={"resolved": True}).raise_for_status()
     d4 = _rebuilt(v, _build("fourth", 160), age=5)
     assert not storage.exists(ws, f"{d4}.pdf")
+
+
+def test_a_pictures_version_is_kept_while_its_thread_is_open(work, owner):
+    """A work folder's PNG is a page of the file class (step 3): a thread on
+    it stores the version it shows, under its own extension, and holds it
+    (``anchor.ext``); a rebuild while the thread is open stores the incoming
+    version too; the resolve lets the commented one go once the page no
+    longer shows it."""
+    def png(color) -> bytes:
+        out = io.BytesIO()
+        Image.new("RGB", (1200, 800), color).save(out, "PNG")
+        return out.getvalue()
+
+    v = work("picture")
+    data = png("white")
+    v.write("figures/fig.png", data, age=30)
+    v.sync()
+    page, ws, name = v.page_of("figures/fig.png"), v.ws, f"{storage.content_digest(data)}.png"
+    doc = v.props(page)["doc"]
+    assert (doc["format"], doc["hash"], doc["ext"], doc["at"]) == ("image", name[:-4], ".png", "path")
+    assert not storage.exists(ws, name)                                    # a page alone stores nothing
+    thread = thread_on(owner, page, page, "the colours are too light")
+    assert kept.wait() and storage.exists(ws, name)
+    with connect_pages_db(ws) as conn:
+        anchor = anchors.parse(conn.execute("SELECT anchor FROM comments WHERE id = ?", (thread["id"],)).fetchone()[0])
+        assert (anchor["kind"], anchor["doc_id"], anchor["ext"]) == ("file", name[:-4], ".png")
+        assert name in kept.held_files(conn) and name in upload_gc.referenced(conn)
+    upload_gc.flush(ws)
+    assert not _rows(ws, "upload_orphans", name)
+
+    other = png("black")
+    v.write("figures/fig.png", other, age=20)
+    v.sync()
+    new = f"{storage.content_digest(other)}.png"
+    assert v.props(page)["doc"]["hash"] == new[:-4] and storage.exists(ws, new) and storage.exists(ws, name)
+    assert owner.get(f"/api/uploads/{name}").content == data            # the commented version, still held
+    owner.post(f"/api/comments/{thread['id']}/resolve", json={"resolved": True}).raise_for_status()
+    upload_gc.flush(ws)
+    assert _rows(ws, "upload_orphans", name) and not _rows(ws, "upload_orphans", new)
 
 
 def test_the_repair_stores_what_the_quota_refused(work, owner, monkeypatch, caplog):

@@ -20,7 +20,8 @@ import pymupdf
 import pytest
 
 from conftest import account_of, fresh_client, login, make_page, make_user, thread_on, token_for
-from gamma import folder_links, gamma_sync, pdf_meta, storage, vault_disk, vault_store, vault_sync
+from gamma import folder_links, gamma_sync, pdf_meta, storage
+from gamma.vault import disk as vault_disk, kinds, store as vault_store
 from gamma.blocks_store import new_block_id
 from gamma.db import connect_pages_db, connect_vaults_db
 from gamma.feedback import files, kept
@@ -54,7 +55,7 @@ def disk(tmp_path, monkeypatch):
     monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: None)
     monkeypatch.setattr(folder_links, "due", lambda link: "")
     monkeypatch.setattr(folder_links, "HOT_S", 3600)
-    monkeypatch.setattr(vault_sync, "SETTLE_NOTE_S", 0)
+    monkeypatch.setattr(kinds, "SETTLE_NOTE_S", 0)
     monkeypatch.setattr(gamma_sync, "SETTLE_S", 0)
     monkeypatch.setattr(vault_store, "MISSING_S", 0)
     monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: None)

@@ -153,6 +153,22 @@ test("the edits: add, duplicate, move, place, hide, show, swap in, remove and pu
   assert.deepEqual(ids(restorePreset(refilled, gone.item, gone.index)), ["a", "c", "d", "n", "b*"]);
 });
 
+test("a region of a picture is a box: it stores no line style and reads as the wash", () => {
+  const region = { width: 1200, height: 800, boundingRect: { x1: 10, y1: 20, x2: 300, y2: 200 }, rects: [{ x1: 10, y1: 20, x2: 300, y2: 200 }], hash: "i1" };
+  assert.deepEqual(withStyle({ color: "#ffe28fa6", image_position: region }, "underline"), { color: "#ffe28fa6", image_position: region });
+  assert.deepEqual(withStyle({ color: "#ffe28fa6", image_position: region, style: "underline" }, "squiggly"), { color: "#ffe28fa6", image_position: region },
+    "a line stored by hand goes");
+  assert.equal(blockStyle({ properties: { style: "strikeout", image_position: region } }), "highlight");
+  assert.deepEqual(withStyle({ image_position: "r" }, "underline"), { image_position: "r", style: "underline" }, "a string is no region");
+  const [block] = addHighlightAsBlock([], { id: "r1", position: region, color: "#9bcdffa6", style: "squiggly", place: "image_position" });
+  const { t0, ...stored } = block.properties;
+  assert.deepEqual(stored, { color: "#9bcdffa6", quote: "", image_position: region });
+  assert.equal("pdf_position" in block.properties, false);
+  const [region1] = blocksToHighlights([block], "image_position", "i1");
+  assert.equal(region1.style, "highlight");
+  assert.deepEqual(region1.position, { ...region, area: true, onVersion: true });
+});
+
 test("an armed highlighter's selection tint: the wash it lays, a light tint of a line's tone", () => {
   assert.equal(selectionTint(hl("a", "highlight", W("#ffe28f"))), "#ffe28fa6");
   assert.equal(selectionTint(hl("a", "underline", W("#9bcdff"))), "#006bd640");

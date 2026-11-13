@@ -84,7 +84,7 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
 @router.post("/pages/{page_id}/plan")
 def post_plan(page_id: str, payload: PlanRequest, request: Request):
     """A synced vault's plan for the page, from the desktop app of another
-    computer (gamma/vault_http.py): ``{client, batch, seq, ops}`` → ``{seq}``,
+    computer (gamma/vault/http_remote.py): ``{client, batch, seq, ops}`` → ``{seq}``,
     every op in one transaction or none, refused whole (409, ``conflict``
     ``stale``) when the page's op log moved past ``seq``, the seq the plan
     was made at (gamma/ops.py ``commit_plan``); a batch id the log holds

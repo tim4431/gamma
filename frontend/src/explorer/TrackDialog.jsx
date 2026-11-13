@@ -7,7 +7,9 @@
 // choice is a base and the changes made on it (explorer/trackSelection.js),
 // so a folder not read yet is ticked or unticked whole; the summary under
 // the tree is the server's preview of the choice, asked 400 ms after the
-// last change, which says what would leave and what the file would read.
+// last change, which says what would leave, which files are too large to
+// keep (listed without their bytes) and what the file would read. Every
+// file ticked is a page, whatever its format (gamma/vault/kinds.py).
 // `link`: the vault as GET /api/folder-links/{id} answers it; `fresh`: the
 // vault is still choosing its first files (made from the shell, which
 // opened this page with ?track=), so Cancel removes it (`onCancelled`).
@@ -35,7 +37,7 @@ const PREVIEW_MS = 400;
 
 const dirKey = (path) => String(path || "").replace(/\/+$/, "");
 const leaf = (path) => dirKey(path).split("/").pop();
-// Why a row is never tracked, whatever is chosen (vault_disk's fixed rules).
+// Why a row is never tracked, whatever is chosen (gamma/vault/disk.py's fixed rules).
 const NEVER = {
   dot: () => t("never tracked: a dot folder or file"),
   node_modules: () => t("never tracked: node_modules"),
@@ -50,7 +52,6 @@ function hintOf(e) {
   return [
     e.never ? NEVER[e.never]?.() || t("never tracked") : "",
     e.git_ignored ? t("git ignores it") : "",
-    !e.directory && !e.never && !e.kind ? t("read once Gamma reads any file") : "",
     e.locked === "followed" ? t("a file vault's PDF, taken in") : "",
   ].filter(Boolean).join(" · ");
 }
@@ -149,20 +150,29 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
   const changed = state.changes.length > 0 || (!fresh && library !== !!link.library);
   const selection = body(state);
   const selectionKey = JSON.stringify(selection);
+  // The preview pending or in flight: stopped before a fresh vault's Cancel
+  // removes the link it would ask about.
+  const previewRef = React.useRef(null); // {timer, ctl}
+  const stopPreview = () => {
+    const p = previewRef.current;
+    previewRef.current = null;
+    if (p) { clearTimeout(p.timer); p.ctl.abort(); }
+  };
   React.useEffect(() => {
     if (!read?.entries) return undefined;
-    let live = true;
+    const ctl = new AbortController();
     const timer = setTimeout(async () => {
       try {
         const d = await apiJson(`${url}/selection/preview`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection }),
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection }), signal: ctl.signal,
         });
-        if (live) setPreview({ ...d, key: selectionKey });
+        if (!ctl.signal.aborted) setPreview({ ...d, key: selectionKey });
       } catch (err) {
-        if (live) setPreview({ error: err.message || String(err), key: selectionKey });
+        if (!ctl.signal.aborted) setPreview({ error: err.message || String(err), key: selectionKey });
       }
     }, PREVIEW_MS);
-    return () => { live = false; clearTimeout(timer); };
+    previewRef.current = { timer, ctl };
+    return () => { clearTimeout(timer); ctl.abort(); if (previewRef.current?.ctl === ctl) previewRef.current = null; };
   }, [selectionKey, !!read?.entries]); // eslint-disable-line react-hooks/exhaustive-deps
   // Save confirms what leaves (the round's guard), so only once the summary
   // says what this choice, not an earlier one, comes to.
@@ -198,6 +208,7 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
     }
   }
   async function cancelFresh() {
+    stopPreview();
     try {
       await apiJson(url, { method: "DELETE" });
     } catch (err) {
@@ -267,8 +278,9 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
                 ))}</ul>
               </details>
             ) : null}
-            {current.unread ? <p>{tn("{u} chosen file is read once Gamma reads any file", "{u} chosen files are read once Gamma reads any file",
-              current.unread, { u: current.unread })}</p> : null}
+            {current.large ? <p>{tn("{n} chosen file is over {size} and is listed without its bytes",
+              "{n} chosen files are over {size} and are listed without their bytes",
+              current.large, { size: fmtBytes(current.keep_bytes || 0) })}</p> : null}
             {current.over_cap ? <p className="importWarning">{t("A work folder tracks at most {cap} files: untick some to save.", { cap: current.cap })}</p> : null}
             {read.rules.exists && !current.rules_ours ? <p>{t("Your .gammaignore will be rewritten.")}</p> : null}
           </> : preview?.error && preview.key === selectionKey ? <p className="importWarning">{preview.error}</p> : <p>{t("Counting…")}</p>}

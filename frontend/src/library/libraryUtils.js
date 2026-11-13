@@ -4,7 +4,7 @@
 import { generateNKeysBetween } from "fractional-indexing";
 import { formatOf } from "../documents/formats.js";
 import { workFolderOf } from "../documents/library.js";
-import { isPdf, pageDocument, sourceAddress } from "../documents/pageDocument.js";
+import { pageDocument, sourceAddress } from "../documents/pageDocument.js";
 import { listedOf } from "../explorer/knownPages.js";
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { itemTypeOf } from "../shared/lib/itemTypes.js";
@@ -443,10 +443,11 @@ export function formatFullDate(iso) {
   return Number.isNaN(then.getTime()) ? "" : fmtDate(then, { dateStyle: "medium", timeStyle: "short" });
 }
 
-// What a card/row says a page is, from its document (pageDocument): a PDF,
-// else just a page.
+// What a card/row says a page is, from its document (pageDocument): its
+// format's word (formatLabel: "PDF", "LaTeX", "Picture", "File"), else just
+// a page.
 export function pageKindLabel(doc) {
-  return isPdf(doc) ? "PDF" : t("Page");
+  return formatLabel(doc) || t("Page");
 }
 
 // A file's format as a list's Format column reads it, from `kind`: a format

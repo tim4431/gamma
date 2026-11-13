@@ -323,6 +323,36 @@ def test_files_travel_by_hash():
     assert remote.texts(page["id"])["imgblk"] == f"![pic]({img['url']})"
 
 
+def test_documents_of_any_format_travel_by_their_stored_name():
+    """A page whose document is a picture is pulled with its file and its
+    doc; a ``.jpeg`` pushed keeps its extension (the remote's /upload-file
+    keeps an image's own), and a stored name with a 10-character extension
+    is a file the engine moves too (``UPLOAD_NAME_RE``)."""
+    remote, local, _ = _pair()
+    png = b"\x89PNG\r\n\x1a\n" + b"p" * 200
+    up = remote.client.post("/api/upload-file", files={"file": ("fig.png", io.BytesIO(png), "image/png")}).json()
+    name = up["url"].rsplit("/", 1)[1]
+    page = remote.client.post("/api/pages/by-file", json={"file": name, "name": "fig.png"}).json()["page"]
+    assert page["properties"]["doc"]["format"] == "image"
+    _sync(local)
+    assert (ws_uploads_dir(local.ws) / name).read_bytes() == png
+    assert local.pages()[page["id"]]["properties"]["doc"] == page["properties"]["doc"]
+    jpeg = b"\xff\xd8\xff" + b"j" * 200
+    up = local.client.post("/api/upload-file", files={"file": ("photo.jpeg", io.BytesIO(jpeg), "image/jpeg")}).json()
+    jname = up["url"].rsplit("/", 1)[1]
+    assert jname.endswith(".jpeg")
+    props = local.client.post("/api/upload-file",
+                              files={"file": ("app.properties", io.BytesIO(b"k=v\n"), "text/plain")}).json()
+    pname = props["url"].rsplit("/", 1)[1]
+    assert pname.endswith(".properties")
+    jpage = local.client.post("/api/pages/by-file", json={"file": jname, "name": "photo.jpeg"}).json()["page"]
+    local.insert(page["id"], "propsblk", f"[app.properties]({props['url']})")
+    assert _sync(local)["files_pushed"] == 2
+    assert (ws_uploads_dir(remote.ws) / jname).read_bytes() == jpeg
+    assert (ws_uploads_dir(remote.ws) / pname).read_bytes() == b"k=v\n"
+    assert remote.pages()[jpage["id"]]["properties"]["doc"]["ext"] == ".jpeg"
+
+
 def _recorded(monkeypatch):
     """The paths the engine asks the remote for, recorded around the
     in-process transport."""
@@ -443,7 +473,9 @@ def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     """A remote whose feed names another workspace data format than this
     server's (one of the two runs a release with a workspace migration step
     the other lacks: a server from before step 52, which put a page's
-    document in one property, names 44) neither gives nor gets anything:
+    document in one property, names 44; one from before step 55, which
+    reads a picture's regions and a listed document, names 52) neither
+    gives nor gets anything:
     the round stops before any write, its status says which side to update,
     local edits wait, and the next round once the two agree carries both
     sides' changes."""
@@ -466,7 +498,8 @@ def test_a_remote_with_another_data_format_pauses_the_round(monkeypatch):
     monkeypatch.setattr(sync_engine, "default_fetch", fetch)
     remote.ops(page["id"], [{"op": "set", "id": "fm1", "content": "text (remote)"}])
     local.insert(page["id"], "fm2", "made here")
-    for there, update in ((here + 1, "this server is updated"), (44, "the remote is updated")):
+    assert here == 55
+    for there, update in ((here + 1, "this server is updated"), (52, "the remote is updated"), (44, "the remote is updated")):
         told[0] = there
         status = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1").json()["status"]
         assert status["version_gap"] == {"here": here, "remote": there}

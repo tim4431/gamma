@@ -95,14 +95,20 @@ the frontend changes: editing a mirror is editing a workspace.
   same folder alike (`normalize.tree_block_id`, derived from the path), so
   a mirror and its remote upgraded separately find the same tree.
 - **Files**: every upload a page references (`/api/uploads/<hash>.<ext>` in
-  content or properties, the stored file of a block's document, `doc`:
-  [documents.md](documents.md)), by content hash — fetched when
+  content or properties, the stored file of a block's document, `doc`, of
+  any format: [documents.md](documents.md)), by content hash — fetched when
   missing on the copy, uploaded when missing on the original. A re-run
-  never duplicates. A file past 32 MiB goes up in parts of 8 MiB over the
-  remote's `/api/uploads/parts` (a PDF as `kind: pdf`, anything else as
-  `kind: file`), read from disk a part at a time, since a proxy in front of
-  the remote caps a request's body (Cloudflare at 100 MB); a remote that
-  does not echo the kind (an older server) gets it whole. Every fetched tree's files are checked, not only the
+  never duplicates. A stored name is `<hash>.<ext>` with an extension of 1
+  to 12 characters (`UPLOAD_NAME_RE`, `formats.EXTENSION_RE`'s length: a
+  `.properties` or `.safetensors` travels like a `.pdf`), and lands under
+  the same name on the other side: `/upload-file` keeps an image's own
+  extension (`<hash>.jpeg` stays `.jpeg`, [api.md](api.md) "Uploads"), so a
+  picture document's page reads its file there too. A file past 32 MiB goes
+  up in parts of 8 MiB over the remote's `/api/uploads/parts` (a PDF by its
+  name, `formats.format_of`, as `kind: pdf`, anything else as `kind:
+  file`), read from disk a part at a time, since a proxy in front of the
+  remote caps a request's body (Cloudflare at 100 MB); a remote that does
+  not echo the kind (an older server) gets it whole. Every fetched tree's files are checked, not only the
   changed blocks', and each round ends with a sweep for files the copy's
   pages name but lack (`missing_uploads`), so a round cut short after a
   page landed but before its PDF did heals by itself. The files that
@@ -336,6 +342,13 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
 - **A remote from before the check** names no `format`, and its rounds run
   as before. The check runs in the copy's engine, so it protects copies
   that run this release or a later one.
+- **Step 55** (`positions`, [migrations.md](migrations.md)) is the newest
+  format move, from 52: the kind column reads a picture's regions
+  (`image_position`) as highlights, and a work folder's file too large to
+  keep is a document at `listed` ([documents.md](documents.md) "The listed
+  state"), which an older copy's op path refuses as a 400 and would stop a
+  push mid-way. Nothing is rewritten: a pair that has run it on both sides
+  has nothing to send for it.
 - **Step 41** (`ink_v2`, [migrations.md](migrations.md)) is a format move
   of this kind. It rewrites every stroke file to `gamma-ink` version 2 as
   a new content-addressed upload, deterministically, so a pair that has
@@ -1389,7 +1402,7 @@ directory on a PC in step as files. Gamma's changes are pulled to the files;
 what goes back, as its switch says, is the PDFs (each its page's new file
 through the replacement) or everything, a note's changes merged into its
 page with the file winning a clash, as client `disk`. A vault of another
-server reads it over HTTP with a token (`gamma/vault_http.py`: the change
+server reads it over HTTP with a token (`gamma/vault/http_remote.py`: the change
 feed, the subtree and the op log) and writes a page's changes as one plan
 (`POST /api/pages/{id}/plan`), refused whole when the page moved meanwhile.
 The gamma-sync client ([synced_vaults.md](synced_vaults.md#the-client))

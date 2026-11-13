@@ -131,7 +131,10 @@ def _unread_doc_file(doc):
 def _position_ids(props: dict, held: bool = True):
     """The stored PDFs a highlight's position holds (``held``): its
     ``pdf_position.doc_id`` and ``pdf_position.prev.doc_id``. Malformed ids
-    and ``UNSTORED`` name none."""
+    and ``UNSTORED`` name none. A region of a picture names none either: its
+    ``image_position.hash`` only says which version it was drawn on, and the
+    version a thread on it was commented on is held by the thread's anchor
+    (gamma/feedback/kept.py)."""
     position = props.get("pdf_position") if held else None
     position = position if isinstance(position, dict) else {}
     prev = position.get("prev")

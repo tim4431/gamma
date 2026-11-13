@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 54
+SCHEMA_VERSION = 55
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -567,8 +567,9 @@ USERS_SCHEMA = [
 # file is made as, and why that file's replacement placed no highlights. One
 # name may have several paths; a path has one page. vault_files = a vault's
 # files as the last round left them, one row a path, a trashed file's being
-# the trash path with ``was`` where it lived (kind 'notes', 'pdf' or
-# 'picture'; the hash and stat and when they were read, for the racy rule; a
+# the trash path with ``was`` where it lived (kind 'notes', 'pdf', 'picture'
+# or 'file', its class, gamma/vault/kinds.py; the hash and stat and when they
+# were read, for the racy rule; a
 # note's base text, its nodes [{id, g, m?}] in document order and ``gone``,
 # the blocks the file dropped [{id, hash, anchor, props, at}]; the title and
 # first filing this base recorded, the page's change-log seq it is level
@@ -645,8 +646,10 @@ VAULTS_SCHEMA = [
 # or the trash), ``folder`` / ``label`` in the pseudo-pages, else what the
 # block's properties make it, tested in this order the way the frontend
 # tests them (ink: an ``ink_url`` key; text box, picture, sheet, recording:
-# an object; link: a non-empty value; highlight: a ``pdf_position`` object,
-# which ink groups and link regions carry too — gamma/highlights.py).
+# an object; link: a non-empty value; highlight: a ``pdf_position``,
+# ``image_position`` or ``text_position`` object — a place on a PDF page,
+# which ink groups and link regions carry too, a region of a picture, a
+# range of a text file — gamma/highlights.py).
 # ``doc_id`` is the hash of the document the row owns (its ``properties.doc``,
 # gamma/documents/model.py ``own_hash``), on every row, nested and trashed
 # ones included: NULL on a row with no document, one shown from an address
@@ -675,7 +678,9 @@ BLOCK_HOT_COLUMNS = {
             WHEN json_type(properties, '$.recording') = 'object' THEN 'recording'
             WHEN json_extract(properties, '$.link_url') != ''
                 OR json_extract(properties, '$.link_page_id') != '' THEN 'link'
-            WHEN json_type(properties, '$.pdf_position') = 'object' THEN 'highlight'
+            WHEN json_type(properties, '$.pdf_position') = 'object'
+                OR json_type(properties, '$.image_position') = 'object'
+                OR json_type(properties, '$.text_position') = 'object' THEN 'highlight'
             ELSE 'note' END) VIRTUAL""",
     "doc_id": """doc_id TEXT GENERATED ALWAYS AS (CASE WHEN json_extract(properties, '$.doc.copy') IS NULL
             THEN NULLIF(json_extract(properties, '$.doc.hash'), '') END) VIRTUAL""",

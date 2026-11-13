@@ -20,7 +20,9 @@ never-tracked entries left out: the base, then the dialog's changes in order
 (a file, a directory whole, every file of a format), then the other file of
 a page one of whose two files is selected (a paper's PDF and its notes are
 tracked together: ``joined``), then the PDFs of the vaults of one file the
-save takes in (``locked``). ``preview`` says what that tracks and which pages
+save takes in (``locked``). ``preview`` says what that tracks (every file
+ticked is a page: notes, PDFs and files of any other format, those past the
+keep limit listed without their bytes) and which pages
 leave; ``write`` puts the ``.gammaignore`` that says it (``ignore_rules.write``,
 the shortest) in place of the one the dialog read, a hand-written one kept
 in the vault's trash. The link's state and its round are
@@ -33,7 +35,8 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import vault_disk, vault_store
+from .. import config
+from ..vault import disk as vault_disk, kinds, store as vault_store
 from ..db import connect_pages_db
 from ..documents.formats import format_of
 from . import ignore_rules
@@ -82,7 +85,13 @@ def preset(path: str, hint: ignore_rules.GitHint) -> bool:
     with: a PDF or a note, unless it lies inside a directory git ignores. A
     file git ignores by a pattern of names alone is ticked, a build's
     ``main.pdf`` under ``*.pdf`` among them: the PDF a paper is read by."""
-    return vault_disk.kind_of(path) in ("notes", "pdf") and not hint.in_ignored_dir(path)
+    return kinds.class_of(path) in (kinds.NOTES, kinds.PDF) and not hint.in_ignored_dir(path)
+
+
+def _kind(path: str) -> str:
+    """The row's class by its name in a work folder's round, as the dialog
+    shows it (``notes``, ``pdf``, else ``file``: every file ticked is a page)."""
+    return kinds.class_of(path, work=True).name
 
 
 def _root(link: dict) -> Path:
@@ -201,15 +210,17 @@ def walk(root: Path) -> Walk:
 
 
 def _pages(link: dict) -> dict:
-    """``{page id: [path…]}``: the vault's files that are a page's, its notes
-    and its PDF, by their page; a page its selection sent to Recently
-    deleted counts by the files where they are (its in-place tombstones), so
-    that ticking one of its two files again joins the other."""
+    """``{page id: [path…]}``: the vault's files that are a page's (the rows
+    of a class that makes pages, gamma/vault/kinds.py: notes, PDFs, a work
+    folder's files of other formats), by their page; a page its selection
+    sent to Recently deleted counts by the files where they are (its in-place
+    tombstones), so that ticking one of its two files again joins the other."""
     out: dict = {}
     rows = [(path, row) for path, row in vault_store.files(link["id"]).items()]
     rows += [(tomb["was"], tomb) for tomb in vault_store.tombstones(link["id"]) if vault_store.in_place(tomb)]
     for path, row in rows:
-        if row["page_id"] and row["kind"] in ("notes", "pdf"):
+        cls = kinds.by_kind(row["kind"])
+        if row["page_id"] and cls is not None and cls.makes_pages:
             out.setdefault(row["page_id"], []).append(path)
     return out
 
@@ -295,7 +306,7 @@ def listing(link: dict, top: str = "", base: str = "file") -> dict:
                 fmt, language = (None, None) if directory else format_of(path)
                 item = {"path": path, "directory": directory, "format": fmt, "language": language, "size": size,
                         "mtime": mtime, "git_ignored": git_ignored, "selected": selected,
-                        "kind": "" if directory else vault_disk.kind_of(path), "page": page,
+                        "kind": "" if directory else _kind(path), "page": page,
                         "pair": next((p for p in pages.get(page, ()) if p != path), None) if page else None,
                         "never": never or None, "placeholder": placeholder}
                 if directory:
@@ -396,7 +407,7 @@ def _leaving(link: dict, selected: set) -> list:
     out = []
     for page, paths in gone.items():
         if page in titles:
-            main = next((p for p in paths if vault_disk.kind_of(p) == "pdf"), paths[0])
+            main = next((p for p in paths if kinds.class_of(p) is kinds.PDF), paths[0])
             out.append({"path": main, "page": page, "title": titles[page] or "", "notes": notes.get(page, 0),
                         "open_comments": threads.get(page, 0)})
     return sorted(out, key=lambda x: x["path"])
@@ -404,20 +415,23 @@ def _leaving(link: dict, selected: set) -> list:
 
 def preview(link: dict, selection: dict) -> dict:
     """What saving ``selection`` would do (``evaluate``): ``{files, bytes,
-    by_format: {pdf, markdown, image, other}, unread, over_cap, cap, leaving,
-    joined, text, rules_ours}`` — the files it tracks, what they weigh and
-    how many of each format, those of no class Gamma reads yet (``unread``),
-    whether they are more than the vault's rounds read (``cap_of``), the
-    pages that leave (``_leaving``), the ``.gammaignore`` it writes
-    (``text``), and whether that replaces nothing a person wrote
+    by_format: {pdf, markdown, image, other}, large, keep_bytes, over_cap,
+    cap, leaving, joined, text, rules_ours}`` — the files it tracks, what
+    they weigh and how many of each format, those past the keep limit
+    (``large``: files of other formats than notes and PDFs over
+    ``keep_bytes``, ``config.vault_keep_bytes``, which the vault lists
+    without their bytes), whether they are more than the vault's rounds read
+    (``cap_of``), the pages that leave (``_leaving``), the ``.gammaignore``
+    it writes (``text``), and whether that replaces nothing a person wrote
     (``rules_ours``: the vault has none, or Gamma's)."""
     chosen = evaluate(link, selection)
     files, selected = chosen.walk.files, chosen.selected
     formats = Counter(files[p][1] if files[p][1] in _SHOWN else "other" for p in selected)
-    cap = cap_of(link)
+    cap, keep = cap_of(link), config.vault_keep_bytes()
     return {"files": len(selected), "bytes": sum(files[p][0] for p in selected),
             "by_format": {k: formats[k] for k in (*_SHOWN, "other")},
-            "unread": sum(1 for p in selected if not vault_disk.kind_of(p)), "over_cap": len(selected) > cap, "cap": cap,
+            "large": sum(1 for p in selected if files[p][0] > keep and kinds.class_of(p, work=True) is kinds.FILE),
+            "keep_bytes": keep, "over_cap": len(selected) > cap, "cap": cap,
             "leaving": _leaving(link, selected), "joined": chosen.joined, "text": text_of(chosen),
             "rules_ours": not chosen.rules.exists or chosen.rules.ours}
 
