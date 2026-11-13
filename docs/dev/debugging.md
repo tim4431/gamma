@@ -50,6 +50,77 @@ docker build -t gamma .
 docker run -p 9001:9001 -v gamma-data:/data ghcr.io/tim4431/gamma
 ```
 
+### Setting up a Mac
+
+An Apple Silicon Mac runs every check but Android's: the backend and
+frontend suites, the desktop app (run, tested and packaged) and the iPad
+app on a simulator. It needs Xcode from the App Store and these from
+Homebrew:
+
+| Install | For |
+|---|---|
+| Xcode, then `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`, `sudo xcodebuild -license accept`, `xcodebuild -runFirstLaunch`, `xcodebuild -downloadPlatform iOS` | The iPad app and its simulator ([ipad/README.md](../../ipad/README.md)) |
+| `python@3.12` | `backend/venv` (`python3.12 -m venv venv`): the Python of the Docker image, of CI's backend suite and of the desktop app's frozen server |
+| `python@3.13` | `python3.13` on the `PATH`, which `ipad/scripts/build-python.sh` makes its pip venv from |
+| `node@22` or `node@24`, then `brew link --overwrite --force` it | The frontend, the desktop shell, and the web app the iPad carries |
+| `xcodegen`, `xcbeautify` | The iPad's Xcode project; readable `xcodebuild` output |
+
+Then `npm ci` in `frontend/` (with `npx playwright install chromium`) and
+in `desktop/` (with `npx install-electron`), and
+`bash ipad/scripts/build-python.sh` once before `xcodegen generate` in
+`ipad/`.
+
+What differs from the Windows commands elsewhere in these docs and in
+`.claude/skills/`:
+
+- **The venv's interpreter** is `venv/bin/python`, not
+  `venv/Scripts/python.exe`.
+- **Node comes from Homebrew, linked into `/opt/homebrew/bin`**, not from
+  fnm. Xcode runs the iPad's build phases with a minimal `PATH`, to which
+  `build-python.sh` adds only `/opt/homebrew/bin` and `/usr/local/bin`. A
+  Node anywhere else (fnm's, nvm's) is not found there, and the app keeps
+  the web app built before, with a warning.
+- **Node's version**: 22.22.2 or later, or 24.15 or later. jsdom, a
+  frontend test dependency, takes `^22.22.2 || ^24.15.0 || >=26.0.0`. CI
+  runs 22.
+- **A venv is made from a named Python** (`python3.12`, `python3.13`).
+  A Mac's `python3` can be newer than both (python.org's installer puts
+  its own first on the `PATH`), and a newer Python accepts what the
+  others refuse (above).
+- **`node --test` runs as a Mac.** Node defines `navigator.platform`
+  (`MacIntel` here), so `hotkeys.js`'s `IS_MAC` holds and a chord reads
+  `⇧⌘O` where CI's Linux reads `Ctrl+Shift+O`. A test that compares a
+  chord's label takes the label from `chordLabel()` or passes `mac`
+  itself.
+- **The browser suite assumes a Windows or Linux keyboard.** Chromium on
+  a Mac reports a Mac too, so the app expects ⌘ where a scenario presses
+  `Control+…` (about 190 presses; only `diagrams.mjs` uses Playwright's
+  `ControlOrMeta`), and labels chords `⌥`, `⌘` and `⌦`. macOS also moves no caret on Home
+  and End, draws overlay scrollbars that take no room, and falls back to
+  other fonts. On 2026-11-12, 133 of the suite's 811 steps failed on a
+  Mac for these reasons. CI's Linux run is the reference: on a Mac, run
+  the groups a change reaches on `main` and on the branch, and compare.
+- **A directory symlink is removed with `os.unlink`**, not with
+  `os.rmdir`, which removes only a Windows junction. A test that links a
+  directory through its helper removes it by the platform
+  (`tests/test_vault_sync.py`, `tests/test_feedback_files.py`).
+- **The desktop app without a Developer ID**: `backend/venv/bin/python
+  desktop/build_backend.py`, then, in `desktop/`,
+  `CSC_IDENTITY_AUTO_DISCOVERY=false npm run pack` for
+  `dist/mac-arm64/Gamma.app`, or
+  `CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --publish never`
+  for the dmg and the zip. The variable keeps electron-builder from
+  looking for a signing identity in the keychain, and the app is signed
+  ad hoc, as CI's are without one
+  ([desktop/docs/release.md](../../desktop/docs/release.md)).
+- **The iPad suite**: a simulator's id from
+  `xcrun simctl list devices available`, then, in `ipad/`,
+  `xcodebuild test -project GammaIPad.xcodeproj -scheme GammaIPad
+  -destination "id=<udid>" ONLY_ACTIVE_ARCH=YES ARCHS=arm64
+  CODE_SIGNING_ALLOWED=NO | xcbeautify`. A Debug build's web view opens in
+  Safari's Develop menu (Settings → Advanced → *Show features for web
+  developers*).
+
 ### Serving the build
 
 `npm run build` writes a Brotli and a gzip copy beside each compressible file
