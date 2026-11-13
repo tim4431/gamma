@@ -17,7 +17,6 @@ A guest's workspace keeps no snapshots and takes no restore: it goes away
 with the guest (docs/dev/guests.md).
 """
 
-import os
 import shutil
 import tempfile
 import zipfile
@@ -26,11 +25,11 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from starlette.background import BackgroundTask
 
 from .. import import_staging, jobs, upload_parts, workspaces, ws_backup
 from ..auth import require_user_id, requested_ws
 from ..db import account_id, connect_users_db, page_now, ws_dir
+from ..downloads import TempFileResponse, temp_file
 from ..storage import display_filename
 from .workspaces import _member
 
@@ -133,17 +132,6 @@ def _write_all(targets: list[str], dest: Path, uploads: bool, by: str, progress=
     progress(done=len(targets), total=len(targets), unit="workspaces", item="")
 
 
-def _temp_zip() -> Path:
-    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-    tmp.close()
-    return Path(tmp.name)
-
-
-def _zip_download(path: Path, name: str) -> FileResponse:
-    return FileResponse(str(path), media_type="application/zip", filename=name,
-                        background=BackgroundTask(os.unlink, str(path)))
-
-
 # --- the work in the request (scripts) ----------------------------------------------
 
 # Sync endpoint on purpose: zipping a large library runs in the threadpool.
@@ -157,13 +145,9 @@ def export_data(request: Request, uploads: int = 1, ws: str | None = None, user:
     target = _target_ws(request, ws, user, "viewer")
     if not ws_dir(target).exists():
         raise HTTPException(status_code=404, detail="no data for this workspace yet")
-    tmp = _temp_zip()
-    try:
+    with temp_file(".zip") as tmp:
         ws_backup.write_zip(target, tmp, uploads=bool(uploads), by=request.state.user_id)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    return _zip_download(tmp, _export_name(target, bool(uploads)))
+    return TempFileResponse(tmp, media_type="application/zip", filename=_export_name(target, bool(uploads)))
 
 
 # Sync on purpose, like /export.
@@ -175,13 +159,10 @@ def export_all(request: Request, uploads: int = 1):
     me = require_user_id(request)
     if request.state.is_guest:
         raise HTTPException(status_code=403, detail="a guest account has nothing to export as a whole")
-    tmp = _temp_zip()
-    try:
+    with temp_file(".zip") as tmp:
         _write_all(workspaces.personal_workspaces(me), tmp, bool(uploads), me)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    return _zip_download(tmp, _export_all_name(request.state.user, bool(uploads)))
+    return TempFileResponse(tmp, media_type="application/zip",
+                            filename=_export_all_name(request.state.user, bool(uploads)))
 
 
 # Sync on purpose: unzip + sqlite restore runs in the threadpool.

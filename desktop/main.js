@@ -2969,7 +2969,8 @@ async function runSmoke() {
   } catch (e) {
     out.error = String(e && e.message ? e.message : e);
   } finally {
-    sidecar.stopAll();
+    // Once it has exited: Windows removes no file the server holds open.
+    await sidecar.stop(ws.id);
     try {
       fs.rmSync(tmp, { recursive: true, force: true });
     } catch {}

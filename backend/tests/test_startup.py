@@ -67,9 +67,10 @@ def test_concurrent_first_mcp_requests_and_lifespan_restart():
 def test_the_background_rounds_run_at_startup(monkeypatch):
     """The app lifespan runs the grant check, the guest sweeper, the trash
     sweeper, the leftover sweeps (snapshot temp files, deleted
-    workspaces' directories) and the off-site copies' round once at
-    startup (then each at its interval)."""
-    from gamma import cloud_sync, guests, offsite, trash, workspaces, ws_backup
+    workspaces' directories, import reviews left, downloads a killed
+    process left) and the off-site copies' round once at startup (then
+    each at its interval)."""
+    from gamma import cloud_sync, downloads, guests, import_staging, offsite, trash, workspaces, ws_backup
     from gamma.app import app
 
     ran = []
@@ -79,12 +80,32 @@ def test_the_background_rounds_run_at_startup(monkeypatch):
     monkeypatch.setattr(ws_backup, "sweep_stale_temp", lambda: ran.append("backup temp"))
     monkeypatch.setattr(workspaces, "remove_leftovers", lambda: ran.append("leftovers"))
     monkeypatch.setattr(offsite, "tick", lambda: ran.append("offsite"))
+    monkeypatch.setattr(import_staging, "sweep", lambda: ran.append("reviews"))
+    monkeypatch.setattr(downloads, "sweep", lambda: ran.append("downloads"))
     with TestClient(app):
         for _ in range(100):
-            if len(ran) == 6:
+            if len(ran) == 8:
                 break
             time.sleep(0.01)
-    assert sorted(ran) == ["backup temp", "grant check", "guests", "leftovers", "offsite", "trash"]
+    assert sorted(ran) == ["backup temp", "downloads", "grant check", "guests", "leftovers", "offsite", "reviews",
+                           "trash"]
+
+
+def test_the_temp_sweeps_share_a_timer_and_go_on_past_a_failure(monkeypatch):
+    """``app.sweep_temp`` runs the three leftover-file sweeps on one timer
+    (the lifespan's ``async with`` is at Python's limit of nested blocks):
+    one that raises is logged, and the ones after it still run."""
+    from gamma import downloads, import_staging, ws_backup
+    from gamma.app import sweep_temp
+
+    def broken():
+        raise OSError("the snapshot folder went away")
+    ran = []
+    monkeypatch.setattr(ws_backup, "sweep_stale_temp", broken)
+    monkeypatch.setattr(import_staging, "sweep", lambda: ran.append("reviews"))
+    monkeypatch.setattr(downloads, "sweep", lambda: ran.append("downloads"))
+    sweep_temp()
+    assert ran == ["reviews", "downloads"]
 
 
 def test_every_asks_a_callable_for_each_pause():
