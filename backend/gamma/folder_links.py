@@ -579,7 +579,16 @@ def _insert(link: dict, token: str = "") -> dict:
                           link["page_id"], link["push"], json.dumps(link["state"]), link["pull"], int(link["library"])))
         except sqlite3.IntegrityError as e:   # the path, taken meanwhile (UNIQUE, ignoring case)
             raise LinkError(_taken(link)) from e
+    _vaults_changed()
     return link
+
+
+def _vaults_changed() -> None:
+    """A vault was made, paused, resumed or removed: this computer's
+    channels to other servers announce it (gamma/computers/channel.py)."""
+    from .computers import channel  # local: it imports this module
+
+    channel.nudge()
 
 
 def _new(ws: str, path: str, user_id: str, **fields) -> dict:
@@ -1264,6 +1273,7 @@ def set_paused(link_id: str, paused: bool) -> dict | None:
         if paused:
             status[PAUSED] = since or page_now()
         conn.execute("UPDATE folder_links SET status = ? WHERE id = ?", (json.dumps(status), link_id))
+    _vaults_changed()
     if paused:
         _stop_agent(link_id)
     return get_link(link_id)
@@ -1586,6 +1596,7 @@ def _forget(link: dict) -> None:
     if engine(link):
         vault_store.forget_link(link["id"])
     _polled.pop(link["id"], None)
+    _vaults_changed()
 
 
 def delete_link(link_id: str, files: str = "keep") -> bool:
@@ -2477,7 +2488,10 @@ def tick() -> None:
     runs in a thread of its own (its lock held keeps the next tick off it),
     so a slow or silent server never holds up the rest. A link whose
     workspace on this server is gone is forgotten, its directory as it is.
-    Then the linked files' sweep (``linked_files.sweep``). Nothing runs
+    Then the linked files' sweep (``linked_files.sweep``). Before the
+    links, this computer's channels to other servers are checked, each
+    running (gamma/computers/channel.py ``check``: the lifespan has no room
+    for another loop). Nothing runs
     where links are not kept (``config.folder_links_enabled``): a row left
     from before stays as it is. One tick at a time: one a hint asks for
     while another runs runs again after it (``_tick_asked``), for a link that
@@ -2494,6 +2508,9 @@ def tick() -> None:
 
 
 def _tick_once() -> None:
+    from .computers import channel  # local: it imports this module
+
+    channel.check()
     for link in all_links():
         if not link["remote_url"] and not workspaces.get(link["workspace_id"]):
             with _holding(link["id"]):

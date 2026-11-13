@@ -339,6 +339,33 @@ tokens. Turning push off keeps the write token until the vault is removed,
 which revokes it (`releaseRemote`, with the window's session, signed into
 the remote).
 
+**The computer shown there.** Right after a vault of another server is
+made, `showComputer` mints on that server, with the window's session and
+the workspace header, a token of the `computer` scope (`{name: "Gamma
+desktop: <host name>", scope: "computer", expires_in_days: 365}`), which
+opens nothing there but the computer's channel, and hands it to the host's
+`POST /api/computer-links` with the shell's word; the host announces this
+computer to that server and keeps a long-poll open to it, so the vault's
+maker sees there, in any window, that the vault is kept on this computer
+and whether it is online ([computers.md](../../docs/dev/computers.md)). A
+replaced token is revoked there. It is skipped when the host already has
+a link for that server and workspace whose account is the one signed in
+there (unless that link was refused), and never handed to another account
+signed in there (the notice says so; the host refuses it too); a failure
+revokes the minted token and is added to the vault's notice, the vault
+staying made. The sync
+panel's view of such a vault says *Shown on NAS as TIM-PC · connected* (or
+*connecting*, *refused this computer's token*, *older than this app*, *not
+reachable*) with *Stop showing*, or *Not shown on NAS* with *Show this
+computer there*: the two actions `show-computer` and `hide-computer`, the
+first minting and handing over as above, the second deleting the host's
+link (`DELETE /api/computer-links/{id}`) and revoking its token there
+(`revokedToken`: when that server answers `revoked: false` or cannot be
+reached, the notice names the connection left to remove in its Settings).
+`releaseRemote` does the second when the last vault of that server and
+workspace goes, the removal's notice saying when the token was left. `refreshKeeping` reads each running local server's `GET
+/api/computer-links` for the line.
+
 In the Mac App Store build the pick is also the app's access to the
 directory or the file, kept as a bookmark (`lib/folderAccess.js`; at
 launch a directory is listed and a file checked for reading), and a server

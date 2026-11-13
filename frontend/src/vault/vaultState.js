@@ -12,8 +12,10 @@
 // (VaultChip.jsx), the banner over the page (its VaultBanner), whether the
 // notes are locked, and the conflict route the merge chips read. A path is
 // "" for a member who cannot act on the vault: where its files lie is the
-// reading of whoever made it. Pure: tests/vaultState.test.mjs.
-import { t, tn } from "../shared/i18n/i18n.js";
+// reading of whoever made it. On any other server the page's chip names
+// the computer that keeps it instead (computerChip, read by
+// usePageComputer.js). Pure: tests/vaultState.test.mjs.
+import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { inPlace, isPdf } from "../documents/pageDocument.js";
 
 // The answer, kept only when it says something: null for a page of no vault
@@ -124,6 +126,69 @@ export function computerAgent(state) {
   return {
     ...agent, running: running && typeof running === "object" ? running : null,
     folder: vault.name || baseName(vault.path), paused: !!vault.paused || !!vault.choosing,
+  };
+}
+
+// The computers that keep the page in a synced vault of the account's, as
+// the page's server knows them (GET /api/pages/{id}/computer,
+// docs/dev/computers.md): each announces itself to that server over its
+// own channel, `[{id, name, online, since, vault: {kind, name, paused},
+// assistants: [{name, label, found, ready, version, code}]}]`, online ones
+// first. Only the vault's maker is told: `[]` for anyone else, for a
+// server older than the route and for an answer that says nothing.
+export function readComputers(answer) {
+  const list = Array.isArray(answer?.computers) ? answer.computers : [];
+  return list.filter((c) => c && typeof c === "object" && typeof c.name === "string" && c.name);
+}
+
+// When a computer went offline, as the chip says it: "2:02 PM" today, "Nov 3"
+// another day this year, with the year before it, in the interface's
+// language ("" for no time known).
+export function sinceText(since, now = new Date()) {
+  const d = new Date(since);
+  if (!since || Number.isNaN(d.getTime())) return "";
+  if (d.toDateString() === now.toDateString()) return fmtDate(d, { hour: "numeric", minute: "2-digit" });
+  return fmtDate(d, d.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+
+const ASSISTANTS = { codex: T("Codex"), claude: T("Claude Code") };
+
+// An assistant a computer has, by its announced code (never the computer's
+// English problem): "Codex", "Codex (not signed in)", "Claude Code
+// (checking)", "Codex (not ready)".
+function assistantText(assistant) {
+  const name = String(assistant.label || (ASSISTANTS[assistant.name] ? t(ASSISTANTS[assistant.name]) : assistant.name) || "");
+  if (assistant.code === "signed_out") return t("{agent} (not signed in)", { agent: name });
+  if (assistant.code === "checking" || assistant.ready == null) return t("{agent} (checking)", { agent: name });
+  if (assistant.code === "not_ready" || assistant.ready === false) return t("{agent} (not ready)", { agent: name });
+  return name;
+}
+
+// The chip of a page another computer keeps (readComputers' first), drawn
+// where vaultChip has nothing to say (any server but this computer's own):
+// {online, label, title, state, vault, paused, assistants}. `label` names
+// the computer ("Synced vault on TIM-PC"); `state` is "Connected" or when it
+// went offline; `vault` the folder or file it keeps, as the page's server
+// names it; `paused` whether its vault is paused there ("" if not);
+// `assistants` the assistants found there, a not-ready one saying why (""
+// for none); `title` the lines after the label, for the tooltip. Null for
+// a page no computer of the account's keeps.
+export function computerChip(computers, now = new Date()) {
+  const computer = readComputers({ computers })[0];
+  if (!computer) return null;
+  const name = computer.name;
+  const online = computer.online === true;
+  const when = online ? "" : sinceText(computer.since, now);
+  const state = online ? t("Connected") : when ? t("Offline since {when}", { when }) : t("Offline");
+  const vault = computer.vault && typeof computer.vault === "object" ? computer.vault : {};
+  const kept = !vault.name ? "" : vault.kind === "file" ? t("File: {name}", { name: vault.name }) : t("Folder: {name}", { name: vault.name });
+  const paused = vault.paused ? t("Paused on {computer}", { computer: name }) : "";
+  const found = (Array.isArray(computer.assistants) ? computer.assistants : [])
+    .filter((a) => a && typeof a === "object" && a.found !== false && a.code !== "missing"); // found: null while checking
+  const assistants = found.length ? t("Assistants there: {names}", { names: found.map(assistantText).join(", ") }) : "";
+  return {
+    online, label: t("Synced vault on {computer}", { computer: name }), state, vault: kept, paused, assistants,
+    title: [state, kept, paused, assistants].filter(Boolean).join("\n"),
   };
 }
 

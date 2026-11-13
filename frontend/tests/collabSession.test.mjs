@@ -19,7 +19,7 @@ const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(
 // A session over fakes; `api(path, init)` answers the HTTP calls. Timers
 // never fire on their own: h.fire() runs whatever is armed.
 function setup(t, api, { canWrite = true, connect = true } = {}) {
-  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0, vault: 0 };
+  const h = { calls: [], remote: [], reloads: [], status: [], notices: [], keepalive: [], sockets: [], timers: new Map(), peers: [], me: null, comments: [], inbox: 0, vault: 0, computer: 0 };
   let timerId = 0;
   const options = {
     pageId: "page-a", canWrite,
@@ -29,6 +29,7 @@ function setup(t, api, { canWrite = true, connect = true } = {}) {
     onSaveNotice: (text, kind) => h.notices.push([kind, text]),
     onComments: (msg) => h.comments.push(msg),
     onVault: () => { h.vault += 1; },
+    onComputer: () => { h.computer += 1; },
   };
   h.session = createCollabSession({
     clientId: ME,
@@ -758,4 +759,20 @@ test("a vault's nudge and every hello refetch the page's standing, so a round th
   h.message({ t: "vault" });
   h.message({ t: "hello", client: ME, seq: 0, peers: [] });
   assert.equal(h.vault, 3, "another page's are not this page's");
+});
+
+test("a computer's nudge is the account's, on any page, and every hello reads the page's computers again", async (t) => {
+  const h = setup(t, async () => ({ seq: 0, batches: [] }));
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.computer, 1, "the join asks");
+  h.message({ t: "computer" });
+  assert.equal(h.computer, 2);
+  h.socket().onclose({});
+  h.fire(); // the reconnect
+  h.message({ t: "hello", client: ME, seq: 0, peers: [] });
+  assert.equal(h.computer, 3, "the rejoin asks again: a computer may have come or gone meanwhile");
+  h.load("page-b", [block("p")]); // navigated away while the socket is still the old page's
+  h.message({ t: "computer" });
+  assert.equal(h.computer, 4, "kept: the nudge is the account's, and the page open now is asked");
+  assert.equal(h.vault, 2, "a vault's nudge is not one");
 });

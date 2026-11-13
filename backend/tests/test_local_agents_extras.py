@@ -102,6 +102,9 @@ def test_the_probe_lists_the_models(lab, disk, monkeypatch):
     assert catalog.cached("claude")["models"] == []
     _until(lambda: not catalog._refreshing)
     assert catalog.cached("claude")["models"] == CLAUDE_MODELS
+    # a reader that comes back often takes what is kept however old, and starts no probe to refresh it
+    catalog._cache["claude"]["at"] -= catalog.PROBE_TTL_S
+    assert catalog.known("claude")["models"] == CLAUDE_MODELS and not catalog._refreshing
 
     # a Codex that cannot list them is still ready, with none
     script_agent(monkeypatch, disk.log, fail="models")

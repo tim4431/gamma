@@ -1265,7 +1265,10 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
   last in that one session; a Send of a file or a folder whose threads
   came from several starts a new one.
 - Comments on another server (the NAS, a clone) never reach this computer's
-  agent, as they never reach its files (feedback.md "Known gaps").
+  agent, as they never reach its files (feedback.md "Known gaps"). That
+  server now sees the computer ([computers.md](computers.md): its channel
+  and presence, step 4a of the research note); its work folders, Sends,
+  mentions and chat over that channel are the next steps.
 - The chat's computer side: Claude Code builds only where the folder lets
   it ask; no diff or Revert of what it changed (Gamma writes no file the
   disk made: a decision first), no *Attach what I see*, no *Open comments

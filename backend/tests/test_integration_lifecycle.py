@@ -147,7 +147,7 @@ def test_a_feedback_token_reads_several_workspaces_and_a_write_token_one(account
         set_workspaces(user_id, pushed["id"], [ws])
     with pytest.raises(HTTPException) as e:
         create_token(user_id, ws, "Other", 90, scope="admin")
-    assert e.value.detail == "scope must be read, write or feedback"
+    assert e.value.detail == "scope must be read, write, feedback or computer"
 
 
 def test_the_credentials_name_the_token(account, resource):

@@ -558,6 +558,48 @@ USERS_SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id, owner)",
+    # computers = what a computer announced over its channel to this server
+    # (gamma/computers/registry.py), one row per integration token of the
+    # ``computer`` scope (token_id): its account and that token's
+    # workspace, the computer's id for this server and its name, the
+    # folders and pages it keeps there (JSON [{kind, folder_id | page_id,
+    # paused}], ids only), its assistants (JSON [{name, label, found, ready,
+    # version, code}]), the app's version, and when it was last seen. Never
+    # a path. Whether it is online now is in memory. Additive: no step.
+    """CREATE TABLE IF NOT EXISTS computers (
+        token_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        computer TEXT NOT NULL,
+        name TEXT NOT NULL,
+        vaults TEXT NOT NULL DEFAULT '[]',
+        assistants TEXT NOT NULL DEFAULT '[]',
+        app TEXT NOT NULL DEFAULT '',
+        seen_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_computers_user ON computers(user_id, workspace_id)",
+    # computer_links = this computer's channel to another Gamma server
+    # (gamma/computers/channel.py), kept by the desktop app's own server:
+    # one per server, workspace there and local account (created_by), with
+    # the ``computer`` token of that server (Fernet-encrypted, as
+    # folder_links keeps a vault's) and its id for whoever revokes it, the
+    # account there the server named (its id and username), and the
+    # channel's status as JSON ({state: connecting | connected | refused |
+    # older | unreachable, error, at}). Additive: no step.
+    """CREATE TABLE IF NOT EXISTS computer_links (
+        id TEXT PRIMARY KEY,
+        remote_url TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        token TEXT NOT NULL,
+        token_id TEXT NOT NULL,
+        account TEXT NOT NULL DEFAULT '',
+        username TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(remote_url, workspace_id, created_by)
+    )""",
 ]
 
 

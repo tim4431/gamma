@@ -81,6 +81,7 @@ import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { workFolderScenarios } from "./scenarios/workFolders.mjs";
 import { feedbackScenarios } from "./scenarios/feedback.mjs";
 import { localAgentScenarios } from "./scenarios/localAgents.mjs";
+import { computerScenarios } from "./scenarios/computers.mjs";
 import { viewerScenarios } from "./scenarios/viewers.mjs";
 import { textSearchScenarios } from "./scenarios/textSearch.mjs";
 import { textAnchorScenarios } from "./scenarios/textAnchors.mjs";
@@ -123,6 +124,7 @@ const RUNNERS = {
   "work-folders": workFolderScenarios,
   "feedback": feedbackScenarios,
   "local-agents": localAgentScenarios,
+  "computers": computerScenarios,
   "viewers": viewerScenarios,
   "text-search": textSearchScenarios,
   "text-anchors": textAnchorScenarios,

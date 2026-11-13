@@ -651,6 +651,14 @@ function revokeToken(api, origin, wsId, tokenId) {
   return api(origin, `/api/integrations/tokens/${tokenId}`, { method: 'DELETE', headers: { 'X-Gamma-Workspace': wsId } }).catch(() => {});
 }
 
+// revokeToken, saying whether the token went: false when the server could
+// not be reached, refused the window's session, or (a server that says so)
+// found no such token of the account signed in there.
+function revokedToken(api, origin, wsId, tokenId) {
+  return api(origin, `/api/integrations/tokens/${tokenId}`, { method: 'DELETE', headers: { 'X-Gamma-Workspace': wsId } })
+    .then((r) => !(r && r.revoked === false), () => false);
+}
+
 // A local server's sidecar, started (or the one already running). It gets
 // the port it had last time when that is free and remembers the one it got,
 // so the server keeps its address — the one the Gamma Connector was set to
@@ -1071,9 +1079,11 @@ async function addFolderVault(wsId, folderId) {
   try {
     const body = { folder: folderId, path: picked, notes: true, pull: choice.pull, push: choice.push };
     let link;
+    let unshown = null; // why this computer is not shown on the remote, the vault made all the same
     if (remote) {
       // A token on the remote for the host to read the folder with, one that
-      // may write when the vault pushes; the vault on the host.
+      // may write when the vault pushes; the vault on the host; then this
+      // computer shown there (showComputer).
       token = await api(origin, '/api/integrations/tokens', {
         method: 'POST',
         headers: { ...JSON_TYPE, ...wsHeaders },
@@ -1086,6 +1096,7 @@ async function addFolderVault(wsId, folderId) {
       });
       token = null; // the host holds it now
       registry.setSettings({ folderHost: at.local.id }); // runs at launch with the clones' hosts
+      unshown = await showComputer({ remote: api, remoteOrigin: origin, remoteName: serverName, wsId, host: { origin: at.origin, api } });
     } else {
       stillOn(shown);
       link = await api(at.origin, '/api/folder-links', {
@@ -1094,7 +1105,7 @@ async function addFolderVault(wsId, folderId) {
         body: JSON.stringify({ ...body, adopt: adopts(preview) }),
       });
     }
-    showNotice(`${name} is synced with ${link.dest}`);
+    showNotice(`${name} is synced with ${link.dest}${unshown ? `. ${unshown}` : ''}`);
     offerBackground(`The synced vault “${name}”`).catch(() => {});
     refreshKeeping().catch(() => {});
     return link;
@@ -1199,8 +1210,10 @@ async function addFileVault(wsId, pageId) {
   let token = null;
   try {
     let link;
+    let unshown = null; // why this computer is not shown on the remote, the vault made all the same
     if (remote) {
-      // A write token on the remote, for the host to replace the page's PDF with; the vault on the host.
+      // A write token on the remote, for the host to replace the page's PDF with; the vault on the host;
+      // then this computer shown there (showComputer).
       token = await api(origin, '/api/integrations/tokens', {
         method: 'POST',
         headers: { ...JSON_TYPE, ...wsHeaders },
@@ -1215,6 +1228,7 @@ async function addFileVault(wsId, pageId) {
       });
       token = null; // the host holds it now
       registry.setSettings({ folderHost: host.local.id }); // runs at launch with the clones' hosts
+      unshown = await showComputer({ remote: api, remoteOrigin: origin, remoteName: shown.name, wsId, host: { origin: host.origin, api } });
     } else {
       stillOn(shown);
       const local = registry.get(shown.id);
@@ -1228,7 +1242,7 @@ async function addFileVault(wsId, pageId) {
         body: JSON.stringify({ kind: 'file', page: pageId, path: picked }),
       });
     }
-    showNotice(`“${title}” is pushed from ${file}: each new version becomes its PDF.`);
+    showNotice(`“${title}” is pushed from ${file}: each new version becomes its PDF.${unshown ? ` ${unshown}` : ''}`);
     offerBackground(`“${title}”`).catch(() => {});
     refreshKeeping().catch(() => {});
     return link;
@@ -1568,12 +1582,134 @@ async function locateVault(serverId, linkId) {
 
 // A vault of a remote server is gone: the token the shell minted for it is
 // revoked there, with the window's session, which is signed into the
-// remote, and once the host keeps nothing more of remote servers it need
-// not start at launch for them.
-async function releaseRemote(origin, api, serverId, link) {
-  if (link.token_id) await revokeToken(serverApi(session.defaultSession), new URL(link.remote_url).origin, link.workspace_id, link.token_id);
+// remote; the last vault of that server and workspace takes this computer
+// off it (hideComputer); and once the host keeps nothing more of remote
+// servers it need not start at launch for them. → what the bar adds when
+// the computer's token there could not be revoked (`remoteName`, that
+// server as the bar names it), else "".
+async function releaseRemote(origin, api, serverId, link, remoteName) {
+  const remote = serverApi(session.defaultSession);
+  const remoteOrigin = registry.originOf(link.remote_url);
+  if (link.token_id) await revokeToken(remote, remoteOrigin, link.workspace_id, link.token_id);
   const left = ((await api(origin, '/api/folder-links')).links || []).filter((l) => l.remote_url);
+  let stranded = '';
+  if (!left.some((l) => registry.originOf(l.remote_url) === remoteOrigin && l.workspace_id === link.workspace_id)) {
+    const hidden = await hideComputer({ origin, api }, remote, remoteOrigin, link.workspace_id).catch(() => null);
+    if (hidden && !hidden.revoked) stranded = keeping.computerStranded(remoteName || remoteOrigin, COMPUTER_NAME);
+  }
   if (!left.length && registry.getSettings().folderHost === serverId) registry.setSettings({ folderHost: '' });
+  return stranded;
+}
+
+// ------------------------------------------------ this computer, shown -----
+// A vault of another server shows this computer there: the vault's maker
+// sees on that server, in any window, that the vault is kept here, whether
+// this computer is online, and which assistants are here, never a path
+// (docs/dev/computers.md). The host keeps one computer link per server,
+// workspace and account, with a token of its own minted there, of scope
+// `computer`, which opens only the channel the host announces itself over:
+// never the vault's token. The shell mints it with the window's session,
+// signed into that server, as it mints a vault's, and hands it to the host
+// with its word (POST /api/computer-links), which checks it with one
+// announce. The token the host's answer says it replaced, and the one a
+// link held when it goes, are revoked on that server by the shell.
+
+// This computer's name on those servers: its host name, as the host's
+// channel announces it.
+const COMPUTER_NAME = String(os.hostname() || '').trim().slice(0, 64) || 'Gamma desktop';
+
+// The host's computer link of server `remoteOrigin` and workspace `wsId`
+// for the account `host.api` is signed in as, or null.
+async function computerLinkOf(host, remoteOrigin, wsId) {
+  const links = (await host.api(host.origin, '/api/computer-links')).links || [];
+  return links.find((c) => registry.originOf(c.remote_url) === remoteOrigin && c.workspace_id === wsId) || null;
+}
+
+// Show this computer on `remoteOrigin` (`remoteName`, as the bar names it)
+// for workspace `wsId`: a computer token minted there through `remote`
+// (Gamma's API in a session signed into that server) and handed to the host
+// (`host`: `{ origin, api }`, signed into it). Unless `always` (the panel's
+// Show this computer there), a host that already shows this computer there
+// for the account signed in there keeps its link, but one that server
+// refused is handed a new token. Never throws, so a vault just made stays
+// made: → null when shown, else the failure as the bar says it, a token
+// minted for a link the host did not make revoked.
+async function showComputer({ remote, remoteOrigin, remoteName, wsId, host, always = false }) {
+  let token = null;
+  try {
+    const had = always ? null : await computerLinkOf(host, remoteOrigin, wsId);
+    if (had) {
+      // GET /api/session names the account signed in there (`user`, its username).
+      const who = await remote(remoteOrigin, '/api/session').catch(() => null);
+      const signedIn = who && typeof who.user === 'string' ? who.user : '';
+      if (had.username && signedIn && signedIn !== had.username) return keeping.computerOtherAccount(remoteName, COMPUTER_NAME, had.username);
+      if ((had.status || {}).state !== 'refused') return null;
+    }
+    token = await remote(remoteOrigin, '/api/integrations/tokens', {
+      method: 'POST',
+      headers: { ...JSON_TYPE, 'X-Gamma-Workspace': wsId },
+      body: JSON.stringify({ name: `Gamma desktop: ${COMPUTER_NAME}`, scope: 'computer', expires_in_days: 365 }),
+    }).catch((e) => { throw Object.assign(e, { minting: true }); });
+    const made = await host.api(host.origin, '/api/computer-links', {
+      method: 'POST',
+      headers: { ...JSON_TYPE, ...shellWord(host.origin) },
+      body: JSON.stringify({ remote_url: remoteOrigin, workspace: wsId, token: token.token, token_id: token.id }),
+    });
+    const minted = token.id;
+    token = null; // the host holds it now
+    const replaced = made && made.replaced && made.replaced.token_id;
+    if (replaced && replaced !== minted) await revokeToken(remote, remoteOrigin, wsId, replaced);
+    return null;
+  } catch (e) {
+    if (token) await revokeToken(remote, remoteOrigin, wsId, token.id); // minted for a link that was never made
+    return keeping.computerFailed(remoteName, e);
+  }
+}
+
+// Stop showing this computer on `remoteOrigin` for workspace `wsId`: the
+// host forgets its computer link there, which stops its channel, and the
+// token the link held is revoked on that server through `remote`. → null
+// when the host had none, else `{ revoked }`: false when that server did not
+// revoke it (unreachable, signed out, another account signed in there), the
+// token then left for the person to remove in that server's Settings.
+async function hideComputer(host, remote, remoteOrigin, wsId) {
+  const had = await computerLinkOf(host, remoteOrigin, wsId);
+  if (!had) return null;
+  const gone = await host.api(host.origin, `/api/computer-links/${encodeURIComponent(had.id)}`, {
+    method: 'DELETE', headers: shellWord(host.origin),
+  });
+  return { revoked: !(gone && gone.token_id) || await revokedToken(remote, remoteOrigin, wsId, gone.token_id) };
+}
+
+// The panel's Show this computer there, on the server and workspace of the
+// vault of another server `linkId` of the host `serverId`: minted with the
+// window's session, signed into that server, as changePush mints.
+async function showComputerOf(serverId, linkId) {
+  const { origin, api, link, item } = await vaultOn(serverId, linkId);
+  if (!link.remote_url) throw new Error('Only a vault of another server shows this computer there.');
+  busy = `Showing this computer on ${item.remote}…`;
+  pushState();
+  try {
+    const failed = await showComputer({ remote: serverApi(session.defaultSession), remoteOrigin: registry.originOf(link.remote_url),
+      remoteName: item.remote, wsId: link.workspace_id, host: { origin, api }, always: true });
+    showNotice(failed || keeping.computerSaid(item.remote, COMPUTER_NAME, true));
+    return !failed;
+  } finally {
+    busy = null;
+    pushState();
+    refreshKeeping().catch(() => {});
+  }
+}
+
+// The panel's Stop showing, on the server and workspace of the vault of
+// another server `linkId` of the host `serverId`; its vaults stay as they are.
+async function hideComputerOf(serverId, linkId) {
+  const { origin, api, link, item } = await vaultOn(serverId, linkId);
+  if (!link.remote_url) throw new Error('Only a vault of another server shows this computer there.');
+  const had = await hideComputer({ origin, api }, serverApi(session.defaultSession), registry.originOf(link.remote_url), link.workspace_id);
+  if (had) showNotice(had.revoked ? keeping.computerSaid(item.remote, COMPUTER_NAME, false) : keeping.computerStranded(item.remote, COMPUTER_NAME));
+  refreshKeeping().catch(() => {});
+  return !!had;
 }
 
 // Remove the vault…: its pages stay (the PDFs it read where they are stored
@@ -1594,11 +1730,11 @@ async function removeVault(serverId, linkId, files) {
   pushState();
   try {
     await api(origin, `/api/folder-links/${link.id}?files=${files === 'trash' ? 'trash' : 'keep'}`, { method: 'DELETE', headers });
-    if (link.remote_url) await releaseRemote(origin, api, serverId, link);
-    showNotice(item.scope === 'file' ? `${item.name} is no longer pushed from ${path.basename(item.dest)}; the file stays as it is.`
+    const stranded = link.remote_url ? await releaseRemote(origin, api, serverId, link, item.remote) : '';
+    showNotice((item.scope === 'file' ? `${item.name} is no longer pushed from ${path.basename(item.dest)}; the file stays as it is.`
       : item.offline || item.stopped ? `${item.name} is no longer synced; nothing in ${item.dest} was touched.`
       : files === 'trash' ? `${item.name} is no longer synced; the files the sync wrote are in its trash, .gamma/trash.`
-      : `${item.dest} is no longer synced; its files stay.`);
+      : `${item.dest} is no longer synced; its files stay.`) + (stranded ? ` ${stranded}` : ''));
     return true;
   } finally {
     busy = null;
@@ -1759,13 +1895,16 @@ function refreshKeeping() {
         const { origin, api } = await localServer(srv.id);
         // (a server from before the Zotero links has no list of them: none; the session's
         // workspaces say which vaults' workspaces the account is still in, unread when it does not answer;
-        // the agents it finds on this computer, none from a server that runs no agents, which answers 404)
-        const [m, f, z, who, found] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links'),
+        // the agents it finds on this computer, none from a server that runs no agents, which answers 404;
+        // the servers it shows this computer on, for its vaults of another server, unsaid when it does not answer)
+        const [m, f, z, who, found, shown] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links'),
           api(origin, '/api/zotero/links').catch(() => null), api(origin, '/api/session').catch(() => null),
-          api(origin, '/api/local-agents', { signal: AbortSignal.timeout(5000) }).catch(() => null)]);
+          api(origin, '/api/local-agents', { signal: AbortSignal.timeout(5000) }).catch(() => null),
+          api(origin, '/api/computer-links').catch(() => null)]);
         const roles = who && Array.isArray(who.workspaces) ? who.workspaces : null;
         const agents = found && Array.isArray(found.agents) ? found.agents : null;
-        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles, agents }, servers);
+        const computers = shown && Array.isArray(shown.links) ? { links: shown.links, name: COMPUTER_NAME } : null;
+        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles, agents, computers }, servers);
         // A server with a link that is not detached starts at launch; one
         // whose links all went or were detached no longer does. A list that
         // did not come leaves that as it was.
@@ -1791,7 +1930,8 @@ function refreshKeeping() {
 // word), `agent` (an agent's name, "" for none) and `agent-runs` ('never'
 // or 'ask'); `choose` opens a work folder's tracking dialog in Gamma, and
 // `check-agents` looks for the agents on this computer again as a work
-// folder's view opens.
+// folder's view opens; `show-computer` and `hide-computer` show this
+// computer on a vault of another server's server, or stop showing it.
 const VAULT_ACTIONS = {
   pause: (serverId, id) => pauseVault(serverId, id, true),
   resume: (serverId, id) => pauseVault(serverId, id, false),
@@ -1810,6 +1950,8 @@ const VAULT_ACTIONS = {
   agent: (serverId, id, value) => setAgent(serverId, id, value),
   'agent-runs': (serverId, id, value) => setAgentRuns(serverId, id, value),
   'check-agents': (serverId) => checkAgents(serverId),
+  'show-computer': (serverId, id) => showComputerOf(serverId, id),
+  'hide-computer': (serverId, id) => hideComputerOf(serverId, id),
 };
 
 // What a panel row does: a clone or a Zotero link opens, pauses (detaches)
@@ -2941,7 +3083,8 @@ function registerIpc() {
   // Of a vault's actions, those that change it or run a round leave the sync
   // panel open on the new state (bar.html keptRow); the others ask first, or
   // open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents',
+    'show-computer', 'hide-computer'];
   ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action, value) =>
     withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action, value), !STAYS_OPEN.includes(action))()));
   // A page's asks about this computer in Gamma's own menus (a folder's "Sync
@@ -3212,6 +3355,7 @@ if (process.env.GAMMA_SHELL_TEST) {
     goOnVault,
     locateVault,
     removeVault,
+    computerName: COMPUTER_NAME,
     revealOnDisk,
     relocateFile,
     carryPage,

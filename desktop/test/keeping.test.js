@@ -166,6 +166,52 @@ test('letting a work folder\'s agent ask in the chat is asked with what it may a
   assert.equal(keeping.runsSaid(claude, 'never'), 'Claude Code no longer asks to run more on Quantum: it keeps to its confinement.');
 });
 
+test('a vault of another server says whether this computer is shown there, in its link\'s state, with Stop showing or Show this computer there', () => {
+  const remote = (computers, more = {}) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Papers\\Lab',
+    remote_url: 'http://nas.lan:9001', pull: true, push: 'off', status: { last_sync: now, folder_path: ['Lab'] }, ...more }, servers, null, null, computers);
+  const shown = (state, more = {}) => ({ links: [{ id: 'c1', remote_url: 'http://nas.lan:9001/', workspace_id: 'lab', account: 'u_1', username: 'tim',
+    status: { state, error: '', at: now }, created_at: now, ...more }], name: 'TIM-PC' });
+
+  const on = remote(shown('connected')).computer;
+  assert.deepEqual([on.state, on.text, on.action, on.button], ['connected', 'Shown on NAS as TIM-PC · connected', 'hide-computer', 'Stop showing']);
+  assert.equal(on.title, 'Only tim sees on NAS, in any window, that this vault is kept on TIM-PC, whether it is online, and which assistants are here. No path is sent.');
+  const words = Object.fromEntries(['connecting', 'refused', 'older', 'unreachable'].map((s) => [s, remote(shown(s)).computer.text]));
+  assert.deepEqual(words, {
+    connecting: 'Shown on NAS as TIM-PC · connecting',
+    refused: 'Shown on NAS as TIM-PC · refused this computer\'s token',
+    older: 'Shown on NAS as TIM-PC · older than this app',
+    unreachable: 'Shown on NAS as TIM-PC · not reachable',
+  });
+  assert.match(remote(shown('refused')).computer.title, /revoked there, or it expired\. Stop showing, then Show this computer there/);
+  assert.equal(remote(shown('unreachable', { status: { state: 'unreachable', error: 'timed out' } })).computer.title,
+    'NAS does not answer now; this computer tries again by itself. Timed out.');
+  assert.equal(remote(shown('')).computer.text, 'Shown on NAS as TIM-PC · connecting', 'a state it does not know reads as connecting');
+
+  // none for this server and workspace: another workspace's or another server's link does not count
+  for (const links of [[], shown('connected', { workspace_id: 'other' }).links, shown('connected', { remote_url: 'http://other.lan:9001' }).links]) {
+    const none = remote({ links, name: 'TIM-PC' }).computer;
+    assert.deepEqual([none.state, none.text, none.action, none.button], ['none', 'Not shown on NAS', 'show-computer', 'Show this computer there']);
+    assert.match(none.title, /that this vault is kept on TIM-PC, .* No path is sent\.$/);
+  }
+  // unread, a vault of this server's own, or another account's seen by a viewer: nothing said
+  assert.equal(remote(null).computer, null);
+  assert.equal(keeping.vault(local, { id: 'f2', kind: 'folder', folder_id: 'x', dest: 'C:\\Lab', remote_url: '', status: {} }, servers, null, null, shown('connected')).computer, null);
+  assert.equal(remote(shown('connected'), { dest: '' }).computer, null);
+  // itemsOf hands the links on; a vault's state is its own
+  const [item] = keeping.itemsOf(local, { links: [{ id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Lab', remote_url: 'http://nas.lan:9001', status: { last_sync: now } }],
+    computers: shown('refused') }, servers);
+  assert.deepEqual([item.state, item.computer.state], ['ok', 'refused']);
+
+  // what showing came to, and why not
+  assert.equal(keeping.computerSaid('NAS', 'TIM-PC', true), 'TIM-PC is shown on NAS: only your account there sees it, with the vaults it keeps and the assistants here.');
+  assert.equal(keeping.computerSaid('NAS', 'TIM-PC', false), 'TIM-PC is no longer shown on NAS; its token there is revoked.');
+  const older = 'NAS is older than this app: it cannot show this computer.';
+  assert.equal(keeping.computerFailed('NAS', { status: 422, minting: true, body: { detail: [{ msg: 'pattern' }] } }), older, 'its scopes do not know a computer\'s');
+  assert.equal(keeping.computerFailed('NAS', { status: 409, body: { detail: 'That server is older than this app: it cannot show this computer.' } }), older);
+  assert.equal(keeping.computerFailed('NAS', { status: 400, minting: true, body: { detail: 'At most 20 tokens per account.' } }), 'NAS cannot show this computer: At most 20 tokens per account.');
+  assert.equal(keeping.computerFailed('NAS', new Error('fetch failed')), 'NAS cannot show this computer: fetch failed');
+});
+
 test('an up-to-date vault says what it pushed, its conflicts, the files changed here and those not synced', () => {
   const v = folder({ push: 'pdfs', status: { last_sync: now, untracked: 4, counts: { sent: 2, conflicts: 1 }, kept: [
     { path: 'a.md', why: 'changed here', force: true },

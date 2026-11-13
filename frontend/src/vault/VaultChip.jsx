@@ -3,17 +3,20 @@
 // vaultState.js: the chip among the page header's buttons, one icon for how
 // the page stands (vaultState's `kind`), with its card (where the file is,
 // a work folder's agent on this computer and what it is at, Show in folder,
-// Add to library…, Feedback…, Edit the file); and the banner over the
-// page, in the missing-page notice's slot, for a note the vault could not
-// write and for an opened PDF whose file is gone (Locate…, Remove). The
-// actions are App's: it posts the shell's messages and opens the dialogs.
+// Add to library…, Feedback…, Edit the file); on any other server, the
+// computer that keeps the page in a synced vault of the account's, online
+// or since when not, and the assistants there (computerChip, no action yet);
+// and the banner over the page, in the missing-page notice's slot, for a
+// note the vault could not write and for an opened PDF whose file is gone
+// (Locate…, Remove). The actions are App's: it posts the shell's messages
+// and opens the dialogs.
 import React from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { AlertCircleIcon, BotIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, PauseIcon, SquareCheckIcon, SyncIcon,
-  TrashIcon, UploadIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, BotIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, MonitorIcon, PauseIcon, SquareCheckIcon,
+  SyncIcon, TrashIcon, UploadIcon } from "../shared/ui/Icons";
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
-import { addsToLibrary, agentLine, directionText, editsFile, notesLocked, vaultChip } from "./vaultState.js";
+import { addsToLibrary, agentLine, computerChip, directionText, editsFile, notesLocked, vaultChip } from "./vaultState.js";
 import "./vault.css";
 
 // The chip's icon, by what the page's standing is (vaultState's `kind`):
@@ -32,10 +35,13 @@ const CHIP_ICONS = { sync: SyncIcon, push: UploadIcon, disk: HardDriveIcon, paus
 // `onCopy()` (Save a copy to library…) for its PDF while it is not (in the
 // library, the copy would be its own page); `onChoose()`, when
 // given, opens Choose files… of its work folder, and `onFeedback()`, when
-// given, the file's feedback view (docs/dev/feedback.md).
-export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, canAdd, file = null, onRemove, onCopy, onChoose, onFeedback }) {
+// given, the file's feedback view (docs/dev/feedback.md). `computers`: the
+// page's computers (usePageComputer.js), whose chip shows when the page
+// has no standing with this computer to show.
+export function VaultChip({ state, computers = [], open, onOpenChange, onReveal, onAdd, onEdit, canAdd, file = null, onRemove, onCopy, onChoose,
+  onFeedback }) {
   const chip = vaultChip(state);
-  if (!chip) return null;
+  if (!chip) return <ComputerChip computers={computers} open={open} onOpenChange={onOpenChange} />;
   const { vault, reader } = state;
   const agent = agentLine(state);
   const path = vault ? vault.path : reader.path;
@@ -116,6 +122,38 @@ export function VaultChip({ state, open, onOpenChange, onReveal, onAdd, onEdit, 
                 title={t("Edit the Markdown file itself; the page takes what you save")}>{t("Edit the file")}</MenuItem>
             ) : null}
           </div>
+        </Popover>
+      ) : null}
+    </span>
+  );
+}
+
+// The chip of a page another computer keeps (vaultState.js computerChip):
+// a dot on its icon for whether the computer is online, its card the
+// computer's name, its state, the folder or file it keeps and the
+// assistants there. Nothing to do from here yet: Show in folder needs a
+// window on that computer.
+function ComputerChip({ computers, open, onOpenChange }) {
+  const chip = computerChip(computers);
+  if (!chip) return null;
+  const state = chip.online ? "online" : "offline";
+  return (
+    <span data-popover="vault" className="popoverAnchor">
+      <button type="button" className="pageActionBtn vaultChip vaultComputerChip" data-computer={state}
+        title={`${chip.label}\n${chip.title}`} aria-label={`${chip.label}: ${chip.state}`}
+        aria-haspopup="menu" aria-expanded={open} onClick={() => onOpenChange(!open)}>
+        <MonitorIcon size={16} />
+        <span className={`vaultComputerDot ${state}`} aria-hidden="true" />
+      </button>
+      {open ? (
+        <Popover as={MenuScope} className="addPopover vaultPopover" aria-label={chip.label}>
+          <div className="popoverTitle">{chip.label}</div>
+          <div className="popoverHint vaultComputerState" data-computer={state}>
+            <span className={`vaultComputerDot ${state}`} aria-hidden="true" />{chip.state}
+          </div>
+          {chip.vault ? <div className="popoverHint">{chip.vault}</div> : null}
+          {chip.paused ? <div className="popoverHint">{chip.paused}</div> : null}
+          {chip.assistants ? <div className="popoverHint vaultAgent">{chip.assistants}</div> : null}
         </Popover>
       ) : null}
     </span>

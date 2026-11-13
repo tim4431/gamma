@@ -465,7 +465,8 @@
   // A row's or a vault view's action (main.js keepingAction). Those that
   // change the vault or run a round leave the panel open on the new state;
   // the others ask first in a native dialog, or open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents',
+    'show-computer', 'hide-computer'];
   function runKept(i, action, value) {
     if (!STAYS_OPEN.includes(action)) closeMenu();
     gammaShell.keepingAction(i.kind, i.server, i.id, action, value).catch(() => {});
@@ -754,7 +755,9 @@
   // tooltip; the rare and the grave ones keep their rows, where their words
   // warn: Choose files… for a work folder (its tracking dialog, in Gamma), Go
   // on… for a vault its guard held, Locate… for one whose directory or file
-  // is not where it was, Force pull… and Force push…, Remove the vault….
+  // is not where it was, Force pull… and Force push…, Show this computer
+  // there or Stop showing for a vault of another server (under its State,
+  // whether this computer is shown there), Remove the vault….
   function renderVault(panel, i) {
     backRow(panel, () => { vaultView = null; renderSync(); });
     panel.appendChild(label(i.name));
@@ -764,6 +767,15 @@
     boxRow(box, 'Local', i.seen ? 'On the computer of the account that made it' : i.dest, i.seen ? '' : 'path');
     boxRow(box, 'Remote', `${i.remote}${i.folder ? ` · ${i.folder}` : ''}`);
     boxRow(box, 'State', i.text).title = i.title;
+    // A vault of another server: whether this computer is shown there (keeping.js computerLine).
+    if (i.computer) {
+      const say = document.createElement('div');
+      say.className = `say${i.computer.state === 'refused' || i.computer.state === 'older' ? ' no' : ''}`;
+      say.id = 'vaultComputer';
+      say.textContent = i.computer.text;
+      say.title = i.computer.title;
+      box.appendChild(say);
+    }
     // A vault of a workspace its maker left runs no round; another account's, seen by a viewer, takes no action.
     const shut = i.seen ? 'Another account made this vault: it, or an editor of the workspace, acts on it.'
       : i.away ? 'Your account is no longer a member of its workspace: nothing is pulled or pushed.' : '';
@@ -823,8 +835,10 @@
       ['locate', ICONS.locate, folder ? 'Locate…' : 'Locate the file…', !i.seen && (!folder || Boolean(i.stopped) || i.offline)],
       ['force-pull', ICONS.force, 'Force pull…', rounds && folder],
       ['force-push', ICONS.force, 'Force push…', rounds && folder],
+      // this computer shown on a vault of another server's server, or no longer
+      i.computer ? [i.computer.action, i.computer.action === 'show-computer' ? ICONS.remote : ICONS.pause, i.computer.button, true] : null,
       ['remove', ICONS.stop, 'Remove the vault…', !i.seen, false, true],
-    ];
+    ].filter(Boolean);
     for (const [act, icon, text, shown, off, danger] of acts) {
       if (!shown) continue;
       const b = document.createElement('button');
