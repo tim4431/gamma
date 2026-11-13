@@ -795,10 +795,10 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       const [raced] = await newStrokes(paper.id, before, 1, "the stroke whose lift beat the answer saved");
       assert(!raced.shape && raced.ch === "xyptazw", `freehand, as the shell drew it (${raced.ch})`);
       // with strokes on the clipboard, a pen held still where it went down opens Paste here; the host drops its line
-      await page.keyboard.press("Control+a");
+      await page.keyboard.press("ControlOrMeta+a");
       await until(async () => /^Lasso/.test(await page.locator(".pdfInkBar .inkToolBtn.modeActive").getAttribute("aria-label")),
         { what: "select all arms the lasso" });
-      await page.keyboard.press("Control+c");
+      await page.keyboard.press("ControlOrMeta+c");
       await page.getByText("Copied 3 strokes.", { exact: true }).first().waitFor();
       await page.keyboard.press("1");
       await shell.down(83, 400, 650);

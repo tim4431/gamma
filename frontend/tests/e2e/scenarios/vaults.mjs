@@ -22,7 +22,9 @@ export async function vaultScenarios(env) {
   const { browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("vaults")) return;
   const server = new Server({ env: { GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "" } });
-  const disk = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-vaults-"));
+  // As the server resolves it (folder_links.py): a Mac's temp directory is
+  // under /var, a link to /private/var.
+  const disk = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-vaults-")));
   try {
     await server.start();
     await server.manage("create-user", "vault-user", "vault-pw");
@@ -112,7 +114,7 @@ export async function vaultScenarios(env) {
         let dialog = await editFile();
         await dialog.locator(".fileSourcePath").getByText(note, { exact: true }).waitFor();
         await dialog.locator(".cm-content").click();
-        await page.keyboard.press("Control+End");
+        await page.keyboard.press("ControlOrMeta+End");
         await page.keyboard.type("\nA line from the editor.");
         await dialog.getByRole("button", { name: "Save", exact: true }).click();
         await dialog.waitFor({ state: "detached" });
@@ -124,7 +126,7 @@ export async function vaultScenarios(env) {
         dialog = await editFile();
         fs.appendFileSync(note, "\n\nChanged on disk.\n");
         await dialog.locator(".cm-content").click();
-        await page.keyboard.press("Control+End");
+        await page.keyboard.press("ControlOrMeta+End");
         await page.keyboard.type(" (unsaved)");
         await dialog.getByRole("button", { name: "Save", exact: true }).click();
         await dialog.locator(".fileSourceMoved").waitFor();
@@ -312,7 +314,7 @@ export async function vaultScenarios(env) {
         // (the library page alone offers Move into page…, so the check fails if the selection did not take)
         const card = (title) => page.locator(".pinnedStrip .pageCard", { hasText: title });
         await card("Pinned paper").click();
-        await card("pinned-library.pdf").click({ modifiers: ["Control"] });
+        await card("pinned-library.pdf").click({ modifiers: ["ControlOrMeta"] });
         await card("pinned-library.pdf").click({ button: "right" });
         const menu = page.locator(".ctxMenu");
         await menu.locator(".ctxMenuItem", { hasText: "Unpin" }).first().waitFor();

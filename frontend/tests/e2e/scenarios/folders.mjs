@@ -1,4 +1,4 @@
-import { Account, wanted } from "../harness.mjs";
+import { Account, FIELD_END, wanted } from "../harness.mjs";
 
 // Folders and labels are blocks (docs/dev/home_library.md "Folders and
 // labels"): New folder makes an empty folder that stays and lists first, a
@@ -99,7 +99,7 @@ export async function folderScenarios(env) {
       await until(async () => (await order()).join("|") === "Empty one|Alpha|Beta|Lab, renamed / 2026", { what: "the order stays" });
       // several selected folders dropped on an edge all land there, in their listed order (Beta picked first)
       await row(page, "Beta").click();
-      await row(page, "Alpha").click({ modifiers: ["Control"] });
+      await row(page, "Alpha").click({ modifiers: ["ControlOrMeta"] });
       await drag(page, row(page, "Beta"), row(page, "Empty one"), "before");
       await until(async () => (await order()).join("|") === "Alpha|Beta|Empty one|Lab, renamed / 2026",
         { what: "Alpha and Beta land before Empty one" });
@@ -368,14 +368,14 @@ export async function folderScenarios(env) {
       // A clause already whole: Tab leaves the text and moves the caret past
       // it at once, so the next keys typed at the end stay there.
       await search.fill("folder:Deep x");
-      await search.press("End");
+      await search.press(FIELD_END);
       await search.press("ArrowLeft");
       await search.press("ArrowLeft");
       await until(async () => (await rows.count()) === 1, { what: "the folder the caret's value names" });
       await search.press("Tab");
       assertEq(await search.inputValue(), "folder:Deep x", "nothing to complete");
       assertEq(await search.evaluate((el) => el.selectionStart), 12, "the caret after the clause's space");
-      await search.press("End");
+      await search.press(FIELD_END);
       await page.keyboard.type("yz");
       assertEq(await search.inputValue(), "folder:Deep xyz", "typed where the caret was put");
 

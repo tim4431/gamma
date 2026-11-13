@@ -1,4 +1,4 @@
-import { Account, FAKE_AI_MODELS, PYTHON, Server, arrived, fakeAiModels, makePdf, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, PYTHON, Server, arrived, fakeAiModels, keyLabel, keyParts, makePdf, wanted } from "../harness.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -250,11 +250,11 @@ export async function settingsScenarios(env) {
   await step("settings: Ctrl+, opens it; Ctrl+F goes to the settings search, Enter and the arrows pick a match", async () => {
     const { ctx, page } = await setup();
     try {
-      await page.keyboard.press("Control+Comma");
+      await page.keyboard.press("ControlOrMeta+Comma");
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       assertEq(await nav(page, "Account & sync").getAttribute("aria-current"), "page", "Settings opens on Account & sync");
       // Over the home library, whose own find box used to take the key.
-      await page.keyboard.press("Control+f");
+      await page.keyboard.press("ControlOrMeta+f");
       const box = page.getByRole("searchbox", { name: "Search settings" });
       await until(() => box.evaluate((el) => el === document.activeElement));
       assertEq(await page.locator(".homeFindInput").evaluate((el) => el === document.activeElement), false);
@@ -262,7 +262,7 @@ export async function settingsScenarios(env) {
       await page.keyboard.press("Enter");
       await row(page, "Parallel requests").waitFor({ state: "visible" });
       // ↓ from the box walks the result buttons, ↑ from the first returns.
-      await page.keyboard.press("Control+f");
+      await page.keyboard.press("ControlOrMeta+f");
       await page.keyboard.type("status bar");
       await page.keyboard.press("ArrowDown");
       assertEq(await page.evaluate(() => document.activeElement?.classList.contains("settingsSearchResult")), true);
@@ -275,11 +275,11 @@ export async function settingsScenarios(env) {
       await nav(page, "Keyboard").click();
       const filter = page.getByRole("searchbox", { name: "Filter shortcuts" });
       await filter.waitFor();
-      await page.keyboard.press("Control+f");
+      await page.keyboard.press("ControlOrMeta+f");
       await until(() => filter.evaluate((el) => el === document.activeElement));
-      await page.keyboard.press("Control+f");
+      await page.keyboard.press("ControlOrMeta+f");
       await until(() => box.evaluate((el) => el === document.activeElement));
-      await page.keyboard.press("Control+f");
+      await page.keyboard.press("ControlOrMeta+f");
       await until(() => filter.evaluate((el) => el === document.activeElement));
       assertNoProblems(page);
     } finally {
@@ -295,17 +295,17 @@ export async function settingsScenarios(env) {
       const caps = async (r) => (await r.locator(".keyCap").allTextContents()).join(" ");
       const del = row(page, "Delete line");
       await del.waitFor();
-      assertEq(await caps(del), "Ctrl Shift K", "the default chord");
+      assertEq(await caps(del), keyParts("Mod-Shift-k").join(" "), "the default chord");
       await del.getByRole("button", { name: "Change the shortcut for Delete line" }).click();
       await del.getByText("Press keys…").waitFor();
-      await page.keyboard.press("Control+Alt+d");
-      await until(async () => (await caps(del)) === "Ctrl Alt D", { what: "rebound" });
+      await page.keyboard.press("ControlOrMeta+Alt+d");
+      await until(async () => (await caps(del)) === keyParts("Mod-Alt-d").join(" "), { what: "rebound" });
       await del.getByRole("button", { name: "Reset Delete line to its default shortcut" }).waitFor();
       await until(async () => (await user.api("/api/prefs/profile")).value?.keybindings?.["block.deleteLine"] === "Mod-Alt-d", { what: "the binding reaches the profile" });
       // Two commands on one chord are flagged on both rows.
       const ren = row(page, "Rename page");
       await ren.getByRole("button", { name: "Change the shortcut for Rename page" }).click();
-      await page.keyboard.press("Control+Alt+d");
+      await page.keyboard.press("ControlOrMeta+Alt+d");
       await ren.getByText("Also used by Delete line").waitFor();
       await del.getByText("Also used by Rename page").waitFor();
       // A bare letter is refused.
@@ -315,7 +315,7 @@ export async function settingsScenarios(env) {
       await page.keyboard.press("Escape");
       await del.waitFor();
       await page.getByRole("button", { name: "Reset all", exact: true }).click();
-      await until(async () => (await caps(del)) === "Ctrl Shift K", { what: "reset" });
+      await until(async () => (await caps(del)) === keyParts("Mod-Shift-k").join(" "), { what: "reset" });
       assertEq(await caps(ren), "F2", "the clash is gone with the reset");
       await page.getByRole("searchbox", { name: "Filter shortcuts" }).fill("duplicate");
       // Duplicate block above / below, the handwriting group's Duplicate handwriting, and the
@@ -336,8 +336,8 @@ export async function settingsScenarios(env) {
       const area = row(page, "Hold to box a region of the PDF");
       const peek = row(page, "Hold to see the original of a translated page");
       await area.waitFor();
-      assertEq(await caps(area), "Ctrl", "Mod is Ctrl off a Mac");
-      assertEq(await caps(peek), "Alt");
+      assertEq(await caps(area), keyLabel("Mod"), "Mod is Ctrl off a Mac, ⌘ on one");
+      assertEq(await caps(peek), keyLabel("Alt"));
       await area.getByRole("button", { name: "Change the shortcut for Hold to box a region of the PDF" }).click();
       await area.getByText("Press a modifier key…").waitFor();
       // A key that is no modifier, and Backspace, leave it recording: a held key is never unbound.
@@ -346,7 +346,7 @@ export async function settingsScenarios(env) {
       await area.getByText("Press a modifier key…").waitFor();
       await page.keyboard.down("Alt");
       await page.keyboard.up("Alt");
-      await until(async () => (await caps(area)) === "Alt", { what: "rebound to Alt" });
+      await until(async () => (await caps(area)) === keyLabel("Alt"), { what: "rebound to Alt" });
       await until(async () => (await user.api("/api/prefs/profile")).value?.keybindings?.["pdf.areaDrag"] === "Alt", { what: "the held key reaches the profile" });
       // The peek holds Alt too: both rows say so.
       await area.getByText("Also used by Hold to see the original of a translated page").waitFor();
@@ -369,15 +369,15 @@ export async function settingsScenarios(env) {
         await page.keyboard.up(key);
         return boxes;
       };
-      await page.keyboard.down("Control");
+      await page.keyboard.down("ControlOrMeta");
       await sleep(200);
       assertEq(await crosshair(), false, "Ctrl is no longer the area key");
-      await page.keyboard.up("Control");
+      await page.keyboard.up("ControlOrMeta");
       await page.keyboard.down("Alt");
       await until(crosshair, { what: "Alt shows the crosshair" });
       await page.keyboard.up("Alt");
       await until(async () => !(await crosshair()), { what: "the crosshair goes with the key" });
-      assertEq(await drag("Control"), 0, "a Ctrl+drag draws no rectangle");
+      assertEq(await drag("ControlOrMeta"), 0, "a Ctrl+drag draws no rectangle");
       await page.keyboard.press("Escape");
       assert(await drag("Alt") > 0, "an Alt+drag boxes a region");
       await page.locator(".plainTip .colorBtn").first().waitFor();
@@ -387,7 +387,7 @@ export async function settingsScenarios(env) {
       await openSettings(page);
       await nav(page, "Keyboard").click();
       await page.getByRole("button", { name: "Reset all", exact: true }).click();
-      await until(async () => (await caps(row(page, "Hold to box a region of the PDF"))) === "Ctrl", { what: "reset" });
+      await until(async () => (await caps(row(page, "Hold to box a region of the PDF"))) === keyLabel("Mod"), { what: "reset" });
       await until(async () => !(await user.api("/api/prefs/profile")).value?.keybindings?.["pdf.areaDrag"], { what: "the reset reaches the profile" });
     } finally { await ctx.close(); }
   });
@@ -2611,7 +2611,7 @@ export async function settingsScenarios(env) {
       // read, and no path is read twice. Settings opens on Keyboard, which
       // reads nothing (Account & sync, where Settings… opens, reads Users'
       // accounts and Server's settings ahead).
-      await page.keyboard.press("Control+Shift+p");
+      await page.keyboard.press("ControlOrMeta+Shift+p");
       const palette = page.getByRole("dialog", { name: "Command palette" });
       await palette.getByRole("textbox", { name: "Type a command" }).fill(">Keyboard shortcuts");
       await until(async () => /Keyboard shortcuts/.test(await palette.locator('[role="option"][aria-selected="true"]').textContent()), { what: "the command selected" });

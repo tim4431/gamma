@@ -92,14 +92,17 @@ What differs from the Windows commands elsewhere in these docs and in
   `⇧⌘O` where CI's Linux reads `Ctrl+Shift+O`. A test that compares a
   chord's label takes the label from `chordLabel()` or passes `mac`
   itself.
-- **The browser suite assumes a Windows or Linux keyboard.** Chromium on
-  a Mac reports a Mac too, so the app expects ⌘ where a scenario presses
-  `Control+…` (about 190 presses; only `diagrams.mjs` uses Playwright's
-  `ControlOrMeta`), and labels chords `⌥`, `⌘` and `⌦`. macOS also moves no caret on Home
-  and End, draws overlay scrollbars that take no room, and falls back to
-  other fonts. On 2026-11-12, 133 of the suite's 811 steps failed on a
-  Mac for these reasons. CI's Linux run is the reference: on a Mac, run
-  the groups a change reaches on `main` and on the branch, and compare.
+- **The browser suite runs on a Mac.** Chromium on a Mac reports a Mac
+  too, so the page takes ⌘ for Mod and labels keys as a Mac does, and the
+  scenarios press and read keys by the rules in
+  [Browser end-to-end suite](#browser-end-to-end-suite) (`ControlOrMeta`,
+  `keyLabel`, `FIELD_END`, `MAC`). A step that presses `Control+…` for
+  Mod, or checks a label such as `"Ctrl+V"` written out, passes on Linux
+  and fails on a Mac. On 2026-11-13, 811 of its 812 steps passed on a
+  Mac. The one left, `translation: a paragraph justified…`, catches the
+  overlay setting a translation in the paper's own font when that font
+  lacks its letters: there `pdf/paperFace.js` `hasGlyph` reads every
+  font as holding CJK.
 - **A directory symlink is removed with `os.unlink`**, not with
   `os.rmdir`, which removes only a Windows junction. A test that links a
   directory through its helper removes it by the platform
@@ -978,6 +981,19 @@ button and waits for that pane's head: the pane before stays on screen
 until the new one's reads are in ([settings.md](settings.md#what-a-pane-reads)),
 and a locator taken in that moment can match there (the Server pane's
 shared workspaces have a Manage of their own).
+
+The browser runs on the machine's own platform, so on a Mac the page's
+Mod is ⌘ and it labels keys as a Mac does. A step presses Mod as
+`ControlOrMeta` (Playwright's Meta on a Mac, Control elsewhere), in a
+chord, a held key or a click's `modifiers`, and keeps `Control` for the
+Ctrl key itself, as in a pinch's Ctrl+wheel, which is Ctrl on every
+platform. A key label a step checks comes from the harness, never a
+literal: `keyLabel(chord)` (`"Mod-v"` reads Ctrl+V, or ⌘V on a Mac) and
+`keyParts(chord)` for key caps, which are the page's own `chordLabel` and
+`chordParts` (`shared/lib/hotkeys.js`). `FIELD_END` puts a text field's
+caret at the end of its line: End, or ⌘→ on a Mac, where End scrolls.
+`MAC` leaves out what a Mac has no part in, as its overlay scrollbars
+take no room and have no track to press.
 
 A git worktree has no `backend/venv` of its own, and the harness looks for
 the interpreter there, so run the suite in one with `GAMMA_E2E_PYTHON`

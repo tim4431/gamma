@@ -230,7 +230,7 @@ export async function viewerScenarios(env) {
         const content = code(page);
         await content.waitFor({ timeout: 20000 });
         await content.click({ position: { x: 40, y: 10 } });
-        await page.keyboard.press("Control+f");
+        await page.keyboard.press("ControlOrMeta+f");
         const panel = page.locator(".docTextView .cm-panels-top .cm-search");
         await panel.waitFor();
         assertEq(await page.locator(".searchPopover").count(), 0, "Gamma's search stays shut");
@@ -257,8 +257,8 @@ export async function viewerScenarios(env) {
         await content.waitFor({ timeout: 20000 });
         assertEq((await page.locator(".docTextLang").innerText()).trim(), "JSON");
         await content.click({ position: { x: 40, y: 10 } });
-        await page.keyboard.press("Control+a");
-        await page.keyboard.press("Control+c");
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.press("ControlOrMeta+c");
         await until(async () => (await page.evaluate(() => navigator.clipboard.readText()).catch(() => "")).replace(/\r\n/g, "\n").trim() === jsonText.trim(),
           { what: "the clipboard holds the whole file" });
         assertNoProblems(page);

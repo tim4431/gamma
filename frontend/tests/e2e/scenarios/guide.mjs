@@ -8,7 +8,7 @@ import { ANCHORS, anchorsForView } from "../../../src/guide/anchors.js";
 import { selectPdfText, waitForPdf } from "./pdf.mjs";
 import { ABSTRACT_PASSAGE } from "../../../src/guide/previewHighlight.js";
 import { readFileSync } from "node:fs";
-import { Account, live } from "../harness.mjs";
+import { Account, keyLabel, live } from "../harness.mjs";
 
 export async function guideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
@@ -49,7 +49,7 @@ export async function guideScenarios(env) {
       await until(async () => page.evaluate(() => new DOMMatrix(getComputedStyle(document.querySelector(".guideCursor")).transform).f
         >= document.querySelector('[data-guide="add.urlInput"]').getBoundingClientRect().bottom), { what: "the typing pointer is off the text" });
       await until(async () => (await page.inputValue('[data-guide="add.urlInput"]')).endsWith(".pdf"), { what: "the demo typed the link" });
-      await page.locator(".guideModifier", { hasText: "Enter" }).waitFor();
+      await page.locator(".guideModifier", { hasText: keyLabel("Enter") }).waitFor();
       // The highlight step shows the drag first, then hands over.
       await page.waitForSelector('[data-guide-overlay="highlight"][data-guide-busy] .guideCursor.dragging', { timeout: 30000 });
       assertEq(await page.locator('.guideCard .guideLink').textContent(), "Skip this demo", "other demos can be skipped one by one");
@@ -90,7 +90,7 @@ export async function guideScenarios(env) {
         if (Math.abs(box.width - lastWidth) > 0.5) { lastWidth = box.width; stableSince = Date.now(); }
         return Date.now() - stableSince > 150;
       }, { what: "the formula rectangle finishes growing" });
-      assertEq(await page.locator('.guideModifier').textContent(), "Ctrl", "box demonstration shows the modifier");
+      assertEq(await page.locator('.guideModifier').textContent(), keyLabel("Mod"), "box demonstration shows the modifier");
       if (flags.keep) await page.screenshot({ path: `${server.dir}/area-demo.png` });
       await page.waitForSelector('[data-guide-overlay="area"]:not([data-guide-busy]) .guideCard');
       assertEq(await page.locator('.pdfAreaMarquee').count(), 0, "example rectangle is cleaned up");
@@ -98,12 +98,12 @@ export async function guideScenarios(env) {
       const viewerBox = await page.locator('[data-guide="pdf.viewer"]').boundingBox();
       const x = Math.max(pdfBox.x, viewerBox.x) + 70;
       const y = Math.max(pdfBox.y, viewerBox.y) + 90;
-      await page.keyboard.down("Control");
+      await page.keyboard.down("ControlOrMeta");
       await page.mouse.move(x, y);
       await page.mouse.down();
       await page.mouse.move(x + 180, y + 95, { steps: 16 });
       await page.mouse.up();
-      await page.keyboard.up("Control");
+      await page.keyboard.up("ControlOrMeta");
       await page.locator('.plainTip .colorBtn').first().click();
       await page.locator('.guideCard .guideDone').waitFor();
       await page.waitForSelector('[data-guide-overlay="note-label"] .guideCard');

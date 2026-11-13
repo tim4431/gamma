@@ -11,7 +11,7 @@
 // taking room, and between two papers read at different zooms), and the
 // share view opening a large document by ranges with the token on every
 // request.
-import { launchBrowser } from "../harness.mjs";
+import { MAC, launchBrowser } from "../harness.mjs";
 
 export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, until, assert, assertNoProblems, openPage }) {
   const PAGES = 300;
@@ -420,7 +420,8 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
     const tab = (name) => p.locator(".tabStrip .tab:not([data-leaving])", { hasText: name });
     try {
       await waitPainted(p, 0);
-      if (shown.browserType().name() === "chromium") {
+      // A Mac draws overlay scrollbars, which take no room.
+      if (shown.browserType().name() === "chromium" && !MAC) {
         const gutter = await p.locator(".pdfViewer").evaluate((el) => el.offsetWidth - el.clientWidth);
         assert(gutter > 0, `the viewer's scrollbar takes room (${gutter} px)`);
       }

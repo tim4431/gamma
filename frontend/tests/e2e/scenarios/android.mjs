@@ -285,7 +285,7 @@ export async function androidScenarios(env) {
       opened.page.on("download", (d) => downloads.push(d.suggestedFilename()));
       await shell.down(91, 100, 300);
       await shell.stroke(91, Array.from({ length: 8 }, (_, i) => [100 + 15 * i, 300 + (i % 2) * 10, 0.5, 10 * i]));
-      await opened.page.keyboard.press("Control+a");
+      await opened.page.keyboard.press("ControlOrMeta+a");
       const menu = opened.page.getByRole("toolbar", { name: "Edit handwriting", exact: true });
       await menu.waitFor();
       const more = menu.getByRole("button", { name: "More", exact: true });

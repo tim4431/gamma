@@ -79,13 +79,13 @@ export async function motionScenarios(env) {
     const page = await openPage(ctx, home);
     try {
       await folderRow(page).waitFor();
-      await page.keyboard.press("Control+Comma");
+      await page.keyboard.press("ControlOrMeta+Comma");
       const settings = page.getByRole("dialog", { name: "Settings" });
       await settings.waitFor();
       await page.keyboard.press("Escape");
       await settings.waitFor({ state: "detached" });
       // the copy of the closed dialog may still be fading: the palette opens anyway
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       const palette = page.getByRole("dialog", { name: "Open a page" });
       await palette.waitFor({ timeout: 3000 });
       await page.keyboard.press("Escape");

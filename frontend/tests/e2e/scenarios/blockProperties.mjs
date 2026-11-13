@@ -287,7 +287,7 @@ export async function blockPropertiesScenarios({ server, browser, makePdf, step,
       // the palette, on the row last edited
       await wrapOf(page, note.id).locator(".blockBody").first().click();
       await page.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
-      await page.keyboard.press("Control+Shift+P");
+      await page.keyboard.press("ControlOrMeta+Shift+P");
       const palette = page.getByRole("textbox", { name: "Type a command" });
       await palette.waitFor();
       await palette.fill(">Block properties");
