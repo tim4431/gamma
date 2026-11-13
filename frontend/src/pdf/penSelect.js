@@ -5,6 +5,7 @@
 // iPad, Android and a desktop's pen. InkLayer.jsx decides the press is the
 // page's (onPenDrag) and holds the touch: its pan off, fingers as palms.
 import { caretAt } from "../shared/lib/caret.js";
+import { penLifted } from "../shared/ui/press.js";
 
 // How far the pen goes before a press is a drag (css px), as InkLayer tells
 // a tap from a swipe: a tap selects nothing and still clicks what it lands on.
@@ -27,10 +28,13 @@ export const penSelecting = () => !!stopDrag;
 
 // `press`: the pen's pointerdown; `viewer`: the pages' .pdfViewer;
 // `onSelected(released)`: the drag ended with something selected, by the
-// pen's lift or, not `released`, by the system. The caret comes from a hit
-// test, which stops at whatever lies over the text (a highlight, a link box,
-// ink), so while the page answers one only its text does (data-pen-select,
-// app.css). Not before the press is a drag, so that a tap still lands on them.
+// pen's lift or, not `released`, by the system. A lift that never came ends
+// it too, where the pen last was (penLifted: the pen hovering or down
+// again), so the page's marks never stay deaf to every pointer. The caret
+// comes from a hit test, which stops at whatever lies over the text (a
+// highlight, a link box, ink), so while the page answers one only its text
+// does (data-pen-select, app.css). Not before the press is a drag, so that
+// a tap still lands on them.
 export function beginPenSelect(press, viewer, onSelected) {
   stopDrag?.();
   press.preventDefault(); // a desktop's pen: no selection of the mouse's beside this one
@@ -54,11 +58,13 @@ export function beginPenSelect(press, viewer, onSelected) {
     stopDrag = null;
     cancelAnimationFrame(raf);
     document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerdown", onAgain, true);
     document.removeEventListener("pointerup", onUp, true);
     document.removeEventListener("pointercancel", onCancel, true);
     textOnly(false);
   };
   function onMove(e) {
+    if (penLifted(e, pointerId)) { lift(); return; }
     if (e.pointerId !== pointerId) return;
     x = e.clientX;
     y = e.clientY;
@@ -71,13 +77,18 @@ export function beginPenSelect(press, viewer, onSelected) {
   }
   function onUp(e) {
     if (e.pointerId !== pointerId) return;
-    if (dragging) {
-      x = e.clientX;
-      y = e.clientY;
-      extend();
-    }
+    x = e.clientX;
+    y = e.clientY;
+    lift();
+  }
+  // the lift, at (x, y)
+  function lift() {
+    if (dragging) extend();
     stop();
     if (selected) onSelected(true);
+  }
+  function onAgain(e) {
+    if (penLifted(e, pointerId)) lift();
   }
   // The system took the touch (a pinch, a scroll already running): what was
   // selected stays.
@@ -88,6 +99,7 @@ export function beginPenSelect(press, viewer, onSelected) {
   }
   stopDrag = stop;
   document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerdown", onAgain, true);
   document.addEventListener("pointerup", onUp, true);
   document.addEventListener("pointercancel", onCancel, true);
 }

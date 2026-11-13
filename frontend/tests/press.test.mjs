@@ -1,10 +1,11 @@
 // The gesture rules shared by mouse and finger (shared/ui/press.js): what
 // counts as a double tap, the stand-in event a held finger gives a menu
 // opener, the props a call site spreads, which press or click opens a menu
-// button's menu, and when a dialog's backdrop closes it.
+// button's menu, when a dialog's backdrop closes it, and when a pen held
+// down is plainly up without its lift.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { backdropPress, doublePress, isDoubleTap, menuPress, pressAt, triggerPress } from "../src/shared/ui/press.js";
+import { backdropPress, doublePress, isDoubleTap, menuPress, penLifted, pressAt, triggerPress } from "../src/shared/ui/press.js";
 
 const el = {}, other = {};
 const tapAt = (t, x = 100, y = 100, on = el) => ({ el: on, t, x, y });
@@ -83,4 +84,18 @@ test("a backdrop closes its dialog only for a press that starts and ends on it",
   press(outerEl, field, outerEl); assert.deepEqual(closed, ["outer"], "a press from the backdrop let go inside the dialog");
   press(field, field, field); assert.deepEqual(closed, ["outer"], "a click inside the dialog");
   press(subEl, subEl, subEl, [sub, subEl]); assert.deepEqual(closed, ["outer", "sub"], "the sub-dialog's own backdrop, through the outer handlers");
+});
+
+test("a pen held down is up without its lift once it hovers or goes down again; nothing else says so", () => {
+  const pen = (type, buttons, pointerId = 7) => ({ type, pointerType: "pen", pointerId, buttons });
+  assert.equal(penLifted(pen("pointermove", 0, 1), 7), true, "the Pencil hovering (WebKit's hover pointer)");
+  assert.equal(penLifted(pen("pointermove", 0), 7), true, "hovering as the same pointer");
+  assert.equal(penLifted(pen("pointerdown", 1, 8), 7), true, "a new contact");
+  assert.equal(penLifted(pen("pointerdown", 1), 7), true, "a desktop pen down again under its one id");
+  assert.equal(penLifted(pen("pointermove", 1), 7), false, "the pen moving in contact");
+  assert.equal(penLifted(pen("pointermove", 32), 7), false, "its eraser end in contact");
+  assert.equal(penLifted(pen("pointerup", 0, 8), 7), false, "another pointer's lift");
+  assert.equal(penLifted({ type: "pointerdown", pointerType: "touch", pointerId: 3, buttons: 1 }, 7), false, "a finger (a palm)");
+  assert.equal(penLifted({ type: "pointermove", pointerType: "mouse", pointerId: 1, buttons: 0 }, 7), false, "a mouse");
+  assert.equal(penLifted(pen("pointermove", 0), null), false, "no pen held");
 });

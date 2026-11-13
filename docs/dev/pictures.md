@@ -1407,7 +1407,7 @@ format.
   of downloading it, in an opaque origin with no script run: the policy's
   `sandbox` is what holds there. Safari's download, and an SVG on an iPad,
   shared to the app or opened at its URL, wait for a device
-  ([ipad.md](ipad.md#device-checks), check 38).
+  ([ipad.md](ipad.md#device-checks), check 39).
 - In the iPad and Android apps an SVG has no time limit: one that takes
   MuPDF minutes holds This iPad's or This device's PDF work that long
   ([SVG pictures](#svg-pictures)).
