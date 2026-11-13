@@ -3467,6 +3467,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
+    openPageChat: (id) => (id === focusedBlockId ? showChat() : openBlock(id, { then: "ask" })),
   });
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",

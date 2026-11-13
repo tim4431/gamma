@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import account_of, fresh_client, login, make_page, make_user, token_for
-from fake_agents import read_log, requests_in, script_agent
+from fake_agents import requests_in, script_agent, turns_in
 from gamma import collab, folder_links, hosted, mentions, workspaces
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.local_agents import mention, runner, store
@@ -213,7 +213,7 @@ def test_a_retried_post_sends_once(lab, disk, monkeypatch):
     again = _post(lab.owner, f.page, note, "@codex once", id="lamRetry1")
     assert first["send"]["request_id"] == "lamRetry1" and "send" not in again
     assert runner.wait_idle(60)
-    assert len([e for e in read_log(disk.log) if e.get("argv") == ["app-server"]]) == 1
+    assert len(turns_in(disk.log)) == 1
 
 
 def test_the_instruction_without_the_mention():
@@ -358,7 +358,7 @@ def test_a_refused_resume_starts_afresh(lab, disk, monkeypatch):
     again = _post(lab.owner, f.page, note, "@claude shorter still", thread_id=thread_id)
     assert runner.wait_idle(60)
     assert _request(lab, again["send"]["request_id"])["state"] == "done"
-    turns = [e["argv"] for e in read_log(disk.log) if "-p" in (e.get("argv") or [])]
+    turns = [e["argv"] for e in turns_in(disk.log)]
     assert ["--resume" in argv for argv in turns] == [False, True, False]
     assert turns[1][turns[1].index("--resume") + 1] == session
     fresh = store.run_of(lab.ws, again["send"]["request_id"])["session"]

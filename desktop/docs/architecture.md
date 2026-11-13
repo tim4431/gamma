@@ -165,12 +165,32 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 | `reveal-on-disk {ws, page}` (the vault chip's *Show in folder*) | `shell:reveal-from-page` | `revealOnDisk` |
 | `relocate-file {ws, page}` (the banner's *Locate…*) | `shell:relocate-from-page` | `relocateFile` |
 | `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening PDF files") |
+| `continue-in-terminal {ws, page}` (the chat's computer side, *Continue in a terminal*) | `shell:terminal-from-page` | `terminalFromPage` |
+
+*Continue in a terminal* takes no command from the page: `terminalFromPage`
+asks the open server, which must be one on this computer (a remote's page
+is refused with a notice), `GET /api/local-agents/chat/terminal?page=<id>`
+through the shell's own `localServer(...).api` with the workspace header,
+checks the answer (an absolute `cwd` that is a directory here, an argv of
+non-empty strings, no control character, nothing a terminal would read as
+its own syntax), and opens a terminal in `cwd` running that argv
+(`lib/terminal.js` `terminalCommand`): Windows Terminal (`wt.exe -d <cwd>
+-- <argv>`) when found on PATH and no part holds a `;` (its command
+separator, wherever it stands), else a new console through `cmd.exe /d /c
+start … cmd.exe /d /k call …` with every part quoted (`"`, `%`, `!` and `^`
+refused); macOS Terminal through `osascript`, each argument shell-quoted
+then escaped for AppleScript, a backslash or `!` refused (the person's
+login shell may be fish or csh, which read them within single quotes);
+Linux `x-terminal-emulator -e`, else the first of
+`gnome-terminal`, `konsole` and `xterm` found. Each is spawned as an argv
+array, detached. A notice says what it opened ("Opened Codex's
+conversation in a terminal.") or why not (the route's detail as it is).
 
 The first two keep the names they had before synced vaults, so that a
 desktop app released before them, which passes on only those, still
 forwards them from an updated server's page. `sync-folder-on-disk` and
 `push-file-on-disk` reach the same channels as spare names; no page sends
-them. The other three are new: an older app ignores them. The shell takes a message only from the content
+them. The others are new: an older app ignores them. The shell takes a message only from the content
 view's page of the open server (its frame's origin), with plain ids
 (`[\w-]{1,64}`), and only while nothing else runs: no action in the bar,
 no vault dialog up, no other ask (`fromPage`). It takes at most one a

@@ -654,7 +654,7 @@ agent), and a token cannot move them.
 | 2. `@codex` in a comment | the mention as a Send of its thread or of the file's open threads, the @ menu's agent row, a follow-up resuming the session that answered, the names settled without reserving them | built: [dev/local_agents.md](../dev/local_agents.md) "A mention in a comment", "As built (step 2)" below |
 | 3a. The chat's computer side | the switch and the strip, the agent's turns in the chat (its reply, its steps, what it changed), a selected passage sent with its source line, Stop, a turn that outlives its tab, its own conversations and History | built: [dev/local_agents.md](../dev/local_agents.md) "The chat's computer side", "As built (step 3a)" below |
 | 3b. Approvals | approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), what the agent may run set on the computer | built: [dev/local_agents.md](../dev/local_agents.md) "Asking in the chat", "As built (step 3b)" below |
-| 3c. The rest of the side | *Continue in a terminal*, the selection's source line as a chip, a Background tasks row, View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, the model and effort, a folder's computer chat, text as it is typed | plan: "The chat window gets a second side" |
+| 3c. The rest of the side | *Continue in a terminal* and *Show in folder*, the agent's model and effort, the reply as it is typed, the selection's source line as a chip, a Background tasks row | built: [dev/local_agents.md](../dev/local_agents.md) "Its model, its typing, a terminal, the sources, Background tasks", "As built (step 3c)" below; later: View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, a folder's computer chat |
 | 4. The remote | the computer announced to the servers its vaults name, presence in any window of the maker, work folders of another server, their requests and the chat relayed through the computer's channel | plan: "How the server sees a vault" |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
 
@@ -798,6 +798,34 @@ reference; where it went otherwise than planned:
   integer), allowed and run with the network. Still not run for real: a
   Codex file-change approval, `untrusted`, and Claude Code's interrupt with
   a prompt waiting.
+
+### As built (step 3c)
+
+[dev/local_agents.md](../dev/local_agents.md) "Its model, its typing, a
+terminal, the sources, Background tasks" is the reference. Five of the
+plan's pieces were built; where they went otherwise:
+
+- **The terminal is the shell's, never the page's.** The page asks the
+  shell with the page's id alone; the shell asks its own server for the
+  session and the agent's command line and builds the terminal's command
+  itself, refusing anything a terminal would read as its own syntax.
+  Checked for real before building: `codex resume` and `claude --resume`
+  in the folder take up a session Gamma's driver made, with its context.
+  The terminal session is the person's own (their settings, MCP servers
+  and trust prompts), not Gamma's confinement.
+- **The models come from the agents themselves**, with no model use:
+  Codex's `model/list` and Claude Code's `initialize`, read with the probe.
+  Claude Code needs `--model` and `--effort` on its command line, since
+  `--restricted` reads none of the person's settings.
+- **Typed text is the poll's**, not a stream to the window: the drivers
+  stream deltas into the message, which the window reads every 1.5 s while
+  a turn runs.
+- **Left for later, each needing more than building:** *View diff* and
+  *Revert* (Gamma writes no file the disk made: a turn asking the agent to
+  undo, or the agent's own checkpoint, is a decision first); *Open
+  comments on this page (n)* (context for the chat, or a Send: undecided);
+  *Attach what I see* (pictures for Claude Code must sit under `.gamma/`);
+  a folder's computer chat.
 
 ### Declined
 

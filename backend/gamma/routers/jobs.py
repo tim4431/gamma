@@ -9,7 +9,9 @@ the router that owns it (export.py, imports.py, metadata.py, ws_backups.py,
 admin.py).
 The listing also shows the account's scheduled backup tasks while one runs
 (gamma/backup_schedule.py, which keeps its own state): read-only rows of
-kind ``scheduled-backup``.
+kind ``scheduled-backup``; and the account's turns of the chat's computer
+side while an agent on this computer has them queued or running: read-only
+rows of kind ``computer-turn``.
 
 A share view's exports are the share's (``auth.share_job_owner``): a
 request carrying the ``?share=`` that started one reads, stops, removes and
@@ -106,14 +108,54 @@ def _waiting_papers(user_id: str) -> list[dict]:
     } for req in fetch_handoff.waiting(user_id)]
 
 
+def _computer_turns(user_id: str) -> list[dict]:
+    """The account's turns of the chat's computer side that this server's
+    agents have queued or running (gamma/local_agents/runner.py
+    ``chat_turns``), in the jobs' shape: read-only rows titled ``<agent> ·
+    <page title>``, ``progress.phase`` ``asking`` while an ask waits for
+    the person. A click opens the page's chat on that side, and Stop is the
+    turn's own (``POST /api/local-agents/chat/turns/{turn}/stop``), never
+    ``cancel``."""
+    from ..db import connect_pages_db
+    from ..local_agents import catalog, enabled, runner
+
+    if not enabled():
+        return []
+    try:
+        turns = runner.chat_turns(user_id)
+    except Exception:  # noqa: BLE001 — the tray never breaks over the agents
+        log.exception("[jobs] could not read the chat turns")
+        return []
+    rows = []
+    for turn in reversed(turns):  # newest first, as the jobs
+        try:
+            with connect_pages_db(turn["ws"]) as conn:
+                found = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (turn["page_id"],)).fetchone()
+        except Exception:  # noqa: BLE001 — a workspace that cannot be read names no page
+            found = None
+        label = catalog.label(turn["agent"])
+        page_title = found[0] if found else ""
+        rows.append({
+            "id": f"computer-{turn['turn_id']}", "kind": "computer-turn", "owner": user_id, "workspace": turn["ws"],
+            "title": f"{label} · {page_title or 'Untitled'}",
+            "params": {"page": turn["page_id"], "turn": turn["turn_id"], "agent": turn["agent"], "label": label,
+                       "title": page_title},
+            "state": turn["state"], "progress": {"phase": "asking"} if turn["asking"] else {}, "error": "",
+            "created_at": turn["queued_at"], "started_at": turn["started_at"], "finished_at": "", "artifact": None,
+            "downloaded": False, "stoppable": not turn["stopping"], "stopping": turn["stopping"], "readonly": True,
+        })
+    return rows
+
+
 @router.get("")
 def list_jobs(request: Request):
     """``{jobs: [...]}``: the account's jobs (newest first, without their
-    results), the running scheduled backups and the paper fetches waiting
-    for their browser, plus the own jobs of the workspace the request works
-    in."""
+    results), the running scheduled backups, the paper fetches waiting for
+    their browser and the chat turns this computer's agents have queued or
+    running, plus the own jobs of the workspace the request works in."""
     user_id, ws, _ = _context(request)
-    return {"jobs": _running_backup_tasks(user_id) + _waiting_papers(user_id) + jobs.for_account(user_id, ws)}
+    return {"jobs": _running_backup_tasks(user_id) + _waiting_papers(user_id) + _computer_turns(user_id)
+            + jobs.for_account(user_id, ws)}
 
 
 @router.post("/clear")

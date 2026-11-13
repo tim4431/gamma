@@ -6,6 +6,9 @@ A turn's ``events()`` gives, in order as they happen:
 
 - ``{"type": "session", "id"}``: the agent's session (Codex's thread), to
   resume it later;
+- ``{"type": "delta", "text"}``, only in a turn started with ``stream``:
+  the next piece of the message the agent is writing; the whole ``text``
+  that follows is that message, in place of what its pieces built;
 - ``{"type": "text", "text"}``: a whole message the agent wrote;
 - ``{"type": "tool", "id", "kind", "title", "status", ...}``: a step, once
   when it starts and once when it ends (``tool``);
@@ -55,6 +58,9 @@ MAX_DIFF = 20_000     # characters of a file change's diff an ask carries
 MAX_REASON = 2000
 
 KINDS = ("read", "edit", "run", "search", "other")
+# An agent's session (Codex's thread, Claude Code's session): what a driver
+# resumes and a terminal is told to, nothing else.
+SESSION = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 ASK_KINDS = ("command", "files", "tool")
 DECISIONS = ("once", "chat", "deny")   # allow it once, allow it in this chat, decline it
 
@@ -114,6 +120,23 @@ def ask(ask_id: str, kind: str, *, step: str = "", command: str | None = None, c
     if tool is not None:
         event["tool"] = tool
     return event
+
+
+MAX_MODELS = 50       # models an agent's listing keeps
+
+
+def model(model_id, label, efforts, effort, default) -> dict | None:
+    """A model an agent offers, as Gamma keeps it: ``{id, label, efforts,
+    effort, default}``, ``efforts`` the reasoning efforts it takes (none
+    for a model without), ``effort`` its own default one (None when the
+    agent names none), ``default`` whether the agent uses it when none is
+    chosen; None for an entry without an id."""
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    efforts = [e.strip()[:40] for e in efforts if isinstance(e, str) and e.strip()] if isinstance(efforts, list) else []
+    effort = effort.strip()[:40] if isinstance(effort, str) and effort.strip() else None
+    return {"id": model_id.strip()[:100], "label": one_line(label if isinstance(label, str) else "", 100)
+            or model_id.strip()[:100], "efforts": efforts, "effort": effort, "default": default is True}
 
 
 def cut_diff(text: str, limit: int = MAX_DIFF) -> str:
@@ -405,7 +428,9 @@ class Turn:
 def start(name: str, **kw) -> Turn:
     """Start a turn of the agent ``name`` (``codex``, ``claude``): the
     driver's ``start`` with ``argv``, ``cwd``, ``prompt``, ``schema``,
-    ``session``, ``images``, ``ask``."""
+    ``session``, ``images``, ``ask``, ``stream`` (its text as it is
+    written, ``delta``), ``model`` and ``effort`` (one the agent listed,
+    ``catalog.probe``'s ``models``; "" for its default)."""
     if name == "codex":
         from . import codex
 

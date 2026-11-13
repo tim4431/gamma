@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
   progressFraction, sortTasks, trayBadge } from "../src/tasks/taskModel.js";
 import { canOpen, exportAgain, kindOf, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
-  taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
+  stopPath, taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
 
 const at = (minutes) => new Date(Date.UTC(2026, 8, 29, 12, minutes)).toISOString();
 const job = (fields) => ({ kind: "export", state: "running", params: {}, progress: {}, error: "", artifact: null,
@@ -253,4 +253,24 @@ test("a follow round: the answer, the job failed when the share refuses it or it
   for (const error of [{ status: 500, message: "boom" }, new Error("Failed to fetch"), {}]) {
     assert.equal(afterFollow(row, { error }), row, "offline or a 5xx: asked again next round");
   }
+});
+
+test("a computer turn's row: the agent and the page, waiting for the person while it asks, its own Stop", () => {
+  const params = { page: "p1", turn: "t1", agent: "codex", label: "Codex", title: "Thesis · draft" };
+  const turn = (fields = {}) => job({ id: "computer-t1", kind: "computer-turn", title: "Codex · Thesis · draft", workspace: "w1",
+    params, readonly: true, ...fields });
+  assert.equal(taskTitle(turn()), "Codex on this computer: Thesis · draft", "the page's own title, a · in it kept");
+  assert.equal(taskTitle(turn({ params: { ...params, title: "" } })), "Codex on this computer: Untitled");
+  assert.equal(taskTitle(turn({ params: { ...params, title: undefined }, title: "Thesis" })), "Codex on this computer: Thesis",
+    "an older server's row: its title");
+  assert.equal(taskInfo(turn({ progress: { phase: "asking" } })), "Waiting for you");
+  assert.equal(taskInfo(turn()), "Working…");
+  assert.equal(taskInfo(turn({ state: "queued" })), "Waiting for its turn…");
+  assert.equal(kindOf(turn()).open, "computer");
+  assert.equal(canOpen(turn()), true);
+  assert.deepEqual(taskActions(turn()), ["stop"]);
+  assert.equal(stopPath(turn()), "/local-agents/chat/turns/t1/stop?ws=w1", "in the workspace the turn runs in");
+  assert.equal(stopPath(turn({ workspace: "", params: { turn: "a b" } })), "/local-agents/chat/turns/a%20b/stop");
+  assert.equal(stopPath(job({})), "", "other jobs stop through their cancel");
+  assert.equal(stopPath({ local: true, kind: "computer-turn" }), "");
 });

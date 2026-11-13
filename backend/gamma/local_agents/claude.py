@@ -41,13 +41,22 @@ held to too) or one outside the directory, and so is a Bash call with a
 ``blocked_path``. Its process runs with ``ASK_ENV``: each Bash call starts
 in the folder, the ``cwd`` its ask names. A ``control_cancel_request`` withdraws an ask. A stop
 denies what waits and interrupts the turn, ``STOP_GRACE_S`` to end.
+
+A turn with ``stream`` (a chat turn) adds ``--include-partial-messages``:
+each ``stream_event`` ``content_block_delta`` of type ``text_delta`` is a
+``delta`` event, and the ``assistant`` text block that follows is the whole
+message. A turn's ``model`` and ``effort`` are ``--model`` (none for the
+listing's ``default``) and ``--effort``. What Claude Code offers is
+``models``: ``initialize``'s answer, no message written.
 """
 
 import json
-import re
+import tempfile
 import threading
+import time
 
-from . import events
+from ..logbuf import log
+from . import events, procs
 
 LABEL = "Claude Code"
 FLAGS = ["-p", "--output-format", "stream-json", "--verbose", "--restricted", "--permission-mode", "acceptEdits",
@@ -61,7 +70,15 @@ ASK_FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-j
 # setting: the shell goes back to the project's directory after every call),
 # so the cwd an ask names is the one the command runs in.
 ASK_ENV = {"CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"}
-SESSION = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+SESSION = events.SESSION
+STREAM_FLAG = "--include-partial-messages"   # a turn with stream: its text as it is written
+DEFAULT_MODEL = "default"   # the listing's entry for the model Claude Code picks itself: no --model
+# What asking which models Claude Code offers starts (``models``): the
+# control protocol's initialize, then stdin closed with no message, so no
+# model is used; no settings file and no MCP server, as a turn.
+MODELS_FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--restricted",
+                "--strict-mcp-config"]
+MODELS_S = 15
 STRUCTURED = "StructuredOutput"   # the tool --json-schema answers through: not a step
 EDITS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
 CHANGE_REFUSED = events.CHANGE_REFUSED
@@ -70,9 +87,17 @@ STOPPED = "The owner stopped the turn."
 INIT, INTERRUPT = "gamma-init", "gamma-stop"   # the ids of Gamma's own control requests
 
 
-def command(argv: list[str], *, schema: dict | None = None, session: str = "", ask: bool = False) -> list[str]:
-    """The whole command line of a turn."""
+def command(argv: list[str], *, schema: dict | None = None, session: str = "", ask: bool = False,
+            stream: bool = False, model: str = "", effort: str = "") -> list[str]:
+    """The whole command line of a turn: ``--model`` and ``--effort`` said
+    each time (``--restricted`` reads no settings file that would)."""
     out = list(argv) + (ASK_FLAGS if ask else FLAGS)
+    if stream:
+        out.append(STREAM_FLAG)
+    if model and model != DEFAULT_MODEL:
+        out += ["--model", model]
+    if effort:
+        out += ["--effort", effort]
     if schema is not None:
         out += ["--json-schema", json.dumps(schema)]
     if session and SESSION.match(session):
@@ -80,13 +105,65 @@ def command(argv: list[str], *, schema: dict | None = None, session: str = "", a
     return out
 
 
+def models(argv: list[str]) -> list[dict]:
+    """The models Claude Code offers (``initialize``'s ``models``, ``{value,
+    displayName, supportsEffort, supportedEffortLevels}``) as Gamma keeps
+    them (``events.model``; ``default`` the entry Claude Code picks itself);
+    [] when it does not say within ``MODELS_S``. Starts and closes one
+    process, which uses no model. Never raises."""
+    try:
+        child = procs.spawn(list(argv) + MODELS_FLAGS, cwd=tempfile.gettempdir())
+    except (OSError, ValueError) as e:
+        log.info(f"[agents] Claude Code did not start to list its models: {e}")
+        return []
+    try:
+        request = {"type": "control_request", "request_id": INIT, "request": {"subtype": "initialize"}}
+        if not child.send(json.dumps(request) + "\n"):
+            return []
+        deadline = time.monotonic() + MODELS_S
+        while time.monotonic() < deadline:
+            try:
+                line = child.line(events.POLL_S)
+            except EOFError:
+                return []
+            try:
+                message = json.loads(line) if line else None
+            except ValueError:
+                continue
+            response = message.get("response") if isinstance(message, dict) else None
+            if (message or {}).get("type") != "control_response" or not isinstance(response, dict) \
+                    or response.get("request_id") != INIT:
+                continue
+            body = response.get("response") if isinstance(response.get("response"), dict) else {}
+            out, seen = [], set()
+            for item in body.get("models") or []:
+                if not isinstance(item, dict):
+                    continue
+                kept = events.model(item.get("value"), item.get("displayName"),
+                                    item.get("supportedEffortLevels") if item.get("supportsEffort") else [],
+                                    None, item.get("value") == DEFAULT_MODEL)
+                if kept and kept["id"] not in seen:
+                    seen.add(kept["id"])
+                    out.append(kept)
+            return out[:events.MAX_MODELS]
+        return []
+    except Exception as e:  # noqa: BLE001 — never raises
+        log.warning(f"[agents] asking Claude Code its models: {e}")
+        return []
+    finally:
+        child.close_stdin()
+        child.wait(2)
+        procs.kill_tree(child, grace=1.0)
+
+
 class ClaudeTurn(events.Turn):
     label = LABEL
 
     def __init__(self, argv: list[str], *, cwd: str, prompt: str, schema: dict | None, session: str,
-                 ask: bool = False):
-        super().__init__(command(argv, schema=schema, session=session, ask=ask), cwd=cwd, ask=ask,
-                         env=ASK_ENV if ask else None)
+                 ask: bool = False, stream: bool = False, model: str = "", effort: str = ""):
+        super().__init__(command(argv, schema=schema, session=session, ask=ask, stream=stream, model=model,
+                                 effort=effort), cwd=cwd, ask=ask, env=ASK_ENV if ask else None)
+        self.stream = stream
         self._tools: dict[str, dict] = {}   # tool_use id → its started event
         if self.child is not None:
             # Claude Code waits about 3 s for stdin: the prompt goes at once,
@@ -165,7 +242,7 @@ class ClaudeTurn(events.Turn):
                         event = self._started(block)
                         if event:
                             yield event
-                    elif block.get("type") == "text" and str(block.get("text") or "").strip():
+                    elif block.get("type") == "text" and (str(block.get("text") or "").strip() or self.stream):
                         yield {"type": "text", "text": str(block["text"])}
             elif kind == "user":
                 content = (line.get("message") or {}).get("content")
@@ -174,6 +251,10 @@ class ClaudeTurn(events.Turn):
                         event = self._ended_tool(block)
                         if event:
                             yield event
+            elif kind == "stream_event" and self.stream:
+                delta = self._delta(line)
+                if delta:
+                    yield {"type": "delta", "text": delta}
             elif kind == "control_request" and self.ask:
                 yield from self._control(line)
             elif kind == "control_cancel_request" and self.ask:
@@ -184,6 +265,18 @@ class ClaudeTurn(events.Turn):
                 self._all_asks()  # the turn is over: nothing waits on an answer any more
                 yield self._result(line)
                 return
+
+    @staticmethod
+    def _delta(line: dict) -> str:
+        """The text a partial message's line adds (a ``content_block_delta``
+        of type ``text_delta``, the main thread's), "" for any other."""
+        if line.get("parent_tool_use_id"):
+            return ""
+        event = line.get("event") if isinstance(line.get("event"), dict) else {}
+        delta = event.get("delta") if isinstance(event.get("delta"), dict) else {}
+        if event.get("type") != "content_block_delta" or delta.get("type") != "text_delta":
+            return ""
+        return str(delta.get("text") or "")
 
     # --- the permission prompts (a turn with ask) ---------------------------------------
 
@@ -249,9 +342,11 @@ class ClaudeTurn(events.Turn):
 
 
 def start(*, argv: list[str], cwd: str, prompt: str, schema: dict | None = None, session: str = "",
-          images: list[str] = (), ask: bool = False) -> ClaudeTurn:
+          images: list[str] = (), ask: bool = False, stream: bool = False, model: str = "",
+          effort: str = "") -> ClaudeTurn:
     """Start ``claude -p`` in ``cwd`` for one turn of ``prompt`` (``session``
-    one to resume; ``ask``, it may ask to run commands). ``images`` are not
-    passed: the prompt names the pictures, which Claude Code opens with
-    Read."""
-    return ClaudeTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, ask=ask)
+    one to resume; ``ask``, it may ask to run commands; ``stream``, its text
+    as it is written; ``model``, ``effort``). ``images`` are not passed: the
+    prompt names the pictures, which Claude Code opens with Read."""
+    return ClaudeTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, ask=ask, stream=stream,
+                      model=model, effort=effort)

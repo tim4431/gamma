@@ -612,15 +612,17 @@ Every route is the workspace's members' (any role) and integration tokens' of an
 ### Agents on this computer (`routers/local_agents.py`, `gamma/local_agents/`) — see [local_agents.md](local_agents.md)
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/local-agents?fresh=0\|1` | `{agents: [{name, label, found, version, ready, problem, at}]}`: Codex CLI and Claude Code as found on this computer, for the sync panel |
+| GET | `/local-agents?fresh=0\|1` | `{agents: [{name, label, found, version, ready, problem, models, at}]}`, `models` what each offers (`[{id, label, efforts, effort, default}]`): Codex CLI and Claude Code as found on this computer, for the sync panel |
 | GET | `/local-agents/waiting?link=` | `{waiting: n}`: the Sends an agent turned on now would take, for the panel's question; the vault's maker only |
 | GET | `/local-agents/chat?page=&version=` | the chat's computer side: `{computer, conversation}` (the strip and the page's active conversation), `{computer, same: true}` when `version` is the stored one |
-| POST | `/local-agents/chat/turns` | `{page, text, selections?, id?}` → 202 `{conversation, turn: {id, state}}`: a message to the folder's agent, queued behind the vault's other runs |
+| POST | `/local-agents/chat/turns` | `{page, text, selections?, id?, model?, effort?}` → 202 `{conversation, turn: {id, state}}`: a message to the folder's agent, queued behind the vault's other runs |
 | POST | `/local-agents/chat/turns/{id}/stop` | `{stopped}` |
 | POST | `/local-agents/chat/new` | `{page}` → `{conversation: null}`: the conversation archived |
 | GET | `/local-agents/chat/history?page=` | `{conversations: [{id, title, agent, updated_at, turns}]}` |
 | POST, DELETE | `/local-agents/chat/history/{id}/open`, `/local-agents/chat/history/{id}` | open or delete an archived conversation |
 | POST | `/local-agents/chat/turns/{turn}/asks/{ask}` | `{decision: "once" \| "chat" \| "deny", note?}` → `{answered: true}`: the person's answer to what the agent asks in the chat (local_agents.md "Asking in the chat") |
+| GET | `/local-agents/chat/terminal?page=` | `{cwd, argv, agent, label}`: how the desktop shell opens the conversation's session in a terminal (*Continue in a terminal*); the page itself never calls it |
+| POST | `/local-agents/chat/sources` | `{page, selections: [{text, page, box}]}` → `{sources: [{file, line, end?} \| null]}`: where each selected passage is in the sources |
 
 Only the desktop app's own server answers (`local_agents.enabled`; elsewhere 404), and only a signed-in account's session (a token or the guest: 403). The chat routes answer only the maker of the vault of the work folder the page is a live file of (404 for anyone else and any other page); the refusals and their codes are local_agents.md "The routes".
 

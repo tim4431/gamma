@@ -12,7 +12,7 @@ import ListMotion from "../shared/ui/ListMotion";
 import {
   ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, DatabaseIcon, DownloadIcon,
   ExportIcon, FileIcon, HardDriveIcon, ImportIcon, RefreshIcon, SearchIcon, SparklesIcon, StopIcon,
-  Trash2Icon, UploadIcon, XIcon,
+  TerminalIcon, Trash2Icon, UploadIcon, XIcon,
 } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { isActive, progressFraction } from "./taskModel.js";
@@ -23,7 +23,7 @@ import { Popover } from "../shared/ui/Surfaces";
 const ICONS = {
   activity: ActivityIcon, cloudDownload: CloudDownloadIcon, database: DatabaseIcon, download: DownloadIcon,
   export: ExportIcon, file: FileIcon, hardDrive: HardDriveIcon, import: ImportIcon, search: SearchIcon,
-  sparkles: SparklesIcon, trash: Trash2Icon, upload: UploadIcon,
+  sparkles: SparklesIcon, terminal: TerminalIcon, trash: Trash2Icon, upload: UploadIcon,
 };
 
 // A clock that ticks while `live` (the elapsed times of running tasks).
