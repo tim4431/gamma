@@ -244,8 +244,8 @@ def create_link(owner: str, library: str, *, workspace_id: str = "", name: str =
             from .folder_links import pushing_vault  # local: only a link to an existing workspace asks
 
             if pushing_vault(workspace_id):
-                raise ValueError("that workspace has a synced vault that pushes everything from this computer: "
-                                 "let it push only PDFs, or only pull, first")
+                raise ValueError("that workspace has a synced vault that pushes everything into it, from this "
+                                 "computer or another: let it push only PDFs, or remove it, first")
             emptied = mirror is not None
             status["adopt"] = adopt
             info = {"id": workspace_id}

@@ -656,7 +656,7 @@ agent), and a token cannot move them.
 | 3b. Approvals | approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), what the agent may run set on the computer | built: [dev/local_agents.md](../dev/local_agents.md) "Asking in the chat", "As built (step 3b)" below |
 | 3c. The rest of the side | *Continue in a terminal* and *Show in folder*, the agent's model and effort, the reply as it is typed, the selection's source line as a chip, a Background tasks row | built: [dev/local_agents.md](../dev/local_agents.md) "Its model, its typing, a terminal, the sources, Background tasks", "As built (step 3c)" below; later: View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, a folder's computer chat |
 | 4a. The channel and presence | the computer announced to the servers its vaults name over a channel of its own (a `computer` token, an announce and a held poll), presence kept by the server and shown to the vault's maker in any window, the sync panel's line | built: [dev/computers.md](../dev/computers.md), "As built (step 4a)" below |
-| 4b. Work folders of another server | a vault of another server that pushes everything into a folder it marks there, the tracking dialog through the host | plan |
+| 4b. Work folders of another server | a vault of another server that pushes everything into an empty folder it marks there, the tracking dialog on the host, that server's rules for the mark and its owner's *Let go* | built: [dev/work_folders.md](../dev/work_folders.md) "Work folders of another server", "As built (step 4b)" below |
 | 4c. Their Sends and mentions | run on the computer over the channel: the server's claim, the entries, the answers written by the server | plan |
 | 4d. The chat relayed | the chat's computer side on another server's page, its asks answered on the computer, *Show in folder* and *Continue in a terminal* from the desktop window there | plan |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
@@ -872,6 +872,28 @@ otherwise than "How the server sees a vault":
   asking form (a card answered on the computer itself, never relayed from
   that server's sessions), and a window on a phone may start, follow and
   stop the agent's work within its confinement but never widen it.
+
+### As built (step 4b)
+
+[dev/work_folders.md](../dev/work_folders.md) "Work folders of another
+server" is the reference. Where it went otherwise than planned:
+
+- **An explicit opt-in.** "A remote vault that pushes everything" would
+  have turned the kept folders of another server that already pushed
+  everything into work folders; a remote vault is one only once made one
+  (`work_vault`: its link's `TAKEN_OVER`).
+- **Empty folders only.** A work folder of another server is made of an
+  empty folder there, checked after the mark is written; a takeover over
+  HTTP (a folder with pages) is later.
+- **That server keeps its members safe**: it refuses a mark in a clone, a
+  Zotero-linked workspace or around another work folder, says it keeps
+  work folders (`whoami.work_folders`, so an older one gets no mark), and
+  its owner can *Let go* of a work folder whose computer is gone, so no
+  folder stays locked for every member; the computer whose mark is gone
+  stops instead of marking it again.
+- **The dialog stays on the computer** (the host's own window, the window
+  sent back to that server after), saying what is uploaded there and
+  which ticked files may hold secrets.
 
 ### Declined
 

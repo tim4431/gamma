@@ -63,6 +63,7 @@ export const GROUPS = [
   { id: "feedback", files: ["feedback.mjs"], s: 60 },
   { id: "local-agents", files: ["localAgents.mjs"], s: 40 },
   { id: "computers", files: ["computers.mjs"], s: 45 },
+  { id: "remote-work", files: ["remoteWork.mjs"], s: 30 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "text-search", files: ["textSearch.mjs"], s: 26 },
   { id: "text-anchors", files: ["textAnchors.mjs"], s: 45 },
@@ -230,6 +231,12 @@ export const RULES = [
   // a file's path, its crumbs and a note's relative link (BlockTree's renderer asks isRelativeHref)
   ["frontend/src/explorer/workPaths.js", ["work-folders", "vaults", "explorer", "notes-pdf-share", "sub-pages"]],
   // a work folder's list view and the tracking dialog; the Files window, its owner and its rows
+  // remote-work: the tracking dialog of a work folder of another server (what goes there, its secrets, the
+  // window handed back) and the folder menu's Let go of this work folder… there
+  ["frontend/src/explorer/trackRemote.js", ["remote-work", "work-folders"]],
+  ["frontend/src/explorer/TrackDialog.jsx", ["work-folders", "vaults", "explorer", "remote-work"]],
+  ["frontend/src/explorer/useWorkFolderActions.jsx", ["work-folders", "vaults", "explorer", "remote-work"]],
+  ["frontend/src/explorer/workFolderActions.js", ["work-folders", "vaults", "explorer", "remote-work"]],
   ["frontend/src/explorer/**", ["work-folders", "vaults", "explorer"]],
   ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages", "explorer"]],
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash", "sub-pages"]],
@@ -294,11 +301,13 @@ export const RULES = [
   // viewers: the engine's class `file` makes a page of every file a work folder tracks;
   // local-agents: a work folder's agent on this computer, turned on and off by the PATCH
   // computers: a vault of another server is what the computer's channel announces there
-  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents", "computers"]],
-  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents", "computers"]],
+  // remote-work: a work folder of another server made, chosen and pushed there
+  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents", "computers", "remote-work"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents", "computers", "remote-work"]],
   ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
   // (text-anchors: a text file's ranges placed again inside the round that replaced it)
-  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer", "text-anchors"]],
+  // (remote-work: the rounds over HTTP into a work folder of another server, vault/http_remote.py)
+  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer", "text-anchors", "remote-work"]],
   // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
   // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
   // (local-agents: a request claimed and worked by an agent on this computer, the document's `agent`)
@@ -320,14 +329,17 @@ export const RULES = [
   ["backend/gamma/work_folders/paths.py", ["work-folders", "vaults", "feedback", "text-search", "explorer"]],
   // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md);
   // files by name (file_search.py)
-  ["backend/gamma/work_folders/**", ["work-folders", "vaults", "explorer"]],
+  // (remote-work: a work folder of another server, its mark refused in a clone or a Zotero-linked workspace
+  // (elsewhere.py), its tracking dialog over HTTP (selection.py) and the owner's Let go (takeover.py))
+  ["backend/gamma/work_folders/**", ["work-folders", "vaults", "explorer", "remote-work"]],
   ["backend/gamma/folder_sync.py", []],
   ["backend/gamma/gamma_sync.py", []],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
   ["backend/gamma/sync_*.py", ["mirror", "publish", "zotero-link"]],
   // the same-block merge: a mirror's sync, two tabs typing in one block, the soak's crowd
   ["backend/gamma/textmerge.py", ["mirror", "collab", "collab-soak"]],
-  ["backend/gamma/routers/sync.py", ["mirror", "publish"]],
+  // (remote-work: whoami's work_folders, which the computer asks before it marks a folder there)
+  ["backend/gamma/routers/sync.py", ["mirror", "publish", "remote-work"]],
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
   ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish"]],
@@ -424,7 +436,7 @@ export const RULES = [
   ["backend/gamma/routers/translate.py", ["settings", "notes-pdf-share", "translation"]],
   // deleting a folder or a label (the trees' other writes are ops, ALL below); a work folder's
   // directory read, its files by name (GET /files) and a path resolved (GET /folders/{id}/at)
-  ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share", "work-folders", "explorer"]],
+  ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share", "work-folders", "explorer", "remote-work"]],
   // comments: their storage and API, and the hooks every block writer runs
   // (orphan, place and purge on deletes, moves and page purges; the copies
   // of a backup merge and an import; after_write feeds the inbox)

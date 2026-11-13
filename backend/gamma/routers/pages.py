@@ -26,7 +26,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import config, folder_links, highlight_relocate, jobs, linked_files, pdf_meta, publish, storage, upload_gc
+from .. import (comments, config, folder_links, highlight_relocate, jobs, linked_files, pdf_meta, publish, storage,
+               upload_gc)
 from ..auth import (DISK_CLIENT, actor_of, link_ratelimit, require_user_id, require_ws, require_ws_writer, resolve_ws,
                     share_scope, writer_client)
 from ..blocks_store import (
@@ -271,9 +272,12 @@ def page_summaries(payload: SummariesLookup, request: Request):
     preview and parent included), in the order asked, for the live pages
     among them: an unknown id, a block that is no page and a page in
     Recently deleted are left out, and through a share link every page it
-    does not reach. The open tabs, the recents and the focused page
-    ask this for the pages the listing does not carry (a
-    work folder's files). Any member, or a share; 413 past
+    does not reach. Each carries ``notes``, how many blocks of its own hold
+    something, and ``open_comments``, its open threads: what a computer's
+    tracking dialog says of the files of a work folder here that leave
+    (gamma/work_folders/selection.py ``_leaving``). The open tabs, the
+    recents and the focused page ask this for the pages the listing does
+    not carry (a work folder's files). Any member, or a share; 413 past
     ``MAX_SUMMARIES``. A read, though a POST (hosted.POST_READS); the
     lookup is ``blocks.summaries``."""
     if len(payload.ids) > MAX_SUMMARIES:
@@ -287,7 +291,13 @@ def page_summaries(payload: SummariesLookup, request: Request):
         if scope is not None:
             found = {i: r for i, r in found.items() if scope.allows_page(conn, i)}
         parents = page_parents(conn) if found else {}
-        pages = [page_summary(found[i], page_preview(conn, i), parents.get(i, "")) for i in ids if i in found]
+        shown = json.dumps(sorted(found))
+        notes = dict(conn.execute("SELECT page_id, COUNT(*) FROM unified_blocks WHERE page_id IN (SELECT value FROM "
+                                  "json_each(?)) AND id != page_id AND (kind != 'note' OR content != '') GROUP BY page_id",
+                                  (shown,)).fetchall()) if found else {}
+        threads = comments.open_counts(conn, sorted(found)) if found else {}
+        pages = [{**page_summary(found[i], page_preview(conn, i), parents.get(i, "")), "notes": notes.get(i, 0),
+                  "open_comments": threads.get(i, 0)} for i in ids if i in found]
         conn.rollback()
     return OrjsonResponse({"pages": pages})
 

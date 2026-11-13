@@ -127,11 +127,13 @@ def test_a_work_folder_made_to_choose_its_files_runs_no_round_until_they_are_cho
 def test_only_a_work_folder_chooses_its_files_and_the_whole_library_pushes_everything_nowhere(owner, disk):
     f = _put(disk / "one.pdf", _pdf("one"))
     (disk / "Pdfs").mkdir()
-    for body in ({"path": str(disk / "Pdfs"), "new_folder": True, "push": "pdfs"},
-                 {"path": str(disk / "Far"), "folder": "f", "remote_url": "http://nas", "token": "t"},
-                 {"kind": "file", "page": make_page(owner, "TR followed")["id"], "path": str(f)}):
+    for body, said in (({"path": str(disk / "Pdfs"), "new_folder": True, "push": "pdfs"}, folder_links.CHOOSES_ONLY),
+                       ({"path": str(disk / "Far"), "folder": "f", "remote_url": "http://nas", "token": "t"},
+                        folder_links.REMOTE_WORK),     # of another server: a folder there, pushing everything, pulling
+                       ({"kind": "file", "page": make_page(owner, "TR followed")["id"], "path": str(f)},
+                        folder_links.CHOOSES_ONLY)):
         r = owner.post("/api/folder-links", json={**body, "choose": True})
-        assert r.status_code == 400 and r.json()["detail"] == folder_links.CHOOSES_ONLY, body
+        assert r.status_code == 400 and r.json()["detail"] == said, body
     (disk / "Whole").mkdir(parents=True)
     r = owner.post("/api/folder-links", json={"folder": "root", "path": str(disk / "Whole"), "push": "everything"})
     assert r.status_code == 400 and "whole library cannot push everything" in r.json()["detail"]

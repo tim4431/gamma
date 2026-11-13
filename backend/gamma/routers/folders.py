@@ -12,7 +12,9 @@ see the refiling like any edit. A deleted folder's AI chats (its bucket and
 its subfolders') are filed into the library chat's history, and its share
 links stop. Workspace editors; never through a share link. Inside a work
 folder the tree is its vault's (``work_folders.filing.tree_op``): a person's
-delete there is refused with the ``locked`` conflict.
+delete there is refused with the ``locked`` conflict. A workspace owner
+lets go of a work folder whose vault is not on this server (``POST
+/api/folders/{id}/let-go``).
 
 The library listing leaves a work folder's files out unless they are in the
 library; ``GET /api/folders/{id}/pages`` lists one of its directories
@@ -29,7 +31,7 @@ import json
 from fastapi import APIRouter, HTTPException, Request
 
 from .. import comments
-from ..auth import actor_of, require_ws, resolve_ws, share_scope, writer_client
+from ..auth import actor_of, require_user_id, require_ws, resolve_ws, share_scope, writer_client, ws_role
 from ..blocks_store import FOLDERS, LABELS
 from ..db import SQL_FILE_NAME, connect_pages_db
 from ..ops import OpError, delete_tree
@@ -78,6 +80,50 @@ def delete_folder(folder_id: str, request: Request):
     directory) passes, a person is refused (403, ``locked``)."""
     ws = _writer(request)
     return delete_tree_block(ws, FOLDERS, folder_id, actor=actor_of(request), client=writer_client(request))
+
+
+@router.post("/folders/{folder_id}/let-go")
+def let_go_of_work_folder(folder_id: str, request: Request):
+    """A work folder whose vault is not on this server let go by a
+    workspace owner (``takeover.let_go``): a computer gone, its token
+    revoked or expired, or its vault removed while this server did not
+    answer would leave the folder locked for every member. Its files not in
+    the library go to Recently deleted, the others stay as library pages
+    filed where they were, its mark is taken off and its directory folders
+    that hold no page go → ``{ok, kept, trashed}``, the files kept and those
+    sent. The computer that kept it stops at its next round
+    (gamma/folder_links.py ``MARK_GONE``). A session of the workspace's
+    owner (403 otherwise, and for a token or a share link); 404 for a
+    folder that carries no mark; 409 for one a synced vault of this server
+    keeps, which is removed instead, and for any in a workspace something
+    else keeps in step (a clone, a Zotero link: ``elsewhere.kept_elsewhere``),
+    whose marks are copies: a clone's let-go would reach its source as the
+    mirror's writes, which no work-folder rule holds, so the source's owner
+    lets go there."""
+    from .. import folder_links
+    from ..work_folders import elsewhere, takeover
+
+    user_id = require_user_id(request)
+    ws = _writer(request)
+    if ws_role(request) != "owner":
+        raise HTTPException(status_code=403, detail="Only the workspace's owner may let go of a work folder.")
+    with connect_pages_db(ws) as conn:
+        marked = Tree.read(conn).mark(folder_id) is not None
+    if not marked:
+        raise HTTPException(status_code=404, detail="That folder is no work folder.")
+    if elsewhere.kept_elsewhere(ws):
+        raise HTTPException(status_code=409, detail="This workspace is kept in step by something else (a clone of "
+                                                    "another, or a Zotero link): let go of the work folder in the "
+                                                    "workspace it comes from, or stop keeping this one in step first.")
+    if any(link["kind"] == "folder" and not link["remote_url"] and link["workspace_id"] == ws
+           and link["folder_id"] == folder_id for link in folder_links.all_links()):
+        raise HTTPException(status_code=409, detail="This work folder is kept by a synced vault on this server: "
+                                                    "remove the vault instead.")
+    try:
+        done = takeover.let_go(ws, folder_id, user_id)
+    except OpError as e:
+        return op_refusal(e)
+    return {"ok": True, **done}
 
 
 @router.delete("/labels/{label_id}")

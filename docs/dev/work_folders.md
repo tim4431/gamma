@@ -79,13 +79,14 @@ from the folder's row, which `Layout.work` carries too): a vault of
 another server that pushes everything into a folder marked there runs a
 work folder's round, as the op rule there asks, while a vault that does
 not push everything, or a round built on an unmarked folder, keeps a kept
-folder's behaviour.
+folder's behaviour. A vault of another server is a work folder only by
+its own opt-in ("Work folders of another server", below): `work_vault`.
 
 A vault that only pulls, or pulls and sends PDFs back, makes Gamma its
 folder's source, so under the rule below nobody could rename or refile its
 pages; a vault of the whole library has no folder to mark; a vault of
-another server cannot use the tracking dialog yet. These stay kept
-folders. A vault of the whole library is refused when it is made, or
+another server is one only when made one of an empty folder there. These
+stay kept folders. A vault of the whole library is refused when it is made, or
 turned, to push everything (`folder_links._whole_library`, from
 `create_link` and from `set_push` when the push changes; the desktop shell
 says the same, `keeping.WHOLE_RULE`); one that pushed everything before
@@ -93,6 +94,97 @@ step 1 goes on as a kept folder, since `check_vault`, which every round
 runs, does not ask. Turning a kept folder's push to everything makes it a
 work folder at its next round, its library switch on so that its pages
 stay in the library.
+
+## Work folders of another server
+
+A vault of another Gamma server (a NAS) is a work folder **there** when it
+was made one: the computer's directory pushes everything into an empty
+folder of that server, which carries the mark, so the folder's files are
+that server's pages (its explorer, comments and feedback), chosen with
+*Choose files…* on the computer. This is step 4b of
+[agent-collab.md](../research/agent-collab.md); the agents that answer
+such a folder's Sends are its next steps.
+
+- **An explicit opt-in.** `folder_links.work_vault(link)` is
+  `work_folder_link(link)`, or a remote folder vault (not the library's
+  root) that pushes everything and whose state carries `TAKEN_OVER`, which
+  only this way of making one sets. The remote kept folders that pushed
+  everything before stay kept folders. `work_vault` decides the mark, the
+  round's work-folder turn, the tracking dialog, the push and pull locks
+  and removal; `work_folder_link` keeps its local meaning for the agents,
+  the feedback files and the chip.
+- **Made of an empty folder only.** `create_remote_link(..., choose,
+  library)` (the host's `POST /api/folder-links` with `remote_url`,
+  `choose: true`, push everything, pull on): that server must say
+  `work_folders: 1` in `GET /api/sync/whoami` (an older one: "The other
+  server is older than this app and keeps no work folders: update it
+  first."); the folder must be no work folder already, nor inside one or
+  around one (`HttpRemote.work_tree()`); the mark is written through the
+  vault's token, then the folder's listing is read again and the mark
+  taken off when any page there is not the work folder's ("That folder of
+  the other server is not empty: a work folder of another server starts
+  empty."), since from the mark on a person's page filed there is stamped
+  the work folder's and filing a library page into it is refused. The link
+  is then paused and choosing, as a local one is. No takeover over HTTP: a
+  folder of that server with pages stays a kept folder.
+- **What that server enforces** (the op path's `mark_rule`, every server): a vault
+  writer's `set` or `insert` on the folder tree with a non-null `vault` is
+  refused `locked` in a clone or a Zotero-linked workspace
+  (`work_folders/elsewhere.kept_elsewhere`) and inside or around another
+  work folder ("A work folder is never inside another work folder, nor
+  around one."); taking a mark off always passes. `pushing_vault` answers
+  a workspace whose folder tree carries a mark, so a clone or a Zotero
+  link is refused over a computer's work folder.
+- **Over HTTP** (`HttpRemote`): `work_pages()` and `stamp(ids, plan)` as
+  `LocalRemote`'s, each reading the listing once; `mark()` and
+  `work_tree()` read the folder tree alone when no listing is loaded, so a
+  quiet push round makes no listing request; a 403 `locked` is that file's
+  problem (`OpError`), never re-planned. Every remote path reads the link
+  with its token.
+- **Locked switches.** Push stays everything and pull on (`REMOTE_LOWERED`:
+  "A work folder of another server pushes everything and pulls: remove the
+  vault to stop it."); raising a remote kept folder to everything is still
+  refused (`REMOTE_RAISED`). No agent is turned on for it yet.
+- **The tracking dialog** is the host's, in the desktop app's own window
+  (never a directory listing through that server): the maker of a remote
+  work folder passes `_chooser`. Its preview adds `uploads: {files,
+  bytes}` (the ticked files whose bytes go to that server, the large ones
+  listed without them) and `secrets` (the ticked files that may hold
+  secrets, `documents/text.is_secret`), which the dialog says: every
+  member of that workspace can read what is uploaded. The leaving files'
+  counts come from that server's `POST /api/pages/summaries` (`notes`,
+  `open_comments`), null when it cannot answer.
+- **Removing**, and cancelling one still choosing, reads the files from
+  that server (asked with the dialog's 15 s, not a round's 120 s); while
+  it cannot be reached either is refused (409 "The other server cannot be
+  reached: remove the vault when it can, or let go of the folder there."),
+  unless forced (`?force=1`: the link forgotten, `mark_stays: true`, which
+  also comes back when that server stopped answering or refused midway).
+  A mark written whose answer was lost is taken off again.
+- **A mark gone.** When that server let go of the folder (below) or the
+  mark is gone otherwise, the round stops the vault (`MARK_GONE`: "the
+  other server let go of this work folder (its mark is gone there): remove
+  this vault") and records it in the link's state (`let_go_there`): from
+  then on the link never acts on that folder again, whatever marks it
+  later (another computer's work folder made there included): its rounds
+  stop at once without asking that server, it writes no mark (switching
+  the library or pull marks nothing either, and for any remote link only
+  while the mark is there), and removing it only forgets it.
+- **Let go.** A computer that is gone, a token revoked or expired, or a
+  removal forced must never leave a folder locked for every member: `POST
+  /api/folders/{id}/let-go` (a session of the workspace's owner; 404 for a
+  folder with no mark; 409 "This work folder is kept by a synced vault on
+  this server: remove the vault instead." where this server keeps it, and
+  in a clone or a Zotero-linked workspace, whose mark is a copy: the
+  workspace it comes from lets go) releases it in place
+  (`takeover.let_go`), as the vault's writer: the files outside the
+  library go to Recently deleted, the others are unstamped and stay as
+  library pages, the mark comes off, and the empty directory folders go,
+  then the files are swept once more, so one stamped while the first sweep
+  ran is not left with a stamp no mark names; `{ok, kept, trashed}`. The
+  folder menu offers it to the owner as *Let go of this work folder…*,
+  confirmed, where no vault of this server keeps the folder (any member's;
+  in the desktop app only once its server's links are read).
 
 ## Stored
 
@@ -652,13 +744,15 @@ the marker, and keeps the link paused and *choosing* (`state.choosing`,
 and `state.made = {folder, marker, marker_dir}`, what making it made, for
 a Cancel): every way into a round refuses it ("choose its files first"),
 a resume too, and the file vaults inside wait for the Save. Every other
-vault (of a folder with pages, or with a directory of no notes or PDFs,
-of another server, of one file, of the whole library) still asks in the
-bar, as before.
+vault (of a folder with pages, or with a directory of no notes or PDFs, of
+one file, of the whole library) still asks in the bar, as before; an
+empty folder of another server becomes a work folder of it the same way
+("Work folders of another server").
 
 **The routes**, by the link's id, never a path, for the link's maker
 alone (`routers/folder_links.py` `_chooser`: another editor gets 403,
-anyone else 404, and so do a file vault and a vault of another server;
+anyone else 404, and so do a file vault and a vault of another server
+that is no work folder;
 [api.md](api.md)). `work_folders/selection.py` holds the tree, the
 evaluation of a selection, the preview, the save's checks and the file's
 writing; `folder_links.save_selection` holds the save's lock, the link's
@@ -699,7 +793,9 @@ state and its round.
   `.gamma/` when it made that and it is left empty, the folder when it was
   made for the vault and nothing is filed there. A folder it was made of
   loses its mark, and a note made in it meanwhile stays as a library page.
-  No `.gammaignore` was written.
+  No `.gammaignore` was written. A work folder of another server is
+  cancelled through that server, refused while it cannot be reached
+  unless forced ("Work folders of another server").
 
 **The preset** of a new work folder ticks PDFs and notes unless they lie
 inside a directory git ignores (`build/`, `out/`, `venv/`). A PDF ignored
@@ -1142,7 +1238,8 @@ into a work folder or one of its directories (`import_review.destination`).
   other chips and `folder:` / `label:` clauses naming one folder or label,
   is resolved on the server and reaches them.
 - Label views list library pages only.
-- A vault of another server is never a work folder in step 1.
+- A work folder of another server is made of an empty folder of it only
+  (no takeover over HTTP), and no agent answers it yet.
 - A deselected file's last edits are pushed until the next whole round.
 - A note's link to a file stays its stored address
   (`/api/uploads/<hash><ext>`), a chip, where the vault does not make it

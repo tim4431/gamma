@@ -781,7 +781,11 @@ async function localServer(serverId) {
 // the shell makes it paused and choosing, then opens the server's window on
 // its folder with its tracking dialog (`?track=`, makeWorkFolder), where the
 // person chooses what it tracks; the page answers through the server, never
-// through the shell. The rounds are the server's; the sync panel (below, "the
+// through the shell. An empty folder of a REMOTE server becomes a work folder
+// there the same way (makeRemoteWorkFolder), kept by the host with a write
+// token; its dialog shows in the host's own window, which the page's
+// `tracked` ask takes back to that server (trackedFromPage), so the
+// directory's names stay on this computer. The rounds are the server's; the sync panel (below, "the
 // sync panel") shows each vault and acts on it. In the Mac App Store build the
 // server that is to read or write there first starts again when it started
 // before the pick (reachFolder).
@@ -980,19 +984,41 @@ const adopts = (preview) => Boolean(preview.marker && !preview.marker.link_id);
 
 // How a folder's vault starts: pulling, and pushing nothing while the folder
 // has pages; an empty folder and a directory with notes or PDFs push
-// everything (never to another server, for now).
-function firstPush(preview, remote) {
-  return !remote && !preview.pages && (preview.notes || preview.pdfs) ? 'everything' : 'off';
+// everything, a work folder, of another server's folder too (whose emptiness
+// that server's own answer settles: makeRemoteWorkFolder).
+function firstPush(preview) {
+  return !preview.pages && (preview.notes || preview.pdfs) ? 'everything' : 'off';
 }
 
 // The pages a folder of a remote server holds, for the dialog's sentence (the
-// host's preview cannot count them). Best effort: 0.
+// host's preview cannot count them). Best effort: 0; a work folder made of a
+// folder that holds pages after all is refused by the host, which asks that
+// server again once the folder is marked.
 async function remotePages(api, origin, headers, folderId) {
   try {
     return ((await api(origin, `/api/sync/folders/${encodeURIComponent(folderId)}`, { headers })).pages || []).length;
   } catch {
     return 0;
   }
+}
+
+// Why workspace `wsId` of the remote at `origin` (`remoteName`, as the bar
+// names it) takes no work folder from this computer, or '' when it does:
+// GET /api/sync/whoami, asked with the window's session `api`, says whether
+// that server keeps work folders (`work_folders`) and the account's role
+// there, which writes as an owner's or an editor's.
+async function remoteWorkRefusal(api, origin, wsId, remoteName) {
+  const older = `${remoteName} is older than this app and keeps no work folders`;
+  let who;
+  try {
+    who = await api(origin, '/api/sync/whoami', { headers: { 'X-Gamma-Workspace': wsId } });
+  } catch (e) {
+    if (!(e.status >= 400 && e.status < 500)) throw e;
+    return e.status === 404 ? older : e.message;
+  }
+  if (!who.work_folders) return older;
+  if (who.role !== 'owner' && who.role !== 'editor') return 'your account may only view this workspace there';
+  return '';
 }
 
 // A work folder made from the directory `picked` on the local server `srv`
@@ -1030,10 +1056,129 @@ async function makeWorkFolder({ srv, origin, api, ws, headers, name, picked, pre
   return link;
 }
 
+// The work folders of another server whose tracking dialog the host's window
+// shows, by the host's link id: `{ host, nas, remoteOrigin, remoteName, wsId,
+// folderId, tokenId, name }`, the host's server id, that server's in the
+// registry (null when it is not there), the folder's workspace and id there,
+// and the token the vault holds there. The page's `tracked` ask
+// (trackedFromPage) is taken only for one of these.
+const tracking = new Map();
+
+// The host's own workspace for its window, where a work folder of another
+// server's tracking dialog shows: the personal one of the account `api` is
+// signed into there, else its default. Never that server's ids.
+async function hostWorkspace(api, origin) {
+  const info = await api(origin, '/api/session');
+  return (openFiles.personalOf(info) || {}).id || info.default_workspace || '';
+}
+
+// A work folder of another server (docs/dev/work_folders.md): the empty
+// folder `folderId` of workspace `wsId` of the remote at `origin` (`shown`,
+// as the registry has it), through the window's session `api`, kept by the
+// host (`host`: `{ local, origin }`) from the directory `picked`. What
+// `preview` refuses is said in the bar and nothing is made. Else a write
+// token minted there, as a pushing vault's, and the vault made on the host
+// paused and choosing (the host marks the folder there and refuses one that
+// holds pages, or that its server would not mark), this computer shown there
+// (showComputer), then the host's own window, its tracking dialog open
+// (`?track=`) over the host's own workspace: the directory's names never go
+// to that server, only the files the person ticks. The token is remembered
+// (tracking) so that a Cancel there revokes it; a vault not made revokes it
+// at once, and one that server or the host refuses (a 4xx: the token not
+// minted, a clone's or a Zotero-linked workspace, a nested folder) throws
+// marked `refused`, for the vault dialog to be asked instead. → the link, or
+// null.
+async function makeRemoteWorkFolder({ host, api, origin, shown, wsId, folderId, name, picked, preview }) {
+  if (preview.refusal) {
+    showNotice(preview.refusal);
+    return null;
+  }
+  const wsHeaders = { 'X-Gamma-Workspace': wsId };
+  busy = `Adding the work folder ${name}…`;
+  pushState();
+  let token = null;
+  let link;
+  let unshown = null; // why this computer is not shown on the remote, the vault made all the same
+  try {
+    token = await api(origin, '/api/integrations/tokens', {
+      method: 'POST',
+      headers: { ...JSON_TYPE, ...wsHeaders },
+      body: JSON.stringify({ name: `Gamma desktop: ${name} synced vault`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
+    });
+    link = await api(host.origin, '/api/folder-links', {
+      method: 'POST',
+      headers: { ...JSON_TYPE, ...shellWord(host.origin) },
+      body: JSON.stringify({ folder: folderId, path: picked, notes: true, pull: true, push: 'everything', choose: true,
+        remote_url: origin, workspace: wsId, token: token.token, token_id: token.id }),
+    });
+    tracking.set(link.id, { host: host.local.id, nas: shown.id, remoteOrigin: origin, remoteName: shown.name, wsId, folderId, tokenId: token.id, name });
+    token = null; // the host holds it now
+    registry.setSettings({ folderHost: host.local.id }); // runs at launch with the clones' hosts
+    unshown = await showComputer({ remote: api, remoteOrigin: origin, remoteName: shown.name, wsId, host: { origin: host.origin, api } });
+  } catch (e) {
+    if (token) await revokeToken(api, origin, wsId, token.id); // minted for a vault that was never made
+    if (!link && e.status >= 400 && e.status < 500) e.refused = true;
+    throw e;
+  } finally {
+    busy = null;
+    pushState();
+  }
+  const hostWs = await hostWorkspace(api, host.origin);
+  if (!current || current.id !== host.local.id) {
+    await openServer(host.local.id);
+    buildMenu();
+  }
+  await openGammaWorkspace(hostWs, { track: link.id });
+  if (unshown) showNotice(unshown);
+  refreshKeeping().catch(() => {});
+  offerBackground(`The work folder “${name}”`).catch(() => {});
+  return link;
+}
+
+// The tracking dialog of a work folder of another server answered, in the
+// host's window (its page's `tracked` ask: `linkId`, the host's link, and
+// whether it was `cancelled`): the window goes back to that server, the
+// folder open. Its Cancel removed the vault a fresh dialog made (the page's
+// DELETE): the token minted for it is revoked there, and this computer is no
+// longer shown there once no other vault of that server and workspace stays
+// (releaseRemote). A Cancel the host refused (that server not reached: the
+// page says `cancelled` false) leaves the vault choosing, its token kept,
+// and is said. Only a dialog the shell opened (tracking), while the window
+// shows its host.
+async function trackedFromPage(_wsId, linkId, cancelled) {
+  const t = tracking.get(linkId);
+  if (!t || !current || current.id !== t.host) return null;
+  tracking.delete(linkId);
+  const at = await localServer(t.host);
+  const kept = ((await at.api(at.origin, '/api/folder-links')).links || []).find((l) => l.id === linkId);
+  if (!kept && cancelled) {
+    const stranded = await releaseRemote(at.origin, at.api, t.host, { remote_url: t.remoteOrigin, workspace_id: t.wsId, token_id: t.tokenId }, t.remoteName);
+    showNotice(`“${t.name}” is not synced with this computer; its folder on ${t.remoteName} stays as it was.${stranded ? ` ${stranded}` : ''}`);
+  } else if (kept && kept.choosing && !cancelled) {
+    // a fresh dialog's every way out cancels: one that leaves the vault choosing was refused
+    showNotice(`“${t.name}” could not be cancelled, ${t.remoteName} not reached: it waits for its files to be chosen. Choose files… in the sync panel, or remove the vault once ${t.remoteName} answers.`);
+  } else if (kept && kept.choosing) {
+    showNotice(`“${t.name}” waits for its files to be chosen: Choose files… in the sync panel.`);
+  } else if (kept && !cancelled) {
+    showNotice(`“${t.name}” pushes the files you chose to ${t.remoteName}, and pulls what changes there.`);
+  }
+  refreshKeeping().catch(() => {});
+  if (t.nas && registry.get(t.nas)) {
+    await openServer(t.nas);
+    buildMenu();
+    await openGammaWorkspace(t.wsId, { folder: t.folderId });
+  }
+  return true;
+}
+
 // Folder `folderId` of the open server's workspace `wsId` synced with a
-// directory the user picks, as the dialog says; an empty folder of a local
-// server that the directory's notes and PDFs would fill (firstPush) becomes
-// a work folder instead (makeWorkFolder), with no dialog here. The whole
+// directory the user picks, as the dialog says; an empty folder that the
+// directory's notes and PDFs would fill (firstPush) becomes a work folder
+// instead (makeWorkFolder, or makeRemoteWorkFolder for a remote's), with no
+// dialog here. A remote's is one only when that server keeps work folders
+// and the account writes there (remoteWorkRefusal), and that server and the
+// host take it; else the dialog asks, pushing nothing to start, the reason
+// in the bar. The whole
 // library is never one (keeping.WHOLE_RULE): its dialog starts pulling
 // only. A folder that has a vault already opens its directory instead.
 async function addFolderVault(wsId, folderId) {
@@ -1065,13 +1210,28 @@ async function addFolderVault(wsId, folderId) {
   const preview = await previewVault(api, at.origin, remote ? {} : wsHeaders, picked, remote ? '' : folderId);
   if (remote) preview.pages = await remotePages(api, origin, wsHeaders, folderId);
   const whole = folderId === 'root';
-  if (!whole && firstPush(preview, remote) === 'everything') {
+  let push = whole ? 'off' : firstPush(preview);
+  if (push === 'everything') {
     stillOn(shown);
-    return makeWorkFolder({ srv: at.local, origin: at.origin, api, ws: { id: wsId, name: wsName }, headers: wsHeaders, name, picked,
-      preview, body: { folder: folderId } });
+    if (!remote) {
+      return makeWorkFolder({ srv: at.local, origin: at.origin, api, ws: { id: wsId, name: wsName }, headers: wsHeaders, name, picked,
+        preview, body: { folder: folderId } });
+    }
+    let refused = await remoteWorkRefusal(api, origin, wsId, serverName);
+    if (!refused) {
+      stillOn(shown);
+      try {
+        return await makeRemoteWorkFolder({ host: at, api, origin, shown, wsId, folderId, name, picked, preview });
+      } catch (e) {
+        if (!e.refused) throw e;
+        refused = e.message;
+      }
+    }
+    showNotice(keeping.remoteWorkRefused(serverName, name, refused));
+    push = 'off';
   }
   const choice = await askVault({ path: picked, server: serverName, workspace: wsName, folder: name, newFolder: false, remote, whole,
-    preview, pull: true, push: whole ? 'off' : firstPush(preview, remote) });
+    preview, pull: true, push });
   if (!choice) return null;
   busy = `Syncing ${name} with this computer…`;
   pushState();
@@ -1374,10 +1534,11 @@ async function pauseVault(serverId, linkId, paused) {
 }
 
 // Whether a vault pulls: Gamma's changes written to its directory. A vault
-// of another server keeps pulling (keeping.REMOTE_RULE).
+// of another server keeps pulling (keeping.REMOTE_RULE), a work folder there
+// too (keeping.REMOTE_WORK_RULE).
 async function setPull(serverId, linkId, pull) {
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
-  if (!pull && link.remote_url) throw new Error(keeping.REMOTE_RULE);
+  if (!pull && link.remote_url) throw new Error(item.work ? keeping.REMOTE_WORK_RULE : keeping.REMOTE_RULE);
   await api(origin, `/api/folder-links/${link.id}`, {
     method: 'PATCH', headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify({ pull }),
   });
@@ -1406,12 +1567,14 @@ async function setLibrary(serverId, linkId, on) {
 // once it is on; `confirmed` answers in tests, where the question takes
 // Cancel), and the PATCH carries the shell's word, which a page of Gamma
 // cannot. The server checks the agent meanwhile ("Checking Codex…") and
-// refuses one that is not ready with why. Turning it off asks nothing.
+// refuses one that is not ready with why. Turning it off asks nothing. A
+// work folder of another server has none, for now (item.agentHere).
 async function setAgent(serverId, linkId, name, confirmed) {
   const word = name || '';
   if (word && !Object.prototype.hasOwnProperty.call(keeping.AGENT_LABELS, word)) throw new Error(`An agent is codex or claude, not ${word}`);
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
   if (!item.work) throw new Error('Only a work folder can have an agent.');
+  if (!item.agentHere) throw new Error('A work folder of another server has no agent, for now.');
   if (word === item.agent) return false;
   const patch = (extra) => api(origin, `/api/folder-links/${link.id}`, {
     method: 'PATCH', headers: { ...headers, ...JSON_TYPE, ...extra }, body: JSON.stringify({ agent: word }),
@@ -1454,7 +1617,7 @@ async function setAgent(serverId, linkId, name, confirmed) {
 async function setAgentRuns(serverId, linkId, runs, confirmed) {
   if (runs !== 'never' && runs !== 'ask') throw new Error(`What an agent may run is never or ask, not ${runs}`);
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
-  if (!item.work || !item.agent) throw new Error('Turn an agent on first.');
+  if (!item.agentHere || !item.agent) throw new Error('Turn an agent on first.');
   if (runs === item.agentRuns) return false;
   if (runs === 'ask' && !confirmed) {
     const q = keeping.runsAsk(item);
@@ -1485,20 +1648,33 @@ async function checkAgents(serverId) {
 }
 
 // Choose files…: the server's window on the work folder, its tracking dialog
-// open (makeWorkFolder's navigation).
+// open (makeWorkFolder's navigation); for a work folder of another server,
+// the host's window over its own workspace, as makeRemoteWorkFolder hands
+// over, the dialog's answer taking the window back there (trackedFromPage).
 async function chooseFiles(serverId, linkId) {
-  const { link } = await vaultOn(serverId, linkId);
+  const { origin, api, link, item } = await vaultOn(serverId, linkId);
+  let ws = link.workspace_id;
+  let at = { folder: link.folder_id, track: link.id };
+  if (link.remote_url) {
+    const remoteOrigin = registry.originOf(link.remote_url);
+    const nas = registry.load().servers.find((s) => s.type === 'remote' && registry.originOf(s.url) === remoteOrigin);
+    tracking.set(link.id, { host: serverId, nas: nas ? nas.id : null, remoteOrigin, remoteName: item.remote, wsId: link.workspace_id,
+      folderId: link.folder_id, tokenId: link.token_id || '', name: item.name });
+    ws = await hostWorkspace(api, origin);
+    at = { track: link.id };
+  }
   if (!current || current.id !== serverId) {
     await openServer(serverId);
     buildMenu();
   }
-  await openGammaWorkspace(link.workspace_id, { folder: link.folder_id, track: link.id });
+  await openGammaWorkspace(ws, at);
   return true;
 }
 
 // What a vault pushes: 'off', 'pdfs' or 'everything' (the Push segment of
 // the vault's own view); a remote server's folder PDFs at most
-// (keeping.REMOTE_RULE), the whole library not everything
+// (keeping.REMOTE_RULE), a work folder there everything and nothing less
+// (keeping.REMOTE_WORK_RULE), the whole library not everything
 // (keeping.WHOLE_RULE). A folder of a remote server needs a write token
 // for it, where it was made with a read one: a write token is minted on the
 // remote with the window's session (signed into the remote, as for
@@ -1528,7 +1704,8 @@ const PUSH_SAID = {
 async function changePush(serverId, linkId, word) {
   if (!keeping.PUSH.includes(word)) throw new Error(`Push is off, pdfs or everything, not ${word}`);
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
-  if (word === 'everything' && link.remote_url) throw new Error(keeping.REMOTE_RULE);
+  if (link.remote_url && item.work && word !== 'everything') throw new Error(keeping.REMOTE_WORK_RULE);
+  if (word === 'everything' && link.remote_url && !item.work) throw new Error(keeping.REMOTE_RULE);
   if (word === 'everything' && link.folder_id === 'root') throw new Error(keeping.WHOLE_RULE);
   const patch = (body) => api(origin, `/api/folder-links/${link.id}`, {
     method: 'PATCH', headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify(body),
@@ -1717,21 +1894,57 @@ async function hideComputerOf(serverId, linkId) {
 // revoked there. Asked first with GET .../removal's counts, unless `files`
 // says: `keep`, the directory's files stay as they are; `trash`, the files
 // the sync wrote move to the vault's trash (.gamma/trash). A file's vault
-// never touches its file.
+// never touches its file. A work folder of another server is let go of
+// there; while that server cannot be reached the host refuses (409), and
+// asked (keeping.farRemovalAsk; Cancel under the harness unless a test
+// queued the answer) the vault is forgotten here all the same (`force=1`),
+// the folder staying a work folder there until its owner lets go of it.
+// GET .../removal saying that server could not be counted (`unreachable`)
+// asks that at once, never the usual question with counts it could not read.
 async function removeVault(serverId, linkId, files) {
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
+  const far = Boolean(link.remote_url && item.work);
+  const unreachable = (e) => far && [409, 502, 503, 504].includes(e && e.status);
+  const forced = async (reason) => {
+    const q = keeping.farRemovalAsk(item, reason);
+    return await ask({ type: 'warning', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 1, cancelId: 1 }, 1) === 0;
+  };
+  let force = false;
   if (!files) {
-    const q = keeping.removalAsk(item, await api(origin, `/api/folder-links/${link.id}/removal`, { headers }));
-    const r = await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: q.buttons.length - 1 }, 0);
-    files = q.choices[r];
-    if (!files) return false;
+    let removal = null;
+    try {
+      removal = await api(origin, `/api/folder-links/${link.id}/removal`, { headers });
+    } catch (e) {
+      if (!unreachable(e)) throw e;
+      removal = { unreachable: true, reason: e.message };
+    }
+    if (far && removal.unreachable) {
+      if (!await forced(removal.reason)) return false;
+      force = true;
+      files = 'keep';
+    } else {
+      const q = keeping.removalAsk(item, removal);
+      const r = await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: q.buttons.length - 1 }, 0);
+      files = q.choices[r];
+      if (!files) return false;
+    }
   }
   busy = `Removing the synced vault ${item.name}…`;
   pushState();
   try {
-    await api(origin, `/api/folder-links/${link.id}?files=${files === 'trash' ? 'trash' : 'keep'}`, { method: 'DELETE', headers });
+    const remove = () => api(origin, `/api/folder-links/${link.id}?files=${files === 'trash' ? 'trash' : 'keep'}${force ? '&force=1' : ''}`,
+      { method: 'DELETE', headers });
+    try {
+      await remove();
+    } catch (e) {
+      if (force || !unreachable(e)) throw e;
+      if (!await forced(e.message)) return false;
+      force = true;
+      await remove();
+    }
     const stranded = link.remote_url ? await releaseRemote(origin, api, serverId, link, item.remote) : '';
     showNotice((item.scope === 'file' ? `${item.name} is no longer pushed from ${path.basename(item.dest)}; the file stays as it is.`
+      : force ? `${item.name} is no longer synced with this computer; on ${item.remote} its folder stays a work folder until the workspace's owner lets go of it there.`
       : item.offline || item.stopped ? `${item.name} is no longer synced; nothing in ${item.dest} was touched.`
       : files === 'trash' ? `${item.name} is no longer synced; the files the sync wrote are in its trash, .gamma/trash.`
       : `${item.dest} is no longer synced; its files stay.`) + (stranded ? ` ${stranded}` : ''));
@@ -3090,8 +3303,9 @@ function registerIpc() {
   // A page's asks about this computer in Gamma's own menus (a folder's "Sync
   // with this computer…", a page's "Push from a file on this computer…", its
   // file shown in its folder, its missing file located, an opened PDF carried
-  // to another server's library, its computer chat continued in a terminal),
-  // passed on by the
+  // to another server's library, its computer chat continued in a terminal,
+  // the tracking dialog of a work folder of another server answered in the
+  // host's window, `flag` saying whether it was cancelled), passed on by the
   // page preload: only from the content view's page of the open server,
   // with plain ids, one action at a time (oneAsk: none while a picker, a
   // question or the vault dialog is up), and at most one a second, so a page
@@ -3115,11 +3329,12 @@ function registerIpc() {
     'shell:relocate-from-page': ['Could not locate the file.', relocateFile],
     'shell:carry-from-page': ['Could not add the page to the other server\'s library.', carryToServer],
     'shell:terminal-from-page': ['Could not open a terminal.', terminalFromPage],
+    'shell:tracked-from-page': ['Could not go back to the work folder.', trackedFromPage],
   };
   for (const [channel, [message, run]] of Object.entries(PAGE_ASKS)) {
-    ipcMain.on(channel, (event, wsId, id) => {
+    ipcMain.on(channel, (event, wsId, id, flag) => {
       if (!fromPage(event, wsId, id)) return;
-      withDialog(message, oneAsk(() => run(wsId, id)))().catch(() => {});
+      withDialog(message, oneAsk(() => run(wsId, id, flag === true)))().catch(() => {});
     });
   }
   // Reveal a directory a link of the open server's workspace writes — only such a one.
@@ -3361,6 +3576,8 @@ if (process.env.GAMMA_SHELL_TEST) {
     carryPage,
     carryToServer,
     terminalFromPage,
+    trackedFromPage,
+    chooseFiles,
     terminals,
     asked,
     answers,

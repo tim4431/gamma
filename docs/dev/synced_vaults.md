@@ -1719,9 +1719,12 @@ writes of routes with no client in their body as the vault's (a file's
 upload and download go without it); and one route of its
 own, a page's plan (`POST /api/pages/{id}/plan`, `ops.commit_plan`). A
 token that may read pulls; pushing takes one that may write, of an editor.
-A vault of another server is never a work folder itself (it writes no
-mark), but one that pushes everything into a folder there that carries a
-mark runs a work folder's round, as the op rule there asks.
+A vault of another server is a work folder only when it was made one of
+an empty folder there ([work_folders.md](work_folders.md) "Work folders
+of another server": it writes the mark through its token, and that server
+refuses a mark in a clone, a Zotero-linked workspace or around another
+work folder); one that pushes everything into a folder there that carries
+a mark runs a work folder's round, as the op rule there asks.
 
 The computer also announces itself to that server over a channel of its
 own (a token of the `computer` scope, which opens nothing else): the

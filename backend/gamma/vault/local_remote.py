@@ -406,6 +406,11 @@ class LocalRemote:
             delete_tree(self.ws, conn, FOLDERS, folder_id, actor=self.user_id, client=CLIENT)
         return True
 
+    def drop_folders(self, folder_ids) -> None:
+        """``drop_folder`` of each of ``folder_ids``, in their order."""
+        for folder_id in folder_ids:
+            self.drop_folder(folder_id)
+
     def link_doc(self, path: str, seen: tuple, page_id: str, ext: str) -> None:
         """``path`` recorded as where the page's document, the bytes ``seen``
         (``linked_files.hash_file``, ``hash_any``) under ``ext``, is read."""
