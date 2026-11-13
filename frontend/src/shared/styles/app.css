@@ -7614,17 +7614,28 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: ew-resize;
 }
 /* ds-allow-end */
-.mcpConsent { max-width: 480px; }
-.mcpConsentPage { overflow: auto; }
-.mcpConsent p { line-height: 1.5; }
+/* An assistant's consent (auth/McpConsent.jsx) in AuthShell's card, wider: the
+   settings' Section, Toggle and workspace rows inside; layout only here. */
+.loginCard.mcpConsent { max-width: 480px; }
+.mcpWho {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 8px;
+  margin: 0 0 12px; font-size: var(--fs-xs); color: var(--text-muted);
+}
+.mcpCode {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 12px; margin: 4px 0 0;
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-block);
+}
+.mcpCode strong { font-family: var(--font-mono); font-size: var(--fs-xl); letter-spacing: 0.12em; color: var(--text-primary); }
+.mcpConsent .setRow { padding-left: 0; padding-right: 0; }
+.mcpCan { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; font-size: var(--fs-sm); line-height: 1.45; color: var(--text-secondary); }
+.mcpCan li { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px; }
+.mcpCan svg { margin-top: 3px; color: var(--text-muted); }
+.mcpFoot { margin: 12px 0 0; }
 .mcpCallback { overflow-wrap: anywhere; }
-.mcpDeviceCode strong { font-family: var(--font-mono); letter-spacing: 0.08em; white-space: nowrap; }
-.mcpPermissions { margin: 8px 0 16px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
-.mcpPermissions ul { padding-left: 18px; margin: 10px 0; line-height: 1.6; font-size: var(--fs-sm); }
-.mcpPermissions p { margin-bottom: 0; }
-.mcpConnectionDetails { margin: 16px 0; font-size: var(--fs-sm); }
+.mcpConnectionDetails { margin: 12px 0 0; font-size: var(--fs-xs); }
 .mcpConnectionDetails summary { cursor: pointer; color: var(--text-secondary); }
-.mcpConsentActions { display: grid; gap: 8px; margin-bottom: 16px; }
+.mcpConsentActions { display: grid; gap: 8px; margin: 20px 0 0; }
 
 /* Key caps: a chord shown as its keys (settings kit KeyCaps) */
 .keyCaps { display: inline-flex; align-items: center; gap: 3px; }

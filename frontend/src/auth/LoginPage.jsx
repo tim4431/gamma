@@ -10,12 +10,14 @@ import { T, t, tn } from "../shared/i18n/i18n.js";
 const DEMO_SCENE_URL = "/media/gamma-scene-light.svg";
 
 // Every page shown before (or instead of) the app: login, an unavailable
-// workspace, a session conflict, a blocked share link. While the session is
+// workspace, a session conflict, a blocked share link, an assistant's consent
+// (auth/McpConsent.jsx). While the session is
 // still being read the splash shows instead (Splash, shared/ui/BrandMark.jsx).
 // A page that reports a situation (`headline`) leads with it under the mark;
 // the others with the name. `scene` (a demo server's landing) puts a picture
-// beside the content instead, which then brings its own heading.
-function AuthShell({ headline, scene, children }) {
+// beside the content instead, which then brings its own heading. `className`
+// sizes a card that holds more than a form (the consent's, wider).
+export function AuthShell({ headline, scene, className = "", children }) {
   return (
     <div className="app">
       <div className="loginPage">
@@ -25,7 +27,7 @@ function AuthShell({ headline, scene, children }) {
             <div className="loginLandingBody">{children}</div>
           </div>
         ) : (
-          <div className="loginCard">
+          <div className={`loginCard ${className}`.trim()}>
             <BrandMark className="loginMark" size={48} />
             {headline
               ? <h1 className="loginTitle loginHeadline">{headline}</h1>
