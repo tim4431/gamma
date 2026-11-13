@@ -823,7 +823,11 @@ holds.
   the call; it can do nothing when the interpreter never came up or the
   entry itself ended (an import error), which only a new build fixes.
   What fails on the Java side before Python's output is redirected is
-  appended to the log, marked with its time.
+  appended to the log, marked with its time. The server starts no process
+  here, having no Python to run in one: an SVG picture, which another
+  server draws in a process it kills after 10 s, is drawn in the server
+  with no time limit, as on the iPad (`sys.platform == "android"`,
+  [pictures.md](pictures.md#svg-pictures)).
 - **What `gamma_mobile.py` does on Android only.** Threads the server
   starts get an 8 MiB stack (`threading.stack_size`), glibc's default,
   which the server has on Linux: Android's threads get bionic's 1 MiB,

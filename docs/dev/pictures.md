@@ -17,7 +17,8 @@ shared images (`frontend/src/transfers/openedFiles.js`, the document types
 in `ipad/project.yml`), `gamma/picture.py`
 (the server's rules and the picture in a PDF), the `/Stamp` writer in
 `gamma/pdf_export.py`, the reader in `gamma/routers/imports.py`, the images
-in `gamma/pdf_image.py`, `gamma/notebook.py` `placed_ops`, and, for the
+in `gamma/pdf_image.py` (an SVG drawn by `gamma/svg_draw.py`),
+`gamma/notebook.py` `placed_ops`, and, for the
 Notability and GoodNotes imports, the picture storing they share
 (`gamma/note_app_import.py` `AppImport.store_picture`) and the mapping it
 goes through (`gamma/notability_map.py` `picture_block`). Tests are listed
@@ -1063,9 +1064,62 @@ counts whatever its prefix, as MuPDF reads the literal `xlink:href` first.
 A repeated id counts as its heaviest element, and a line break in an id
 matches a space.
 
-**As pixels** (`pdf_image.svg_png`): MuPDF's page of it drawn by
-`pdf_text.page_raster`, its longer side a given size, clear where it draws
-nothing.
+**Drawn under a time limit** (`pdf_image._svg_drawing`, `gamma/svg_draw.py`).
+Inside those bounds MuPDF can still take minutes to draw an SVG, and nothing
+stops a call into it. Measured on PyMuPDF 1.28: the conversion to a PDF is
+quick (1.3 s for 8 MiB of path data), the drawing is not. At 2048 px a path
+of 600 000 points took 190 s, 100 000 translucent layers over the picture
+more than 5 minutes, 10 000 masks 13 s, a page of large text 9 to 25 s.
+Tiny dashes, gradients of 100 000 stops, patterns, nested clips and a huge
+viewBox drew at once; groups 500 deep do not open.
+
+- MuPDF converts and draws an SVG file only in a process of its own
+  (`gamma/svg_draw.py`). The process is killed past `SVG_DRAW_SECONDS`
+  (10 s). Its address space is capped at `SVG_DRAW_MEMORY` (1 GiB; the 40 MP
+  of embedded pictures the bounds let through take 300 MB) where the system
+  holds a process to one, which is Linux. macOS and Windows have no such cap.
+- The PDF (`svg_pdf`) is converted there and drawn once at `SVG_DRAW_SIDE`
+  (2048 px on its longer side), to prove it draws in time. An AI picture
+  of a whole page holding the SVG draws it smaller (at most
+  `RENDER_MAX_SIDE`, 1568), and the Notability PNG, 2048 too, shares the
+  drawing. A PNG of another side or of a region (`svg_png`: the AI's PNG,
+  a picture page's region) is a drawing of its own, in its own process.
+- The server holds no lock while the process works: other PDF requests go
+  on. At most two such processes run at once (`_SVG_DRAWS`).
+- An SVG that does not draw in time is a `ValueError`, as any SVG that does
+  not draw, so every caller leaves it out as before: the PDFs with a log
+  line, the Notability export counted, the AI told.
+- A process takes 80 ms from a cold start, importing PyMuPDF included,
+  against 20 ms for the same small drawing in the server. What a drawing
+  came to (the PNG, or why it does not draw) is kept by the file's content,
+  the side and the region, `SVG_CACHE_BYTES` (64 MiB) in all, the oldest
+  going first. Only the drawing at `SVG_DRAW_SIDE` keeps the PDF too. A page
+  exported again starts no process, and a file that does not draw in time
+  costs its 10 s once until the server restarts.
+- The process is the server's own Python running `svg_draw.py` as a script
+  (`-P`, so nothing beside it shadows a module). The frozen desktop server
+  has no Python, so it runs itself: `gamma-server --draw-svg <side> <cap>`
+  (`desktop/backend_entry.py`). It reads the sized SVG on stdin, and a
+  region as four more arguments. It writes the PDF's length, the PDF and
+  the PNG on stdout. `subprocess` starts it: fork and exec in C on Linux and
+  macOS, with no Python run between them in a threaded server, and
+  `CreateProcess` with no console window on Windows.
+- The iPad and Android apps run the server inside their own process, with
+  no Python to start another, and iOS starts no process at all.
+  `sys.platform` is `ios` on an iPad and its simulator and `android` on
+  Android. There an SVG is converted and drawn in the server, under the
+  PyMuPDF lock, with no time limit and nothing kept, as before
+  (`SVG_APART`).
+- An SVG is not drawn when it is added. The browser draws it on the page
+  without MuPDF, and MuPDF reads less than a browser: a file it cannot draw
+  in time is still a good picture on screen, and is left out only of what
+  MuPDF makes. A check at upload would cost every upload a process and
+  miss the files that come by other ways (the imports, a mirror, a clone).
+
+**As pixels** (`pdf_image.svg_png`): MuPDF's page of it, or a region of
+that page, drawn in the drawing's process, its longer side a given size,
+clear where it draws nothing. In the mobile apps `pdf_text.page_raster`
+draws it.
 
 - The Notability export: Notability takes no SVG, so a picture of one goes
   in as a PNG of it, `notability_export.SVG_PNG_SIDE` (2048) px on its
@@ -1075,6 +1129,10 @@ nothing.
   a PNG of one, `RENDER_MAX_SIDE` on its longer side. `view_image` shows a
   note's SVG images so too, and says of one that does not draw that it does
   not read as a picture.
+- A picture page's picture (`ai_pictures.image_region`: the chat's picture
+  of a picture page or of its region, the feedback reader's): the region
+  alone, its longer side `RENDER_MAX_SIDE`, zoomed at most 4, on white
+  ([ai.md](ai.md#pictures) "A picture page's region").
 
 **As it came.** The Notability and GoodNotes imports store an SVG picture
 as its file (`note_app_import.picture_file`, `picture.picture_type`). The
@@ -1185,7 +1243,11 @@ format.
   download, the copy MuPDF reads sized as the browser shows it, the stamp's
   vectors drawn as the screen draws them (stretched too), the SVG read back
   by the import and kept in a round trip, the bounds MuPDF never passes
-  (every way of writing a reference too), nothing read outside the file,
+  (every way of writing a reference too), a drawing past its time killed
+  with the PyMuPDF lock free meanwhile and left out, a drawing kept by its
+  content, a region drawn alone in the process (a picture page's too), the
+  mobile apps' drawing in the server, the frozen server's `--draw-svg`,
+  nothing read outside the file,
   the Notability export's PNG (of an old box's SVG too), the AI's PNG and
   its word for one that does
   not draw, and the file as it came in a GoodNotes import and the text
@@ -1276,9 +1338,29 @@ format.
 - An SVG in the PDFs is what MuPDF draws of it, which is not always what a
   browser draws: CSS beyond inline styles, filters, masks and web fonts may
   differ. Its text is set in MuPDF's fonts.
-- WebKit (Safari, the iPad app) is not checked: whether it draws an SVG's
-  `<img>` under the file's own policy (inline styles are allowed for it),
-  and an SVG shared to the app.
+- WebKit was checked in Playwright's WPE build on Linux, not in Safari or
+  on an iPad. There an SVG's `<img>` draws under the file's own policy as in
+  Chromium: its `<style>` and `style` attributes kept, its script not run,
+  nothing it names fetched. Its natural size is Chromium's (a viewBox alone
+  300 × 150, one side from the viewBox's aspect, an em 16 px), so `svgFill`
+  stretches it alike. Opened at its URL, that build shows the SVG instead
+  of downloading it, in an opaque origin with no script run: the policy's
+  `sandbox` is what holds there. Safari's download, and an SVG on an iPad,
+  shared to the app or opened at its URL, wait for a device
+  ([ipad.md](ipad.md#device-checks), check 38).
+- In the iPad and Android apps an SVG has no time limit: one that takes
+  MuPDF minutes holds This iPad's or This device's PDF work that long
+  ([SVG pictures](#svg-pictures)).
+- The time limit counts from a drawing's start, not the wait for one of
+  the two at once. A drawing kept stays until the server restarts or newer
+  ones push it out, so a file that timed out under a passing load stays out
+  of the PDFs until then.
+- A PDF that holds an SVG as vectors is drawn by the server itself, under
+  the PyMuPDF lock: the AI's and the feedback reader's pictures of a PDF
+  page with a picture on it (`ink_view.page_with_handwriting`). The drawing
+  at `SVG_DRAW_SIDE` proved the SVG draws in time that large, and such a
+  picture is at most `RENDER_MAX_SIDE` a side, but a crop zoomed up to 4×
+  can draw the SVG larger than the proof did, with no time limit.
 - An SVG in a Zotero note without the PDF copy is embedded as a data URI.
   Whether Zotero's note editor shows one is unchecked.
 - A highlighter over a faded picture on a dark page or dark paper is not

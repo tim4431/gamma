@@ -1146,6 +1146,10 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   app can read ([release.md](release.md#mac-app-store)).
 - `backend_entry.py` — entry for the frozen server (`--port`, `--data-dir`;
   sets env before importing gamma, serves the bundled `frontend_dist`).
+  `--draw-svg <side> <cap> [<x0> <y0> <x1> <y1>]` runs the server's SVG
+  drawing process instead (`gamma/svg_draw.py`): a frozen server has no
+  Python to start one with, so it starts itself
+  ([pictures.md](../../docs/dev/pictures.md#svg-pictures)).
 - `build_backend.py` — PyInstaller onedir freeze into
   `dist-backend/gamma-server/` (collects uvicorn's string-resolved modules,
   PyMuPDF's native libraries — MuPDF and its C++ wrapper beside the

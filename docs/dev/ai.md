@@ -1237,8 +1237,9 @@ page-image route, the chat's region and view pictures, `picture_at`) draws
 it through `ai_pictures.image_region(ws, file, box, marks)`: `page` is 1
 (any other is "no such page"), `ink` does nothing. The function reads the
 stored file (an upload or a work folder's file read in place, at most
-`STORED_MAX_BYTES`), an SVG through its one-page PDF
-(`pdf_image.svg_pdf`), a raster with Pillow (the EXIF orientation applied,
+`STORED_MAX_BYTES`), an SVG as MuPDF draws the box alone under its time
+limit (`pdf_image.svg_png`, [pictures.md](pictures.md#svg-pictures)), a
+raster with Pillow (the EXIF orientation applied,
 an animation's first frame, transparency on white), cuts the box (at
 least `REGION_MIN_PX`, 48, of the picture's own pixels a side) and scales
 it so the longer side is `RENDER_MAX_SIDE`, zooming at most

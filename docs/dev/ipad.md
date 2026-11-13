@@ -851,7 +851,7 @@ before a reload waits until a page can take it. The web half is
 ### Pictures
 
 Pictures on a page ([pictures.md](pictures.md#adding-a-picture)) are the
-web app's, with no native code. The iPad differs in four ways:
+web app's, with no native code. The iPad differs in five ways:
 
 - **The picker.** The strip's Picture button opens the system file picker
   (`shared/lib/pickFiles.js`, `accept="image/*"`), which WebKit shows as
@@ -868,6 +868,10 @@ web app's, with no native code. The iPad differs in four ways:
   and 8192 in desktop Chromium and Firefox). So a picture re-encoded there (a HEIC, a TIFF, one past
   24 MP) comes out within those caps, and so does Copy image's PNG. A PNG,
   JPEG, GIF or WebP up to 24 MP goes up as it is, as on every device.
+- **An SVG in the exports.** This iPad's server draws one itself, in the
+  app's process and with no time limit, where another server draws it in
+  a process it kills after 10 s ([What runs](#what-runs)). An SVG that
+  takes MuPDF minutes holds this iPad's PDF work that long.
 
 ### The local server
 
@@ -889,10 +893,13 @@ answers. Nothing in it knows what the server holds.
   supports iOS since 3.13 (PEP 730), and the app embeds it as
   [its iOS guide](https://docs.python.org/3/using/ios.html) describes.
 - **The backend from `backend/`, unchanged**: `app.py` and the `gamma`
-  package, copied into the bundle at build time. The server has no iPad
-  branch. It reads the environment the desktop's sidecars are given
-  ([desktop.md](desktop.md)), and it spawns no processes, which iOS would
-  not allow.
+  package, copied into the bundle at build time. It reads the environment
+  the desktop's sidecars are given ([desktop.md](desktop.md)), and it
+  spawns no processes, which iOS would not allow. Its one iPad branch is
+  where another server would start one, to draw an SVG picture under a
+  time limit: it knows iOS by `sys.platform == "ios"` and draws the SVG
+  itself, with no limit, as on Android
+  ([pictures.md](pictures.md#svg-pictures)).
 - **The built web app** from `frontend/dist`, served at the server's root
   (`GAMMA_STATIC_DIR`). This iPad therefore shows the web app of the app's
   own build, as a desktop's local server does; another server shows its
@@ -1605,6 +1612,14 @@ Only an iPad can show these, and none has been run yet:
     the keyboard stays up through the focus change of a New block tap, that
     the bar sits on the real keyboard, and that a finger's sideways pan of
     the bar's tools works (`touch-action: pan-x`).
+38. SVG pictures ([pictures.md](pictures.md#svg-pictures)). Playwright's
+    WebKit on Linux draws an SVG's `<img>` as Chromium does, under the
+    file's own policy. On the iPad: an SVG from Files placed on a page and
+    stretched (its whole frame filled, its inline styles kept, no script
+    run), an SVG shared to the app landing as a picture, and its URL opened
+    in Safari (downloaded, or shown with no script run). Then an annotated
+    PDF and a Notability export of that page on This iPad, whose server
+    draws the SVG itself, with no time limit.
 
 ### Not built yet
 
