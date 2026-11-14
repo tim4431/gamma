@@ -18,7 +18,7 @@ from gamma.ai_tools import run_agent_tool
 from gamma.db import connect_data_db, connect_pages_db
 from gamma.documents import text as doc_text
 from gamma.documents.model import page_document
-from gamma.feedback import agent as feedback_agent, entries as feedback_entries
+from gamma.annotations import entries as feedback_entries, hand
 from gamma.search import indexer
 from gamma.search.index import as_doc, store_docs
 from gamma.vault import disk as vault_disk, kinds, store as vault_store
@@ -217,7 +217,7 @@ def test_a_range_on_a_secrets_file_is_named_by_its_lines_alone(owner, paper, mon
     with connect_pages_db(paper.ws) as conn:
         [entry] = [e for e in feedback_entries.entries(paper.ws, conn, feedback_entries.resolve_scope(conn, env))
                    if e["id"] == thread["id"]]
-        named = feedback_agent._named(conn, {"page_id": env, "id": thread["id"], "block_id": bid})
+        named = hand.named(conn, {"page_id": env, "id": thread["id"], "block_id": bid})
     assert entry["where"] == {"line": 2, "placed": "exact"} and named == ".env, line 2"
     # MCP's export hands the model a page as Markdown or its notes as a PDF: no quote of the range
     text, _ = mcp_export.export_page(paper.ws, "http://gamma.test", account_of(OWNER),

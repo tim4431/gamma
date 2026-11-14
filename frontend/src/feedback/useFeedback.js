@@ -1,4 +1,4 @@
-// Where the feedback view is open (docs/dev/feedback.md): a module store, as
+// Where the feedback view is open (docs/dev/annotations.md): a module store, as
 // pdf/translateState.js and guide/recent.js keep theirs, so each opener —
 // the explorer view's bar, the Comments window's header, the vault chip's
 // card — opens it where it is, and App renders the one dialog

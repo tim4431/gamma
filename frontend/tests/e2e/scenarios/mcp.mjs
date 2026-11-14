@@ -52,7 +52,7 @@ export async function mcpScenarios(env) {
     }
   });
   // An authorization request, for reading alone or (`scope` with
-  // gamma:feedback) also answering the user's feedback.
+  // gamma:feedback, the Comment level's name) also commenting.
   async function request(scope = "gamma:read") {
     const redirect = "https://client.example/callback";
     const verifier = randomBytes(32).toString("base64url");
@@ -66,7 +66,6 @@ export async function mcpScenarios(env) {
       code_challenge_method: "S256", state: "browser-test", scope });
     return { url: `${server.base}/oauth/authorize?${params}`, client, redirect, verifier };
   }
-  const FEEDBACK_BOX = "Answer my comments on work-folder files";
 
   await step("mcp: browser login, workspace approval, token exchange and revocation", async () => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
@@ -90,8 +89,9 @@ export async function mcpScenarios(env) {
       assert(await page.getByRole("button", { name: "Allow read-only access" }).isDisabled(), "a connection reads at least one workspace");
       await home.check();
       await other.check();
-      // a client asking to read alone: the feedback box starts unticked, and the connection is read-only
-      assert(!await page.getByRole("checkbox", { name: FEEDBACK_BOX }).isChecked(), "answering feedback is not asked for");
+      // a client asking to read alone: each workspace starts at View, and the connection is read-only
+      assertEq(JSON.stringify(await picker.getByRole("button", { pressed: true }).allTextContents()),
+        JSON.stringify(["View", "View"]), "the Comment level is not asked for");
       if (process.env.GAMMA_MCP_SCREENSHOTS) {
         fs.mkdirSync(process.env.GAMMA_MCP_SCREENSHOTS, { recursive: true });
         await page.screenshot({ path: path.join(process.env.GAMMA_MCP_SCREENSHOTS, "consent-desktop.png") });
@@ -128,21 +128,23 @@ export async function mcpScenarios(env) {
     }
   });
 
-  await step("mcp: a client asking for gamma:feedback gets the consent box ticked, and the connection allowed may answer feedback", async () => {
+  await step("mcp: a client asking for gamma:feedback starts at the Comment level, and the connection comments there under its name", async () => {
     const ctx = await alice.context(browser);
     try {
       await ctx.route("https://client.example/callback**", (route) => route.fulfill({ status: 200, contentType: "text/plain", body: "Connection approved." }));
       const flow = await request("gamma:read gamma:feedback");
       const page = await openPage(ctx, flow.url);
-      const box = page.getByRole("checkbox", { name: FEEDBACK_BOX });
-      await box.waitFor();
-      assert(await box.isChecked(), "asked for, the box starts ticked");
-      await page.getByText("Read and answer feedback", { exact: true }).waitFor();
-      // unticked, the page reads as a read-only connection's; ticked again, as one that answers
-      await box.uncheck();
+      const spaces = page.getByRole("group", { name: "Workspaces it may read" });
+      const comment = spaces.getByRole("button", { name: "Comment", exact: true });
+      await comment.waitFor();
+      assertEq(await comment.getAttribute("aria-pressed"), "true", "asked for, the workspace starts at Comment");
+      assert((await comment.getAttribute("title")).includes("comment, reply, resolve and highlight"), "its tooltip says what it may do");
+      await page.getByText("Read and comment", { exact: true }).waitFor();
+      // at View, the page reads as a read-only connection's; at Comment again, as one that comments
+      await spaces.getByRole("button", { name: "View", exact: true }).click();
       await page.getByRole("button", { name: "Allow read-only access" }).waitFor();
-      await box.check();
-      await page.getByRole("button", { name: "Allow reading and answering" }).click();
+      await comment.click();
+      await page.getByRole("button", { name: "Allow reading and commenting" }).click();
       await page.waitForURL("https://client.example/callback**");
       const callback = new URL(page.url());
       const response = await fetch(`${server.base}/oauth/token`, { method: "POST", body: new URLSearchParams({
@@ -157,9 +159,20 @@ export async function mcpScenarios(env) {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) });
       assertEq(listed.status, 200);
       const names = (await listed.json()).result.tools.map((tool) => tool.name);
-      assert(names.includes("reply_feedback") && names.includes("resolve_feedback"), `the answering tools are listed: ${names.join(", ")}`);
+      assert(["comment", "resolve", "highlight"].every((name) => names.includes(name)), `the writing tools are listed: ${names.join(", ")}`);
       const connection = (await alice.api("/api/integrations/tokens")).tokens.find((t) => t.name === "Codex browser test (OAuth)");
-      assertEq(connection?.scope, "feedback", "a feedback connection in settings");
+      assertEq(connection?.scope, "read", "a read connection in settings");
+      assertEq(JSON.stringify(connection?.comment_workspaces), JSON.stringify([alice.ws]), "it comments in the workspace marked Comment");
+      // its comment lands on the page under the connection's name, for alice, and the page's thread shows it
+      const pageId = (await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Commented by a connection" } })).id;
+      const made = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${granted.access_token}`,
+        "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "comment", arguments: { page_id: pageId, body: "Read it, looks right." } } }) });
+      const result = (await made.json()).result;
+      assert(!result.isError, `the comment is written: ${JSON.stringify(result.content)}`);
+      const [thread] = (await alice.api(`/api/pages/${pageId}/comments`)).threads;
+      assertEq(thread?.comments?.[0]?.agent, "Codex browser test", "signed with the connection's name");
+      assertEq(thread.comments[0].author, "alice", "for its account");
       await alice.api(`/api/integrations/tokens/${connection.id}`, { method: "DELETE" });
       assertNoProblems(page);
     } finally { await ctx.close(); }

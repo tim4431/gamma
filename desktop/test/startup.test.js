@@ -102,7 +102,7 @@ test('an http:// address that sent the window to https:// (main.js sentToHttps) 
   const ABORTED = 'ERR_ABORTED (-3) loading \'http://nas.lan:5000/\'';
   const redirect = diagnoseOpen(ABORTED, { url: 'http://nas.lan:5000', scope: 'lan', sentTo: { to: 'https://nas.lan:5001', hsts: false } });
   assert.deepEqual([redirect.action, redirect.to, redirect.summary], ['https', 'https://nas.lan:5001', 'nas.lan now redirects to https://nas.lan:5001.']);
-  assert.match(redirect.hint, /synced vaults, computer link and offline copies move there with it/);
+  assert.match(redirect.hint, /synced folders and files, computer link and offline copies move there with it/);
   const hsts = diagnoseOpen(ABORTED, { url: 'http://nas.example.com:9001', scope: 'name', sentTo: { to: 'https://nas.example.com', hsts: true } });
   assert.deepEqual([hsts.action, hsts.to, hsts.summary], ['https', 'https://nas.example.com', 'This name is HTTPS-only in this window.']);
   // an https:// address is never offered another by this

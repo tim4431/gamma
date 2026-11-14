@@ -1,11 +1,11 @@
-// The chat's History popover, on both sides of the chat: Gamma AI's
-// conversations of the page or folder (ChatDock) and the page's
-// conversations with the agent on this computer (chat/computer/
-// ComputerChat.jsx). A search field, then the conversation shown now and
-// the earlier ones, each `.chatHistRow` opening its conversation, with a
+// The chat's History popover (ChatDock): the bucket's conversations with
+// every agent, Gamma AI's and a computer agent's together
+// (chat/computer/computerChat.js historyRows). A search field, then the
+// conversation shown now and the others, each `.chatHistRow` opening its
+// conversation, led by its agent's icon while the chat has several, with a
 // row menu (⋯, a right-click or a held finger: menuPress) of the caller's
 // items; the loading, empty and no-match hints; and under the list what
-// the caller adds (ChatDock's bulk bar).
+// the caller adds (the bulk bar).
 import { useState } from "react";
 import { ContextMenu, MenuButton } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
@@ -42,20 +42,21 @@ export const deleteQuestion = (row, onConfirm) => ({
 
 // `rows` the listed ones ([{id, title, updated_at, active}], the search's
 // matches: matchRows), the active one first; `loading` while the earlier
-// ones are read. `onOpen(row)` opens an earlier one; `disabledReason`, set
-// while none can be opened, greys them and is their title. `menuItems(row,
-// close)` the row menu's MenuItems (none: the row has no menu); `tip(row)`
-// an earlier row's title; `lead(row)` what comes before a row's title (a
-// tick box), `editing(row)` what stands in for a row (a rename field), and
-// `picking` while rows are ticked. Escape in the search closes (`onClose`).
+// ones are read. `onOpen(row)` opens another one; `disabledReason(row)`,
+// set while the row cannot be opened, greys it and is its title.
+// `menuItems(row, close)` the row menu's MenuItems (none: the row has no
+// menu); `tip(row)` another row's title; `lead(row)` what comes before a
+// row's title (a tick box), `icon(row)` its agent's icon (none: no icon),
+// `editing(row)` what stands in for a row (a rename field), and `picking`
+// while rows are ticked. Escape in the search closes (`onClose`).
 export default function ChatHistoryPop({
-  query, onQuery, onClose, rows, loading, onOpen, disabledReason = "", menuItems, tip = (row) => row.title,
-  lead, editing, picking = false, children,
+  query, onQuery, onClose, rows, loading, onOpen, disabledReason = () => "", menuItems, tip = (row) => row.title,
+  lead, icon, editing, picking = false, children,
 }) {
   const [menu, setMenu] = useState(null); // {x, y, row}: a row's menu
   const openMenu = (row) => (e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, row }); };
   const close = () => setMenu(null);
-  const open = (row) => { if (!row.active && !disabledReason) onOpen(row); };
+  const open = (row) => { if (!row.active && !disabledReason(row)) onOpen(row); };
   return (
     <Popover className="chatHistoryPop">
       <input
@@ -70,16 +71,18 @@ export default function ChatHistoryPop({
         {rows.map((s) => {
           const stand = editing?.(s);
           if (stand) return stand;
-          const off = !s.active && !!disabledReason;
+          const off = !s.active && disabledReason(s);
           const hasMenu = !!menuItems?.(s, close);
+          const Icon = icon?.(s);
           return (
             <div key={s.id} className={`chatHistRow rowMenuHost${s.active ? " active" : ""}`}
-              role="button" tabIndex={0} aria-disabled={off || undefined}
-              title={off ? disabledReason : s.active ? t("The conversation shown now") : tip(s)}
+              role="button" tabIndex={0} aria-disabled={off ? true : undefined}
+              title={off || (s.active ? t("The conversation shown now") : tip(s))}
               onClick={() => open(s)}
               onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) open(s); }}
               {...(hasMenu ? menuPress(openMenu(s)) : {})}>
               {lead?.(s)}
+              {Icon ? <Icon size={14} className="chatHistIcon" aria-hidden="true" /> : null}
               <span className="chatHistTitle">{s.title || t("Untitled")}</span>
               <span className="chatHistAge">{s.active ? t("now") : relAge(s.updated_at)}</span>
               {hasMenu ? <MenuButton open={openMenu(s)} /> : null}

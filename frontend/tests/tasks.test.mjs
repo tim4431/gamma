@@ -256,11 +256,12 @@ test("a follow round: the answer, the job failed when the share refuses it or it
 });
 
 test("a computer turn's row: the agent and the page, waiting for the person while it asks, its own Stop", () => {
-  const params = { page: "p1", turn: "t1", agent: "codex", label: "Codex", title: "Thesis · draft" };
+  const params = { bucket: "p1", turn: "t1", agent: "codex", label: "Codex", title: "Thesis · draft" };
   const turn = (fields = {}) => job({ id: "computer-t1", kind: "computer-turn", title: "Codex · Thesis · draft", workspace: "w1",
     params, readonly: true, ...fields });
   assert.equal(taskTitle(turn()), "Codex on this computer: Thesis · draft", "the page's own title, a · in it kept");
   assert.equal(taskTitle(turn({ params: { ...params, title: "" } })), "Codex on this computer: Untitled");
+  assert.equal(taskTitle(turn({ params: { ...params, bucket: "home", title: "" } })), "Codex on this computer: Library");
   assert.equal(taskTitle(turn({ params: { ...params, title: undefined }, title: "Thesis" })), "Codex on this computer: Thesis",
     "an older server's row: its title");
   assert.equal(taskTitle(turn({ params: { ...params, computer: "TIM-PC" } })), "Codex on TIM-PC: Thesis · draft",

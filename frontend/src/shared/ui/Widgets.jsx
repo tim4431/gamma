@@ -8,7 +8,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { CheckIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, MoreIcon, PinIcon, XIcon } from "./Icons";
+import FileIcon from "./FileIcon.jsx";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, FileTextIcon, MoreIcon, PinIcon, XIcon } from "./Icons";
 import { ContextMenu, MenuItem, MenuLabel, SubMenuItem, useMenuTrigger } from "./Menus";
 import { useWheelPan } from "./wheelPan";
 import { tabDrag, useTabDrag } from "./tabDrag.js";
@@ -392,7 +393,9 @@ const CHAT_COPY_COMPONENTS = {
 // Navigation for Gamma's own links, provided once by App: the chat, the
 // rendered notes and anything else that renders a library link opens a page
 // in place instead of reloading the app. { openPage(id, target),
-// openBlock(id), citeSource(pageId) → {title, short} | null }; `target` is
+// openBlock(id), openThread(threadId, blockId, pageId) (a comment thread
+// open on its page: a computer agent's answer card's threads, the chat's
+// thread note), citeSource(pageId) → {title, short} | null }; `target` is
 // where to land ({kind: "citation", pageId, page, quote} or {kind: "line",
 // pageId, line, to, quote}, null for the page's top); citeSource names the
 // paper or file a citation pill points at.
@@ -656,7 +659,8 @@ function PopoverAnchor({ name, children, className = "" }) {
 }
 
 // The topbar's tab strip (Chrome-style). Each tab leads with its page's kind
-// icon (`kindOf(id)` → its document's format, "" for none); pinned tabs come
+// icon (`kindOf(id)` → {format, file}: its document's format, "" for none,
+// and a synced folder's file's name, whose theme icon it is); pinned tabs come
 // first, keep their title and carry a pin (click to unpin) where the close
 // button would be.
 // The strip keeps the active tab in view, pans with a plain mouse wheel, and
@@ -768,7 +772,10 @@ function OpenTabs({
     onMenuOpenChange?.(false);
     if (tab.id !== activeId) onOpen(tab.id);
   };
-  const kindIcon = (tab, size) => <FileGlyph format={kindOf?.(tab.id) || ""} size={size} />;
+  const kindIcon = (tab, size) => {
+    const kind = kindOf?.(tab.id);
+    return <FileIcon path={kind?.file} format={kind?.format || ""} size={size} />;
+  };
 
   return (
     <>

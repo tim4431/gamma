@@ -167,9 +167,10 @@ def test_chat_page_scope_arms_read_tools(org, monkeypatch):
     assert r.status_code == 200
     # Anthropic's own API hosts a web search, so Automatic arms search_web.
     assert [t["name"] for t in seen["tools"]] == [
-        "read_page", "read_block", "read_chats", "list_feedback", "read_feedback", "view_pdf_page", "view_ink",
+        "read_page", "read_block", "read_chats", "list_annotations", "read_annotation", "view_pdf_page", "view_ink",
         "view_image", "cite", "search_library", "search_papers", "related_papers", "search_web", "fetch_paper",
-        "read_paper", "save_paper", "edit_block", "create_block", "move_block", "delete_block", "clip_region"]
+        "read_paper", "save_paper", "edit_block", "create_block", "move_block", "delete_block", "clip_region",
+        "comment", "resolve", "highlight"]
     assert f'page_id "{ids["a"]}"' in seen["system"]
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     reads = [l["action"] for l in lines if "action" in l]
@@ -641,10 +642,11 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
                                      "folder": ids["readout"], "stream": True,
                                      "permissions": {"rename": "off", "move": "off", "save": "off",
                                                      "restore": "off", "delete": "off", "organize": "off",
-                                                     "organize_delete": "off", "block_edit": "off"}})
+                                                     "organize_delete": "off", "block_edit": "off",
+                                                     "comment": "off"}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
-        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_feedback", "read_feedback",
+        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_annotations", "read_annotation",
         "view_pdf_page", "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
         "search_web", "fetch_paper", "read_paper", "list_deleted"]
     assert seen["blocked"].startswith("error: tool not enabled")

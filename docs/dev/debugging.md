@@ -106,7 +106,7 @@ What differs from the Windows commands elsewhere in these docs and in
 - **A directory symlink is removed with `os.unlink`**, not with
   `os.rmdir`, which removes only a Windows junction. A test that links a
   directory through its helper removes it by the platform
-  (`tests/test_vault_sync.py`, `tests/test_feedback_files.py`).
+  (`tests/test_vault_sync.py`, `tests/test_annotations_files.py`).
 - **The desktop app without a Developer ID**: `backend/venv/bin/python
   desktop/build_backend.py`, then, in `desktop/`,
   `CSC_IDENTITY_AUTO_DISCOVERY=false npm run pack` for
@@ -589,7 +589,7 @@ runs more, and `ZOTERO_FUZZ_TRACE=<key>` follows one object round by round.
 
 The synced vaults' tests ([synced_vaults.md](synced_vaults.md)) work on
 real directories in `tmp_path` and a real workspace; a test that makes a
-vault removes it with `DELETE …?files=keep`, since the links live in the
+vault removes it with `DELETE /api/folder-links/{id}`, since the links live in the
 worker's shared users.db. By module: `test_md_lens.py` (the lens block by
 block, each law on small files) and `test_md_lens_corpus.py`, the gate: the
 lens's laws through `shape` over every Markdown file of the repository, the

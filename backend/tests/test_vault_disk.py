@@ -643,10 +643,10 @@ def test_stale_temps_go_and_a_write_going_on_stays(tmp_path):
 
 def test_write_own_writes_gammas_file_below_gamma_over_whatever_is_there(tmp_path, monkeypatch):
     root, _id = vault(tmp_path)
-    assert write_own(root, ".gamma/feedback/open.json", b"{}\n") is True
-    assert (root / ".gamma/feedback/open.json").read_bytes() == b"{}\n" and leftovers(root) == []
-    assert write_own(root, ".gamma/feedback/open.json", b"[]\n") is True
-    assert (root / ".gamma/feedback/open.json").read_bytes() == b"[]\n" and leftovers(root) == []
+    assert write_own(root, ".gamma/annotations/open.json", b"{}\n") is True
+    assert (root / ".gamma/annotations/open.json").read_bytes() == b"{}\n" and leftovers(root) == []
+    assert write_own(root, ".gamma/annotations/open.json", b"[]\n") is True
+    assert (root / ".gamma/annotations/open.json").read_bytes() == b"[]\n" and leftovers(root) == []
     with pytest.raises(ValueError):
         write_own(root, "notes/open.json", b"x")
     with pytest.raises(Outside):
@@ -654,14 +654,28 @@ def test_write_own_writes_gammas_file_below_gamma_over_whatever_is_there(tmp_pat
     assert not (root / "notes").exists() and not (tmp_path / "open.json").exists()
     if WINDOWS:   # a reader holding it to the last try: nothing written, no temporary left, False
         monkeypatch.setattr(vault_disk, "REPLACE_RETRY_S", 0.01)
-        with open(root / ".gamma/feedback/open.json", "rb"):
-            assert write_own(root, ".gamma/feedback/open.json", b"{}\n") is False
-        assert (root / ".gamma/feedback/open.json").read_bytes() == b"[]\n" and leftovers(root) == []
+        with open(root / ".gamma/annotations/open.json", "rb"):
+            assert write_own(root, ".gamma/annotations/open.json", b"{}\n") is False
+        assert (root / ".gamma/annotations/open.json").read_bytes() == b"[]\n" and leftovers(root) == []
     gone = tmp_path / "unplugged"   # an empty mount point: nothing made
     gone.mkdir()
     with pytest.raises(Offline):
-        write_own(gone, ".gamma/feedback/open.json", b"x")
+        write_own(gone, ".gamma/annotations/open.json", b"x")
     assert list(gone.iterdir()) == []
+    # beside a followed file, with no marker: the file stands for it, and the .gamma/ made for it is hidden
+    with pytest.raises(Offline):
+        write_own(gone, ".gamma/annotations/main.pdf/open.json", b"x", beside="main.pdf")
+    assert list(gone.iterdir()) == []
+    (gone / "main.pdf").write_bytes(b"%PDF-1.7\n")
+    assert write_own(gone, ".gamma/annotations/main.pdf/open.json", b"{}\n", beside="main.pdf") is True
+    assert (gone / ".gamma/annotations/main.pdf/open.json").read_bytes() == b"{}\n" and leftovers(gone) == []
+    if WINDOWS:
+        assert os.stat(gone / ".gamma").st_file_attributes & stat.FILE_ATTRIBUTE_HIDDEN
+    # a directory whose .gamma/ holds a marker is a vault's: the followed file stands for none there
+    (root / "beside.pdf").write_bytes(b"%PDF-1.7\n")
+    with pytest.raises(Stopped, match="a vault's"):
+        write_own(root, ".gamma/annotations/beside.pdf/open.json", b"x", beside="beside.pdf")
+    assert not (root / ".gamma/annotations/beside.pdf").exists()
 
 
 def test_write_own_never_writes_below_a_junction(tmp_path):
@@ -671,28 +685,28 @@ def test_write_own_never_writes_below_a_junction(tmp_path):
     if WINDOWS:
         import _winapi
 
-        _winapi.CreateJunction(str(elsewhere), str(root / ".gamma" / "feedback"))
+        _winapi.CreateJunction(str(elsewhere), str(root / ".gamma" / "annotations"))
     else:
         try:
-            os.symlink(elsewhere, root / ".gamma" / "feedback", target_is_directory=True)
+            os.symlink(elsewhere, root / ".gamma" / "annotations", target_is_directory=True)
         except OSError:
             pytest.skip("this account may not make symlinks")
     with pytest.raises(Outside):
-        write_own(root, ".gamma/feedback/open.json", b"x")
+        write_own(root, ".gamma/annotations/open.json", b"x")
     assert list(elsewhere.iterdir()) == []
 
 
 def test_sweep_own_takes_gammas_stale_temps_of_a_directory_the_scan_never_enters(tmp_path):
     root, vault_id = vault(tmp_path)
     then = time.time() - 3600
-    old, young = write(root, ".gamma/feedback/.gamma-old.tmp", "x"), write(root, ".gamma/feedback/.gamma-young.tmp", "y")
-    theirs = write(root, ".gamma/feedback/~$theirs.md", "z")
+    old, young = write(root, ".gamma/annotations/.gamma-old.tmp", "x"), write(root, ".gamma/annotations/.gamma-young.tmp", "y")
+    theirs = write(root, ".gamma/annotations/~$theirs.md", "z")
     for path in (old, theirs):
         os.utime(path, (then, then))
     assert scan(root, vault_id).temps == []
-    assert sweep_own(root, ".gamma/feedback") == 1
+    assert sweep_own(root, ".gamma/annotations") == 1
     assert not old.exists() and young.exists() and theirs.exists()
-    assert sweep_own(root, ".gamma/feedback/img") == 0
+    assert sweep_own(root, ".gamma/annotations/img") == 0
 
 
 # --- names, moves and the trash ---------------------------------------------------------

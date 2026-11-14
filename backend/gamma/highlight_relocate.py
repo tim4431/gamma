@@ -1093,6 +1093,40 @@ class Doc:
         return dict(self._texts)
 
 
+QUOTE_REACH = 1  # the pages either side of the one an agent names that its quote is looked for on too
+
+
+def place_quote(src, quote: str, page_no: int) -> tuple[dict | None, str, float]:
+    """Where an agent's ``quote`` of PDF page ``page_no`` (1-based) stands
+    in the file ``src`` (what ``Doc`` takes), for a highlight it makes
+    (gamma/annotations/places.py): ``(position, spelled, 1.0)``, the stored
+    position of an exact copy ``find_passage`` finds on that page or the
+    ``QUOTE_REACH`` pages either side (the named page first among equals;
+    exact as the search folds text: case, dashes, quotes, ligatures, a word
+    hyphenated at a line's end, the spaces), and its text as the file
+    spells it. Anything less is no place for an agent's quote, which it
+    copied from the text: ``(None, spelled, confidence)`` of the closest
+    passage, from ``CLOSEST_MIN`` alike on, else ``(None, "", 0.0)``.
+    ValueError for a page the file does not have (or past ``MAX_PAGES``),
+    or an exact copy with no glyph box to draw over."""
+    with Doc(src) as doc:
+        if not 1 <= page_no <= doc.count:
+            raise ValueError(f"the PDF has no page {page_no}" + (f" (it has {doc.count})" if doc.count else ""))
+        pages = {n: doc.text(n) for n in range(max(1, page_no - QUOTE_REACH), min(doc.count, page_no + QUOTE_REACH) + 1)}
+        match = find_passage(pages, normalize_quote(quote), hint_page=page_no, closest=CLOSEST_MIN)
+        if match is None:
+            return None, "", 0.0
+        spans = _spans(match)
+        spelled = _spelled(pages[match.page], spans)
+        if match.confidence < 1.0:
+            return None, spelled, match.confidence
+        boxes = _boxes(pages, match, spans)
+        if not boxes:
+            raise ValueError(f"that passage of PDF page {match.page} has no glyph drawn to mark: comment on the "
+                             "page instead")
+        return _position(match.page, doc.frame(match.page), boxes), spelled, match.confidence
+
+
 def page_highlights(conn, page_id: str, *, unplaced: bool = False) -> list[tuple[str, dict]]:
     """``(id, properties)`` of the page's blocks placed on a PDF page by
     rectangles: highlights and link regions (``highlights.is_highlight``),

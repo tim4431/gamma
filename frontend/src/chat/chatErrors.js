@@ -3,9 +3,11 @@
 // rate, overloaded, unreachable, bad_endpoint, too_long, other) on the HTTP error
 // and on the stream's error line; a connection probe adds "no_model" (an
 // entry with no model picked); "network" is the browser losing Gamma
-// itself. The chat's error card, the login check's warning strip and the
-// Test result on a Settings connection row all read their headline here,
-// so no two of them word one failure differently.
+// itself; "agent" is a computer agent's turn that failed, whose computer
+// says why in its own sentence (`said`, chat/computer/computerChat.js
+// shownMessages). The chat's error card, the login check's warning strip
+// and the Test result on a Settings connection row all read their headline
+// here, so no two of them word one failure differently.
 //
 // `fix` names the card's main action (ChatDock turns it into a button):
 // connect / own_key open Settings → Connections, key / signin / connection
@@ -17,9 +19,11 @@ import { t } from "../shared/i18n/i18n.js";
 export const FAILURE_KINDS = ["not_configured", "allowance", "auth", "blocked", "rate", "overloaded",
   "unreachable", "bad_endpoint", "too_long", "no_model", "network", "other"];
 
-export function failureCopy(kind, { provider = "", auth = "key" } = {}) {
+export function failureCopy(kind, { provider = "", auth = "key", said = "" } = {}) {
   const name = provider || t("The AI service");
   switch (kind) {
+    case "agent":
+      return { headline: said || t("Failed") };
     case "not_configured":
       return { headline: t("No AI service connected"), text: t("Connect one in Settings to start chatting."), fix: "connect" };
     case "allowance":

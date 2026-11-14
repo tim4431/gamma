@@ -983,11 +983,12 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
     members lose them — the admin UI says so before). Its prefs go from
     every workspace that stays where it could keep some: those it was a
     member of, and the public ones (a guest has no public access), and so
-    does its Inbox, and its Zotero links. The mailed links of the deleted workspaces' invitations
-    by e-mail are withdrawn in the background, or before this returns with
+    does its Inbox, and its Zotero links. The agents it turned on on this
+    computer go off (``runner.release_account``). The mailed links of the
+    deleted workspaces' invitations by e-mail are withdrawn in the background, or before this returns with
     ``wait`` (``email_invites.cancel_links``). Returns the deleted
     workspace ids."""
-    from . import email_invites  # local: email_invites imports this module
+    from . import email_invites, local_agents  # local: email_invites imports this module
     from .computers import registry  # local: the registry imports this module
 
     links = []
@@ -1011,6 +1012,9 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
         conn.execute("DELETE FROM inbox_items WHERE user_id = ?", (user_id,))
         conn.commit()
     registry.drop(computers)
+    if local_agents.enabled():                          # the agents it turned on here go off
+        from .local_agents import runner
+        runner.release_account(user_id)
     email_invites.cancel_links(links, wait=wait)
     for ws in deleted:
         remove_files(ws)

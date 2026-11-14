@@ -14,3 +14,11 @@
 .trackSummary li { padding: 3px 0; overflow-wrap: anywhere; }
 .trackSummary li span { color: var(--text-muted); font-size: var(--fs-xs); }
 .trackLibrary { margin: 8px 0; }
+
+/* Detach (explorer/DetachDialog.jsx): the report dialog's radios, each
+   choice with what it does under its name. */
+.reportModal.detachDialog { width: min(480px, calc(100vw - 32px)); }
+.detachChoices { margin: 8px 0; }
+.detachChoices .reportReason { align-items: flex-start; padding: 4px 0; }
+.detachChoices .reportReason input { margin-top: 3px; }
+.detachChoice { display: flex; flex-direction: column; gap: 2px; }

@@ -102,10 +102,10 @@ set. MCP passes `mcp_tools`: every reading tool that stays inside the
 library, without the web tools, the change tools or `list_deleted`. Its
 scope is read-only, and its `link_base` makes results carry absolute links
 to pages, PDF pages, blocks and comment threads (`gamma_link`; the chat's
-results carry none, [mcp.md](mcp.md) "Links in results"). The two tools
-that answer feedback are the adapter's own, not the registry's
-([mcp.md](mcp.md) "Answering feedback"): the chat reads threads and never
-answers them.
+results carry none, [mcp.md](mcp.md) "Links in results"). The three
+writing tools (`comment`, `resolve`, `highlight`) reach MCP at a
+connection's Comment level, the four note tools at its Edit level
+([mcp.md](mcp.md) "The Comment level", "Editing notes").
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
@@ -114,8 +114,8 @@ answers them.
 | `read_page` | Read pages | folder + page | Read one page, by id or a work folder's file by its `path`: title, the pages it is inside and the pages inside it, properties, the user's highlights and notes, its open comment threads, and its document's text — a PDF's extracted text in windows by page and offset, a text file's numbered lines in windows by `from_line` / `to_line` |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
-| `list_feedback` | Read pages | folder + page | The user's feedback: the comment threads on a work folder's files (a work folder by name or id, a directory, a file; every work folder the chat reaches without one; a Send request's threads), each with its file, place, source line and comments, as Markdown, in batches (`limit`, `after`) |
-| `read_feedback` | Read pages | folder + page | One feedback item in any state, as Markdown and as JSON, with the pictures of its region now and as it was commented on |
+| `list_annotations` | Read pages | folder + page | The highlights and comment threads of a page, a folder or the library (a page's or a folder's id, a folder's path, a work folder by name, `home`; the chat's own page or folder without one; a Send request's threads), each with its file, place, source line, note and a thread's comments, as Markdown, in batches (`limit`, `after`) |
+| `read_annotation` | Read pages | folder + page | One annotation, a thread in any state or a bare highlight, as Markdown and as JSON, with the pictures of its region now and as it was commented on |
 | `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
 | `view_image` | View pages and handwriting | folder + page | Look at the pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), or a picture block's own, all of them or one by index |
@@ -142,6 +142,9 @@ answers them.
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
 | `delete_block` | Edit note blocks | folder + page | Delete a note block with everything under it; the user can revert |
 | `clip_region` | Edit note blocks | folder + page | Store a picture of a PDF region (with the handwriting on it, if asked) or of a handwriting block as an upload the notes can embed, and return its URL |
+| `comment` | Comments and highlights | folder + page | Write a comment as the chat's agent, for its account: a reply in a thread, or a new thread on a PDF quote with its page, a text file's lines, a note or the page itself |
+| `resolve` | Comments and highlights | folder + page | Resolve a comment thread once it is done; never a reopen |
+| `highlight` | Comments and highlights | folder + page | Highlight a PDF quote or a text file's lines as the chat's agent, with a note, a colour and a style |
 
 ### list_pages (folder only)
 
@@ -420,43 +423,52 @@ preference); the transcript ends by naming the `start` to continue from. The
 spec tells the model that replies in it are an AI's earlier answers, not the
 page's content. Shares the "Read pages" permission with `read_page`.
 
-### list_feedback and read_feedback (both scopes)
+### list_annotations and read_annotation (both scopes)
 
-The comment threads on a work folder's files, read as the user's feedback
-([feedback.md](feedback.md): the entries, their places, sources and
-pictures are `gamma/feedback/entries.py`'s, the text `markdown.render`'s).
+The highlights and comment threads of a page, a folder or the library: a
+comment is the user's request, the passages quoted stay document data
+([annotations.md](annotations.md): the entries, their places, sources and
+pictures are `gamma/annotations/entries.py`'s, the text `markdown.render`'s).
 Both share the "Read pages" permission and reach MCP by `mcp_tools`' rule.
 The reader's modules load on the first call, since they bring SyncTeX and
-the region pictures.
+the region pictures. Their names until step 3.1 of
+[research/agents-as-participants-plan.md](../research/agents-as-participants-plan.md),
+`list_feedback` and `read_feedback` (read_feedback's `thread_id` too), stay
+callable through `DEPRECATED_TOOLS` so a saved chat replays.
 
-`list_feedback` lists the threads of a scope in the Markdown form the
-feedback files use (`pictures="tool"`: no image, a `Picture:
-read_feedback(thread_id=…)` line instead), a section per work folder, each
-headed `# Feedback on <name>`, a batch at a time (`limit`, default 20, at
-most 50; `after` the thread the previous batch ended at, and the result
-names the next call when more are left; a thread answered or resolved since
-its batch still marks where the listing goes on). `scope` is a work folder
-by id or by name (exactly, else ignoring case; exactly one), a directory's folder id or a
-file's page id; `state` open (the default), resolved or all; `request` a
-Send request's id, whose instruction line and state head its threads. In a
-folder chat without `scope` it lists every work folder the chat reaches
-(the chat's folder itself when that is a directory of one); a chat in a
-library folder reaches none and says so. A page chat lists its own page's
-threads and no other's, and on a library page answers "This page is no work
-folder's file: its comments are not feedback." (no error: nothing to list).
-The document's `owner` is the chat's account, which an agent uses to tell
-the person's comments from other members'. The action carries `page_id`
-when the scope is one file.
+`list_annotations` lists the entries of a scope in the Markdown form the
+annotation files use (`pictures="tool"`: no image, a `Picture:
+read_annotation(id=…)` line instead), one document headed `# Annotations on
+<name>` (`the library` for the library), a batch at a time (`limit`,
+default 20, at most 50; `after` the entry the previous batch ended at, and
+the result names the next call when more are left; a thread answered or
+resolved since its batch still marks where the listing goes on). `scope`
+(`_annotation_scope`) is `home` (the library), a page's or a folder's id
+(a work folder, a directory of one, a library folder), a work folder by
+name (exactly, else ignoring case; exactly one), else a folder by its path
+as the tools show it (`_find_folder`); left out, the chat's own: a page
+chat's page, a folder chat's folder, the library at the root. `state` open
+(the default), resolved or all, which filters the threads alone: a bare
+highlight is always listed; `request` a Send request's id, whose
+instruction line and state head its threads. The reach is the chat's: a
+page chat reads its own page (and the pages in its context), a folder chat
+the folders and pages below its folder, `home` at the library root alone;
+anything else is "that folder is outside this chat's scope" or the page's
+refusal. The document's `owner` is the chat's account, which an agent uses
+to tell the person's comments from other members'. The action carries
+`page_id` when the scope is one page.
 
-`read_feedback(thread_id)` reads one item in any state: its Markdown form,
+`read_annotation(id)` reads one item, a thread in any state or a bare
+highlight by its block id: its Markdown form,
 then the entry as JSON (with the `picture_url` / `before_url` routes), and
 its pictures — the region now, then, after a rebuild, as it was commented
 on — on the action's `images` as `view_pdf_page` carries its picture,
 unless the model reads text only (`scope["pictures"] is False`; the tool is
 not in `PICTURE_TOOLS`, its text being useful alone). The action carries
 `page_id`, `block_id` and `pdf_page`, so MCP's `structuredContent` locates
-the thread. A reply's id, a hidden thread, a library page's thread and an
-unknown id are "no feedback item has that id".
+the entry. A reply's id, a hidden thread, a highlight that has a thread
+(read by the thread's id) and an unknown id are "no annotation has that
+id".
 
 `gamma_link(scope, page_id, *, thread_id=…)` links a thread
 (`&page=&block=&thread=`, the address the Inbox opens), so an MCP entry
@@ -1612,6 +1624,64 @@ had are not checked), and their approval cards show the pictures a change
 adds (`pictures` on the preview). The prompt says which URLs the model may
 embed: the ones in a picture's label line, `clip_region`'s result, and
 `read_block`'s text.
+
+### comment / resolve / highlight (both scopes, one permission)
+
+The writing tools: what the agent writes in the library under its own name,
+for the account it acts for ([annotations.md](annotations.md) "The writing
+tools"; `gamma/annotations/hand.py` writes, `places.py` finds the place). One
+permission, **Comments and highlights** (`comment`, Ask by default as every
+change is, in the "Make changes" group of Settings → AI → Tool usage), arms
+all three. They are `mutating` and `commenting` (`WRITING_TOOLS`): armed
+where the scope may comment (`can_comment`, `auth.can_comment`: any member,
+a viewer's chat too, and a token that comments there), not only where it
+edits (`can_write`), and `run_agent_tool` refuses them without it ("you
+cannot comment in this workspace"). Who writes is the scope's `agent`, the
+stamp a block it makes keeps (`agents.stamp`; the chat's is Gamma AI's for
+the person, `agents.gamma()`, or the connection's of a token that drives
+the chat, `agents.of_request`), read back as `agents.of_stamp`, and its
+`actor`, the account that authors the comment and the op. A new highlight
+is a block, an edit: a viewer's chat comments on the page or a note, and
+its `highlight` or `comment` on a passage or lines is refused before it
+asks (`hand.may_mark`, in `_plan_write`).
+
+- **`comment`**: `body`, and `thread_id` for a reply, else a place of a page
+  (by `page_id`, a work folder's file by `path`, a `block_id`'s page, else a
+  page chat's): `quote` with `pdf_page` on a PDF, `line` and `end_line` (and
+  their `quote`) in a text file, `block_id` a note, or none of them for the
+  page's own thread. A new thread on a passage or a range is on a new
+  highlight of it, drawn in the wash as a person's commented passage is.
+- **`resolve`**: `thread_id`; a resolved thread answers "resolved already"
+  and is no change (`noop`); never a reopen, which is the person's.
+- **`highlight`**: a passage or a range, as `comment`'s, with `note` (the
+  block's text), `color` (`yellow`, `green`, `blue`, `purple`: the palette's
+  first four washes, `hand.COLORS`) and `style` (`highlight`, `underline`,
+  `squiggly`, `strikeout`, as the viewer's styles); a place the agent
+  highlighted already is refused with that highlight's id.
+
+A quote is found exactly, as the relocation folds text, or not at all: one
+not on the page is refused with the closest passage the finder saw, never
+placed by guess ([annotations.md](annotations.md) "The writing tools"). The
+plan of a call (`_plan_write`) checks the thread or the page is in the chat's
+reach as any change's does (a page chat writes on its page alone; the
+context's pages are read-only), and the approval card shows the page's
+title, the place (`preview.place`: `{kind, page?, lines?, quote?}`, which the
+card words, `approvals.placeText`) and the comment's text as a diff; a call
+whose place is not found asks nobody. Each answers with the ids it made (the
+thread and the comment, the new highlight) and the link `list_annotations`
+gives the entry (`entries.link_of`, `?ws=&page=&block=` and `&thread=` for a
+thread; absolute on MCP), and its action (kind `comment`, `resolve` or
+`highlight`, with `page_id`, `block_id`, `thread_id`, `comment_id`, `link`,
+`title`, a reply's `reply`) lists it under the reply as a note change:
+"Commented in …", "Replied in a comment thread in …", "Resolved a comment
+thread in …", "Highlighted a passage in …" (`chat/agentSteps.js`); a
+highlight reloads the open page's tree as a block tool does (`BLOCK_TOOLS`).
+None has a revert row: a comment and a highlight are the person's to delete.
+The same words on the same place by the same agent within `hand.REPEAT_S`
+are refused with what the first call wrote, so a call made again never
+doubles a comment. The prompt names them once any is armed: reply where a
+comment asks, say what changed, resolve once done, ask on a passage, quote
+verbatim, comment or highlight only when asked.
 
 ## Guardrails
 

@@ -1,14 +1,15 @@
 """Sends of a work folder a computer keeps with an agent, the server's side
 (step 4c of docs/research/agent-collab.md; gamma/routers/computers.py,
-gamma/computers/registry.py, gamma/feedback/requests.py): the announce's
-vault agent, kept and shown to its maker alone; the channel's Send routes
+gamma/computers/registry.py, gamma/annotations/requests.py): the agent a
+computer announces on for the token's account, the agent of the work
+folders it keeps, shown to that account alone; the channel's Send routes
 with a computer token, each answering only for its account's Sends made in
-Gamma in a folder it announced with an agent; the claim keyed by the run (a
+Gamma in a work folder it keeps while an agent is on there; the claim keyed by the run (a
 retry held, another taker refused); progress and answers only from the run
 that holds the request; the answers written here, signed as the agent with
 the claim's ``seen``, a retry writing nothing twice; a withdraw told once
 and never overwritten; a token's Send and a token's change of a held
-request refused; the held poll woken by a Send; a mention made here; the
+request refused; the held poll woken by a Send; a mention made here a turn of its thread; the
 Feedback document's agent; the pictures of a held thread.
 
 One process plays both sides (as tests/test_computers.py): the routes are
@@ -32,7 +33,9 @@ from gamma.documents.model import document
 
 MAKER, EDITOR, STRANGER = "cps_maker", "cps_editor", "cps_stranger"
 FRAME = {"width": 600, "height": 800}
-CODEX = [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": ""}]
+CODEX = [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": "",
+          "enabled": True, "runs": "never"}]
+OFF = [{**CODEX[0], "enabled": False}]   # Codex there, turned off
 
 
 def _pdf() -> bytes:
@@ -96,13 +99,13 @@ def _mint(c, name="Gamma desktop: TIM-PC") -> dict:
                201)
 
 
-def _announce(c, *vaults, name="TIM-PC", computer_id="cps-pc") -> str:
+def _announce(c, *vaults, name="TIM-PC", computer_id="cps-pc", assistants=CODEX) -> str:
     return _ok(c.post("/api/computers/announce", json={"computer": {"id": computer_id, "name": name}, "app": "v9",
-                                                       "vaults": list(vaults), "assistants": CODEX}))["version"]
+                                                       "vaults": list(vaults), "assistants": assistants}))["version"]
 
 
-def _kept(lab, agent="codex", **more) -> dict:
-    return {"kind": "folder", "folder_id": lab.W, "agent": agent, **more}
+def _kept(lab, **more) -> dict:
+    return {"kind": "folder", "folder_id": lab.W, **more}
 
 
 @pytest.fixture
@@ -161,24 +164,28 @@ def _comments(lab, thread_id) -> list:
 
 # --- the binding --------------------------------------------------------------------------------------
 
-def test_the_announce_keeps_a_work_folders_agent_and_shows_it_to_its_maker_alone(lab):
+def test_the_announced_agent_is_its_work_folders_shown_to_its_account_alone(lab):
     item = _mint(lab.maker)
     c = _bearer(item["token"])
-    _announce(c, _kept(lab), {"kind": "folder", "folder_id": lab.W2, "agent": "gpt"},
-              {"kind": "folder", "folder_id": lab.plain, "agent": "claude"},
-              {"kind": "file", "page_id": lab.other, "agent": "codex"})
+    _announce(c, _kept(lab, agent="claude"), {"kind": "folder", "folder_id": lab.plain},
+              {"kind": "file", "page_id": lab.other},
+              assistants=[*CODEX, {"name": "claude", "label": "Claude Code", "found": True, "ready": True,
+                                   "enabled": True, "runs": "always"}, {"name": "gpt", "enabled": True}])
     with connect_users_db() as conn:
-        vaults = json.loads(conn.execute("SELECT vaults FROM computers WHERE token_id = ?", (item["id"],)).fetchone()[0])
-    assert vaults == [{"kind": "folder", "folder_id": lab.W, "paused": False, "agent": "codex"},
-                      {"kind": "folder", "folder_id": lab.W2, "paused": False},          # an agent unknown here: none
-                      {"kind": "folder", "folder_id": lab.plain, "paused": False},       # no work folder: none
-                      {"kind": "file", "page_id": lab.other, "paused": False}]           # a file vault has none
-    # only a work folder's root here counts
+        vaults, assistants = (json.loads(v) for v in conn.execute(
+            "SELECT vaults, assistants FROM computers WHERE token_id = ?", (item["id"],)).fetchone())
+    # a vault names no agent (one a vault says is dropped); the assistants say which are on, an unknown one none
+    assert vaults == [{"kind": "folder", "folder_id": lab.W, "paused": False},
+                      {"kind": "folder", "folder_id": lab.plain, "paused": False},
+                      {"kind": "file", "page_id": lab.other, "paused": False}]
+    assert [(a["name"], a["enabled"], a["runs"]) for a in assistants] == [("codex", True, "never"),
+                                                                          ("claude", True, "never")]
+    # only a work folder's root here counts, with the first agent on, in the catalog's order
     assert registry.agent_folders(item["id"], lab.ws) == {lab.W: {"agent": "codex", "paused": False}}
     found = registry.agent_of(lab.ws, lab.W, account_of(MAKER))
     assert found == {
         "token_id": item["id"], "user_id": account_of(MAKER), "agent": "codex", "label": "Codex", "computer": "TIM-PC",
-        "online": True, "paused": False, "ready": True, "code": ""}
+        "online": True, "paused": False, "ready": True, "code": "", "lent_by": ""}
     assert registry.agent_of(lab.ws, lab.W, account_of(EDITOR)) is None        # another account's computer: none
     assert registry.agent_of(lab.ws, lab.W2, account_of(MAKER)) is None
     assert registry.agent_of(lab.ws, lab.plain, account_of(MAKER)) is None
@@ -193,6 +200,20 @@ def test_the_announce_keeps_a_work_folders_agent_and_shows_it_to_its_maker_alone
     assert _bearer(item["token"]).get("/api/feedback/requests").status_code == 403
 
 
+def test_an_older_apps_announce_names_its_agent_on_the_work_folders_vault(lab):
+    """An app older than the computer's agents names none ``enabled`` and
+    puts the agent on the folder vaults instead: that one is on, never
+    asking."""
+    item = _mint(lab.maker)
+    old = [{k: v for k, v in CODEX[0].items() if k not in ("enabled", "runs")},
+           {"name": "claude", "label": "Claude Code", "found": True, "ready": True}]
+    _announce(_bearer(item["token"]), _kept(lab, agent="codex"), assistants=old)
+    assert registry.agent_folders(item["id"], lab.ws) == {lab.W: {"agent": "codex", "paused": False}}
+    assert registry.agent_of(lab.ws, lab.W, account_of(MAKER))["agent"] == "codex"
+    _announce(_bearer(item["token"]), _kept(lab), assistants=old)          # no vault names one: none on
+    assert registry.agent_folders(item["id"], lab.ws) == {}
+
+
 def test_another_members_computer_never_takes_the_makers_binding(lab, pc):
     """An editor's computer announcing the maker's work folder with an agent
     serves that editor's own Sends alone; a viewer's keeps no agent."""
@@ -200,19 +221,19 @@ def test_another_members_computer_never_takes_the_makers_binding(lab, pc):
     _announce(_bearer(evil["token"]), _kept(lab), name="EVIL-PC", computer_id="cps-evil")   # announced last, online
     assert registry.agent_of(lab.ws, lab.W, account_of(MAKER))["computer"] == "TIM-PC"
     assert registry.agent_of(lab.ws, lab.W, account_of(EDITOR))["computer"] == "EVIL-PC"
-    # the maker's mention, dialog and token Send still name TIM-PC
+    # the maker's mention (a turn of its thread), dialog and token Send still name TIM-PC
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments",
                            json={"block_id": _passage(lab), "body": "@codex please tighten the intro"}), 201)
-    assert [s["id"] for s in _sends(pc)["sends"]] == [r["send"]["request_id"]]
-    assert _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]["computer"] == "TIM-PC"
+    assert [t["id"] for t in _ok(pc.c.get("/api/computers/chats"))["turns"]] == [r["turn"]["turn_id"]]
+    assert _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]["computer"] == "TIM-PC"
     r = _bearer(token_for(lab.maker, "write")).post("/api/feedback/requests", json={"scope": lab.main})
     assert (r.status_code, r.json()["detail"]) == (403, "Codex on TIM-PC takes Sends made in Gamma, not with a token.")
-    # the editor's own @codex is the editor's Send, never listed to the maker's computer
+    # the editor's own @codex is the editor's turn, never listed to the maker's computer
     r = _ok(lab.editor.post(f"/api/pages/{lab.main}/comments", json={"block_id": _passage(lab), "body": "@codex hi"}),
             201)
-    assert r["send"]["request_id"] not in [s["id"] for s in _sends(pc)["sends"]]
-    assert [s["id"] for s in _ok(_bearer(evil["token"]).get("/api/computers/sends"))["sends"]] == \
-        [r["send"]["request_id"]]
+    assert r["turn"]["turn_id"] not in [t["id"] for t in _ok(pc.c.get("/api/computers/chats"))["turns"]]
+    assert [t["id"] for t in _ok(_bearer(evil["token"]).get("/api/computers/chats"))["turns"]] == \
+        [r["turn"]["turn_id"]]
     # a viewer's computer keeps no agent
     viewer = "cps_viewer"
     make_user(viewer, f"pw-{viewer}")
@@ -249,7 +270,7 @@ def test_the_makers_sends_made_in_gamma_wait_for_the_computer_and_no_one_elses(l
                       "withdrawn": []}
     _send(lab, t, who=lab.editor)                                       # another account's Send: never this computer's
     o = thread_on(lab.maker, lab.other, lab.other, "elsewhere")["id"]
-    _send(lab, o, page=lab.other)                                       # a folder kept without an agent
+    _send(lab, o, page=lab.other)                                       # a work folder it does not keep
     whole = _send(lab, page=lab.W)                                      # a Send of the whole folder: no page
     assert [s.get("page_id") for s in _sends(pc)["sends"]] == [lab.main, None] and _sends(pc)["sends"][1]["id"] == whole["id"]
     # a token's Send there is refused: the computer takes the Sends made in Gamma
@@ -258,7 +279,7 @@ def test_the_makers_sends_made_in_gamma_wait_for_the_computer_and_no_one_elses(l
     # paused there: nothing waits for it
     _announce(pc.c, _kept(lab, paused=True))
     assert _sends(pc)["sends"] == []
-    assert _claim(pc, sent["id"], status=409)["detail"] == "The work folder is paused: Codex starts once it syncs again."
+    assert _claim(pc, sent["id"], status=409)["detail"] == "The synced folder is paused: Codex starts once it syncs again."
 
 
 def test_a_send_wakes_the_computers_held_poll_or_its_next(lab, pc):
@@ -310,7 +331,7 @@ def test_a_claim_is_one_write_keyed_by_its_run(lab, pc):
     r = laptop.post(f"/api/computers/sends/{sent['id']}/claim", json={"run": "run-1", "agent": "codex"})
     assert (r.status_code, r.json()["detail"]) == (409, "Another run holds this request.")
     # a token's change of the request the computer holds is refused; the requester may still withdraw
-    r = _bearer(token_for(lab.maker, "feedback", "Claude Code")).post(
+    r = _bearer(token_for(lab.maker, "read", "Claude Code", comments=True)).post(
         f"/api/feedback/requests/{sent['id']}/state", json={"state": "done"})
     assert (r.status_code, r.json()["detail"]) == (409, "Codex on TIM-PC is answering this request.")
     # not this computer's: another account's Send, another account's computer, another agent, a bad run id
@@ -319,7 +340,7 @@ def test_a_claim_is_one_write_keyed_by_its_run(lab, pc):
     stranger = _bearer(_mint(lab.stranger)["token"])
     assert stranger.post(f"/api/computers/sends/{sent['id']}/claim", json={"run": "r", "agent": "codex"}).status_code == 404
     other = _send(lab, thread_on(lab.maker, lab.main, lab.main, "another")["id"])
-    assert _claim(pc, other["id"], agent="claude", status=409)["detail"] == "This work folder's agent is Codex."
+    assert _claim(pc, other["id"], agent="claude", status=409)["detail"] == "This synced folder's agent is Codex."
     assert _claim(pc, other["id"], run="bad id!", status=400)
     # a Send withdrawn before it is claimed is no longer sent
     _ok(lab.maker.post(f"/api/feedback/requests/{other['id']}/state", json={"state": "failed"}))
@@ -355,7 +376,8 @@ def test_the_answers_are_written_here_as_the_agents_once(lab, pc):
     assert all(t["answered"] for t in record["threads"])
     fixed, kept = _comments(lab, fix), _comments(lab, keep)
     reply = fixed["comments"][-1]
-    assert (reply["id"], reply["agent"], reply.get("agent_kind")) == ("cpsReplyFix1", "Codex", "local")
+    assert (reply["id"], reply["agent"], reply.get("agent_kind"), reply.get("agent_on")) == (
+        "cpsReplyFix1", "Codex", "computer", "TIM-PC"), "signed as the agent of the computer that announced itself"
     assert reply["body"] == "Defined it in 2.1. [x](http://evil.example/a.png)"     # inert: no picture loads
     assert fixed["resolved_at"] and not kept["resolved_at"]
     # a retry writes nothing twice and answers the same
@@ -408,7 +430,7 @@ def test_an_agent_taking_a_withdrawn_request_again_ends_the_computers_run(lab, p
     sent = _send(lab, t)
     _claim(pc, sent["id"], run="run-a")
     _ok(lab.maker.post(f"/api/feedback/requests/{sent['id']}/state", json={"state": "failed"}))  # the computer sleeps
-    agent = _bearer(token_for(lab.maker, "feedback", "Claude Code"))
+    agent = _bearer(token_for(lab.maker, "read", "Claude Code", comments=True))
     _ok(agent.post(f"/api/feedback/requests/{sent['id']}/state", json={"state": "running", "detail": "On it"}))
     with connect_pages_db(lab.ws) as conn:
         assert conn.execute("SELECT ended FROM feedback_request_runs WHERE request_id = ?",
@@ -462,35 +484,38 @@ def test_the_pictures_of_a_thread_the_computer_holds(lab, pc):
 
 # --- the mention and the Feedback dialog ------------------------------------------------------------------
 
-def test_a_mention_made_here_is_a_send_the_computer_takes(lab, pc):
+def test_a_mention_made_here_is_a_turn_of_its_thread_the_computer_takes(lab, pc):
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments",
                            json={"block_id": _passage(lab), "body": "@codex please tighten the intro"}), 201)
-    send = r["send"]
-    assert (send["agent"], send["scope"], send["threads"]) == ("Codex", "thread", 1)
-    assert [s["id"] for s in _sends(pc)["sends"]] == [send["request_id"]]
-    assert _request(lab, send["request_id"])["note"] == "please tighten the intro"
-    # another member's @codex is no Send; nor the maker's once the agent is off there
+    turn = r["turn"]
+    assert (turn["agent"], turn["state"]) == ("Codex", "queued") and _sends(pc)["sends"] == []
+    assert [t["id"] for t in _ok(pc.c.get("/api/computers/chats"))["turns"]] == [turn["turn_id"]]
+    claimed = _ok(pc.c.post(f"/api/computers/chats/{turn['turn_id']}/claim", json={"run": "cps-run-t", "agent": "codex"}))
+    assert (claimed["turn"]["text"], claimed["turn"]["thread_id"]) == ("please tighten the intro", r["thread"]["id"])
+    assert claimed["thread"]["id"] == r["thread"]["id"] and claimed["thread"]["place"]["page"] == 1
+    # another member's @codex is no turn; nor the maker's once the agent is off there
     r = _ok(lab.editor.post(f"/api/pages/{lab.main}/comments", json={"block_id": lab.main, "body": "@codex hi"}), 201)
-    assert "send" not in r
-    _announce(pc.c, {"kind": "folder", "folder_id": lab.W})
+    assert "turn" not in r
+    _announce(pc.c, _kept(lab), assistants=OFF)
+    assert registry.agent_folders(pc.id, lab.ws) == {} and registry.workspaces_of(account_of(MAKER)) == []
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments", json={"block_id": lab.main, "body": "@codex hi"}), 201)
-    assert "send" not in r
+    assert "turn" not in r
 
 
 def test_the_feedback_document_names_the_computers_agent_to_its_maker_alone(lab, pc):
-    agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
+    agent = _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]
     assert agent == {"name": "codex", "label": "Codex", "computer": "TIM-PC", "online": True, "ready": True,
                      "problem": "", "takes": True, "why": ""}
-    assert not _ok(lab.editor.get("/api/feedback", params={"scope": lab.W})).get("agent")
-    assert not _ok(lab.maker.get("/api/feedback", params={"scope": lab.W2})).get("agent")
+    assert not _ok(lab.editor.get("/api/annotations", params={"scope": lab.W})).get("agent")
+    assert not _ok(lab.maker.get("/api/annotations", params={"scope": lab.W2})).get("agent")
     _announce(pc.c, _kept(lab, paused=True))
-    agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
-    assert (agent["takes"], agent["why"]) == (False, "The work folder is paused on TIM-PC: Codex starts once it syncs "
+    agent = _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]
+    assert (agent["takes"], agent["why"]) == (False, "The synced folder is paused on TIM-PC: Codex starts once it syncs "
                                                      "again.")
     # away: a Send waits for it, and the dialog says so
     _announce(pc.c, _kept(lab))
     registry.reset()
-    agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
+    agent = _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]
     assert (agent["online"], agent["problem"], agent["takes"]) == (False, "TIM-PC is offline: this runs when it "
                                                                          "connects.", True)
     t = thread_on(lab.maker, lab.main, lab.main, "while away")["id"]
@@ -508,5 +533,5 @@ def test_the_feedback_document_says_why_an_online_computers_agent_is_not_ready(l
     _ok(pc.c.post("/api/computers/announce", json={
         "computer": {"id": "cps-pc", "name": "TIM-PC"}, "app": "v9", "vaults": [_kept(lab)],
         "assistants": [{**CODEX[0], "found": found, "ready": False, "code": code}]}))
-    agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
+    agent = _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]
     assert (agent["online"], agent["ready"], agent["problem"], agent["takes"]) == (True, False, problem, True)

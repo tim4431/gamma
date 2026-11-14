@@ -1401,7 +1401,7 @@ export default function SettingsDialog({
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "ai" ? <>
                   <PaneHead icon={SparklesIcon} title={t("Connections")} />
-                  <AiSettings value={aiValue}
+                  <AiSettings value={aiValue} signedIn={who.signedIn}
                     confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
                 </> : null}
                 {pane === "assistant" ? <>

@@ -21,7 +21,7 @@ from gamma.vault import disk as vault_disk, kinds, store as vault_store, sync as
 from gamma.blocks_store import FOLDERS
 from gamma.db import connect_pages_db
 from gamma.documents.model import stored_name
-from gamma.feedback import files as feedback_files
+from gamma.annotations import files as annotation_files
 from gamma.ops import commit_ops, restore_page, trash_page
 from gamma.vault.local_remote import LocalRemote
 from gamma.work_folders import marks, takeover
@@ -372,15 +372,15 @@ def test_a_page_its_selection_trashed_and_a_person_restored_stays_once_the_push_
     assert v.state(page) == "live" and "deleted_by_vault" not in v.props(page)
 
 
-def test_a_work_folder_let_go_at_its_round_loses_its_feedback_files(work):
+def test_a_work_folder_let_go_at_its_round_loses_its_annotation_files(work):
     """A vault whose push came down is released before its next round
     (``folder_links._work_turn``): its pages unstamped, its mark off, and
-    the feedback files its rounds wrote gone (gamma/feedback/files.py)."""
+    the annotation files its rounds wrote gone (gamma/annotations/files.py)."""
     v = work(library=True)
     v.write("Note.md", "keep\n")
     v.sync()
     page = v.page_of("Note.md")
-    here = v.root / feedback_files.DIR
+    here = v.root / annotation_files.DIR
     (here / "img").mkdir(parents=True)
     (here / "open.json").write_text("{}\n", encoding="utf-8")
     (here / "img" / "0123456789abcdef.jpg").write_bytes(b"\xff\xd8\xff")
@@ -448,7 +448,7 @@ def test_a_work_folder_with_a_deselected_pdf_is_removed_its_bytes_stored(work):
     assert v.state(page) == "trashed"
     assert [rel for _page, rel, _doc in folder_links._in_place(v.link)] == ["Paper.pdf"]
     assert folder_links.removal(v.link)["bytes"] == (v.root / "Paper.pdf").stat().st_size
-    folder_links._store_in_place(v.link, v.root)
+    folder_links._store_in_place(v.link, v.root, every=False)
     assert storage.exists(v.ws, stored_name(v.props(page)["doc"]["hash"], ".pdf"))
 
 

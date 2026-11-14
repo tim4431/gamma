@@ -37,8 +37,10 @@ function anchorRect(target) {
 // (note, page, highlight). `canComment`: the reader may write (signed in);
 // else a link visitor reads only and is asked to sign in (`onSignIn`).
 // onClose(returnFocus): Escape gives the focus back to the anchor.
-// `links`: what the fields' [[ and @ pickers read (App's {pages, rootId,
-// lookupBlock, refCache, onCacheRef}; CommentComposer.jsx).
+// `links`: what the fields' [[ and @ pickers and their Send to tick read
+// (App's {pages, rootId, lookupBlock, refCache, onCacheRef, agents,
+// sendTo}; CommentComposer.jsx), and a thread's turn's Open in chat and
+// Stop (`onOpenChat`, `onStopTurn`; Thread.jsx).
 export default function ThreadPopover({ target, threads, kind = "note", me, owner, canComment, people, labelsFor, links,
   onBlockRefClick, onAdd, onEdit, onDelete, onResolve, onCopyLink, onSignIn, onClose }) {
   const ref = useRef(null);
@@ -127,7 +129,7 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
         {shown.map((th) => (
           <Thread key={th.id} thread={th} focused={th.id === target.threadId} canComment={canComment}
             active={th.id === activeThread} onActivate={setActiveThread}
-            onResolve={onResolve} onReply={(threadId, body) => onAdd(target.blockId, body, threadId)} {...common} />
+            onResolve={onResolve} onReply={(threadId, body, to) => onAdd(target.blockId, body, threadId, to)} {...common} />
         ))}
         {hiddenResolved ? (
           <button type="button" className="uiBtn sm ghost commentShowResolved" onClick={() => setWithResolved(true)}>
@@ -145,7 +147,7 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
             <CommentComposer {...field} autoFocus people={people} me={me} draftKey={`new:${target.blockId}`}
               placeholder={shown.length ? t("New comment…") : t("Write a comment…")} submitLabel={t("Comment")}
               // stored, the thread shows with its reply field; "New comment" starts another
-              onSubmit={async (body) => { const ok = await onAdd(target.blockId, body, ""); if (ok) setComposing(false); return ok; }}
+              onSubmit={async (body, to) => { const ok = await onAdd(target.blockId, body, "", to); if (ok) setComposing(false); return ok; }}
               onEscape={escape} />
           </div>
         ) : (

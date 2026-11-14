@@ -115,10 +115,12 @@ def _computer_turns(user_id: str) -> list[dict]:
     """The account's turns of the chat's computer side that this server's
     agents have queued or running (gamma/local_agents/runner.py
     ``chat_turns``), in the jobs' shape: read-only rows titled ``<agent> ·
-    <page title>``, ``progress.phase`` ``asking`` while an ask waits for
-    the person. A click opens the page's chat on that side, and Stop is the
-    turn's own (``POST /api/local-agents/chat/turns/{turn}/stop``), never
-    ``cancel``."""
+    <title>``, the title of the page or the folder the conversation is
+    about (``params.title`` "" for the library, which the row names
+    ``Library``), ``progress.phase`` ``asking`` while an ask
+    waits for the person. A click opens that chat on the agent's side, and
+    Stop is the turn's own (``POST /api/local-agents/chat/turns/{turn}/stop``),
+    never ``cancel``."""
     from ..db import connect_pages_db
     from ..local_agents import enabled, runner
 
@@ -133,23 +135,23 @@ def _computer_turns(user_id: str) -> list[dict]:
     for turn in reversed(turns):  # newest first, as the jobs
         try:
             with connect_pages_db(turn["ws"]) as conn:
-                found = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (turn["page_id"],)).fetchone()
+                found = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (turn["bucket"],)).fetchone()
         except Exception:  # noqa: BLE001 — a workspace that cannot be read names no page
             found = None
-        page_title = found[0] if found else ""
-        rows.append(_turn_row(user_id, turn, page_title, asking=turn["asking"]))
+        title = found[0] if found else ""
+        rows.append(_turn_row(user_id, turn, title, asking=turn["asking"]))
     return rows
 
 
-def _turn_row(user_id: str, turn: dict, page_title: str, *, asking: bool = False) -> dict:
+def _turn_row(user_id: str, turn: dict, title: str, *, asking: bool = False) -> dict:
     from ..local_agents import catalog
 
     label = catalog.label(turn["agent"])
     return {
         "id": f"computer-{turn['turn_id']}", "kind": "computer-turn", "owner": user_id, "workspace": turn["ws"],
-        "title": f"{label} · {page_title or 'Untitled'}",
-        "params": {"page": turn["page_id"], "turn": turn["turn_id"], "agent": turn["agent"], "label": label,
-                   "title": page_title, **({"computer": turn["computer"]} if turn.get("computer") else {})},
+        "title": f"{label} · {title or ('Library' if turn['bucket'] == 'home' else 'Untitled')}",
+        "params": {"bucket": turn["bucket"], "turn": turn["turn_id"], "agent": turn["agent"], "label": label,
+                   "title": title, **({"computer": turn["computer"]} if turn.get("computer") else {})},
         "state": turn["state"], "progress": {"phase": "asking"} if asking else {}, "error": "",
         "created_at": turn["queued_at"], "started_at": turn["started_at"], "finished_at": "", "artifact": None,
         "downloaded": False, "stoppable": not turn["stopping"], "stopping": turn["stopping"], "readonly": True,
@@ -164,7 +166,7 @@ def _feedback_runs(user_id: str) -> list[dict]:
     the Send's file or folder; Stop is its requester's withdraw, theirs
     alone (``POST /api/feedback/requests/{id}/state``)."""
     from ..db import connect_pages_db
-    from ..feedback import requests
+    from ..annotations import requests
     from ..folder_links import get_link
     from ..local_agents import catalog, enabled, runner, store
 

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
 from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, offsite, reports
 from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
-from .feedback import listeners as feedback_listeners, requests as feedback_requests
+from .annotations import listeners as annotation_listeners, requests as feedback_requests
 from .computers import channel as computer_channel
 from . import local_agents
 from .local_agents import runner as local_agents_runner
@@ -32,6 +32,7 @@ from .routers import (
     admin,
     ai,
     ai_handoffs,
+    annotations as annotations_router,
     auth as auth_router,
     blocks,
     backup_tasks,
@@ -311,7 +312,7 @@ async def read_only_gate(request: Request, call_next):
 
 def sweep_comments() -> None:
     """The comments' sweep (gamma/comments.py), then the Sends'
-    (gamma/feedback/requests.py), on one timer: the lifespan's ``async
+    (gamma/annotations/requests.py), on one timer: the lifespan's ``async
     with`` is at Python's limit of nested blocks, so the two share a line.
     The second runs whatever the first did; each logs its own failures."""
     try:
@@ -500,9 +501,10 @@ def create_app() -> FastAPI:
     app.include_router(folders.router)
     app.include_router(collab.router)
     app.include_router(comments_router.router)
+    app.include_router(annotations_router.router)
     app.include_router(feedback_router.router)
     app.include_router(local_agents_api.router)
-    feedback_listeners.register()  # what keeps the feedback files, requests and kept versions current
+    annotation_listeners.register()  # what keeps the annotation files, requests and kept versions current
     local_agents_runner.register()  # an agent on this computer takes the Sends of the folders it answers
     app.include_router(reports_router.router)
     app.include_router(sync.router)

@@ -426,7 +426,7 @@ with `.pem`, `.key`, `.p12` or `.pfx` is never indexed (it is recorded with
 no text), never put in a chat's context and never read by a tool, nor is
 the quote of a range or a selection of its lines: the chat, `read_page`,
 `read_block`, a thread's place and the feedback entries name its lines
-alone (`feedback.anchors.text_kept`). The
+alone (`annotations.anchors.text_kept`). The
 index is keyed by the bytes and the rule by the name, so a search applies
 it again to every page a hit reaches (`search.hits.docs_of` leaves a
 secrets file's page out of the scope, `hits.build` gives it no hit): a file
@@ -627,7 +627,9 @@ a glyph per format (the PDF's stamp, a text's brackets, a picture's
 mountain, audio's note, video's play triangle, a plain sheet for a binary,
 a note's lines), tinted by format in `library/library.css`; the cards, the
 pickers' rows, the open tabs (App's `tabKinds`) and the page family's
-`sub_pages[]` hand it theirs. App
+`sub_pages[]` hand it theirs. A work folder's file is drawn by its name
+instead, with Material Icon Theme's icon (`shared/ui/FileIcon.jsx`,
+[work_folders.md](work_folders.md) "File icons"), `FileGlyph` its fallback. App
 holds the open page's `doc` (`pageDocument(focusedBlock)`) and `docId`
 (`ownHash(doc)`); the chat (`chat/ChatDock.jsx`) takes `doc` and reads its
 PDF by `fileHash`.

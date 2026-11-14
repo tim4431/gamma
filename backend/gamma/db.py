@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 58
+SCHEMA_VERSION = 64
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -145,7 +145,8 @@ USERS_SCHEMA = [
         scope TEXT NOT NULL DEFAULT 'read',
         workspaces TEXT NOT NULL DEFAULT '',
         edits TEXT NOT NULL DEFAULT '',
-        asks INTEGER NOT NULL DEFAULT 1
+        asks INTEGER NOT NULL DEFAULT 1,
+        comments TEXT NOT NULL DEFAULT ''
     )""",
     # mirrors = local workspaces that are offline copies of a workspace on
     # another Gamma server (gamma/sync_engine.py): where it lives, the
@@ -649,9 +650,14 @@ USERS_SCHEMA = [
 # not be written, and the journal ``pending``, JSON {token, ...});
 # vault_dirs = a vault's directories, their folders and file ids;
 # vault_history = the bytes a write replaced, zlib, kept some days. A file id
-# is text: it can pass 63 bits. agent_folders = the agent on this computer a
-# work folder's vault answers its Sends with (gamma/local_agents/store.py:
-# codex or claude, who turned it on and when); agent_runs = one row a run of
+# is text: it can pass 63 bits. computer_agents = the agents of this computer
+# (gamma/local_agents/store.py: codex or claude, whether it is on, what it
+# may run, ``never`` or ``ask``, the account that turned it on, which owns
+# it, and when; a row stays when it is turned off); agent_dirs = the
+# directories this computer offers its agents beyond its vaults (an id, the
+# path, a name, when it was added); agent_folders = what each vault's agent
+# was before agents were the computer's, read once into computer_agents
+# (``store.carry_over``) and never since; agent_runs = one row a run of
 # that agent on a request, its session, state, progress, the source files it
 # changed (JSON), whether the build changed, its steps (JSON) and process;
 # ``error`` is this computer's record of a failure (the agent's whole error,
@@ -660,15 +666,22 @@ USERS_SCHEMA = [
 # its run read the thread and the comments it read (JSON ids), its reply and
 # the request: what a follow-up resumes; agent_conversations = the session
 # a page's computer chat (pages.db computer_chats) ran its agent in last,
-# and the directory: what its next turn resumes; agent_turns = one row a
-# turn of that chat, its state (queued, running, done, failed, stopped),
+# and the directory: what its next turn resumes (``link_id`` its vault's, ""
+# for a conversation that works in no vault); agent_turns = one row a turn
+# of that chat (``page_id`` its conversation's bucket: a page's id, a
+# folder's or "home"), its state (queued, running, done, failed, stopped),
 # its process and ``error``, this computer's record (the whole error, the
 # stderr tail), never written in the conversation; agent_policies = what a
-# vault's agent may run (``ask``: its chat's turns may ask the person; no
-# row is ``never``), who set it and when; agent_grants = a command a person
-# allowed in a conversation of that chat, exactly as asked, the directory it
-# runs in (``.`` the folder) and the network host it reaches ("" none), and
-# its vault.
+# vault's agent could run, read with agent_folders and never since;
+# agent_grants = the commands allowed in a chat keyed by its vault, left
+# unread; agent_dir_grants = a command a person allowed in a conversation of
+# that chat, exactly as asked, keyed by the directory the turn works in, the
+# folder below it the command runs in (``.`` the directory itself) and the
+# network host it reaches ("" none), with the conversation's agent;
+# agent_people = a person the agent's owner lets use it (a co-author): the
+# server of the workspace ("" for this server, else the address a channel of
+# the owner's names, computer_links.remote_url), its workspace there, the
+# person's account there, the agent, how Settings names the person, when.
 VAULTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS linked_files (
         ws TEXT NOT NULL,
@@ -795,6 +808,38 @@ VAULTS_SCHEMA = [
         link_id TEXT NOT NULL,
         at TEXT NOT NULL,
         PRIMARY KEY (conversation_id, command, cwd, host)
+    )""",
+    """CREATE TABLE IF NOT EXISTS computer_agents (
+        agent TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        runs TEXT NOT NULL DEFAULT 'never',
+        set_by TEXT NOT NULL DEFAULT '',
+        set_at TEXT NOT NULL DEFAULT ''
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_dirs (
+        id TEXT PRIMARY KEY,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        added_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_dir_grants (
+        conversation_id TEXT NOT NULL,
+        dir TEXT NOT NULL,
+        command TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        host TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, dir, command, cwd, host)
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_people (
+        server TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        account TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        username TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        PRIMARY KEY (server, workspace_id, account, agent)
     )""",
 ]
 
@@ -972,21 +1017,34 @@ CHATS_SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS chat_history_bucket ON chat_history (bucket, updated_at)",
 ]
-# computer_chats = the conversations of a page's chat with the agent on this
-# computer (gamma/local_agents/chats.py, docs/dev/local_agents.md "The chat's
-# computer side"), not chats: one account's alone, the maker of the work
-# folder's vault (`user_id`), `agent` the agent it began with, `messages`
-# its JSON messages (the person's and the agent's turns, relative paths
-# only), `version` bumped by every write (the runner's as the turn goes,
-# the routes'), `archived_at` NULL for the page's active conversation of
-# that account. Private to the account: a backup carries none and a restore
-# keeps the live rows (ws_backup.PRIVATE_TABLES); no export, share, mirror
-# or read_chats reads it; it goes with the page deleted for good
-# (ops._purge). Additive: no step (docs/dev/migrations.md rule 2).
+# computer_chats = the conversations of a chat with a computer's agent
+# (gamma/local_agents/chats.py, docs/dev/local_agents.md "The chat's
+# computer side"), not chats: one account's (`user_id`), read by it and by
+# `owner`, the account whose agent it talks to (`user_id` itself but for a
+# co-author's, docs/dev/local_agents.md "A co-author's turn"), `bucket`
+# what it is about as chats.bucket says it (a page's id, a folder block's
+# or "home"), `dir` where its agent works, chosen when it starts
+# (``chats.place_of``): the work folder W its bucket is in (that vault's
+# directory), an offered directory's id (vaults.db agent_dirs), or "" for
+# an empty directory of its own; `agent` the agent it began with,
+# `messages` its JSON messages (the person's and the agent's turns,
+# relative paths only), `version` bumped by every write (the runner's as
+# the turn goes, the routes'), `archived_at` NULL for the bucket's active
+# conversation of that account. `thread_id` names the comment thread a
+# conversation answers ("" for a chat's; docs/dev/local_agents.md "A
+# comment sent to an agent"): its bucket is the thread's page, it is never
+# its bucket's active chat nor in History, and `archived_at` NULL is the
+# thread's conversation of that account. Private to the account: a backup
+# carries none and a restore keeps the live rows (ws_backup.PRIVATE_TABLES);
+# no export, share, mirror or read_chats reads it; it goes with the page
+# deleted for good (ops._purge), and a deleted folder's are filed into the
+# library's (ops, ``chats.file_into_home``). Step 59 gave it `bucket` (was
+# `page_id`) and `dir`, step 62 `thread_id`, step 63 `owner`
+# (docs/dev/migrations.md).
 COMPUTER_CHATS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS computer_chats (
         id TEXT PRIMARY KEY,
-        page_id TEXT NOT NULL,
+        bucket TEXT NOT NULL,
         user_id TEXT NOT NULL,
         agent TEXT NOT NULL,
         title TEXT NOT NULL DEFAULT '',
@@ -994,14 +1052,19 @@ COMPUTER_CHATS_SCHEMA = [
         version INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        archived_at TEXT
+        archived_at TEXT,
+        dir TEXT NOT NULL DEFAULT '',
+        thread_id TEXT NOT NULL DEFAULT '',
+        owner TEXT NOT NULL DEFAULT ''
     )""",
-    "CREATE INDEX IF NOT EXISTS idx_computer_chats_page ON computer_chats(page_id, user_id, archived_at)",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chats_bucket ON computer_chats(bucket, user_id, archived_at)",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chats_thread ON computer_chats(thread_id, user_id) WHERE thread_id != ''",
     # computer_chat_runs = a turn of such a conversation that runs on another
     # computer (step 4d: a page of a work folder of this server kept on a
     # computer of its maker's with an agent there, gamma/computers/registry.py
     # ``agent_of``; local_agents/chats.py, routers/computers.py): `state`
-    # queued until a run of a computer of `user_id`'s claims it (`holder` its
+    # queued until a run of a computer of its conversation's `owner` claims
+    # it (`holder` its
     # token id, `run` the id it minted, `started_at`), running, then done,
     # failed or stopped; `seq` the last write taken from that run, so a retry
     # or a late one never goes back; `stop` set by the person's Stop of a
@@ -1009,12 +1072,13 @@ COMPUTER_CHATS_SCHEMA = [
     # reply's: only a computer keeping the folder with that agent takes it);
     # `computer` the name of the computer last known to take it (the one
     # keeping the folder at its begin, then the one that claimed it), so
-    # its row names one after that computer is gone. Goes with its
-    # conversation deleted. Additive: no step (docs/dev/migrations.md rule 2).
+    # its row names one after that computer is gone; `bucket` its
+    # conversation's, always a page (was `page_id` until step 59). Goes with
+    # its conversation deleted.
     """CREATE TABLE IF NOT EXISTS computer_chat_runs (
         turn_id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
-        page_id TEXT NOT NULL,
+        bucket TEXT NOT NULL,
         user_id TEXT NOT NULL,
         agent TEXT NOT NULL DEFAULT '',
         computer TEXT NOT NULL DEFAULT '',
@@ -1044,7 +1108,9 @@ COMPUTER_CHATS_SCHEMA = [
 # for a session), `resolved_agent` the one that resolved a root (cleared
 # on reopen); `anchor` (JSON, the root only, NULL on a reply and on a root
 # from before step 54) is the place the thread was opened on
-# (gamma/feedback/anchors.py). Never part of a block, so no block reader
+# (gamma/annotations/anchors.py); `agent_owner` the username of the
+# agent's owner when it wrote for a co-author (gamma/agents.py ``owner``,
+# '' otherwise and on every comment from before step 64). Never part of a block, so no block reader
 # has to skip them; a comment write touches no page.
 COMMENTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS comments (
@@ -1064,7 +1130,8 @@ COMMENTS_SCHEMA = [
         agent TEXT NOT NULL DEFAULT '',
         agent_id TEXT NOT NULL DEFAULT '',
         resolved_agent TEXT NOT NULL DEFAULT '',
-        anchor TEXT
+        anchor TEXT,
+        agent_owner TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE INDEX IF NOT EXISTS idx_comments_block ON comments(block_id)",
     "CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id, created_at)",
@@ -1087,7 +1154,7 @@ COMMENTS_SCHEMA = [
     ) WITHOUT ROWID""",
 ]
 # feedback_requests = the Sends of a work folder's feedback
-# (gamma/feedback/requests.py, docs/dev/feedback.md): `id` a block id's
+# (gamma/annotations/requests.py, docs/dev/annotations.md): `id` a block id's
 # shape (the client may mint it), `rev` the listing's cursor (MAX + 1 at
 # the insert and at every state change), `work_folder` and the `scope` the
 # requester sent (`scope_kind` file or folder), `by` / `by_name` the
@@ -1424,11 +1491,15 @@ DATA_SCHEMA = [
     "CREATE TABLE IF NOT EXISTS pdf_translation_briefs (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
     "model TEXT NOT NULL, brief TEXT NOT NULL, at TEXT NOT NULL, "
     "PRIMARY KEY (doc_id, lang, model)) WITHOUT ROWID",
-    # feedback_pictures = the region pictures of a work folder's comment
-    # threads (gamma/feedback/pictures.py): JPEG bytes by their key, at
-    # most 48 MB in all, the oldest `at` going first.
-    "CREATE TABLE IF NOT EXISTS feedback_pictures (key TEXT PRIMARY KEY, data BLOB NOT NULL, "
+    # annotation_pictures = the region pictures of highlights and comment
+    # threads (gamma/annotations/pictures.py): JPEG bytes by their key, at
+    # most 48 MB in all, the oldest `at` going first. Its name until step
+    # 3.1 of docs/research/agents-as-participants-plan.md was
+    # feedback_pictures, dropped here: its pictures are drawn again when
+    # asked for.
+    "CREATE TABLE IF NOT EXISTS annotation_pictures (key TEXT PRIMARY KEY, data BLOB NOT NULL, "
     "bytes INTEGER NOT NULL, at TEXT NOT NULL)",
+    "DROP TABLE IF EXISTS feedback_pictures",
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few

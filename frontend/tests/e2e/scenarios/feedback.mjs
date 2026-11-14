@@ -5,9 +5,9 @@ import { marginLeft } from "../../../src/comments/marginLayout.js";
 import { Account, ROOT, Server, wanted } from "../harness.mjs";
 import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
 
-// Feedback on a work folder's files (docs/dev/feedback.md): the comments the
+// Feedback on a work folder's files (docs/dev/annotations.md): the comments the
 // person makes on a paper's PDF in a work folder, read by an agent through
-// the files Gamma writes into the directory (.gamma/feedback/) and the
+// the files Gamma writes into the directory (.gamma/annotations/) and the
 // feedback API, and answered as the agent's own comments. The vaults recipe
 // (GAMMA_FOLDER_LINKS, no shell secret, a desktop user agent) over the
 // SyncTeX sample paper (backend/tests/samples/synctex/paper, built twice):
@@ -59,7 +59,7 @@ export async function feedbackScenarios(env) {
     };
     const paperDir = path.join(disk, "paper");
     copyPaper("v1", paperDir);
-    const feedbackDir = path.join(paperDir, ".gamma", "feedback");
+    const feedbackDir = path.join(paperDir, ".gamma", "annotations");
     const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
     const openJson = () => readJson(path.join(feedbackDir, "open.json"));
     const filesOf = async (folder) => (await user.api(`/api/folders/${folder}/pages?limit=500`)).pages;
@@ -148,7 +148,7 @@ export async function feedbackScenarios(env) {
             return d.entries?.length === 2 ? d : null;
           } catch { return null; }
         }, { timeout: 8000, what: "open.json with the two entries" });
-        assertEq(doc.format, "gamma-feedback-1");
+        assertEq(doc.format, "gamma-annotations-1");
         assert(doc.entries.every((e) => e.file === "main.pdf"), "both under main.pdf");
         const byId = Object.fromEntries(doc.entries.map((e) => [e.id, e]));
         const passage = byId[passageThread.id], figure = byId[areaThread.id];
@@ -272,16 +272,18 @@ export async function feedbackScenarios(env) {
         assertEq(request.threads.length, 3, "its three threads");
         await until(() => fs.existsSync(path.join(feedbackDir, "requests", `${request.id}.json`)), { timeout: 8000, what: "the request file" });
         assertEq(readJson(path.join(feedbackDir, "requests", `${request.id}.json`)).entries.length, 3, "with three entries");
+        // the dialog's entries carry the Send's chip (a thread's own chip is its turn with an agent's)
+        await until(async () => (await d.locator('.feedbackEntry [data-sent="sent"]').count()) === 3, { timeout: 10000, what: "the entries show Sent" });
+        assertEq(await margin.locator(".commentCard .commentTurn").count(), 0, "no thread has a turn");
         await page.keyboard.press("Escape");
         await d.waitFor({ state: "detached" });
-        await until(async () => (await margin.locator('.commentCard [data-sent="sent"]').count()) === 3, { timeout: 10000, what: "the cards show Sent" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });
 
     let token = null;
-    await step("feedback: a script with a feedback token takes the request, rebuilds the paper, replies, resolves and is refused everything else", async () => {
-      token = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Claude Code", scope: "feedback" } });
+    await step("feedback: a script with a token at the Comment level takes the request, rebuilds the paper, replies, resolves and is refused a note's edit", async () => {
+      token = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Claude Code", comment_workspaces: [user.ws] } });
       const agent = async (pathname, { method = "GET", body } = {}) => {
         const r = await fetch(`${server.base}${pathname}`, { method, headers: { Authorization: `Bearer ${token.token}`,
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}) }, body: body !== undefined ? JSON.stringify(body) : undefined });
@@ -297,7 +299,7 @@ export async function feedbackScenarios(env) {
       await sync(link);
       await until(async () => JSON.stringify((await blockOf(main.id, passageBlock)).properties.pdf_position.boundingRect) !== before,
         { timeout: 30000, what: "the passage's highlight placed again" });
-      const doc = (await agent(`/api/feedback?scope=${W}`)).json;
+      const doc = (await agent(`/api/annotations?scope=${W}`)).json;
       const passage = doc.entries.find((e) => e.id === passageThread.id);
       assertEq(passage.source?.file, "sections/method.tex");
       assertEq(passage.source.line, passageLine + 3, "the source line moved by the three lines inserted");
@@ -310,12 +312,10 @@ export async function feedbackScenarios(env) {
         assertEq((await agent(`/api/comments/${th.id}/resolve`, { method: "POST", body: { resolved: true } })).status, 200);
       }
       assertEq((await agent(`/api/feedback/requests/${request.id}/state`, { method: "POST", body: { state: "done" } })).status, 200);
-      // refused: a new thread, a block edit, a comment edit, a reopen
-      assertEq((await agent(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: main.id, body: "a new thread" } })).status, 403);
+      // it comments, as a person may, and changes no note: its own reply it edits, a block edit is refused
       assertEq((await agent(`/api/blocks/${passageBlock}`, { method: "PUT", body: { content: "renamed" } })).status, 403);
       const replyId = (await threadsOf(main.id)).find((th) => th.id === inkThread.id).comments[1].id;
-      assertEq((await agent(`/api/comments/${replyId}`, { method: "PATCH", body: { body: "edited" } })).status, 403);
-      assertEq((await agent(`/api/comments/${passageThread.id}/resolve`, { method: "POST", body: { resolved: false } })).status, 403);
+      assertEq((await agent(`/api/comments/${replyId}`, { method: "PATCH", body: { body: `Done for ${inkThread.id.slice(0, 4)}` } })).status, 200);
     });
 
     await step("feedback: the person hears of the agent's replies and resolves, the dialog says the request is done, and the files follow", async () => {
@@ -378,14 +378,14 @@ export async function feedbackScenarios(env) {
         }, { timeout: 8000, what: "open.json holds it again" });
         assertEq(openJson().entries.find((e) => e.id === passageThread.id).sent, null, "its request row was answered: no Sent");
         await page.locator(".dockWindow:has(.commentsPanel) .segGroup button", { hasText: "Open (2)" }).click();
-        assertEq(await panel.locator(`.commentsPanelRow[data-thread-id="${passageThread.id}"] [data-sent]`).count(), 0, "no chip on the row");
+        assertEq(await panel.locator(`.commentsPanelRow[data-thread-id="${passageThread.id}"] .stateTag`).count(), 0, "no chip on the row");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });
 
     await step("feedback: removing the work folder takes its feedback files with it", async () => {
       await user.api(`/api/folder-links/${link.id}`, { method: "DELETE" });
-      await until(() => !fs.existsSync(feedbackDir), { timeout: 15000, what: ".gamma/feedback gone" });
+      await until(() => !fs.existsSync(feedbackDir), { timeout: 15000, what: ".gamma/annotations gone" });
       assert(fs.existsSync(path.join(paperDir, "main.pdf")), "the paper's own files stay");
       await user.api(`/api/integrations/tokens/${token.id}`, { method: "DELETE" });
     });

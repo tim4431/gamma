@@ -42,6 +42,7 @@ export const PANE_READS = {
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
   integrations: () => ["/integrations/tokens"],
+  ai: ({ signedIn }) => [signedIn && "/computers"],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
   tools: () => ["/ai/search-services"],
   maintenance: () => ["/quota", "/metadata/status"],

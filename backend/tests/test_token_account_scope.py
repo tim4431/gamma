@@ -31,11 +31,12 @@ def owner():
     return c
 
 
-@pytest.mark.parametrize("scope", ["read", "write", "feedback"])
+@pytest.mark.parametrize("scope", ["read", "write", "comment"])
 def test_a_token_never_changes_the_account(owner, scope):
     ws = workspace_of("tas_owner")
     entry = next(e for e in ai_settings.load_provider_entries(account_of("tas_owner")))
-    c = _bearer(create_token(account_of("tas_owner"), ws, f"tok-{scope}", 90, scope=scope)["token"])
+    level = {"scope": "read", "comments": "*", "workspaces": "*"} if scope == "comment" else {"scope": scope}
+    c = _bearer(create_token(account_of("tas_owner"), ws, f"tok-{scope}", 90, **level)["token"])
     pid = entry["id"]
     for method, path, body in (
         ("PUT", f"/api/ai/providers/{pid}", {"base_url": "https://attacker.example/v1"}),

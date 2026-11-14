@@ -1,59 +1,107 @@
 // The chat's computer side, its state (docs/dev/local_agents.md "The chat's
-// computer side"): the owner of the side's part of the chat window, so
-// ChatDock only switches to it. The conversation is the server's: a turn
-// runs on this computer whatever the tab does, the server writes the
-// agent's message as it goes, and the side reads it (GET
-// /api/local-agents/chat) as the page's chat opens, after each action,
-// when the window comes back, and every POLL_MS while a turn is queued or
-// running. Closing the tab stops nothing; Stop is a request of its own.
-import { useCallback, useEffect, useRef, useState } from "react";
+// computer side"): the conversation with a computer's agent picked in the
+// chat, which ChatDock draws through the chat's own transcript and
+// composer. The conversation is the server's: a turn runs on this computer
+// whatever the tab does, the server writes the agent's message as it goes,
+// and the side reads it (GET /api/local-agents/chat) as the bucket's chat
+// opens, after each action, when the window comes back, and every POLL_MS
+// while a turn is queued or running. Closing the tab stops nothing; Stop is
+// a request of its own. `useComputerSide` is what ChatDock reads of it; the
+// plain functions under the imports read and change what History lists of
+// the computer's agents.
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, makeId } from "../../shared/lib/utils";
+import { GammaNavContext } from "../../shared/ui/Widgets";
 import { t } from "../../shared/i18n/i18n.js";
+import { stripFacts } from "../agents.js";
 import {
-  AWAY_POLL_MS, POLL_MS, SOURCES_MAX, answerBody, askPath, awayFrom, chatPath, liveTurn, sourcesBody, turnBody,
+  AWAY_POLL_MS, POLL_MS, SOURCES_MAX, TEXT_MAX, answerBody, askPath, awayFrom, canSend, chatPath, emptyLine, isRemote,
+  lastEnded, liveTurn, modelChoice, modelDisplay, retryOf, shownMessages, sourcesBody, turnBody, workPlace,
 } from "./computerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const post = (body) => ({ method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
+// A bucket with the agent picked for it and the comment thread whose
+// conversation it shows ("" for its own), as one key ("" for no bucket).
+const seatOf = (bucket, agent, thread = "") => (bucket ? `${bucket}\n${agent}\n${thread}` : "");
+const bucketOf = (seat) => seat.split("\n")[0];
+const agentOf = (seat) => seat.split("\n")[1] || "";
+const threadOf = (seat) => seat.split("\n")[2] || "";
 
-// The side's state for the page `pageId` ("" while the side is not shown:
-// nothing is read). `{computer, conversation, read, error, busy, reload,
-// say, send, answer, stop, newChat, history, readHistory, openHistory,
-// deleteHistory, revokeGrants}`:
+// New chat in the bucket (POST /api/local-agents/chat/new): its active
+// conversation with a computer's agent archived, whichever agent it has;
+// throws the server's refusal (a turn of it still to end).
+export function newComputerChat(bucket) {
+  return apiJson(`${API}/local-agents/chat/new`, post({ bucket }));
+}
+
+// The bucket's conversations with the computer's agents, as History lists
+// them (GET /api/local-agents/chat/history): {conversations, active}, the
+// archived ones and the active one, of whichever agent.
+export function computerHistory(bucket) {
+  return apiJson(`${API}/local-agents/chat/history?bucket=${encodeURIComponent(bucket)}`);
+}
+
+// An archived conversation made its bucket's active one, the active one
+// archived; throws the server's refusal (a turn of the active one still to
+// end).
+export function openComputerChat(id) {
+  return apiJson(`${API}/local-agents/chat/history/${encodeURIComponent(id)}/open`, post({}));
+}
+
+// An archived conversation deleted, its session, grants and directory of
+// its own with it.
+export function deleteComputerChat(id) {
+  return apiJson(`${API}/local-agents/chat/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// Where a conversation, active or archived, downloads from.
+export const computerExportPath = (id) => `${API}/local-agents/chat/history/${encodeURIComponent(id)}/export`;
+
+// The side's state for the bucket `pageId` (a page's id, a folder's, or
+// "home"; "" while the side is not shown: nothing is read) with the agent
+// picked for it (`agent`, chat/agents.js: its `name` asked for, its `label`
+// what the words name before the read), or with `thread` the conversation
+// of that comment thread of the page (its Open in chat). `{computer,
+// conversation, read,
+// error, busy, reload, say, send, answer, stop, newChat, revokeGrants}`:
 //   computer      the strip's facts as the server read them ({agent, label,
 //                 ready, problem, folder, folder_id, paused, turn, models,
-//                 grants}, and for another computer's agent {computer,
-//                 online, since, remote: true}), null until read; `models`
-//                 the agent's [{id, label, efforts, effort, default}],
-//                 `grants` the commands allowed in the conversation
-//                 [{command, cwd, host}]
-//   conversation  the page's active conversation ({id, title, agent,
-//                 messages, version}) or null; both are kept with the page
-//                 they are of, so a page switched to never shows the last
-//                 page's
-//   read          whether the page's conversation has been read (or failed)
-//   error         why the page's conversation could not be read, "" once
-//                 it was; reload() reads it again
+//                 grants, dir, session}, and for another computer's agent
+//                 {computer, online, since, remote: true}), null until read;
+//                 `models` the agent's [{id, label, efforts, effort,
+//                 default}], `grants` the commands allowed in the
+//                 conversation [{command, cwd, host}]
+//   conversation  the bucket's active conversation ({id, title, agent,
+//                 messages, version}) or null; both are kept with the
+//                 bucket and the agent they are of, so another one never
+//                 shows the last one's
+//   read          whether the conversation has been read (or failed)
+//   error         why it could not be read, "" once it was; reload()
+//                 reads it again
 //   busy          an action is on its way
 //   send(text, selections, choice) → whether the turn was made, `choice`
-//   the conversation's {model, effort} (computerChat.modelChoice); answer(turnId,
-//   askId, decision, note) answers what the turn asks, throwing a
-//   refusal for the card to say; stop(turnId),
-//   newChat(), openHistory(id), deleteHistory(id) do what they say and read
-//   the conversation again; `history` the archived conversations
-//   ([{id, title, agent, updated_at, turns}], null until readHistory());
+//   the conversation's {model, effort} (computerChat.modelChoice) and, for
+//   a conversation that begins, `dir` where it works (computerChat
+//   workPlace); answer(turnId, askId, decision, note) answers what the turn
+//   asks, throwing a refusal for the card to say; stop(turnId) and
+//   newChat() do what they say and read the conversation again;
 //   revokeGrants() takes back what was allowed in the conversation;
 //   say(text) is the status pill
 // `setStatus` says what failed, naming the agent as the server read it, or
-// before a read has `known` (the vault's label, "Codex").
-export function useComputerChat(pageId, setStatus, known = "") {
-  const [held, setHeld] = useState({ pageId: "", computer: null, conversation: null, read: false, error: "" });
+// before a read as the agent picked.
+export function useComputerChat(pageId, agent, setStatus, thread = "") {
+  const name = agent?.name || "";
+  const known = agent?.label || "";
+  // What is held is kept with the bucket, the agent and the thread it is of
+  // (`seat`), so another bucket, agent or thread never shows the last one's.
+  const seat = seatOf(pageId, name, thread);
+  const [held, setHeld] = useState({ seat: "", computer: null, conversation: null, read: false, error: "" });
   const [busy, setBusy] = useState(false);
-  const [history, setHistory] = useState(null);
   const heldRef = useRef(held);
   heldRef.current = held;
-  const open = useRef(pageId);
-  open.current = pageId;
+  const open = useRef(seat);
+  open.current = seat;
   const status = useRef(setStatus);
   status.current = setStatus;
   // Each read is numbered: only the newest asked lands, and an action's
@@ -64,41 +112,40 @@ export function useComputerChat(pageId, setStatus, known = "") {
   const turnId = useRef("");
 
   const load = useCallback(async () => {
-    const page = open.current;
-    if (!page) return;
+    const key = open.current;
+    if (!key) return;
     const n = ++asked.current;
-    const now = heldRef.current.pageId === page ? heldRef.current : null;
+    const now = heldRef.current.seat === key ? heldRef.current : null;
     const mine = now?.conversation || null;
     try {
-      const answer = await apiJson(`${API}${chatPath(page, mine ? mine.version : null)}`);
+      const answer = await apiJson(`${API}${chatPath(bucketOf(key), mine ? mine.version : null, agentOf(key), threadOf(key))}`);
       if (n !== asked.current) return;
       setHeld((prev) => ({
-        pageId: page, computer: answer.computer || null, read: true, error: "",
-        conversation: answer.same && prev.pageId === page ? prev.conversation : answer.conversation || null,
+        seat: key, computer: answer.computer || null, read: true, error: "",
+        conversation: answer.same && prev.seat === key ? prev.conversation : answer.conversation || null,
       }));
     } catch (err) {
       if (n !== asked.current) return;
-      // A poll that fails keeps what was read, and is tried again; a page
-      // never read says why where its conversation would be.
+      // A poll that fails keeps what was read, and is tried again; a
+      // conversation never read says why where it would be.
       const error = t("Could not load chat: {message}", { message: err.message });
-      setHeld((prev) => (prev.pageId === page && prev.read && !prev.error ? prev
-        : { pageId: page, computer: prev.pageId === page ? prev.computer : null, conversation: null, read: true, error }));
+      setHeld((prev) => (prev.seat === key && prev.read && !prev.error ? prev
+        : { seat: key, computer: prev.seat === key ? prev.computer : null, conversation: null, read: true, error }));
     }
   }, []);
 
   // What an action's answer says of the conversation, kept at once.
-  const keep = useCallback((page, conversation) => {
+  const keep = useCallback((key, conversation) => {
     asked.current++;
-    setHeld((prev) => ({ ...(prev.pageId === page ? prev : { computer: null }), pageId: page, conversation, read: true, error: "" }));
+    setHeld((prev) => ({ ...(prev.seat === key ? prev : { computer: null }), seat: key, conversation, read: true, error: "" }));
   }, []);
 
   useEffect(() => {
     turnId.current = "";
-    setHistory(null);
     load();
-  }, [pageId, load]);
+  }, [seat, load]);
 
-  const state = held.pageId === pageId ? held : { computer: null, conversation: null, read: false, error: "" };
+  const state = held.seat === seat ? held : { computer: null, conversation: null, read: false, error: "" };
   const live = !!pageId && (!!state.computer?.turn || !!liveTurn(state.conversation));
   // A turn waiting for another computer that is away is read less often.
   const every = awayFrom(state.computer) ? AWAY_POLL_MS : POLL_MS;
@@ -117,14 +164,14 @@ export function useComputerChat(pageId, setStatus, known = "") {
     };
   }, [load]);
 
-  // An action on the page's conversation: `busy` meanwhile, its failure
-  // said as `failed` words it, and the conversation read again after.
+  // An action on the conversation: `busy` meanwhile, its failure said as
+  // `failed` words it, and the conversation read again after.
   const act = useCallback(async (run, failed) => {
-    const page = open.current;
-    if (!page) return false;
+    const key = open.current;
+    if (!key) return false;
     setBusy(true);
     try {
-      await run(page);
+      await run(bucketOf(key), key);
       return true;
     } catch (err) {
       status.current?.(failed(err.message || String(err)));
@@ -136,11 +183,12 @@ export function useComputerChat(pageId, setStatus, known = "") {
   }, [load]);
 
   const label = state.computer?.label || known;
-  const send = useCallback((text, selections, choice = null) => act(async (page) => {
+  const send = useCallback((text, selections, choice = null) => act(async (page, key) => {
     if (!turnId.current) turnId.current = makeId();
-    const answer = await apiJson(`${API}/local-agents/chat/turns`, post(turnBody(turnId.current, page, text, selections, choice)));
+    const body = turnBody(turnId.current, page, text, selections, { ...choice, agent: agentOf(key) });
+    const answer = await apiJson(`${API}/local-agents/chat/turns`, post(body));
     turnId.current = "";
-    keep(page, answer.conversation || null);
+    keep(key, answer.conversation || null);
   }, (message) => t("Couldn't send to {agent}: {message}", { agent: label, message })), [act, keep, label]);
 
   // The person's answer to what the turn asks. One taken is left to the
@@ -160,40 +208,10 @@ export function useComputerChat(pageId, setStatus, known = "") {
     await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/stop`, post({}));
   }, (message) => t("Couldn't stop {agent}: {message}", { agent: label, message })), [act, label]);
 
-  const newChat = useCallback(() => act(async (page) => {
-    await apiJson(`${API}/local-agents/chat/new`, post({ page }));
-    keep(page, null);
-    setHistory(null);
+  const newChat = useCallback(() => act(async (page, key) => {
+    await newComputerChat(page);
+    keep(key, null);
   }, (message) => t("Couldn't start a new chat: {message}", { message })), [act, keep]);
-
-  const readHistory = useCallback(async () => {
-    const page = open.current;
-    if (!page) return;
-    try {
-      const answer = await apiJson(`${API}/local-agents/chat/history?page=${encodeURIComponent(page)}`);
-      if (open.current === page) setHistory(answer.conversations || []);
-    } catch (err) {
-      if (open.current === page) setHistory([]);
-      status.current?.(t("Chat history: {message}", { message: err.message }));
-    }
-  }, []);
-
-  const openHistory = useCallback((id) => act(async (page) => {
-    const answer = await apiJson(`${API}/local-agents/chat/history/${encodeURIComponent(id)}/open`, post({}));
-    keep(page, answer.conversation || null);
-    setHistory(null);
-  }, (message) => t("Couldn't open the conversation: {message}", { message })), [act, keep]);
-
-  // The row leaves the list at once; a refusal has the list read again.
-  const deleteHistory = useCallback((id) => act(async () => {
-    setHistory((rows) => (rows ? rows.filter((r) => r.id !== id) : rows));
-    try {
-      await apiJson(`${API}/local-agents/chat/history/${encodeURIComponent(id)}`, { method: "DELETE" });
-    } catch (err) {
-      setHistory(null);
-      throw err;
-    }
-  }, (message) => t("Couldn't delete the conversation: {message}", { message })), [act]);
 
   // Allowed in this chat taken back: the conversation's commands ask again.
   const revokeGrants = useCallback(() => act(async () => {
@@ -207,7 +225,156 @@ export function useComputerChat(pageId, setStatus, known = "") {
 
   return {
     computer: state.computer, conversation: state.conversation, read: state.read, error: state.error, busy,
-    reload: load, say, send, answer, stop, newChat, history, readHistory, openHistory, deleteHistory, revokeGrants,
+    reload: load, say, send, answer, stop, newChat, revokeGrants,
+  };
+}
+
+// The model and effort chosen for each conversation in this tab, by the
+// bucket, the agent and the conversation's id ("" before its first turn); a
+// turn's message keeps what it ran with, so a reopened conversation shows
+// it.
+const picks = new Map();
+const pickKey = (bucket, agent, conversation) => `${bucket}\n${agent}\n${conversation?.id || ""}`;
+// The directory each bucket's next conversation is to work in (an offered
+// one's id, "" for one of its own), until its first turn.
+const places = new Map();
+
+// What ChatDock reads of the side for the bucket `bucket` ("" while no
+// computer's agent is the one shown: nothing is read) and the agent picked
+// (`agent`), with `page` whether the bucket is a page, `dirs` the
+// directories this computer offers, and the PDF passages selected (App's,
+// which go with the next message and are cleared once the server took it):
+//   chat        useComputerChat's state
+//   info        the strip's facts: the server's, else the picked agent's
+//               (chat/agents.js stripFacts) until its read lands
+//   label       the agent's name; `where` the other computer's that runs
+//               it ("" for this one)
+//   messages    the conversation as the transcript draws it (shownMessages)
+//   stopId      the turn Stop stops: the conversation's own, or the one the
+//               server says is queued for it before the conversation shows
+//               it; "" for none, `working` while there is one (New chat and
+//               History's other conversations wait for it)
+//   ready(text) whether `text` can go now; send(text) → whether the turn
+//               was made
+//   retry(i)    Retry for the failed turn at the transcript's index `i`,
+//               null when it is not the newest or nothing could go now
+//   chip        the model chip's props (chat/AgentChip.jsx: label, models,
+//               model, onModel, sections) and `text`, what it reads: the
+//               agent's models and efforts, the choice the conversation's
+//   grants      the Allowed in this chat chip's props (GrantChip), null
+//               while nothing is allowed
+//   place, pickPlace   where a conversation that begins works (workPlace)
+//   sources     the passages' source lines (usePassageSources)
+//   links       what a changed file's link resolves through (PathLink's
+//               context), null outside a work folder
+//   empty       {text, again} the empty transcript's line, `again` when it
+//               says why the conversation could not be read (Try again);
+//               null until the read
+//   thread      the comment thread whose conversation the side shows
+//               (`thread`, chatSide.js useChatThread), "" for the bucket's
+//               own: nothing is sent from the chat then (its thread's
+//               replies are its messages)
+export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSelections = [], setPdfSelections, setStatus,
+  thread = "" }) {
+  const chat = useComputerChat(bucket, bucket ? agent : null, setStatus, thread);
+  const info = chat.computer || stripFacts(agent);
+  const label = info?.label || agent?.label || "";
+  const conversation = chat.conversation;
+  const messages = useMemo(() => shownMessages(conversation, info), [conversation, info]);
+  const [, redraw] = useState(0); // `picks` and `places` keep the choices
+  const key = pickKey(bucket, agent?.id || "", conversation);
+  const models = info?.models || [];
+  const choice = modelChoice(models, conversation, picks.get(key) || null);
+  const pickModel = (next) => {
+    picks.set(key, next);
+    redraw((n) => n + 1);
+  };
+  // Where a conversation that begins works, once the server said where it
+  // stands (a vault's own directory is the vault's).
+  const place = chat.computer ? workPlace(chat.computer, conversation, dirs, places.get(bucket) || "") : null;
+  const pickPlace = (dir) => {
+    places.set(bucket, dir);
+    redraw((n) => n + 1);
+  };
+  const how = () => ({ ...choice, ...(place?.pick ? { dir: place.value } : {}) });
+  const remote = isRemote(info);
+  const where = remote ? String(info.computer || "") : "";
+  // The source lines need the window to be the computer the folder is on.
+  const sources = usePassageSources(remote || !page ? "" : bucket, pdfSelections, lastEnded(conversation));
+  const stopId = liveTurn(conversation)?.turn_id || chat.computer?.turn?.turn_id || "";
+  // Off until the conversation was read: one that failed may hold a turn.
+  const landed = chat.read && !chat.error;
+  const ready = (text) => landed && !thread && !chat.busy && canSend(info, conversation, text);
+
+  async function send(text) {
+    if (!ready(text)) return false;
+    const sent = await chat.send(String(text).slice(0, TEXT_MAX), pdfSelections, how());
+    if (sent) {
+      setPdfSelections([]);
+      // A first turn's picks are its conversation's now, and a new chat
+      // starts from the agent's default and no folder.
+      if (!conversation) {
+        picks.delete(key);
+        places.delete(bucket);
+      }
+    }
+    return sent;
+  }
+
+  // Retry on a failed turn, the newest: the person's message again, with
+  // its passages, while a message could go.
+  const retry = (i) => {
+    const again = retryOf(conversation, conversation?.messages?.[i]);
+    if (!again || !ready(again.text)) return null;
+    return () => chat.send(again.text, again.selections, how());
+  };
+
+  // A changed file's link opens it (PathLink): its path is the work
+  // folder's (the server's `folder_id`), resolved from the folder's top.
+  const nav = useContext(GammaNavContext);
+  const folderId = chat.computer?.folder_id || "";
+  const { say } = chat;
+  const links = useMemo(() => (folderId && nav?.openPage ? {
+    pageId: bucket,
+    resolve: async (href) => {
+      try {
+        const d = await apiJson(`${API}/folders/${encodeURIComponent(folderId)}/at?${new URLSearchParams({ path: href })}`);
+        return d.pages || [];
+      } catch {
+        return [];
+      }
+    },
+    open: (id) => nav.openPage(id),
+    say,
+  } : null), [folderId, nav, bucket, say]);
+
+  const empty = !conversation?.messages?.length && chat.error ? { text: chat.error, again: true }
+    : chat.read ? { text: thread ? t("This comment thread has no conversation of yours with {agent}.", { agent: label })
+      : emptyLine(info, label, where, place, page), again: false } : null;
+
+  // The composer's model chip (chat/AgentChip.jsx): the agent's models, its
+  // efforts as a section, the choice the conversation's.
+  const efforts = choice.shown?.efforts || [];
+  const chip = {
+    label: t("{agent}'s model", { agent: label }), text: [label, modelDisplay(choice)].filter(Boolean).join(" · "),
+    models: models.map((m) => [m.id, m.label || m.id]), model: choice.model || choice.shown?.id || "",
+    onModel: (model) => pickModel({ model, effort: choice.effort }),
+    sections: efforts.length ? [{
+      label: t("Reasoning effort"), value: choice.effort, onChange: (effort) => pickModel({ model: choice.model, effort }),
+      options: [["", choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default")],
+        ...efforts.map((ef) => [ef, ef])],
+    }] : [],
+  };
+  // The commands allowed in this chat (Gamma AI's GrantChip), null for none.
+  const allowed = (chat.computer?.grants || []).map((g) => g.command).join(", ");
+  const grants = allowed ? {
+    list: allowed, onRevoke: chat.revokeGrants, disabled: chat.busy,
+    title: t("{agent} runs these commands without asking in this chat: {list}. Click to make it ask again.", { agent: label, list: allowed }),
+  } : null;
+
+  return {
+    chat, info, label, where, messages, stopId, working: !!stopId, ready, send, retry, chip, grants,
+    place, pickPlace, sources, links, empty, thread,
   };
 }
 

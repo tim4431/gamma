@@ -100,7 +100,7 @@ export async function httpsScenarios(env) {
     await alice.file(pg.id, { folders: ["Lattice"] });
     const folderId = await alice.folder("Lattice");
     const read = await alice.api("/api/integrations/tokens", { method: "POST",
-      body: { name: "Gamma desktop: Lattice synced vault", scope: "read", expires_in_days: 365 } });
+      body: { name: "Gamma desktop: Lattice synced folder", scope: "read", expires_in_days: 365 } });
     const dir = path.join(disk, "Lattice");
     const vaultBody = { folder: folderId, path: dir, notes: true, pull: true, push: "off", remote_url: ip,
       workspace: alice.ws, token: read.token, token_id: read.id };

@@ -121,7 +121,7 @@ def test_a_work_folder_made_to_choose_its_files_runs_no_round_until_they_are_cho
     assert folder_links.run_page(link["id"], new_block_id()) is False
     owner.post(f"{url}/relink", json={"path": str(root)}).raise_for_status()
     r = owner.post("/api/folder-links/open", json={"path": str(root / "main.pdf")})
-    assert r.status_code == 400 and r.json()["detail"] == "Choose what this work folder tracks first."
+    assert r.status_code == 400 and r.json()["detail"] == "Choose what this synced folder tracks first."
     assert rounds == [] and vault_store.files(link["id"]) == {}
     assert "not chosen yet" in folder_links._halted(folder_links.get_link(link["id"]))
     assert owner.get(url).json()["choosing"] is True
@@ -149,7 +149,7 @@ def test_cancelling_a_work_folder_takes_back_what_making_it_made(owner, disk, ro
     ws = workspace_of(OWNER)
     root = disk / "Cancelled"
     link = _choosing(owner, root, {"a.md": "a\n"})
-    assert owner.delete(f"/api/folder-links/{link['id']}").json() == {"ok": True}
+    assert owner.delete(f"/api/folder-links/{link['id']}").json() == {"ok": True, "kept": 0, "trashed": 0}
     assert folder_links.get_link(link["id"]) is None and vault_store.files(link["id"]) == {}
     assert not (root / vault_disk.MARKER_DIR).exists() and not (root / ignore_rules.NAME).exists()
     assert (root / "a.md").read_text(encoding="utf-8") == "a\n"
@@ -365,7 +365,7 @@ def test_the_preview_counts_what_a_selection_tracks_and_what_leaves(owner, disk,
     seen = _preview(owner, link)
     assert seen["over_cap"] is True and seen["cap"] == 3
     r = _save(owner, link)
-    assert r.status_code == 400 and "more than a work folder tracks" in r.json()["detail"]
+    assert r.status_code == 400 and "more than a synced folder tracks" in r.json()["detail"]
     r = owner.post(f"/api/folder-links/{link['id']}/selection/preview", json={"selection": {"changes": [{"on": True}]}})
     assert r.status_code == 400
 
@@ -439,7 +439,7 @@ def test_a_file_its_work_folder_does_not_track_opens_from_no_page(owner, disk, r
     _sync(owner, link["id"])
     _put(root / "drafts" / "x.pdf", _pdf("a draft"))
     r = owner.post("/api/folder-links/open", json={"path": str(root / "drafts" / "x.pdf")})
-    assert r.status_code == 400 and "is not tracked by its work folder" in r.json()["detail"]
+    assert r.status_code == 400 and "is not tracked by its synced folder" in r.json()["detail"]
     _put(root / "later.pdf", _pdf("tracked, not read yet"))
     r = owner.post("/api/folder-links/open", json={"path": str(root / "later.pdf")})
     assert r.status_code == 200 and r.json()["page"] == _page_of(link, "later.pdf")

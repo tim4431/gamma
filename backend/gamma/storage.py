@@ -68,7 +68,7 @@ from .work_folders.library import work_folder_of
 # leaves them out (``held=False``), and so the document of a work folder's
 # file read in place that is no library document: a build on this computer,
 # whose bytes are stored only while a comment thread on it is open
-# (gamma/feedback/kept.py), never leaves it, where a library file's stored
+# (gamma/annotations/kept.py), never leaves it, where a library file's stored
 # versions do. A name is the whole ``<stem>.<ext>`` run: what follows it
 # ("….png." ending a sentence, "?ws=…", "#page=2") is not part of it.
 UPLOAD_REF_RE = re.compile(r"/api/uploads/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})(?![0-9A-Za-z])")
@@ -134,7 +134,7 @@ def _position_ids(props: dict, held: bool = True):
     and ``UNSTORED`` name none. A region of a picture names none either: its
     ``image_position.hash`` only says which version it was drawn on, and the
     version a thread on it was commented on is held by the thread's anchor
-    (gamma/feedback/kept.py)."""
+    (gamma/annotations/kept.py)."""
     position = props.get("pdf_position") if held else None
     position = position if isinstance(position, dict) else {}
     prev = position.get("prev")
@@ -691,7 +691,7 @@ def linked_path(ws: str, name: str) -> Path | None:
     keeps links (gamma/linked_files.py): the first of its paths whose size
     and time are as recorded, so what is read is what was hashed, whether a
     copy is stored too or not (the disk is the version the page shows: a
-    feedback thread's source line is read beside it, gamma/feedback). One
+    comment thread's source line is read beside it, gamma/annotations). One
     whose stat moved reads as nothing and its listeners hear of it
     (``linked_moved``); one that is gone reads as nothing and is the page's
     missing file. Costs a query, and nothing where links are not kept. No

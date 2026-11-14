@@ -491,7 +491,7 @@ class _Batch:
         parent = op.get("parent") if op["op"] == "insert" else tree.parent.get(folder)
         below = tree.subtree(folder)
         if tree.work_of(parent) or any(w != folder and w in below for w in tree.roots()):
-            raise OpError(403, "A work folder is never inside another work folder, nor around one.", conflict=LOCKED)
+            raise OpError(403, "A synced folder is never inside another synced folder, nor around one.", conflict=LOCKED)
 
     def work_patch(self, page_id: str, before: dict, patch: dict | None, content: str | None) -> dict | None:
         """A page root's ``set`` held to the work-folder rule
@@ -732,9 +732,13 @@ class _Batch:
             # A folder's conversations are never dropped with it, whichever
             # path deletes it (DELETE /folders/{id}, or a tree batch as a
             # mirror or the iPad relays one): filed into the library chat's
-            # history in this transaction. Local import: the router imports ops.
+            # history in this transaction, and so are its conversations with
+            # a computer's agent. Local imports: the router imports ops, the
+            # agents' package is loaded where it is used.
+            from .local_agents import chats as agent_chats
             from .routers.chats import file_into_home
             self.chats_filed.update(file_into_home(self.conn, [r[0] for r in rows]))
+            agent_chats.file_into_home(self.conn, [r[0] for r in rows])
         self.applied.append({"op": "delete", "id": block_id})
 
     def merge(self, op: dict) -> None:
@@ -924,6 +928,27 @@ def _document_patch(props: dict, *, patch: bool = True) -> dict:
         return document_props(props, patch=patch)
     except ValueError as e:
         raise OpError(400, str(e))
+
+
+SERVER_KEYS = ("agent",)  # properties only the server's own writers set (agents.stamp)
+
+
+def client_ops(ops: list[dict], client: str) -> list[dict]:
+    """A request's ops with the server's keys (``SERVER_KEYS``) taken out of
+    each insert's and set's props: a block's ``agent`` stamp is written by
+    the server's writers (an agent's create_block, the hand's highlight),
+    never by a client's batch; its removal (None in a set) passes. The
+    mirror's batch (``sync``, from an integration token only:
+    ``auth.writer_client``) keeps them, as it keeps every property."""
+    if work_filing.writer_of(client) == "mirror":
+        return ops
+    for op in ops:
+        props = op.get("props")
+        if op.get("op") in ("insert", "set") and isinstance(props, dict):
+            for key in SERVER_KEYS:
+                if props.get(key) is not None:
+                    props.pop(key)
+    return ops
 
 
 def _log(conn, page_id: str, actor: str, client: str, now: str, applied: list, after: int = 0, *,
@@ -1383,8 +1408,8 @@ def _purge(conn, page_id: str, actor: str) -> list:
     conn.execute("DELETE FROM page_ops WHERE page_id = ?", (page_id,))
     conn.execute("DELETE FROM chats WHERE bucket = ?", (page_id,))
     conn.execute("DELETE FROM chat_history WHERE bucket = ?", (page_id,))
-    conn.execute("DELETE FROM computer_chats WHERE page_id = ?", (page_id,))
-    conn.execute("DELETE FROM computer_chat_runs WHERE page_id = ?", (page_id,))
+    conn.execute("DELETE FROM computer_chats WHERE bucket = ?", (page_id,))
+    conn.execute("DELETE FROM computer_chat_runs WHERE bucket = ?", (page_id,))
     if not trashed:
         touch_page(conn, page_id, actor, "deleted")
     return rows

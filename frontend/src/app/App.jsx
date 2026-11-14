@@ -245,8 +245,10 @@ import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
-import { addsToLibrary, baseName, carriesToServer, computerAgent, isOpenedFile, keeperAgent, keeperComputer, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
-import { sideMark } from "../chat/computer/computerChat.js";
+import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
+import { chatAgents, commentAgents } from "../chat/agents.js";
+import { useLocalAgents } from "../chat/useLocalAgents.js";
+import { showThreadChat } from "../chat/computer/chatSide.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -296,10 +298,12 @@ import { copyDocument, documentFileUrl, documentViewerUrl, fileHash, inPlace, is
 import { isLibraryPdf, workFolderOf } from "../documents/library.js";
 import { mergeKnown } from "../explorer/knownPages.js";
 import { fileRules, filingTargets, folderRules, refusalText, treeOf, workOf } from "../explorer/workFolders.js";
-import { directoryMoves, filingOf, libraryCopy, listDirs, listRows, pagesMenu, workCounts } from "../explorer/workFolderActions.js";
+import { directoryMoves, filingOf, libraryCopy, listRows, pagesMenu, workCounts } from "../explorer/workFolderActions.js";
 import { useWorkFolderActions } from "../explorer/useWorkFolderActions.jsx";
-import FolderList from "../explorer/FolderList.jsx";
-import { useFolderRows, useWorkSort } from "../explorer/useFolderRows.js";
+import FolderTree from "../explorer/FolderTree.jsx";
+import FileThemeIcon from "../shared/ui/FileIcon.jsx";
+import { folderRows } from "../explorer/fileTree.js";
+import { useFolderTree } from "../explorer/useFolderTree.js";
 import { useSummaries } from "../explorer/useSummaries.js";
 import { layoutKeeping, useFilesWindow } from "../explorer/useFilesWindow.js";
 import { useFilesTree } from "../explorer/useFilesTree.js";
@@ -359,6 +363,8 @@ const FileSourceDialog = lazySurface(() => import("../vault/FileSourceDialog"));
 const FolderPickerDialog = lazySurface(() => import("../vault/FolderPickerDialog"));
 // Choose files…, what a work folder tracks (explorer/TrackDialog.jsx), while open.
 const TrackDialog = lazySurface(() => import("../explorer/TrackDialog"));
+// Detach of a synced folder (explorer/DetachDialog.jsx), while open.
+const DetachDialog = lazySurface(() => import("../explorer/DetachDialog"));
 // The Files window (explorer/FilesWindow.jsx): the folders and the work
 // folders' files as a tree, with the View menu.
 const FilesWindow = lazySurface(() => import("../explorer/FilesWindow.jsx"));
@@ -1492,7 +1498,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const clone = (list) => (list || []).map((b) => {
       const id = makeId();
       ids.set(b.id, id);
-      const { zotero_readonly: _readonly, zotero_author: _author, ...properties } = b.properties || {};
+      // a block an agent made is the copier's in the copy (blockModel.js freshCopy)
+      const { zotero_readonly: _readonly, zotero_author: _author, agent: _agent, ...properties } = b.properties || {};
       return { ...b, id, properties, children: clone(b.children) };
     });
     const remap = (list) => {
@@ -3001,15 +3008,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // posts nor takes down the "Opening…" of the one the reader is waiting on.
   const openSeqRef = useRef(0);
   // The pages the listing does not carry (docs/dev/work_folders.md): the
-  // open work folder's directory, its files a page of rows at a time
-  // (explorer/useFolderRows.js), and the summaries of the files open in a
+  // open work folder's folder view, the files of its directory and of each
+  // directory open in it a page of rows at a time (explorer/useFolderTree.js),
+  // and the summaries of the files open in a
   // tab, viewed lately or open now (explorer/useSummaries.js),
   // each read again with the listing. `knownBlocks` is every page row the
   // app has, the listing's first; `pageBlocks` below derives from it.
   const workFolder = folderFilter && !labelFilter ? workOf(workTree, folderFilter) : "";
-  const workSort = useWorkSort();
-  const folderRows = useFolderRows({ folderId: workFolder ? folderFilter : "", sort: workSort.sort, order: workSort.order, version: libTree });
-  const listingIds = useMemo(() => new Set([...homeBlocks, ...folderRows.rows].map((b) => b.id)), [homeBlocks, folderRows.rows]);
+  const folderTree = useFolderTree({ folderId: workFolder ? folderFilter : "", libTree, version: libTree });
+  const listingIds = useMemo(() => new Set([...homeBlocks, ...folderTree.rows].map((b) => b.id)), [homeBlocks, folderTree.rows]);
   const summaries = useSummaries({
     ids: [...openTabs.map((tab) => tab.id), ...recentViews.map((r) => r.id), focusedBlockId],
     known: (id) => listingIds.has(id), version: libTree, enabled: !shareMode && !!authUser?.user,
@@ -3019,19 +3026,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const files = useFilesWindow({
     scopeKey: authUser?.user && wsId ? `${authUser.user}@${wsId}` : "", libTree, enabled: !shareMode && !!authUser?.user,
   });
-  const knownBlocks = useMemo(() => mergeKnown(homeBlocks, [...folderRows.rows, ...summaries.rows, ...files.known]),
-    [homeBlocks, folderRows.rows, summaries.rows, files.known]);
+  const knownBlocks = useMemo(() => mergeKnown(homeBlocks, [...folderTree.rows, ...summaries.rows, ...files.known]),
+    [homeBlocks, folderTree.rows, summaries.rows, files.known]);
   // A rename or a delete made here, on every row the app holds of the page,
   // the Files window's too (filesTree, made further down: these run on an
   // action, never while rendering).
   const patchKnown = (id, fields) => {
-    folderRows.patch(id, fields); summaries.patch(id, fields); files.patch(id, fields); filesTree.dirs.patch(id, fields);
+    folderTree.dirs.patch(id, fields); summaries.patch(id, fields); files.patch(id, fields); filesTree.dirs.patch(id, fields);
   };
-  const dropKnown = (ids) => { folderRows.drop(ids); summaries.drop(ids); files.forget(ids); filesTree.dirs.drop(ids); };
-  // The format of the document each known page carries ("" for none), for
-  // a tab's kind icon (tabs store only id, title and pinned).
-  const tabKinds = useMemo(() => new Map(knownBlocks.map((b) => [b.id, pageDocument(b)?.format || ""])), [knownBlocks]);
-  const tabKindOf = useCallback((id) => tabKinds.get(id) || "", [tabKinds]);
+  const dropKnown = (ids) => { folderTree.dirs.drop(ids); summaries.drop(ids); files.forget(ids); filesTree.dirs.drop(ids); };
+  // The format of the document each known page carries ("" for none) and a
+  // synced folder's file's name, for a tab's kind icon (tabs store only id,
+  // title and pinned).
+  const tabKinds = useMemo(() => new Map(knownBlocks.map((b) => [b.id, {
+    format: pageDocument(b)?.format || "", file: workFolderOf(b) ? b.properties?.file_name || "" : "",
+  }])), [knownBlocks]);
+  const tabKindOf = useCallback((id) => tabKinds.get(id) || null, [tabKinds]);
 
   // Background tasks (tasks/useTasks.js, docs/dev/tasks.md): the server's
   // jobs — exports, backups, restores, imports, the search indexer — and
@@ -3364,7 +3374,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     enterNewBlock, setEnterNewBlock, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
-    inboxSystemNotifications, setInboxSystemNotifications,
+    inboxSystemNotifications, setInboxSystemNotifications, commentSendTo, setCommentSendTo,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, highlightPresets, setHighlightPresets,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
@@ -3477,7 +3487,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
-    openPageChat: (id) => (id === focusedBlockId ? showChat() : openBlock(id, { then: "ask" })),
+    // a page's chat, or a folder's or the library's (`home`) in the library's view
+    openPageChat: (id) => {
+      if (id !== "home" && !libTree.folders.has(id)) return id === focusedBlockId ? showChat() : openBlock(id, { then: "ask" });
+      if (focusedBlockId) goHome(true, true);
+      openFolder(id === "home" ? "" : id);
+      showChat();
+    },
   });
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
@@ -4897,22 +4913,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const vaultState = vault.state;
   const vaultConflicts = vaultConflictsPath(vaultState);
   const vaultConflictCount = vaultState?.vault?.conflicts || 0;
-  // The work folder's agent on this computer that the maker names in a
-  // comment (`@codex`, vaultState.js mentionAgent), else, in any window,
-  // the agent of the computer that keeps a work folder of the page's server
-  // (keeperAgent: "Codex on TIM-PC"): the comment fields' `links.agent`,
-  // never MentionContext, which reaches the notes.
+  // The agents the chat talks to (chat/agents.js chatAgents): Gamma AI, the
+  // agents this computer runs that the account turned on (GET
+  // /api/local-agents, chat/useLocalAgents.js), or on a page of a work
+  // folder another computer keeps, that computer's. The comment fields'
+  // `links.agents` are those a comment on the page can be sent to (its
+  // Send to tick and `@codex`, commentAgents: the chat's computer agents,
+  // "Codex on TIM-PC" or this computer's), never MentionContext, which
+  // reaches the notes; `links.sendTo` the tick as the person left it last.
   const pageComputers = pageComputer.computers;
-  const commentAgent = useMemo(() => (IS_DESKTOP ? mentionAgent(vaultState) : null) || keeperAgent(pageComputers),
-    [vaultState, pageComputers]);
-  // The same agent for the chat's computer side (vaultState.js computerAgent,
-  // else keeperComputer: the maker's messages on the page's server run on
-  // the computer that keeps the work folder).
-  const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null) || keeperComputer(pageComputers),
-    [vaultState, pageComputers]);
-  // Whether that agent works or waits for the person, for the chat's side switch (sideMark).
-  const chatComputerMark = useMemo(() => sideMark(chatComputer, tasks.jobs, focusedBlockId),
-    [chatComputer, tasks.jobs, focusedBlockId]);
+  // read once the workspace is chosen: an agent another account lends is of a workspace (`lent`)
+  const localAgents = useLocalAgents(!shareMode && !!authUser?.user && !authUser?.is_guest && wsReady);
+  const chatAgentList = useMemo(() => chatAgents({
+    aiInfo, models: providerModels(aiInfo?.models, aiProvider), local: localAgents, computers: pageComputers,
+  }), [aiInfo, aiProvider, localAgents, pageComputers]);
+  const commentAgentList = useMemo(() => commentAgents(chatAgentList), [chatAgentList]);
+  const commentSend = useMemo(() => ({ ticked: commentSendTo, remember: setCommentSendTo }), [commentSendTo, setCommentSendTo]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept
@@ -5276,6 +5292,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // document), flashed, and the
   // popover open on the thread. A note's thread brings the notes over a
   // phone's PDF tab (showInNotes), so the note it is about shows under it.
+  // A thread's Open in chat (comments/Thread.jsx): its page's chat on the
+  // reader's conversation of the thread with its agent
+  // (chat/computer/chatSide.js showThreadChat), where its asks are answered.
+  function openThreadChat(thread) {
+    showThreadChat(thread.page_id, thread.id, thread.agent_chat?.agent || "");
+    if (thread.page_id === focusedBlockId) showChat();
+    else openBlock(thread.page_id, { then: "ask" });
+  }
   function showThread(thread) {
     if (thread.block_id !== focusedBlockId) {
       if (anchorOf(treeById.get(thread.block_id), positionKeyOf(doc))) landOnBlock(thread.block_id);
@@ -5882,7 +5906,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // survives the swap). Over the op-log poll (me.via "poll") it would land
     // only with the next read, after reveal() looked for the block.
     setAiLive((live) => (live && (live.tool === "create_block" || live.blockId === a.block_id) ? null : live));
-    if (a.block_id) markAiBlock(a.block_id, a.kind === "create" ? "create" : a.kind === "move" ? "move" : "edit", 6000);
+    const made = a.kind === "create" || a.kind === "highlight";
+    if (a.block_id) markAiBlock(a.block_id, made ? "create" : a.kind === "move" ? "move" : "edit", 6000);
     const reveal = () => {
       if (!a.block_id) return;
       requestAnimationFrame(() => {
@@ -6143,7 +6168,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } else if (stopped.length) {
         setStatus(t("Upload stopped: {stopped}", { stopped: stopped.join(", ") }));
       }
-      if (besideWork && done.length && !failed.length) setStatus(t("Uploaded to the library: a work folder's files come from its directory."));
+      if (besideWork && done.length && !failed.length) setStatus(t("Uploaded to the library: a synced folder's files come from its directory."));
       // Runs after the upload/import UI work and never delays its completion.
       queueMetadataForUploads(pdfDone);
     } finally {
@@ -6867,9 +6892,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (listed) prefetchFamily(blockId);
     // The pane its document gets, and the margin the PDF's and a picture's
     // threads stand in, fetched as the page starts to open.
-    const tabPane = viewerOf(tabKinds.get(blockId));
+    const tabFormat = tabKinds.get(blockId)?.format;
+    const tabPane = viewerOf(tabFormat);
     if (VIEWERS[tabPane]?.margin) preloadCommentMargin();
-    preloadViewer(tabKinds.get(blockId));
+    preloadViewer(tabFormat);
     // Until the tree lands the page on screen stays, and "Opening…" shows
     // only once the open has kept the reader waiting.
     const switching = !!focusedBlockId;
@@ -9520,12 +9546,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [openedReady]);
   // The props a folder card shares between the pinned strip and the library
   // grid: glyph, title, count, selection/drag/drop behaviour and the context
-  // menu. Each site adds its own className, tip, time and extras.
+  // menu. Each site adds its own className, tip, time and extras. A synced
+  // folder's own card wears the theme's root folder and names the computer
+  // that keeps it (work.keeperOf), or says it is a synced folder.
   function folderCardProps(f) {
+    const synced = !!libTree.folders.get(f)?.mark;
     return {
-      glyph: <FolderGlyph />,
+      glyph: synced ? <FileThemeIcon root /> : <FolderGlyph />,
       title: libTree.folders.get(f)?.name,
-      kind: "Folder",
+      kind: synced ? work.keeperOf(f)?.text || t("Synced folder") : "Folder",
       count: folderMeta[f]?.count || 0,
       labelMode: fileLabels,
       checked: selecting && selectedFolders.has(f),
@@ -9649,8 +9678,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The home view's own pages: a sub-page is reached through its parent
   // (the crumbs, Pages inside, a link), so the listing, the root feed and
   // the folder and label counts leave it out, and so they do a work
-  // folder's file not in the library (`_listed`), which its directory lists
-  // (explorer/FolderList.jsx), and so they do a row read beside the listing
+  // folder's file not in the library (`_listed`), which its folder view lists
+  // (explorer/FolderTree.jsx), and so they do a row read beside the listing
   // (a tab's summary): the library draws what its last read carried, none
   // when that read failed. Tabs, recents and the pinned strip keep every
   // page; the pickers the listed ones and those of the tabs, recents and
@@ -9669,7 +9698,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // renames, and whether it is in the library.
   const work = useWorkFolderActions({
     tree: workTree, pages: pagesById, focusedId: focusedBlockId, focusedBlock, vault, setStatus, confirm: setConfirmBox, openPage, tasks,
-    owner: !shareMode && actingRole(workspace) === "owner",
+    menuFolder: homeMenu?.kind === "folder" ? homeMenu.id : "", listing: libTree, signedIn: !shareMode && !!authUser?.user && !authUser?.is_guest,
     reload: async (ids) => {
       await fetchHomeBlocks();
       if (ids.includes(focusedBlockIdRef.current)) loadBlocksForBlock(focusedBlockIdRef.current);
@@ -10055,12 +10084,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   ) : libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
     <div className="empty homeEmpty" ref={homeEmptyRef}>{homeEmptyText}</div>
   ) : null);
-  // A work folder's directory (docs/dev/work_folders.md "The folder's list
-  // view"), shown as a list whatever the library's view: its directories by
-  // name with the files below each, then the files of the page of rows read
-  // (explorer/FolderList.jsx), which the filter box narrows by name.
-  const workDirs = workFolder ? listDirs(levelFolders, workTree, folderMeta) : [];
-  const workRows = useMemo(() => listRows(folderRows.rows, pagesById, homeQuery), [folderRows.rows, pagesById, homeQuery]);
+  // A work folder's directory (docs/dev/work_folders.md "The folder view"),
+  // shown as a tree whatever the library's view: its directories by name,
+  // each opening in place, then the files of each directory open, which the
+  // filter box narrows by name (explorer/FolderTree.jsx), and the page rows
+  // of those files.
+  const workTreeRows = useMemo(() => (workFolder ? folderRows({
+    folder: folderFilter, libTree, workTree, folderMeta, dirs: folderTree.dirs, expanded: folderTree.expanded, query: homeQuery,
+  }) : []), [workFolder, folderFilter, libTree, workTree, folderMeta, folderTree.dirs, folderTree.expanded, homeQuery]);
+  const workRows = useMemo(() => listRows(workTreeRows, pagesById), [workTreeRows, pagesById]);
   // Timestamp shown on a library card and in the list's date column follows
   // the active sort: sorted by view time → viewed (falling back to modified,
   // same as the sort), by added → created; modified otherwise (incl. Title
@@ -10089,9 +10121,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     );
   };
   // Page-shaped view of the visible slice, in the order it is drawn, which a
-  // Shift+click ranges over: a work folder's rows in its list view.
+  // Shift+click ranges over: a work folder's files in its folder view.
   const homeVisiblePages = useMemo(
-    () => (workFolder ? workRows : homeVisibleItems.filter((it) => it.kind === "page").map((it) => it.block)),
+    () => (workFolder ? [...workRows.values()] : homeVisibleItems.filter((it) => it.kind === "page").map((it) => it.block)),
     [workFolder, workRows, homeVisibleItems]
   );
   // Pinned papers — shown as a favorites strip at the library root. Most
@@ -10209,7 +10241,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // active card's target; none on a phone. The handlers reach App's latest
   // through a ref, so the value changes only with what the cards show.
   const marginFns = useRef(null);
-  marginFns.current = { commentLabels, openBlockLink, copyThreadLink, onCacheRef, commentSignIn, openThread };
+  marginFns.current = { commentLabels, openBlockLink, copyThreadLink, onCacheRef, commentSignIn, openThread, openThreadChat };
   const commentMargin = useMemo(() => (commentsOn && !isPhone ? {
     threadsByBlock: comments.threadsByBlock,
     target: threadPop?.margin ? threadPop : null,
@@ -10220,7 +10252,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     labelsFor: (body) => marginFns.current.commentLabels(body),
     links: {
       pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache,
-      onCacheRef: (...args) => marginFns.current.onCacheRef(...args), agent: commentAgent,
+      onCacheRef: (...args) => marginFns.current.onCacheRef(...args), agents: commentAgentList, sendTo: commentSend,
+      onOpenChat: (thread) => marginFns.current.openThreadChat(thread), onStopTurn: comments.stopTurn,
     },
     onBlockRefClick: (...args) => marginFns.current.openBlockLink(...args),
     onAdd: comments.add,
@@ -10232,7 +10265,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onActivate: (blockId, threadId) => marginFns.current.openThread(blockId, null, { threadId, toggle: false, pdf: true }),
     onClose: () => setThreadPop(null),
   } : null), [commentsOn, isPhone, comments.threadsByBlock, threadPop, commentMe, shareMode, workspace?.role, canComment, people, // eslint-disable-line react-hooks/exhaustive-deps
-    pageBlocks, focusedBlockId, treeById, refCache, commentAgent, !!commentSignIn, comments.add, comments.edit, comments.remove, comments.resolve]);
+    pageBlocks, focusedBlockId, treeById, refCache, commentAgentList, commentSend, !!commentSignIn, comments.add, comments.edit, comments.remove,
+    comments.resolve, comments.stopTurn]);
   // A press on a highlight or a region in the viewer: a note's ⊕ waiting
   // for its highlight picks it; else its row in the notes, and the chat is
   // fed as a click on the PDF feeds it (quote as the selection, an area or a
@@ -10493,7 +10527,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Rebuilt when what the handlers close over changes; a click reads the
   // current value, so the cards themselves never re-render for navigation.
   const gammaNav = useMemo(
-    () => ({ openPage: openPageLink, openBlock: openBlockLink, citeSource }),
+    () => ({ openPage: openPageLink, openBlock: openBlockLink, citeSource,
+      openThread: (threadId, blockId, pageId) => openThreadAt(threadId, blockId, pageId || focusedBlockId) }),
     [focusedBlockId, blocks, refCache, shareMode, knownBlocks, pageTitle],
   );
 
@@ -11142,7 +11177,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {/* in the desktop app: the synced vault that keeps the page, or the file an opened page is read from;
                     elsewhere the computer that keeps it */}
                 <VaultChip state={vaultState} computers={pageComputer.computers} open={openPopover === "vault"} canAdd={lib.organize}
-                  onOpenChange={(v) => { if (v) { vault.refresh(); pageComputer.refresh(); } setOpenPopover(v ? "vault" : null); }}
+                  onOpenChange={(v) => {
+                    if (v) { vault.refresh(); pageComputer.refresh(); work.lookDetach(focusedFile); }
+                    setOpenPopover(v ? "vault" : null);
+                  }}
                   onReveal={() => askShell("reveal-on-disk", { page: focusedBlockId })}
                   onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip}
                   onFeedback={work.chip.file && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined} />
@@ -11590,9 +11628,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {workFolder ? (
                   <MenuSelect
                     icon={ArrowUpDownIcon}
-                    label={t("Sort this work folder's files")}
-                    value={workSort.sort}
-                    onChange={workSort.setSort}
+                    label={t("Sort this synced folder's files")}
+                    value={folderTree.sort}
+                    onChange={folderTree.setSort}
                     options={[
                       ["name", t("Name"), TypeIcon],
                       ["format", t("Format"), FileIcon],
@@ -11655,13 +11693,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 blank: no "empty" line before the rows, and nothing the rows
                 would push down. */}
             {homeMode && !homeLoaded && !homeFailed ? null : homeMode && workFolder ? (
-                <FolderList dirs={workDirs} rows={workRows} read={folderRows} folderId={folderFilter} sort={workSort.sort} query={homeQuery}
+                <FolderTree rows={workTreeRows} tree={folderTree} folderId={folderFilter} pageOf={(id) => workRows.get(id)} query={homeQuery}
                   atTop={folderFilter === workFolder} choosing={!!work.linkOf(workFolder)?.choosing} onChoose={lib.organize ? work.chooser(workFolder) : null}
-                  onNewPage={newPageAllowed ? () => createPage() : null} onRetry={() => fetchHomeBlocks({ still: true })}
-                  listRef={homeListingRef} still={homeStill} onBlank={clearSelection}
+                  onNewPage={newPageAllowed ? () => createPage() : null} listRef={homeListingRef} onBlank={clearSelection}
                   row={{
-                    selecting, selectedFolders, selectedPages, folderMenu: (id) => openTagMenu("folder", id), pageMenu: openPageMenu, menuPress,
-                    onFolderClick: handleFolderClick, onFolderOpen: openFolder, onPageClick: handlePageClick, onPageOpen: openPage,
+                    selecting, selectedPages, folderMenu: (id) => openTagMenu("folder", id), pageMenu: openPageMenu, menuPress,
+                    onPageClick: handlePageClick, onPageOpen: openPage,
                     editingId: homeEditingId, onRename: commitPageRename, onRenameCancel: () => setHomeEditingId(null),
                     onPin: lib.pin ? setPagesPinned : null, draggable: lib.organize, onDragStart: startPageDrag,
                   }} />
@@ -11889,7 +11926,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {rowColumns(item, tn("{n} page", "{n} pages", labelMeta[l]?.count || 0), menu)}
                       </div>
                       ); }
-                      if (item.kind === "folder") { const f = item.folder; const menu = openTagMenu("folder", f); return (
+                      if (item.kind === "folder") {
+                        const f = item.folder;
+                        const menu = openTagMenu("folder", f);
+                        // a synced folder's own row: the theme's root folder and who keeps it
+                        const synced = !!libTree.folders.get(f)?.mark;
+                        const keeper = synced ? work.keeperOf(f) : null;
+                        return (
                       <div
                         key={item.key}
                         data-motion-key={item.key}
@@ -11905,7 +11948,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onDrop={(e) => dropOnFolder(e, f)}
                         title={lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in") : t("Click to select · double-click to open")}
                       >
-                        {selecting && selectedFolders.has(f) ? <SelectCheck /> : <FolderIcon size={16} />}
+                        {selecting && selectedFolders.has(f) ? <SelectCheck />
+                          : synced ? <FileThemeIcon root size={20} /> : <FolderIcon size={16} />}
                         {folderRenaming?.id === f ? (
                           <input
                             autoFocus
@@ -11923,7 +11967,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : (
                           <span className="folderName">{libTree.folders.get(f).name}</span>
                         )}
-                        {rowColumns(item, tn("{n} page", "{n} pages", folderMeta[f]?.count || 0), menu)}
+                        {keeper ? <span className="folderKeeper" title={keeper.title}>{keeper.text}</span> : null}
+                        {rowColumns(item, synced ? tn("{n} file", "{n} files", folderMeta[f]?.count || 0)
+                          : tn("{n} page", "{n} pages", folderMeta[f]?.count || 0), menu)}
                       </div>
                       ); }
                       const b = item.block;
@@ -12470,7 +12516,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // reload) the first group's that has a PDF
     const shown = groupsOf(tabLayout).map((g) => g.active).filter((id) => id && id !== focusedBlockId);
     const kept = notesPaperRef.current;
-    return shown.includes(kept) ? kept : shown.find((id) => tabKinds.get(id) === "pdf") || null;
+    return shown.includes(kept) ? kept : shown.find((id) => tabKinds.get(id)?.format === "pdf") || null;
   })();
   const winVisible = {
     notes: (Boolean(notesWindow) && !centerNotes) || !!notesPaper,
@@ -12571,8 +12617,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
-          computer={chatComputer}
-          computerMark={chatComputerMark}
+          agents={chatAgentList} localAgents={localAgents}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
@@ -12606,8 +12651,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onStatus={setStatus}
             // what a thread is on: a highlight's quote, else the note's text, else the handwriting's page
             anchorText={(id) => anchorWords(treeById.get(id))}
-            // the agent that answers the reader's Sends, so a row's chip reads as its thread's card
-            agent={commentAgent}
             // on a work folder's file, for a member who may edit: the feedback view (feedback/)
             onFeedback={focusedFile && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
@@ -12630,7 +12673,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <FilesWindow {...common} onClose={onClose} files={files} tree={filesTree} libTree={libTree} workTree={workTree}
             folderMeta={folderMeta} libraryPages={libraryPages} lib={lib} pageMenu={openSubPageMenu} folderMenu={openTreeFolderMenu}
             menuPress={menuPress} onOpen={(pageId, row) => { files.remember(row); openPage(pageId); }}
-            onDragStart={startTreeDrag} onDrop={dropOnFolder} dragOver={folderDragOver} setDragOver={setFolderDragOver} />
+            onDragStart={startTreeDrag} onDrop={dropOnFolder} dragOver={folderDragOver} setDragOver={setFolderDragOver}
+            keeperOf={work.keeperOf} />
         </LazyBoundary>
       );
     }
@@ -14476,6 +14520,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             folders={[{ id: "", name: t("All files") }, ...folderMenuIds.map((id) => ({ id, name: folderPath(libTree, id) }))]} />
         </LazyBoundary>
       ) : null}
+      {work.detachDialog ? (
+        <LazyBoundary>
+          <DetachDialog {...work.detachDialog} />
+        </LazyBoundary>
+      ) : null}
       {/* the feedback view, while an opener (the list bar, the Comments window, the vault chip) has it open */}
       <FeedbackHost me={authUser?.user || ""} canSend={canWriteWorkspace} links={vault.links} onOpenThread={openThreadAt} />
       {vault.tracking ? (
@@ -14490,8 +14539,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // once the round read it.
               const lands = tick && !link.remote_url ? ticked : null;
               const file = baseName(tick);
-              setStatus(lands === false ? t("{file} was left unticked, so it is not a page of this work folder.", { file })
-                : t("Saved. The work folder reads its files now."));
+              setStatus(lands === false ? t("{file} was left unticked, so it is not a page of this synced folder.", { file })
+                : t("Saved. The synced folder reads its files now."));
               fetchHomeBlocks();
               vault.refreshLinks();
               vault.watchRound(link.id, async () => {
@@ -14501,7 +14550,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 try {
                   const { page } = await apiJson(`${API}/folder-links/${encodeURIComponent(link.id)}/page?${new URLSearchParams({ path: tick })}`);
                   if (page) openPage(page);
-                  else setStatus(t("{file} is tracked; its page opens once the work folder has read it.", { file }));
+                  else setStatus(t("{file} is tracked; its page opens once the synced folder has read it.", { file }));
                 } catch (err) {
                   setStatus(t("Could not open this page: {message}", { message: err.message || err }));
                 }
@@ -15154,8 +15203,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               const [up, down] = [folderNeighbour(libTree, id, -1), folderNeighbour(libTree, id, 1)];
               const stepping = lib.organize && homeMode && homeSort === "manual" && folders.length === 1 && !inWork;
               const choose = folders.length === 1 && lib.organizeIn(id).chooseFiles ? work.chooser(id) : null;
-              // A work folder no vault of this server keeps: its owner's way out.
-              const letGo = folders.length === 1 ? work.letGo(id) : null;
+              // A synced folder's root: Detach from {computer}…, for its
+              // vault's maker and the workspace's owner (its plan read as the
+              // menu opened), in every window.
+              const detach = folders.length === 1 ? work.detachOf(id) : null;
               // Move to: the library's folders every one of them may go
               // into, in the flyout's order (folderRules moveTargets).
               const into = folders.map((f) => new Set(lib.organizeIn(f).moveTargets));
@@ -15164,7 +15215,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <MenuItem key="open" icon={FolderOpenIcon} keys={chordLabel("Enter")}
                     onClick={() => { setHomeMenu(null); if (!homeMode) goHome(); openFolder(id); }}>{t("Open")}</MenuItem>,
                   choose && (
-                    <MenuItem key="track" icon={SquareCheckIcon} title={t("Choose which files of its directory the work folder tracks")}
+                    <MenuItem key="track" icon={SquareCheckIcon} title={t("Choose which files of its directory the synced folder tracks")}
                       onClick={() => { setHomeMenu(null); choose(); }}>{t("Choose files…")}</MenuItem>
                   ),
                 ],
@@ -15225,7 +15276,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   // (desktop/docs/architecture.md). Making one takes an editor.
                   IS_DESKTOP && lib.organize && folders.length === 1 && !inWork && (
                     <MenuItem key="disk" icon={HardDriveIcon}
-                      title={t("Make this folder a synced vault: a directory on this computer where each page is a Markdown note beside its PDF, pulled and pushed by the desktop app")}
+                      title={t("Sync this folder with a directory on this computer, where each page is a Markdown note beside its PDF, pulled and pushed by the desktop app")}
                       onClick={() => {
                         setHomeMenu(null);
                         askShell("keep-folder-on-disk", { folder: id });
@@ -15237,10 +15288,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ),
                 ],
                 [
-                  letGo && (
-                    <MenuItem key="letgo" icon={UnlinkIcon} danger
-                      title={t("Free this folder from the computer that syncs it, when that computer is gone")}
-                      onClick={() => { setHomeMenu(null); letGo(); }}>{t("Let go of this work folder…")}</MenuItem>
+                  detach && (
+                    <MenuItem key="detach" icon={UnlinkIcon}
+                      title={t("Stop syncing this folder: its files stay in Gamma or go to Recently deleted, and its directory stays as it is")}
+                      onClick={() => { setHomeMenu(null); detach.start(); }}>{detach.label}</MenuItem>
                   ),
                   lib.organizeIn(id).delete && (
                     <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolder(id); }}>{t("Delete")}</MenuItem>
@@ -15326,7 +15377,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             people={people}
             labelsFor={commentLabels}
             // the fields' [[ and @ pickers, as a note row's (rowProps)
-            links={{ pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache, onCacheRef, agent: commentAgent }}
+            links={{ pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache, onCacheRef,
+              agents: commentAgentList, sendTo: commentSend, onOpenChat: openThreadChat, onStopTurn: comments.stopTurn }}
             onBlockRefClick={openBlockLink}
             onAdd={comments.add}
             onEdit={comments.edit}

@@ -126,28 +126,36 @@ def test_account_deletion_removes_tokens_in_retained_workspaces(account, admin, 
     assert resolve_token(retained["token"], resource) == (other, shared)
 
 
-def test_a_feedback_token_reads_several_workspaces_and_a_write_token_one(account):
-    from gamma.integrations import ALL, grant, set_workspaces
+def test_a_read_token_reads_several_workspaces_at_their_levels_and_a_write_token_one(account):
+    from gamma.integrations import ALL, comment_grant, grant, set_workspaces
 
     username, ws, _browser = account
     user_id = account_of(username)
-    lab = workspaces.create("Feedback lab " + secrets.token_hex(3), user_id, kind="shared")["id"]
-    assert grant(user_id, [ws, lab], "feedback") == (ws, f'["{ws}", "{lab}"]')
-    assert grant(user_id, ALL, "feedback") == (ws, ALL)
-    assert grant(user_id, [ws, lab], "read")[1] == f'["{ws}", "{lab}"]'
+    lab = workspaces.create("Comment lab " + secrets.token_hex(3), user_id, kind="shared")["id"]
+    assert grant(user_id, [ws, lab], "read") == (ws, f'["{ws}", "{lab}"]')
+    assert grant(user_id, ALL, "read") == (ws, ALL)
     for wanted in ([ws, lab], ALL):
         with pytest.raises(HTTPException) as e:
             grant(user_id, wanted, "write")
         assert e.value.detail == "A read and write token is for one workspace."
-    item = create_token(user_id, ws, "Agent", 90, scope="feedback")
-    assert set_workspaces(user_id, item["id"], [lab, ws]) == (lab, f'["{lab}", "{ws}"]', "")
-    assert set_workspaces(user_id, item["id"], [lab, ws], [ws]) == (lab, f'["{lab}", "{ws}"]', f'["{ws}"]')
+    # the Comment level: none, the ones it reads, or every one with every one read
+    assert comment_grant(user_id, ws, f'["{ws}", "{lab}"]', [lab]) == f'["{lab}"]'
+    assert comment_grant(user_id, ws, ALL, ALL) == ALL and comment_grant(user_id, ws, "", []) == ""
+    for reads, wanted in (("", [lab]), ("", ALL)):
+        with pytest.raises(HTTPException) as e:
+            comment_grant(user_id, ws, reads, wanted)
+        assert e.value.status_code == 400
+    item = create_token(user_id, ws, "Agent", 90)
+    assert set_workspaces(user_id, item["id"], [lab, ws]) == (lab, f'["{lab}", "{ws}"]', "", "")
+    assert set_workspaces(user_id, item["id"], [lab, ws], [ws], [lab]) == (
+        lab, f'["{lab}", "{ws}"]', f'["{ws}"]', f'["{lab}"]')
     pushed = create_token(user_id, ws, "Mirror", 90, scope="write")
     with pytest.raises(HTTPException):
         set_workspaces(user_id, pushed["id"], [ws])
-    with pytest.raises(HTTPException) as e:
-        create_token(user_id, ws, "Other", 90, scope="admin")
-    assert e.value.detail == "scope must be read, write, feedback or computer"
+    for scope in ("admin", "feedback", "turn"):
+        with pytest.raises(HTTPException) as e:
+            create_token(user_id, ws, "Other", 90, scope=scope)
+        assert e.value.detail == "scope must be read, write or computer"
 
 
 def test_the_credentials_name_the_token(account, resource):
@@ -156,16 +164,17 @@ def test_the_credentials_name_the_token(account, resource):
     username, ws, _browser = account
     user_id = account_of(username)
     lab = workspaces.create("Named lab " + secrets.token_hex(3), user_id, kind="shared")["id"]
-    item = create_token(user_id, ws, "Claude Code (OAuth)", 90, oauth_resource=resource, scope="feedback",
-                        workspaces=f'["{ws}", "{lab}"]')
+    item = create_token(user_id, ws, "Claude Code (OAuth)", 90, oauth_resource=resource,
+                        workspaces=f'["{ws}", "{lab}"]', comments=f'["{ws}"]')
     if resource is None:  # the HTTP API takes no OAuth token
         grant_ = resolve_token_scope(item["token"])
         assert isinstance(grant_, Grant)
-        assert grant_ == (user_id, username, ws, "feedback", item["id"], "Claude Code (OAuth)")
-        assert (grant_.token_id, grant_.name) == (item["id"], "Claude Code (OAuth)")
+        assert grant_ == (user_id, username, ws, "read", item["id"], "Claude Code (OAuth)", True)
+        assert (grant_.token_id, grant_.name, grant_.comments) == (item["id"], "Claude Code (OAuth)", True)
     connection = resolve_connection(item["token"], resource)
     assert isinstance(connection, Connection)
-    assert connection == Connection(user_id, [ws, lab], "feedback", item["id"], "Claude Code (OAuth)", username)
+    assert connection == Connection(user_id, [ws, lab], "read", item["id"], "Claude Code (OAuth)", username,
+                                    commentable=(ws,))
     assert connection[:2] == (user_id, [ws, lab]) and connection[1] == [ws, lab]
     # a scope this server does not know reads as read
     with connect_users_db() as conn:

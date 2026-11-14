@@ -2,8 +2,8 @@
 // note editor (editor/BlockCmEditor.jsx) with a note's typing aids — chips
 // for [[links]], @people and dates, inline marks and math drawn in place,
 // the "[[" link picker (editor/useRefPicker.js), the "@" menu without
-// reminders or "Invite…" but, for a work folder's maker, with its agent on
-// this computer (editor/useMentionMenu.js), the "/" menu of the
+// reminders or "Invite…" but with the agents a comment can be sent to
+// (editor/useMentionMenu.js), the "/" menu of the
 // commands that write text (editor/useSlashMenu.js: no page, sheet, upload
 // or embed), and inside $…$ the live preview and \command completion
 // (editor/useMathUi.js). Return breaks the line as in a note, continuing a
@@ -13,9 +13,13 @@
 // (`onCancel` for an edit, else `onEscape`: the popover closes). The field
 // keeps its own undo history. Unsent text is kept by `draftKey` for as long
 // as the tab lives, so closing the popover (a press outside it, Escape,
-// another block's comments) loses none of it.
+// another block's comments) loses none of it. A new comment's and a
+// reply's field has the *Send to {agent}* tick under it while an agent can
+// be sent the comment (comments/sendTo.js): ticked, the comment is also
+// the instruction of a turn of that agent; `@codex` typed ticks it.
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpIcon } from "../shared/ui/Icons";
+import { MenuSelect } from "../shared/ui/Menus";
 import { t } from "../shared/i18n/i18n.js";
 import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { touchTyping } from "../shared/lib/pointer.js";
@@ -32,7 +36,9 @@ import { useMathUi } from "../editor/useMathUi.js";
 import { useMentionMenu } from "../editor/useMentionMenu.js";
 import { useRefPicker } from "../editor/useRefPicker.js";
 import { useSlashMenu } from "../editor/useSlashMenu.js";
-import { MAX_COMMENT, mentionHint } from "./comments.js";
+import { chatPick } from "../chat/computer/chatSide.js";
+import { MAX_COMMENT } from "./comments.js";
+import { editHint, namedAgent, sendNote, startsTicked, tickAgent, tickedPlaceholder } from "./sendTo.js";
 
 // The unsent texts by field: `new:<block id>`, `reply:<thread id>`,
 // `edit:<comment id>`. Module state: the popover remounts, the tab keeps them.
@@ -51,21 +57,26 @@ const COMMENT_ABILITIES = {};
 const fieldKey = (e) => e.key === "F2"
   || ((e.ctrlKey || e.metaKey) && !e.altKey && ["z", "y"].includes(e.key.toLowerCase()));
 
-// onSubmit(text) → a promise of whether it was stored: the field empties
-// at once and gets the text back when it was refused. `initial`: an edit's
-// text; `onCancel` shows Cancel beside the button (an edit) and drops its
-// draft. `draftKey`: where the field's unsent text is kept. `blockId`: the
-// block the thread is on, left out of the link picker's blocks. `links`:
-// App's {pages, rootId (the open page), lookupBlock, refCache, onCacheRef,
-// agent} for the pickers, `agent` the work folder's agent on this computer,
-// or on the computer that keeps it, that the maker can name (vaultState.js
-// mentionAgent or keeperAgent, null for none): the
-// @ menu lists it, the field chips it and says under the text what sending
-// does; `refused`: for an edit the server will not send to the agent, its
-// code (Thread.jsx), said there instead; `labelsFor(text)`: the labels of
-// the [[links]] in a text.
+// onSubmit(text, to) → a promise of whether it was stored, `to` the id of
+// the agent it is sent to, "" for none (the tick shown and unticked), null
+// for a field with no tick (an edit, no agents: the server reads an
+// `@name`): the field empties at once and gets the text back when it was
+// refused. `initial`: an edit's text; `onCancel`
+// shows Cancel beside the button (an edit, which has no tick: an `@name` it
+// adds is read by the server) and drops its draft. `draftKey`: where the
+// field's unsent text is kept. `blockId`: the block the thread is on, left
+// out of the link picker's blocks; `thread`: the thread a reply goes in
+// (null for a new one). `links`: App's {pages, rootId (the open page),
+// lookupBlock, refCache, onCacheRef, agents, sendTo} for the pickers,
+// `agents` the agents a comment on the page can be sent to (chat/agents.js
+// commentAgents): the @ menu lists them, the field chips them and ticks
+// for them; `sendTo` {ticked, remember(ticked)}: how the person left the
+// tick last (an account preference) and keeping a change of it.
+// `refused`: for an edit the server will not send to an agent, its code
+// (Thread.jsx), said there instead; `labelsFor(text)`: the labels of the
+// [[links]] in a text.
 export function CommentComposer({ initial = "", placeholder, submitLabel, autoFocus = false, people = [], me = "",
-  draftKey = "", blockId = "", links = NO_LINKS, refused = "", labelsFor, onSubmit, onCancel, onEscape }) {
+  draftKey = "", blockId = "", thread = null, links = NO_LINKS, refused = "", labelsFor, onSubmit, onCancel, onEscape }) {
   const [text, setText] = useState(() => (draftKey && drafts.has(draftKey) ? drafts.get(draftKey) : initial));
   useEffect(() => {
     if (!draftKey) return;
@@ -74,11 +85,22 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
   }, [draftKey, text, initial]);
   const cancel = onCancel ? () => { if (draftKey) drafts.delete(draftKey); onCancel(); } : null;
   const ref = useRef(null);
-  const { pages, rootId, lookupBlock, refCache, onCacheRef, agent = null } = links;
-  const agents = useMemo(() => (agent ? [agent] : NO_AGENTS), [agent]);
-  // Whom the field's chips name: the page's people, and the agent.
+  const { pages, rootId, lookupBlock, refCache, onCacheRef, agents = NO_AGENTS, sendTo = null } = links;
+  // Whom the field's chips name: the page's people, and the agents.
   const named = useContext(MentionContext);
-  const mentions = useMemo(() => (agent ? { ...named, agents } : named), [named, agent, agents]);
+  const mentions = useMemo(() => (agents.length ? { ...named, agents } : named), [named, agents]);
+  // The tick (an edit has none): as the person set it, else its default
+  // (sendTo.js startsTicked); the agent it names, as chosen in its menu,
+  // else its default (tickAgent). `@codex` typed ticks it for that agent.
+  const ticks = !onCancel && agents.length > 0;
+  const [tick, setTick] = useState(null);
+  const [chosen, setChosen] = useState("");
+  const ticked = ticks && (tick ?? startsTicked(thread, sendTo?.ticked));
+  const target = ticks ? tickAgent(agents, { thread, picked: chatPick(rootId), chosen }) : null;
+  const toggle = (on) => {
+    setTick(on);
+    sendTo?.remember(on);
+  };
   const { mathUi, setMathUi, mathAcIdx, updateMathUi, acceptCompletion, acKey, tabJumpKey } = useMathUi();
   const refPicker = useRefPicker({
     editorRef: ref, excludeId: blockId, pages, rootId, lookupBlock, refCache, onCacheRef,
@@ -131,8 +153,9 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
   };
   const trimmed = text.trim();
   const tooLong = text.length > MAX_COMMENT;
-  // A comment on the page itself sends the file's open comments.
-  const hint = mentionHint({ agent, text, initial, file: blockId === rootId, refused });
+  // Ticked, what may keep the agent from answering; an edit's, what saving
+  // an `@name` it adds does.
+  const hint = onCancel ? editHint({ agents, text, initial, refused }) : ticked ? sendNote(target) : null;
   // The button's hover names its key ("Shift+Enter", "⇧↩" on a Mac); on
   // an on-screen keyboard, where Shift+Return breaks the line, Ctrl/⌘+Enter
   // (sendsOnShiftEnter).
@@ -142,8 +165,13 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
     const sent = text;
     setText("");
     closePopups();
-    const ok = await onSubmit(sent);
+    const ok = await onSubmit(sent, ticks ? (ticked && target ? target.id : "") : null);
     if (!ok) setText((now) => now || sent);
+  };
+  const edited = (value) => {
+    setText(value);
+    const said = ticks ? namedAgent(agents, value, text) : null;
+    if (said) { setTick(true); setChosen(said.id); }
   };
 
   const onKeyDown = (e) => {
@@ -188,12 +216,12 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
           ownHistory
           className="blockEditorCm commentField"
           value={text}
-          placeholder={placeholder}
-          ariaLabel={placeholder}
+          placeholder={ticked ? tickedPlaceholder(target, placeholder) : placeholder}
+          ariaLabel={ticked ? tickedPlaceholder(target, placeholder) : placeholder}
           refLabels={labelsFor ? labelsFor(text) : NO_LABELS}
           mentions={mentions}
           onChange={(e) => {
-            setText(e.target.value);
+            edited(e.target.value);
             refPicker.onEdit(e);
             updateMathUi(e.target, true);
             slash.update(e.target, true);
@@ -219,8 +247,21 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
           </button>
         )}
       </div>
-      {tooLong || cancel || hint ? (
+      {tooLong || cancel || hint || ticks ? (
         <div className="commentComposerBar">
+          {ticks ? (
+            <span className="commentSendTo" data-send-to={ticked ? target?.name : ""}>
+              <label className="commentSendTick">
+                <input type="checkbox" checked={ticked} onChange={(e) => toggle(e.target.checked)}
+                  aria-label={t("Send to {agent}", { agent: target?.label || "" })} />
+                {agents.length > 1 ? t("Send to") : t("Send to {agent}", { agent: target?.label || "" })}
+              </label>
+              {agents.length > 1 ? (
+                <MenuSelect up label={t("Agent")} value={target?.id || ""} onChange={(id) => { setChosen(id); toggle(true); }}
+                  options={agents.map((a) => [a.id, a.computer ? t("{agent} on {computer}", { agent: a.label, computer: a.computer }) : a.label])} />
+              ) : null}
+            </span>
+          ) : null}
           {tooLong ? <span className="commentTooLong">{t("At most {n} characters", { n: MAX_COMMENT.toLocaleString() })}</span>
             : hint ? <span className={`commentAgentHint${hint.warn ? " agentProblem" : ""}`} data-agent-hint>{hint.text}</span> : null}
           <span className="commentComposerSpacer" />

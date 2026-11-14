@@ -159,8 +159,9 @@ def _whoami(url):
 @pytest.fixture
 def trust_state(monkeypatch):
     """The trust state on entry (truststore injected or not) is the one on
-    exit, so no later test runs in another."""
-    import truststore
+    exit, so no later test runs in another. Without truststore (the mobile
+    apps' pins, requirements-mobile.txt) these tests have nothing to check."""
+    truststore = pytest.importorskip("truststore")
 
     injected = ssl.SSLContext is truststore.SSLContext
     truststore.extract_from_ssl()
@@ -213,7 +214,7 @@ def test_an_unpinned_certificate_is_refused_and_described(tls, certs, verifying,
 
 def test_an_unpinned_certificate_is_refused_by_the_system_store(tls, certs, desktop, monkeypatch):
     """The one case that verifies with truststore, as the app does."""
-    import truststore
+    truststore = pytest.importorskip("truststore")
 
     assert ssl.SSLContext is truststore.SSLContext   # the app injected it (net_proxy.install)
     monkeypatch.setattr(gamma_sync, "make_opener", net_proxy.build_opener)
@@ -316,7 +317,11 @@ def test_a_leaf_sent_alone_is_worded_as_a_missing_intermediate(tls, certs, verif
     server = tls(*certs["signed"])
     with pytest.raises(gamma_sync.CertificateRefused) as e:
         _whoami(server.url)
-    assert e.value.missing_intermediate and "fullchain.pem" in str(e.value)
+    assert "fullchain.pem" in str(e.value)
+    # Python 3.13 tells how many certificates the server sent
+    # (SSLSocket.get_unverified_chain); before it, as in the desktop app's
+    # 3.12, the words name both causes (CertificateRefused)
+    assert e.value.missing_intermediate == hasattr(ssl.SSLSocket, "get_unverified_chain")
 
 
 def test_the_pins_are_replaced_whole(desktop):

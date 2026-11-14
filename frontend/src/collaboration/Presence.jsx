@@ -3,9 +3,10 @@
 // comes from their name (personColor.js), so the same person looks the same
 // here as beside their comment; an open editor shows as a full avatar, a
 // mere viewer as a faded one. `PersonAvatar` draws someone who is not on the
-// page, by username alone.
+// page, by username alone, and `AgentAvatar` an agent, by its kind.
 import React, { useLayoutEffect, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
+import { agentKindIcon } from "../chat/AgentChip";
 import { renderedCaretRect } from "../editor/clickToSource";
 import { scanMathSpans } from "../editor/mdScan";
 import { personColor } from "./personColor.js";
@@ -36,6 +37,14 @@ function PeerAvatar({ peer, onClick, title }) {
 // owner, a person to mention, a comment's author, an Inbox item's actor.
 export function PersonAvatar({ name, title }) {
   return <PeerAvatar peer={{ name, anchor: 0 }} title={title} />;
+}
+
+// The avatar of an agent that wrote or made something, by its kind
+// (chat/agents.js agentKind): its icon in place of an initial, on a neutral
+// disc, so an agent never reads as a person of the page.
+export function AgentAvatar({ kind, title }) {
+  const Icon = agentKindIcon(kind);
+  return <span className="peerAvatar agentAvatar" data-agent={kind} title={title}><Icon size={12} /></span>;
 }
 
 // Chips on a block row: up to three avatars, then a "+n".

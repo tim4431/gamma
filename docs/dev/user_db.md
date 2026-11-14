@@ -141,14 +141,19 @@ All state is SQLite + files on disk under a data directory (env
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
   - `integration_tokens` — hashed assistant tokens per account, each of one
-    workspace (with a `scope` — `read`, `write`, `feedback`, a read token
-    that may also reply to and resolve the threads on a work folder's files
-    ([comments.md](comments.md) "Who may comment"), or `computer`, a
+    workspace (with a `scope` — `read`, `write`, `computer`, a
     computer's channel to this server, which opens nothing else
-    ([computers.md](computers.md)); free text, so a scope
+    ([computers.md](computers.md)), or `turn`, the token of one turn of an
+    agent on this computer, which opens MCP alone and lives for the turn
+    ([local_agents.md](local_agents.md) "Gamma's tools"); free text, so a scope
     this server does not know reads as `read` — and `workspaces`, what a read
-    or feedback token's MCP connection reads beside it: `''`, `'*'` or a JSON
-    list), and `mcp_oauth` — the OAuth flow's
+    token's MCP connection reads beside it: `''`, `'*'` or a JSON list; of
+    those, `comments`, where it may also comment, reply, resolve and
+    highlight (the Comment level, schema step 61, which made the `feedback`
+    scope's tokens such read tokens: [mcp.md](mcp.md) "The Comment level";
+    [comments.md](comments.md) "Who may comment"), and `edits`, where it may
+    also change notes, each `''`, `'*'` or a JSON list; `asks`, whether each
+    note change asks first), and `mcp_oauth` — the OAuth flow's
     expiring records ([mcp.md](mcp.md));
   - `mirrors` — the offline copies of remote workspaces: the local workspace,
     the remote's address and workspace, the write token (Fernet-encrypted
@@ -412,24 +417,28 @@ All state is SQLite + files on disk under a data directory (env
     nothing references them (`name`, `keep_s`, `since`; "Stored files"
     below);
   - `computer_chats` — the chat's computer side
-    ([local_agents.md](local_agents.md) "The chat's computer side"): a
-    page's conversations of the work folder vault's maker with the agent on
-    the computer, one row a conversation (its messages as JSON, a
-    `version`, `archived_at` null for the active one). Private to the
-    account (`ws_backup.PRIVATE_TABLES`: a backup has it empty, a restore
-    keeps the live rows), read by no export, mirror or share, gone with
-    its page deleted for good (`ops._purge`), and an account's rows go when
-    its membership ends or the account is deleted
-    (`db.delete_workspace_prefs`). From `db.PAGES_SCHEMA` as the file opens
-    (no workspace step);
+    ([local_agents.md](local_agents.md) "The chat's computer side"): an
+    account's conversations with its agent on the computer, one row a
+    conversation: its `bucket` (a page's id, a folder's or `home`, as
+    `chats`), `dir` (where its agent works: the work folder's id, an
+    offered directory's id, or "" for an empty one of its own), its
+    messages as JSON, a `version`, `archived_at` null for the active one.
+    Private to the account (`ws_backup.PRIVATE_TABLES`: a backup has it
+    empty, a restore keeps the live rows), read by no export, mirror or
+    share, gone with its page deleted for good (`ops._purge`), filed into
+    the library's History with its folder deleted, and an account's rows go
+    when its membership ends or the account is deleted
+    (`db.delete_workspace_prefs`). Step 59 renamed `page_id` to `bucket`
+    and added `dir` ([migrations.md](migrations.md));
   - `computer_chat_runs` — a turn of such a conversation run on another
     computer (step 4d, [local_agents.md](local_agents.md) "The chat on
-    another server's page"): the turn, its conversation, page and account,
-    the turn's agent and the computer last known to take it, the computer
-    token holding it and its run once claimed, the last
+    another server's page"): the turn, its conversation, its `bucket` (a
+    page) and account, the turn's agent and the computer last known to take
+    it, the computer token holding it and its run once claimed, the last
     write's `seq`, a stop flag, its state, when it was queued and started.
     Private like `computer_chats` (`ws_backup.PRIVATE_TABLES`), gone with
-    its page (`ops._purge`) and with its account's rows; additive;
+    its page (`ops._purge`) and with its account's rows; `bucket` was
+    `page_id` until step 59;
   - `feedback_request_runs` — the run of a computer that holds a Send of
     this server's (step 4c, [computers.md](computers.md) "The Sends"): the
     request, the holding token, the run, the agent, the `seen` time, the
@@ -455,7 +464,7 @@ All state is SQLite + files on disk under a data directory (env
     it, and a comment write touches no page;
   - `feedback_requests` and `feedback_request_threads` — a work folder's
     Sends and the threads each names, with when an agent or another
-    account answered each ([feedback.md](feedback.md) "Requests"). From
+    account answered each ([annotations.md](annotations.md) "Requests"). From
     `db.PAGES_SCHEMA` as the file opens (no workspace step); a restore in
     place copies them, no merge, export or mirror does, and a sweep beside
     the comments' deletes the finished ones 90 days after their last state;
@@ -529,8 +538,8 @@ All state is SQLite + files on disk under a data directory (env
   (`gamma/translate_store.py`, [translation.md](translation.md) "Kept
   translations"; asked of the model again, at its cost, when they are
   gone), the region pictures of a work folder's comment threads
-  `feedback_pictures` (JPEG bytes by key, at most 48 MB, the oldest going
-  first; drawn again when asked, [feedback.md](feedback.md)) and the
+  `annotation_pictures` (JPEG bytes by key, at most 48 MB, the oldest going
+  first; drawn again when asked, [annotations.md](annotations.md)) and the
   document text index `text_fts` / `text_fts_docs` (the extracted text of
   the PDFs and text files, a row per PDF page or run of 40 lines — schema
   + queries `gamma/search/index.py`, extraction `gamma/search/indexer.py`;
@@ -862,11 +871,11 @@ track of the ones nothing uses.
   ([zotero_sync.md](zotero_sync.md#pdfs)). Once the conflict is kept or the
   link is removed it is an ordinary file again; "theirs" makes it the
   page's PDF. And **an open thread holds the version it was opened on**:
-  the file its root's `anchor.doc_id` names (`feedback.anchors.held_file`,
+  the file its root's `anchor.doc_id` names (`annotations.anchors.held_file`,
   `<doc_id>.pdf`) while the root is neither resolved nor orphaned, held
   (in `names`, never in `shown`), so a work folder's build that a
   comment was made on outlives the rebuilds after it until the thread is
-  resolved ([feedback.md](feedback.md) "The commented version kept").
+  resolved ([annotations.md](annotations.md) "The commented version kept").
 - **Unreferenced files are kept for 30 days.** When the last reference to a
   file goes (its block deleted, a page's PDF detached or replaced by a new
   version), the file stays on disk and is served as before. Its name is

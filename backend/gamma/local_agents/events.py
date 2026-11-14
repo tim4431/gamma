@@ -11,15 +11,17 @@ A turn's ``events()`` gives, in order as they happen:
   that follows is that message, in place of what its pieces built;
 - ``{"type": "text", "text"}``: a whole message the agent wrote;
 - ``{"type": "tool", "id", "kind", "title", "status", ...}``: a step, once
-  when it starts and once when it ends (``tool``);
+  when it starts and once when it ends (``tool``), a call of Gamma's own
+  tools of kind ``gamma`` (``gamma_step``);
 - ``{"type": "ask", "id", "kind", "step", ...}``, only in a turn started
   with ``ask``: the agent asks to do what its confinement keeps from it
   (``ask``), ``id`` the driver's own key for the answer, ``step`` the id of
   the tool event it is about ("" for none);
 - ``{"type": "ask_gone", "id"}``: the agent withdrew that ask;
-- ``{"type": "done", "ok", "answer", "text", "error", "stopped", "usage"}``:
-  exactly one, last, however the turn ends: its end, ``stop()``, a crash,
-  a broken pipe, ten minutes of silence (``done``).
+- ``{"type": "done", "ok", "answer", "text", "error", "stopped", "usage",
+  "gamma_down"}``: exactly one, last, however the turn ends: its end,
+  ``stop()``, a crash, a broken pipe, ten minutes of silence, Gamma's tools
+  that did not start (``done``).
 
 An ask is answered with ``answer()``, from any thread, the person's or
 Gamma's own (``by``: a driver words the agent's decline after whose it
@@ -51,6 +53,7 @@ import threading
 import time
 import unicodedata
 from pathlib import Path
+from typing import NamedTuple
 
 from ..logbuf import log
 from . import procs
@@ -64,7 +67,30 @@ MAX_TITLE = 200
 MAX_DIFF = 20_000     # characters of a file change's diff an ask carries
 MAX_REASON = 2000
 
-KINDS = ("read", "edit", "run", "search", "other")
+KINDS = ("read", "edit", "run", "search", "gamma", "other")   # gamma: a call of Gamma's tools, named by its ``tool``
+GAMMA_TOOL = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+# Gamma's tools that write as the agent (gamma/ai_tools.py WRITING_TOOLS,
+# frontend chat/computer/computerChat.js GAMMA_WRITES): a call of one is
+# worded as a write.
+GAMMA_WRITES = ("comment", "resolve", "highlight")
+
+# Gamma's MCP endpoint as a turn's agent is given it (gamma/local_agents/
+# tools.py): the server's name in the agent's config, and the variable of
+# the agent's environment that holds the turn's token. Not ``gamma``, the
+# name Gamma's own setup gives the user's connection (``codex mcp add
+# gamma``): Codex merges a thread's server into the user's of the same name,
+# whose other keys (its headers, its tools turned off, a command) would then
+# be the turn's.
+MCP_NAME = "gamma_turn"
+TOKEN_ENV = "GAMMA_AGENT_MCP_TOKEN"
+
+
+class Gamma(NamedTuple):
+    """Gamma's tools for one turn (``tools.mint``): ``url`` this server's
+    ``/mcp`` as the agent reaches it, ``token`` the turn's, which reaches the
+    agent in ``TOKEN_ENV`` alone."""
+    url: str
+    token: str
 # An agent's session (Codex's thread, Claude Code's session): what a driver
 # resumes and a terminal is told to, nothing else.
 SESSION = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -88,11 +114,12 @@ _FENCE = re.compile(r"^```[A-Za-z]*\s*\n(.*?)\n?```\s*$", re.S)
 
 
 def tool(tool_id: str, kind: str, title: str, status: str, *, path: str = "", command: str = "",
-         output: str | None = None) -> dict:
+         output: str | None = None, name: str = "") -> dict:
     """A step: ``kind`` one of ``KINDS``, ``title`` one line (Read
     sections/intro.tex, Run latexmk -pdf main.tex), ``status`` started,
     completed or failed; ``path`` for a read or an edit, ``command`` for a
-    run, ``output`` (its tail) once a run ends."""
+    run, ``output`` (its tail) once a run ends, ``name`` the Gamma tool a
+    gamma step called (its ``tool``: a name ``GAMMA_TOOL`` takes, else "")."""
     event = {"type": "tool", "id": tool_id, "kind": kind, "title": one_line(title, MAX_TITLE), "status": status}
     if kind in ("read", "edit"):
         event["path"] = path
@@ -100,7 +127,25 @@ def tool(tool_id: str, kind: str, title: str, status: str, *, path: str = "", co
         event["command"] = command
         if output is not None:
             event["output"] = output[-MAX_OUTPUT:]
+    if kind == "gamma":
+        event["tool"] = name if GAMMA_TOOL.match(name or "") else ""
     return event
+
+
+def gamma_words(name: str, *, now: bool = False) -> str:
+    """A call of Gamma's tool ``name`` in words, as the chat says it
+    (computerChat.js ``stepText``, ``stepNow``): "Read Gamma: read_page",
+    "Wrote in Gamma: comment"; ``now``, while it runs: "Reading Gamma: …",
+    "Writing in Gamma: …"."""
+    if not name:
+        return "Reading Gamma" if now else "Read Gamma"
+    lead = ("Writing in" if now else "Wrote in") if name in GAMMA_WRITES else ("Reading" if now else "Read")
+    return f"{lead} Gamma: {name}"
+
+
+def gamma_step(tool_id: str, name: str, status: str) -> dict:
+    """A call of Gamma's tool ``name`` (Read Gamma: read_page)."""
+    return tool(tool_id, "gamma", gamma_words(name), status, name=name)
 
 
 def ask(ask_id: str, kind: str, *, step: str = "", command: str | None = None, cwd: str | None = None,
@@ -276,9 +321,11 @@ def protected(path: str, cwd: str) -> bool:
 
 
 def done(*, ok: bool, answer=None, text: str = "", error: str = "", stopped: bool = False,
-         usage: dict | None = None) -> dict:
+         usage: dict | None = None, gamma_down: bool = False) -> dict:
+    """The turn's end; ``gamma_down``, it failed because Gamma's tools did
+    not start or connect (``GammaDown``)."""
     return {"type": "done", "ok": ok, "answer": answer, "text": text or "", "error": "" if ok else error,
-            "stopped": stopped, "usage": usage or {}}
+            "stopped": stopped, "usage": usage or {}, "gamma_down": gamma_down}
 
 
 def one_line(text: str, limit: int = MAX_TITLE) -> str:
@@ -333,6 +380,11 @@ class TurnFailed(Exception):
     """A turn that cannot go on: its message is ``done``'s error."""
 
 
+class GammaDown(TurnFailed):
+    """Gamma's tools did not start or connect for the turn: the session is
+    the agent's all the same, so a turn again afresh would fail alike."""
+
+
 class _Stopped(Exception):
     pass
 
@@ -346,7 +398,10 @@ class Turn:
 
     ``session`` is the agent's session id ("" until it is known), ``pid``
     the CLI's process (0 when it could not start), ``env`` what a driver
-    adds to the environment it runs in (``procs.spawn``). ``events()`` may be read
+    adds to the environment it runs in (``procs.spawn``), ``gamma`` Gamma's
+    tools for the turn (``Gamma``, None for none): its token goes into that
+    environment as ``TOKEN_ENV``, and the driver names ``gamma_url`` in the
+    agent's own config. ``events()`` may be read
     once; ``stop()`` and ``answer()`` may be called from any thread, any
     number of times, and return at once. A driver subclasses it with
     ``_run`` (the events of the turn, a ``done`` last), when the agent can
@@ -355,11 +410,15 @@ class Turn:
 
     label = "The agent"
 
-    def __init__(self, argv: list[str], *, cwd: str, ask: bool = False, env: dict | None = None):
+    def __init__(self, argv: list[str], *, cwd: str, ask: bool = False, env: dict | None = None,
+                 gamma: Gamma | None = None):
         self.session = ""
         self.pid = 0
         self.cwd = cwd
         self.ask = ask
+        self.gamma_url = gamma.url if gamma else ""
+        if gamma:
+            env = {**(env or {}), TOKEN_ENV: gamma.token}
         self._asks: dict[str, object] = {}   # the asks waiting for an answer: key -> what the driver answers with
         self._asking = threading.Lock()
         self._stop = threading.Event()
@@ -434,6 +493,9 @@ class Turn:
         except _Idle:
             graceful = False
             end = done(ok=False, error=f"{self.label} said nothing for 10 minutes.")
+        except GammaDown as e:
+            graceful = False
+            end = done(ok=False, error=str(e), gamma_down=True)
         except TurnFailed as e:
             graceful = False
             end = done(ok=False, error=str(e))
@@ -537,16 +599,20 @@ class Turn:
         procs.kill_tree(child, grace=1.0)
 
 
-def start(name: str, **kw) -> Turn:
+def start(name: str, *, title: str = "", **kw) -> Turn:
     """Start a turn of the agent ``name`` (``codex``, ``claude``): the
     driver's ``start`` with ``argv``, ``cwd``, ``prompt``, ``schema``,
     ``session``, ``images``, ``ask``, ``stream`` (its text as it is
     written, ``delta``), ``model`` and ``effort`` (one the agent listed,
-    ``catalog.probe``'s ``models``; "" for its default)."""
+    ``catalog.probe``'s ``models``; "" for its default) and ``gamma``
+    (``Gamma``: the agent reads Gamma through its MCP endpoint); ``title``
+    the name of a new Codex thread, which ``codex resume`` lists it by
+    (Claude Code's sessions need none: C3 of
+    docs/research/agents-as-participants-plan.md)."""
     if name == "codex":
         from . import codex
 
-        return codex.start(**kw)
+        return codex.start(**kw, title=title)
     if name == "claude":
         from . import claude
 

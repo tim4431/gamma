@@ -2,8 +2,8 @@
 (step 4c of docs/research/agent-collab.md): the computer's side
 (gamma/local_agents/home.py ``HttpHome``, runner.py ``queue_remote`` and
 ``withdraw_remote``, computers/channel.py ``_sends`` and the announce's
-``agent``, feedback/sources.py ``source_in_vault``, the panel's gate in
-routers/folder_links.py) against that server's channel routes
+assistants, feedback/sources.py ``source_in_vault``) against that server's
+channel routes
 (gamma/routers/computers.py).
 
 One process plays both: the NAS is a TestClient of its own reached through
@@ -22,11 +22,11 @@ fetched); a Send made while the computer is away taken when it comes back;
 a token's Send refused there and another account's never run; a withdraw
 stopping the run, never overwritten; a claim retried (the same run told it
 holds it, another refused) and answers retried writing nothing twice; an
-``@codex`` mention made there run here; recovery failing an open run there,
+``@codex`` mention made there run here as a turn of its thread (no Send:
+test_remote_chat.py has the thread's turn); recovery failing an open run there,
 and the channel's next announce one left open while that server was away (a
 claim never answered too); a paused vault pushing nothing; Stop showing
-turning the agents there off; the routes' refusals; the panel's gate (shown
-there first, asking refused).
+leaving the computer's agents be; the routes' refusals.
 The local path is the local agents' tests' (test_local_agents_*.py)."""
 
 import io
@@ -46,7 +46,7 @@ from gamma import folder_links, gamma_sync, pdf_meta, storage, workspaces
 from gamma.blocks_store import new_block_id
 from gamma.computers import channel, registry
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
-from gamma.feedback import files as feedback_files, requests, sources
+from gamma.annotations import files as annotation_files, requests, sources
 from gamma.integrations import create_token
 from gamma.local_agents import catalog, codex, events, home, info, procs, runner, store
 from gamma.ops import commit_ops
@@ -123,7 +123,7 @@ def nas(lab, tmp_path, monkeypatch):
             return fn(at, *args, **kwargs)
         return call
 
-    for module in (folder_links, selection, feedback_files, runner, home, info):
+    for module in (folder_links, selection, annotation_files, runner, home, info):
         monkeypatch.setattr(module, "connect_pages_db", guarded(module.connect_pages_db))
     monkeypatch.setattr(folder_links, "commit_ops", guarded(folder_links.commit_ops))
     runner.register()
@@ -144,16 +144,16 @@ def nas(lab, tmp_path, monkeypatch):
         if folder_links.inside(link["path"], str(tmp_path)):
             folder_links._forget(link)
     with connect_vaults_db() as conn:
-        for table in ("agent_runs", "agent_folders", "agent_threads", "agent_policies"):
+        for table in ("agent_runs", "computer_agents", "agent_threads", "agent_dir_grants", "agent_people"):
             conn.execute(f"DELETE FROM {table}")
     with connect_users_db() as conn:
         for user in (account_of(OWNER), account_of(EDITOR)):
             conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user,))
             conn.execute("DELETE FROM computers WHERE user_id = ?", (user,))
             conn.execute("DELETE FROM computer_links WHERE created_by = ?", (user,))
-    with feedback_files._guard:
-        feedback_files._pages.clear()
-        feedback_files._folders.clear()
+    with annotation_files._guard:
+        annotation_files._pages.clear()
+        annotation_files._scopes.clear()
     assert not left, f"children left running: {[c.proc.pid for c in left]}"
 
 
@@ -173,8 +173,8 @@ def _rects(fractions) -> list:
 def _made(lab, nas, name: str, *, agent: str = "codex", shown: bool = True) -> SimpleNamespace:
     """The paper as a work folder of the NAS made from a directory here, its
     files chosen and pushed there; this computer shown there (its channel,
-    ``turn`` a turn of it) and ``agent`` turned on with the shell's word; a
-    passage and the figure commented on there."""
+    ``turn`` a turn of it) and ``agent`` turned on for the computer with the
+    shell's word; a passage and the figure commented on there."""
     w = make_folder(lab.owner, name)
     root = nas.root / name
     for rel in SOURCES:
@@ -199,9 +199,9 @@ def _made(lab, nas, name: str, *, agent: str = "codex", shown: bool = True) -> S
         assert r.status_code == 201, r.text
         turn = channel._Channel(r.json()["link"]["id"])
     if agent:
-        r = lab.owner.patch(f"/api/folder-links/{link['id']}", json={"agent": agent}, headers=SHELL)
+        r = lab.owner.patch(f"/api/local-agents/{agent}", json={"enabled": True}, headers=SHELL)
         assert r.status_code == 200, r.text
-        assert r.json()["queued"] == 0 and r.json()["agent"]["name"] == agent
+        assert r.json()["queued"] == 0 and r.json()["enabled"]   # that server's Sends: its channel asks for them
     v1 = PLACES["v1"]
     passage, area = new_block_id(), new_block_id()
     commit_ops(lab.ws, page, [
@@ -255,8 +255,8 @@ def _until(test, timeout=30.0):
 
 def _computer_row(token_id: str) -> dict:
     with connect_users_db() as conn:
-        row = conn.execute("SELECT vaults FROM computers WHERE token_id = ?", (token_id,)).fetchone()
-    return {"vaults": json.loads(row[0])} if row else {}
+        row = conn.execute("SELECT vaults, assistants FROM computers WHERE token_id = ?", (token_id,)).fetchone()
+    return {"vaults": json.loads(row[0]), "assistants": json.loads(row[1])} if row else {}
 
 
 def _prompt_items(log: Path) -> tuple[list[dict], dict]:
@@ -326,21 +326,24 @@ def test_the_channel_queues_the_sends_that_server_gives_and_stops_the_withdrawn(
     f.turn._sends(Server(), link)
     assert queued == [(f.id, "r1")] and withdrawn == [([f.id], "r0", "run-0")]
     assert f.turn.sends_due is False
-    # paused there: nothing taken; a vault with no agent asks nothing at all
+    # paused there: nothing taken; with no agent on, nothing is asked at all
     folder_links.set_paused(f.id, True)
     queued.clear()
     f.turn._sends(Server(), link)
     assert queued == []
-    store.set_agent(f.id, "", by=lab.user)
+    store.set_agent("codex", False, by=lab.user)
     assert channel.agent_folders(link) == {}
     f.turn._sends(None, link)                                            # no request made: None would fail
 
-    # the announce names the folder's agent, never a path
+    # the announce names the agents on for the channel's account, and a work folder's vault its agent for an
+    # older server alone; never a path
     folder_links.set_paused(f.id, False)
-    store.set_agent(f.id, "codex", by=lab.user)
+    store.set_agent("codex", True, by=lab.user)
     state = channel.state_of(link)
     assert [v for v in state["vaults"] if v.get("folder_id") == f.w] == [
         {"kind": "folder", "folder_id": f.w, "paused": False, "agent": "codex"}]
+    assert [(a["name"], a["enabled"]) for a in state["assistants"]] == [("codex", True), ("claude", False)]
+    assert channel.agent_folders(link) == {f.w: (folder_links.get_link(f.id), "codex")}
     assert str(nas.root) not in json.dumps(state)
 
     # a server from before the Sends: its channel opens the announce and the poll alone (403), asked again later
@@ -368,39 +371,19 @@ def test_a_run_pushes_nothing_while_its_vault_is_paused_choosing_or_gone(lab, na
     assert nas.pushed == [(f.id, {"direction": "push"})]
 
 
-def test_stop_showing_turns_the_agents_there_off(lab, nas):
+def test_stop_showing_leaves_the_computers_agents_be(lab, nas):
     f = _made(lab, nas, "RS unshown")
     r = lab.owner.delete(f"/api/computer-links/{f.turn.link_id}", headers=SHELL)
     assert r.status_code == 200, r.text
-    assert store.agent_of(f.id) is None
-    # shown there again (maybe as another account): no agent comes back without its question
+    assert store.agent_for(lab.user)["agent"] == "codex"
+    # shown there again: the announce says the computer's agents as they are
     item = _mint(lab.owner)
     r = lab.owner.post("/api/computer-links", json={"remote_url": nas.url, "workspace": lab.ws,
                                                     "token": item["token"], "token_id": item["id"]}, headers=SHELL)
     assert r.status_code == 201, r.text
     channel._Channel(r.json()["link"]["id"]).once()
-    assert [v.get("agent") for v in _computer_row(item["id"])["vaults"] if v.get("folder_id") == f.w] == [None]
-
-
-def test_the_panel_turns_an_agent_on_for_a_work_folder_of_another_server_shown_there(lab, nas):
-    f = _made(lab, nas, "RS gate", agent="", shown=False)
-    r = lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent": "codex"}, headers=SHELL)
-    assert (r.status_code, r.json()["detail"]) == (400, "Show this computer on testserver first.")
-    assert lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent": "codex"}).status_code == 403   # the shell's word
-    item = _mint(lab.owner)
-    r = lab.owner.post("/api/computer-links", json={"remote_url": nas.url, "workspace": lab.ws, "token": item["token"],
-                                                    "token_id": item["id"]}, headers=SHELL)
-    assert r.status_code == 201, r.text
-    on = lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent": "codex"}, headers=SHELL)
-    assert on.status_code == 200 and on.json()["agent"]["name"] == "codex" and on.json()["queued"] == 0
-    # asking in the chat stays a work folder of this server's
-    r = lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent_runs": "ask"}, headers=SHELL)
-    assert (r.status_code, r.json()["detail"]) == (409, "Asking in the chat is for a work folder of this computer's "
-                                                        "server: for one of another server, choose Ask on this "
-                                                        "computer.")
-    assert lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent_runs": "never"}).status_code == 200
-    off = lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent": ""})
-    assert off.status_code == 200 and off.json()["agent"] is None
+    assert [(a["name"], a["enabled"]) for a in _computer_row(item["id"])["assistants"]] == [("codex", True),
+                                                                                           ("claude", False)]
 
 
 # --- the loop, against that server's routes -------------------------------------------------------
@@ -410,8 +393,7 @@ def test_the_makers_send_runs_here_and_is_answered_there(lab, nas, monkeypatch):
                  commands=["latexmk -pdf main.tex"], summary="Fixed both comments.")
     f = _made(lab, nas, "RS loop")
     f.turn.once()                                                          # announced with its agent
-    assert [v.get("agent") for v in _computer_row(f.token["id"])["vaults"] if v.get("folder_id") == f.w] == [
-        "codex"]
+    assert [a["name"] for a in _computer_row(f.token["id"])["assistants"] if a["enabled"]] == ["codex"]
     sent = _send(lab.owner, f, note="fix these")
     assert _request(lab, sent["id"])["state"] == "sent"                    # the local runner never took it
     f.turn.once()                                                          # woken, or asked after its announce
@@ -431,9 +413,10 @@ def test_the_makers_send_runs_here_and_is_answered_there(lab, nas, monkeypatch):
     threads = _threads(lab, f)
     for thread_id in f.threads:
         reply = threads[thread_id]["comments"][-1]
-        assert (reply["agent"], reply.get("agent_kind"), reply["author"]) == ("Codex", "local", OWNER)
+        assert (reply["agent"], reply.get("agent_kind"), reply["author"]) == ("Codex", "computer", OWNER)
         assert (reply["body"], reply["id"]) == (f"Done for {thread_id}.", home.reply_id(run["id"], thread_id))
-        assert threads[thread_id]["resolved_at"] and threads[thread_id]["resolved_agent"] == "Codex"
+        assert reply["agent_on"] and threads[thread_id]["resolved_at"]
+        assert threads[thread_id]["resolved_agent"] == f"Codex on {reply['agent_on']}"
     assert set(store.threads_of(f.id, f.threads)) == set(f.threads)     # their sessions, for a follow-up
 
     # the source lines computed here, the regions' pictures fetched into the folder and handed to the agent
@@ -443,10 +426,10 @@ def test_the_makers_send_runs_here_and_is_answered_there(lab, nas, monkeypatch):
     assert by[f.threads[1]]["source"] == {"file": "main.tex", "line": 22, "as": "current"}
     assert by[f.threads[0]]["file"] == "main.pdf"
     named = [rel for item in items for rel in item["pictures"]]                  # in the prompt's order
-    assert named and all(rel.startswith(f"{feedback_files.IMG}/") and (f.root / rel).is_file() for rel in named)
+    assert named and all(rel.startswith(f"{annotation_files.IMG}/") and (f.root / rel).is_file() for rel in named)
     assert [Path(p["path"]).resolve() for p in turn["input"] if p.get("type") == "localImage"] == [
         (f.root / rel).resolve() for rel in named]
-    assert (f.root / feedback_files.DIR / ".gitignore").read_bytes() == feedback_files.GITIGNORE   # never in git
+    assert (f.root / annotation_files.DIR / ".gitignore").read_bytes() == annotation_files.GITIGNORE   # never in git
     assert str(f.root) not in json.dumps(_request(lab, sent["id"]))       # never a path of this computer there
 
 
@@ -550,16 +533,17 @@ def test_a_run_whose_answers_were_lost_tries_again_and_writes_nothing_twice(lab,
     assert store.run_of(lab.ws, sent["id"])["state"] == "done"
 
 
-def test_a_mention_made_there_runs_here(lab, nas):
+def test_a_mention_made_there_runs_here_as_a_turn_of_its_thread(lab, nas):
     f = _made(lab, nas, "RS mention")
     f.turn.once()
     r = lab.owner.post(f"/api/pages/{f.page}/comments", json={"block_id": f.page, "body": "@codex tighten the title"})
     assert r.status_code == 201, r.text
+    assert r.json()["turn"]["agent"] == "Codex" and "send" not in r.json()
     thread_id = r.json()["thread"]["id"]
     f.turn.once()
     assert runner.wait_idle(60)
     reply = _threads(lab, f)[thread_id]["comments"][-1]
-    assert (reply["agent"], reply.get("agent_kind")) == ("Codex", "local")
+    assert (reply["agent"], reply.get("agent_kind"), reply["body"]) == ("Codex", "computer", "Done: tighten the title")
 
 
 def test_recovery_fails_an_open_run_there(lab, nas):
@@ -649,9 +633,9 @@ def test_the_channels_routes_answer_only_the_computers_own(lab, nas):
     assert computer.post(f"/api/computers/sends/{theirs['id']}/claim",
                          json={"run": "rsn-run-x", "agent": "codex"}).status_code == 404
     assert theirs["id"] not in {s["id"] for s in computer.get("/api/computers/sends").json()["sends"]}
-    # a folder no longer announced with an agent
+    # the agent turned off: the folder announced with none
     mine = _send(lab.owner, f)
-    lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent": ""}).raise_for_status()
+    lab.owner.patch("/api/local-agents/codex", json={"enabled": False}).raise_for_status()
     f.turn.once()
     assert computer.get("/api/computers/sends").json()["sends"] == []
     assert computer.post(f"/api/computers/sends/{mine['id']}/claim",

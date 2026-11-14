@@ -7,7 +7,7 @@ import re
 
 from gamma.ai_tools import agent_system, run_agent_tool
 
-from ai_fixtures import ALLOW_ALL, FakeResp, children, folder, notes, org, props  # noqa: F401  (fixtures)
+from ai_fixtures import ALLOW_ALL, FakeResp, ai_provider, children, folder, notes, org, props  # noqa: F401  (fixtures)
 
 
 def test_read_block_outline_with_ids(notes):
@@ -176,6 +176,13 @@ def test_create_block_placement(notes):
     assert action["kind"] == "create" and action["page_id"] == ids["page"]
     new_last = re.search(r"\[([^\]]+)\]", text).group(1)
     assert children(c, ids["page"])[-1] == new_last
+    assert "agent" not in props(c, new_last)["properties"], "a scope without a stamp stamps nothing"
+    # the chat's scope carries Gamma AI's stamp (routers/ai.py), which the block keeps
+    stamp = {"id": "gamma", "name": "Gamma AI", "for": "tim"}
+    text, _ = run_agent_tool(ids["ws"], {**scope, "agent": stamp}, "create_block",
+                             {"parent_id": ids["page"], "content": "Gamma AI's note"})
+    made = re.search(r"\[([^\]]+)\]", text).group(1)
+    assert props(c, made)["properties"]["agent"] == stamp
     # after_id inserts between siblings.
     text, _ = run_agent_tool(ids["ws"], scope, "create_block",
                              {"parent_id": ids["page"], "content": "wedged in",
@@ -566,3 +573,31 @@ def test_edit_block_judges_a_passage_where_it_lands(notes):
     assert text.startswith("ok"), text
     assert props(c, padded)["content"] == "Let $ x $ be the position, and $v$ its speed."
     c.delete(f"/api/blocks/{page}")
+
+
+def test_a_note_the_chat_makes_says_gamma_ai_made_it(notes, ai_provider, monkeypatch):
+    """The chat's scope carries Gamma AI's stamp for the account
+    (routers/ai.py, agents.stamp): the note its create_block adds keeps it
+    as ``properties.agent``; the block is the account's all the same."""
+    c, ids = notes
+    import gamma.routers.ai as ai_mod
+
+    opened = []
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        opened.append(1)
+        if len(opened) == 1:
+            return FakeResp([
+                {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "t1", "name": "create_block"}},
+                {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": json.dumps(
+                    {"parent_id": ids["page"], "content": "Gamma AI's stamped note"})}},
+                {"type": "content_block_stop"},
+            ])
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Added."}}])
+
+    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
+    r = c.post("/api/ai/chat", json={"prompt": "add a note", "agent_scope": "page", "page_id": ids["page"],
+                                     "permissions": ALLOW_ALL})
+    assert r.status_code == 200, r.text
+    made = next(a for a in r.json()["actions"] if a["tool"] == "create_block")["block_id"]
+    assert props(c, made)["properties"]["agent"] == {"id": "gamma", "name": "Gamma AI", "for": ids["user"]}

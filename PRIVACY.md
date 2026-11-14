@@ -96,10 +96,11 @@ needs them. What is sent is limited to what the feature requires:
   itself loads no third-party scripts and receives no connection tokens.
   Content is handled by the assistant and its provider under their policies.
   This does not send data to the Gamma developer or require configuring an AI
-  provider inside Gamma. An assistant you allowed to answer feedback (a
-  connection or token made with that access) may also write replies in, and
-  resolve, the comment threads on the files of your work folders, and nothing
-  else.
+  provider inside Gamma. An assistant you gave the Comment level in a
+  workspace (a connection or token made with that access) may also write
+  comments and replies there, resolve threads and highlight passages, each
+  under its own name, and nothing else; one you let edit a workspace may
+  also add, edit and move notes there.
 - **External assistants (MCP), what Gamma stores**: only a hash of the
   connection token. A comment an assistant writes through a connection stores
   the connection's name beside your account, so the thread shows who wrote it.

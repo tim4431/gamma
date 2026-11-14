@@ -1,4 +1,4 @@
-"""The SyncTeX reader (gamma/feedback/synctex.py, docs/dev/feedback.md
+"""The SyncTeX reader (gamma/annotations/synctex.py, docs/dev/annotations.md
 "SyncTeX") on real builds of TeX Live 2024 (samples/synctex/README.md): the
 truth corpus, where every word names its own file and line, built with
 pdfTeX, XeTeX and LuaTeX; the paper's figure, equation, page number and a
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from gamma.feedback import synctex
+from gamma.annotations import synctex
 
 SAMPLES = Path(__file__).parent / "samples" / "synctex"
 CASES = json.loads((SAMPLES / "truth" / "cases.json").read_text(encoding="utf-8"))

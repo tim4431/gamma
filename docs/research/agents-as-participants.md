@@ -14,7 +14,7 @@ Status: **a plan; nothing is built.** The mechanics as they stand are in
 [dev/work_folders.md](../dev/work_folders.md),
 [dev/local_agents.md](../dev/local_agents.md),
 [dev/computers.md](../dev/computers.md) and
-[dev/feedback.md](../dev/feedback.md). This note records where the built
+[dev/annotations.md](../dev/annotations.md). This note records where the built
 design differs from what was asked, the decisions, the design and its
 steps. Three of the corrections reverse decisions the two earlier notes
 record ("Reversed" below). What to build, unit by unit with its files,
@@ -189,7 +189,7 @@ explorer's look.
   stays as it is: anchors, source lines, pictures, the version kept
   while a thread is open, the Markdown form.
 - **On disk.** A synced folder's directory holds the marks of its files
-  as `.gamma/annotations/` (`open.md`, `open.json`, `img/`), kept by the
+  as `.gamma/feedback/` (`open.md`, `open.json`, `img/`), kept by the
   vault's rounds, for a folder of another server too (today a remote
   vault writes none). An agent started in a terminal reads them with no
   connection.
@@ -284,7 +284,7 @@ tests, are in [the plan](agents-as-participants-plan.md).
 |---|---|
 | 1. The explorer and Detach | the icon function and its set, the synced folder's mark and tree, Detach with its two outcomes, in every window |
 | 2. Agents in Settings and the picker | the settings moved to the computer, the Agents list, the picker on every page, one conversation store, the turn's connection and Gamma's tools, the chat without a provider |
-| 3. Marks and identity | the reader for any page with highlights, `.gamma/annotations/`, `comment` / `resolve` / `highlight`, the *Comment* level, the agent's row and stamp, a mention as a turn, a co-author's use; the request layer removed |
+| 3. Marks and identity | the reader for any page with highlights, `.gamma/feedback/`, `comment` / `resolve` / `highlight`, the *Comment* level, the agent's row and stamp, a mention as a turn, a co-author's use; the request layer removed |
 | 4. Another server | a computer linked in Settings, the choice of computer and directory, asks relayed |
 | 5. Sessions | the CLI's sessions listed in History, read and continued |
 
@@ -299,6 +299,72 @@ folder*; the icons are Material Icon Theme's whole set, mapped as VS Code
 maps them; the marks of a file linked to disk are written there too; a
 co-author is granted the agent once, asks it with `@` or the tick, and
 what their turn asks to run is granted one time at most
-([the plan](agents-as-participants-plan.md), decision 13). Still to read
-before a co-author's use ships: what each vendor's terms say of a second
-person driving the owner's signed-in CLI.
+([the plan](agents-as-participants-plan.md), decision 13). What each
+vendor's terms say of a second person driving the owner's signed-in CLI is
+below; it turned into the consent the owner gives, not a refusal.
+
+## A co-author's use and the vendors' terms (read 2026-11-14)
+
+A co-author's turn runs the owner's CLI on the owner's computer, signed in
+as the owner: Codex with the owner's ChatGPT sign-in or API key, Claude
+Code with the owner's Claude subscription or API key. The co-author never
+sees a credential (it stays in the CLI's own store on the owner's
+computer, and Gamma never reads it), but the person whose words drive the
+turn is someone else. What the terms say, quoted as the pages read on the
+date above:
+
+- **OpenAI, Terms of Use** (consumer ChatGPT plans, which a Codex signed in
+  with ChatGPT is under; <https://openai.com/policies/terms-of-use/>,
+  effective 1 January 2026; the clause is unchanged from the 11 December
+  2024 version): "You may not share your account credentials or make your
+  account available to anyone else and are responsible for all activities
+  that occur under your account." The Business terms
+  (<https://openai.com/policies/business-terms/>, effective 1 January 2026)
+  add: "Customer will not share Account access credentials or individual
+  login credentials between multiple users." OpenAI's help article on Codex
+  with a ChatGPT plan
+  (<https://help.openai.com/en/articles/11369540>) says the ChatGPT terms
+  apply and says nothing of a second person. (openai.com answered this
+  fetch with 403; the clauses were read from the copies at
+  <https://open.windriver.com/info/uni-license-list/licenses/openai-tou-20241211.html>
+  and <https://conductatlas.com/platform/openai/openai-terms-of-use/provision/CA-P-078680/no-account-sharing-or-transfer-to-others/>,
+  captured 5 October 2026.)
+- **Anthropic, Consumer Terms** (Free, Pro, Max; Claude Code signed in with
+  a Claude account is under them, <https://code.claude.com/docs/en/legal-and-compliance>;
+  <https://www.anthropic.com/legal/consumer-terms>, effective 8 October
+  2025): "You may not share your Account login information, Anthropic API
+  key, or Account credentials with anyone else. You also may not make your
+  Account available to anyone else." and "You are responsible for all
+  activity occurring under your Account". Claude Code's legal page adds:
+  "Advertised usage limits for Pro, Max, and Ultra plans assume ordinary,
+  individual usage of Claude Code and the Agent SDK", and "Anthropic does
+  not permit third-party developers to offer Claude.ai login into their own
+  applications, or to route requests through Free, Pro, Max, or Ultra plan
+  credentials on behalf of their users."
+- **Anthropic, Commercial Terms** (an API key, Team, Enterprise;
+  <https://www.anthropic.com/legal/commercial-terms>, effective 17 June
+  2025): the customer may "power products and services Customer makes
+  available" to its users, and "Customer is responsible for all activity
+  under its account". The Claude Code page says this "does not restrict how
+  customers provision and manage their own API keys … for use by the
+  customer's own authorized users — provided the resulting usage is billed
+  to the key owner".
+
+So both vendors' personal plans forbid making the account available to
+anyone else, and a co-author driving the owner's signed-in CLI is close to
+that; an API key's use for the key owner's own collaborators is allowed on
+Anthropic's commercial terms and is billed to the owner. Gamma neither
+shares nor intermediates a credential (the CLI signs in through the
+vendor's own flow, and its sign-in stays on the owner's computer), and
+whether a given use is "making the account available" is the owner's to
+judge for their plan. The build therefore keeps the feature and puts the
+terms in the owner's consent, the one sentence the desktop app's question
+ends with when a person is named (desktop/lib/keeping.js `personAsk`):
+
+> bob's turns run on your Codex sign-in on this computer: OpenAI's terms for
+> ChatGPT plans say you may not make your account available to anyone
+> else, and you are responsible for keeping to your account's terms.
+
+(Claude Code's names Anthropic's terms for Claude plans.) Nothing is
+refused on the vendor's account: a person the owner names is the owner's
+decision, as turning the agent on is.

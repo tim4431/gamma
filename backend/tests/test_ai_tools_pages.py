@@ -423,6 +423,30 @@ def test_area_highlights_reach_the_model_as_pictures(org, monkeypatch):
     c.delete(f"/api/blocks/{page}")
 
 
+def test_a_pdf_passage_names_its_pdf_page(org, monkeypatch):
+    """A highlighted passage of a PDF reaches read_page and the chat context
+    with its 1-based PDF page, as a text file's range does with its lines."""
+    from gamma import ai_context
+    from gamma.routers.ai import AIChatRequest
+
+    c, ids = org
+    monkeypatch.setattr(ai_context, "pdf_path", lambda ws, doc: "fake.pdf")
+    monkeypatch.setattr(ai_context, "extract_text_pages", lambda *a, **kw: ("(page 1) text", 1))
+    monkeypatch.setattr(ai_context, "ensure_indexed", lambda *a: None)
+    rect = {"x1": 80, "y1": 100, "x2": 400, "y2": 120}
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "passage notes",
+                                       "properties": {"folders": [ids["readout"]], **doc_props("b" * 24)}}).json()["id"]
+    c.post("/api/blocks", json={"parent_id": page, "content": "why this name?", "properties": {
+        "quote": "the loss is defined as", "pdf_position": {"pageNumber": 4, "width": 800, "height": 1000,
+                                                          "boundingRect": rect, "rects": [rect]}}})
+    said = '- Highlighted: "the loss is defined as" (PDF page 4)\n  User note: why this name?'
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "read_page", {"page_id": page})
+    assert said in text
+    payload = AIChatRequest(prompt="what is it?", page_id=page, include_notes=True)
+    assert said in ai_context.gather_inputs(ids["ws"], payload, False, crops=[])[1]
+    c.delete(f"/api/blocks/{page}")
+
+
 def test_text_boxes_are_notes_never_area_highlights(org, monkeypatch):
     """A text box has no quote, like an area highlight, but is a note:
     area_highlight never takes it for a rectangle (not even with a stray

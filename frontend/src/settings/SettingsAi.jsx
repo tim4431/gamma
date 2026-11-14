@@ -1,5 +1,6 @@
-// Settings → AI › Connections: the user's AI credential list (OpenAI-platform style)
-// and the add/edit-key wizard. The account's own list, its Test and Usage
+// Settings → AI › Connections: who the chat talks to (SettingsAgents.jsx:
+// Gamma AI and the agents of the account's computers), then the user's AI
+// credential list (OpenAI-platform style) and the add/edit-key wizard. The account's own list, its Test and Usage
 // results live in App.jsx (the aiKeys* group), its connect dialog in
 // useProviderEditor (providerEditor.js) — these components only render them;
 // the server's shared entries appear there as read-only rows.
@@ -13,6 +14,7 @@ import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
 import { modelLabel } from "../chat/modelPrefs";
 import { ModelPicker } from "./ModelPicker";
+import { SettingsAgents } from "./SettingsAgents.jsx";
 import { UsageChart } from "./UsageChart.jsx";
 import { AccountPicker, Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
@@ -765,7 +767,7 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
   );
 }
 
-export function AiSettings({ value, confirm, setStatus }) {
+export function AiSettings({ value, confirm, setStatus, signedIn = false }) {
   // The picked connection, else the one the chat falls back to
   // (providerModels in chat/modelPrefs.js): the first that offers models.
   const listed = (id) => value.aiKeysInfo?.providers.some((item) => item.id === id);
@@ -775,8 +777,11 @@ export function AiSettings({ value, confirm, setStatus }) {
     : value.aiKeysInfo?.providers[0]?.id;
   const canEdit = value.aiKeysInfo?.can_edit;
   const providers = value.aiKeysInfo?.providers || [];
+  const active = providers.find((item) => item.id === activeKeyId);
   return (
     <>
+      <SettingsAgents connection={active && value.aiModels?.length ? active.label || active.protocol : ""}
+        signedIn={signedIn} setStatus={setStatus} />
       {/* Add provider sits on the section's rule once there is a list, as a
           section's action does everywhere in Settings; before, the empty
           state offers it. */}

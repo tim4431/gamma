@@ -50,7 +50,7 @@ export function useRefPicker({ editorRef, excludeId, pages, rootId, lookupBlock,
     const [np, nb] = pickerCounts(pageHits.length, blockHits.length);
     return [
       ...pageHits.slice(0, np).map((p) => ({
-        kind: "page", id: p.id, title: p.content, format: p._doc?.format || "",
+        kind: "page", id: p.id, title: p.content, format: p._doc?.format || "", file: p._fileName || "",
         meta: [pageKindLabel(p._doc), p._path || p._folderChips?.[0]?.name].filter(Boolean).join(" · "),
       })),
       ...blockHits.slice(0, nb).map((b) => ({

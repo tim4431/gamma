@@ -54,7 +54,7 @@ from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_PAGE, LABELS, PARENT_PAGE,
                            named, new_block_id, page_parents, top_of, touch_page, tree_children, tree_parents,
                            tree_rows, write_lock)
 from .documents.model import own_hash, page_document
-from .feedback.kept import held_files
+from .annotations.kept import held_files
 from .db import (DATA_SCHEMA, PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db, copy_chats,
                  page_now, register_functions, safe_ws_id, ws_dir)
 from .logbuf import log

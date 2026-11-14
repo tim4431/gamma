@@ -47,7 +47,7 @@ def grow_box(x0: float, y0: float, x1: float, y1: float, width: float, height: f
     × ``height`` frame, top-left origin): padded, at least
     ``CROP_MIN_SIDE`` a side, inside the page, as fractions; None for no
     frame. What a feedback thread's ink anchor is cropped by
-    (gamma/feedback/anchors.py), so its picture is view_ink's."""
+    (gamma/annotations/anchors.py), so its picture is view_ink's."""
     if width <= 0 or height <= 0:
         return None
     pad = max(CROP_PAD, 0.1 * max(x1 - x0, y1 - y0))
@@ -194,7 +194,7 @@ def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None, 
     as Gamma has it, in place of the original, as the annotated export
     writes it. ``marks``, highlight marks as ``annotate_pdf`` takes them,
     are drawn over it all (a feedback thread's region picture,
-    gamma/feedback/pictures.py, picks them); none by default."""
+    gamma/annotations/pictures.py, picks them); none by default."""
     from .pdf_export import page_with_ink, still_embedded
 
     path = path or page_pdf_path(ws, conn, page_id)

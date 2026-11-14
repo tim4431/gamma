@@ -848,7 +848,7 @@ async function main() {
       assert(got.page, JSON.stringify(got));
       assert(/To edit it as a note, open it with Gamma again and pick Edit in Gamma\.$/.test(await hook(app, (s) => s.notice())), 'the bar says how to edit it');
       const question = (await hook(app, (s) => s.asked.slice())).find((q) => q.startsWith('Edit Lone notes.md in Gamma?'));
-      assert(question && question.includes(`Edit in Gamma makes ${path.dirname(md)} a work folder`), 'asked, naming its directory: ' + question);
+      assert(question && question.includes(`Edit in Gamma makes ${path.dirname(md)} a synced folder`), 'asked, naming its directory: ' + question);
       await waitFor(() => shownPage(content) === got.page, 'the window on its page', 30_000);
       const page = await serverCall(app, `/api/blocks/${got.page}`, { ws: got.workspace });
       const doc = page.properties.doc || {};
@@ -1092,13 +1092,13 @@ async function main() {
       assert.deepEqual([links[0].pull, links[0].push], [true, 'off'], 'as the dialog said');
       assert.equal(fs.realpathSync(links[0].dest).toLowerCase(), fs.realpathSync(kept).toLowerCase(), 'synced where the picker said');
       await waitFor(async () => /is synced with/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
-      // The chooser now shows the folder synced; the panel lists it under Synced vaults, and "sync" runs a round.
+      // The chooser now shows the folder synced; the panel lists it under Synced folders and files, and "sync" runs a round.
       const again = await chooserRow(bar, 'Kept lab');
       assert((await again.textContent()).includes('synced'), 'shown as synced');
       await bar.keyboard.press('Escape');
       await menuClosed(bar);
       const row = await keptRow(app, bar, 'vault', 'Kept lab');
-      assert.equal(await bar.locator('#syncPanel .menuLabel', { hasText: 'Synced vaults' }).count(), 1, 'under its group');
+      assert.equal(await bar.locator('#syncPanel .menuLabel', { hasText: 'Synced folders and files' }).count(), 1, 'under its group');
       assert((await row.getAttribute('title')).includes(`${fs.realpathSync(kept).split(path.sep).pop()} ⇄ Alpha · Kept lab`), 'path ⇄ remote · folder in its tooltip');
       for (const act of ['pause', 'sync', 'more']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
       assert.equal(await row.locator('[data-act="push"]').count(), 0, 'the push switch is the vault view\'s, not the row\'s');
@@ -1123,7 +1123,7 @@ async function main() {
       return `${links[0].dest}: ${said}`;
     });
 
-    await step('synced vault from the library: a folder\'s "Sync with this computer…" asks for the directory and shows the dialog; asked again, it opens it; removed with its files to the trash', async () => {
+    await step('synced vault from the library: a folder\'s "Sync with this computer…" asks for the directory and shows the dialog; asked again, it opens it; removed, its directory left as it is but for .gamma/', async () => {
       await hook(app, (s, id) => s.openServer(id), ids.alpha);
       await waitLoggedIn(content);
       const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
@@ -1152,14 +1152,15 @@ async function main() {
       assert.equal(mine.length, 1, 'one vault');
       const opened = await hook(app, (s) => s.externalOpens[s.externalOpens.length - 1]);
       assert.equal(fs.realpathSync(opened).toLowerCase(), fs.realpathSync(dir).toLowerCase(), 'its directory opened');
-      // Removing it with its files moves what the sync wrote to the vault's trash.
-      await hook(app, (s, [server, id]) => s.removeVault(server, id, 'trash'), [mine[0].server, mine[0].id]);
-      await waitFor(() => !fs.existsSync(md), 'the files went to the trash', 10_000);
-      assert(fs.existsSync(path.join(dir, '.gamma', 'trash')), 'into .gamma/trash');
-      return `${mine[0].dest}, then removed with its files in its trash`;
+      // Removing it leaves the directory as it is, but for Gamma's own marker and .gamma/.
+      await hook(app, (s, [server, id]) => s.removeVault(server, id, 'keep'), [mine[0].server, mine[0].id]);
+      await waitFor(async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links.every((l) => l.folder_id !== 'e2efolder3'),
+        'the vault is gone', 10_000);
+      assert(fs.existsSync(md) && !fs.existsSync(path.join(dir, '.gamma', 'vault.json')), 'its files stay, its marker goes');
+      return `${mine[0].dest}, then removed, its files as they were`;
     });
 
-    await step('synced vault from a remote: the chooser on a remote server makes the vault on the host — no clone, a read token for a vault that pushes nothing; "Remove the vault…" drops it', async () => {
+    await step('synced vault from a remote: the chooser on a remote server makes the vault on the host — no clone, a read token for a vault that pushes nothing; "Remove the synced folder…" drops it', async () => {
       // On the remote (Alpha by URL: the same server, so the session is there).
       await hook(app, (s, id) => s.openServer(id), ids.remote);
       await waitFor(async () => (await hook(app, (s) => s.current())).id === ids.remote && new URL(content.url()).origin === urls.alpha, 'remote open', 15_000);
@@ -1197,7 +1198,7 @@ async function main() {
       const said = JSON.stringify(minted.map((t) => [t.name, t.scope]));
       assert.deepEqual(minted.map((t) => t.scope).sort(), ['computer', 'read'], `the vault's token and the computer's minted: ${said}`);
       assert(minted.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), `the vault's: read scope, named after the folder: ${said}`);
-      // The chooser shows it synced; the vault's "Remove the vault…" drops it and revokes the token; the files stay.
+      // The chooser shows it synced; the vault's "Remove the synced folder…" drops it and revokes the token; the files stay.
       const shown = await chooserRow(bar, 'Far lab');
       assert((await shown.textContent()).includes('synced'), 'shown as synced');
       await bar.keyboard.press('Escape');
@@ -1294,7 +1295,7 @@ async function main() {
       return 'pdfs, then off';
     });
 
-    await step('"Add a synced vault…" in the launcher: a directory becomes a work folder of the host\'s own workspace, its marker written and nothing tracked until its tracking dialog saves; the window goes to that dialog', async () => {
+    await step('"Add a synced folder…" in the launcher: a directory becomes a work folder of the host\'s own workspace, its marker written and nothing tracked until its tracking dialog saves; the window goes to that dialog', async () => {
       const dir = path.join(profile, 'Reading');
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, 'Idea.md'), '# Idea\n\n- a first thought\n- a second one\n');

@@ -1,41 +1,55 @@
 """The chat's computer side (docs/dev/local_agents.md "The chat's computer
-side"): a page's conversations with the agent on this computer, kept in the
-workspace's pages.db (``computer_chats``, db.COMPUTER_CHATS_SCHEMA) for its
-one reader, the maker of the vault of the work folder the page is a file of;
-on any server, also a page whose work folder a computer of the reader's
-keeps with an agent there, its turns run on that computer (step 4d, "a turn
-run on another computer" below).
+side"): the conversations of a chat with a computer's agent, kept in the
+workspace's pages.db (``computer_chats``, db.COMPUTER_CHATS_SCHEMA) for the
+account that talks to the agent, and read by the agent's ``owner`` too
+where that is another account (a co-author's, ``readable``; decision 12 of
+docs/research/agents-as-participants-plan.md). A conversation is about a
+bucket, as an AI chat is (a page's id, a folder's, or ``home``, the
+library), and its agent works in one directory (``place_of``): the vault's
+of the work folder the bucket is in, else a directory this computer offers
+its agents (``store.dirs``), else an empty one of its own (``own_dir``). On
+any server, a page whose work folder a computer of the reader's keeps with
+an agent there has its turns run on that computer (step 4d, "a turn run on
+another computer" below).
 
-A conversation is the page's active one for that account (``archived_at``
-NULL) or an archived one (History). Its messages are the person's
-(``{id, role: "user", text, selections: [{text, page, box}], at}``) and the
-agent's (``{id, role: "agent", agent, label, turn_id, state, text, steps, asks,
-changes, changed, built, error, fresh, model, effort, at, ended_at,
-waiting?}``, ``asks`` what its agent asks the person and waits for, a turn
-run on another computer's ``waiting`` instead (what it asks is answered
-there, never written here; false at its end), ``model`` and
+A conversation is the bucket's active one for that account (``archived_at``
+NULL) or an archived one (History), or a comment thread's (``thread_id``,
+gamma/local_agents/threads.py: its bucket the thread's page, never the
+bucket's active one nor in History), and names where its agent works
+(``dir``), chosen when it starts: a turn in another directory starts a new
+conversation (``begin``), as another agent does. Its messages are the
+person's (``{id, role: "user", text, selections: [{text, page, box}],
+at}``) and the agent's (``{id, role: "agent", agent, label, turn_id, state,
+text, steps, asks, changes, changed, built, error, fresh, model, effort, at,
+ended_at, waiting?}``, ``asks`` what its agent asks the person and waits
+for, a turn run on another computer's ``waiting`` instead (what it asks is
+answered there, never written here; false at its end), ``model`` and
 ``effort`` what the turn asked for, null for the agent's default; its
 ``text`` grows as the agent writes it), the agent's written by the runner as
 its turn goes (gamma/local_agents/runner.py ``_ChatTurn``), relative paths
-only. Every write takes the workspace's
-write lock and sets ``version`` above every version of the page's
-conversations of that account, and never below the clock
-(``_next_version``), so a client that polls with the version it holds
-learns of any change, an opened conversation's included.
+only. Every write takes the workspace's write lock and sets ``version``
+above every version of the bucket's conversations of that account, and
+never below the clock (``_next_version``), so a client that polls with the
+version it holds learns of any change, an opened conversation's included.
 
 These are not the AI chats (gamma/routers/chats.py): no member, share,
 export, backup, mirror or read_chats reads them (ws_backup.PRIVATE_TABLES),
-and they go with their page deleted for good (ops._purge).
+they go with their page deleted for good (ops._purge), and a deleted
+folder's are filed into the library's (``file_into_home``).
 
 This module is imported inside functions (gamma/local_agents/__init__.py).
 """
 
 import json
 import re
+import shutil
 import time
+from pathlib import Path
 
-from ..blocks_store import new_block_id, write_lock
+from .. import config
+from ..blocks_store import load_props, new_block_id, write_lock
 from ..db import connect_pages_db, page_now
+from ..logbuf import log
 from . import store
 
 MAX_TEXT = 20_000        # characters of a message: the person's, the agent's reply
@@ -45,9 +59,10 @@ TITLE_CHARS = 80
 HISTORY_CAP = 200        # archived conversations listed
 BUSY = ("queued", "running")
 MESSAGE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+HOME = "home"            # the library's bucket, as the AI chats name it
 
-_COLUMNS = ("id", "page_id", "user_id", "agent", "title", "messages", "version", "created_at", "updated_at",
-            "archived_at")
+_COLUMNS = ("id", "bucket", "dir", "user_id", "agent", "title", "messages", "version", "created_at", "updated_at",
+            "archived_at", "thread_id", "owner")
 _SELECT = f"SELECT {', '.join(_COLUMNS)} FROM computer_chats"
 
 
@@ -59,24 +74,102 @@ class ChatError(Exception):
         self.status, self.detail = status, detail
 
 
-def vault_of(ws: str, page_id: str, user_id: str) -> dict | None:
-    """The vault here of the work folder the page is a live file of, made
-    by ``user_id`` (the one with an agent first, when two keep it): the
-    one gate of the side, its link; None for any other page or account."""
+def about(conn, bucket: str) -> dict | None:
+    """What a conversation of ``bucket`` is about, None for no such bucket:
+    ``{kind: "library"}``; ``{kind: "folder", id, name, w}``; ``{kind:
+    "page", id, title, format, w}``, ``format`` its document's (``note``
+    for a page without one); ``w`` the work folder it is in ("" for none),
+    with ``work_folder`` its name and ``path`` the bucket's path in it (a
+    directory's, a file's; "" for the work folder itself) when it is in
+    one. A page in Recently deleted is none."""
+    from ..annotations import entries
+    from ..annotations.entries import AnnotationError
+    from ..work_folders.marks import Tree
+
+    if bucket == HOME:
+        return {"kind": "library", "w": ""}
+    if not bucket:
+        return None
+    tree = Tree.read(conn)
+    if bucket in tree:
+        found = {"kind": "folder", "id": bucket, "name": tree.names.get(bucket, ""), "w": tree.work_of(bucket)}
+    else:
+        row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
+                           (bucket,)).fetchone()
+        if row is None:
+            return None
+        props = load_props(row[1])
+        doc = props.get("doc") if isinstance(props.get("doc"), dict) else {}
+        w = props.get("work_folder") if isinstance(props.get("work_folder"), str) else ""
+        found = {"kind": "page", "id": bucket, "title": row[0] or "", "format": doc.get("format") or "note",
+                 "w": w if w in tree else ""}
+    if found["w"]:
+        try:
+            scope = entries.work_scope(conn, bucket, tree)
+        except AnnotationError:
+            found["w"] = ""
+        else:
+            found.update(work_folder=tree.names.get(found["w"], ""),
+                         path="" if scope.kind == "work_folder" else scope.name)
+    return found
+
+
+def own_dir(ws: str, conversation_id: str) -> Path:
+    """The empty directory of its own a conversation's agent works in when
+    its bucket is in no work folder kept here and it names no offered
+    directory: below the data directory, made at its first turn (the
+    runner) and removed with the conversation (``delete``,
+    ``sweep_dirs``)."""
+    return config.AGENTS_DIR / ws / conversation_id
+
+
+def place_of(ws: str, bucket: str, user_id: str, dir: str = "", conversation_id: str = "") -> dict | None:
+    """Where ``user_id``'s agent works for a conversation of ``bucket`` that
+    names ``dir`` (decision 14 of docs/research/agents-as-participants-plan.md),
+    the one gate of the side: ``{kind, dir, path, name, link, about}``,
+    ``about`` what the bucket is (``about``), ``dir`` what the conversation
+    keeps of the place.
+
+    - ``vault``: the bucket is in a work folder a vault here keeps (a file
+      of it, a folder in it): that vault's directory, ``dir`` the work
+      folder's id, ``link`` the vault (the one the account made first,
+      when two keep it), ``name`` the work folder's;
+    - ``offered``: else ``dir`` names a directory this computer offers its
+      agents (``store.dirs``): its ``path`` and ``name``;
+    - ``own``: else an empty directory of its own (``own_dir`` of
+      ``conversation_id``; ``path`` "" before the conversation is made),
+      ``dir`` "".
+
+    The account must have an agent on here (``store.agent_for``), or have
+    made the vault (it reads its conversations with none on); a co-author
+    an agent here serves in ``ws`` (``store.lent_to``) has the ``vault``
+    place alone, never an offered directory or one of its own (decision 13);
+    None for any other account, and for no such bucket."""
     from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
-    if not page_id:
+    if not user_id:
         return None
     with connect_pages_db(ws) as conn:
-        row = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
-                           (page_id,)).fetchone()
-    if not row or not row[0]:
+        found = about(conn, bucket)
+    if found is None:
         return None
-    links = [link for link in folder_links.all_links()
-             if link["workspace_id"] == ws and link["folder_id"] == row[0] and link["created_by"] == user_id
-             and folder_links.work_folder_link(link)]
-    agents = store.agents_of([link["id"] for link in links]) if links else {}
-    return next((link for link in links if link["id"] in agents), links[0] if links else None)
+    mine = store.agent_for(user_id) is not None
+    if found["w"]:
+        links = [link for link in folder_links.all_links() if link["workspace_id"] == ws
+                 and link["folder_id"] == found["w"] and folder_links.work_folder_link(link)]
+        links.sort(key=lambda link: link["created_by"] != user_id)
+        if links and (mine or links[0]["created_by"] == user_id or store.lent_to(ws, user_id)):
+            return {"kind": "vault", "dir": found["w"], "path": links[0]["path"],
+                    "name": found["work_folder"] or folder_links.dest_of(links[0]).name, "link": links[0],
+                    "about": found}
+    if not mine:
+        return None
+    offered = next((entry for entry in store.dirs() if entry["id"] == dir), None) if dir else None
+    if offered is not None:
+        return {"kind": "offered", "dir": offered["id"], "path": offered["path"], "name": offered["name"],
+                "link": None, "about": found}
+    return {"kind": "own", "dir": "", "path": str(own_dir(ws, conversation_id)) if conversation_id else "",
+            "name": "", "link": None, "about": found}
 
 
 def _conversation(row) -> dict:
@@ -88,12 +181,26 @@ def _conversation(row) -> dict:
     return found
 
 
+def readable(conversation: dict | None, user_id: str) -> bool:
+    """Whether the account ``user_id`` reads the conversation: the account
+    that talks in it, or the owner of its agent (decision 12)."""
+    return conversation is not None and bool(user_id) and user_id in (conversation["user_id"],
+                                                                        conversation.get("owner") or "")
+
+
+def lent(conversation: dict | None) -> bool:
+    """Whether the conversation is a co-author's: its agent another
+    account's."""
+    return conversation is not None and (conversation.get("owner") or conversation["user_id"]) != conversation[
+        "user_id"]
+
+
 def shown(conversation: dict | None) -> dict | None:
     """What the routes answer of a conversation: ``{id, title, agent,
-    messages, version}``."""
+    thread_id, messages, version}``, ``thread_id`` "" for a chat's."""
     if conversation is None:
         return None
-    return {k: conversation[k] for k in ("id", "title", "agent", "messages", "version")}
+    return {k: conversation[k] for k in ("id", "title", "agent", "thread_id", "messages", "version")}
 
 
 def busy(conversation: dict | None) -> dict | None:
@@ -105,10 +212,24 @@ def busy(conversation: dict | None) -> dict | None:
     return None
 
 
-def active(conn, page_id: str, user_id: str) -> dict | None:
-    """The page's active conversation of the account, None for none."""
-    row = conn.execute(f"{_SELECT} WHERE page_id = ? AND user_id = ? AND archived_at IS NULL "
-                       "ORDER BY updated_at DESC LIMIT 1", (page_id, user_id)).fetchone()
+def active(conn, bucket: str, user_id: str) -> dict | None:
+    """The bucket's active conversation of the account, None for none (a
+    thread's is none: ``of_thread``)."""
+    row = conn.execute(f"{_SELECT} WHERE bucket = ? AND user_id = ? AND archived_at IS NULL AND thread_id = '' "
+                       "ORDER BY updated_at DESC LIMIT 1", (bucket, user_id)).fetchone()
+    return _conversation(row) if row else None
+
+
+def of_thread(conn, thread_id: str, user_id: str, *, owner: bool = False) -> dict | None:
+    """The account's conversation of the comment thread ``thread_id``, None
+    for none (one of another agent, or of another directory, was archived
+    when the next began); with ``owner``, where the account has none, the
+    newest of a co-author's there with the account's agent (``readable``)."""
+    row = conn.execute(f"{_SELECT} WHERE thread_id = ? AND user_id = ? AND archived_at IS NULL "
+                       "ORDER BY updated_at DESC LIMIT 1", (thread_id, user_id)).fetchone()
+    if row is None and owner:
+        row = conn.execute(f"{_SELECT} WHERE thread_id = ? AND owner = ? AND archived_at IS NULL "
+                           "ORDER BY updated_at DESC LIMIT 1", (thread_id, user_id)).fetchone()
     return _conversation(row) if row else None
 
 
@@ -117,27 +238,37 @@ def get(conn, conversation_id: str) -> dict | None:
     return _conversation(row) if row else None
 
 
-def _next_version(conn, page_id: str, user_id: str) -> int:
-    """A version above every one of the page's conversations of the account
-    and never below the clock in microseconds: deleting an archived
+def _next_version(conn, bucket: str, user_id: str) -> int:
+    """A version above every one of the bucket's conversations of the
+    account and never below the clock in microseconds: deleting an archived
     conversation can take the highest version away, and the next write must
     still not repeat a version a client holds (a poll with it would read
     another conversation as the same). A write takes far longer than a
     microsecond, so the clock has passed any version handed out before."""
-    row = conn.execute("SELECT MAX(version) FROM computer_chats WHERE page_id = ? AND user_id = ?",
-                       (page_id, user_id)).fetchone()
+    row = conn.execute("SELECT MAX(version) FROM computer_chats WHERE bucket = ? AND user_id = ?",
+                       (bucket, user_id)).fetchone()
     return max(int(row[0] or 0) + 1, time.time_ns() // 1000)
 
 
 def _save(conn, conversation: dict, messages: list, **more) -> dict:
     """The conversation's ``messages`` (and ``more`` columns) written with
     its next version → it as written. Inside the caller's write lock."""
-    version = _next_version(conn, conversation["page_id"], conversation["user_id"])
+    version = _next_version(conn, conversation["bucket"], conversation["user_id"])
     now = page_now()
     sets = {"messages": json.dumps(messages, ensure_ascii=False), "version": version, "updated_at": now, **more}
     conn.execute(f"UPDATE computer_chats SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?",
                  (*sets.values(), conversation["id"]))
     return {**conversation, **sets, "messages": messages}
+
+
+def _answered(ws: str, ended) -> None:
+    """The turns ``ended`` (``(conversation id, turn id)``) ended: a
+    thread's is answered in its thread (``threads.settle``), after the
+    write that ended it is committed. Never raises."""
+    from . import threads  # local: threads reads the conversations through this module
+
+    for conversation_id, turn_id in ended:
+        threads.settle(ws, conversation_id, turn_id)
 
 
 def selections_of(raw) -> list[dict]:
@@ -164,11 +295,11 @@ def selections_of(raw) -> list[dict]:
 def sources_of(ws: str, conn, page_id: str, selections: list[dict | None]) -> list[dict | None]:
     """The line each of ``selections`` (as ``selections_of`` keeps one,
     None for one that is not) maps to in the work folder's sources
-    (``feedback.sources.source_for``: ``{file, line, end?}``), None where
+    (``annotations.sources.source_for``: ``{file, line, end?}``), None where
     its page or box is not known or nothing answers. Reads the synctex the
     build left; runs no process."""
     from ..blocks_store import load_props
-    from ..feedback import sources
+    from ..annotations import sources
     from ..logbuf import log
 
     row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
@@ -202,55 +333,80 @@ def _turn_of(conversation: dict, message_id: str) -> dict | None:
     return None
 
 
-def begin(ws: str, *, page_id: str, user_id: str, link_id: str, agent: str, label: str, text: str,
+def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: str, label: str, text: str,
           selections: list[dict], message_id: str = "", model: str = "", effort: str = "",
-          remote: bool = False, computer: str = "") -> tuple[dict, dict, bool]:
+          remote: bool = False, computer: str = "", thread_id: str = "", comment_id: str = "",
+          agent_id: str = "", owner: str = "", resume: str = "") -> tuple[dict, dict, bool]:
     """A turn begins: the person's message and the agent's ``queued`` one
     (with the ``model`` and ``effort`` the turn asks for, None for the
-    agent's default) written in the page's active conversation (one is
-    started, titled by the message, when it has none) and the turn
-    recorded on this computer
-    (``store.add_turn``), or for one that runs on another computer
-    (``remote``, the vault ``link_id`` none) here (``computer_chat_runs``,
-    ``queued``, with its ``agent`` and the ``computer`` that keeps the
-    folder), in one step under the write lock → ``(the
-    conversation, the agent's message, whether the turn is new)``. A
-    ``message_id`` the active conversation has already answers the turn it
-    made (a retried POST). ChatError 409 while a turn of the conversation
-    is queued or running."""
-    now = page_now()
+    agent's default) written in the bucket's active conversation, or with
+    ``thread_id`` in the account's conversation of that comment thread
+    (``of_thread``; the person's message then names the ``comment_id`` it
+    is, the agent's the ``agent_id`` that answers in the thread), and the
+    turn recorded on this computer (``store.add_turn``, ``link_id`` the
+    vault it works in, "" for none), or for one that runs on another
+    computer (``remote``) here (``computer_chat_runs``, ``queued``, with
+    its ``agent`` and the ``computer`` that keeps the folder), in one step
+    under the write lock → ``(the conversation, the agent's message,
+    whether the turn is new)``. A conversation is started, titled by the
+    message, when the bucket (or the thread) has none, or when its own
+    works elsewhere than ``dir`` (``place_of``'s) or with another
+    ``agent``, or another ``owner``'s (the account whose agent it is, the
+    turn's own but for a co-author's): that one is archived, so a
+    conversation never changes its directory, its agent or whose agent it
+    is. A thread's conversation started so takes the session of the
+    account's conversation ``resume`` (the one whose turn opened the
+    thread, ``threads.opener_of``: ``store.conversation_of``'s row copied)
+    while that one waits on no turn and has the same directory, agent and
+    owner, so its agent resumes where it asked. A ``message_id`` the
+    conversation has already answers the turn it made (a retried POST).
+    ChatError 409 while a turn of the conversation is queued or running."""
+    now, owner = page_now(), owner or user_id
     with connect_pages_db(ws) as conn:
         write_lock(conn)
-        conversation = active(conn, page_id, user_id)
+        conversation = of_thread(conn, thread_id, user_id) if thread_id else active(conn, bucket, user_id)
         if conversation is not None and message_id:
             made = _turn_of(conversation, message_id)
             if made is not None:
                 return conversation, made, False
-        if busy(conversation) is not None:
-            raise ChatError(409, f"{label} is still working on the last message: wait for it, or stop it.")
+        working = busy(conversation)
+        if working is not None:
+            raise ChatError(409, f"{working.get('label') or label} is still working on the last message: "
+                                 "wait for it, or stop it.")
+        if conversation is not None and (conversation["dir"] != dir or conversation["agent"] != agent
+                                         or (conversation["owner"] or conversation["user_id"]) != owner):
+            _archive(conn, conversation)
+            conversation = None
         if conversation is None:
-            conversation = {"id": new_block_id(), "page_id": page_id, "user_id": user_id, "agent": agent,
+            conversation = {"id": new_block_id(), "bucket": bucket, "dir": dir, "user_id": user_id, "agent": agent,
                             "title": title_of(text), "messages": [], "version": 0, "created_at": now,
-                            "updated_at": now, "archived_at": None}
-            conn.execute("INSERT INTO computer_chats (id, page_id, user_id, agent, title, messages, version, "
-                         "created_at, updated_at) VALUES (?, ?, ?, ?, ?, '[]', 0, ?, ?)",
-                         (conversation["id"], page_id, user_id, agent, conversation["title"], now, now))
+                            "updated_at": now, "archived_at": None, "thread_id": thread_id, "owner": owner}
+            conn.execute("INSERT INTO computer_chats (id, bucket, dir, user_id, agent, title, messages, version, "
+                         "created_at, updated_at, thread_id, owner) VALUES (?, ?, ?, ?, ?, ?, '[]', 0, ?, ?, ?, ?)",
+                         (conversation["id"], bucket, dir, user_id, agent, conversation["title"], now, now, thread_id,
+                          owner))
+            opener = get(conn, resume) if resume and thread_id else None
+            session = store.conversation_of(resume) if opener is not None else None
+            if (session is not None and busy(opener) is None and opener["user_id"] == user_id
+                    and (opener["dir"], opener["agent"], opener["owner"] or opener["user_id"]) == (dir, agent, owner)):
+                store.ran_conversation(conversation["id"], link_id=session["link_id"], agent=session["agent"],
+                                       session=session["session"], cwd=session["cwd"])
         turn_id = new_block_id()
         person = {"id": message_id or new_block_id(), "role": "user", "text": text, "selections": selections,
-                  "at": now}
+                  "at": now, **({"comment_id": comment_id} if thread_id else {})}
         reply = {"id": new_block_id(), "role": "agent", "agent": agent, "label": label, "turn_id": turn_id,
                  "state": "queued", "text": "", "steps": [], "asks": [], "changes": [], "changed": 0, "built": False,
                  "error": "", "fresh": False, "model": model or None, "effort": effort or None, "at": now,
-                 "ended_at": None}
+                 "ended_at": None, **({"agent_id": agent_id} if thread_id else {})}
         conversation = _save(conn, conversation, [*conversation["messages"], person, reply])
         if remote:
-            conn.execute("INSERT INTO computer_chat_runs (turn_id, conversation_id, page_id, user_id, agent, computer, "
+            conn.execute("INSERT INTO computer_chat_runs (turn_id, conversation_id, bucket, user_id, agent, computer, "
                          "queued_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (turn_id, conversation["id"], page_id, user_id, agent, computer, now))
+                         (turn_id, conversation["id"], bucket, user_id, agent, computer, now))
             return conversation, reply, True
         # Recorded before the commit: a server that stops between the two
         # finds the turn open at its start (runner.recover) and fails it.
-        store.add_turn(turn_id, ws=ws, link_id=link_id, conversation_id=conversation["id"], page_id=page_id,
+        store.add_turn(turn_id, ws=ws, link_id=link_id, conversation_id=conversation["id"], page_id=bucket,
                        agent=agent)
     return conversation, reply, True
 
@@ -258,7 +414,8 @@ def begin(ws: str, *, page_id: str, user_id: str, link_id: str, agent: str, labe
 def write_reply(ws: str, conversation_id: str, turn_id: str, fields: dict) -> bool:
     """The agent's message of the turn ``turn_id`` takes ``fields`` →
     whether it was written (False: the conversation or the message is
-    gone)."""
+    gone). A ``state`` of ``ENDED`` answers a thread's turn in its thread
+    (``_answered``)."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         conversation = get(conn, conversation_id)
@@ -271,6 +428,8 @@ def write_reply(ws: str, conversation_id: str, turn_id: str, fields: dict) -> bo
             return False
         messages = [*messages[:at], {**messages[at], **fields}, *messages[at + 1:]]
         _save(conn, conversation, messages)
+    if conversation["thread_id"] and fields.get("state") in ENDED:
+        _answered(ws, [(conversation_id, turn_id)])
     return True
 
 
@@ -291,43 +450,48 @@ def _archive(conn, conversation: dict | None) -> None:
         _save(conn, conversation, conversation["messages"], archived_at=page_now())
 
 
-def new(ws: str, page_id: str, user_id: str, label: str) -> None:
-    """New chat: the page's active conversation of the account archived.
+def new(ws: str, bucket: str, user_id: str, label: str) -> None:
+    """New chat: the bucket's active conversation of the account archived.
     ChatError 409 while its turn is queued or running."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)
-        conversation = active(conn, page_id, user_id)
+        conversation = active(conn, bucket, user_id)
         if busy(conversation) is not None:
             raise ChatError(409, f"{label} is still working: stop it first.")
         _archive(conn, conversation)
 
 
-def history(ws: str, page_id: str, user_id: str) -> list[dict]:
-    """The page's archived conversations of the account, newest first:
-    ``{id, title, agent, updated_at, turns}``."""
+def listed(conversation: dict | None) -> dict | None:
+    """A conversation as History lists it: ``{id, title, agent, updated_at,
+    turns}``; None for none."""
+    if conversation is None:
+        return None
+    return {"id": conversation["id"], "title": conversation["title"], "agent": conversation["agent"],
+            "updated_at": conversation["updated_at"],
+            "turns": sum(1 for m in conversation["messages"] if m.get("role") == "agent")}
+
+
+def history(ws: str, bucket: str, user_id: str) -> list[dict]:
+    """The bucket's archived conversations of the account, newest first,
+    as ``listed``; a thread's never (they are read from their thread)."""
     with connect_pages_db(ws) as conn:
-        rows = conn.execute(f"{_SELECT} WHERE page_id = ? AND user_id = ? AND archived_at IS NOT NULL "
-                            "ORDER BY updated_at DESC LIMIT ?", (page_id, user_id, HISTORY_CAP)).fetchall()
-    out = []
-    for row in rows:
-        found = _conversation(row)
-        out.append({"id": found["id"], "title": found["title"], "agent": found["agent"],
-                    "updated_at": found["updated_at"],
-                    "turns": sum(1 for m in found["messages"] if m.get("role") == "agent")})
-    return out
+        rows = conn.execute(f"{_SELECT} WHERE bucket = ? AND user_id = ? AND archived_at IS NOT NULL "
+                            "AND thread_id = '' ORDER BY updated_at DESC LIMIT ?",
+                            (bucket, user_id, HISTORY_CAP)).fetchall()
+    return [listed(_conversation(row)) for row in rows]
 
 
 def open_one(ws: str, conversation: dict, label: str) -> dict:
-    """The archived ``conversation`` becomes its page's active one, the
+    """The archived ``conversation`` becomes its bucket's active one, the
     active one archived → it as written. ChatError 409 while the active
     one's turn is queued or running, 404 for one that is gone or not
     archived."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         found = get(conn, conversation["id"])
-        if found is None or found["archived_at"] is None:
+        if found is None or found["archived_at"] is None or found["thread_id"]:
             raise ChatError(404, "No earlier conversation has that id.")
-        current = active(conn, found["page_id"], found["user_id"])
+        current = active(conn, found["bucket"], found["user_id"])
         if busy(current) is not None:
             raise ChatError(409, f"{label} is still working: stop it first.")
         _archive(conn, current)
@@ -337,70 +501,131 @@ def open_one(ws: str, conversation: dict, label: str) -> dict:
 def delete(ws: str, conversation: dict, *, here: bool = True) -> None:
     """An archived conversation deleted, its turns run on another computer
     with it, and with ``here`` (its agent runs on this computer) the
-    sessions this computer kept of it. ChatError 409 for the active one."""
+    session and the grants this computer kept of it and its directory of
+    its own. ChatError 409 for the active one."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         found = get(conn, conversation["id"])
         if found is None:
             raise ChatError(404, "No earlier conversation has that id.")
         if found["archived_at"] is None:
-            raise ChatError(409, "This is the page's conversation now: start a new chat first.")
+            raise ChatError(409, "This is the conversation shown now: start a new chat first.")
         conn.execute("DELETE FROM computer_chats WHERE id = ?", (found["id"],))
         conn.execute("DELETE FROM computer_chat_runs WHERE conversation_id = ?", (found["id"],))
     if here:
         store.forget_conversation(conversation["id"])
+        _remove_dir(own_dir(ws, conversation["id"]))
+
+
+def file_into_home(conn, buckets) -> int:
+    """The conversations of the folders ``buckets``, deleted, filed into
+    the library's History (archived, their bucket ``home``), in the
+    caller's transaction (ops' tree delete, as the AI chats'
+    ``routers.chats.file_into_home``) → how many. Each keeps where its
+    agent works."""
+    return conn.execute("UPDATE computer_chats SET bucket = ?, archived_at = COALESCE(archived_at, ?) "
+                        "WHERE bucket IN (SELECT value FROM json_each(?))",
+                        (HOME, page_now(), json.dumps(sorted(buckets)))).rowcount
+
+
+def _remove_dir(path: Path) -> None:
+    if path.is_dir():
+        try:
+            shutil.rmtree(path)
+        except OSError as e:
+            log.warning(f"[agents] removing the directory of a conversation gone, {path.name}: {e}")
+
+
+def sweep_dirs(ws: str) -> None:
+    """The directories of its own (``own_dir``) of the workspace's
+    conversations gone some other way than their delete (a page deleted for
+    good, an account no longer a member, a backup restored) removed, every
+    one of a workspace gone: at start (``runner.recover``)."""
+    top = config.AGENTS_DIR / ws
+    if not top.is_dir():
+        return
+    if not (config.WORKSPACES_DIR / ws / "pages.db").is_file():
+        _remove_dir(top)
+        return
+    with connect_pages_db(ws) as conn:
+        kept = {row[0] for row in conn.execute("SELECT id FROM computer_chats WHERE dir = ''")}
+    for entry in top.iterdir():
+        if entry.is_dir() and entry.name not in kept:
+            _remove_dir(entry)
 
 
 # --- a turn run on another computer (step 4d) ----------------------------------------------------
 # A page of a work folder of this server kept on a computer of its maker's
-# with an agent there (gamma/computers/registry.py ``agent_of``): the
-# conversation stays here, that computer takes its turns over its channel
-# (gamma/routers/computers.py) and writes the agent's message back. Each
-# turn is a ``computer_chat_runs`` row: ``queued`` until a run of a
-# computer of the account's claims it (``holder`` its token, ``run`` the
+# with an agent there (gamma/computers/registry.py ``agent_of``), or of
+# another account's whose agent serves the person (a co-author's, ``lent``):
+# the conversation stays here, that computer takes its turns over its
+# channel (gamma/routers/computers.py) and writes the agent's message back.
+# Each turn is a ``computer_chat_runs`` row: ``queued`` until a run of a
+# computer of the conversation's ``owner`` claims it (``holder`` its token, ``run`` the
 # id it minted), ``running``, then its end; ``seq`` the last write taken
 # from that run, so a retried or late write never goes back; ``stop`` the
 # person's Stop of a running turn, which the computer is told (a second
 # Stop ends it here). Only the run that holds a turn writes it, and only
 # while it runs. A turn is its ``agent``'s: only a computer keeping the
 # folder with that agent is given it, and one queued when no computer of
-# the account keeps its folder with that agent any more fails
-# (``fail_queued``, from the announce and a token's end), so none runs
-# later unasked.
+# the owner keeps its folder with that agent any more, or whose agent no
+# longer serves its co-author, fails (``fail_queued``, from the announce
+# and a token's end), so none runs later unasked. Such a conversation's
+# bucket is a page, which the channel names ``page_id`` (its computer may
+# be of an older Gamma).
 
 ENDED = ("done", "failed", "stopped")
 MAX_WAITING = 20          # turns one listing gives a computer at most
 EARLIER = 6               # earlier messages a turn's prompt takes (runner._ChatTurn._work)
 NO_TURN = "No turn has that id."
+DETACHED = "The synced folder was detached before its computer took this turn."
 
-_RUN_COLUMNS = ("turn_id", "conversation_id", "page_id", "user_id", "agent", "computer", "holder", "run", "seq",
+_RUN_COLUMNS = ("turn_id", "conversation_id", "bucket", "user_id", "agent", "computer", "holder", "run", "seq",
                 "stop", "state", "queued_at", "started_at")
 
 
-def remote_of(ws: str, page_id: str, user_id: str) -> dict | None:
-    """The computer of ``user_id``'s that keeps the work folder the page is
-    a live file of with an agent there (``registry.agent_of``, with the
-    work folder's ``folder_id``): the side's gate for a page whose agent
-    runs on another computer; None for any other page or account."""
+def remote_of(ws: str, bucket: str, user_id: str) -> dict | None:
+    """The computer of ``user_id``'s that keeps the work folder the bucket
+    is a live file of with an agent there, else another account's whose
+    agent serves ``user_id`` (``registry.agent_of`` ``lent``, with the work
+    folder's ``folder_id``; ``user_id`` the agent's owner, ``lent_by`` its
+    username for a co-author): the side's gate for a page whose agent runs
+    on another computer; None for any other bucket or account."""
     from ..computers import registry  # local: registry reaches this package where an agent is named
 
-    if not page_id:
+    if not bucket:
         return None
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
-                           (page_id,)).fetchone()
+                           (bucket,)).fetchone()
     if not row or not row[0]:
         return None
-    found = registry.agent_of(ws, row[0], user_id)
+    found = registry.agent_of(ws, row[0], user_id, lent=True)
     return {**found, "folder_id": row[0]} if found is not None else None
 
 
+def far_problem(found: dict) -> str:
+    """Why the online computer's agent (``registry.agent_of``) cannot take
+    a turn now, in the words the @ menu says it; "" while it is ready or
+    not known to be otherwise."""
+    if found["ready"] is not False:
+        return ""
+    label, computer = found["label"], found["computer"]
+    if found["code"] == "signed_out":
+        return f"{label} is not signed in on {computer}."
+    if found["code"] == "missing":
+        return f"{label} is not on {computer}."
+    return f"{label} is not ready on {computer}."
+
+
 def run_of(conn, turn_id: str) -> dict | None:
-    """The turn's ``computer_chat_runs`` row, None for a turn that runs on
-    no other computer."""
-    row = conn.execute(f"SELECT {', '.join(_RUN_COLUMNS)} FROM computer_chat_runs WHERE turn_id = ?",
-                       (turn_id,)).fetchone()
-    return dict(zip(_RUN_COLUMNS, row)) if row else None
+    """The turn's ``computer_chat_runs`` row with its conversation's
+    ``owner`` (whose computer runs it), None for a turn that runs on no
+    other computer."""
+    row = conn.execute(f"SELECT {', '.join('r.' + c for c in _RUN_COLUMNS)}, COALESCE(NULLIF(c.owner, ''), "
+                       "r.user_id) FROM computer_chat_runs r LEFT JOIN computer_chats c ON c.id = r.conversation_id "
+                       "WHERE r.turn_id = ?", (turn_id,)).fetchone()
+    return dict(zip((*_RUN_COLUMNS, "owner"), row)) if row else None
 
 
 def _message_at(conversation: dict | None, turn_id: str) -> int | None:
@@ -410,32 +635,38 @@ def _message_at(conversation: dict | None, turn_id: str) -> int | None:
                 None)
 
 
-def _end_run(conn, row: dict, state: str, fields: dict | None = None) -> None:
+def _end_run(conn, row: dict, state: str, fields: dict | None = None, ended: list | None = None) -> None:
     """The turn's row and its message (when it still reads queued or
-    running) end ``state``, ``fields`` written with it. Inside the caller's
-    write lock."""
+    running) end ``state``, ``fields`` written with it; a thread's turn
+    ended joins ``ended``, to be answered in its thread once the caller
+    committed (``_answered``). Inside the caller's write lock."""
     conn.execute("UPDATE computer_chat_runs SET state = ? WHERE turn_id = ?", (state, row["turn_id"]))
     conversation = get(conn, row["conversation_id"])
     at = _message_at(conversation, row["turn_id"])
     if at is not None and conversation["messages"][at].get("state") in BUSY:
         messages = conversation["messages"]
-        ended = {**messages[at], **(fields or {}), "state": state, "asks": [], "waiting": False,
-                 "ended_at": page_now()}
-        _save(conn, conversation, [*messages[:at], ended, *messages[at + 1:]])
+        message = {**messages[at], **(fields or {}), "state": state, "asks": [], "waiting": False,
+                   "ended_at": page_now()}
+        _save(conn, conversation, [*messages[:at], message, *messages[at + 1:]])
+        if conversation["thread_id"] and ended is not None:
+            ended.append((conversation["id"], row["turn_id"]))
 
 
-def waiting_turns(conn, user_id: str, folders: dict[str, str]) -> list[dict]:
-    """The turns of ``user_id``'s that wait for a computer in pages of the
-    work folders ``folders`` (``{folder id: its agent there}``), each the
-    turn of that folder's agent there, oldest first, at most
+def waiting_turns(conn, user_id: str, folders: dict[str, str], people=()) -> list[dict]:
+    """The turns for the agents of ``user_id``'s that wait for a computer in
+    pages of the work folders ``folders`` (``{folder id: its agent
+    there}``), each the turn of that folder's agent there, of ``user_id``'s
+    own or of one of the ``people`` the agent serves, oldest first, at most
     ``MAX_WAITING``: ``[{id, conversation_id, page_id, folder_id, at}]``."""
     rows = conn.execute(
-        "SELECT r.turn_id, r.conversation_id, r.page_id, b.work_folder, r.queued_at FROM computer_chat_runs r "
-        "JOIN unified_blocks b ON b.id = r.page_id AND b.parent_id = 'root' "
+        "SELECT r.turn_id, r.conversation_id, r.bucket, b.work_folder, r.queued_at FROM computer_chat_runs r "
+        "JOIN unified_blocks b ON b.id = r.bucket AND b.parent_id = 'root' "
         "JOIN computer_chats c ON c.id = r.conversation_id "
         "JOIN json_each(?) f ON f.key = b.work_folder AND f.value = r.agent "
-        "WHERE r.state = 'queued' AND r.user_id = ? "
-        "ORDER BY r.queued_at, r.turn_id LIMIT ?", (json.dumps(folders), user_id, MAX_WAITING)).fetchall()
+        "WHERE r.state = 'queued' AND COALESCE(NULLIF(c.owner, ''), r.user_id) = ? "
+        "AND (r.user_id = ? OR r.user_id IN (SELECT value FROM json_each(?))) "
+        "ORDER BY r.queued_at, r.turn_id LIMIT ?",
+        (json.dumps(folders), user_id, user_id, json.dumps(sorted(people)), MAX_WAITING)).fetchall()
     return [{"id": turn_id, "conversation_id": conversation_id, "page_id": page_id, "folder_id": w, "at": at}
             for turn_id, conversation_id, page_id, w, at in rows]
 
@@ -453,24 +684,34 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, agent: 
     """The run ``run`` of the computer ``holder`` (a computer of
     ``user_id``'s named ``computer``, whose work folder agent is
     ``agent``) takes the queued
-    turn: the row and its message ``running``, in one step under the write
-    lock → ``{turn: {id, conversation_id, page_id, text, selections, model,
-    effort}, history, page: {path, title}, seen}``: the person's message,
-    the conversation's earlier messages as the turn's prompt takes them
-    (``[{role: owner | agent, text}]``, the last ``EARLIER``), the page's
-    path in the work folder and its title, and this server's clock. The
-    same run taking it again (a retry) is answered again. A turn whose
-    page is no longer a file of the work folder fails. ChatError 404 for
-    no turn of ``user_id``'s, 409 when another run holds it, it is no
-    longer queued, or it is another agent's (left queued, for a computer
-    keeping the folder with that one)."""
-    from ..feedback import entries
-    from ..feedback.entries import FeedbackError
+    turn of a conversation whose agent is ``user_id``'s: the row and its
+    message ``running``, in one step under the write lock → ``{turn: {id,
+    conversation_id, page_id, title, text, selections, model, effort, for:
+    {id, username}, thread_id?, comment_id?}, history, page: {path, title},
+    seen, thread?}``: ``for`` the account the turn is for (``user_id``
+    itself, or a co-author: the route checks it is one the agent serves),
+    the conversation's title, the person's
+    message, the conversation's earlier messages as the turn's prompt takes
+    them (``[{role: owner | agent, text}]``, the last ``EARLIER``), the
+    page's path in the work folder and its title, and this server's clock;
+    a thread's turn also names its thread and the comment it is, and gives
+    the thread's entry (``thread``: ``threads.entry_of``, with its PDF
+    place, from which the computer finds its source line). The same run
+    taking it again (a retry) is answered again. A turn whose page is no
+    longer a file of the work folder fails. ChatError 404 for no turn of
+    ``user_id``'s, 409 when another run holds it, it is no longer queued,
+    or it is another agent's (left queued, for a computer keeping the
+    folder with that one)."""
+    from ..annotations import entries
+    from ..annotations.entries import AnnotationError
+    from . import threads  # local: threads reads the conversations through this module
+
+    from ..db import account_names, connect_users_db
 
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         row = run_of(conn, turn_id)
-        if row is None or row["user_id"] != user_id:
+        if row is None or row["owner"] != user_id:
             raise ChatError(404, NO_TURN)
         conversation = get(conn, row["conversation_id"])
         at = _message_at(conversation, turn_id)
@@ -494,11 +735,13 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, agent: 
         if (row["agent"] or reply.get("agent")) != agent:
             raise ChatError(409, f"This turn is for {reply.get('label') or 'another agent'}.")
         try:
-            scope = entries.resolve_scope(conn, row["page_id"])
-        except FeedbackError:
-            refusal = "This page is no longer a file of the work folder."
-            _end_run(conn, row, "failed", {"error": refusal})
+            scope = entries.work_scope(conn, row["bucket"])
+        except AnnotationError:
+            refusal = "This page is no longer a file of the synced folder."
+            ended = []
+            _end_run(conn, row, "failed", {"error": refusal}, ended)
             conn.commit()
+            _answered(ws, ended)
             raise ChatError(409, refusal) from None
         if not again:
             now = page_now()
@@ -510,12 +753,20 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, agent: 
         person = next((m for m in reversed(messages[:at]) if m.get("role") == "user"), None) or {}
         earlier = [{"role": "owner" if m.get("role") == "user" else "agent", "text": m.get("text") or ""}
                    for m in messages[:at] if m is not person and (m.get("text") or "").strip()][-EARLIER:]
-        title = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (row["page_id"],)).fetchone()
-    return {"turn": {"id": turn_id, "conversation_id": row["conversation_id"], "page_id": row["page_id"],
-                     "text": person.get("text") or "", "selections": person.get("selections") or [],
-                     "model": reply.get("model") or "", "effort": reply.get("effort") or ""},
-            "history": earlier, "page": {"path": scope.name, "title": (title[0] if title else "") or ""},
-            "seen": page_now()}
+        title = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (row["bucket"],)).fetchone()
+        thread = threads.entry_of(ws, conn, conversation["thread_id"], places=True) if conversation["thread_id"] else None
+    with connect_users_db() as users:
+        username = account_names(users, {row["user_id"]}).get(row["user_id"], "")
+    turn = {"id": turn_id, "conversation_id": row["conversation_id"], "page_id": row["bucket"],
+            "title": conversation["title"], "text": person.get("text") or "", "selections": person.get("selections") or [],
+            "model": reply.get("model") or "", "effort": reply.get("effort") or "",
+            "for": {"id": row["user_id"], "username": username}}
+    out = {"turn": turn, "history": earlier, "page": {"path": scope.name, "title": (title[0] if title else "") or ""},
+           "seen": page_now()}
+    if conversation["thread_id"]:
+        turn.update(thread_id=conversation["thread_id"], comment_id=person.get("comment_id") or "")
+        out["thread"] = thread
+    return out
 
 
 def write_run(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, seq: int, fields: dict) -> bool:
@@ -524,13 +775,13 @@ def write_run(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, seq
     message, when ``seq`` is above the last one taken from it (else
     nothing: a retried or late write) → whether it was written. A ``state``
     of ``ENDED`` ends the row too, the message's ``ended_at`` this
-    server's clock. ChatError 404 for no turn of ``user_id``'s this
-    computer holds or held, 409 when another run holds it, it is no longer
-    running (stopped here) or its message is gone (the run stops)."""
+    server's clock. ChatError 404 for no turn of an agent of ``user_id``'s
+    this computer holds or held, 409 when another run holds it, it is no
+    longer running (stopped here) or its message is gone (the run stops)."""
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         row = run_of(conn, turn_id)
-        if row is None or row["user_id"] != user_id or row["holder"] != holder:
+        if row is None or row["owner"] != user_id or row["holder"] != holder:
             raise ChatError(404, NO_TURN)
         if row["run"] != run:
             raise ChatError(409, "Another run holds this turn.")
@@ -551,6 +802,8 @@ def write_run(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, seq
         _save(conn, conversation, [*messages[:at], {**messages[at], **fields}, *messages[at + 1:]])
         conn.execute("UPDATE computer_chat_runs SET seq = ?, state = ? WHERE turn_id = ?",
                      (seq, state if state in ENDED else "running", turn_id))
+    if conversation["thread_id"] and state in ENDED:
+        _answered(ws, [(conversation["id"], turn_id)])
     return True
 
 
@@ -562,6 +815,7 @@ def stop_run(ws: str, turn_id: str, *, online) -> bool:
     already: its computer may no longer run it) end ``stopped`` now (a run
     that comes back is refused at its next write) → whether there was one
     to stop."""
+    ended = []
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         row = run_of(conn, turn_id)
@@ -574,7 +828,8 @@ def stop_run(ws: str, turn_id: str, *, online) -> bool:
         at = _message_at(conversation, row["turn_id"])
         if row["state"] not in BUSY and (at is None or conversation["messages"][at].get("state") not in BUSY):
             return False
-        _end_run(conn, row, "stopped")
+        _end_run(conn, row, "stopped", ended=ended)
+    _answered(ws, ended)
     return True
 
 
@@ -583,6 +838,7 @@ def fail_held(ws: str, holder: str, words) -> list[str]:
     expired), so none of its runs can write again: each turn it holds
     running fails, ``words(agent)`` its message's error → the turns
     failed."""
+    ended = []
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         rows = [dict(zip(_RUN_COLUMNS, r)) for r in conn.execute(
@@ -592,35 +848,61 @@ def fail_held(ws: str, holder: str, words) -> list[str]:
             conversation = get(conn, row["conversation_id"])
             at = _message_at(conversation, row["turn_id"])
             _end_run(conn, row, "failed",
-                     {"error": words(conversation["messages"][at].get("agent") if at is not None else "")})
+                     {"error": words(conversation["messages"][at].get("agent") if at is not None else "")}, ended)
+    _answered(ws, ended)
     return [row["turn_id"] for row in rows]
 
 
-def fail_queued(ws: str, user_id: str, kept: dict[str, set], words) -> list[str]:
-    """The turns of ``user_id``'s queued in pages of the work folders of
-    ``kept`` (``{folder id: the agents the account's computers keep it with
-    now}``) whose agent is none of them fail, ``words(agent, agents)``
-    their message's error: no computer would take them, and one turned on
-    again later must not run them unasked → the turns failed."""
+def fail_queued(ws: str, user_id: str, kept: dict[str, dict[str, set]], words) -> list[str]:
+    """The turns queued for the agents of ``user_id``'s in pages of the
+    work folders of ``kept`` (``{folder id: {each agent the account's
+    computers keep it with now: the people it serves there}}``) whose agent
+    is none of them, or whose co-author it no longer serves, fail,
+    ``words(agent, agents, lent)`` their message's error: no computer would
+    take them, and one turned on again later must not run them unasked →
+    the turns failed."""
     if not kept:
         return []
+    ended = []
     with connect_pages_db(ws) as conn:
         write_lock(conn)
         rows = [(dict(zip(_RUN_COLUMNS, r[:-1])), r[-1]) for r in conn.execute(
             f"SELECT {', '.join('r.' + c for c in _RUN_COLUMNS)}, b.work_folder FROM computer_chat_runs r "
-            "JOIN unified_blocks b ON b.id = r.page_id WHERE r.state = 'queued' AND r.user_id = ? "
+            "JOIN unified_blocks b ON b.id = r.bucket JOIN computer_chats c ON c.id = r.conversation_id "
+            "WHERE r.state = 'queued' AND COALESCE(NULLIF(c.owner, ''), r.user_id) = ? "
             "AND b.work_folder IN (SELECT value FROM json_each(?))", (user_id, json.dumps(sorted(kept)))).fetchall()]
         failed = []
         for row, w in rows:
-            if row["agent"] not in kept[w]:
-                _end_run(conn, row, "failed", {"error": words(row["agent"], kept[w])})
+            lent = row["user_id"] != user_id
+            if row["agent"] not in kept[w] or (lent and row["user_id"] not in kept[w][row["agent"]]):
+                _end_run(conn, row, "failed", {"error": words(row["agent"], set(kept[w]), lent)}, ended)
                 failed.append(row["turn_id"])
+    _answered(ws, ended)
     return failed
+
+
+def fail_detached(ws: str, pages: list[str]) -> list[str]:
+    """The turns queued for another computer in ``pages``, those of a work
+    folder just detached (gamma/work_folders/detach.py, which reads them
+    while they still name it), fail (``DETACHED``): once it is no work
+    folder, no computer is given them. One running there stops on that
+    computer, whose round finds the folder detached (gamma/folder_links.py
+    ``LET_GO_THERE``) → the turns failed."""
+    ended = []
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        rows = [dict(zip(_RUN_COLUMNS, r)) for r in conn.execute(
+            f"SELECT {', '.join(_RUN_COLUMNS)} FROM computer_chat_runs "
+            "WHERE state = 'queued' AND bucket IN (SELECT value FROM json_each(?))", (json.dumps(pages),))]
+        for row in rows:
+            _end_run(conn, row, "failed", {"error": DETACHED}, ended)
+    _answered(ws, ended)
+    return [row["turn_id"] for row in rows]
 
 
 def remote_turns(ws: str, user_id: str) -> list[dict]:
     """The turns of ``user_id``'s in ``ws`` queued or running on another
-    computer, oldest first: ``{ws, turn_id, conversation_id, page_id,
+    computer, oldest first: ``{ws, turn_id, conversation_id, bucket,
     agent, title, computer, state, asking, stopping, queued_at,
     started_at}`` (Background tasks' rows, routers/jobs.py), ``agent`` the
     turn's own, ``title`` the page's, ``computer`` the name of the computer
@@ -632,23 +914,23 @@ def remote_turns(ws: str, user_id: str) -> list[dict]:
 
     with connect_pages_db(ws) as conn:
         rows = conn.execute(
-            "SELECT r.turn_id, r.conversation_id, r.page_id, COALESCE(NULLIF(r.agent, ''), c.agent), b.content, "
+            "SELECT r.turn_id, r.conversation_id, r.bucket, COALESCE(NULLIF(r.agent, ''), c.agent), b.content, "
             "r.state, r.stop, r.queued_at, r.started_at, r.holder, b.work_folder, r.computer, "
             "(SELECT json_extract(m.value, '$.waiting') FROM json_each(c.messages) m "
             " WHERE json_extract(m.value, '$.role') = 'agent' AND json_extract(m.value, '$.turn_id') = r.turn_id) "
             "FROM computer_chat_runs r JOIN computer_chats c ON c.id = r.conversation_id "
-            "LEFT JOIN unified_blocks b ON b.id = r.page_id WHERE r.user_id = ? AND r.state IN ('queued', 'running') "
+            "LEFT JOIN unified_blocks b ON b.id = r.bucket WHERE r.user_id = ? AND r.state IN ('queued', 'running') "
             "ORDER BY r.queued_at, r.turn_id", (user_id,)).fetchall()
 
     def computer(holder: str, folder: str, known: str) -> str:
         if holder:
             return registry.computer_name(holder) or known
-        found = registry.agent_of(ws, folder, user_id) if folder else None
+        found = registry.agent_of(ws, folder, user_id, lent=True) if folder else None
         return found["computer"] if found else known
 
-    return [{"ws": ws, "turn_id": turn_id, "conversation_id": conversation_id, "page_id": page_id, "agent": agent,
+    return [{"ws": ws, "turn_id": turn_id, "conversation_id": conversation_id, "bucket": bucket, "agent": agent,
              "title": title or "", "computer": computer(holder or "", folder or "", known or ""), "state": state,
              "asking": state == "running" and bool(waiting), "stopping": bool(stop), "queued_at": queued_at,
              "started_at": started_at}
-            for turn_id, conversation_id, page_id, agent, title, state, stop, queued_at, started_at, holder, folder,
+            for turn_id, conversation_id, bucket, agent, title, state, stop, queued_at, started_at, holder, folder,
             known, waiting in rows]

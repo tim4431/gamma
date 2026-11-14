@@ -14,32 +14,32 @@ from ai_fixtures import ALL_PERMS, ALL_TOOLS, folder
 
 def test_registry_scopes_and_permissions():
     assert [t["name"] for t in agent_tools("folder")] == [
-        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_feedback", "read_feedback",
+        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_annotations", "read_annotation",
         "view_pdf_page", "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
         "fetch_paper", "save_paper", "rename_page", "move_page", "list_deleted", "restore_page", "delete_page",
         "rename_folder", "create_label", "rename_label", "label_page", "delete_folder", "delete_label", "edit_block",
-        "create_block", "move_block", "delete_block", "clip_region"]
+        "create_block", "move_block", "delete_block", "clip_region", "comment", "resolve", "highlight"]
     # Paper chats never list, rename, move or restore pages; the note-block
-    # tools and save_paper exist there.
+    # tools, the writing tools and save_paper exist there.
     assert [t["name"] for t in agent_tools("page")] == [
-        "read_page", "read_block", "read_chats", "list_feedback", "read_feedback", "view_pdf_page", "view_ink",
+        "read_page", "read_block", "read_chats", "list_annotations", "read_annotation", "view_pdf_page", "view_ink",
         "view_image", "cite", "search_library", "search_papers", "related_papers", "fetch_paper", "save_paper",
-        "edit_block", "create_block", "move_block", "delete_block", "clip_region"]
+        "edit_block", "create_block", "move_block", "delete_block", "clip_region", "comment", "resolve", "highlight"]
     assert agent_tools("") == []  # plain chat
     assert [t["name"] for t in agent_tools(
         "folder", {"rename": "off", "move": "off", "block_edit": "off", "save": "off", "restore": "off",
-                   "delete": "off", "organize": "off", "organize_delete": "off"})] == [
-        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_feedback", "read_feedback",
+                   "delete": "off", "organize": "off", "organize_delete": "off", "comment": "off"})] == [
+        "list_pages", "list_folders", "read_page", "read_block", "read_chats", "list_annotations", "read_annotation",
         "view_pdf_page", "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
         "fetch_paper", "list_deleted"]
     names = [t["name"] for t in agent_tools("folder", {"search": "off"})]
     assert "search_library" not in names and "read_page" in names
     # "List pages" gates the folder tree and Recently deleted too; "Read
-    # pages" the page chats, the feedback and the citation records; the
+    # pages" the page chats, the annotations and the citation records; the
     # viewer handwriting.
     names = [t["name"] for t in agent_tools("folder", {"list": "off", "read": "off", "view": "off"})]
-    assert not {"list_pages", "list_folders", "list_deleted", "read_page", "read_chats", "list_feedback",
-                "read_feedback", "cite", "view_pdf_page", "view_ink", "view_image"} & set(names)
+    assert not {"list_pages", "list_folders", "list_deleted", "read_page", "read_chats", "list_annotations",
+                "read_annotation", "cite", "view_pdf_page", "view_ink", "view_image"} & set(names)
     # Restoring and deleting pages are changes of their own; listing what is deleted is reading.
     names = [t["name"] for t in agent_tools("folder", {"restore": "off"})]
     assert "restore_page" not in names and {"list_deleted", "save_paper", "delete_page"} <= set(names)
@@ -47,9 +47,12 @@ def test_registry_scopes_and_permissions():
     assert "delete_page" not in names and {"restore_page", "delete_folder", "delete_block"} <= set(names)
     # One permission gates all three note-editing tools.
     names = [t["name"] for t in agent_tools("page", {"block_edit": "off"})]
-    assert names == ["read_page", "read_block", "read_chats", "list_feedback", "read_feedback", "view_pdf_page",
+    assert names == ["read_page", "read_block", "read_chats", "list_annotations", "read_annotation", "view_pdf_page",
                      "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
-                     "fetch_paper", "save_paper"]
+                     "fetch_paper", "save_paper", "comment", "resolve", "highlight"]
+    # One permission, Comments and highlights, gates the three writing tools.
+    names = [t["name"] for t in agent_tools("page", {"comment": "off"})]
+    assert not {"comment", "resolve", "highlight"} & set(names) and "edit_block" in names
     # The two web tools have their own permissions.
     names = [t["name"] for t in agent_tools("page", {"web_search": "off", "web_read": "off"})]
     assert "search_papers" not in names and "fetch_paper" not in names and "read_page" in names
@@ -96,7 +99,7 @@ def test_agent_system_mentions_scope_and_armed_tools():
     assert 'the folder "readout / fast" (id f1)' in text and "rename_page" in text
     assert "the root of their library" in agent_system(folder(""))
     page_text = agent_system({"type": "page", "page_id": "p1"},
-                             {"search": "off", "block_edit": "off", "save": "off"})
+                             {"search": "off", "block_edit": "off", "save": "off", "comment": "off"})
     assert 'page_id "p1"' in page_text
     assert "read_page" in page_text and "search_library" not in page_text
     assert "suggest them" in page_text  # no write tools armed
@@ -115,8 +118,9 @@ def test_agent_system_mentions_scope_and_armed_tools():
 
 def test_block_tools_gated_by_permissions():
     armed = {t["name"] for t in agent_tools("page", {"block_read": "off", "block_edit": "off", "view": "off",
-                                                        "web_search": "off", "web_read": "off", "save": "off"})}
-    assert armed == {"read_page", "read_chats", "list_feedback", "read_feedback", "cite", "search_library"}
+                                                        "web_search": "off", "web_read": "off", "save": "off",
+                                                        "comment": "off"})}
+    assert armed == {"read_page", "read_chats", "list_annotations", "read_annotation", "cite", "search_library"}
 
 
 def test_agent_system_explains_the_new_tools_only_when_armed():
@@ -127,7 +131,7 @@ def test_agent_system_explains_the_new_tools_only_when_armed():
     assert "attached as a picture of just those strokes, saved or not: read it there, not with view_ink" in text
     assert "(a selection: from its picture)" in text
     assert "cite returns the citation records" in text
-    assert "list_feedback and read_feedback read the comment threads on a work folder's files" in text
+    assert "list_annotations and read_annotation read the highlights and comment threads of a page" in text
     assert "save_paper adds a paper" in text and "never as a side effect" in text
     assert "restore_page brings them back" in text
     # Without note editing the transcription is not written anywhere.
@@ -135,7 +139,7 @@ def test_agent_system_explains_the_new_tools_only_when_armed():
     assert "view_ink" in read_only and "[illegible]" not in read_only
     assert "restore_page" not in read_only  # folder chats only
     off = agent_system(folder(""), {"view": "off", "read": "off", "save": "off", "restore": "off"})
-    for phrase in ("Handwriting:", "cite returns", "save_paper adds", "Recently deleted for", "list_feedback"):
+    for phrase in ("Handwriting:", "cite returns", "save_paper adds", "Recently deleted for", "list_annotations"):
         assert phrase not in off
 
 

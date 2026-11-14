@@ -16,8 +16,8 @@
 // "" for a member who cannot act on the vault: where its files lie is the
 // reading of whoever made it. On any other server the page's chip names
 // the computer that keeps it instead (computerChip, read by
-// usePageComputer.js), and a work folder's agent there (keeperAgent, and
-// for the chat's computer side keeperComputer).
+// usePageComputer.js), and a work folder's agent there (vaultAgent, which
+// the chat's and the comments' agents read: chat/agents.js keeperAgent).
 // Pure: tests/vaultState.test.mjs.
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { inPlace, isPdf } from "../documents/pageDocument.js";
@@ -111,40 +111,6 @@ export function agentLine(state) {
   };
 }
 
-// The agent a comment on the page can name (`@codex`): the work folder's
-// agent on this computer, for the vault's maker alone, whose mention of it
-// in a comment is a Send (docs/dev/local_agents.md). The @
-// menu's row, the field's hint and the chip in the maker's own comments
-// read it: {name, label, ready, problem}, `problem` as agentLine's. Null
-// for anyone else, a vault that is no work folder, and a folder with no
-// agent on.
-export function mentionAgent(state) {
-  const vault = state?.vault;
-  const agent = vault?.agent;
-  if (!vault?.work_folder || !vault.mine || !agent || typeof agent !== "object" || !agent.name) return null;
-  return {
-    name: agent.name, label: agent.label || agent.name, ready: agent.ready,
-    problem: agent.ready === false ? String(agent.problem || "") : "",
-  };
-}
-
-// The chat's computer side (chat/computer/): the same agent, by the same rule
-// as mentionAgent, with what the side's strip says before its own read
-// lands: `running` the vault's run ({kind, request_id, detail}, null when
-// idle), `folder` the work folder's name, `paused` whether the vault is
-// paused or still choosing its files (the agent starts nothing then).
-// Null wherever mentionAgent is.
-export function computerAgent(state) {
-  const agent = mentionAgent(state);
-  if (!agent) return null;
-  const { vault } = state;
-  const running = vault.agent.running;
-  return {
-    ...agent, running: running && typeof running === "object" ? running : null,
-    folder: vault.name || baseName(vault.path), paused: !!vault.paused || !!vault.choosing,
-  };
-}
-
 // The computers that keep the page in a synced vault of the account's, as
 // the page's server knows them (GET /api/pages/{id}/computer,
 // docs/dev/computers.md): each announces itself to that server over its
@@ -185,7 +151,8 @@ function assistantText(assistant) {
 // The chip of a page another computer keeps (readComputers' first), drawn
 // where vaultChip has nothing to say (any server but this computer's own):
 // {online, label, title, state, vault, paused, assistants}. `label` names
-// the computer ("Synced vault on TIM-PC"); `state` is "Connected" or when it
+// the computer ("Synced folder on TIM-PC", a vault of one file's "Synced
+// vault on TIM-PC"); `state` is "Connected" or when it
 // went offline; `vault` the folder or file it keeps, as the page's server
 // names it; `paused` whether its vault is paused there ("" if not);
 // `assistants` the assistants found there, a not-ready one saying why (""
@@ -209,75 +176,44 @@ export function computerChip(computers, now = new Date()) {
   const answers = vaultAgent(computer);
   const agent = answers ? t("Agent: {agent} on {computer}", { agent: answers.label, computer: name }) : "";
   return {
-    online, label: t("Synced vault on {computer}", { computer: name }), state, vault: kept, paused, assistants, agent,
+    online, label: vault.kind === "file" ? t("Synced vault on {computer}", { computer: name }) : t("Synced folder on {computer}", { computer: name }),
+    state, vault: kept, paused, assistants, agent,
     title: [state, kept, paused, assistants, agent].filter(Boolean).join("\n"),
   };
 }
 
+// What a synced folder's card, row and Files window row say of the computer
+// that keeps it: {text, title}, "TIM-PC · Connected". `link` this desktop
+// app's own vault of the folder (useVault's links, GET /api/folder-links:
+// its `status` and `choosing`), which names this computer and how its last
+// round stands; else `computer`, the account's computer that keeps it as
+// the folder's server knows it (GET /api/folders/computers: {name, online,
+// since, paused}), named with whether it is connected, paused there, or
+// since when it is offline. Null for neither (a member who is not the
+// keeper's account).
+export function folderKeeper(link, computer, now = new Date()) {
+  if (!link && !computer?.name) return null;
+  let name, state;
+  if (link) {
+    const status = link.status || {};
+    name = t("This computer");
+    state = link.choosing ? t("Choosing files…") : status.paused_at ? t("Paused")
+      : status.stopped || status.offline || status.last_error ? t("Not syncing") : status.running ? t("Syncing…") : t("Synced");
+  } else {
+    const when = computer.online ? "" : sinceText(computer.since, now);
+    name = computer.name;
+    state = computer.online ? (computer.paused ? t("Paused") : t("Connected")) : when ? t("Offline since {when}", { when }) : t("Offline");
+  }
+  return { text: t("{computer} · {state}", { computer: name, state }), title: [t("Kept on {computer}", { computer: name }), state].join("\n") };
+}
+
 // A computer's agent on the work folder it keeps of the page's server
-// (`vault.agent`), {name, label}, or null for none.
-function vaultAgent(computer) {
+// (`vault.agent`), {name, label}, or null for none: the chip's, and the
+// chat's and the comments' agent there (chat/agents.js keeperAgent).
+export function vaultAgent(computer) {
   const agent = computer?.vault?.agent;
   if (!agent || typeof agent !== "object" || typeof agent.name !== "string" || !agent.name) return null;
   return { name: agent.name, label: String(agent.label || (ASSISTANTS[agent.name] ? t(ASSISTANTS[agent.name]) : agent.name)) };
-}
-
-// How the agent stands on a computer that is online, as its announced
-// assistant says (by its code, never the computer's English problem):
-// {ready, problem}, `ready` null while it is still checking or not
-// announced, `problem` why it cannot run ("" while it can).
-function assistantState(computer, agent) {
-  const found = (Array.isArray(computer.assistants) ? computer.assistants : [])
-    .find((a) => a && typeof a === "object" && a.name === agent.name);
-  const words = { agent: agent.label, computer: computer.name };
-  if (!found || found.code === "checking" || found.ready == null) return { ready: null, problem: "" };
-  if (found.code === "missing" || found.found === false) return { ready: false, problem: t("{agent} is not on {computer}.", words) };
-  if (found.code === "signed_out") return { ready: false, problem: t("{agent} is not signed in on {computer}.", words) };
-  if (found.code === "not_ready" || found.ready === false) return { ready: false, problem: t("{agent} is not ready on {computer}.", words) };
-  return { ready: true, problem: "" };
-}
-
-// The agent a comment on the page can name where this computer has none
-// for it (mentionAgent null: any window but the desktop app's own server's):
-// the agent of the first of the page's computers (readComputers, so the
-// maker's alone) whose work folder of the page's server has one turned on,
-// which the maker's Sends and mentions made here run on
-// (docs/dev/local_agents.md). mentionAgent's {name, label, ready, problem}
-// with `computer` its name and `online` whether it is connected: `ready`
-// and `problem` as its announced assistant says while it is online, null
-// and "" while it is away (the Send waits for it). Null for none.
-export function keeperAgent(computers) {
-  const computer = keeperOf(computers);
-  if (!computer) return null;
-  const agent = vaultAgent(computer);
-  const online = computer.online === true;
-  const { ready, problem } = online ? assistantState(computer, agent) : { ready: null, problem: "" };
-  return { ...agent, ready, problem, computer: computer.name, online };
-}
-
-// The first of the page's computers whose work folder of the page's
-// server has an agent on, or null.
-function keeperOf(computers) {
-  return readComputers({ computers }).find((computer) => vaultAgent(computer)) || null;
-}
-
-// The chat's computer side where this computer has none for the page
-// (computerAgent null: any window but the desktop app's own server's):
-// keeperAgent's agent, the maker's alone, which the side's messages run on
-// in the work folder's directory there, as computerAgent's shape until the
-// side's own read lands (GET /api/local-agents/chat's `computer`, which
-// says the same): `folder` the work folder's name, `paused` whether it is
-// paused there, `since` when the computer went away (null while online),
-// `remote` true (chat/computer/computerChat.js words it by the computer's
-// name). Null for none.
-export function keeperComputer(computers) {
-  const agent = keeperAgent(computers);
-  if (!agent) return null;
-  const { vault, since } = keeperOf(computers);
-  return {
-    ...agent, running: null, folder: String(vault.name || ""), paused: !!vault.paused,
-    since: agent.online ? null : since || null, remote: true,
-  };
 }
 
 // The banner over the page, in the missing-page notice's slot: a note the

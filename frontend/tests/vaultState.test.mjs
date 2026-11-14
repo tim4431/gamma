@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, isOpenedFile,
-  keeperAgent, libraryWorkspaces, mentionAgent, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultBanner,
+  addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerChip, directionText, editsFile, folderKeeper, isOpenedFile,
+  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultAgent, vaultBanner,
   vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
@@ -237,39 +237,6 @@ test("a work folder's agent on this computer: named, its problem while it cannot
   assert.equal(agentLine(null), null);
 });
 
-test("the agent a comment names: the work folder's, for its maker alone", () => {
-  const codex = { name: "codex", label: "Codex", ready: true, problem: "", running: null };
-  const work = (over = {}, agent = {}) => folder({ work_folder: true, mine: true, agent: { ...codex, ...agent }, ...over });
-  assert.deepEqual(mentionAgent(work()), { name: "codex", label: "Codex", ready: true, problem: "" });
-  assert.deepEqual(mentionAgent(work({}, { running: { request_id: "r1", detail: "Editing main.tex" } })),
-    { name: "codex", label: "Codex", ready: true, problem: "" }, "working: still named");
-  assert.equal(mentionAgent(work({}, { ready: false, problem: "Codex is not signed in." })).problem, "Codex is not signed in.");
-  assert.equal(mentionAgent(work({}, { ready: null, problem: "stale" })).problem, "", "still checking");
-  assert.equal(mentionAgent(work({ mine: false })), null, "a member who did not make the vault");
-  assert.equal(mentionAgent(work({ work_folder: false })), null);
-  assert.equal(mentionAgent(work({ agent: null })), null, "no agent on");
-  assert.equal(mentionAgent(opened()), null);
-  assert.equal(mentionAgent(null), null);
-});
-
-test("the chat's computer side: the same agent, with its run, the folder's name and whether it is paused", () => {
-  const codex = { name: "codex", label: "Codex", ready: true, problem: "", running: null };
-  const work = (over = {}, agent = {}) => folder({ work_folder: true, mine: true, agent: { ...codex, ...agent }, ...over });
-  assert.deepEqual(computerAgent(work()),
-    { name: "codex", label: "Codex", ready: true, problem: "", running: null, folder: "Papers", paused: false });
-  const running = { kind: "chat", request_id: null, detail: "Editing main.tex" };
-  assert.deepEqual(computerAgent(work({}, { running })).running, running);
-  assert.equal(computerAgent(work({ name: "" })).folder, "Attention.md", "no name: the path's last");
-  assert.equal(computerAgent(work({ paused: true })).paused, true);
-  assert.equal(computerAgent(work({ choosing: true })).paused, true, "still choosing its files");
-  assert.equal(computerAgent(work({}, { ready: false, problem: "Codex is not signed in." })).problem, "Codex is not signed in.");
-  assert.equal(computerAgent(work({ mine: false })), null, "a member who did not make the vault");
-  assert.equal(computerAgent(work({ work_folder: false })), null);
-  assert.equal(computerAgent(work({ agent: null })), null, "no agent on");
-  assert.equal(computerAgent(opened()), null);
-  assert.equal(computerAgent(null), null);
-});
-
 const codexThere = { name: "codex", label: "Codex", found: true, ready: true, version: "0.167.0", code: "" };
 const pc = (over = {}) => ({ id: "c1", name: "TIM-PC", online: true, since: null, vault: { kind: "folder", name: "cavity", paused: false },
   assistants: [codexThere], ...over });
@@ -296,7 +263,7 @@ test("when a computer went offline: the time today, the day this year, the year 
 test("the computer's chip: its name, connected or offline since, the vault it keeps, and the assistants there", () => {
   const now = new Date(2026, 10, 13, 18, 0);
   const chip = computerChip([pc()], now);
-  assert.equal(chip.label, "Synced vault on TIM-PC");
+  assert.equal(chip.label, "Synced folder on TIM-PC");
   assert.equal(chip.online, true);
   assert.equal(chip.state, "Connected");
   assert.equal(chip.vault, "Folder: cavity");
@@ -308,8 +275,9 @@ test("the computer's chip: its name, connected or offline since, the vault it ke
   assert.match(away.state, /^Offline since 2:02/);
   assert.equal(computerChip([pc({ online: false })], now).state, "Offline", "no time known");
   assert.equal(computerChip([pc({ vault: { kind: "file", name: "main.pdf", paused: true } })], now).vault, "File: main.pdf");
+  assert.equal(computerChip([pc({ vault: { kind: "file", name: "main.pdf" } })], now).label, "Synced vault on TIM-PC", "a vault of one file");
   assert.equal(computerChip([pc({ vault: { kind: "file", name: "main.pdf", paused: true } })], now).paused, "Paused on TIM-PC");
-  assert.equal(computerChip([pc({ online: false }), pc({ id: "c2", name: "LAPTOP" })], now).label, "Synced vault on TIM-PC", "the first: the server sends online ones first");
+  assert.equal(computerChip([pc({ online: false }), pc({ id: "c2", name: "LAPTOP" })], now).label, "Synced folder on TIM-PC", "the first: the server sends online ones first");
   assert.equal(computerChip([], now), null);
   assert.equal(computerChip(null, now), null);
 });
@@ -330,6 +298,23 @@ test("the assistants there: by their code, never the computer's own words; none 
   assert.equal(line(undefined), "");
 });
 
+test("a synced folder's root names the computer that keeps it and how its sync stands", () => {
+  const now = new Date(2026, 10, 13, 18, 0);
+  const link = (status = {}, more = {}) => ({ id: "v1", status, choosing: false, ...more });
+  assert.deepEqual(folderKeeper(link({ last_sync: "x" }), null, now), { text: "This computer · Synced", title: "Kept on This computer\nSynced" });
+  assert.equal(folderKeeper(link({ paused_at: "x" }), null, now).text, "This computer · Paused");
+  assert.equal(folderKeeper(link({ stopped: "gone" }), null, now).text, "This computer · Not syncing");
+  assert.equal(folderKeeper(link({ running: true }), null, now).text, "This computer · Syncing…");
+  assert.equal(folderKeeper(link({}, { choosing: true }), null, now).text, "This computer · Choosing files…");
+  const pc = { name: "TIM-PC", online: true, since: null, paused: false };
+  assert.equal(folderKeeper(link(), pc, now).text, "This computer · Synced", "this desktop app's own vault first");
+  assert.equal(folderKeeper(null, pc, now).text, "TIM-PC · Connected");
+  assert.equal(folderKeeper(null, { ...pc, paused: true }, now).text, "TIM-PC · Paused");
+  assert.match(folderKeeper(null, { ...pc, online: false, since: new Date(2026, 10, 13, 14, 2).toISOString() }, now).text, /^TIM-PC · Offline since 2:02/);
+  assert.equal(folderKeeper(null, { ...pc, online: false }, now).text, "TIM-PC · Offline");
+  assert.equal(folderKeeper(null, null, now), null, "nobody this account knows keeps it");
+});
+
 test("the computer's chip names the agent there that runs the work folder's Sends", () => {
   const work = (agent) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent } });
   const chip = computerChip([work({ name: "codex", label: "Codex" })]);
@@ -340,23 +325,10 @@ test("the computer's chip names the agent there that runs the work folder's Send
   assert.equal(computerChip([pc()]).agent, "", "an announce without the field");
 });
 
-test("the agent a comment names where this computer has none: the first computer's whose work folder has one", () => {
-  const work = (over = {}, agent = { name: "codex", label: "Codex" }) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent }, ...over });
-  assert.deepEqual(keeperAgent([work()]), { name: "codex", label: "Codex", ready: true, problem: "", computer: "TIM-PC", online: true });
-  assert.deepEqual(keeperAgent([work({ online: false, since: "2026-11-13T14:02:00Z" })]),
-    { name: "codex", label: "Codex", ready: null, problem: "", computer: "TIM-PC", online: false }, "offline: it waits, nothing known of it");
-  assert.equal(keeperAgent([pc({ id: "c0", name: "LAPTOP" }), work()]).computer, "TIM-PC", "the first with an agent");
-  assert.equal(keeperAgent([work({}, null)]), null, "no agent on");
-  assert.equal(keeperAgent([pc()]), null, "an announce without the field");
-  assert.equal(keeperAgent([]), null);
-  assert.equal(keeperAgent(undefined), null);
-  // as its assistant there says, by its code
-  const as = (assistant) => keeperAgent([work({ assistants: [{ ...codexThere, ...assistant }] })]);
-  assert.equal(as({ ready: false, code: "signed_out" }).ready, false);
-  assert.equal(as({ ready: false, code: "signed_out" }).problem, "Codex is not signed in on TIM-PC.");
-  assert.equal(as({ ready: false, code: "not_ready" }).problem, "Codex is not ready on TIM-PC.");
-  assert.equal(as({ found: false, ready: false, code: "missing" }).problem, "Codex is not on TIM-PC.");
-  assert.equal(as({ ready: null, code: "checking" }).ready, null);
-  assert.equal(as({ ready: null, code: "checking" }).problem, "");
-  assert.equal(keeperAgent([work({ assistants: [] })]).ready, null, "not announced: not known");
+test("a computer's agent on the work folder it keeps of the page's server", () => {
+  const work = (agent) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent } });
+  assert.deepEqual(vaultAgent(work({ name: "codex", label: "Codex" })), { name: "codex", label: "Codex" });
+  assert.deepEqual(vaultAgent(work({ name: "claude" })), { name: "claude", label: "Claude Code" }, "no label: its name's");
+  assert.equal(vaultAgent(work(null)), null);
+  assert.equal(vaultAgent(pc()), null, "an announce without the field");
 });

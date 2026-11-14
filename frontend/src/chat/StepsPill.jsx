@@ -1,6 +1,6 @@
 // A turn's steps in one pill, which unfolds to each step (`children`): the
-// pill of Gamma AI's replies (ChatDock's AgentSteps) and of the computer
-// side's turns (computer/ComputerChat.jsx), each of which words it. It is
+// pill of Gamma AI's replies and of a computer agent's turns
+// (chat/ChatTranscript.jsx AgentSteps, which words both). It is
 // one element from the turn's start to its end, so its `label` morphs
 // through every step: while `live` a spinner leads it and its words
 // shimmer, while the turn is `waiting` for the person (an approval, a paper

@@ -13,19 +13,32 @@ import { waitForPdf } from "./pdf.mjs";
 // workspace holds the folder "Paper", its maker alice and an editor, bob; the
 // computer's own account makes a work folder of it from the SyncTeX sample
 // paper's directory, shows the computer there and turns Codex on for it.
-// Alice's plain browser on the NAS then has the Gamma AI | Codex switch in the
-// PDF page's chat, its strip naming Codex on the computer: a message with a
+// Alice's plain browser on the NAS then lists "Codex on <host>" beside Gamma AI
+// in the PDF page's chat's chip, its strip naming Codex on the computer: a message with a
 // PDF passage runs on the computer and its reply and steps come back into the
 // conversation the NAS keeps; a tab closed mid-turn finds the turn again and
 // the follow-up resumes Codex's session there; Stop of a running turn ends
-// it; New chat and History work as locally. Bob has no Codex side. The
-// computer stopped, the strip says it is offline, a message waits for it
-// ("Waiting for <host>") and runs once it is back.
+// it; New chat and History work as locally. Bob has no Codex side, until
+// the computer's owner lets him use Codex there (a co-author, step 3.6 of
+// docs/research/agents-as-participants-plan.md): his @codex in a comment on
+// the paper then runs on the computer, and the answer in his thread reads
+// "Codex on <host>, for rc-bob", alice's (the channel's account) named as
+// its owner. The computer stopped, the strip says it is offline, a message
+// waits for it ("Waiting for <host>") and runs once it is back.
 const FAKES = path.join(ROOT, "backend", "tests", "fake_agents");
 const PAPER = path.join(ROOT, "backend", "tests", "samples", "synctex", "paper");
+const PLACES = JSON.parse(fs.readFileSync(path.join(PAPER, "places.json"), "utf8"));
+const PAGE = { width: 612, height: 792 };
 const GRACE_S = 3;
 const CHAT_REPLY = "Tightened the sentence in sections/method.tex:3.";
 const BUILD = "latexmk -pdf main.tex";
+
+// An area on page 1 of the paper from places.json's fraction rect, in the
+// page's points as the viewer stores it.
+function areaOf([x1, y1, x2, y2]) {
+  const r = { x1: x1 * PAGE.width, y1: y1 * PAGE.height, x2: x2 * PAGE.width, y2: y2 * PAGE.height };
+  return { pageNumber: 1, ...PAGE, boundingRect: r, rects: [r], area: true };
+}
 
 export async function remoteChatScenarios(env) {
   const { browser, step, openPage, assert, assertEq, assertNoProblems, until, sleep } = env;
@@ -74,7 +87,7 @@ export async function remoteChatScenarios(env) {
     let pdf = "";
     const at = () => `${nas.base}/?ws=${wsId}&page=${pdf}`;
     const computersOf = async (account) => (await account.api(`/api/pages/${pdf}/computer`)).computers;
-    const chatOf = (account) => account.api(`/api/local-agents/chat?page=${pdf}`);
+    const chatOf = (account) => account.api(`/api/local-agents/chat?bucket=${pdf}`);
     const conversation = async () => (await chatOf(alice)).conversation;
     // The chat window, opened from the View menu when it is closed.
     const openChat = async (page) => {
@@ -87,10 +100,22 @@ export async function remoteChatScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The chat's Codex side, its strip shown.
+    // The agents the composer's chip lists, by name, its menu closed again.
+    const agentsListed = async (page, dock) => {
+      await dock.locator(".chatModelChip .uiSelectBtn").click();
+      const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").allInnerTexts();
+      await page.keyboard.press("Escape");
+      return names.map((s) => s.trim());
+    };
+    // The chat's Codex side, picked in the composer's chip unless it shows
+    // already (no AI service: the agent is the chat's own), its strip shown.
     const codexSide = async (page) => {
       const dock = await openChat(page);
-      await dock.locator(".segGroup").getByRole("button", { name: "Codex", exact: true }).click();
+      await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+      if (!(await dock.locator(".computerStrip").count())) {
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: /^Codex on / }).click();
+      }
       await dock.locator(".computerStrip").waitFor();
       return dock;
     };
@@ -115,7 +140,7 @@ export async function remoteChatScenarios(env) {
       assert(codex?.found && codex.ready, `Codex is found and ready on the computer: ${JSON.stringify(codex)}`);
       // as the shell's makeRemoteWorkFolder: a write token on the NAS, the work folder on the host
       const token = await alice.api("/api/integrations/tokens", { method: "POST",
-        body: { name: "Gamma desktop: Paper synced vault", scope: "write", expires_in_days: 365 } });
+        body: { name: "Gamma desktop: Paper synced folder", scope: "write", expires_in_days: 365 } });
       const link = await owner.api("/api/folder-links", { method: "POST", body: { folder: folderId, path: dir, notes: true, pull: true,
         push: "everything", choose: true, remote_url: nas.base, workspace: wsId, token: token.token, token_id: token.id } });
       assertEq(JSON.stringify([link.work, link.choosing]), JSON.stringify([true, true]), "a work folder of the NAS, its files to be chosen");
@@ -135,8 +160,8 @@ export async function remoteChatScenarios(env) {
         body: { remote_url: nas.base, workspace: wsId, token: minted.token, token_id: minted.id } });
       await until(async () => (await owner.api("/api/computer-links")).links.find((l) => l.id === made.link.id)?.status?.state === "connected",
         { timeout: 45000, every: 500, what: "the channel connected" });
-      const turned = await owner.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent: "codex" } });
-      assertEq(turned.agent?.name, "codex", "Codex on for the work folder");
+      const turned = await owner.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: true } });
+      assertEq(turned.enabled, true, "Codex on for the computer");
       const [seen] = await until(async () => {
         const list = await computersOf(alice);
         return list.length && list[0].online && list[0].vault?.agent?.name === "codex" ? list : null;
@@ -162,13 +187,13 @@ export async function remoteChatScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
-        // Their names: a narrow window shows the sides' icons alone.
-        assertEq(await dock.locator(".segGroup button").evaluateAll((b) => b.map((x) => x.getAttribute("aria-label")).join("|")), "Gamma AI|Codex",
-          "the switch names Gamma AI and the folder's agent");
+        await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+        assertEq((await agentsListed(page, dock)).join("|"), `Gamma AI|Codex on ${name}`,
+          "the chip lists Gamma AI and the agent of the computer that keeps the folder");
         await codexSide(page);
         const ready = `Codex on ${name}${folder ? ` · ${folder}` : ""}`;
         await until(async () => (await stripText(dock)) === ready, { what: `the strip reads ${ready}: ${await stripText(dock)}` });
-        await dock.locator(".chatEmpty", { hasText: `it works in the work folder's directory on ${name}.` }).waitFor();
+        await dock.locator(".chatEmpty", { hasText: `it works in the synced folder's directory on ${name}.` }).waitFor();
         assertEq(await dock.getByRole("textbox", { name: "Message Codex", exact: true }).getAttribute("placeholder"),
           `Message Codex on ${name}…`, "the composer names the computer");
         assertEq(await dock.locator(".computerStripMenu").count(), 0, "no menu: Show in folder and the terminal need the computer itself");
@@ -273,7 +298,7 @@ export async function remoteChatScenarios(env) {
         await until(async () => heard().slice(before).some((e) => e.in?.method === "turn/start"),
           { timeout: 20000, every: 250, what: "Codex's turn started on the computer" });
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).click({ timeout: 10000 });
-        await dock.locator(".computerEnded", { hasText: "Stopped" }).waitFor({ timeout: 30000 });
+        await dock.locator(".chatBubble.ai", { hasText: "(stopped)" }).waitFor({ timeout: 30000 });
         await dock.getByRole("button", { name: "Send", exact: true }).waitFor();
         assertEq(await lastState(), "stopped", "stored as stopped");
         await dock.getByRole("button", { name: "New chat", exact: true }).click();
@@ -284,7 +309,7 @@ export async function remoteChatScenarios(env) {
         assertNoProblems(page);
       } finally { await ctx.close(); }
       assert(heard().slice(before).some((e) => e.in?.method === "turn/interrupt"), "Codex was interrupted on the computer");
-      assertEq((await alice.api(`/api/local-agents/chat/history?page=${pdf}`)).conversations.length, 0,
+      assertEq((await alice.api(`/api/local-agents/chat/history?bucket=${pdf}`)).conversations.length, 0,
         "the opened conversation is the active one again");
     });
 
@@ -296,22 +321,94 @@ export async function remoteChatScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
         await sleep(800);
-        assertEq(await dock.getByRole("button", { name: "Codex", exact: true }).count(), 0, "no switch to Codex");
+        const listed = (await dock.locator(".chatModelChip").count()) ? await agentsListed(page, dock) : [];
+        assertEq(listed.filter((n) => n.startsWith("Codex")).length, 0, "no Codex to pick");
         assertEq(await dock.locator(".computerStrip").count(), 0, "no computer side");
         assertNoProblems(page);
       } finally { await ctx.close(); }
       // the expected refusals, outside the page
-      const asBob = await fetch(`${nas.base}/api/local-agents/chat?page=${pdf}`, { headers: bob.headers() });
+      const asBob = await fetch(`${nas.base}/api/local-agents/chat?bucket=${pdf}`, { headers: bob.headers() });
       assertEq(asBob.status, 404, `another member reads no seat: ${await asBob.text()}`);
       const sent = await fetch(`${nas.base}/api/local-agents/chat/turns`, { method: "POST",
-        headers: bob.headers({ "Content-Type": "application/json" }), body: JSON.stringify({ page: pdf, text: "hello" }) });
+        headers: bob.headers({ "Content-Type": "application/json" }), body: JSON.stringify({ bucket: pdf, text: "hello" }) });
       assertEq(sent.status, 404, `nor sends: ${await sent.text()}`);
       const token = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "a script", scope: "write", expires_in_days: 1 } });
-      const asToken = await fetch(`${nas.base}/api/local-agents/chat?page=${pdf}`,
+      const asToken = await fetch(`${nas.base}/api/local-agents/chat?bucket=${pdf}`,
         { headers: { Authorization: `Bearer ${token.token}`, "X-Gamma-Workspace": wsId } });
       assertEq(asToken.status, 403, `a token is refused: ${await asToken.text()}`);
       await alice.api(`/api/integrations/tokens/${token.id}`, { method: "DELETE" });
       assertEq((await conversation()).messages.filter((m) => m.role === "user" && m.text === "hello").length, 0, "nothing written");
+    });
+
+    await step("remote-chat: the computer's owner lets bob use Codex there; bob's @codex in a comment on the paper is a turn on the computer, answered in his thread as Codex on the computer, for rc-bob", async () => {
+      // whom the owner may name: the editors of the NAS's workspace, asked over the channel, the channel's own account left out
+      const { places } = await owner.api("/api/local-agents/people");
+      const there = places.find((p) => p.server === nas.base && p.workspace_id === wsId);
+      const person = there?.people.find((p) => p.username === "rc-bob");
+      assert(person && !there.people.some((p) => p.username === "rc-alice"), `bob is offered, alice is not: ${JSON.stringify(places)}`);
+      const named = await owner.api("/api/local-agents/codex/people", { method: "POST",
+        body: { server: nas.base, workspace_id: wsId, account: person.id } });
+      assertEq(JSON.stringify(named.people.map((p) => p.username)), JSON.stringify(["rc-bob"]), "bob may use Codex");
+      // announced: the NAS now shows bob the computer that keeps the page, that agent alone, lent by alice
+      const [lent] = await until(async () => {
+        const list = await computersOf(bob);
+        return list.length && list[0].vault?.agent?.name === "codex" ? list : null;
+      }, { timeout: 45000, every: 500, what: "the page's computer for bob" });
+      assertEq(JSON.stringify([lent.name, lent.lent_by, lent.assistants.map((a) => [a.name, a.enabled, a.runs])]),
+        JSON.stringify([name, "rc-alice", [["codex", true, "never"]]]), "the computer bob may use, lent by alice, never asking");
+      const area = await bob.api("/api/blocks", { method: "POST", body: { parent_id: pdf, content: "",
+        properties: { pdf_position: areaOf(PLACES.v1.figure.rect), color: "rgba(255, 226, 143, 0.65)" } } });
+      const root = (await bob.api(`/api/pages/${pdf}/comments`, { method: "POST",
+        body: { block_id: area.id, body: "the legend hides the curve" } })).thread;
+      const before = heard().length;
+      const ctx = await bob.context(browser);
+      const page = await openPage(ctx, at());
+      try {
+        await waitForPdf(page, 1);
+        if (!(await page.locator(".commentsPanel").count())) {
+          await page.getByRole("button", { name: "View", exact: true }).click();
+          await page.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+          await page.keyboard.press("Escape");
+        }
+        const row = page.locator(`.commentsPanelRow[data-thread-id="${root.id}"]`);
+        await row.waitFor({ timeout: 10000 });
+        await row.click();
+        const thread = page.locator(".commentThread").first();
+        await thread.locator(".commentBody").first().click();
+        const field = thread.locator(".commentField .cm-content").last();
+        await field.waitFor();
+        await field.click();
+        const tick = thread.locator(".commentSendTo input[type=checkbox]");
+        assertEq(await tick.isChecked(), false, "a thread among people: the tick off");
+        await page.keyboard.type("@cod");
+        const menu = page.locator(".mentionMenu");
+        await until(async () => (await menu.locator(".refPopupItem.selected .refPopupText").innerText().catch(() => "")).startsWith("Codex"),
+          { what: "the @ menu offers bob the agent lent to him" });
+        await page.keyboard.press("Enter");
+        await menu.waitFor({ state: "detached" });
+        await until(() => tick.isChecked(), { what: "@codex ticks the box" });
+        await page.keyboard.type("move it inside the plot");
+        await page.keyboard.press("Shift+Enter");
+        const answer = thread.locator(".commentItem.reply", { hasText: CHAT_REPLY });
+        await answer.waitFor({ timeout: 60000 });
+        assertEq((await answer.locator(".commentAuthor").textContent()).trim(), "Codex", "the reply is Codex's");
+        assertEq(await answer.locator(".commentFor").textContent(), `on ${name}, for rc-bob`, "on its computer, for bob");
+        assertEq(await answer.locator(".commentAuthor").getAttribute("title"), `Written by rc-alice's Codex on ${name}, for rc-bob`,
+          "the byline's title names its owner too");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const turns = heard().slice(before).filter((e) => e.in?.method === "turn/start");
+      assertEq(turns.length, 1, "one turn, on the computer");
+      const told = turns[0].in.params.input.map((p) => p.text || "").join("\n");
+      assert(told.includes('"message": "move it inside the plot"') && told.includes("rc-bob"), `bob's words, as his: ${told.slice(0, 600)}`);
+      const stored = (await bob.api(`/api/pages/${pdf}/comments`)).threads.find((th) => th.id === root.id);
+      const theirs = stored.comments.at(-1);
+      assertEq(JSON.stringify([theirs.agent, theirs.author, theirs.agent_on, theirs.agent_owner]),
+        JSON.stringify(["Codex", "rc-bob", name, "rc-alice"]), "Codex answered for bob, alice its owner");
+      // the conversation is bob's, read by alice too, and by no one else
+      const his = (await bob.api(`/api/local-agents/chat?bucket=${pdf}&thread=${root.id}`)).conversation;
+      const hers = (await alice.api(`/api/local-agents/chat?bucket=${pdf}&thread=${root.id}`)).conversation;
+      assertEq(JSON.stringify([his?.id, his?.thread_id]), JSON.stringify([hers?.id, root.id]), "bob's conversation of his thread, which alice reads");
     });
 
     await step("remote-chat: the computer stopped, the strip says it is offline and a message waits for it, and runs once the computer is back", async () => {

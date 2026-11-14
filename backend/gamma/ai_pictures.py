@@ -260,7 +260,7 @@ def image_region(ws: str, name: str, box=None, marks=()) -> tuple[bytes, str, in
     folder's file read in place) as a JPEG, ``(bytes, media_type, width,
     height)`` as ``render_page`` shapes a picture, cut to ``box`` (fractions
     of the picture, top-left origin) when one is given: what a feedback
-    thread's picture (gamma/feedback/pictures.py), the chat's page image of
+    thread's picture (gamma/annotations/pictures.py), the chat's page image of
     a picture page and ``clip_region`` draw. An SVG is drawn by MuPDF under
     its time limit (``pdf_image.svg_png``); a raster is read with Pillow, its
     EXIF orientation applied, an animation's first frame, transparency on

@@ -1,6 +1,6 @@
-// The card a failed reply ends in, on both sides of the chat: a Gamma AI
-// reply (ChatDock, worded per failure kind by chat/chatErrors.js) and a
-// turn of the agent on this computer (chat/computer/ComputerChat.jsx). A
+// The card a failed reply ends in, whichever agent's (chat/ChatTranscript.jsx,
+// worded per failure kind by chat/chatErrors.js): a Gamma AI reply, or a
+// turn of a computer's agent headed by its computer's own sentence. A
 // headline saying what went wrong, one plain sentence (`text`), the buttons
 // that fix it or try again (`actions`), and the raw words of whoever failed
 // folded under `detailLabel` ("Details"). `compact`: a reply that broke off

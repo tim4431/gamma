@@ -22,7 +22,7 @@ from conftest import account_of, doc_props, fresh_client, login, make_folder, ma
 from gamma import config, folder_links, gamma_sync
 from gamma.vault import disk as vault_disk, kinds, local_remote, store as vault_store, sync as vault_sync
 from gamma.db import connect_users_db
-from gamma.feedback import files as feedback_files
+from gamma.annotations import files as annotation_files
 from gamma.integrations import create_token
 
 REAL_BACKGROUND = folder_links.run_in_background  # before ``disk`` stubs it
@@ -105,14 +105,13 @@ def test_a_vault_keeps_the_folder_where_it_was_asked_and_the_tick_follows_change
     r = owner.patch(f"/api/folder-links/{link['id']}", json={"notes": False})
     assert r.status_code == 400 and "keeps its notes" in r.json()["detail"]
 
-    # removing the vault with its files moves what pull wrote to its trash, nothing else
+    # removing the vault leaves its directory as it is, but for Gamma's own marker and .gamma/
     (dest / "mine.txt").write_text("not the vault's", encoding="utf-8")
-    r = owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"})
-    assert r.status_code == 200
+    r = owner.delete(f"/api/folder-links/{link['id']}")
+    assert r.status_code == 200 and r.json() == {"ok": True, "kept": 0, "trashed": 0}
     assert owner.get("/api/folder-links").json()["links"] == []
-    assert not (dest / "FL paper.md").exists() and (dest / "mine.txt").is_file()
-    assert not (dest / vault_disk.MARKER).exists()
-    assert [p.name for p in (dest / ".gamma" / "trash").rglob("*.md")] == ["FL paper.md"]
+    assert sorted(p.name for p in dest.iterdir()) == ["FL paper.md", "mine.txt"]
+    assert "a thought" in (dest / "FL paper.md").read_text(encoding="utf-8")
 
 
 def test_a_paused_link_runs_only_when_asked_and_no_round_undoes_the_pause(owner, disk, monkeypatch):
@@ -155,7 +154,7 @@ def test_a_paused_link_runs_only_when_asked_and_no_round_undoes_the_pause(owner,
     monkeypatch.setattr(local_remote.LocalRemote, "layout", pausing)
     assert _sync(owner, link["id"])["paused_at"]
     assert _due(link["id"]) == ""
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 def test_sync_now_answers_with_its_round_running_and_the_status_follows_it_to_its_end(owner, disk, monkeypatch):
@@ -192,7 +191,7 @@ def test_sync_now_answers_with_its_round_running_and_the_status_follows_it_to_it
         time.sleep(0.02)
     assert status["last_error"] == "" and (dest / "FL now paper.md").is_file()
     assert rounds == ["pull", ""]  # the one asked for first, with what it asked, then the one asked meanwhile
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 def test_a_links_running_is_a_round_holding_it_however_long_that_round_runs(owner, disk, monkeypatch):
@@ -223,7 +222,7 @@ def test_a_links_running_is_a_round_holding_it_however_long_that_round_runs(owne
     # the same mark with nothing holding the lock: what a server stopped mid-round leaves
     assert owner.get(f"/api/folder-links/{link['id']}").json()["status"]["running"] is False
     assert _due(link["id"]) == "both"  # never synced: the tick runs it now
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 def test_a_sync_asked_while_a_page_round_holds_the_vault_reads_running_until_its_own_round_ends(owner, disk,
@@ -254,7 +253,7 @@ def test_a_sync_asked_while_a_page_round_holds_the_vault_reads_running_until_its
         assert time.monotonic() < deadline, f"the round never ended: {status}"
         time.sleep(0.02)
     assert status["last_error"] == "" and (dest / "FL held second.md").is_file()   # its own round's outcome
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 def test_a_vaults_round_shows_its_progress_while_it_runs(owner, disk, monkeypatch):
@@ -323,7 +322,7 @@ def test_a_path_must_be_a_full_one_of_its_own_outside_the_data_directory(owner, 
 
     link = _create(owner, folder=folder, path=str(disk / "First"))
     r = owner.post("/api/folder-links", json={"folder": folder, "path": str(disk / "first")})   # another link's, ignoring case
-    assert r.status_code == 400 and "by another synced vault" in r.json()["detail"]
+    assert r.status_code == 400 and "by another synced folder" in r.json()["detail"]
     other = _create(owner, folder=folder, path=str(disk / "Second"))                           # the same folder twice
     _sync(owner, link["id"])
     _sync(owner, other["id"])
@@ -343,7 +342,7 @@ def test_a_path_must_be_a_full_one_of_its_own_outside_the_data_directory(owner, 
     assert status["upgraded_at"] and status["counts"]["added"] == 1 and (kept / vault_disk.MARKER).is_file()
     assert not (kept / gamma_sync.STATE).exists()
     for l in owner.get("/api/folder-links").json()["links"]:
-        owner.delete(f"/api/folder-links/{l['id']}", params={"files": "trash"}).raise_for_status()
+        owner.delete(f"/api/folder-links/{l['id']}").raise_for_status()
 
 
 @pytest.fixture
@@ -407,7 +406,7 @@ def test_root_links_the_whole_library(owner, disk):
     link = _create(owner, folder="root", path=str(disk / "Everything"))
     assert _sync(owner, link["id"])["last_error"] == ""
     assert (disk / "Everything" / "FL loose.md").is_file()
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 def test_a_failed_round_is_reported_and_retried_later(owner, disk, monkeypatch):
@@ -424,7 +423,7 @@ def test_a_failed_round_is_reported_and_retried_later(owner, disk, monkeypatch):
     assert _due(link["id"]) == "both"
     monkeypatch.setattr(local_remote.LocalRemote, "layout", layout)
     assert _sync(owner, link["id"])["last_error"] == ""
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 @pytest.fixture
@@ -502,9 +501,8 @@ def test_a_vault_of_another_server_pulls_with_its_token(owner, disk, over_http, 
     other = login("fl_far_other", "pw")
     assert other.get("/api/folder-links").json()["links"] == []
     assert other.get(f"/api/folder-links/{link['id']}").status_code == 404
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
-    assert not (far / "FL far paper.md").exists() and not (far / vault_disk.MARKER).exists()
-    assert [p.name for p in (far / ".gamma" / "trash").rglob("*.md")] == ["FL far paper.md"]   # moved, never deleted
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert sorted(p.name for p in far.iterdir()) == ["FL far paper.md"]   # its files stay, the marker goes
 
 
 def test_a_vault_of_another_server_says_what_is_in_its_way(owner, disk, over_http, monkeypatch):
@@ -560,7 +558,7 @@ def test_a_vault_of_another_server_says_what_is_in_its_way(owner, disk, over_htt
     assert r.status_code == 409 and r.json()["move_to"] == "https://testserver", r.text
     assert r.json()["detail"].endswith(": open https://testserver in Gamma and make the vault from there.")
     way.clear()
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 def test_who_may_use_it(owner, guest, disk):
@@ -575,7 +573,7 @@ def test_who_may_use_it(owner, guest, disk):
     assert other.get(f"/api/folder-links/{link['id']}").status_code == 404
     assert other.delete(f"/api/folder-links/{link['id']}").status_code == 404
     assert fresh_client().get("/api/folder-links").status_code == 401
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 def test_no_other_server_keeps_folders_on_disk(owner, disk, monkeypatch):
@@ -596,7 +594,7 @@ def test_no_other_server_keeps_folders_on_disk(owner, disk, monkeypatch):
     assert not (disk / "Elsewhere" / "FL e.md").exists()
     assert owner.get(f"/api/sync/folders/{folder}").status_code == 200
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 # --- a vault's direction ------------------------------------------------------------------------
@@ -664,9 +662,9 @@ def test_the_hot_loop_gives_a_pulled_page_a_round_of_its_own(owner, disk, monkey
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
-def test_the_hot_loop_writes_a_marked_work_folders_feedback_files_under_its_lock(owner, disk, monkeypatch):
-    """The feedback pass of the hot loop, the writer stood in for
-    (gamma/feedback/files.py has its own tests): a work folder marked has
+def test_the_hot_loop_writes_a_marked_work_folders_annotation_files_under_its_lock(owner, disk, monkeypatch):
+    """The annotations pass of the hot loop, the writer stood in for
+    (gamma/annotations/files.py has its own tests): a work folder marked has
     its files written under its lock and the mark settled; a lock a round
     holds keeps the mark, as does a pass that left something for the next;
     a paused link drops it; a page of no work folder marks nothing; every
@@ -679,8 +677,8 @@ def test_the_hot_loop_writes_a_marked_work_folders_feedback_files_under_its_lock
     then = time.time() - 10
     os.utime(dest / "Thoughts.md", (then, then))
     link = _create(owner, path=str(dest), new_folder=True, push="everything")
-    assert _sync(owner, link["id"])["feedback"] == {"open": 0}
-    assert (dest / feedback_files.DIR / "open.json").is_file()
+    assert _sync(owner, link["id"])["annotations"] == {"open": 0}
+    assert (dest / annotation_files.DIR / "open.json").is_file()
     ws, w = workspace_of("fl_owner"), link["folder_id"]
     page = vault_store.files(link["id"])["Thoughts.md"]["page_id"]
     written, answer = [], {"open": 0}
@@ -690,35 +688,35 @@ def test_the_hot_loop_writes_a_marked_work_folders_feedback_files_under_its_lock
         return dict(answer)
 
     def feedback_pass():
-        links = {l["id"]: l for l in folder_links.all_links() if folder_links.engine(l) and not l["remote_url"]}
-        for marked_ws, marked_w in feedback_files.due(0):
-            folder_links._feedback_pass(marked_ws, marked_w, links, feedback_files)
-    monkeypatch.setattr(feedback_files, "write", write)
-    feedback_files.mark(ws, page)                      # a page's mark is its work folder's; the tick finds it
+        links = [l for l in folder_links.all_links() if not l["remote_url"]]
+        for marked_ws, marked_w in annotation_files.due(0):
+            folder_links._annotations_pass(marked_ws, marked_w, links, annotation_files)
+    monkeypatch.setattr(annotation_files, "write", write)
+    annotation_files.mark(ws, page)                      # a page's mark is its work folder's; the tick finds it
     with pytest.MonkeyPatch.context() as hot:
         hot.setattr(folder_links, "HOT_S", 0)
         folder_links.hot_tick()
-    assert written and set(written) == {(link["id"], True)} and (ws, w) not in feedback_files.due(0)
+    assert written and set(written) == {(link["id"], True)} and (ws, w) not in annotation_files.due(0)
     n = len(written)
-    feedback_files.mark_folder(ws, w)
+    annotation_files.mark_folder(ws, w)
     lock = folder_links._lock(link["id"])
     assert lock.acquire(blocking=False)                # a round holds the vault: the mark waits
     try:
         feedback_pass()
-        assert len(written) == n and (ws, w) in feedback_files.due(0)
+        assert len(written) == n and (ws, w) in annotation_files.due(0)
     finally:
         folder_links._let_go(link["id"], lock)
     answer["left"] = 1                                 # a pass that left something keeps the mark
     feedback_pass()
-    assert len(written) == n + 1 and (ws, w) in feedback_files.due(0)
+    assert len(written) == n + 1 and (ws, w) in annotation_files.due(0)
     del answer["left"]
     feedback_pass()
-    assert len(written) == n + 2 and (ws, w) not in feedback_files.due(0)
+    assert len(written) == n + 2 and (ws, w) not in annotation_files.due(0)
     owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True}).raise_for_status()
-    feedback_files.mark_folder(ws, w)                  # paused: dropped, nothing written
+    annotation_files.mark_folder(ws, w)                  # paused: dropped, nothing written
     feedback_pass()
-    assert len(written) == n + 2 and (ws, w) not in feedback_files.due(0)
-    feedback_files.mark(ws, "no-such-page")
-    assert (ws, w) not in feedback_files.due(0)
+    assert len(written) == n + 2 and (ws, w) not in annotation_files.due(0)
+    annotation_files.mark(ws, "no-such-page")
+    assert (ws, w) not in annotation_files.due(0)
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
-    assert not (dest / feedback_files.DIR).exists() and (dest / vault_disk.MARKER_DIR).is_dir()
+    assert not (dest / vault_disk.MARKER_DIR).exists()             # the annotation files, the marker, then .gamma/

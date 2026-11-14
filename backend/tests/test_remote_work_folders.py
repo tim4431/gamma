@@ -5,40 +5,51 @@ server (test_folder_links.py ``over_http``), while this computer's own
 in-process reads and writes of that workspace fail (``far``): made of an
 empty folder there and refused otherwise, chosen in the tracking dialog here
 (what goes there, its secrets), its library switch written to the mark there,
-cancelled, removed (kept, trashed, refused and forced while that server does
-not answer, a cancel too, the mark said to stay when it stops answering
-midway), a mark whose answer was lost taken back, the questions between
+cancelled, removed (its files kept as pages there or sent to Recently deleted,
+refused and forced while that server does not answer, a cancel too, the mark
+said to stay when it stops answering midway), a mark whose answer was lost taken back, the questions between
 rounds waiting as questions, stopped for good once that server let go of it
 (never marking, pushing into or releasing that folder again), the remote kept folders
-that push everything left as they were; the remote's own ``stamp`` and
+that push everything left as they were; the annotation files of such a work
+folder and of a followed file there, read from that server with the vault's
+token (gamma/annotations/files.py); the remote's own ``stamp`` and
 ``work_pages`` against ``LocalRemote``'s, a ``locked`` refusal as the file's,
 a round of push alone that reads no listing. And every server's side: a
 vault's mark refused in a clone or a Zotero-linked workspace and inside or
 around a work folder (gamma/ops.py ``mark_rule``), ``pushing_vault`` seeing
-a mark, whoami's ``work_folders``, the summaries' counts, and a workspace
-owner's Let go (``POST /api/folders/{id}/let-go``: refused in a clone or a
-Zotero-linked workspace, sweeping again once the mark is off)."""
+a mark, whoami's ``work_folders``, the summaries' counts, and the Detach of a work
+folder kept on no computer here (``POST /api/folders/{id}/detach``: for the
+workspace's owner and the account whose computer keeps it, while it may edit
+the workspace, which is woken, its paused vaults left to their next round;
+refused in a clone or a Zotero-linked workspace, sweeping again once the mark
+is off)."""
 
+import io
 import json
 import os
 import time
 
+import pymupdf
 import pytest
 
-from conftest import (account_of, fresh_client, login, make_folder, make_user, mark_work_folder, work_props,
-                      workspace_of)
+from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, mark_work_folder,
+                      thread_on, work_props, workspace_of)
 from gamma import config, folder_links, gamma_sync, workspaces
 from gamma.auth import DISK_CLIENT
+from gamma.computers import channel, registry
 from gamma.blocks_store import FOLDERS, create_page, new_block_id
 from gamma.db import connect_pages_db, connect_users_db
-from gamma.feedback import files as feedback_files
+from gamma.annotations import files as annotation_files
 from gamma.integrations import create_token
+from gamma.local_agents import runner
 from gamma.ops import LOCKED, OpError, commit_ops
 from gamma.vault import disk as vault_disk, http_remote as vault_http, kinds, store as vault_store
 from gamma.vault.local_remote import LocalRemote
 from gamma.vault.remote import Edit
 from gamma.work_folders import elsewhere, selection, takeover
 from test_folder_links import _create, _sync, disk, over_http  # noqa: F401: the disk and over_http fixtures
+from test_highlight_relocate import _position
+from test_vault_sync import insert
 
 OWNER = "rwf_owner"
 _made = []    # the tokens a test made, revoked after it: an account holds twenty at most
@@ -78,7 +89,7 @@ def far(monkeypatch, owner):
             return fn(at, *args, **kwargs)
         return call
 
-    for module in (folder_links, selection, feedback_files):
+    for module in (folder_links, selection, annotation_files):
         monkeypatch.setattr(module, "connect_pages_db", guarded(module.connect_pages_db))
     monkeypatch.setattr(folder_links, "commit_ops", guarded(folder_links.commit_ops))
     return ws
@@ -230,9 +241,10 @@ def test_a_work_folder_of_another_server_is_made_of_an_empty_folder_there_and_ch
     owner.patch(f"/api/folder-links/{link['id']}", json={"library": False}).raise_for_status()
     assert _mark(far, w) == {"pull": True, "library": False}
     said = owner.get(f"/api/folder-links/{link['id']}/removal").json()
-    assert said["files"] == 1 and said["pages"] == 2 and "unreachable" not in said     # small.txt is in no library
-    r = owner.delete(f"/api/folder-links/{link['id']}")
-    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert (said["files"], said["in_library"], said["pages"], said["bytes"]) == (2, 1, 2, 0)   # small.txt in no library
+    assert "unreachable" not in said
+    r = owner.delete(f"/api/folder-links/{link['id']}", params={"pages": "remove"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "kept": 1, "trashed": 1}
     assert folder_links.get_link(link["id"]) is None and _mark(far, w) is None and _files_of(far, w) == {}
     for page_id, props in there.items():      # one in Recently deleted keeps its stamps, which a restore drops
         now = _props(far, page_id)
@@ -257,13 +269,13 @@ def test_a_work_folder_of_another_server_is_refused_but_into_an_empty_unmarked_f
     inner = make_folder(owner, "RWF marked/Inner")
     mark_work_folder(owner, marked)
     r = owner.post("/api/folder-links", json=_body(over_http, marked, disk / "Marked"))
-    assert r.status_code == 409 and "a work folder already" in r.json()["detail"]
+    assert r.status_code == 409 and "a synced folder already" in r.json()["detail"]
     r = owner.post("/api/folder-links", json=_body(over_http, inner, disk / "Inner"))
-    assert r.status_code == 409 and "inside a work folder, or holds one" in r.json()["detail"]
+    assert r.status_code == 409 and "inside a synced folder, or holds one" in r.json()["detail"]
     around = make_folder(owner, "RWF around")
     mark_work_folder(owner, make_folder(owner, "RWF around/W"))
     r = owner.post("/api/folder-links", json=_body(over_http, around, disk / "Around"))
-    assert r.status_code == 409 and "inside a work folder, or holds one" in r.json()["detail"]
+    assert r.status_code == 409 and "inside a synced folder, or holds one" in r.json()["detail"]
 
     # not pushing everything and pulling, or the library's top
     empty = make_folder(owner, "RWF empty")
@@ -276,7 +288,7 @@ def test_a_work_folder_of_another_server_is_refused_but_into_an_empty_unmarked_f
     monkeypatch.setattr(folder_links, "_remote", lambda *a: (lambda s, who: (s, {k: v for k, v in who.items()
                                                                                if k != "work_folders"}))(*remote(*a)))
     r = owner.post("/api/folder-links", json=_body(over_http, empty, disk / "Empty"))
-    assert r.status_code == 400 and "keeps no work folders" in r.json()["detail"] and _mark(far, empty) is None
+    assert r.status_code == 400 and "keeps no synced folders" in r.json()["detail"] and _mark(far, empty) is None
     monkeypatch.setattr(folder_links, "_remote", remote)
 
     # that server refuses the mark (a Zotero-linked workspace there): refused, nothing kept
@@ -327,7 +339,7 @@ def test_a_cancelled_work_folder_of_another_server_lets_its_folder_go_there(owne
     # a member writes a note in the folder meanwhile: a file of the work folder there
     note = owner.post("/api/pages", json={"title": "RWF member note", "folders": [w]}).json()["id"]
     assert _props(far, note)["work_folder"] == w
-    assert owner.delete(f"/api/folder-links/{link['id']}").json() == {"ok": True}
+    assert owner.delete(f"/api/folder-links/{link['id']}").json() == {"ok": True, "kept": 0, "trashed": 0}
     assert folder_links.get_link(link["id"]) is None and _mark(far, w) is None
     props = _props(far, note)
     assert props["parent"] == "root" and "work_folder" not in props and props["folders"] == [w]   # a library page
@@ -349,16 +361,16 @@ def test_removing_one_while_that_server_does_not_answer_is_refused_unless_forced
     assert r.status_code == 409 and r.json()["detail"].startswith("The other server cannot be reached")
     assert folder_links.get_link(link["id"]) is not None and (disk / "Unreached" / vault_disk.MARKER).is_file()
     r = owner.delete(f"/api/folder-links/{link['id']}", params={"force": 1})
-    assert r.status_code == 200 and r.json() == {"ok": True, "mark_stays": True}
+    assert r.status_code == 200 and r.json() == {"ok": True, "kept": 0, "trashed": 0, "mark_stays": True}
     assert folder_links.get_link(link["id"]) is None and _mark(far, w) is not None
     monkeypatch.setattr(vault_http.HttpRemote, "work_pages", work_pages)
 
-    # the workspace's owner lets go of it there: its files out of the library to Recently deleted
-    r = owner.post(f"/api/folders/{w}/let-go")
+    # the workspace's owner detaches it there: its files out of the library to Recently deleted
+    r = owner.post(f"/api/folders/{w}/detach", json={"pages": "remove"})
     assert r.status_code == 200 and r.json() == {"ok": True, "kept": 0, "trashed": 2}
     assert _mark(far, w) is None and _files_of(far, w) == {}
     assert all(_props(far, page_id)["parent"] != "root" for page_id in there)
-    assert owner.post(f"/api/folders/{w}/let-go").status_code == 404
+    assert owner.post(f"/api/folders/{w}/detach", json={"pages": "remove"}).status_code == 404
 
 
 def test_a_work_folder_let_go_there_stops_its_vault_for_good(owner, disk, over_http, far, monkeypatch):
@@ -366,16 +378,20 @@ def test_a_work_folder_let_go_there_stops_its_vault_for_good(owner, disk, over_h
     root = disk / "Let go"
     link = _saved(owner, over_http, w, root, {"a.md": "a\n"}, library=True)
     page = next(iter(_files_of(far, w)))
-    assert owner.post(f"/api/folders/{w}/let-go").json() == {"ok": True, "kept": 1, "trashed": 0}
+    assert owner.post(f"/api/folders/{w}/detach", json={"pages": "keep"}).json() == {"ok": True, "kept": 1, "trashed": 0}
     assert _mark(far, w) is None and "work_folder" not in _props(far, page)
 
     # its library switch, turned before its next round, writes no mark where none is
     owner.patch(f"/api/folder-links/{link['id']}", json={"library": False}).raise_for_status()
     assert _mark(far, w) is None
+    stopped = []
+    monkeypatch.setattr(runner, "stop_link", lambda link_id, why="": stopped.append((link_id, why)))
     status = _sync(owner, link["id"])
     assert status["stopped"] == folder_links.MARK_GONE and _mark(far, w) is None     # never marked again
     assert folder_links.get_link(link["id"])["state"][folder_links.LET_GO_THERE]
-    assert owner.get(f"/api/folder-links/{link['id']}").json()["work"] is False
+    assert stopped == [(link["id"], "detached")]                                      # its agent's run here stops
+    said = owner.get(f"/api/folder-links/{link['id']}").json()
+    assert said["work"] is False and said["let_go"] is True                           # the desktop app forgets it
 
     # another computer's vault makes a work folder of it there: this one never takes it for its own
     mark = mark_work_folder(owner, w, library=True)
@@ -393,6 +409,7 @@ def test_a_work_folder_let_go_there_stops_its_vault_for_good(owner, disk, over_h
     monkeypatch.setattr(gamma_sync, "default_open", counting)
     status = _sync(owner, link["id"])
     assert status["stopped"] == folder_links.MARK_GONE and asked == []                # stopped at once
+    assert stopped == [(link["id"], "detached")]
     folder_links._mark_again(folder_links.get_link(link["id"], with_token=True))
     assert asked == [] and folder_links.removal(folder_links.get_link(link["id"]))["files"] == 0
     monkeypatch.setattr(gamma_sync, "default_open", opened)
@@ -400,9 +417,9 @@ def test_a_work_folder_let_go_there_stops_its_vault_for_good(owner, disk, over_h
 
     # removed: only forgotten, the other vault's work folder left as it is
     r = owner.delete(f"/api/folder-links/{link['id']}")
-    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert r.status_code == 200 and r.json() == {"ok": True, "kept": 0, "trashed": 0}
     assert _mark(far, w) == mark and list(_files_of(far, w)) == [theirs]
-    owner.post(f"/api/folders/{w}/let-go").raise_for_status()
+    owner.post(f"/api/folders/{w}/detach", json={"pages": "remove"}).raise_for_status()
 
 
 def test_a_removal_that_server_stops_answering_midway_says_the_mark_stays(owner, disk, over_http, far, monkeypatch):
@@ -412,11 +429,11 @@ def test_a_removal_that_server_stops_answering_midway_says_the_mark_stays(owner,
     trash = vault_http.HttpRemote.trash
     monkeypatch.setattr(vault_http.HttpRemote, "trash", lambda self, page_id: (_ for _ in ()).throw(
         vault_http.Unreachable("down")))
-    r = owner.delete(f"/api/folder-links/{link['id']}")
-    assert r.status_code == 200 and r.json() == {"ok": True, "mark_stays": True}
+    r = owner.delete(f"/api/folder-links/{link['id']}", params={"pages": "remove"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "kept": 0, "trashed": 0, "mark_stays": True}
     assert folder_links.get_link(link["id"]) is None and _mark(far, w) is not None
     monkeypatch.setattr(vault_http.HttpRemote, "trash", trash)
-    owner.post(f"/api/folders/{w}/let-go").raise_for_status()
+    owner.post(f"/api/folders/{w}/detach", json={"pages": "remove"}).raise_for_status()
 
 
 def test_a_cancel_while_that_server_does_not_answer_is_refused_unless_forced(owner, disk, over_http, far,
@@ -431,11 +448,11 @@ def test_a_cancel_while_that_server_does_not_answer_is_refused_unless_forced(own
     assert r.status_code == 409 and r.json()["detail"].startswith("The other server cannot be reached")
     assert folder_links.get_link(link["id"]) is not None and (root / vault_disk.MARKER).is_file()
     r = owner.delete(f"/api/folder-links/{link['id']}", params={"force": 1})
-    assert r.status_code == 200 and r.json() == {"ok": True, "mark_stays": True}
+    assert r.status_code == 200 and r.json() == {"ok": True, "kept": 0, "trashed": 0, "mark_stays": True}
     assert folder_links.get_link(link["id"]) is None and not (root / vault_disk.MARKER).exists()
     assert _mark(far, w) is not None
     monkeypatch.setattr(vault_http.HttpRemote, "work_pages", work_pages)
-    owner.post(f"/api/folders/{w}/let-go").raise_for_status()
+    owner.post(f"/api/folders/{w}/detach", json={"pages": "remove"}).raise_for_status()
 
 
 def test_a_mark_whose_answer_was_lost_is_taken_back(owner, disk, over_http, far, monkeypatch):
@@ -469,6 +486,127 @@ def test_the_questions_between_rounds_wait_as_questions(owner, disk, over_http, 
     assert waits and set(waits) == {folder_links.ASK_TIMEOUT_S}, waits
 
 
+# --- the annotation files ---------------------------------------------------------------------
+
+AREA = {"x1": 66, "y1": 60, "x2": 260, "y2": 110}
+JPEG = b"\xff\xd8\xff"
+
+
+def _pdf(text: str) -> bytes:
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), text)
+    return doc.tobytes()
+
+
+def _area(ws, page) -> str:
+    """An area highlight on the page's first PDF page, written there."""
+    block_id = new_block_id()
+    commit_ops(ws, page, [insert(page, "", {"pdf_position": _position(1, AREA, area=True), "color": "#ffe28fa6"},
+                                 block_id)], actor=account_of(OWNER))
+    return block_id
+
+
+def _recorded(monkeypatch) -> list:
+    """The paths this computer asks the other server, recorded."""
+    asked, opened = [], gamma_sync.default_open
+
+    def recording(method, path, headers, body=None):
+        asked.append(path)
+        return opened(method, path, headers, body)
+    monkeypatch.setattr(gamma_sync, "default_open", recording)
+    return asked
+
+
+def test_a_work_folder_of_another_server_writes_the_annotations_it_reads_there(owner, disk, over_http, far,
+                                                                              monkeypatch):
+    """Each round reads its folder's entries there (``GET /api/annotations``)
+    and the pictures they name, by the routes that server names, with the
+    vault's token, never this computer's copy of that workspace (``far``),
+    and writes the files a work folder of this server writes, its files
+    named by its rows; the files of before go. A server that does not
+    answer it is the files' error, never the round's."""
+    w = make_folder(owner, "RWF marks")
+    root = disk / "RWF marks"
+    link = _saved(owner, over_http, w, root, {"main.pdf": _pdf("the method defines the loss"), "notes.md": "a\n"})
+    page = vault_store.files(link["id"])["main.pdf"]["page_id"]
+    area = _area(far, page)
+    thread = thread_on(owner, page, page, "the whole paper")
+    former = root / annotation_files.FORMER
+    former.mkdir(parents=True)
+    (former / "open.json").write_bytes(b"{}\n")
+    asked = _recorded(monkeypatch)
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and status["annotations"] == {"open": 1}
+    here = root / annotation_files.DIR
+    doc = json.loads((here / "open.json").read_text(encoding="utf-8"))
+    assert (doc["format"], doc["work_folder"]["id"], doc["scope"]["kind"], doc["owner"]) == (
+        "gamma-annotations-1", w, "work_folder", OWNER)
+    assert "agent" not in doc and "agents_found" not in doc                # the dialog's, never the files'
+    assert [(e["id"], e["type"], e["file"]) for e in doc["entries"]] == [
+        (thread["id"], "thread", "main.pdf"), (area, "highlight", "main.pdf")]
+    entry = doc["entries"][1]
+    assert entry["picture"] and (here / entry["picture"]).read_bytes()[:3] == JPEG and "picture_url" not in entry
+    assert f"/api/annotations?scope={w}&state=open" in asked
+    assert any(path.startswith(f"/api/annotations/{area}/picture?at=now") for path in asked)
+    assert "## main.pdf" in (here / "open.md").read_text(encoding="utf-8")
+    assert (here / ".gitignore").read_bytes() == annotation_files.GITIGNORE and not former.exists()
+
+    # a round of push alone reads them again at most every REMOTE_POLL_S, keeping the last summary meanwhile
+    asked.clear()
+    status = _sync(owner, link["id"], direction="push")
+    assert status["annotations"] == {"open": 1} and not any(p.startswith("/api/annotations") for p in asked)
+    folder_links._annotations_read[link["id"]] -= folder_links.REMOTE_POLL_S
+    status = _sync(owner, link["id"], direction="push")
+    assert status["annotations"] == {"open": 1} and f"/api/annotations?scope={w}&state=open" in asked
+
+    # a server of a release before the reader: the round goes on, the files stay as they were
+    before = (here / "open.json").read_bytes()
+    opened = gamma_sync.default_open
+
+    def older(method, path, headers, body=None):
+        if path.startswith("/api/annotations"):
+            return 404, {"Content-Type": "application/json"}, io.BytesIO(b'{"detail": "Not Found"}')
+        return opened(method, path, headers, body)
+    monkeypatch.setattr(gamma_sync, "default_open", older)
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and status["annotations"]["error"] and (here / "open.json").read_bytes() == before
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert not (root / vault_disk.MARKER_DIR).exists()
+
+
+def test_a_followed_file_of_another_server_writes_its_pages_annotations_beside_it(owner, disk, over_http, far,
+                                                                                 monkeypatch):
+    """A vault of one file of another server reads its page's entries there
+    at its rounds, one every ``REMOTE_POLL_S`` while the file rests, and
+    writes them beside the file; removed, they go."""
+    data = _pdf("the far draft")
+    r = owner.post("/api/uploads", files={"file": ("draft.pdf", data, "application/pdf")})
+    assert r.status_code == 200, r.text
+    page = make_page(owner, "RWF far draft", doc_props(r.json()["doc_id"], name="draft.pdf"))["id"]
+    build = _put(disk / "far" / "main.pdf", data)
+    token = _token()
+    link = _create(owner, kind="file", page=page, path=str(build), remote_url=over_http, token=token["token"],
+                   token_id=token["id"], workspace=far)
+    asked = _recorded(monkeypatch)
+    status = _sync(owner, link["id"])
+    assert status["counts"]["sent"] == 0 and status["annotations"] == {"open": 0}
+    assert f"/api/annotations?scope={page}&state=open" in asked
+    here = build.parent / annotation_files.DIR / "main.pdf"
+    assert json.loads((here / "open.json").read_text(encoding="utf-8"))["scope"] == {
+        "kind": "page", "id": page, "name": "RWF far draft"}
+
+    # the file at rest: a round every REMOTE_POLL_S all the same, which sends nothing and reads them again
+    area = _area(far, page)
+    assert folder_links.due(folder_links.get_link(link["id"])) == "both"
+    assert folder_links.due(folder_links.get_link(link["id"])) == ""         # asked a moment ago
+    status = _sync(owner, link["id"])
+    assert status["counts"]["sent"] == 0 and status["last_error"] == ""
+    [entry] = json.loads((here / "open.json").read_text(encoding="utf-8"))["entries"]
+    assert (entry["id"], entry["file"]) == (area, "main.pdf") and (here / entry["picture"]).is_file()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert not (build.parent / vault_disk.MARKER_DIR).exists() and build.is_file()
+
+
 # --- the remote's own pieces ------------------------------------------------------------------
 
 def test_the_remote_stamps_and_reads_a_work_folders_files_as_this_servers_remote_does(owner, disk, over_http, far):
@@ -495,7 +633,7 @@ def test_the_remote_stamps_and_reads_a_work_folders_files_as_this_servers_remote
 
 
 def test_a_locked_refusal_there_is_the_files_problem_never_planned_again(owner, disk, over_http, far, monkeypatch):
-    error = vault_http._refusal(403, {"detail": "A work folder's file is named by its file: rename it on disk.",
+    error = vault_http._refusal(403, {"detail": "A synced folder's file is named by its file: rename it on disk.",
                                       "conflict": LOCKED}, "/api/pages/x/plan", "POST")
     assert isinstance(error, OpError) and error.conflict == LOCKED and error.status == 403
     assert isinstance(vault_http._refusal(403, {"detail": "no"}, "/x", "POST"), vault_http.Refused)
@@ -548,7 +686,7 @@ def test_a_vaults_mark_is_refused_inside_or_around_a_work_folder_and_in_a_kept_w
     _marking(ws, below, mark)
     with pytest.raises(OpError) as refused:
         _marking(ws, outer, mark)                                        # a work folder below it
-    assert refused.value.conflict == LOCKED and "never inside another work folder" in refused.value.detail
+    assert refused.value.conflict == LOCKED and "never inside another synced folder" in refused.value.detail
     _marking(ws, below, None)                                            # taken off: always
     _marking(ws, outer, mark)
 
@@ -574,8 +712,8 @@ def test_whoami_says_work_folders_and_the_summaries_count_notes_and_threads(owne
     assert [(p["id"], p["notes"], p["open_comments"]) for p in pages] == [(page, 1, 0)]
 
 
-def test_a_workspace_owner_alone_lets_go_of_a_work_folder_kept_on_no_computer_here(owner, disk, over_http,
-                                                                                    monkeypatch):
+def test_a_work_folder_kept_on_no_computer_here_is_detached_by_its_owner_or_its_computers_account(
+        owner, disk, over_http, monkeypatch):
     shared = workspaces.create("RWF shared", account_of(OWNER), kind="shared")["id"]
     make_user("rwf_editor", "pw")
     workspaces.set_member(shared, account_of("rwf_editor"), "editor", by=account_of(OWNER))
@@ -588,18 +726,58 @@ def test_a_workspace_owner_alone_lets_go_of_a_work_folder_kept_on_no_computer_he
     with connect_pages_db(shared) as conn:
         file = create_page(conn, "RWF a file", work_props(w, "a.txt"), actor=account_of(OWNER),
                            client=DISK_CLIENT)["id"]
-    r = editor.post(f"/api/folders/{w}/let-go")
-    assert r.status_code == 403
-    assert owner_there.post(f"/api/folders/{make_folder(owner_there, 'RWF plain')}/let-go").status_code == 404
+    url = f"/api/folders/{w}/detach"
+
+    # another member may not, and learns nothing of it; nor does a token; a folder of no mark is none
+    assert editor.get(url).json() == {"may": False}
+    assert editor.post(url, json={"pages": "keep"}).status_code == 403
+    assert owner_there.get(f"/api/folders/{make_folder(owner_there, 'RWF plain')}/detach").status_code == 404
     token = create_token(account_of(OWNER), shared, "rwf-token", 1, scope="write")
     _made.append(token["id"])
-    r = fresh_client().post(f"/api/folders/{w}/let-go", headers={"Authorization": f"Bearer {token['token']}"})
+    r = fresh_client().post(url, json={"pages": "keep"}, headers={"Authorization": f"Bearer {token['token']}"})
     assert r.status_code == 403
+    assert owner_there.post(url, json={"pages": "trash"}).status_code == 422
 
-    # a clone or a Zotero-linked workspace carries copies of marks: let go where they come from
+    # the workspace's owner may: no computer keeps it, so none is named and nothing new is stored
+    assert owner_there.get(url).json() == {"may": True, "files": 1, "in_library": 0, "too_large": 0, "bytes": 0,
+                                           "computer": None}
+
+    # a viewer's computer token announces what it likes: announcing a vault of it is no authority
+    make_user("rwf_viewer", "pw")
+    workspaces.set_member(shared, account_of("rwf_viewer"), "viewer", by=account_of(OWNER))
+    viewer = login("rwf_viewer", "pw")
+    viewer.headers["X-Gamma-Workspace"] = shared
+    r = viewer.post("/api/integrations/tokens", json={"name": "rwf-forged", "scope": "computer", "expires_in_days": 1})
+    assert r.status_code == 201, r.text
+    forged = r.json()
+    _made.append(forged["id"])
+    r = fresh_client(headers={"Authorization": f"Bearer {forged['token']}"}).post("/api/computers/announce", json={
+        "computer": {"id": "rwf-viewer-pc", "name": "RWF-VIEWER"}, "app": "v9.9.9", "assistants": [],
+        "vaults": [{"kind": "folder", "folder_id": w, "paused": False}]})
+    assert r.status_code == 200, r.text
+    assert forged["id"] in [c["token_id"] for c in registry.keepers(shared, w)]
+    assert viewer.get(url).json() == {"may": False}
+    assert viewer.post(url, json={"pages": "remove"}).status_code == 403
+    assert _mark(shared, w) is not None and _props(shared, file)["parent"] == "root"
+    registry.forget(forged["id"])
+
+    # the account whose computer announced a vault of it may too, while it may edit the workspace, and is told
+    # which computer, online or not
+    computer = create_token(account_of("rwf_editor"), shared, "rwf-computer", 1, scope="computer")
+    _made.append(computer["id"])
+    registry.announce(account_of("rwf_editor"), "rwf_editor", shared, computer["id"],
+                      {"computer": {"id": "rwf-pc", "name": "RWF-PC"}, "vaults": [{"kind": "folder", "folder_id": w}]})
+    assert editor.get(url).json()["computer"] == {"name": "RWF-PC", "online": True}
+    assert owner_there.get(url).json()["computer"] is None                      # named to its own account alone
+    registry.reset()                                                            # gone offline
+    assert editor.get(url).json() == {"may": True, "files": 1, "in_library": 0, "too_large": 0, "bytes": 0,
+                                      "computer": {"name": "RWF-PC", "online": False}}
+
+    # a clone or a Zotero-linked workspace carries copies of marks: detached where they come from
     kept_elsewhere = elsewhere.kept_elsewhere
     monkeypatch.setattr(elsewhere, "kept_elsewhere", lambda ws: "a clone" if ws == shared else "")
-    r = owner_there.post(f"/api/folders/{w}/let-go")
+    assert editor.get(url).json() == {"may": False}
+    r = owner_there.post(url, json={"pages": "remove"})
     assert r.status_code == 409 and "kept in step" in r.json()["detail"] and _mark(shared, w) is not None
     monkeypatch.setattr(elsewhere, "kept_elsewhere", kept_elsewhere)
 
@@ -614,17 +792,67 @@ def test_a_workspace_owner_alone_lets_go_of_a_work_folder_kept_on_no_computer_he
         unmark(remote, folder)
 
     monkeypatch.setattr(takeover, "_unmark", stamped_meanwhile)
-    assert owner_there.post(f"/api/folders/{w}/let-go").json() == {"ok": True, "kept": 0, "trashed": 2}
+    woken = []
+    monkeypatch.setattr(registry, "wake", lambda token_id, reason: woken.append((token_id, reason)))
+    assert editor.post(url, json={"pages": "remove"}).json() == {"ok": True, "kept": 0, "trashed": 2}
     assert _mark(shared, w) is None and _props(shared, file)["parent"] != "root"
     assert late and _props(shared, late[0])["parent"] != "root"
+    assert woken == [(computer["id"], "let_go")]                                # it finds the mark gone at once
+    registry.forget(computer["id"])
 
 
-def test_a_work_folder_kept_by_a_vault_of_this_server_is_removed_not_let_go(owner, disk):
+def test_detaching_keeps_a_computers_files_as_pages_there_storing_nothing_new(owner, disk, over_http, far,
+                                                                              monkeypatch):
+    """Keep, on the server the computer pushed to: its files' bytes are
+    there already, so each file is a page filed where it was, a file too
+    large to keep listed still; the computer finds the mark gone at its round
+    (``channel._Channel._let_go``: a round of each work folder of that
+    server, unless paused)."""
+    monkeypatch.setattr(config, "vault_keep_bytes", lambda: 20)
+    w = make_folder(owner, "RWF keep there")
+    root = disk / "Keep there"
+    link = _saved(owner, over_http, w, root, {"a.md": "a\n", "b.txt": "b\n", "big.csv": "x,y\n" * 20},
+                  changes=[{"path": "b.txt", "on": True}, {"path": "big.csv", "on": True}])
+    there = _files_of(far, w)
+    assert len(there) == 3
+    plan = owner.get(f"/api/folders/{w}/detach").json()
+    assert (plan["files"], plan["in_library"], plan["too_large"], plan["bytes"]) == (3, 0, 1, 0)
+    r = owner.post(f"/api/folders/{w}/detach", json={"pages": "keep"})
+    assert r.json() == {"ok": True, "kept": 3, "trashed": 0}
+    for page_id, props in there.items():
+        now = _props(far, page_id)
+        assert now["parent"] == "root" and not any(key in now for key in ("work_folder", "library", "file_name"))
+        assert now.get("doc", {}).get("at") == props.get("doc", {}).get("at")       # stored, or listed, as it was
+    assert {_props(far, p).get("doc", {}).get("at") for p in there} == {None, "store", "listed"}
+    rounds = []
+    monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: rounds.append(link_id))
+
+    def let_go():
+        rounds.clear()
+        channel._Channel("rwf-channel")._let_go({"id": "rwf-channel", "remote_url": link["remote_url"],
+                                                 "workspace_id": link["workspace_id"], "created_by": link["created_by"]})
+
+    owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True}).raise_for_status()
+    let_go()
+    assert rounds == []                                                             # paused: it waits for its round
+    owner.patch(f"/api/folder-links/{link['id']}", json={"paused": False}).raise_for_status()
+    let_go()
+    assert rounds == [link["id"]]
+    assert _sync(owner, link["id"])["stopped"] == folder_links.MARK_GONE
+    assert sorted(p.name for p in root.iterdir() if p.name != ".gamma") == [
+        ".gammaignore", "a.md", "b.txt", "big.csv"]                                 # the directory as it was
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_a_work_folder_kept_by_a_vault_of_this_server_is_detached_by_removing_the_vault(owner, disk):
     folder = make_folder(owner, "RWF here")
     link = _create(owner, folder=folder, path=str(disk / "Here"), push="everything")
-    r = owner.post(f"/api/folders/{folder}/let-go")
-    assert r.status_code == 409 and "remove the vault instead" in r.json()["detail"]
-    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert owner.get(f"/api/folders/{folder}/detach").json() == {
+        "may": True, "files": 0, "in_library": 0, "too_large": 0, "bytes": 0,
+        "computer": {"name": channel.computer_name(), "online": True}}
+    r = owner.post(f"/api/folders/{folder}/detach", json={"pages": "keep"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "kept": 0, "trashed": 0}
+    assert folder_links.get_link(link["id"]) is None and _mark(workspace_of(OWNER), folder) is None
 
 
 # --- a path of it, from this computer's file manager -----------------------------------------------

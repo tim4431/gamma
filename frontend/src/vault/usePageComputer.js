@@ -8,8 +8,8 @@
 // unlike useVault's route, an answer of 404 (a server older than the route)
 // or an error is "none" for that read alone, never for the window. Each
 // vault names the agent that runs the maker's Sends there (`vault.agent`):
-// the comment fields' agent where this computer has none (App's
-// commentAgent, vaultState.js keeperAgent).
+// the chat's and the comment fields' agent there (chat/agents.js
+// keeperAgent and commentAgents, App's chatAgentList and commentAgentList).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { readComputers } from "./vaultState.js";

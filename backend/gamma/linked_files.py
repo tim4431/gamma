@@ -2,7 +2,7 @@
 "Reading a PDF where it is"; docs/research/open-with-plan.md for formats
 other than PDF): a page of a workspace whose document stays at a path,
 nothing copied (but the versions shown while a comment thread on the page
-is open, gamma/feedback/kept.py) and nothing ever written into it or beside
+is open, gamma/annotations/kept.py) and nothing ever written into it or beside
 it. Only the desktop app's own server has them
 (``config.folder_links_enabled``).
 
@@ -72,7 +72,7 @@ from .blocks_store import (BLOCK_COLUMNS, FOLDERS, PARENT_PAGE, TRASH, TREES, bl
 from .db import connect_pages_db, connect_users_db, connect_vaults_db, format_stamp
 from .documents import formats
 from .documents.model import SQL_IN_PLACE, document, document_at, in_place, own_hash, page_document, stored_name
-from .feedback import kept
+from .annotations import kept
 from .logbuf import log
 from .ops import after_commits, apply_batches, commit_ops, delete_page, purge_pages, restore_page, trash_page
 from .work_folders import selection
@@ -622,7 +622,7 @@ def _directory_vault_page(path: str, actor: str) -> dict | None:
         if not workspaces.role_of(link["workspace_id"], actor):
             return None
         if folder_links.choosing(link):
-            raise folder_links.LinkError("Choose what this work folder tracks first.")
+            raise folder_links.LinkError("Choose what this synced folder tracks first.")
         root, name = folder_links.dest_of(link), folder_links.vault_name(link)
         page_id, trashed = vault_page(link, rel)
         if trashed:
@@ -634,7 +634,7 @@ def _directory_vault_page(path: str, actor: str) -> dict | None:
                 raise folder_links.LinkError(f"Gamma never tracks {path}: {words}.")
             if not selection.tracked(root, rel):
                 if folder_links.work_folder_link(link):
-                    raise folder_links.LinkError(f"{path} is not tracked by its work folder: tick it in Choose files…")
+                    raise folder_links.LinkError(f"{path} is not tracked by its synced folder: tick it in Choose files…")
                 return None
             if link["status"].get(folder_links.PAUSED):
                 raise folder_links.LinkError(f"{path} is in “{name}”, which is paused: resume it in the sync panel, "
@@ -642,7 +642,7 @@ def _directory_vault_page(path: str, actor: str) -> dict | None:
             folder_links.run_link(link["id"], wait=True)
             page_id, _trashed = vault_page(link, rel)
             if not page_id:
-                raise folder_links.LinkError(f"{path} is in the synced vault {link['path']}, which has not made it "
+                raise folder_links.LinkError(f"{path} is in the synced folder {link['path']}, which has not made it "
                                              "a page yet: try again in a moment.")
         if not page_id:
             return None

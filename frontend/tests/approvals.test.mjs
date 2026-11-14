@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approvalTitle, batchNotes, conversationId, declinedSummary, deletionNotes, grantsIn, readGrants, toolAnswers,
-  waitsForPapers, withGrant, withoutGrants, withoutPaperWait, writeGrants,
+  approvalTitle, batchNotes, conversationId, declinedSummary, deletionNotes, grantsIn, placeText, readGrants,
+  toolAnswers, waitsForPapers, withGrant, withoutGrants, withoutPaperWait, writeGrants,
 } from "../src/chat/approvals.js";
 
 test("the card's headline says what the call would do", () => {
@@ -24,6 +24,18 @@ test("the card's headline says what the call would do", () => {
   assert.equal(card("delete_block", { title: "N", what: "something new" }), "Delete a note in “N”");
   assert.equal(card("clip_region", { title: "N", what: "PDF page 2 (a region of it)" }), "Clip a picture of PDF page 2 (a region of it) in “N”");
   assert.equal(card("view_image", {}, { block_id: "b" }), "Look at a note's pictures");
+  // The writing tools: a new thread, a reply (a declined one knows it by its thread_id), a resolve, a highlight.
+  assert.equal(card("comment", { title: "N", reply: false }), "Comment on “N”");
+  assert.equal(card("comment", { title: "N", reply: true }), "Reply in a comment thread in “N”");
+  assert.equal(card("comment", { title: "N" }, { thread_id: "t1" }), "Reply in a comment thread in “N”");
+  assert.equal(card("resolve", { title: "N" }), "Resolve a comment thread in “N”");
+  assert.equal(card("highlight", { title: "N" }), "Highlight a passage in “N”");
+  assert.equal(placeText({ kind: "passage", page: 3, quote: "the loss" }), "Page 3: “the loss”");
+  assert.equal(placeText({ kind: "lines", lines: [4, 6] }), "Lines 4–6");
+  assert.equal(placeText({ kind: "lines", lines: [4, 4], quote: "x = 1" }), "Line 4: “x = 1”");
+  assert.equal(placeText({ kind: "file" }), "The page itself");
+  assert.equal(placeText({ kind: "note" }), "A note");
+  assert.equal(placeText(undefined), "");
   // A reading tool the user set to ask names its arguments, a page by title.
   assert.equal(approvalTitle({ tool: "read_page", args: { page_id: "a" } }, { titleOf: (id) => (id === "a" ? "Attention" : "") }),
     "Read “Attention”");

@@ -224,7 +224,7 @@ export function placedToCheck(pos) {
 // A text range measured on another version than `fileHash`, the file shown,
 // which the server's run has not placed on it yet: not lost, its `hash`
 // another (one stored empty reads as the file's own). The server's rule
-// (gamma/feedback/entries.py _placed, "pending": whether to check or not);
+// (gamma/annotations/entries.py _placed, "pending": whether to check or not);
 // false without a file to compare with.
 export function rangePending(pos, fileHash) {
   return !!fileHash && isRecord(pos) && !pos.lost && typeof pos.hash === "string" && !!pos.hash && pos.hash !== fileHash;
@@ -635,11 +635,20 @@ export function addHighlightAsBlock(blocks, { id, quote = "", note = "", positio
   return [...(blocks || []), block];
 }
 
+// The agent that made a block (gamma/agents.py stamp): its stored
+// `properties.agent`, {id, name, on?, for, owner?}, or null for a block a person
+// made. The block is the account's either way; this only says who made it.
+export function blockAgent(b) {
+  const a = b?.properties?.agent;
+  return a && typeof a === "object" && typeof a.name === "string" && a.name ? a : null;
+}
+
 // The viewer's highlights (PdfViewer's `highlights`, the image view's
 // regions), one for each block placed under `key` (positionKeyOf) with a
 // position, in document order: {id, quote, note, hasNote, color, style,
-// position}, `quote` blockQuote's, `note` the block's own text, `color`
-// blockColor's (stored #rrggbbaa, or the default), `style` markStyle.js
+// position, agent}, `quote` blockQuote's, `note` the block's own text,
+// `agent` blockAgent's (null for a person's highlight), `color` blockColor's
+// (stored #rrggbbaa, or the default), `style` markStyle.js
 // blockStyle's and `position` blockPosition's. A region's position carries
 // `area: true` for the readers that branch on it (the stored shape does
 // not) and `onVersion`, whether it was drawn on `hash`, the picture the page
@@ -668,6 +677,7 @@ export function blocksToHighlights(blocks, key = "pdf_position", hash = "") {
           color: blockColor(b),
           style: blockStyle(b),
           position: shown(pos),
+          agent: blockAgent(b),
         });
       }
       if (b.children?.length) walk(b.children);
@@ -930,8 +940,9 @@ export function insertBlocks(blocks, at, list) {
 // makes it. The anchoring stays with the original: a copy with the same
 // position would draw the highlight, a picture's region or a text range
 // twice (linkHighlightToBlock's rule), and so would the Zotero annotation an
-// import made it from. The quote is kept.
+// import made it from. The quote is kept; the agent that made the original
+// (`agent`, blockAgent) is not: the copy is the person's own.
 export function freshCopy(b) {
-  const { pdf_position, image_position, text_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
+  const { pdf_position, image_position, text_position, imported_annot, annot_stripped, zotero_annotation, agent, ...props } = b.properties || {};
   return { ...b, id: makeId(), properties: props, children: (b.children || []).map(freshCopy) };
 }

@@ -20,7 +20,11 @@
 // a page's foot pushing the next page's down), and a card pressed with a
 // pen or the Text tool armed opening and drawing nothing; beside the pen
 // strip, a press on a card letting go of a handwriting selection, and the
-// card keeping its right-click, Enter and Escape from the strip.
+// card keeping its right-click, Enter and Escape from the strip; an
+// assistant at the Comment level commenting on a passage by its quote (the
+// passage highlighted, the thread signed with its name), and Gamma AI doing
+// the same from a PDF's chat once its card is allowed (a stand-in model).
+import http from "node:http";
 import { editRow } from "./notes.mjs";
 import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
 import { Account, arrived, assertOpensInPlace, keyLabel, settingsPane, sleep, wanted } from "../harness.mjs";
@@ -615,6 +619,92 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     }
   });
 
+  // The assistants' steps write on a paper of their own, so the threads and
+  // highlights they leave stay off the paper the steps after them count.
+  let assisted = "";
+  await step("comments: an assistant at the Comment level comments on a PDF passage by its quote: the passage is highlighted, the thread is the assistant's, for its person; a quote not on the page is refused with the closest", async () => {
+    const up = await ann.upload("/api/uploads", makePdf([["A preprint on tensor networks", "and matrix product states"]]), "assisted.pdf", "application/pdf");
+    assisted = (await ann.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Assisted paper", source_url: up.source_url } })).id;
+    const token = await ben.api("/api/integrations/tokens", { method: "POST", body: { name: "Claude Code", comment_workspaces: [wsId] } });
+    const call = async (name, args) => {
+      const r = await fetch(`${server.base}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${token.token}`,
+        "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) });
+      return (await r.json()).result;
+    };
+    // (in a window of its own: A stays on the reviewed paper the steps after this use)
+    const ctx = await ann.context(browser);
+    try {
+      const P = await openPage(ctx, `${server.base}/?ws=${wsId}&page=${assisted}`);
+      await waitForPdf(P, 1);
+      const refused = await call("comment", { page_id: assisted, quote: "matrix product stats", pdf_page: 1, body: "x" });
+      assert(refused.isError && refused.content[0].text.includes("the closest passage reads “matrix product states”"),
+        `refused with the closest: ${refused.content[0].text}`);
+      const made = await call("comment", { page_id: assisted, quote: "matrix product states", pdf_page: 1, body: "Do you mean MPS here?" });
+      assert(!made.isError, `written: ${made.content[0].text}`);
+      // the new highlight arrives live, and the thread link opens the assistant's comment under its name
+      await P.locator('[data-page="1"] div[data-hl-id][title="Highlighted by Claude Code, for cm-ben"]').first().waitFor({ timeout: 10000 });
+      await P.goto(`${server.base}/?ws=${wsId}&page=${assisted}&thread=${made.structuredContent.thread_id}`);
+      const item = P.locator(".commentItem", { hasText: "Do you mean MPS here?" }).first();
+      await item.waitFor({ timeout: 10000 });
+      assertEq(await item.locator(".commentAuthor").textContent(), "Claude Code", "the assistant's name");
+      assertEq(await item.locator(":scope > .agentAvatar").getAttribute("data-agent"), "connection", "a connection's avatar");
+      assertNoProblems(P);
+    } finally {
+      await ctx.close();
+      await ben.api(`/api/integrations/tokens/${token.id}`, { method: "DELETE" });
+    }
+  });
+
+  await step("comments: Gamma AI asked in a PDF's chat comments on a passage once allowed: the passage is highlighted naming it, the thread signed Gamma AI, for its person", async () => {
+    const model = await commentingModel({ quote: "A preprint on", pdf_page: 1, body: "Which paper is this one?" });
+    const provider = (await ben.api("/api/ai/providers", { method: "POST", body: {
+      protocol: "openai", name: "Stand-in model", api_key: "e2e-comment-only", base_url: model.base, models: "comment-model" } }))
+      .providers.find((p) => p.base_url === model.base);
+    const ctx = await ben.context(browser);
+    try {
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, `${server.base}/?ws=${wsId}&page=${assisted}`);
+      await waitForPdf(page, 1);
+      const dock = page.locator(".dockWindow:has(.chatPanel)");
+      if (!(await dock.count())) {
+        await page.getByRole("button", { name: "View", exact: true }).click();
+        await page.locator(".menuPopover .ctxMenuItem", { hasText: "AI Chat" }).click();
+        await page.keyboard.press("Escape");
+      }
+      const input = dock.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await input.fill("Ask the authors which paper this is, on its first line.");
+      await input.press("Enter");
+      // Comments and highlights asks first: the card names the place
+      const card = dock.locator(".chatApproval");
+      await card.waitFor({ timeout: 15000 });
+      await card.getByText("Page 1: “A preprint on”").waitFor();
+      await card.getByRole("button", { name: "Allow once", exact: true }).click();
+      await dock.locator(".chatBubble.ai", { hasText: "I left the authors a comment." }).waitFor({ timeout: 15000 });
+      assert(model.results.some((r) => r.includes("ok — commented on page 1, “A preprint on”")),
+        `the tool's answer reached the model: ${JSON.stringify(model.results)}`);
+      // the new highlight arrives live and says who made it
+      await page.locator('[data-page="1"] div[data-hl-id][title="Highlighted by Gamma AI, for cm-ben"]').first().waitFor({ timeout: 10000 });
+      const thread = (await ben.api(`/api/pages/${assisted}/comments?state=all`)).threads
+        .find((th) => th.comments[0]?.body === "Which paper is this one?");
+      assert(thread, "the thread is on the page");
+      assertEq(JSON.stringify([thread.comments[0].author, thread.comments[0].agent, thread.comments[0].agent_kind]),
+        JSON.stringify(["cm-ben", "Gamma AI", "gamma"]), "written for its account, by Gamma AI");
+      await page.goto(`${server.base}/?ws=${wsId}&page=${assisted}&thread=${thread.id}`);
+      const item = page.locator(".commentItem", { hasText: "Which paper is this one?" }).first();
+      await item.waitFor({ timeout: 10000 });
+      assertEq(await item.locator(".commentAuthor").textContent(), "Gamma AI", "Gamma AI's name");
+      assertEq(await item.locator(".commentFor").textContent(), "for cm-ben", "for the person who asked");
+      assertEq(await item.locator(":scope > .agentAvatar").getAttribute("data-agent"), "gamma", "Gamma AI's avatar");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await ben.api(`/api/ai/providers/${provider.id}`, { method: "DELETE" });
+      await model.close();
+    }
+  });
+
   await step("comments: a page opening asks for its threads alongside its tree, and a PDF's for the margin cards' module too, before any card is wanted", async () => {
     const ctx = await ben.context(browser);
     try {
@@ -1178,4 +1268,44 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
 
   await ctxA.close();
   await ctxB.close();
+}
+
+// A chat model's API as the server reaches it (the OpenAI wire, streamed):
+// the server's tool check answered with its check tool, a chat turn with a
+// call of `comment` with `args`, and the turn after the tool's answer with a
+// line of text. `results` holds each answer of the tool it was sent back.
+function commentingModel(args) {
+  const results = [];
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (chunk) => { raw += chunk; });
+    req.on("end", () => {
+      if (req.method !== "POST") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ data: [{ id: "comment-model" }] }));
+      }
+      const body = JSON.parse(raw || "{}");
+      const tools = new Set((body.tools || []).map((tool) => tool.function?.name));
+      const last = (body.messages || []).at(-1) || {};
+      const chunk = (delta, finish = null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+      const call = (name, args) => chunk({ tool_calls: [{ index: 0, id: `call-${name}`, type: "function",
+        function: { name, arguments: JSON.stringify(args) } }] }) + chunk({}, "tool_calls");
+      let said;
+      if (tools.has("report_ok")) said = call("report_ok", { status: "ok" });
+      else if (last.role === "tool") {
+        results.push(String(last.content));
+        said = chunk({ content: "I left the authors a comment." }) + chunk({}, "stop");
+      } else if (tools.has("comment")) said = call("comment", args);
+      else said = chunk({ content: "A comment for the authors" }) + chunk({}, "stop");
+      if (!body.stream) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: "A comment for the authors" }, finish_reason: "stop" }] }));
+      }
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.end(`${said}data: [DONE]\n\n`);
+    });
+  });
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({
+    results, base: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((done) => server.close(done)),
+  })));
 }
