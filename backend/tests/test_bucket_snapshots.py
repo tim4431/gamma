@@ -66,8 +66,8 @@ def _task(owner, ws, **changes):
 
 
 def test_a_task_copies_its_snapshots_and_prunes_them_to_its_retention(bucket, scheduler):
-    ws = make_user("bs_admin", "bs-admin-pw", is_admin=1)
-    owner = account_of("bs_admin")
+    ws = make_user("bsnap_admin", "bs-admin-pw", is_admin=1)
+    owner = account_of("bsnap_admin")
     task = _task(owner, ws, retention_mode="count", retention_value=2)
     other = _task(owner, ws, retention_mode="count", retention_value=5)
     plain = _task(owner, ws, bucket=False)
@@ -91,28 +91,28 @@ def test_a_task_copies_its_snapshots_and_prunes_them_to_its_retention(bucket, sc
 
 def test_who_may_copy_to_the_bucket(client, s3_bucket, scheduler):
     _forget_bucket()
-    ws = make_user("bs_admin2", "bs-admin2-pw", is_admin=1)
+    ws = make_user("bsnap_admin2", "bs-admin2-pw", is_admin=1)
     with pytest.raises(tasks.TaskError, match="No bucket is set up"):
-        _task(account_of("bs_admin2"), ws)
+        _task(account_of("bsnap_admin2"), ws)
     offsite.save({"bucket": BUCKET, "region": "us-east-1", "access_key": "testing", "secret_key": "testing"})
     try:
-        member = make_user("bs_member", "bs-member-pw")
+        member = make_user("bsnap_member", "bs-member-pw")
         with pytest.raises(tasks.TaskError, match="Only a server admin"):
-            _task(account_of("bs_member"), member)
-        assert tasks.save(account_of("bs_member"), TaskInput(name="Here only", workspaces=[member]).model_dump())[
+            _task(account_of("bsnap_member"), member)
+        assert tasks.save(account_of("bsnap_member"), TaskInput(name="Here only", workspaces=[member]).model_dump())[
             "bucket"] is False
         # paused, a task that can no longer copy still saves (as with a lost workspace)
-        task = _task(account_of("bs_admin2"), ws)
+        task = _task(account_of("bsnap_admin2"), ws)
         _forget_bucket()
-        assert tasks.save(account_of("bs_admin2"), {**TaskInput(name="Paused", workspaces=[ws], bucket=True,
+        assert tasks.save(account_of("bsnap_admin2"), {**TaskInput(name="Paused", workspaces=[ws], bucket=True,
                                                                  enabled=False).model_dump()}, task["id"])
     finally:
         _forget_bucket()
 
 
 def test_a_copy_that_fails_leaves_the_snapshots_and_the_schedule(bucket, scheduler, monkeypatch):
-    ws = make_user("bs_admin3", "bs-admin3-pw", is_admin=1)
-    owner = account_of("bs_admin3")
+    ws = make_user("bsnap_admin3", "bs-admin3-pw", is_admin=1)
+    owner = account_of("bsnap_admin3")
     task = _task(owner, ws)
 
     def refused(*_args):
@@ -136,10 +136,10 @@ def _job(c, route, body):
 
 
 def test_the_copies_through_the_api(bucket):
-    make_user("bs_boss", "bs-boss-pw", is_admin=1)
-    make_user("bs_user", "bs-user-pw")
-    boss, user = login("bs_boss", "bs-boss-pw"), login("bs_user", "bs-user-pw")
-    ws = workspace_of("bs_boss")
+    make_user("bsnap_boss", "bs-boss-pw", is_admin=1)
+    make_user("bsnap_user", "bs-user-pw")
+    boss, user = login("bsnap_boss", "bs-boss-pw"), login("bsnap_user", "bs-user-pw")
+    ws = workspace_of("bsnap_boss")
     make_page(boss, "In the copy")
     snap = ws_backup.create(ws, label="task-0123456789ab", uploads=False, scheduled=True,
                             task_id="0123456789ab" + "0" * 20)
@@ -176,7 +176,7 @@ def test_the_copies_through_the_api(bucket):
     assert job["state"] == "done", job["error"]
     assert job["result"]["workspace"] == gone  # the copy's own id, free here
     made = workspaces.get(gone)
-    assert made["name"] == workspaces.get(ws)["name"] and workspaces.role_of(gone, account_of("bs_boss")) == "owner"
+    assert made["name"] == workspaces.get(ws)["name"] and workspaces.role_of(gone, account_of("bsnap_boss")) == "owner"
     assert [g["here"] for g in boss.get("/api/admin/offsite/snapshots").json()["groups"]] == [True, True]
 
     assert boss.delete(f"/api/admin/offsite/snapshots/{ws}/{snap['name']}").json() == {"ok": True}
