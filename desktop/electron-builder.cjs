@@ -44,9 +44,11 @@
 // nowhere after an uninstall. scripts/openwith.cjs reads the table and
 // writes assets/installer.nsh (the NSIS installer's file types and its
 // "Open with Gamma" on folders), assets/appx-extensions.xml (the Store
-// package's file types) and assets/linux/ (the .deb's folder entries for
-// Dolphin and Nemo); macOS takes the file types and public.folder from it
-// below. Edit the table, then `npm run openwith`.
+// package's file types and its "Open with Gamma", a COM class the package
+// carries: native/open-with/, put in by scripts/after-pack.cjs) and
+// assets/linux/ (the .deb's folder entries for Dolphin and Nemo); macOS
+// takes the file types and public.folder from it below. Edit the table,
+// then `npm run openwith`.
 
 const { debFpm, macFileAssociations, MAC_FOLDER_TYPE } = require('./scripts/openwith.cjs');
 
@@ -69,7 +71,9 @@ module.exports = {
   directories: { output: 'dist', buildResources: 'assets' },
   files: ['main.js', 'preload.js', 'lib/**', 'ui/**', 'assets/icon.png', 'package.json'],
   extraResources: [{ from: 'dist-backend/gamma-server', to: 'gamma-server' }],
-  afterPack: 'scripts/adhoc-sign.cjs', // macOS only, no-op elsewhere / with a real cert
+  // macOS: ad-hoc signing without a real cert; the Store package: the folder
+  // verb's DLL (scripts/after-pack.cjs).
+  afterPack: 'scripts/after-pack.cjs',
 
   win: {
     target: ['nsis'],
@@ -109,7 +113,10 @@ module.exports = {
     // upload form let it through as a legacy .appx, the msstore CLI does
     // not). Windows 10 1809 is also Electron's own floor.
     minVersion: '10.0.17763.0',
-    customExtensionsPath: 'assets/appx-extensions.xml', // generated: the file types (top of file)
+    customExtensionsPath: 'assets/appx-extensions.xml', // generated: the file types and folder verb (top of file)
+    // electron-builder's template with the folder verb's namespaces declared
+    // (assets/, relative to buildResources).
+    customManifestPath: 'appxmanifest.xml',
   },
 
   mac: {
