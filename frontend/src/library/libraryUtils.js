@@ -294,7 +294,7 @@ export function pagesIntoPage(pages, ids, target) {
 // labels its own; `_path` is where it is (pagePathLabel, "" for a library
 // page) and `_subPages` how many pages are right inside it. `_opened`: it is
 // *Opened files*, the page the files read in place are inside
-// (vault/vaultState.js isOpenedPdf). A work folder's file
+// (vault/vaultState.js isOpenedFile). A work folder's file
 // (docs/dev/work_folders.md) has `_workFolder`, its root folder's id ("" for
 // any other page), `_library` whether it is in the library too and
 // `_fileName` its file's name; `_size` is its document's size in bytes
@@ -465,7 +465,7 @@ export const LANGUAGE_LABELS = {
   c: "C", cpp: "C++", rust: "Rust", go: "Go", java: "Java", kotlin: "Kotlin", swift: "Swift", ruby: "Ruby", // i18n-ignore
   php: "PHP", shell: "Shell", r: "R", julia: "Julia", lua: "Lua", sql: "SQL", perl: "Perl", haskell: "Haskell", // i18n-ignore
   scala: "Scala", diff: "Diff", rst: "reStructuredText", typst: "Typst", makefile: "Makefile", // i18n-ignore
-  dockerfile: "Dockerfile", cmake: "CMake", // i18n-ignore
+  dockerfile: "Dockerfile", cmake: "CMake", markdown: "Markdown", // i18n-ignore
 };
 export function formatLabel(kind) {
   const { format = "", language = "" } = typeof kind === "string" ? { format: kind } : kind || {};

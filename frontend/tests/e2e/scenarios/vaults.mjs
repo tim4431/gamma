@@ -13,8 +13,9 @@ import { row } from "./notes.mjs";
 // the file won and its merge chip, the notes lock of a vault that does not
 // pull, Add to library… from Opened files, from the Pinned and Recent strips
 // and a tab, and into another workspace, its Another server… (a message to
-// the shell), and the folder and Document menu items, whose messages to the
-// shell an init script records.
+// the shell), a .tex and a .md opened from this computer in the code view
+// (what a file that is no PDF cannot do), and the folder and Document menu
+// items, whose messages to the shell an init script records.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 
@@ -257,6 +258,78 @@ export async function vaultScenarios(env) {
         }, { what: "out of Opened files, stored and filed" });
         await chip.waitFor({ state: "detached", timeout: 10000 });
         assertEq((await user.api(`/api/folder-links/page/${opened.page}`)).reader, null, "it reads no file any more");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    });
+
+    await step("vaults: Opened files read a .tex and a .md in the code view; the .md is never added to the library, the .tex keeps no pushing and goes to no other server", async () => {
+      const loose = path.join(disk, "loose");
+      fs.mkdirSync(loose, { recursive: true });
+      const tex = path.join(loose, "Chapter.tex");
+      const md = path.join(loose, "Readme.md");
+      write(tex, "\\section{Results}\nThe numbers came out.\n");
+      write(md, "# Readme\n\nHow to build the paper.\n");
+      const openedTex = await user.api("/api/folder-links/open", { method: "POST", body: { path: tex } });
+      const openedMd = await user.api("/api/folder-links/open", { method: "POST", body: { path: md } });
+      assertEq(openedTex.format, "text", "a LaTeX source is a text document");
+      assertEq(openedMd.format, "text", "a lone Markdown file is read as text, not made a note");
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(openedMd.page));
+      try {
+        const content = page.locator(".docTextView .cm-content");
+        await content.waitFor({ timeout: 20000 });
+        assertEq(await content.getAttribute("contenteditable"), "false", "read-only");
+        await until(async () => (await page.locator(".docTextView .cm-content .hljs-section").count()) > 0,
+          { timeout: 20000, what: "its heading coloured as Markdown" });
+        assertEq((await page.locator(".docTextLang").innerText()).trim(), "Markdown", "the bar names the language");
+        // the chip is among the page's buttons, in the Notes window, folded for a file page opened empty
+        const unfoldNotes = async () => {
+          const folded = page.locator(".dockWindow.collapsed", { hasText: "Notes" });
+          await folded.waitFor({ timeout: 5000 }).catch(() => {});
+          if (await folded.count()) await folded.click();
+        };
+        await unfoldNotes();
+        const chip = page.locator(".vaultChip");
+        await chip.waitFor({ timeout: 15000 });
+        assertEq(await chip.getAttribute("aria-label"), "On this computer", "the chip says where it is read");
+        assert((await chip.getAttribute("title")).includes(`This file is read from ${md}`), "in a file's words, not a PDF's");
+        await chip.click();
+        const card = page.locator(".vaultPopover");
+        await card.getByText("To edit it as a note, open it with Gamma again and pick Edit in Gamma; to keep a copy as a note, drop the file on the library.",
+          { exact: true }).waitFor();
+        assertEq(await card.locator(".ctxMenuItem", { hasText: "Add to library…" }).count(), 0, "no Add to library…");
+        await chip.click();
+        await card.waitFor({ state: "detached" });
+        // its tab's menu offers neither Add to library… nor the moves
+        await page.locator(".tabStrip .tab", { hasText: "Readme" }).first().click({ button: "right" });
+        const menu = page.locator(".ctxMenu");
+        await menu.locator(".ctxMenuItem").first().waitFor();
+        const items = (await menu.locator(".ctxMenuItem").allInnerTexts()).map((s) => s.trim());
+        for (const gone of ["Add to library…", "Move into page…", "Move to library"]) {
+          assert(!items.includes(gone), `its tab: no ${gone} (${items.join(", ")})`);
+        }
+        await page.keyboard.press("Escape");
+        await menu.waitFor({ state: "detached" });
+
+        await page.goto(at(openedTex.page));
+        await content.waitFor({ timeout: 20000 });
+        assertEq((await page.locator(".docTextLang").innerText()).trim(), "LaTeX", "the .tex in its own language");
+        await unfoldNotes();
+        await chip.waitFor({ timeout: 15000 });
+        assert((await chip.getAttribute("title")).includes(`This file is read from ${tex}`), "the .tex's chip in a file's words");
+        await chip.click();
+        const add = card.locator(".ctxMenuItem", { hasText: "Add to library…" });
+        await add.waitFor();
+        assertEq(await add.getAttribute("title"), "Store the file in the library and file the page in a folder: its notes and chat come with it",
+          "Add to library… in a file's words");
+        await add.click();
+        const dialog = page.locator(".folderPicker");
+        await dialog.waitFor();
+        await dialog.getByText("The file is stored in the library and filed in the folder you pick, with its notes and chat.", { exact: true }).waitFor();
+        assertEq(await dialog.locator(".folderPickerKeep").count(), 0, "no Keep pushing from the file: a file vault reads PDFs alone");
+        assertEq(await dialog.getByRole("button", { name: "Another server…" }).count(), 0, "no other server: only a PDF is carried");
+        await page.keyboard.press("Escape");
+        await dialog.waitFor({ state: "detached" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });

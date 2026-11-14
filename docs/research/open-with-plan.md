@@ -1,6 +1,7 @@
 # Open with Gamma: the build plan
 
-Status: **a plan, not built.** Written 2026-11-13 against `dev` @ 1a806002
+Status: **built** (2026-11-13; the differences are in the research note's
+"As built" section, [open-with.md](open-with.md)). Written 2026-11-13 against `dev` @ 1a806002
 after three surveys (what each target can register, what opening should do,
 what the plan of [file-explorer.md](file-explorer.md) allows), with their main
 claims checked in the code; the file:line references below were read then,

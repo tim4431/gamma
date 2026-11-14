@@ -8,7 +8,8 @@ breadth first, at most ``LIST_ENTRIES`` entries and ``LIST_SECONDS``, the
 directories not reached left closed (``walked`` false, ``capped``). What the
 scan never tracks is one closed row each, with why (``never``: a dot
 directory, ``node_modules``, a link, a name Windows refuses, two names that
-differ only by case, a name that is no UTF-8); what git ignores is marked
+differ only by case, a name that is no UTF-8), which ``never_reason`` says
+of one path in words; what git ignores is marked
 (``ignore_rules.hint_stack``), a directory git ignores left closed for the
 dialog to list by itself. No file is opened or hashed, and nothing is
 written. Each row says whether it is selected under the base asked: what
@@ -165,6 +166,48 @@ def _read(root: Path, rel: str) -> list:
         if not row[4] and folds[vault_disk._fold(row[0])] > 1:
             row[4] = "case"
     return rows
+
+
+# What ``never_reason`` says of each code of ``_read``'s ``never``, and of a name ``_read`` leaves out
+NEVER_WORDS = {
+    "encoding": "its name is not UTF-8",
+    "link": "{segment} is a link or junction",
+    "node_modules": "it is inside node_modules",
+    "dot": "it is inside a dot directory",
+    "name": "Windows refuses its name",
+    "case": "another name there differs from it only in case",
+    "unlisted": "Gamma never lists such a file",
+}
+
+
+def never_reason(root: Path, rel: str) -> tuple[str, str]:
+    """Why the scan never tracks the vault's path ``rel`` (``/`` between its
+    names, as given: not resolved, so a link or a junction on the way is
+    one), as ``(code, words)``, ``("", "")`` when it may. Each directory on
+    the way down is read as the tracking dialog reads it (``_read``), and
+    the row of the next name decides: its ``never`` code, a ``case`` clash
+    among them, or ``unlisted`` for a name ``_read`` leaves out (a temporary
+    name, ``.gammaignore``, one the scan lists nowhere, one not there). A
+    directory that does not answer says nothing: the round will."""
+    parent = ""
+    for segment in [s for s in rel.split("/") if s]:
+        try:
+            rows = _read(root, parent)
+        except vault_disk.Offline:
+            return "", ""
+        here = [r for r in rows if r[1].name == segment or r[0].rsplit("/", 1)[-1] == segment]
+        if not here:
+            folded = vault_disk._fold(segment)
+            here = [r for r in rows if vault_disk._fold(r[0].rsplit("/", 1)[-1]) == folded]
+        if len(here) != 1:
+            return "unlisted", NEVER_WORDS["unlisted"]
+        path, _entry, directory, _stub, never = here[0]
+        if never:
+            return never, NEVER_WORDS[never].format(segment=segment)
+        if not directory:
+            break
+        parent = path
+    return "", ""
 
 
 def _stat(entry, stub: bool) -> tuple | None:

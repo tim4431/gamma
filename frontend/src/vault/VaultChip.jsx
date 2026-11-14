@@ -7,16 +7,17 @@
 // computer that keeps the page in a synced vault of the account's, online
 // or since when not, and the assistants there (computerChip, no action yet);
 // and the banner over the page, in the missing-page notice's slot, for a
-// note the vault could not write and for an opened PDF whose file is gone
-// (Locate…, Remove). The actions are App's: it posts the shell's messages
-// and opens the dialogs.
+// note the vault could not write and for an opened file whose file is gone
+// (Locate…, Remove). An opened Markdown file read as text (openedNote) is
+// never added to the library: its card says how to make it a note instead.
+// The actions are App's: it posts the shell's messages and opens the dialogs.
 import React from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { AlertCircleIcon, BotIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, MonitorIcon, PauseIcon, SquareCheckIcon,
   SyncIcon, TrashIcon, UploadIcon } from "../shared/ui/Icons";
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
-import { addsToLibrary, agentLine, computerChip, directionText, editsFile, notesLocked, vaultChip } from "./vaultState.js";
+import { addsToLibrary, agentLine, computerChip, directionText, editsFile, notesLocked, openedNote, opensAsPdf, vaultChip } from "./vaultState.js";
 import "./vault.css";
 
 // The chip's icon, by what the page's standing is (vaultState's `kind`):
@@ -67,7 +68,9 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
             <div className="popoverHint">{t("This vault does not pull: the notes are written in the file, and only highlights are edited here.")}</div>
           ) : null}
           {reader && !reader.missing ? (
-            <div className="popoverHint">{t("Read where it is, not stored in the library. Add it to the library to keep a copy.")}</div>
+            <div className="popoverHint">{openedNote(reader)
+              ? t("To edit it as a note, open it with Gamma again and pick Edit in Gamma; to keep a copy as a note, drop the file on the library.")
+              : t("Read where it is, not stored in the library. Add it to the library to keep a copy.")}</div>
           ) : null}
           {file ? (
             <div className="popoverHint">{file.library
@@ -90,10 +93,11 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
               <MenuItem icon={FolderOpenIcon} onClick={() => { onOpenChange(false); onReveal(); }}
                 title={t("Show the file in this computer's file manager")}>{t("Show in folder")}</MenuItem>
             ) : null}
-            {(file ? !file.library : addsToLibrary(state)) && canAdd ? (
+            {(file ? !file.library : addsToLibrary(state) && !openedNote(reader)) && canAdd ? (
               <MenuItem icon={FolderPlusIcon} onClick={() => { onOpenChange(false); onAdd(); }}
                 title={file ? t("Add the file's page to the library, filed in a library folder too: it stays in its work folder")
-                  : t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")}>
+                  : opensAsPdf(reader) ? t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")
+                  : t("Store the file in the library and file the page in a folder: its notes and chat come with it")}>
                 {t("Add to library…")}
               </MenuItem>
             ) : null}

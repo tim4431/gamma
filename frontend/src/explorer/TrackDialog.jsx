@@ -13,7 +13,14 @@
 // `link`: the vault as GET /api/folder-links/{id} answers it; `fresh`: the
 // vault is still choosing its first files (made from the shell, which
 // opened this page with ?track=), so Cancel removes it (`onCancelled`).
-// `onSaved()` follows a Save, whose round runs in the background. A vault
+// `tick`: the path of a file of the directory opened with Gamma, which the
+// shell handed over with ?tick= (the folder does not track it yet): the
+// folders down to it are read and opened, its row is shown and marked
+// (ImportTree's `link`, one row lit), and it is ticked (trackSelection.js
+// tickChange), a line over the tree saying so or why it cannot be.
+// `onSaved(ticked)` follows a Save, whose round runs in the background:
+// `ticked` whether the tick's row was ticked at the Save, null for no tick
+// or one that cannot be tracked or is gone. A vault
 // of another server (`link.remote_url`) uploads every file ticked to that
 // server, which the summary says with the secrets files among them
 // (explorer/trackRemote.js); in the desktop app, whose shell opened its
@@ -27,9 +34,10 @@ import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { fmtBytes } from "../shared/lib/format.js";
 import { SubDialog, Toggle } from "../settings/SettingsKit";
 import ImportTree from "../transfers/ImportTree.jsx";
+import { firstRow } from "../transfers/importReview";
 import { formatLabel } from "../library/libraryUtils";
 import { askShell } from "../vault/useVault.js";
-import { body, boxOf, initial, isSelected, ofFormat, toggle, toggleAll, toggleFormat } from "./trackSelection.js";
+import { body, boxOf, initial, isSelected, ofFormat, tickChange, toggle, toggleAll, toggleFormat } from "./trackSelection.js";
 import { handsBack, secretsWarning, uploadsText } from "./trackRemote.js";
 import "../transfers/importReview.css";
 import "./explorer.css";
@@ -96,7 +104,7 @@ function buildTree(entries, reading, joined) {
   return root;
 }
 
-export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose, setStatus }) {
+export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancelled, onClose, setStatus }) {
   const base = fresh ? "preset" : "file";
   const [state, setState] = React.useState(() => initial(base));
   const [read, setRead] = React.useState(null); // {rules, capped, entries: Map} | {error}
@@ -159,6 +167,22 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
     }
   };
 
+  // The file opened from this computer (`tick`), once the folders down to
+  // it are read, one at a time as the tree reads them: {path, why, never,
+  // n}, `path` its file row ("" for none to show), `why` and `never` as
+  // tickChange says, `n` each showing of the row (ImportTree opens the way
+  // to it and scrolls to it once per `n`). The tick is a change like any
+  // other: unticked again, it is not saved.
+  const [ticked, setTicked] = React.useState(null);
+  React.useEffect(() => {
+    if (!tick || ticked || !read?.entries) return;
+    const step = tickChange(state, read.entries, tick);
+    if (step.read) { openFolder(step.read); return; }
+    if (!step.why) setState((s) => tickChange(s, read.entries, tick).state);
+    const file = step.entry && !step.entry.directory ? dirKey(step.entry.path) : "";
+    setTicked({ path: file, why: step.why, never: step.entry?.never || "", n: 1 });
+  }, [read, tick, ticked]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const changed = state.changes.length > 0 || (!fresh && library !== !!link.library);
   const selection = body(state);
   const selectionKey = JSON.stringify(selection);
@@ -202,6 +226,21 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
   };
   const box = (node) => (!node.directory && joined.has(node.path)
     ? { checked: true, indeterminate: false, disabled: true } : boxOf(state, node, entries));
+  // The tick's row, lit and shown (pressing its name shows it again).
+  const tickLink = React.useMemo(() => {
+    const key = ticked?.path;
+    if (!key) return undefined;
+    const at = firstRow(tree, new Set([key]), (file) => file.path);
+    return { rowKey: (file) => file.path, linked: (k) => k === key, lit: new Set([key]), pressed: key,
+      reveal: at && { ...at, n: ticked.n }, onPick: () => setTicked((x) => ({ ...x, n: x.n + 1 })) };
+  }, [tree, ticked]);
+  const tickRow = ticked?.path && !ticked.why ? entries.get(ticked.path) : null;
+  const tickName = leaf(tick);
+  const tickLine = !ticked ? null
+    : ticked.why === "never" ? { warn: true, text: t("{file} is {why}.",
+      { file: tickName, why: NEVER[ticked.never]?.() || t("never tracked") }) }
+    : ticked.why === "gone" ? { warn: true, text: t("{file} is not in this work folder any more.", { file: tickName }) }
+    : { warn: false, text: t("Opened from your computer: {file} is ticked. Save to track it and open it.", { file: tickName }) };
 
   async function save() {
     setSaving(true);
@@ -212,7 +251,7 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
         body: JSON.stringify({ selection, base_hash: read.rules.hash || "", library }),
       });
       if (handBack) tracked(false);
-      else onSaved();
+      else onSaved(tickRow ? !!box(tickRow).checked : null);
     } catch (err) {
       if (err?.status === 409) setProblem({ text: t("The .gammaignore changed on disk since it was read."), again: true });
       else setProblem({ text: err.message || String(err) });
@@ -252,6 +291,7 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
         <p>{fresh ? t("Pick what this work folder tracks: each file ticked becomes a page, and the rest stay on disk only.")
           : t("Pick what this work folder tracks. A file unticked leaves Gamma for Recently deleted; it stays on disk.")}</p>
       </div>
+      {tickLine ? <p className={tickLine.warn ? "importWarning" : "reportModalHint"}>{tickLine.text}</p> : null}
       {read?.error ? <p role="alert" className="importWarning">{read.error}</p> : null}
       {!read ? <p className="reportModalHint">{t("Reading…")}</p> : null}
       {read?.entries ? <>
@@ -271,7 +311,7 @@ export default function TrackDialog({ link, fresh, onSaved, onCancelled, onClose
           </div>
         </div>
         <div className="importTreeScroll trackTree">
-          <ImportTree node={tree} boxOf={box} onOpenFolder={openFolder}
+          <ImportTree node={tree} boxOf={box} onOpenFolder={openFolder} link={tickLink}
             onSelect={(node, on) => setState((s) => toggle(s, node, on))} />
         </div>
         {read.capped ? <p className="reportModalHint">{t("The directory is large: folders not read yet are ticked or unticked whole.")}</p> : null}

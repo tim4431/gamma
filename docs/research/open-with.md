@@ -6,10 +6,11 @@ another text file be opened with Gamma from the file manager, as a PDF can?
 What can each operating system register, and what should opening do, given
 the work-folder design of [file-explorer.md](file-explorer.md)?
 
-Status: **decided, not built.** This note surveys what other apps register,
-what each target allows, what Gamma had, and records the decision and why.
-The build plan, unit by unit with its tests and manual checks, is
-[open-with-plan.md](open-with-plan.md). The mechanics, once built, live in
+Status: **decided and built** (2026-11-13, differences in "As built"
+below). This note surveys what other apps register, what each target
+allows, what Gamma had, and records the decision and why. The build plan,
+unit by unit with its tests and manual checks, is
+[open-with-plan.md](open-with-plan.md). The mechanics live in
 [desktop/docs/architecture.md](../../desktop/docs/architecture.md) "Opening
 files and folders", [dev/synced_vaults.md](../dev/synced_vaults.md) "Opened
 files" and [dev/work_folders.md](../dev/work_folders.md) "The tracking
@@ -184,6 +185,55 @@ a tracking dialog by ids, and *Opened files* reads a PDF in place.
 - An *Opened files* page whose directory later becomes a work folder keeps
   its own page (as a PDF does); taking it in is open.
 - A budget for the vault preview's walk of a very large directory.
+
+## As built
+
+Built on the plan's six units, with these differences:
+
+- **Registration.** The `.deb`'s two folder entries are mapped through the
+  top-level `deb.fpm` of `electron-builder.cjs` (electron-builder has no
+  `linux.deb` key; its schema refuses one). An entry of the generator's
+  `dropped` list carries its ProgID, which the deletion names, and an
+  update also deletes its `Capabilities\FileAssociations` value, which
+  would otherwise outlive it. Dolphin's entry keeps the `&` accelerator;
+  Nemo's drops it.
+- **The server.** A directory around only vaults the account cannot see
+  answers `hidden`, not `none`, so it is never taken as nobody's. A file
+  that is a PDF by its bytes but not its name opens as a PDF. A non-PDF that
+  grows past the keep limit after it was opened is left as it was rather
+  than hashed whole again. Inside a vault, a work folder still choosing is
+  answered before a page in Recently deleted, so an untracked file of a
+  paused work folder opens *Choose files…*, whose Save resumes it. A link
+  inside a vault to a file outside it opens, through `/open`, as a lone
+  file of its target; `where` says the link is never tracked, so the shell
+  refuses first. *Locate…* keeps the page's extension for the same bytes
+  and takes the located file's for new ones, of the same format.
+- **The web app.** The dialog reads the unread directories down to the
+  ticked file one at a time and lights its row with the import review's
+  row link (`ImportTree`'s `link`). A row that is never tracked says
+  `{file} is {why}.` in the tree's own words. *Add to library…* of opened
+  files that are not all PDFs counts files, not PDFs.
+- **The shell.** The hint on how to edit a lone Markdown file follows
+  *Just view it* only, not the reads where opening again would not ask.
+  The "nothing tracked yet" notice names the nearest folder from the
+  workspace's folder list. A new work folder with a tick opens its dialog
+  in one navigation (`makeWorkFolder` takes the tick). *Locate…* filters its
+  picker by the file's own extension (a `Makefile` is stored as `.bin`).
+  `whereIs` says "Starting <server>…" while it starts a stopped one, so a
+  PDF named at a cold launch with a second local server stopped waits for
+  that server. The broad-place question of *Sync with this computer…* and
+  *Locate…*, which need not make a work folder, asks *Sync all of <place>
+  with Gamma?*.
+
+Checked: the backend's affected modules, the frontend's and the desktop's
+unit suites, the browser groups `vaults`, `work-folders` and `viewers`,
+and the desktop e2e, including its steps for a folder handed over, a work
+folder's files, a lone Markdown file viewed and edited, and a directory
+named at a cold launch (on Linux under Xvfb, where two older steps, the
+remote's synced vault and the background window, fail the same way on
+`dev`). Not run: the manual rows of
+[desktop/docs/checklist.md](../../desktop/docs/checklist.md) on installed
+builds (4.11, 4.12, 4.17, 4.18), which no test can stand in for.
 
 ## Relation to earlier notes
 

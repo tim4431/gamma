@@ -6,8 +6,10 @@
 // work_folder, choosing, mine, agent}`, `mine` whether this account made it,
 // `choosing` a work folder still choosing its first files, `agent` a work
 // folder's agent on this computer or null), `reader`
-// the PDF the page reads where it lies (`{path, missing, mine,
-// relocation_error?}`, `mine` whether this account opened the file).
+// the file the page reads where it lies (`{path, missing, mine, format,
+// ext, relocation_error?}`, `mine` whether this account opened the file,
+// `format` and `ext` its document's: a PDF, or any other format Gamma
+// shows, which cannot do all a PDF can, opensAsPdf and openedNote).
 // What the page shows of it: the chip in the page header and its card
 // (VaultChip.jsx), the banner over the page (its VaultBanner), whether the
 // notes are locked, and the conflict route the merge chips read. A path is
@@ -48,8 +50,8 @@ export function directionText(vault) {
 // paused, "alert" the vault could not write or the file is gone. The label
 // says the same in words, for the tooltip, the screen reader and the card;
 // a folder vault's page says where it is synced, a vault of one file where
-// its PDF is pushed from (a file vault only pushes), an opened PDF that it
-// is on this computer.
+// its PDF is pushed from (a file vault only pushes), an opened file that it
+// is on this computer, in a PDF's words or any other file's.
 export function vaultChip(state) {
   if (!state) return null;
   const { vault, reader } = state;
@@ -66,13 +68,14 @@ export function vaultChip(state) {
     return { kind, label, title: lines.join("\n") };
   }
   const missing = !!reader.missing;
-  return {
-    kind: missing ? "alert" : "disk",
-    label: missing ? t("File missing") : t("On this computer"),
-    title: missing ? t("The file this PDF was read from is gone")
-      : reader.path ? t("This PDF is read from {path}, not stored in the library", { path: reader.path })
-      : t("This PDF is read from a file on this computer, not stored in the library"),
-  };
+  const pdf = opensAsPdf(reader);
+  const title = pdf ? (missing ? t("The file this PDF was read from is gone")
+    : reader.path ? t("This PDF is read from {path}, not stored in the library", { path: reader.path })
+    : t("This PDF is read from a file on this computer, not stored in the library"))
+    : missing ? t("The file this page was read from is gone")
+    : reader.path ? t("This file is read from {path}, not stored in the library", { path: reader.path })
+    : t("This file is read where it lies on this computer, not stored in the library");
+  return { kind: missing ? "alert" : "disk", label: missing ? t("File missing") : t("On this computer"), title };
 }
 
 // What the card says of the agent on this computer that answers the work
@@ -267,7 +270,7 @@ export function keeperComputer(computers) {
 }
 
 // The banner over the page, in the missing-page notice's slot: a note the
-// vault could not write (`problem`, why), or an opened PDF whose file is
+// vault could not write (`problem`, why), or an opened file whose file is
 // gone (`missing`, with Locate… and Remove). Null for neither.
 export function vaultBanner(state) {
   if (state?.vault?.problem) return { kind: "problem", reason: String(state.vault.problem) };
@@ -304,7 +307,7 @@ export function editsFile(state) {
   return !!vault && vault.push === "everything" && /\.(md|markdown)$/i.test(vault.path || "");
 }
 
-// Whether Add to library… takes the page in as an opened PDF (a work
+// Whether Add to library… takes the page in as an opened file (a work
 // folder's file is fileRules' addToLibrary, explorer/workFolders.js).
 export function addsToLibrary(state) {
   return !!state?.reader && !state.vault;
@@ -319,11 +322,25 @@ export function openedHere(state) {
   return state?.reader?.mine !== false;
 }
 
+// Whether a document (a page's pageDocument, a library row's `_doc`, or
+// the open page's `reader`, which carries its document's format and ext)
+// is a PDF: an opened file of any other format neither keeps pushing from
+// its file nor is carried to another server (linked_files.add_to_library
+// and the carry routes refuse it).
+export const opensAsPdf = (doc) => doc?.format === "pdf";
+
+// Whether a document is a Markdown file read as a text document: an opened
+// lone .md, shown read-only in the code view, which never joins the library
+// (every .md there is a note; linked_files.add_to_library refuses it). To
+// edit it as a note, its folder becomes a work folder (Open with Gamma's
+// Edit in Gamma); dropped on the library, it is imported as a note.
+export const openedNote = (doc) => doc?.format === "text" && /^\.(md|markdown)$/i.test(doc.ext || "");
+
 // Whether the page's PDF can be carried to another server's library (the
 // desktop app's `carry-to-server`): an opened PDF whose file is there to read,
 // opened by this account.
 export function carriesToServer(state) {
-  return addsToLibrary(state) && !state.reader.missing && openedHere(state);
+  return addsToLibrary(state) && opensAsPdf(state.reader) && !state.reader.missing && openedHere(state);
 }
 
 // Where the page's vault keeps its conflicts (the merge chips' read and
@@ -335,11 +352,11 @@ export function vaultConflictsPath(state) {
 }
 
 // Whether a library row (App's pageBlocks: `_doc`, `_parentPage`, `_opened`)
-// is a PDF opened from this computer, one whose document is read in place,
-// inside *Opened files*: the page Move to library and Move into page… take
-// to Add to library… instead, since its bytes must be stored before it
-// leaves.
-export function isOpenedPdf(id, pagesById) {
+// is a file opened from this computer, of any format, one whose document is
+// read in place, inside *Opened files*: the page Move to library and Move
+// into page… take to Add to library… instead, since its bytes must be
+// stored before it leaves.
+export function isOpenedFile(id, pagesById) {
   const row = pagesById?.get(id);
   return inPlace(row?._doc) && !!row._parentPage && !!pagesById.get(row._parentPage)?._opened;
 }

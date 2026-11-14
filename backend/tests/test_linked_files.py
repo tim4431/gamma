@@ -43,6 +43,7 @@ from test_offsite import data  # noqa: F401: the bucket and its data directory
 from test_pdf_export import _annotated_pdf
 
 OLD_LINE = "the quick brown wombat digs a long burrow"
+PDF = {"format": "pdf", "ext": ".pdf"}   # what a reader says of a PDF's document
 LOOK_AGAIN = linked_files._look_again
 
 
@@ -150,7 +151,7 @@ def test_a_pdf_opened_is_read_where_it_is_and_copied_nowhere(owner, ws, disk):
     assert props["doc"] == {"format": "pdf", "name": "Wombats 2024.pdf", "hash": doc, "ext": ".pdf", "at": "path"}
     assert "auto_title" not in props and props["parent_page"] == _opened_files(ws)
     assert page in _inside(owner, ws)
-    assert _state(owner, page) == {"vault": None, "reader": {"path": str(f.resolve()), "missing": False, "mine": True}}
+    assert _state(owner, page) == {"vault": None, "reader": {"path": str(f.resolve()), "missing": False, "mine": True, **PDF}}
 
     # nothing stored...
     assert not storage.exists(ws, name) and storage.usage(ws) == stored_before and storage.readable(ws, name)
@@ -237,7 +238,7 @@ def test_a_file_that_is_a_vault_opens_the_vault_s_page(owner, ws, disk):
     link = _create(owner, kind="file", page=page["id"], path=str(f))
     try:
         answer = _opened(owner, f)
-        assert answer == {"workspace": ws, "page": page["id"], "created": False, "title": "LF kept paper"}
+        assert answer == {"workspace": ws, "page": page["id"], "created": False, "title": "LF kept paper", "format": ""}
         assert _rows(ws, page["id"]) == []
     finally:
         owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
@@ -249,7 +250,8 @@ def test_a_file_inside_a_directory_vault_comes_first(owner, ws, disk, monkeypatc
     assert linked_files._directory_vault_page(str(f), "anyone") is None
     page = make_page(owner, "LF vault page")
     monkeypatch.setattr(linked_files, "_directory_vault_page", lambda path, actor: {"workspace": ws, "page": page})
-    assert _opened(owner, f) == {"workspace": ws, "page": page["id"], "created": False, "title": "LF vault page"}
+    assert _opened(owner, f) == {"workspace": ws, "page": page["id"], "created": False, "title": "LF vault page",
+                                 "format": ""}
 
 
 def test_bytes_the_workspace_stores_open_their_page(owner, disk):
@@ -272,6 +274,141 @@ def test_a_clone_takes_no_new_opened_file(disk):
     assert r.status_code == 400 and "clone" in r.json()["detail"]
 
 
+# --- a file of any format ----------------------------------------------------------------
+
+def _disk_file(disk, name, data):  # noqa: F811: the fixture's value
+    """A file of its own on "this computer", at rest: ``(path, doc_id)``."""
+    path = disk / name
+    _write(path, data.encode("utf-8") if isinstance(data, str) else data)
+    return path, storage.content_digest(path.read_bytes())
+
+
+def test_a_file_of_any_format_is_read_where_it_is_in_the_viewer_of_its_format(owner, ws, disk):
+    from test_vault_sync import PNG
+    cases = (("paper.tex", b"\\section{Wombats}\n", "text", ".tex"),
+             ("README.md", b"# Read me\n", "text", ".md"),            # a Markdown file is a text document here
+             ("fig.png", PNG + b"of its own", "image", ".png"),       # bytes no other test reads in place
+             ("tone.wav", b"RIFF\x24\x00\x00\x00WAVEfmt ", "audio", ".wav"))
+    for name, data, fmt, ext in cases:
+        f, doc = _disk_file(disk, f"formats/{name}", data)
+        answer = _opened(owner, f)
+        assert answer["created"] is True and answer["format"] == fmt and answer["title"] == Path(name).stem, name
+        page = answer["page"]
+        props = _props(owner, page)
+        assert props["doc"] == {"format": fmt, "name": name, "hash": doc, "ext": ext, "at": "path", "size": len(data)}
+        assert props["parent_page"] == _opened_files(ws) and page in _inside(owner, ws)
+        assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": False, "mine": True,
+                                                 "format": fmt, "ext": ext}
+        assert _rows(ws, page) == [(f"{doc}{ext}", str(f.resolve()))] and not storage.exists(ws, f"{doc}{ext}")
+        assert owner.get(f"/api/uploads/{doc}{ext}").content == data
+        assert _opened(owner, f) == {**answer, "created": False}           # opened again: its page
+
+
+def test_an_opened_tex_follows_its_file_and_stays_a_text_document(owner, ws, disk, monkeypatch):
+    scheduled, stored = [], []
+    monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: scheduled.append(doc_id))
+    f, doc = _disk_file(disk, "draft.tex", "\\section{One}\n")
+    page = _opened(owner, f)["page"]
+    monkeypatch.setattr(kept, "keeps_bytes", lambda *a, **k: True)      # each version stored, as for an open thread
+    real = folder_links.store_file_stream
+    monkeypatch.setattr(folder_links, "store_file_stream", lambda w, s, ext: stored.append(ext) or real(w, s, ext))
+    monkeypatch.setattr(folder_links, "store_pdf_stream", lambda *a: pytest.fail("a text file stored as a PDF"))
+
+    two = b"\\section{Two}\n"
+    _write(f, two, age=20)
+    assert owner.get(f"/api/uploads/{doc}.tex").status_code == 404       # moved: served as nothing until followed
+    linked_files.follow(ws, f"{doc}.tex")
+    new = storage.content_digest(two)
+    assert _props(owner, page)["doc"] == {"format": "text", "name": "draft.tex", "hash": new, "ext": ".tex",
+                                          "at": "path", "size": len(two)}
+    assert _rows(ws, page) == [(f"{new}.tex", str(f.resolve()))] and stored == [".tex"] and scheduled == []
+    assert owner.get(f"/api/uploads/{new}.tex").content == two
+
+    three = b"\\section{Three}\n"                                         # changed, then opened again
+    _write(f, three, age=40)
+    again = _opened(owner, f)
+    assert again["page"] == page and again["created"] is False and again["format"] == "text"
+    assert _props(owner, page)["doc"]["hash"] == storage.content_digest(three) and scheduled == []
+
+
+def test_a_moved_markdown_file_is_located_and_a_file_of_another_format_refused(owner, ws, disk):
+    from test_vault_sync import PNG
+    f, doc = _disk_file(disk, "notes.md", "# Notes\n")
+    page = _opened(owner, f)["page"]
+    moved = disk / "elsewhere" / "notes.md"
+    moved.parent.mkdir(parents=True)
+    f.rename(moved)
+    assert _state(owner, page)["reader"]["missing"] is True
+    r = owner.post(f"/api/folder-links/opened/{page}/locate", json={"path": str(moved)})
+    assert r.status_code == 200, r.text
+    assert _state(owner, page)["reader"] == {"path": str(moved.resolve()), "missing": False, "mine": True,
+                                             "format": "text", "ext": ".md"}
+    assert _rows(ws, page) == [(f"{doc}.md", str(moved.resolve()))]
+    picture = _disk_file(disk, "pic.png", PNG)[0]
+    r = owner.post(f"/api/folder-links/opened/{page}/locate", json={"path": str(picture)})
+    assert r.status_code == 400 and r.json()["detail"] == "Pick a text file: this page reads one."
+
+
+def test_bytes_a_library_page_stores_of_any_format_open_that_page(owner, ws, disk):
+    data = b"\\documentclass{article}\n"
+    name, _existed = storage.store_file_stream(ws, io.BytesIO(data), ".tex")
+    held = make_page(owner, "LF a stored source", doc_props(name[:-4], name="main.tex", format="text", ext=".tex",
+                                                          size=len(data)))
+    f, _doc = _disk_file(disk, "main-copy.tex", data)
+    answer = _opened(owner, f)
+    assert (answer["page"], answer["created"], answer["format"]) == (held["id"], False, "text")
+
+
+def test_a_binary_a_program_and_a_file_past_the_keep_limit_are_refused(owner, disk, monkeypatch):
+    blob = _disk_file(disk, "blob.dat", b"\x00\x01\x02 no text")[0]
+    for path, said in ((blob, "Gamma cannot show blob.dat: open it in another app."),
+                       (_disk_file(disk, "setup.exe", b"MZ\x90\x00")[0], "Gamma does not open programs (.exe)."),
+                       (_disk_file(disk, "run.bat", "echo hi\n")[0], "Gamma does not open programs (.bat).")):
+        r = _open(owner, path)
+        assert r.status_code == 400 and r.json()["detail"] == said, r.text
+    monkeypatch.setattr(config, "vault_keep_bytes", lambda: 10)
+    r = _open(owner, _disk_file(disk, "big.txt", "x" * 100)[0])
+    assert r.status_code == 400 and r.json()["detail"].startswith("big.txt is too large for Gamma to show here")
+    f, _data, _doc = _disk_pdf(disk, "big.pdf", "LF a PDF has no keep limit")
+    assert _opened(owner, f)["format"] == "pdf"
+
+
+def test_only_a_pdf_has_its_metadata_looked_up(owner, disk, monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(pdf_meta, "schedule", lambda ws, doc_id: scheduled.append(doc_id))
+    _opened(owner, _disk_file(disk, "meta.tex", "\\title{No lookup}\n")[0])
+    assert scheduled == []
+    f, _data, doc = _disk_pdf(disk, "meta.pdf", "LF looked up")
+    _opened(owner, f)
+    assert scheduled == [doc]
+
+
+def test_an_opened_tex_joins_the_library_and_an_opened_markdown_file_does_not(owner, ws, disk):
+    f, doc = _disk_file(disk, "kept.tex", "\\section{Kept}\n")
+    page = _opened(owner, f)["page"]
+    r = owner.post(f"/api/folder-links/opened/{page}/add", json={"keep_pushing": True})
+    assert r.status_code == 400 and r.json()["detail"] == "Only a PDF keeps pushing from its file."
+    r = owner.post(f"/api/folder-links/opened/{page}/add", json={})
+    assert r.status_code == 200, r.text
+    assert r.json()["properties"]["doc"] == {"format": "text", "name": "kept.tex", "hash": doc, "ext": ".tex",
+                                             "at": "store", "size": f.stat().st_size}
+    assert storage.exists(ws, f"{doc}.tex") and _rows(ws, page) == []
+
+    md = _opened(owner, _disk_file(disk, "README.md", "# Kept apart\n")[0])["page"]
+    r = owner.post(f"/api/folder-links/opened/{md}/add", json={})
+    assert r.status_code == 400 and r.json()["detail"] == (
+        "A Markdown file joins the library as a note: drop it on the library, or open its folder with Gamma to edit "
+        "it where it is.")
+    assert _props(owner, md)["parent_page"] == _opened_files(ws)
+
+
+def test_only_a_pdf_is_carried_to_another_server(owner, disk):
+    page = _opened(owner, _disk_file(disk, "carried.tex", "\\section{Here}\n")[0])["page"]
+    for r in (owner.get(f"/api/folder-links/opened/{page}/carried"),
+              owner.post(f"/api/folder-links/opened/{page}/carried", json={"digest": "d"})):
+        assert r.status_code == 400 and r.json()["detail"] == "Only a PDF is carried to another server."
+
+
 # --- one page to a path ------------------------------------------------------------------
 
 def test_opening_the_file_of_a_deleted_page_brings_that_page_back(owner, ws, disk):
@@ -284,7 +421,7 @@ def test_opening_the_file_of_a_deleted_page_brings_that_page_back(owner, ws, dis
     assert again["page"] == page and again["created"] is False
     assert owner.get(f"/api/blocks/{note}").status_code == 200           # with what was on it
     assert _rows(ws, page) == [(f"{doc}.pdf", str(f.resolve()))]
-    assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": False, "mine": True}
+    assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": False, "mine": True, **PDF}
     assert _inside(owner, ws)[0] == page
 
 
@@ -473,7 +610,7 @@ def test_a_replacement_whose_highlights_could_not_be_placed_says_so(owner, ws, d
 
     _write(f, _lines([[(72, 500, OLD_LINE)]]), age=40)
     linked_files.follow(ws, f"{new}.pdf")
-    assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": False, "mine": True}
+    assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": False, "mine": True, **PDF}
 
 
 def test_an_opened_pdf_with_an_open_thread_keeps_each_version_it_shows_stored(owner, ws, disk, monkeypatch):
@@ -753,7 +890,7 @@ def test_a_file_that_is_gone_reads_as_missing_and_is_located(owner, ws, disk):
     f.unlink()
     assert owner.get(f"/api/uploads/{doc}.pdf").status_code == 404
     assert linked_files.missing(ws, page) is True
-    assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": True, "mine": True}
+    assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": True, "mine": True, **PDF}
     assert owner.get(f"/api/blocks/{page}").status_code == 200           # the page stays
 
     # the same bytes, elsewhere
@@ -762,7 +899,7 @@ def test_a_file_that_is_gone_reads_as_missing_and_is_located(owner, ws, disk):
     r = owner.post(f"/api/folder-links/opened/{page}/locate", json={"path": str(moved)})
     assert r.status_code == 200 and r.json()["id"] == page and r.json()["properties"]["doc"]["hash"] == doc
     assert owner.get(f"/api/uploads/{doc}.pdf").content == data
-    assert _state(owner, page)["reader"] == {"path": str(moved.resolve()), "missing": False, "mine": True}
+    assert _state(owner, page)["reader"] == {"path": str(moved.resolve()), "missing": False, "mine": True, **PDF}
 
     # a replacement
     moved.unlink()
@@ -1006,7 +1143,7 @@ def test_an_opened_file_on_a_disk_that_is_gone_reads_as_missing(owner, ws, disk,
     now[0] += 2
     try:
         assert owner.get(f"/api/uploads/{doc}.pdf").status_code == 404 and heard == []   # nothing moved
-        assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": True, "mine": True}
+        assert _state(owner, page)["reader"] == {"path": str(f.resolve()), "missing": True, "mine": True, **PDF}
         assert str(mount.resolve()) in storage._offline
     finally:
         away.rename(mount)
@@ -1216,14 +1353,14 @@ def test_add_to_library_of_another_workspace_takes_nothing_when_a_page_inside_it
     assert lab_owner.get(f"/api/blocks/{page}").status_code == 404
 
     # the check before the export passes, and the inner page is there by the time of the merge
-    held, asked = linked_files.page_for_doc, []
+    held, asked = linked_files.page_for_file, []
 
-    def blind(conn, doc_id, *a, **kw):
+    def blind(conn, doc_id, ext, *a, **kw):
         asked.append(doc_id)
-        return None if doc_id == inner_doc else held(conn, doc_id, *a, **kw)
+        return None if doc_id == inner_doc else held(conn, doc_id, ext, *a, **kw)
 
     with monkeypatch.context() as m:
-        m.setattr(linked_files, "page_for_doc", blind)
+        m.setattr(linked_files, "page_for_file", blind)
         r = owner.post(f"/api/folder-links/opened/{page}/add", json={"workspace": lab_ws})
     assert r.status_code == 400 and "already" in r.json()["detail"], r.text
     assert inner_doc in asked
@@ -1741,7 +1878,7 @@ def test_a_member_who_only_views_is_not_told_the_path(lab, disk):
     _ws, alice, bob, vera = lab
     f = _disk_pdf(disk, "private.pdf", "LF a person's own reading")[0]
     page = _opened(alice, f)["page"]
-    assert vera.get(f"/api/folder-links/page/{page}").json()["reader"] == {"path": "", "missing": False, "mine": False}
+    assert vera.get(f"/api/folder-links/page/{page}").json()["reader"] == {"path": "", "missing": False, "mine": False, **PDF}
     assert bob.get(f"/api/folder-links/page/{page}").json()["reader"]["path"] == str(f.resolve())
 
 
@@ -1976,12 +2113,9 @@ def test_an_ai_tool_that_fails_on_a_file_sends_no_path_to_the_model(owner, ws, m
 
 def test_what_cannot_be_opened_is_refused(owner, disk):
     disk.mkdir(parents=True, exist_ok=True)
-    text = disk / "notes.txt"
-    text.write_text("no pdf", encoding="utf-8")
     fake = disk / "fake.pdf"
     fake.write_text("no pdf either", encoding="utf-8")
-    for path, why in (("relative/paper.pdf", "full path"), (text, "Pick a PDF"), (disk / "there-is-none.pdf", "no file"),
-                      (fake, "%PDF")):
+    for path, why in (("relative/paper.pdf", "full path"), (disk / "there-is-none.pdf", "no file"), (fake, "%PDF")):
         r = _open(owner, path)
         assert r.status_code == 400 and why in r.json()["detail"], r.text
 

@@ -625,3 +625,62 @@ def test_a_work_folder_kept_by_a_vault_of_this_server_is_removed_not_let_go(owne
     r = owner.post(f"/api/folders/{folder}/let-go")
     assert r.status_code == 409 and "remove the vault instead" in r.json()["detail"]
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+# --- a path of it, from this computer's file manager -----------------------------------------------
+
+@pytest.fixture(scope="module")
+def reader(client):
+    """Another account of this server, which opens files of this computer too."""
+    make_user("rwf_reader", "pw")
+    return login("rwf_reader", "pw")
+
+
+def _where(c, path) -> dict:
+    r = c.post("/api/folder-links/where", json={"path": str(path)})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_where_names_a_work_folder_of_another_server_by_that_servers_ids(owner, reader, disk, over_http, far):
+    w = make_folder(owner, "RWF where")
+    root = disk / "RWF where"
+    link = _saved(owner, over_http, w, root, {"notes.md": "a thought\n", "sub/deep.md": "deeper\n"})
+    sub = _where(owner, root / "sub")
+    assert (sub["is"], sub["rel"], sub["exact"]) == ("vault", "sub", True)
+    assert sub["folder"] == vault_store.dirs(link["id"])["sub"]["folder_id"] and sub["folder"] not in ("", w)
+    assert sub["link"] == {"id": link["id"], "kind": "folder", "workspace": far, "folder": w, "remote_url": over_http,
+                           "work": True, "choosing": False, "paused": False, "mine": True, "name": "RWF where"}
+    note = _where(owner, root / "notes.md")
+    assert (note["page"], note["trashed"], note["tracked"]) == (vault_store.files(link["id"])["notes.md"]["page_id"],
+                                                                False, True)
+
+    # opened here, a file it pushes there is refused, never a page of this server: one replacer per file
+    _put(root / "later.md", "not read there yet\n")
+    for rel in ("notes.md", "later.md"):
+        r = owner.post("/api/folder-links/open", json={"path": str(root / rel)})
+        assert r.status_code == 400 and r.json()["detail"] == f"{(root / rel).resolve()} is kept on testserver: open it there."
+
+    # another account is told nothing of it, and the file is a lone file of its own
+    assert _where(reader, root / "notes.md") == {"is": "hidden"}
+    r = reader.post("/api/folder-links/open", json={"path": str(root / "notes.md")})
+    assert r.status_code == 200, r.text
+    assert r.json()["created"] is True and r.json()["workspace"] == workspace_of("rwf_reader")
+    assert r.json()["format"] == "text"
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+
+
+def test_a_file_a_remote_kept_folder_does_not_push_opens_as_a_lone_file(owner, disk, over_http, far):
+    """The host's round of a kept folder pushes its PDFs and notes at most:
+    a source beside them has one reader, the page it is opened as."""
+    token = _token()
+    root = disk / "RWF kept sources"
+    kept = _create(owner, folder=make_folder(owner, "RWF kept sources"), path=str(root), remote_url=over_http,
+                   token=token["token"], token_id=token["id"], push="pdfs")
+    f = _put(root / "draft.tex", "\\section{Draft}\n")
+    said = _where(owner, f)
+    assert (said["is"], said["link"]["work"], said["page"], said["tracked"]) == ("vault", False, "", False)
+    r = owner.post("/api/folder-links/open", json={"path": str(f)})
+    assert r.status_code == 200, r.text
+    assert r.json()["created"] is True and r.json()["format"] == "text"
+    owner.delete(f"/api/folder-links/{kept['id']}").raise_for_status()

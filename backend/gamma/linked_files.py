@@ -1,27 +1,31 @@
-"""PDFs read where they are on this computer (docs/research/vaults.md "Reading
-a PDF where it is"): a page of a workspace whose PDF stays at a path, nothing
-copied (but the versions shown while a comment thread on the page is open,
-gamma/feedback/kept.py) and nothing ever written into it or beside it. Only
-the desktop app's own server has them (``config.folder_links_enabled``).
+"""Files read where they are on this computer (docs/research/vaults.md
+"Reading a PDF where it is"; docs/research/open-with-plan.md for formats
+other than PDF): a page of a workspace whose document stays at a path,
+nothing copied (but the versions shown while a comment thread on the page
+is open, gamma/feedback/kept.py) and nothing ever written into it or beside
+it. Only the desktop app's own server has them
+(``config.folder_links_enabled``).
 
 Such a page's document is read in place (``doc.at`` ``path``,
 gamma/documents/model.py) and has a stored name like any other
-(``stored_name``: ``<hash>.pdf``); vaults.db ``linked_files`` says which path
-holds that name. ``storage.open_path`` answers from there, by one stat: a file whose
-size and time are as recorded is the bytes that name hashes, one that moved
-reads as nothing, and the read tells this module (``storage.linked_moved``).
-Hashing and the replacement never run inside a read: a worker thread takes
-the name off the queue (``follow``). The same bytes refresh the stat of a
-row that still stands (``_refresh_row``); new bytes wait until the file has
-settled (``gamma_sync.settled``: a build's half-written PDF is never a
-page's), then are ``replace_attachment`` through
-``folder_links.LocalSink``, as a file vault's push is, as the account the row
-names, so the highlights are placed again and open viewers switch on the ops,
-and the row moves to the new name. Until then the old name reads as nothing;
-the upload route waits a moment for the worker (``settle_wait``), so that a
-file only touched is no failure. ``sweep``, from the links' tick, looks at
-every row's stat, which also picks up what the worker could not take, and
-forgets what nobody kept.
+(``stored_name``: ``<hash>.pdf`` for a PDF, ``<hash><ext>`` for a file of any
+other format); vaults.db ``linked_files`` says which path holds that name.
+``storage.open_path`` answers from there, by one stat: a file whose size and
+time are as recorded is the bytes that name hashes, one that moved reads as
+nothing, and the read tells this module (``storage.linked_moved``). Hashing
+and the replacement never run inside a read: a worker thread takes the name
+off the queue (``follow``). The same bytes refresh the stat of a row that
+still stands (``_refresh_row``); new bytes wait until the file has settled
+(``gamma_sync.settled``: a build's half-written PDF is never a page's; a file
+of another format has no ``%%EOF`` to wait for), then are
+``replace_attachment`` through ``folder_links.LocalSink``, as a file vault's
+push is, as the account the row names, keeping the document's format, so the
+highlights are placed again and open viewers switch on the ops, and the row
+moves to the new name. Until then the old name reads as nothing; the upload
+route waits a moment for the worker (``settle_wait``), so that a file only
+touched is no failure. ``sweep``, from the links' tick, looks at every row's
+stat, which also picks up what the worker could not take, and forgets what
+nobody kept.
 
 A file a vault's round reads (its page has a ``vault_files`` row of a class
 read in place, a PDF's or a work folder's file's) is that round's to
@@ -29,19 +33,21 @@ replace, and nothing here touches it: one replacer per file (``_in_vault``).
 A work folder's file of any format has its row here too, named
 ``<hash><ext>`` (``_put_row`` with its ``ext``; ``hash_any`` hashes it with
 no header check, ``restat`` refreshes a touched one, ``store_page_bytes``
-stores its version under its own extension), while *Opened files* and the
-follow worker stay PDFs.
+stores its version under its own extension).
 
-An opened PDF is a page inside the one page *Opened files*, found by its
+An opened file is a page inside the one page *Opened files*, found by its
 property (``OPENED_FILES``) and made on demand, newest first: a sub-page is
 the one way a page stays out of the library's list that server and client
-share. ``open_pdf`` opens, ``add_to_library`` stores the bytes and takes the
-page out (or to another workspace of this server, with everything on it,
-the page here to Recently deleted), ``let_go`` sends it to Recently deleted
+share. It holds a file of any format Gamma can show, in the viewer of its
+format (``_read``: a Markdown file is a text document there, never a note;
+a binary, a program or a file past the keep limit is refused).
+``open_file`` opens, ``add_to_library`` stores the bytes and takes the page
+out (or to another workspace of this server, with everything on it, the
+page here to Recently deleted), ``let_go`` sends a PDF's to Recently deleted
 the same way once the desktop app has carried it to another server
 (``carry_digest``: only a page unchanged since), ``locate`` finds a file that went,
 ``missing`` and ``reader`` say how a page stands. A path has one page,
-deleted or not: ``open_pdf`` brings that page back and ``locate`` refuses
+deleted or not: ``open_file`` brings that page back and ``locate`` refuses
 the path to any other, so that following the file never takes a row from a
 page. A page taken to another workspace goes to Recently deleted without its
 rows, so the file is no page here any more. A page's rows name the account that
@@ -61,8 +67,8 @@ from fractional_indexing import generate_key_between
 
 from . import collab, comments, config, folder_links, gamma_sync, pdf_meta, storage, workspaces, ws_backup
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, PARENT_PAGE, TRASH, TREES, block_to_dict, create_page, folder_paths,
-                           free_position, load_props, page_for_doc, page_root_id, touch_page, with_sub_pages,
-                           write_lock)
+                           free_position, load_props, page_for_file, page_root_id, touch_page,
+                           with_sub_pages, write_lock)
 from .db import connect_pages_db, connect_users_db, connect_vaults_db, format_stamp
 from .documents import formats
 from .documents.model import SQL_IN_PLACE, document, document_at, in_place, own_hash, page_document, stored_name
@@ -83,6 +89,9 @@ IN_BOTH = ("Someone wrote on this page in that workspace as it arrived there, so
            "too: it is in both workspaces now.")
 SETTLE_WAIT_S = 3                # how long the upload route waits for the worker
 LOOK_AGAIN_S = 1                 # how soon a file still being written is looked at again
+MARKDOWN_EXTS = (".md", ".markdown")   # an opened file of these is text, and never joins the library (``_add``)
+# What ``locate`` calls a file of each format Gamma reads in place
+_A_FORMAT = {"pdf": "a PDF", "text": "a text", "image": "an image", "audio": "an audio", "video": "a video"}
 
 _opening = threading.Lock()      # one open, locate, add or let-go at a time: a path gets one page, a page one place
 _waiting: set = set()            # (ws, name) of the linked files a read found moved
@@ -131,13 +140,58 @@ def hash_file(path) -> tuple[str, int, int, str]:
     return doc_id, size, mtime_ns, file_id
 
 
-def _read(path: str) -> tuple[str, int, int, str]:
-    """``hash_file`` for a file someone just named: what stops it is theirs
-    to hear (another program may hold it)."""
+def _format(name: str, head: bytes) -> tuple[str, str]:
+    """``(format, ext)`` an opened file named ``name`` whose first bytes are
+    ``head`` is read as (``formats.format_of``): a PDF stored as ``.pdf``
+    whatever its name says, a Markdown file as a text document (an opened
+    file is no note: only a work folder edits a note where it is), any
+    other under ``formats.vault_extension`` (``Makefile`` text as ``.bin``,
+    as a work folder stores it)."""
+    fmt, _language = formats.format_of(name, head)
+    if fmt == "pdf":
+        return "pdf", ".pdf"
+    return ("text" if fmt == "markdown" else fmt), formats.vault_extension(name)
+
+
+def _no_program(path: str) -> None:
+    """LinkError for a file whose name says the system runs it
+    (``formats.BLOCKED_EXTENSIONS``): Gamma opens no program."""
+    ext = formats.extension_of(Path(path).name)
+    if ext in formats.BLOCKED_EXTENSIONS:
+        raise folder_links.LinkError(f"Gamma does not open programs ({ext}).")
+
+
+def _read(path: str) -> tuple[tuple, str, str]:
+    """A file someone just named, read to be opened or located: ``(seen,
+    format, ext)``, ``seen`` ``hash_any``'s first four, ``format`` and
+    ``ext`` ``_format``'s. LinkError for what stops it (theirs to hear:
+    another program may hold it), a program (``_no_program``), a ``.pdf``
+    that is no PDF, a file Gamma cannot show (``binary``), and one of
+    another format than PDF past the keep limit (``config.vault_keep_bytes``,
+    measured before it is read through; a PDF has none)."""
+    _no_program(path)
+    name = Path(path).name
     try:
-        return hash_file(path)
+        with open(path, "rb") as f:
+            head = f.read(formats.SNIFF_BYTES)
+        size = os.stat(path).st_size
+    except OSError as e:
+        raise folder_links.LinkError(f"Cannot read {path}: {e}") from e
+    fmt, ext = _format(name, head)
+    if fmt == "pdf" and not storage.is_pdf(head):
+        raise folder_links.LinkError(f"Cannot read {path}: not a valid PDF (missing %PDF header)")
+    if fmt == "binary":
+        raise folder_links.LinkError(f"Gamma cannot show {name}: open it in another app.")
+    keep = config.vault_keep_bytes()
+    if fmt != "pdf" and size > keep:
+        raise folder_links.LinkError(f"{name} is too large for Gamma to show here (over {keep >> 20} MB).")
+    try:
+        *seen, head = hash_any(path)
     except (OSError, ValueError) as e:
         raise folder_links.LinkError(f"Cannot read {path}: {e}") from e
+    if _format(name, head) != (fmt, ext):
+        raise folder_links.LinkError(f"Cannot read {path}: the file changed while it was read")
+    return tuple(seen), fmt, ext
 
 
 def _put_row(ws: str, path: str, seen: tuple, page_id: str, actor: str = "", *, name: str = "",
@@ -219,16 +273,26 @@ def _rows_at(ws: str, path: str) -> dict[str, str]:
                                  (ws, path)).fetchall())
 
 
+def _owned_file(props) -> str:
+    """The stored name (``<hash><ext>``) of the document a page owns, from
+    its properties: "" for none, and for a copy (it owns no bytes)."""
+    view = page_document(load_props(props) if isinstance(props, str) else props)
+    own = own_hash(view)
+    return stored_name(own, view["ext"]) if own else ""
+
+
 def _rows_standing(ws: str, path: str) -> dict[str, str]:
     """``_rows_at`` once the rows that stand for nothing are gone: the page
-    does not exist any more, or carries another PDF now (a replacement left
-    the row behind). A page in Recently deleted keeps its row, but one taken
-    to another workspace, which went there without its rows (``_carry``)."""
+    does not exist any more, or carries another document now (a replacement
+    left the row behind). A page in Recently deleted keeps its row, but one
+    taken to another workspace, which went there without its rows
+    (``_carry``)."""
     rows = _rows_at(ws, path)
     with connect_pages_db(ws) as conn:
-        carried = dict(conn.execute("SELECT id, doc_id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
-                                    (json.dumps(sorted(set(rows.values()))),)).fetchall())
-    for name in [name for name, page_id in rows.items() if stored_name(carried.get(page_id) or "", ".pdf") != name]:
+        carried = {page_id: _owned_file(props) for page_id, props in conn.execute(
+            "SELECT id, properties FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps(sorted(set(rows.values()))),))}
+    for name in [name for name, page_id in rows.items() if carried.get(page_id, "") != name]:
         _drop_row(ws, name, path)
         del rows[name]
     return rows
@@ -285,26 +349,28 @@ def _sink(ws: str, actor: str) -> folder_links.LocalSink:
 
 
 def _take_bytes(sink: folder_links.LocalSink, page_id: str, filename: str, path: str, seen: tuple,
-                opener: str = "") -> None:
-    """The page takes the bytes ``seen`` at ``path`` as its PDF, as ``sink``'s
-    account: its row under the new name first, naming ``opener`` (``sink``'s
-    account when none), so the relocation run reads the new file, the bytes
-    stored while the page keeps them (``kept.keeps_bytes``: an open comment
-    thread holds the version it was opened on, so the outgoing one, stored
-    at the open or at the replacement before, is the run's reference), then
-    the replacement a file vault's push makes. The bytes may be a library
+                opener: str = "", *, format: str = "pdf", ext: str = ".pdf") -> None:
+    """The page takes the bytes ``seen`` at ``path`` as its document, of
+    ``format`` stored under ``ext`` (its PDF, or an opened file of another
+    format, which stays of its format), as ``sink``'s account: its row
+    under the new name first, naming ``opener`` (``sink``'s account when
+    none), so the relocation run reads the new file, the bytes stored while
+    the page keeps them (``kept.keeps_bytes``: an open comment thread holds
+    the version it was opened on, so the outgoing one, stored at the open or
+    at the replacement before, is the run's reference), then the
+    replacement a file vault's push makes. The bytes may be a library
     page's too: the disk is what it is. SyncError when the page does not
     take them or they cannot be stored, and the row is gone again. A
     replacement stands without its relocation run (past the account's
     background tasks): nobody is there to hear why, so the row keeps it for
     the page (``reader``), and Find highlights in this PDF places them
-    later."""
-    ws, name = sink.ws, stored_name(seen[0], ".pdf")
-    _put_row(ws, path, seen, page_id, opener or sink.user_id)
+    later. A PDF's metadata lookup is scheduled."""
+    ws, name = sink.ws, stored_name(seen[0], ext)
+    _put_row(ws, path, seen, page_id, opener or sink.user_id, ext=ext)
     try:
-        if kept.keeps_bytes(ws, page_id) and sink.store(Path(path)) != seen[0]:
+        if kept.keeps_bytes(ws, page_id) and sink.store(Path(path), ext) != seen[0]:
             raise gamma_sync.SyncError("the file changed while it was read")
-        answer = sink.replace(page_id, seen[0], filename, check_held=False)
+        answer = sink.replace(page_id, seen[0], filename, check_held=False, format=format, ext=ext, size=seen[1])
     except gamma_sync.SyncError:
         _drop_row(ws, name, path)
         raise
@@ -314,19 +380,22 @@ def _take_bytes(sink: folder_links.LocalSink, page_id: str, filename: str, path:
         with connect_vaults_db() as conn:
             conn.execute("UPDATE linked_files SET relocation_error = ? WHERE ws = ? AND name = ? AND path = ?",
                          (reason, ws, name, path))
-    pdf_meta.schedule(ws, seen[0])
+    if format == "pdf":
+        pdf_meta.schedule(ws, seen[0])
 
 
 def _catch_up(sink: folder_links.LocalSink, name: str, path: str, page_id: str, page: dict, seen: tuple,
               opener: str = "") -> None:
     """The row ``name`` at ``path`` brought up to the file as it is now,
     ``seen``: the same bytes refresh its stat (``_refresh_row``), new ones
-    are the page's (``page``, ``LocalSink.current``) and the row moves to
-    their name, naming ``opener`` (``_take_bytes``)."""
-    if stored_name(seen[0], ".pdf") == name:
+    are the page's (``page``, ``LocalSink.current``: of the format and
+    extension of its document) and the row moves to their name, naming
+    ``opener`` (``_take_bytes``)."""
+    if stored_name(seen[0], page["ext"]) == name:
         _refresh_row(sink.ws, name, path, page_id, seen, opener or sink.user_id)
         return
-    _take_bytes(sink, page_id, page["filename"] or Path(path).name, path, seen, opener)
+    _take_bytes(sink, page_id, page["filename"] or Path(path).name, path, seen, opener, format=page["format"],
+                ext=page["ext"])
     _drop_row(sink.ws, name, path)
 
 
@@ -337,25 +406,35 @@ def _look(sink: folder_links.LocalSink, name: str, path: str, recorded: int, pag
     which are whole however lately it was written: hashed at once, its stat
     refreshed. Other bytes wait until they have settled, the next look soon
     for a file still being written and the sweep's for one that stopped
-    short."""
-    seen = hash_file(path) if os.stat(path).st_size == recorded else None
-    if seen and stored_name(seen[0], ".pdf") == name:
+    short. A PDF is hashed with its header checked (``hash_file``) and
+    settles once it ends as a PDF ends; a file of another format
+    (``page``'s document's) has no header or end to wait for, and past the
+    keep limit is left as it is (ValueError: Gamma shows no such file)."""
+    pdf = page["format"] == "pdf"
+    if not pdf and os.stat(path).st_size > config.vault_keep_bytes():
+        raise ValueError("the file is too large for Gamma to show here now")
+
+    def read(p):
+        return hash_file(p) if pdf else hash_any(p)[:4]
+    seen = read(path) if os.stat(path).st_size == recorded else None
+    if seen and stored_name(seen[0], page["ext"]) == name:
         _refresh_row(sink.ws, name, path, page_id, seen, opener)
         return
-    why = gamma_sync.settled(Path(path))
+    why = gamma_sync.settled(Path(path)) if pdf else gamma_sync.settled(Path(path), tail=None)
     if why == gamma_sync.WRITING:
         _look_again(sink.ws, name)
     if not why:
-        _catch_up(sink, name, path, page_id, page, seen or hash_file(path), opener)
+        _catch_up(sink, name, path, page_id, page, seen or read(path), opener)
 
 
 def follow(ws: str, name: str) -> None:
     """What a moved stat comes to, for each path of ``name`` that moved. A
-    vault's PDF is its round's, a page in the trash waits, a row a replacement
-    left behind goes, and what cannot be read now, or written (nobody may edit
-    the workspace any more, which ``LocalSink.current`` refuses), stays as it
-    is for the sweep's next look. The row keeps naming its opener, whoever the
-    change is written as (``_sink``)."""
+    vault's file is its round's, a page in the trash waits, a row a
+    replacement left behind goes, and what cannot be read now, or written
+    (nobody may edit the workspace any more, which ``LocalSink.current``
+    refuses), stays as it is for the sweep's next look. The row keeps naming
+    its opener, whoever the change is written as (``_sink``). A file of any
+    format is followed so, under its document's extension."""
     with connect_vaults_db() as conn:
         rows = conn.execute("SELECT path, size, mtime_ns, page_id, actor FROM linked_files "
                             "WHERE ws = ? AND name = ? AND page_id != ''", (ws, name)).fetchall()
@@ -367,7 +446,7 @@ def follow(ws: str, name: str) -> None:
             page = sink.current(page_id)  # refused when nobody left in the workspace may edit it
             if page is None:
                 continue
-            if stored_name(page["doc_id"], ".pdf") != name:
+            if stored_name(page["doc_id"], page["ext"]) != name:
                 _drop_row(ws, name, path)
                 continue
             _look(sink, name, path, size, page_id, page, actor)
@@ -476,13 +555,41 @@ def _to_top(conn, page_id: str, actor: str) -> dict:
 
 
 def _vault_row_page(link: dict, rel: str) -> str:
-    """The page whose PDF the vault's row at ``rel`` is ("" for none), the
-    name compared as this computer compares names."""
+    """The page the vault's row at ``rel`` names, of any kind ("" for none):
+    a paired paper's PDF and notes rows name one page, so either opens it.
+    The name is compared as this computer compares names."""
     fold = "lower(path) = lower(?)" if os.path.normcase("A") == "a" else "path = ?"
     with connect_vaults_db() as conn:
-        row = conn.execute(f"SELECT page_id FROM vault_files WHERE link_id = ? AND kind = 'pdf' AND was = '' AND {fold} "
+        row = conn.execute(f"SELECT page_id FROM vault_files WHERE link_id = ? AND page_id != '' AND was = '' AND {fold} "
                            "ORDER BY path = ? DESC LIMIT 1", (link["id"], rel, rel)).fetchone()
     return row[0] if row else ""
+
+
+def vault_page(link: dict, rel: str) -> tuple[str, bool]:
+    """``(page, trashed)`` of the vault's file ``rel`` (``/`` between names):
+    the page its row names (``_vault_row_page``); for a vault of this
+    server "" and ``trashed`` when that page is in Recently deleted, "" when
+    it is gone for good. A vault of another server's page is its id there,
+    as the row has it, unchecked (its workspace is that server's)."""
+    page_id = _vault_row_page(link, rel)
+    if not page_id or link["remote_url"]:
+        return page_id, False
+    with connect_pages_db(link["workspace_id"]) as conn:
+        row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    if row and row[0] == "root":
+        return page_id, False
+    return "", bool(row) and row[0] == TRASH
+
+
+def _reads_there(link: dict, rel: str) -> bool:
+    """Whether a vault of another server reads its file ``rel``, so pushes
+    it there: its row has a page, or it is a work folder whose
+    ``.gammaignore`` tracks the file and whose scan may."""
+    if _vault_row_page(link, rel):
+        return True
+    root = folder_links.dest_of(link)
+    return (folder_links.work_vault(link) and selection.tracked(root, rel)
+            and not selection.never_reason(root, rel)[0])
 
 
 def _directory_vault_page(path: str, actor: str) -> dict | None:
@@ -492,25 +599,48 @@ def _directory_vault_page(path: str, actor: str) -> dict | None:
     everything) has a round now for a file it has not read yet that it
     tracks, and a LinkError when that leaves it no page; inside any other
     vault a file Gamma did not read is no page of it, and opens as any file
-    does. A work folder's file it does not track, and any file of a work
-    folder whose files are not chosen yet, is a LinkError: it opens from
-    the work folder once ticked in its tracking dialog."""
+    does. A LinkError, before any round, for: any file of a work folder
+    whose files are not chosen yet; a file whose page is in Recently
+    deleted (never restored from here: the round put it there); a file the
+    scan never tracks (``selection.never_reason``); a work folder's file it
+    does not track (it opens from the work folder once ticked in its
+    tracking dialog); a file with no page yet of a paused vault (no round
+    runs it from here). A vault of another server that ``actor`` made and
+    that reads the file (``_reads_there``: its host's round pushes it
+    there) is a LinkError too, a backstop for the desktop app, which asks
+    ``folder_links.where_is`` first: one replacer per file. Any other file
+    there opens as a lone file, as a file a local kept folder does not read
+    does."""
     for link in folder_links.all_links():
-        if not folder_links.engine(link) or link["remote_url"] or not folder_links.inside(path, link["path"]):
+        if not folder_links.engine(link) or not folder_links.inside(path, link["path"]):
             continue
+        rel = os.path.relpath(path, link["path"]).replace(os.sep, "/")
+        if link["remote_url"]:
+            if link["created_by"] == actor and _reads_there(link, rel):
+                raise folder_links.LinkError(f"{path} is kept on {folder_links.server_name(link)}: open it there.")
+            return None
         if not workspaces.role_of(link["workspace_id"], actor):
             return None
         if folder_links.choosing(link):
             raise folder_links.LinkError("Choose what this work folder tracks first.")
-        rel = os.path.relpath(path, link["path"]).replace(os.sep, "/")
-        page_id = _vault_row_page(link, rel)
+        root, name = folder_links.dest_of(link), folder_links.vault_name(link)
+        page_id, trashed = vault_page(link, rel)
+        if trashed:
+            raise folder_links.LinkError(f"{path} is a file of “{name}”, whose page is in Recently deleted: "
+                                         "restore it there.")
         if not page_id and link["push"] == folder_links.PUSH_ALL:
-            if not selection.tracked(folder_links.dest_of(link), rel):
+            code, words = selection.never_reason(root, rel)
+            if code:
+                raise folder_links.LinkError(f"Gamma never tracks {path}: {words}.")
+            if not selection.tracked(root, rel):
                 if folder_links.work_folder_link(link):
                     raise folder_links.LinkError(f"{path} is not tracked by its work folder: tick it in Choose files…")
                 return None
+            if link["status"].get(folder_links.PAUSED):
+                raise folder_links.LinkError(f"{path} is in “{name}”, which is paused: resume it in the sync panel, "
+                                             "then open the file again.")
             folder_links.run_link(link["id"], wait=True)
-            page_id = _vault_row_page(link, rel)
+            page_id, _trashed = vault_page(link, rel)
             if not page_id:
                 raise folder_links.LinkError(f"{path} is in the synced vault {link['path']}, which has not made it "
                                              "a page yet: try again in a moment.")
@@ -536,13 +666,14 @@ def _file_vault_page(path: str, actor: str) -> dict | None:
     return {"workspace": row[0], "page": page} if page else None
 
 
-def _reopen(sink: folder_links.LocalSink, path: str, rows: dict[str, str], seen: tuple) -> dict:
+def _reopen(sink: folder_links.LocalSink, path: str, rows: dict[str, str], seen: tuple, ext: str = ".pdf") -> dict:
     """The page that holds ``path`` (``rows``, ``_rows_standing``) opened
     again: back from Recently deleted when it is there, with all it held and
     its place in *Opened files*, brought up to the file (``_catch_up``, its
-    rows naming its opener still), at the top of *Opened files*. LinkError
-    for a page that does not take it."""
-    name = stored_name(seen[0], ".pdf")
+    rows naming its opener still), at the top of *Opened files*. ``ext`` is
+    the file's as it was read now. LinkError for a page that does not take
+    it."""
+    name = stored_name(seen[0], ext)
     page_id = rows.get(name) or next(iter(rows.values()))
     with connect_pages_db(sink.ws) as conn:
         if page_root_id(conn, page_id) != page_id:
@@ -557,42 +688,53 @@ def _reopen(sink: folder_links.LocalSink, path: str, rows: dict[str, str], seen:
         return _to_top(conn, page_id, sink.user_id)
 
 
-def open_pdf(ws: str, path: str, actor: str) -> dict:
-    """The PDF at ``path`` opened in place → ``{workspace, page (a block dict),
-    created}``. ``path`` is checked as a file link's is
-    (``folder_links.clean_file_path``). In this order: a file inside a vault
-    opens that vault's page, a file that is a vault of its own opens that
-    page (either may be in another workspace), bytes a page of ``ws`` stores
-    open that page, and the page that holds the path opens, whatever became
-    of it (``_reopen``): a page deleted comes back, and bytes that changed are
-    its new PDF. Otherwise a new page inside *Opened files*, with the file's
-    stem as its title and no ``auto_title`` (a lookup fills fields and never
-    renames). A clone's pages are its origin's, so a new one is refused there.
-    LinkError for what cannot be opened."""
+def open_file(ws: str, path: str, actor: str) -> dict:
+    """The file at ``path``, of any format Gamma can show, opened in place
+    → ``{workspace, page (a block dict), created}``. ``path`` is checked as
+    a file link's is, of any extension (``folder_links.clean_file_path``),
+    and a program is refused (``_no_program``). In this order: a file
+    inside a vault opens that vault's page (``_directory_vault_page``, with
+    its refusals), a file that is a vault of its own opens that page (either
+    may be in another workspace), then the file is read (``_read``: its
+    format, a Markdown file as text; a binary or one past the keep limit
+    refused), bytes a page of ``ws`` stores open that page
+    (``page_for_file``), and the page that holds the path opens, whatever
+    became of it (``_reopen``): a page deleted comes back, and bytes that
+    changed are its new document. Otherwise a new page inside *Opened
+    files*, with the file's stem as its title and no ``auto_title`` (a
+    lookup fills fields and never renames), its document of the file's
+    format (a PDF's with no size, as ever; any other with its extension and
+    size), and a PDF's metadata lookup scheduled. A clone's pages are its
+    origin's, so a new one is refused there. LinkError for what cannot be
+    opened."""
     from .sync_engine import get_mirror  # local: it imports the routers
 
-    path = folder_links.clean_file_path(path)
+    path = folder_links.clean_file_path(path, pdf_only=False)
+    _no_program(path)
     vault = _directory_vault_page(path, actor) or _file_vault_page(path, actor)
     if vault:
         return {**vault, "created": False}
-    seen = _read(path)
+    seen, fmt, ext = _read(path)
     with _opening:
         rows = _rows_standing(ws, path)
         with connect_pages_db(ws) as conn:
-            stored = page_for_doc(conn, seen[0], BLOCK_COLUMNS)
+            stored = page_for_file(conn, seen[0], ext, BLOCK_COLUMNS)
         if stored:
             return {"workspace": ws, "page": block_to_dict(stored), "created": False}
         if rows:
-            return {"workspace": ws, "page": _reopen(folder_links.LocalSink(ws, actor), path, rows, seen), "created": False}
+            page = _reopen(folder_links.LocalSink(ws, actor), path, rows, seen, ext)
+            return {"workspace": ws, "page": page, "created": False}
         if get_mirror(ws) is not None:
             raise folder_links.LinkError("A clone keeps its origin's pages: open this file in another workspace.")
+        shape = {} if fmt == "pdf" else {"format": fmt, "ext": ext, "size": seen[1]}
         with connect_pages_db(ws) as conn:
             opened = _opened_files(conn) or create_page(conn, OPENED_TITLE, {OPENED_FILES: True}, actor=actor)["id"]
             page = create_page(conn, Path(path).stem,
-                               {"doc": document(seen[0], name=Path(path).name, at="path"), PARENT_PAGE: opened},
+                               {"doc": document(seen[0], name=Path(path).name, at="path", **shape), PARENT_PAGE: opened},
                                actor=actor, position=_top_key(conn, opened))
-        _put_row(ws, path, seen, page["id"], actor)
-    pdf_meta.schedule(ws, seen[0])
+        _put_row(ws, path, seen, page["id"], actor, ext=ext)
+    if fmt == "pdf":
+        pdf_meta.schedule(ws, seen[0])
     return {"workspace": ws, "page": page, "created": True}
 
 
@@ -646,24 +788,27 @@ def store_page_bytes(ws: str, page_id: str, name: str, doc_id: str) -> bool:
 
 
 def add_to_library(ws: str, page_id: str, folder_id: str, keep_pushing: bool, actor: str, workspace: str = "") -> dict:
-    """An opened PDF becomes a page of the library, here in its workspace:
-    its bytes are stored (``store_pdf_stream``; the same hash, so the page's
-    document keeps its hash and name), the page leaves *Opened files* for
-    ``folder_id`` or the library's top, and it no longer reads the file (its
-    document at ``store``). With ``keep_pushing``
-    the file goes on as a vault of one file (``create_file_link``), made
-    before the page moves, so a refusal leaves the page as it was. The bytes
-    may be a library page's already: two pages of one file, as a Zotero
-    link's may be, and when the store has them already no file need be there
-    (``keep_pushing`` wants one). With ``workspace``, another workspace of
-    this server, the page goes there with everything on it (``_carry``) and
-    ``folder_id`` is one of that workspace's. Both, and ``keep_pushing``, are
-    the opener's alone (``_openers``), as a vault's disk is its maker's: the
-    file is on that account's computer, and another editor of the workspace
-    stores its bytes here at most. One add runs at a time (``_opening``), so
-    a second press finds the page gone, never half carried. → the page.
-    LinkError for a page that reads no file, a folder that does not exist,
-    or a file that is gone or changed."""
+    """An opened file becomes a page of the library, here in its workspace:
+    its bytes are stored (``store_linked``, under its document's extension;
+    the same hash, so the page's document keeps its hash and name), the page
+    leaves *Opened files* for ``folder_id`` or the library's top, and it no
+    longer reads the file (its document at ``store``). With ``keep_pushing``
+    (a PDF's alone: a vault of one file is a PDF's) the file goes on as a
+    vault of one file (``create_file_link``), made before the page moves, so
+    a refusal leaves the page as it was. The bytes may be a library page's
+    already: two pages of one file, as a Zotero link's may be, and when the
+    store has them already no file need be there (``keep_pushing`` wants
+    one). With ``workspace``, another workspace of this server, the page
+    goes there with everything on it (``_carry``) and ``folder_id`` is one
+    of that workspace's. Both, and ``keep_pushing``, are the opener's alone
+    (``_openers``), as a vault's disk is its maker's: the file is on that
+    account's computer, and another editor of the workspace stores its bytes
+    here at most. One add runs at a time (``_opening``), so a second press
+    finds the page gone, never half carried. → the page. LinkError for a
+    page that reads no file, a Markdown file read as text (every ``.md`` of
+    the library is a note: dropped on the library it is one), a non-PDF
+    with ``keep_pushing``, a folder that does not exist, or a file that is
+    gone or changed."""
     with _opening:
         return _add(ws, page_id, folder_id, keep_pushing, actor, workspace or ws)
 
@@ -671,6 +816,12 @@ def add_to_library(ws: str, page_id: str, folder_id: str, keep_pushing: bool, ac
 def _add(ws: str, page_id: str, folder_id: str, keep_pushing: bool, actor: str, target: str) -> dict:
     """``add_to_library``, under ``_opening``, into ``target``."""
     page = _linked_page(ws, page_id)
+    shown = page_document(page["properties"])
+    if shown["format"] == "text" and shown["ext"] in MARKDOWN_EXTS:
+        raise folder_links.LinkError("A Markdown file joins the library as a note: drop it on the library, or open "
+                                     "its folder with Gamma to edit it where it is.")
+    if keep_pushing and shown["format"] != "pdf":
+        raise folder_links.LinkError("Only a PDF keeps pushing from its file.")
     if (keep_pushing or target != ws) and actor not in _openers(ws, page_id):
         raise folder_links.LinkError("Only the account that opened this file may keep it pushing or take it to "
                                      "another workspace: the file is on that account's computer.")
@@ -795,25 +946,25 @@ def _titled(conn, pages: list[str]) -> dict[str, tuple[str, dict]]:
 
 
 def _inside_at_hand(ws: str, page_id: str, pages: dict) -> dict[str, str]:
-    """``{doc_id: the file its bytes are read from}`` of the pages inside the
-    opened one (``pages``, ``{id: (title, properties)}``, the opened page
-    among them) that read a file here too: the path their rows hold it at
-    as it was hashed, else the stored copy. LinkError for one whose file is
-    neither, gone or changed since: the export would read it as nothing, and
-    the page would go there without its PDF and with no path to find one
-    by, while here it went to Recently deleted without its rows."""
+    """``{stored name: the file its bytes are read from}`` of the pages
+    inside the opened one (``pages``, ``{id: (title, properties)}``, the
+    opened page among them) that read a file here too: the path their rows
+    hold it at as it was hashed, else the stored copy. LinkError for one
+    whose file is neither, gone or changed since: the export would read it
+    as nothing, and the page would go there without its document and with
+    no path to find one by, while here it went to Recently deleted without
+    its rows."""
     at_hand = {}
     for pid, (title, props) in pages.items():
         view = page_document(props)
-        doc = own_hash(view)
-        if pid == page_id or not doc or not in_place(view):
+        if pid == page_id or not own_hash(view) or not in_place(view):
             continue
         name = view["file"]
         at = _at_rest(_rows_of(ws, pid), name)
         if not at and not storage.exists(ws, name):
             raise folder_links.LinkError(f"The file of the page inside it, {title}, is gone or has just changed: "
                                          "locate it there, or try again in a moment.")
-        at_hand[doc] = at or str(storage.find_upload_file(name, ws))
+        at_hand[name] = at or str(storage.find_upload_file(name, ws))
     return at_hand
 
 
@@ -845,6 +996,13 @@ def _let_go(ws: str, page_id: str, digest: str, actor: str) -> bool:
     return True
 
 
+def _library_holds(conn, view) -> bool:
+    """Whether a library page of the workspace of ``conn`` owns the bytes
+    the document ``view`` owns, of its extension (``page_for_file``)."""
+    own = own_hash(view)
+    return bool(own and page_for_file(conn, own, view["ext"]))
+
+
 def _carry(ws: str, page: dict, target: str, folder_id: str, keep_pushing: bool, path: str, actor: str) -> dict:
     """``add_to_library`` into ``target``, another workspace of this server:
     the bytes stored there, and those of each page inside it that reads a
@@ -869,7 +1027,7 @@ def _carry(ws: str, page: dict, target: str, folder_id: str, keep_pushing: bool,
     from .routers.export import page_gamma_zip  # local: keep gamma.* free of the routers package
     from .sync_engine import get_mirror  # local: it imports the routers
 
-    page_id, doc_id = page["id"], own_hash(page_document(page["properties"]))
+    page_id, name = page["id"], page_document(page["properties"])["file"]
     if get_mirror(target) is not None:
         raise folder_links.LinkError("A clone keeps its origin's pages: add this file to another workspace.")
     with connect_pages_db(ws) as conn:
@@ -879,14 +1037,13 @@ def _carry(ws: str, page: dict, target: str, folder_id: str, keep_pushing: bool,
     with connect_pages_db(target) as conn:
         held = [pid for pid, (_title, props) in each.items()
                 if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (pid,)).fetchone()
-                or page_for_doc(conn, own_hash(page_document(props)))]
+                or _library_holds(conn, page_document(props))]
     if held:
         raise folder_links.LinkError(HELD_THERE)
-    files = {**_inside_at_hand(ws, page_id, each),
-             doc_id: path or str(storage.find_upload_file(stored_name(doc_id, ".pdf"), ws))}
-    for doc, at in files.items():  # stored there before the export, which reads a file that moved as nothing
-        if not storage.exists(target, stored_name(doc, ".pdf")):
-            store_linked(target, stored_name(doc, ".pdf"), at)
+    files = {**_inside_at_hand(ws, page_id, each), name: path or str(storage.find_upload_file(name, ws))}
+    for stored, at in files.items():  # stored there before the export, which reads a file that moved as nothing
+        if not storage.exists(target, stored):
+            store_linked(target, stored, at)
     with tempfile.TemporaryDirectory(prefix="gamma-carry-") as td:
         zpath = Path(td) / "page.zip"
         page_gamma_zip(ws, page_id, zpath, {PARENT_PAGE: None, FOLDERS: [folder_id] if folder_id else None})
@@ -918,11 +1075,14 @@ def _carry(ws: str, page: dict, target: str, folder_id: str, keep_pushing: bool,
 
 
 def _opened_by(ws: str, page_id: str, actor: str) -> None:
-    """LinkError unless the page reads a file here (``_linked_page``) and
-    ``actor`` opened it (``_openers``): taking the page to another server is
-    that account's alone, as taking it to another workspace here is
+    """LinkError unless the page reads a PDF here (``_linked_page``: the
+    desktop app's carry to another server takes a PDF alone) and ``actor``
+    opened it (``_openers``): taking the page to another server is that
+    account's alone, as taking it to another workspace here is
     (``add_to_library``)."""
-    _linked_page(ws, page_id)
+    page = _linked_page(ws, page_id)
+    if page_document(page["properties"])["format"] != "pdf":
+        raise folder_links.LinkError("Only a PDF is carried to another server.")
     if actor not in _openers(ws, page_id):
         raise folder_links.LinkError("Only the account that opened this file may take it to another server: the "
                                      "file is on that account's computer.")
@@ -963,25 +1123,35 @@ def let_go(ws: str, page_id: str, digest: str, actor: str) -> bool:
 
 
 def locate(ws: str, page_id: str, path: str, actor: str) -> dict:
-    """An opened PDF's file found again at ``path`` (checked as ``open_pdf``
-    checks one): the same bytes are the page's as they stand, others replace
-    its PDF, as ``actor``, and its old rows go, the new one naming the page's
-    opener still (``_opener``). → the page. LinkError for a page that reads
-    no file, a file that cannot be opened, or one that is another page's,
-    whatever it reads now and even from Recently deleted."""
+    """An opened file found again at ``path`` (checked and read as
+    ``open_file`` checks and reads one), of the format of the page's
+    document: the same bytes are the page's as they stand, others replace
+    its document, as ``actor``, and its old rows go, the new one naming the
+    page's opener still (``_opener``). → the page. LinkError for a page that
+    reads no file, a file that cannot be opened or is of another format, or
+    one that is another page's, whatever it reads now and even from Recently
+    deleted."""
     page = _linked_page(ws, page_id)
-    path = folder_links.clean_file_path(path)
-    seen = _read(path)
-    name = stored_name(seen[0], ".pdf")
+    shown = page_document(page["properties"])
+    path = folder_links.clean_file_path(path, pdf_only=False)
+    seen, fmt, ext = _read(path)
+    if fmt != shown["format"]:
+        raise folder_links.LinkError(f"Pick {_A_FORMAT.get(shown['format'], 'a ' + shown['format'])} file: this page "
+                                     "reads one.")
+    same = seen[0] == own_hash(shown)
+    if same:
+        ext = shown["ext"]   # its name is the page's document's
+    name = stored_name(seen[0], ext)
     with _opening:
         if any(holder != page_id for holder in _rows_standing(ws, path).values()):
             raise folder_links.LinkError("Another opened page reads that file.")
         rows, opener = _rows_of(ws, page_id), _opener(ws, page_id, actor)
-        if seen[0] == own_hash(page_document(page["properties"])):
-            _put_row(ws, path, seen, page_id, opener)
+        if same:
+            _put_row(ws, path, seen, page_id, opener, ext=ext)
         else:
             try:
-                _take_bytes(folder_links.LocalSink(ws, actor), page_id, Path(path).name, path, seen, opener)
+                _take_bytes(folder_links.LocalSink(ws, actor), page_id, Path(path).name, path, seen, opener,
+                            format=fmt, ext=ext)
             except gamma_sync.SyncError as e:
                 raise folder_links.LinkError(str(e)) from e
         for old, old_path, _size, _mtime_ns in rows:
@@ -1004,18 +1174,23 @@ def missing(ws: str, page_id: str) -> bool:
 
 
 def reader(ws: str, page_id: str, actor: str = "") -> dict | None:
-    """``{path, missing, mine}`` of a page that reads a file here (``path`` ""
-    when a crash left it no row; ``mine`` whether ``actor`` opened the file,
-    the account whose alone it is to keep pushing or take elsewhere,
-    ``add_to_library``), and ``relocation_error`` when its last new bytes
-    placed no highlights (``_take_bytes``); None for any other page."""
+    """``{path, missing, mine, format, ext}`` of a page that reads a file
+    here (``path`` "" when a crash left it no row; ``mine`` whether
+    ``actor`` opened the file, the account whose alone it is to keep pushing
+    or take elsewhere, ``add_to_library``; ``format`` and ``ext`` its
+    document's, by which the client hides what a page of another format
+    than PDF, or a Markdown file read as text, cannot do), and
+    ``relocation_error`` when its last new bytes placed no highlights
+    (``_take_bytes``); None for any other page."""
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
-    if not row or not in_place(page_document(load_props(row[0]))):
+    view = page_document(load_props(row[0])) if row else None
+    if not in_place(view):
         return None
     paths = [path for _name, path, _size, _mtime_ns in _rows_of(ws, page_id)]
     state = {"path": next((p for p in paths if storage.linked_stat(p)), paths[0] if paths else ""),
-             "missing": missing(ws, page_id), "mine": bool(actor) and actor in _openers(ws, page_id)}
+             "missing": missing(ws, page_id), "mine": bool(actor) and actor in _openers(ws, page_id),
+             "format": view["format"], "ext": view["ext"]}
     with connect_vaults_db() as conn:
         reason = conn.execute("SELECT relocation_error FROM linked_files WHERE ws = ? AND page_id = ? "
                               "AND relocation_error != '' LIMIT 1", (ws, page_id)).fetchone()

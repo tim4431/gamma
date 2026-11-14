@@ -441,7 +441,7 @@ Being a sub-page keeps it out of the library's list. Such a page leaves
 first (`POST /folder-links/opened/{id}/add`): the page menu and a tab's menu
 offer it in place of Move into page… and Move to library when every acted-on
 page is an opened PDF, and neither when some are (`vault/vaultState.js`
-`isOpenedPdf`, `addingToLibrary` in App); Move to folder ▸ is hidden too
+`isOpenedFile`, `addingToLibrary` in App); Move to folder ▸ is hidden too
 while any acted-on page is one, and a move into a page or out to the
 library that names one opens the dialog instead. Its dialog (`vault/FolderPickerDialog.jsx`) picks the
 workspace and the folder, and whether the file goes on pushing its new

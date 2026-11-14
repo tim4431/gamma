@@ -819,7 +819,7 @@ is for" works at the end of step 2.
 | 4. Text in search and the chat | The extractor, text files in the index, `source: "file"` hits with lines, the chat's context and `read_page` by lines. | A question about a `.tex` file answered with a link to its line. |
 | 5. The explorer | The Files window, quick open's Files group, paths in crumbs and links. | The browser suite's new group. |
 | 6. Anchors in text | `text_position`, highlights and threads from a selection, relocation after a change. | A file rewritten under ten comments keeps the ones whose text survived and marks the rest. |
-| Later | Work folders of another server from the dialog (made of an empty folder there: [agent-collab.md](agent-collab.md) step 4b; a folder with pages still later); editing a text file in Gamma; notebook and table viewers; building LaTeX ([latex-projects.md](latex-projects.md), parts 4 and 5, on a work folder's files). | |
+| Later | Work folders of another server from the dialog (made of an empty folder there: [agent-collab.md](agent-collab.md) step 4b; a folder with pages still later); editing a text file in Gamma; notebook and table viewers; building LaTeX ([latex-projects.md](latex-projects.md), parts 4 and 5, on a work folder's files); opening files and folders from the file manager: [open-with.md](open-with.md). | |
 
 Step 0 and the first half of step 3 are refactors with nothing to show,
 and they carry most of the risk; each is small enough to review alone for
@@ -1242,7 +1242,10 @@ Where it differs from the plan above, the whole list:
     (`ai_context.area_highlight` stays PDF); exports writing a work
     folder's file at its path; a region crop in the readable exports (a
     region exports as a note); editing a text file; Opened files of
-    formats other than PDF; a listed file's head as text; a region's own
+    formats other than PDF (built since by [open-with.md](open-with.md),
+    which also decided that a Markdown file outside every vault asks
+    whether to become a note of a work folder, else opens read-only in the
+    code view, and is never added to the library); a listed file's head as text; a region's own
     rows in the highlight menu (the PDF's rows show); the AI title for a
     non-PDF document (`docId` is the PDF's); an admin setting for the keep
     limit.

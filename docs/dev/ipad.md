@@ -826,7 +826,7 @@ before a reload waits until a page can take it. The web half is
 (`takeOpenedFiles`):
 
 1. **Where.** As the desktop does with a PDF it is handed
-   ([desktop/docs/architecture.md "Opening PDF files"](../../desktop/docs/architecture.md#opening-pdf-files)),
+   ([desktop/docs/architecture.md "Opening files and folders"](../../desktop/docs/architecture.md#opening-files-and-folders)),
    the files go to the workspace shown when the account can edit there,
    else to its personal workspace. A workspace others see asks first: one
    with other members, a public one, or a clone. The question offers

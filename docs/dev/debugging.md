@@ -554,8 +554,10 @@ files of every format as pages), `test_vault_upgrade.py` (a folder kept
 before synced vaults taken onto the engine), `test_vault_http.py` (a vault of another server, over a
 TestClient standing in for it), `test_vault_routes.py` (the routes, the
 refusals, the hot loop, the page's own routes, the shell's secret) and
-`test_linked_files.py` (PDFs read where they are, and a server that keeps
-no links never making vaults.db); `test_folder_links.py` and
+`test_linked_files.py` (files read where they are, of any format Gamma can
+show, and a server that keeps no links never making vaults.db),
+`test_open_with.py` (which vault, page or refusal a path opened from the
+file manager is: `POST /api/folder-links/where`); `test_folder_links.py` and
 `test_disk_push.py` keep the links' API and the PDFs pushed from disk. On
 the frontend, `vaultState.test.mjs` (a page's standing with this computer)
 and `notesLock.test.mjs` (what a vault that does not pull and pushes
@@ -1233,7 +1235,7 @@ The scenarios live in `tests/e2e/scenarios/`:
   log and settings (cadence, detach, reattach), a same-block conflict
   resolved on its row chip, Remove origin ([mirror.md](mirror.md)).
   `--only mirror`.
-- `vaults.mjs`: synced vaults and PDFs read where they are, as a page of
+- `vaults.mjs`: synced vaults and files read where they are, as a page of
   the desktop app shows them ([synced_vaults.md](synced_vaults.md)). A
   second Gamma keeps vaults (`GAMMA_FOLDER_LINKS=1`, no shell secret) and
   the browser says it is the desktop app (an Electron user agent); real

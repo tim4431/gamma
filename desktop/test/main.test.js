@@ -7,8 +7,11 @@
 // panel's actions in the vocabulary, a round followed to its end, a work
 // folder made from a directory and its tracking dialog opened in the window,
 // a folder with pages through the bar's dialog, the shell's word on the
-// routes that take a path, and the focus hint; and a PDF opened with Gamma,
-// where its page is. `npm test` in desktop/.
+// routes that take a path, and the focus hint; and a file or a folder opened
+// with Gamma: what each local server says it is (whereIs, as which account),
+// where the window goes for each answer, the question about a Markdown file
+// outside every vault, one new work folder at a time, the broad places, and
+// a file read where it is. `npm test` in desktop/.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -75,9 +78,10 @@ const electron = {
   },
 };
 for (const name of ['BaseWindow', 'WebContentsView', 'Menu', 'Tray', 'clipboard', 'nativeImage', 'nativeTheme',
-  'shell', 'ipcMain', 'net', 'dialog', 'systemPreferences']) {
+  'shell', 'ipcMain', 'net', 'systemPreferences']) {
   electron[name] = stub();
 }
+electron.dialog = stub({ showMessageBox: async () => ({ response: 0 }) }); // an error box (errorBox), shown to no one
 const resolveFilename = Module._resolveFilename;
 Module._resolveFilename = function (request, ...rest) {
   return request === 'electron' ? 'electron' : resolveFilename.call(this, request, ...rest);
@@ -157,6 +161,9 @@ function fresh() {
   shell.pretendShown(null, null);
   shell.asked.length = 0;
   shell.answers.length = 0;
+  shell.waiting.length = 0;
+  shell.errorBoxes.length = 0;
+  shell.pretendBooted(true);
 }
 
 // The window's content view on local server `local` (a fake of server()),
@@ -1614,7 +1621,7 @@ test('a PDF opened with Gamma: bytes the workspace shown carries open their page
     // on the NAS: the page there that holds these bytes, its highlights and notes with it
     let view = onNas();
     shell.pretendShown(nas.srv, view, appWindow);
-    assert.deepEqual(await shell.readPdf(pdf), { workspace: 'team', page: 'annotated' });
+    assert.deepEqual(await shell.readFile(pdf), { workspace: 'team', page: 'annotated' });
     const [lookup] = lookups(nas);
     assert.deepEqual([lookup.path, lookup.method, lookup.headers['X-Gamma-Workspace']], [`/api/blocks/by-doc/${docId}`, 'GET', 'team']);
     assert.deepEqual(view.loaded, ['http://nas.lan:9001/?ws=team&page=annotated']);
@@ -1625,7 +1632,7 @@ test('a PDF opened with Gamma: bytes the workspace shown carries open their page
     // in a clone on this computer: its page there
     view = windowOn(here.fake, [], 'lab');
     shell.pretendShown(here.srv, view, appWindow);
-    assert.deepEqual(await shell.readPdf(pdf), { workspace: 'lab', page: 'annotated' });
+    assert.deepEqual(await shell.readFile(pdf), { workspace: 'lab', page: 'annotated' });
     assert.equal(lookups(here)[0].headers['X-Gamma-Workspace'], 'lab');
     assert.deepEqual(view.loaded, ['http://127.0.0.1:50999/?ws=lab&page=annotated']);
     assert.equal(opens().length, 0);
@@ -1633,7 +1640,7 @@ test('a PDF opened with Gamma: bytes the workspace shown carries open their page
     // bytes no page of the NAS holds: read on this computer, in the account's own workspace there
     delete carried[`/api/blocks/by-doc/${docId}`];
     shell.pretendShown(nas.srv, onNas(), appWindow);
-    assert.deepEqual(await shell.readPdf(pdf), { workspace: 'mine', page: 'read-here' });
+    assert.deepEqual(await shell.readFile(pdf), { workspace: 'mine', page: 'read-here' });
     assert.equal(lookups(nas).length, 2, 'asked there first');
     const [open] = opens();
     assert.deepEqual([open.body, open.headers['X-Gamma-Workspace'], open.headers['X-Gamma-Shell']], [{ path: pdf }, 'mine', shell.shellSecret]);
@@ -1642,7 +1649,7 @@ test('a PDF opened with Gamma: bytes the workspace shown carries open their page
     // a workspace of this computer's server the account writes in: the server looks for the bytes itself
     const asked = lookups(here).length;
     shell.pretendShown(here.srv, windowOn(here.fake, [], 'mine'), appWindow);
-    assert.deepEqual(await shell.readPdf(pdf), { workspace: 'mine', page: 'read-here' });
+    assert.deepEqual(await shell.readFile(pdf), { workspace: 'mine', page: 'read-here' });
     assert.equal(lookups(here).length, asked);
     assert.equal(opens().length, 2);
   } finally {
@@ -1699,5 +1706,581 @@ test('a page\'s Continue in a terminal: the command is the open server\'s answer
   } finally {
     terminal.onPath = realOnPath;
     shell.pretendShown(null, null);
+  }
+});
+
+// ------------------------------------------------------ Open with Gamma -----
+
+// What `POST /api/folder-links/where` answers on fake `s`, by path
+// (`answers`, read when asked; a function answers when called; any other
+// path is nobody's), the other routes as `more` answers them.
+const isDir = (p) => {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+function whereOf(s, answers, more = () => null) {
+  s.fake.routes = (p, init) => {
+    if (p === '/api/folder-links/where') {
+      const asked = JSON.parse(init.body).path;
+      const a = answers[asked];
+      return typeof a === 'function' ? a() : a || { is: 'none', dir: isDir(asked), name: path.basename(asked), refusal: '' };
+    }
+    return more(p, init);
+  };
+}
+const whereCalls = (s) => s.fake.calls.filter((c) => c.path === '/api/folder-links/where');
+
+// A `where` answer inside a work folder "Paper" of the local server, `link`
+// and `more` changing what they name.
+const inVault = (link = {}, more = {}) => ({
+  is: 'vault', dir: true, name: 'x', rel: '', never: '', folder: 'f1', exact: true,
+  link: { id: 'v1', kind: 'folder', workspace: 'mine', folder: 'f1', remote_url: '', work: true, choosing: false, paused: false, mine: true, name: 'Paper', ...link },
+  ...more,
+});
+
+// A file of `text` at `p`, its directories made.
+function put(p, text = 'x') {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, text);
+  return p;
+}
+
+// A local server's start under the test: it answers at the fakes' address
+// (`fail`: the ids of those that do not start).
+function stubStart(fail = []) {
+  const real = sidecar.start;
+  sidecar.start = async (ws) => {
+    if (fail.includes(ws.id)) throw new Error('could not bind');
+    running.add(ws.id);
+    return { url: 'http://127.0.0.1:50999', port: 50999 };
+  };
+  return () => { sidecar.start = real; };
+}
+
+// The address the window loaded last, as its query.
+const lastAt = (view) => Object.fromEntries(new URL(view.loaded.at(-1)).searchParams);
+
+// The routes a work folder made from a directory takes on fake `s`: the
+// preview, the vault made (`w<n>`, choosing), and each one read again,
+// choosing while `chooses()` says so.
+function makesWorkFolders(s, chooses = () => true) {
+  let made = 0;
+  return (p, init) => {
+    if (p === '/api/folder-links/preview') return previewOf(JSON.parse(init.body).path);
+    if (p === '/api/folder-links' && init.method === 'POST') {
+      made += 1;
+      const body = JSON.parse(init.body);
+      return vaultLink({ id: `w${made}`, folder_id: `nf${made}`, path: body.path, dest: body.path, push: 'everything', choosing: true });
+    }
+    const m = p.match(/^\/api\/folder-links\/(w\d+)$/);
+    if (m) return { id: m[1], choosing: chooses(m[1]) };
+    return null;
+  };
+}
+const made = (s) => s.fake.calls.filter((c) => c.path === '/api/folder-links' && c.method === 'POST');
+const opens = (s) => s.fake.calls.filter((c) => c.path === '/api/folder-links/open');
+const questions = (prefix) => shell.asked.filter((q) => q.startsWith(prefix));
+
+test('what is handed over before the app is up waits for it, as absolute paths of what exists', async () => {
+  fresh();
+  const paper = fs.mkdtempSync(path.join(dir, 'Early-'));
+  shell.pretendBooted(false);
+  assert.deepEqual(await shell.openWithGamma([path.basename(paper), path.join(dir, 'gone.md'), '--hidden'], dir), []);
+  assert.deepEqual(shell.pretendBooted(true), [paper], 'the boot opens it');
+});
+
+test('whereIs asks the window\'s server through the window\'s session and the others as the shell, the first answer that is not none winning; a signed-out window learns what a path is and is told to sign in before going there', async () => {
+  fresh();
+  const one = server('One');
+  const two = server('Two');
+  const paper = fs.mkdtempSync(path.join(dir, 'Where-'));
+  const answers1 = {};
+  whereOf(one, answers1);
+  whereOf(two, { [paper]: inVault({ id: 'v2', name: 'There' }) });
+  const through = [];
+  const view = windowOn({ answer: (p, init, url) => { through.push(p); return one.fake.answer(p, init, url); } });
+  shell.pretendShown(one.srv, view, appWindow);
+  try {
+    const a = await shell.whereIs(paper);
+    assert.deepEqual([a.is, a.srv.id, a.as, a.link.id], ['vault', two.srv.id, 'shell', 'v2'], 'nobody\'s on One, Two\'s vault');
+    assert.deepEqual(through, ['/api/session', '/api/folder-links/where'], 'the window\'s server through its session, signed in there');
+    assert.deepEqual([whereCalls(one).length, whereCalls(two).length], [1, 1]);
+    for (const c of [...whereCalls(one), ...whereCalls(two)]) {
+      assert.equal(c.headers['X-Gamma-Shell'], shell.shellSecret, 'a path goes with the shell\'s word');
+      assert.equal(c.headers['X-Gamma-Workspace'], undefined, 'and no workspace');
+      assert.deepEqual(c.body, { path: paper });
+    }
+    // the window's server first: its answer wins, the next one is not asked
+    answers1[paper] = inVault();
+    const b = await shell.whereIs(paper);
+    assert.deepEqual([b.srv.id, b.as, b.signedOut, b.link.id], [one.srv.id, 'window', false, 'v1']);
+    assert.equal(whereCalls(two).length, 1);
+
+    // signed out in the window: One asked as the shell, only to learn what the path is
+    const out = windowOn({ answer: (p, init, url) => (p === '/api/session'
+      ? { ok: true, status: 200, json: async () => ({ user: null }) } : one.fake.answer(p, init, url)) });
+    shell.pretendShown(one.srv, out, appWindow);
+    const c = await shell.whereIs(paper);
+    assert.deepEqual([c.srv.id, c.as, c.signedOut], [one.srv.id, 'shell', true]);
+    const [got] = await shell.openWithGamma([paper]);
+    assert.equal(got.error, `Sign in to One, then open ${path.basename(paper)} again.`);
+    assert.deepEqual(out.loaded, [], 'and the window goes nowhere');
+
+    // signed out between the session read and the question (a 401): asked again as the shell
+    const flaky = windowOn({ answer: (p, init, url) => (p === '/api/folder-links/where'
+      ? { ok: false, status: 401, json: async () => ({ detail: 'Not signed in' }) } : one.fake.answer(p, init, url)) });
+    shell.pretendShown(one.srv, flaky, appWindow);
+    const d = await shell.whereIs(paper);
+    assert.deepEqual([d.srv.id, d.as, d.signedOut, d.link.id], [one.srv.id, 'shell', true, 'v1']);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+test('whereIs skips a server that does not answer in 10 s or has no such route, starts a stopped local server before a path is believed nobody\'s, names one that does not start, and never asks a remote server', async () => {
+  fresh();
+  const slow = server('Slow');
+  const old = server('Old');
+  const later = server('Later', [], { running: false });
+  const broken = server('Broken', [], { running: false });
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  const tex = put(path.join(dir, 'Far', 'main.tex'), '\\documentclass{article}');
+  const fresh1 = fs.mkdtempSync(path.join(dir, 'Nobody-'));
+  whereOf(slow, { [tex]: () => new Promise(noop) }, makesWorkFolders(slow));
+  old.fake.routes = (p) => (p === '/api/folder-links/where' ? { failWith: 404 } : null);
+  whereOf(later, { [tex]: { is: 'file_vault', workspace: 'mine', page: 'fv' } });
+  const restore = stubStart([broken.srv.id]);
+  const view = windowOn(slow.fake, [{ origin: 'http://nas.lan:9001', fake: nas.fake }], 'team');
+  shell.pretendShown(nas.srv, view, appWindow);
+  try {
+    const before = timers.length;
+    const asking = shell.whereIs(tex);
+    const wait = () => timers.slice(before).filter((t) => t.ms === 10_000 && !t.cleared);
+    await until(() => wait().length === 1, 'Slow is asked, with ten seconds to answer');
+    wait()[0].fn(); // the ten seconds go by
+    const a = await asking;
+    assert.deepEqual([a.is, a.srv.id, a.page], ['file_vault', later.srv.id, 'fv'], 'Old\'s 404 skipped, Later started and asked');
+    assert.ok(running.has(later.srv.id));
+    assert.ok(!running.has(broken.srv.id), 'a server after the one that answered is not started');
+    assert.equal(whereCalls(old).length, 1);
+
+    // nobody's: every local server asked, the one that would not start named, and the folder becomes a work folder
+    const [got] = await shell.openWithGamma([fresh1]);
+    assert.equal(got.track, 'w1');
+    assert.deepEqual([whereCalls(slow).length, whereCalls(later).length], [2, 2]);
+    assert.equal(made(slow).length, 1, 'on the host');
+    assert.equal(shell.notice(), `“${path.basename(fresh1)}” is a work folder of Mine on Slow now: choose the files it tracks. Gamma could not check Broken's synced vaults: it did not start.`);
+    assert.equal(nas.fake.calls.length, 0, 'the remote the window showed is never asked');
+  } finally {
+    restore();
+    shell.pretendShown(null, null);
+  }
+});
+
+test('a folder opened with Gamma opens what Gamma has there: its work folder\'s folder or its tracking dialog while it chooses, a kept folder, a vault of another server on that server, the one vault it holds; refusals and the rest said', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  const paper = fs.mkdtempSync(path.join(dir, 'Paper-'));
+  const sub = path.join(paper, 'sub');
+  const deep = path.join(sub, 'deep');
+  const modules = path.join(paper, 'node_modules');
+  for (const d of [deep, modules]) fs.mkdirSync(d, { recursive: true });
+  const around = fs.mkdtempSync(path.join(dir, 'Around-'));
+  const nobody = fs.mkdtempSync(path.join(dir, 'Fresh-'));
+  const answers = {};
+  const works = makesWorkFolders(host);
+  whereOf(host, answers, (p, init) => (p === '/api/sync/folders' ? { folders: [{ id: 'f3', path: ['Paper', 'sub'] }] } : works(p, init)));
+  host.fake.vaults = [vaultLink({ push: 'everything', choosing: true, mine: true, path: paper, dest: paper })];
+  const view = windowOn(host.fake, [{ origin: 'http://nas.lan:9001', fake: nas.fake }]);
+  shell.pretendShown(host.srv, view, appWindow);
+  const open = async (p) => (await shell.openWithGamma([p]))[0];
+  try {
+    // a work folder still choosing: its tracking dialog, for its maker only
+    answers[paper] = inVault({ choosing: true });
+    const dialog = await open(paper);
+    assert.deepEqual([dialog.workspace, dialog.track], ['mine', 'v1']);
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'f1', track: 'v1' });
+    assert.equal(shell.notice(), '“Paper” waits for its files to be chosen.');
+    answers[paper] = inVault({ choosing: true, mine: false });
+    assert.equal((await open(paper)).error, 'Only the account that made the work folder “Paper” chooses what it tracks.');
+    assert.match(shell.errorBoxes.at(-1), new RegExp(`^Could not open ${path.basename(paper)} in Gamma\\. Only the account`));
+
+    // its directory or one inside it: the folder of that directory, a paused vault as it is
+    answers[paper] = inVault({ paused: true });
+    assert.deepEqual(await open(paper), { path: paper, workspace: 'mine', folder: 'f1' });
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'f1' });
+    assert.ok(!host.fake.calls.some((c) => c.method === 'PATCH'), 'nothing resumed');
+    answers[sub] = inVault({}, { rel: 'sub', folder: 'f3' });
+    await open(sub);
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'f3' });
+    answers[deep] = inVault({}, { rel: 'sub/deep', folder: 'f3', exact: false });
+    await open(deep);
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'f3' }, 'the nearest directory above it that has a folder');
+    assert.equal(shell.notice(), 'Nothing in sub/deep is tracked yet: “Paper” opened at “sub”. Choose files… picks what it tracks.');
+    answers[modules] = inVault({}, { rel: 'node_modules', never: 'it is inside node_modules' });
+    await open(modules);
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'f1' });
+    assert.equal(shell.notice(), 'Gamma never tracks node_modules: it is inside node_modules. “Paper” opened.');
+
+    // a kept folder of the whole library: the library
+    answers[paper] = inVault({ work: false, folder: 'root', name: 'Library' }, { folder: 'root' });
+    await open(paper);
+    assert.deepEqual(lastAt(view), { ws: 'mine' });
+
+    // a vault of another server: that server, by its ids; one the registry does not hold is said
+    answers[paper] = inVault({ remote_url: 'http://nas.lan:9001', workspace: 'team', folder: 'r1', work: false }, { folder: 'r2' });
+    await open(paper);
+    assert.equal(view.loaded.at(-1), 'http://nas.lan:9001/?ws=team&folder=r2');
+    assert.equal(shell.current().id, nas.srv.id);
+    shell.pretendShown(host.srv, view, appWindow);
+    answers[paper] = inVault({ remote_url: 'http://far.lan:9001', workspace: 'team', work: false });
+    assert.equal((await open(paper)).error, `${paper} is synced with far.lan:9001: add that server to Gamma to open it here.`);
+
+    // another account's, refused; a directory around vaults: the one it holds, or which they are
+    answers[paper] = { is: 'hidden' };
+    assert.equal((await open(paper)).error, `${paper} is kept by another account on this computer.`);
+    const held = { id: 'v1', workspace: 'mine', folder: 'f1', remote_url: '', work: true, choosing: false, mine: true, name: 'Paper', rel: 'Paper' };
+    answers[around] = { is: 'around', vaults: [held] };
+    await open(around);
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'f1' });
+    assert.equal(shell.notice(), `${around} holds the work folder “Paper”, which opened: a work folder is never inside or around another.`);
+    const loads = view.loaded.length;
+    answers[around] = { is: 'around', vaults: [held, { ...held, id: 'v9', work: false, name: 'Kept', rel: 'b/Kept' }] };
+    assert.deepEqual(await open(around), { path: around });
+    assert.equal(view.loaded.length, loads, 'nothing opened');
+    assert.equal(shell.notice(), `${around} holds 2 synced vaults (“Paper”, “Kept”): open one of their folders with Gamma, or pick it in the sync panel.`);
+
+    // a place no vault may have: the server's words, nothing made
+    const refusal = 'Pick a project directory: Gamma does not sync your whole home directory or a directory around it.';
+    answers[nobody] = { is: 'none', dir: true, name: 'x', refusal };
+    assert.equal((await open(nobody)).error, refusal);
+    assert.equal(made(host).length, 0);
+
+    // nothing there: a work folder of the workspace the window shows, its dialog open
+    delete answers[nobody];
+    const fresh1 = await open(nobody);
+    assert.deepEqual([fresh1.workspace, fresh1.folder, fresh1.track], ['mine', 'nf1', 'w1']);
+    assert.deepEqual(made(host)[0].body, { path: nobody, new_folder: true, pull: true, push: 'everything', choose: true, adopt: false });
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'nf1', track: 'w1' });
+    assert.equal(shell.notice(), `“${path.basename(nobody)}” is a work folder of Mine on Host now: choose the files it tracks.`);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+test('one new work folder at a time: a folder opened while the one made before still chooses its files is told to wait and nothing is made, an existing vault still opens, and once the first is saved the next is made', async () => {
+  fresh();
+  const host = server('Host');
+  const first = fs.mkdtempSync(path.join(dir, 'First-'));
+  const second = fs.mkdtempSync(path.join(dir, 'Second-'));
+  const kept = fs.mkdtempSync(path.join(dir, 'Kept-'));
+  let choosing = true;
+  whereOf(host, { [kept]: inVault({ work: false, name: 'Kept' }) }, makesWorkFolders(host, () => choosing));
+  const view = windowOn(host.fake);
+  shell.pretendShown(host.srv, view, appWindow);
+  try {
+    // several selected: one handed over after another on one queue
+    const [a, b, c] = await shell.openWithGamma([first, second, kept]);
+    assert.equal(a.track, 'w1');
+    assert.deepEqual(b, { path: second });
+    assert.deepEqual([c.workspace, c.folder], ['mine', 'f1'], 'an existing vault is not held back');
+    assert.equal(made(host).length, 1, 'one marker written, not two');
+    const asked = host.fake.calls.find((call) => call.path === '/api/folder-links/w1');
+    assert.equal(asked.headers['X-Gamma-Workspace'], 'mine');
+    const [again] = await shell.openWithGamma([second]);
+    assert.deepEqual(again, { path: second });
+    assert.equal(shell.notice(), `Choose the files of “${path.basename(first)}” first, then open ${second} with Gamma again.`);
+    assert.equal(made(host).length, 1);
+
+    // its files chosen (saved): the next one is made
+    choosing = false;
+    assert.equal((await shell.openWithGamma([second]))[0].track, 'w2');
+    assert.equal(made(host).length, 2);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+test('a file opened with Gamma opens its vault\'s page, ticks a file its work folder does not track in the tracking dialog, has the server open one it tracks, and reads one no vault reads where it is', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  const paper = fs.mkdtempSync(path.join(dir, 'Files-'));
+  const tex = put(path.join(paper, 'main.tex'));
+  const csv = put(path.join(paper, 'sub', 'data.csv'));
+  const cached = put(path.join(paper, '.cache', 'a.tex'));
+  const md = put(path.join(paper, 'theirs.md'));
+  const answers = {};
+  whereOf(host, answers, (p, init) => (p === '/api/folder-links/open' && init.method === 'POST'
+    ? { workspace: 'mine', page: 'opened', created: true, title: 'main', format: 'text' } : null));
+  host.fake.vaults = [vaultLink({ push: 'everything', mine: true, path: paper, dest: paper }),
+    vaultLink({ id: 'v2', remote_url: 'http://nas.lan:9001', workspace_id: 'team', push: 'everything', mine: true, path: paper, dest: paper })];
+  const view = windowOn(host.fake, [{ origin: 'http://nas.lan:9001', fake: nas.fake }]);
+  shell.pretendShown(host.srv, view, appWindow);
+  const open = async (p) => (await shell.openWithGamma([p]))[0];
+  const file = (link, more) => inVault(link, { dir: false, page: '', trashed: false, tracked: false, ...more });
+  const remote = { id: 'v2', remote_url: 'http://nas.lan:9001', workspace: 'team', folder: 'r1' };
+  try {
+    answers[cached] = file({}, { rel: '.cache/a.tex', never: 'it is inside a dot directory' });
+    assert.equal((await open(cached)).error, 'Gamma never tracks a.tex: it is inside a dot directory.');
+
+    // its page, whatever its format: no new page, nothing copied
+    answers[tex] = file({}, { rel: 'main.tex', page: 'p1', tracked: true });
+    assert.deepEqual(await open(tex), { path: tex, workspace: 'mine', page: 'p1' });
+    assert.deepEqual(lastAt(view), { ws: 'mine', page: 'p1' });
+    assert.equal(opens(host).length, 0, 'the server opens nothing');
+    answers[tex] = file({}, { rel: 'main.tex', trashed: true });
+    assert.equal((await open(tex)).error, 'main.tex is a file of “Paper”, whose page is in Recently deleted: restore it there.');
+
+    // a work folder's file it does not track: its dialog with the file ticked, its maker only
+    answers[csv] = file({}, { rel: 'sub/data.csv' });
+    assert.deepEqual(await open(csv), { path: csv, workspace: 'mine', folder: 'f1', track: 'v1', tick: 'sub/data.csv' });
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'f1', track: 'v1', tick: 'sub/data.csv' });
+    assert.equal(shell.notice(), 'data.csv is not tracked by “Paper” yet: tick it and save to open it.');
+    answers[csv] = file({ choosing: true }, { rel: 'sub/data.csv', tracked: true });
+    assert.equal((await open(csv)).tick, 'sub/data.csv', 'a work folder still choosing ticks it too');
+    answers[csv] = file({ mine: false }, { rel: 'sub/data.csv' });
+    assert.equal((await open(csv)).error, 'Only the account that made the work folder “Paper” chooses what it tracks: ask it to track data.csv.');
+
+    // one it tracks with no page yet: the server opens it in the vault's workspace, unless the vault is paused
+    answers[tex] = file({ paused: true }, { rel: 'main.tex', tracked: true });
+    assert.equal((await open(tex)).error, '“Paper” is paused: resume it in the sync panel, then open main.tex again.');
+    assert.equal(opens(host).length, 0);
+    answers[tex] = file({}, { rel: 'main.tex', tracked: true });
+    assert.deepEqual(await open(tex), { path: tex, workspace: 'mine', page: 'opened' });
+    const [opened] = opens(host);
+    assert.deepEqual([opened.body, opened.headers['X-Gamma-Workspace'], opened.headers['X-Gamma-Shell']], [{ path: tex }, 'mine', shell.shellSecret]);
+    assert.deepEqual(lastAt(view), { ws: 'mine', page: 'opened' });
+
+    // a kept folder's file that is not its own: read where it is, as a lone file
+    answers[tex] = file({ work: false }, { rel: 'main.tex' });
+    assert.equal((await open(tex)).page, 'opened');
+    assert.match(shell.notice(), /^main is read from this computer, under Opened files in Mine on Host\.$/);
+
+    // a vault of another server: its page there; the host's dialog for a file it does not track; never a page here
+    answers[tex] = file(remote, { rel: 'main.tex', page: 'rp', tracked: true });
+    assert.deepEqual(await open(tex), { path: tex, workspace: 'team', page: 'rp' });
+    assert.equal(view.loaded.at(-1), 'http://nas.lan:9001/?ws=team&page=rp');
+    shell.pretendShown(host.srv, view, appWindow);
+    answers[tex] = file(remote, { rel: 'main.tex' });
+    assert.equal((await open(tex)).tick, 'main.tex');
+    assert.deepEqual(lastAt(view), { ws: 'mine', track: 'v2', tick: 'main.tex' }, 'the host\'s own workspace');
+    answers[tex] = file(remote, { rel: 'main.tex', tracked: true });
+    assert.equal((await open(tex)).error, 'main.tex has not reached nas.lan:9001 yet: it opens there after the work folder\'s next round.');
+    const reads = opens(host).length;
+    answers[tex] = file({ ...remote, work: false }, { rel: 'main.tex' });
+    assert.equal((await open(tex)).page, 'opened', 'a remote kept folder\'s file it does not push: a lone file');
+    assert.equal(opens(host).length, reads + 1);
+    assert.equal(nas.fake.calls.length, 0, 'nothing of it went to the NAS');
+
+    // a vault of one file: its page
+    answers[tex] = { is: 'file_vault', workspace: 'mine', page: 'fv' };
+    assert.deepEqual(await open(tex), { path: tex, workspace: 'mine', page: 'fv' });
+    assert.deepEqual(lastAt(view), { ws: 'mine', page: 'fv' });
+
+    // another account's vault: read where it is, a Markdown file never asked about
+    answers[md] = { is: 'hidden' };
+    assert.equal((await open(md)).page, 'opened');
+    assert.deepEqual(questions('Edit '), []);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+test('a Markdown file outside every vault asks: Just view it reads it with how to edit it, Edit in Gamma makes a work folder of its repository with the file ticked, or of its directory', async () => {
+  fresh();
+  const host = server('Host');
+  const repo = fs.mkdtempSync(path.join(dir, 'Repo-'));
+  fs.mkdirSync(path.join(repo, '.git'));
+  const md = put(path.join(repo, 'docs', 'notes.md'), '# Notes\n');
+  const markdown = put(path.join(repo, 'docs', 'more.markdown'));
+  const tex = put(path.join(repo, 'docs', 'main.tex'));
+  const kept = put(path.join(repo, 'kept.md'));
+  const loose = fs.mkdtempSync(path.join(dir, 'Loose-'));
+  const lone = put(path.join(loose, 'lone.md'));
+  const holding = fs.mkdtempSync(path.join(dir, 'Holding-'));
+  fs.writeFileSync(path.join(holding, '.git'), 'gitdir: ../elsewhere\n'); // a worktree's
+  const inner = put(path.join(holding, 'docs', 'inner.md'));
+  const refused = fs.mkdtempSync(path.join(dir, 'Refused-'));
+  fs.mkdirSync(path.join(refused, '.git'));
+  const stray = put(path.join(refused, 'docs', 'stray.md'));
+  const around = { is: 'around', vaults: [{ id: 'v9', workspace: 'mine', folder: 'f9', remote_url: '', work: true, choosing: false, mine: true, name: 'Lab', rel: 'lab' }] };
+  const system = 'Pick a project directory: it is the operating system\'s.';
+  const answers = {
+    [kept]: inVault({}, { dir: false, rel: 'kept.md', page: 'pk', tracked: true }),
+    [holding]: around,
+    [refused]: around,
+    [path.join(refused, 'docs')]: { is: 'none', dir: true, name: 'docs', refusal: system },
+  };
+  let choosing = true;
+  const works = makesWorkFolders(host, () => choosing);
+  whereOf(host, answers, (p, init) => (p === '/api/folder-links/open' && init.method === 'POST'
+    ? { workspace: 'mine', page: `read-${path.basename(JSON.parse(init.body).path)}`, created: true, title: 'x', format: 'text' } : works(p, init)));
+  const view = windowOn(host.fake);
+  shell.pretendShown(host.srv, view, appWindow);
+  const open = async (p) => (await shell.openWithGamma([p]))[0];
+  const question = (name, at, repoToo) => `Edit ${name} in Gamma? ${name} is in no work folder. Edit in Gamma makes ${at} a work folder: Gamma writes a hidden .gamma folder there, asks which of its files to track, and saves your edits back to ${name}. Just view it opens the file read-only.${repoToo ? ` ${at} is the repository ${name} is in.` : ''}`;
+  const HINT = ' To edit it as a note, open it with Gamma again and pick Edit in Gamma.';
+  try {
+    // asked, the harness answering Just view it: read where it is, the bar saying how to edit it
+    assert.equal((await open(md)).page, 'read-notes.md');
+    assert.deepEqual(questions('Edit '), [question('notes.md', repo, true)]);
+    assert.ok(shell.notice().endsWith(HINT), shell.notice());
+    assert.equal((await open(markdown)).page, 'read-more.markdown');
+    assert.equal(questions('Edit ').length, 2, 'a .markdown is asked about too');
+    // never for a .tex, a vault's own file, or (above) another account's
+    await open(tex);
+    assert.ok(!shell.notice().endsWith(HINT));
+    assert.equal((await open(kept)).page, 'pk');
+    assert.equal(questions('Edit ').length, 2);
+    assert.equal(made(host).length, 0);
+
+    // Edit in Gamma: its repository a work folder, the file ticked by its path from there
+    shell.answers.push(0);
+    const edit = await open(md);
+    assert.deepEqual([edit.track, edit.tick], ['w1', 'docs/notes.md']);
+    assert.equal(made(host)[0].body.path, repo);
+    assert.deepEqual(lastAt(view), { ws: 'mine', folder: 'nf1', track: 'w1', tick: 'docs/notes.md' });
+    assert.equal(shell.notice(), `“${path.basename(repo)}” is a work folder of Mine on Host now: choose the files it tracks.`);
+    const reads = opens(host).length;
+
+    // while it chooses its files: no question, nothing opened
+    const asked = questions('Edit ').length;
+    assert.deepEqual(await open(lone), { path: lone });
+    assert.equal(shell.notice(), `Choose the files of “${path.basename(repo)}” first, then open lone.md again.`);
+    assert.equal(questions('Edit ').length, asked);
+    assert.equal(opens(host).length, reads);
+
+    // saved: no repository, its own directory
+    choosing = false;
+    shell.answers.push(0);
+    assert.deepEqual((await open(lone)).tick, 'lone.md');
+    assert.equal(made(host)[1].body.path, loose);
+    assert.equal(questions('Edit ').at(-1), question('lone.md', loose, false));
+
+    // the repository (a worktree's .git file) around a vault elsewhere in it: the file's own directory
+    choosing = false;
+    shell.answers.push(0);
+    assert.equal((await open(inner)).tick, 'inner.md');
+    assert.equal(made(host)[2].body.path, path.join(holding, 'docs'));
+
+    // neither can be one: no question, read where it is, the reason said
+    const before = questions('Edit ').length;
+    assert.equal((await open(stray)).page, 'read-stray.md');
+    assert.equal(questions('Edit ').length, before);
+    assert.ok(shell.notice().endsWith(` ${system}`), shell.notice());
+    assert.ok(!shell.notice().includes(HINT));
+    assert.equal(made(host).length, 3);
+
+    // a Markdown file loose on the Desktop: asked, then asked about the Desktop, whose Cancel makes and reads nothing
+    const desk = put(path.join(dir, 'desk.md'));
+    const reading = opens(host).length;
+    shell.answers.push(0);
+    assert.deepEqual(await open(desk), { path: desk });
+    assert.equal(questions('Make all of ').length, 1);
+    assert.equal(made(host).length, 3);
+    assert.equal(opens(host).length, reading, 'the person asked to edit it, not to read it');
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+test('the broad-place question: a directory that is the Desktop is asked about before it becomes a work folder, Cancel making nothing; a project inside Documents is not asked about', async () => {
+  fresh();
+  const host = server('Host');
+  host.fake.routes = makesWorkFolders(host);
+  shell.pretendShown(host.srv, windowOn(host.fake), appWindow);
+  // (app.getPath answers `dir` for every place under the test: it is the Desktop, Documents and Downloads at once)
+  process.env.GAMMA_SHELL_PICK_DIR = dir;
+  try {
+    assert.equal(await shell.addDirectoryVault(), null);
+    assert.deepEqual(shell.asked, [`Make all of Desktop a work folder? ${dir} is your Desktop folder. Gamma would write a hidden .gamma folder there, read the folder while it runs, and ask which of its files to track. For one project, open that project's folder instead.`]);
+    assert.equal(host.fake.calls.filter((c) => c.path === '/api/folder-links/preview').length, 0, 'not even looked at');
+    assert.equal(made(host).length, 0);
+    shell.answers.push(0);
+    assert.equal((await shell.addDirectoryVault()).id, 'w1', 'made once the person says so');
+    const project = fs.mkdtempSync(path.join(dir, 'paper-'));
+    shell.asked.length = 0;
+    assert.equal((await shell.addDirectoryVault(project)).id, 'w2');
+    assert.deepEqual(questions('Make all of '), []);
+    assert.equal(await shell.broadOk(project), true);
+    // Sync with this computer… and Locate… need not make a work folder: their words say a synced vault
+    shell.asked.length = 0;
+    assert.equal(await shell.broadOk(dir, false), false);
+    assert.deepEqual(shell.asked, [`Sync all of Desktop with Gamma? ${dir} is your Desktop folder. Gamma would write a hidden .gamma folder there and read the folder while it runs. For one project, pick that project's folder instead.`]);
+  } finally {
+    delete process.env.GAMMA_SHELL_PICK_DIR;
+    shell.pretendShown(null, null);
+  }
+});
+
+test('a file of another format read where it is: no lookup by its hash and no annotations for a .tex, the window on the NAS asking nothing there, and a shared workspace asked about first', async () => {
+  fresh();
+  const here = server('Here');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  here.fake.workspaces.push({ id: 'lab', name: 'Lab', role: 'owner', members: 1, access: 'private', mirror_of: 'Lab on NAS' },
+    { id: 'team', name: 'Team', role: 'editor', members: 3, access: 'private', mirror_of: '' });
+  const tex = put(path.join(dir, 'Sources', 'main.tex'));
+  const md = put(path.join(dir, 'Sources', 'notes.md'));
+  here.fake.routes = (p, init) => (p === '/api/folder-links/open' && init.method === 'POST'
+    ? { workspace: init.headers['X-Gamma-Workspace'], page: 'read-here', created: true, title: 'main', format: 'text' } : null);
+  const restore = stubStart();
+  try {
+    // in a clone: the host's own workspace, asked nothing by hash
+    shell.pretendShown(here.srv, windowOn(here.fake, [], 'lab'), appWindow);
+    assert.deepEqual(await shell.readFile(tex), { workspace: 'mine', page: 'read-here' });
+    assert.ok(!here.fake.calls.some((c) => c.path.startsWith('/api/blocks/')), 'neither a lookup by hash nor a page read');
+    assert.ok(!here.fake.calls.some((c) => c.path === '/api/import/pdf-annotations'), 'no annotations');
+    assert.equal(shell.notice(), 'main is read from this computer, under Opened files in Mine on Here.');
+
+    // the window on the NAS: read on this computer, nothing asked there
+    shell.pretendShown(nas.srv, windowOn(here.fake, [{ origin: 'http://nas.lan:9001', fake: nas.fake }], 'team'), appWindow);
+    assert.deepEqual(await shell.readFile(tex), { workspace: 'mine', page: 'read-here' });
+    assert.equal(nas.fake.calls.length, 0);
+    assert.equal(shell.current().id, here.srv.id);
+
+    // a shared workspace: asked first, the account's own offered (the harness's answer)
+    shell.pretendShown(here.srv, windowOn(here.fake, [], 'team'), appWindow);
+    assert.deepEqual(await shell.readFile(md, { hint: true }), { workspace: 'mine', page: 'read-here' });
+    assert.deepEqual(shell.asked, ['Open “notes.md” in Team? Team is shared: everyone in it can see the page and read the file from this computer while Gamma runs.']);
+    assert.equal(shell.notice(), 'main is read from this computer, under Opened files in Mine on Here. To edit it as a note, open it with Gamma again and pick Edit in Gamma.');
+  } finally {
+    restore();
+    shell.pretendShown(null, null);
+  }
+});
+
+test('the queue goes on after a failure: each path handed over is opened in turn, the one that fails said in an error box', async () => {
+  fresh();
+  const host = server('Host');
+  const theirs = fs.mkdtempSync(path.join(dir, 'Theirs-'));
+  const pdf = put(path.join(dir, 'Queue', 'paper.pdf'), '%PDF-1.7');
+  whereOf(host, { [theirs]: { is: 'hidden' }, [pdf]: { is: 'file_vault', workspace: 'mine', page: 'fv' } });
+  const view = windowOn(host.fake);
+  shell.pretendShown(host.srv, view, appWindow);
+  try {
+    const got = await shell.openWithGamma([theirs, path.join(dir, 'gone.pdf'), '--flag', pdf]);
+    assert.deepEqual(got, [{ path: theirs, error: `${theirs} is kept by another account on this computer.` }, { path: pdf, workspace: 'mine', page: 'fv' }]);
+    assert.deepEqual(shell.errorBoxes, [`Could not open ${path.basename(theirs)} in Gamma. ${theirs} is kept by another account on this computer.`]);
+    assert.deepEqual(lastAt(view), { ws: 'mine', page: 'fv' });
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+test('a start that names a file or a folder never goes hidden into the tray, a login start with the background on does', () => {
+  fresh();
+  registry.setSettings({ background: true });
+  process.argv.push('--hidden');
+  try {
+    assert.equal(shell.bootHidden([]), true);
+    assert.equal(shell.bootHidden([dir]), false, 'a folder handed over shows the window');
+  } finally {
+    process.argv.pop();
+    registry.setSettings({ background: false });
   }
 });

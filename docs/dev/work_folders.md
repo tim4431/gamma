@@ -810,7 +810,8 @@ the save takes that vault in.
 review's tree, opened from `?track=` (the shell's hand-over, read once and
 taken off the address), from *Choose files…* on W's folder menu, on a
 file's vault card and in the sync panel (the desktop, a link of this
-server), and from an empty work folder's line. It reads the directory
+server), from an empty work folder's line, and with a file ticked when that
+file was opened with Gamma (below). It reads the directory
 whole, as far as the tree's budget goes, and a folder that came back
 unwalked when it is opened. A work folder still choosing starts from the
 preset, any other from its file. The choice is a base and the changes
@@ -836,6 +837,36 @@ read by a tool or shown under a chip, though its code view shows it
 ([documents.md](documents.md) "Text extraction"). Save writes the
 selection and the folder's list is read again once the round is over;
 Cancel on a new work folder asks first, then removes it.
+
+**A file opened with Gamma** that a work folder of this computer does not
+track, or any file of one still choosing, is the dialog's third way in,
+after making a work folder and *Choose files…*. The desktop shell asks its
+server what the path is (`POST /api/folder-links/where`) and, for the
+folder's maker, opens the folder with
+`?ws=&folder=&track=<link id>&tick=<rel>`, `rel` the file's path in the
+directory with `/` ([desktop architecture](../../desktop/docs/architecture.md)).
+The web app reads `tick` with `track` and takes both off the address at once
+(`vault/useVault.js`, `tracking.tick`), so the path is kept neither in the
+history nor in a copied link, and the server stores nothing for it. The
+dialog reads the folders down to the file one at a time, as it reads a
+folder that came back unwalked when it is opened, opens them, scrolls the
+file's row into view and marks it, and ticks it as one more change on the
+base (`trackSelection.tickChange`): over the preset of a work folder still
+choosing as over the file of any other, and no change when the base
+already tracks it. A line over the tree says so: "Opened from your
+computer: main.tex is ticked. Save to track it and open it." A row the scan
+never tracks is not ticked, and the line gives the tree's own reason; a
+path the listing no longer has says the file is not in this work folder any
+more. The tick is a change like any other and can be unticked before the
+Save, and the dialog's state at the Save decides where the window goes
+(App's `onSaved`, a work folder of this server): unticked, the status says
+the file was left unticked, so it is no page of this work folder; ticked,
+once the round is over the app asks
+`GET /api/folder-links/{id}/page?path=<rel>` and opens the page it names,
+or, with `""` (no round read the file yet, or its page is in Recently
+deleted), says the file is tracked and its page opens once the work folder
+has read it. A work folder of another server hands the window back to the shell on
+Save, as it always does.
 
 ## The folder's list view
 
@@ -1035,9 +1066,16 @@ classes" the class `file`.)
   writes them within a pass of a comment, a reply, a resolve, a relocation
   or a Send ([feedback.md](feedback.md) "The files"); a paused or choosing
   vault writes none.
-- **Opening a file with the app** (`linked_files.open_pdf`) inside a work
-  folder that does not track it, or one still choosing, is refused: it
-  opens from the work folder once ticked in Choose files….
+- **Opening a file with the app** (`linked_files.open_file`, `POST
+  /api/folder-links/open`) inside a work folder opens the page of a file it
+  tracks, after a round for one it has not read yet. A file it does not
+  track, and any file of one still choosing, is refused: the desktop shell
+  opens the tracking dialog with the file ticked instead ("The tracking
+  dialog"). So is a file the scan never tracks (`Gamma never tracks <path>:
+  <why>.`), a file with no page yet in a paused work folder (no round runs
+  it from here: resume it in the sync panel, then open the file again), and
+  a file whose page is in Recently deleted (restore it there; the round put
+  it there).
 
 ## The takeover
 

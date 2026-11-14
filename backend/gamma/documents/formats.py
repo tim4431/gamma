@@ -155,8 +155,9 @@ NAMES: dict[str, tuple[str, str]] = {
 
 # What a text file's language is called: the chat's context here, the
 # library's Format column on the client (libraryUtils.js LANGUAGE_LABELS;
-# tests/shared/formats.json "language_names"). Every language of the tables
-# but plaintext, which is just text.
+# tests/shared/formats.json "language_names"). Every language a text
+# document can have but plaintext, which is just text: the tables', and
+# markdown (language_of: a Markdown file read as text outside a vault).
 LANGUAGE_NAMES = {
     "latex": "LaTeX", "bibtex": "BibTeX", "csv": "CSV", "tsv": "TSV", "json": "JSON", "yaml": "YAML", "toml": "TOML",
     "xml": "XML", "ini": "INI", "python": "Python", "mathematica": "Mathematica", "matlab": "MATLAB", "html": "HTML",
@@ -165,6 +166,7 @@ LANGUAGE_NAMES = {
     "ruby": "Ruby", "php": "PHP", "shell": "Shell", "r": "R", "julia": "Julia", "lua": "Lua", "sql": "SQL",
     "perl": "Perl", "haskell": "Haskell", "scala": "Scala", "diff": "Diff", "rst": "reStructuredText",
     "typst": "Typst", "makefile": "Makefile", "dockerfile": "Dockerfile", "cmake": "CMake",
+    "markdown": "Markdown",
 }
 
 # The serving views of the table.
@@ -268,11 +270,14 @@ def stored_format(name: str, ext: str, head: bytes | None) -> tuple[str, str | N
 
 def language_of(name: str, ext: str) -> str | None:
     """The language a text document's name or extension says (``NAMES``,
-    then a text row of ``EXTENSIONS``), else None."""
+    then a text row of ``EXTENSIONS``; a Markdown row's is ``markdown``:
+    an opened ``.md`` read in place as text), else None."""
     known = NAMES.get(_leaf(name))
     if known:
         return known[1]
     row = EXTENSIONS.get(ext)
+    if row and row.format == "markdown":
+        return "markdown"
     return row.language if row and row.format == "text" else None
 
 

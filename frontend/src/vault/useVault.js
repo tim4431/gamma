@@ -49,14 +49,17 @@ let elsewhere = false;
 //             `links`: null in the desktop app until they are known, empty
 //             on a server that keeps no vault (404) and outside the desktop
 //             app (that server's own answer refuses a folder it keeps)
-//   tracking  {link, fresh} while the tracking dialog is open for the vault
-//             `link` (as GET /api/folder-links/{id} answers it), `fresh`
-//             when the vault is still choosing its
-//             first files, else null: `track(linkId)` opens it, as the boot
-//             parameter `track` (`options.track`, the shell's hand-over)
-//             does once the workspace is known, which also leaves the URL;
-//             a link that cannot be read says so (`options.setStatus`)
-export function useVault(pageId, enabled, { track = "", setStatus = null } = {}) {
+//   tracking  {link, fresh, tick} while the tracking dialog is open for the
+//             vault `link` (as GET /api/folder-links/{id} answers it), `fresh`
+//             when the vault is still choosing its first files, `tick` the
+//             path in its directory of a file to tick ("" for none), else
+//             null: `track(linkId, tick)` opens it, as the boot parameters
+//             `track` and `tick` (`options.track` and `options.tick`, the
+//             shell's hand-over, `tick` when a file of the directory was
+//             opened with Gamma) do once the workspace is known, which also
+//             leaves the URL; a link that cannot be read says so
+//             (`options.setStatus`)
+export function useVault(pageId, enabled, { track = "", tick = "", setStatus = null } = {}) {
   const onStatus = useRef(setStatus);
   onStatus.current = setStatus;
   const [held, setHeld] = useState({ pageId: "", state: null });
@@ -96,10 +99,10 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
     }
   }, []);
   useEffect(() => { refreshLinks(); }, [enabled, refreshLinks]);
-  const trackLink = useCallback(async (linkId) => {
+  const trackLink = useCallback(async (linkId, file = "") => {
     try {
       const link = await apiJson(`${API}/folder-links/${encodeURIComponent(linkId)}`);
-      setTracking({ link, fresh: !!link.choosing });
+      setTracking({ link, fresh: !!link.choosing, tick: file || "" });
     } catch (err) {
       onStatus.current?.(t("Could not open Choose files…: {message}", { message: err.message }));
     }
@@ -123,9 +126,10 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
     booted.current = true;
     const url = new URL(window.location.href);
     url.searchParams.delete("track");
+    url.searchParams.delete("tick");
     window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
-    trackLink(track);
-  }, [track, enabled, trackLink]);
+    trackLink(track, tick);
+  }, [track, tick, enabled, trackLink]);
   const state = held.pageId === pageId ? held.state : null;
   const banner = vaultBanner(state);
   const key = bannerKey(pageId, banner);

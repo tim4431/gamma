@@ -74,15 +74,20 @@ const STORE_UPDATES_URL = 'ms-windows-store://downloadsandupdates';
 // and sidecars are never touched.
 if (process.env.GAMMA_SHELL_USER_DATA) app.setPath('userData', process.env.GAMMA_SHELL_USER_DATA);
 
+// The files and folders this start names (lib/openFiles.js: the user's
+// arguments that exist, as absolute paths), read before the lock so that a
+// second start hands them over already parsed.
+const handedOver = openFiles.openedPaths(openFiles.launchArgs(process.argv, process.defaultApp), process.cwd()).map((i) => i.path);
+
 // One app per profile: a second one would run a second server on the same
-// data directories. A second start (a PDF opened from the file manager, the
-// Start menu while the app sits in the tray) hands its command line to this
-// one (`second-instance`, below) and quits. The smoke test runs beside it.
-// The Mac App Store build takes no lock (the submitted build found
-// Electron's unusable in the sandbox): Launch Services already runs one
-// copy of a store app, handing a PDF opened from the Finder over as
-// `open-file`.
-const primary = SMOKE || process.mas || app.requestSingleInstanceLock();
+// data directories. A second start (a file or a folder opened from the file
+// manager, the Start menu while the app sits in the tray) hands what it
+// names to this one (`additionalData`, read by `second-instance` below) and
+// quits. The smoke test runs beside it. The Mac App Store build takes no
+// lock (the submitted build found Electron's unusable in the sandbox):
+// Launch Services already runs one copy of a store app, handing a PDF
+// opened from the Finder over as `open-file`.
+const primary = SMOKE || process.mas || app.requestSingleInstanceLock({ paths: handedOver });
 if (!primary) app.quit();
 
 // The Mac App Store build's folders outside its sandbox (lib/folderAccess.js),
@@ -774,8 +779,11 @@ async function localServer(serverId) {
 // public API. Only the shell names a path: the routes that take one want its
 // word (shellWord, X-Gamma-Shell). The ways in: a folder's "Sync with this
 // computer…" in Gamma's page and the panel's chooser (addFolderVault), "Add a
-// synced vault…" in the launcher and the panel (addDirectoryVault), a page's
-// "Push from a file on this computer…" (addFileVault). A work folder (a vault
+// synced vault…" in the launcher and the panel (addDirectoryVault), a folder
+// opened with Gamma from the file manager (newWorkFolder, below "Files and
+// folders from the system"), a page's "Push from a file on this computer…"
+// (addFileVault). A directory that is the Desktop, Downloads… is asked about
+// first (broadOk). A work folder (a vault
 // of a local server's folder that pushes everything, docs/dev/work_folders.md:
 // a directory added, or an empty folder synced with one) asks nothing here:
 // the shell makes it paused and choosing, then opens the server's window on
@@ -861,16 +869,26 @@ async function choosePath(opts) {
   return chosen;
 }
 
-function pickDirectory(title, message) {
+// `defaultPath`: where the picker opens (the Mac App Store build's *Open
+// with Gamma* opens it at the folder handed over, to be chosen there).
+function pickDirectory(title, message, defaultPath = app.getPath('documents')) {
   if (process.env.GAMMA_SHELL_PICK_DIR) return process.env.GAMMA_SHELL_PICK_DIR;
-  return choosePath({ title, message, buttonLabel: 'Choose', properties: ['openDirectory', 'createDirectory'], defaultPath: app.getPath('documents') });
+  return choosePath({ title, message, buttonLabel: 'Choose', properties: ['openDirectory', 'createDirectory'], defaultPath });
+}
+
+// A file of extension `ext` (`.pdf`, `.tex`…; '' for any file), the
+// picker showing that extension only.
+function pickFile(title, message, ext, buttonLabel = 'Choose') {
+  if (process.env.GAMMA_SHELL_PICK_FILE) return process.env.GAMMA_SHELL_PICK_FILE;
+  const bare = String(ext || '').replace(/^\./, '');
+  return choosePath({
+    title, message, buttonLabel, properties: ['openFile'], filters: bare ? [{ name: bare.toUpperCase(), extensions: [bare] }] : [],
+    defaultPath: app.getPath('documents'),
+  });
 }
 
 function pickPdf(title, message, buttonLabel = 'Choose') {
-  if (process.env.GAMMA_SHELL_PICK_FILE) return process.env.GAMMA_SHELL_PICK_FILE;
-  return choosePath({
-    title, message, buttonLabel, properties: ['openFile'], filters: [{ name: 'PDF', extensions: ['pdf'] }], defaultPath: app.getPath('documents'),
-  });
+  return pickFile(title, message, '.pdf', buttonLabel);
 }
 
 // The native question, or its answer under the test harness: the one a test
@@ -1027,8 +1045,10 @@ async function remoteWorkRefusal(api, origin, wsId, remoteName) {
 // marker another vault holds among it) is said in the bar and nothing is
 // made; else the vault is made paused and choosing, and the server's window,
 // opened when another shows, goes to its folder with its tracking dialog,
-// which saves what it tracks and runs its first round. → the link, or null.
-async function makeWorkFolder({ srv, origin, api, ws, headers, name, picked, preview, body }) {
+// which saves what it tracks and runs its first round; `tick`, a file's path
+// in the directory, is ticked there (a Markdown file opened with Gamma,
+// *Edit in Gamma*). → the link, or null.
+async function makeWorkFolder({ srv, origin, api, ws, headers, name, picked, preview, body, tick = '' }) {
   if (preview.refusal) {
     showNotice(preview.refusal);
     return null;
@@ -1050,7 +1070,7 @@ async function makeWorkFolder({ srv, origin, api, ws, headers, name, picked, pre
     await openServer(srv.id);
     buildMenu();
   }
-  await openGammaWorkspace(ws.id, { folder: link.folder_id, track: link.id });
+  await openGammaWorkspace(ws.id, { folder: link.folder_id, track: link.id, tick });
   refreshKeeping().catch(() => {});
   offerBackground(`The work folder “${name}”`).catch(() => {});
   return link;
@@ -1202,7 +1222,7 @@ async function addFolderVault(wsId, folderId) {
   }
   const picked = await pickDirectory(`Sync “${name}” with this computer`,
     `Choose the directory “${name}” is synced with: an empty one, or one whose notes and PDFs it takes.`);
-  if (!picked) return null;
+  if (!picked || !(await broadOk(picked, false))) return null;
   stillOn(shown);
   // The server that keeps the vault: the open one, or the host for a remote's folder.
   let at = remote ? await ensureHost(api) : { local: registry.get(shown.id), origin };
@@ -1316,18 +1336,75 @@ async function vaultPlace(wsId) {
 // picks becomes a work folder, a new folder named after it whose files the
 // person chooses in its tracking dialog (makeWorkFolder). No server need be
 // open (vaultPlace). `dir`, the directory already chosen (oneByOne's "Sync
-// the folder…"), asks for none; `wsId`, the workspace it was asked in there.
+// the folder…", the Mac App Store build's *Open with Gamma*), asks for none;
+// `wsId`, the workspace it was asked in there.
 async function addDirectoryVault(dir, wsId) {
   const picked = dir || await pickDirectory('Add a synced vault',
     'Choose a directory: it becomes a folder of Gamma named after it, and you choose the files it tracks.');
   if (!picked) return null;
+  const made = await workFolderOf(picked, wsId);
+  return made && made.link;
+}
+
+// A work folder made of the directory `picked` where vaultPlace puts it, a
+// new folder named after it, after the broad-place question when it is one
+// (broadOk), its tracking dialog open with `tick` ticked when one is given.
+// → `{ link, srv, ws, name }`, or null when asked off or refused by the
+// preview (said in the bar).
+async function workFolderOf(picked, wsId, tick = '') {
+  if (!(await broadOk(picked))) return null;
   let place = await vaultPlace(wsId);
   if (await reachFolder(place.srv, picked)) place = await vaultPlace(wsId);
   const { srv, origin, api, ws } = place;
   const headers = { 'X-Gamma-Workspace': ws.id };
   const name = path.basename(picked) || picked;
   const preview = await previewVault(api, origin, headers, picked, '');
-  return makeWorkFolder({ srv, origin, api, ws, headers, name, picked, preview, body: { new_folder: true } });
+  const link = await makeWorkFolder({ srv, origin, api, ws, headers, name, picked, preview, body: { new_folder: true }, tick });
+  return link && { link, srv, ws, name };
+}
+
+// The places a work folder does not take without a question (broadOk):
+// the system's own folders for documents and media, and a cloud drive's
+// root. Each the place itself only: `Documents/paper` is a project.
+function knownPlaces() {
+  const places = [];
+  for (const [key, label] of [['desktop', 'Desktop'], ['documents', 'Documents'], ['downloads', 'Downloads'], ['music', 'Music'],
+    ['pictures', 'Pictures'], ['videos', 'Videos']]) {
+    try {
+      places.push({ label, path: app.getPath(key) });
+    } catch {} // a folder this system does not have
+  }
+  for (const key of ['OneDrive', 'OneDriveConsumer', 'OneDriveCommercial']) {
+    if (process.env[key]) places.push({ label: 'OneDrive', path: process.env[key] });
+  }
+  if (process.platform === 'darwin') {
+    places.push({ label: 'iCloud Drive', path: path.join(app.getPath('home'), 'Library', 'Mobile Documents', 'com~apple~CloudDocs') });
+  }
+  return places;
+}
+
+// Whether a vault may take the directory `dir`: asked first when it is one
+// of knownPlaces (the Desktop, Downloads…), which holds a person's loose
+// files rather than a project; true for any other. The server refuses home
+// and the system's places itself (folder_links.place_refusal). Asked by
+// every way the shell gives a vault a directory: a work folder made
+// (workFolderOf), a folder's *Sync with this computer…* and *Locate…*;
+// `work` false for those two, which make or move a synced vault that need
+// not be a work folder, so the question does not say one. Under the test
+// harness the question takes Cancel.
+async function broadOk(dir, work = true) {
+  const label = openFiles.broadPlace(dir, knownPlaces());
+  if (!label) return true;
+  const r = await ask(work ? {
+    type: 'question', buttons: ['Make it a work folder', 'Cancel'], defaultId: 1, cancelId: 1,
+    message: `Make all of ${label} a work folder?`,
+    detail: `${dir} is your ${label} folder. Gamma would write a hidden .gamma folder there, read the folder while it runs, and ask which of its files to track. For one project, open that project's folder instead.`,
+  } : {
+    type: 'question', buttons: ['Use it', 'Cancel'], defaultId: 1, cancelId: 1,
+    message: `Sync all of ${label} with Gamma?`,
+    detail: `${dir} is your ${label} folder. Gamma would write a hidden .gamma folder there and read the folder while it runs. For one project, pick that project's folder instead.`,
+  }, 1);
+  return r === 0;
 }
 
 // Page `pageId` of the open server's workspace `wsId` pushed from a PDF the
@@ -1658,17 +1735,19 @@ async function checkAgents(serverId) {
 // open (makeWorkFolder's navigation); for a work folder of another server,
 // the host's window over its own workspace, as makeRemoteWorkFolder hands
 // over, the dialog's answer taking the window back there (trackedFromPage).
-async function chooseFiles(serverId, linkId) {
+// `tick`, a file's path in the work folder, is ticked in the dialog (a file
+// of it opened with Gamma that it does not track yet).
+async function chooseFiles(serverId, linkId, tick = '') {
   const { origin, api, link, item } = await vaultOn(serverId, linkId);
   let ws = link.workspace_id;
-  let at = { folder: link.folder_id, track: link.id };
+  let at = { folder: link.folder_id, track: link.id, tick };
   if (link.remote_url) {
     const remoteOrigin = registry.originOf(link.remote_url);
     const nas = registry.load().servers.find((s) => s.type === 'remote' && registry.originOf(s.url) === remoteOrigin);
     tracking.set(link.id, { host: serverId, nas: nas ? nas.id : null, remoteOrigin, remoteName: item.remote, wsId: link.workspace_id,
       folderId: link.folder_id, tokenId: link.token_id || '', name: item.name });
     ws = await hostWorkspace(api, origin);
-    at = { track: link.id };
+    at = { track: link.id, tick };
   }
   if (!current || current.id !== serverId) {
     await openServer(serverId);
@@ -1753,7 +1832,7 @@ async function locateVault(serverId, linkId) {
   const picked = item.scope === 'file'
     ? await pickPdf(`Where is ${path.basename(item.dest)} now?`, `Choose the PDF “${item.name}” is pushed from.`)
     : await pickDirectory(`Where is “${item.name}” now?`, `Choose the directory of the synced vault “${item.name}”, wherever it is now.`);
-  if (!picked) return null;
+  if (!picked || (item.scope !== 'file' && !(await broadOk(picked, false)))) return null;
   let at = { origin, api };
   if (await reachFolder(srv, picked)) at = await localServer(serverId);
   const after = await at.api(at.origin, `/api/folder-links/${link.id}/relink`, {
@@ -1999,15 +2078,18 @@ async function revealOnDisk(wsId, pageId) {
   return found;
 }
 
-// A page's missing file located: a PDF read where it is takes the PDF the
-// user picks (POST /api/folder-links/opened/<id>/locate), and the page of a
-// vault has its vault located (locateVault).
+// A page's missing file located: a file read where it is takes the file the
+// user picks, of the same extension (POST /api/folder-links/opened/<id>/locate,
+// which refuses one of another format), and the page of a vault has its
+// vault located (locateVault).
 async function relocateFile(wsId, pageId) {
   const shown = current; // the server it is asked of, whatever the window opens while the picker is up
   const found = await pageOnDisk(wsId, pageId);
   if (!found) throw new Error('This page reads no file on this computer.');
   if (found.vault) return locateVault(found.server, found.vault.id);
-  const picked = await pickPdf(`Where is ${path.basename(found.path) || 'the file'} now?`, 'Choose the PDF this page reads.');
+  const ext = path.extname(found.path || '').toLowerCase();
+  const picked = await pickFile(`Where is ${path.basename(found.path) || 'the file'} now?`,
+    ext === '.pdf' ? 'Choose the PDF this page reads.' : `Choose the ${ext ? `${ext} ` : ''}file this page reads.`, ext);
   if (!picked) return null;
   stillOn(shown);
   const local = registry.get(shown.id);
@@ -2277,55 +2359,459 @@ async function signInWithCloud(startUrl) {
   refreshGamma();
 }
 
-// ------------------------------------------------- PDFs from the system -----
-// A PDF the operating system hands the app ("Open with → Gamma", Gamma as
-// the default PDF app, a file dropped on the app's icon) or Server → Open a
-// PDF… picks is read where it is (readPdf, docs/research/vaults.md "Reading
-// a PDF where it is"): a page of a local server reads the file, and nothing
-// is stored or written beside it. The account's preference to add opened
-// PDFs to the library, and the Mac App Store build, take the older way
-// (addPdf): the file is added to the library the window shows and opened
-// there, as an upload in Gamma adds it: stored, the page carrying it found
-// or made (`POST /api/blocks/by-doc/<hash>`, so a file already in the
-// library opens its page), the annotations another reader saved in it
-// imported, and the window moves to the page. With no server open the last
-// one opens (the first local server, made when there is none). A workspace
+// ---------------------------------------- files and folders from the system -----
+// What the operating system hands the app ("Open with → Gamma", Gamma as the
+// default app of a type, a folder's "Open with Gamma", a file or a folder
+// dropped on the app's icon) and what Server → Open a PDF… picks
+// (docs/architecture.md "Opening files and folders"). One queue takes every
+// hand-over, a path at a time in the order they came (openWithGamma). Each
+// local server is asked what the path is (whereIs: POST
+// /api/folder-links/where, never a remote server), and the window goes by
+// the ids it answers. A folder opens its vault's folder, or becomes a work
+// folder of this computer's server, its tracking dialog open
+// (openFolderWithGamma); a file opens its vault's page, or that tracking
+// dialog with the file ticked when its work folder does not track it yet,
+// or is read where it is under Opened files (readFile), a Markdown file
+// outside every vault asking first whether to make its project a work folder
+// (editOrView). The account's preference to add opened PDFs to the library,
+// and the Mac App Store build, take the older way for a PDF (addPdf): the
+// file is added to the library the window shows and opened there, as an
+// upload in Gamma adds it: stored, the page carrying it found or made (`POST
+// /api/blocks/by-doc/<hash>`, so a file already in the library opens its
+// page), the annotations another reader saved in it imported. A workspace
 // others see asks first and offers the account's own; one the account can
-// only read hands the file to its own (lib/openFiles.js;
-// docs/architecture.md "Opening PDF files"). One file at a time, in the
-// order they came.
+// only read hands the file to its own (lib/openFiles.js). The shell's words
+// are English: it has no catalog.
 
 // A proxy in front of a server caps a request's body, so past this a file
 // goes in parts, as Gamma's own upload sends it (frontend/src/shared/lib/uploadParts.js).
 const PART_BYTES = 32 * 1024 * 1024;
-let booted = false; // until then files wait in earlyPdfs (macOS hands them over before `ready`)
-const earlyPdfs = [];
-let pdfQueue = Promise.resolve();
+let booted = false; // until then what is handed over waits in `early` (macOS hands it over before `ready`)
+const early = [];
+let openQueue = Promise.resolve();
+const MARKDOWN = /\.(md|markdown)$/i;
 
-// One entry per file: `{ file, workspace, page }` once it is open, `{ file,
-// error }` when it could not be (said in a dialog), `{ file }` when the
-// question was cancelled.
-function openPdfFiles(files) {
+// Paths handed over (`cwd`, the start's working directory, for one named
+// relative to it), handled one by one after the hand-overs before them: a
+// directory by openFolderWithGamma, a file by openFileWithGamma, each with
+// the window brought forward first. A failure is said in an error box and
+// the next path goes on. → an entry per path: `{ path, workspace, page }` or
+// `{ path, workspace, folder }` once it is open (with `track` and `tick` for
+// a tracking dialog), `{ path, error }` when it could not be, `{ path }`
+// when a question was cancelled or a notice says why nothing opened.
+function openWithGamma(paths, cwd) {
   if (!booted) {
-    earlyPdfs.push(...files);
+    early.push(...openFiles.openedPaths(paths, cwd).map((i) => i.path));
     return Promise.resolve([]);
   }
-  const run = pdfQueue.then(async () => {
+  const run = openQueue.then(async () => {
     const done = [];
-    for (const file of files) {
+    for (const item of openFiles.openedPaths(paths, cwd)) {
       try {
-        done.push({ file, ...(await readPdf(file)) });
+        await surfaceWindow();
+        if (opening) await opening.catch(() => {});
+        done.push({ path: item.path, ...(await (item.dir ? openFolderWithGamma(item.path) : openFileWithGamma(item.path))) });
       } catch (e) {
         const detail = String((e && e.message) || e);
-        done.push({ file, error: detail });
-        console.error(`[shell] could not open ${file}: ${detail}`);
-        errorBox({ type: 'error', title: 'Gamma', message: `Could not open ${path.basename(file)} in Gamma.`, detail, buttons: ['OK'] });
+        done.push({ path: item.path, error: detail });
+        console.error(`[shell] could not open ${item.path}: ${detail}`);
+        errorBox({ type: 'error', title: 'Gamma', message: `Could not open ${path.basename(item.path) || item.path} in Gamma.`, detail, buttons: ['OK'] });
       }
     }
     return done;
   });
-  pdfQueue = run.catch(() => {});
+  openQueue = run.catch(() => {});
   return run;
+}
+
+// What path `p` is to this computer's servers (POST /api/folder-links/where,
+// gamma/folder_links.py where_is): the first answer that is not
+// `none`, as `{ ...answer, srv, at, as, signedOut }`, `srv` the server that
+// answered, `at` the `{ origin, api }` it was asked through, `as` 'window'
+// or 'shell' (askWhere). Each local server of the registry that runs is
+// asked, the window's first, then each that does not, started first: a path
+// is taken as nobody's only once every one was asked (a server that did not
+// start is named in `unchecked`, for the notice that follows). No remote
+// server is ever asked, and only ids come back to the window. Nobody's: the
+// host's `none` answer, its `refusal` with it (another's when the host gave
+// none, else one made here with no refusal).
+const WHERE_MS = 10_000;
+async function whereIs(p) {
+  const locals = () => registry.load().servers.filter((s) => s.type === 'local');
+  if (!locals().some((s) => sidecar.status(s.id))) await startHost();
+  const all = locals();
+  const host = hostOf();
+  const answered = [];
+  const up = all.filter((s) => sidecar.status(s.id));
+  for (const srv of [...up.filter((s) => current && s.id === current.id), ...up.filter((s) => !current || s.id !== current.id)]) {
+    const a = await askWhere(srv, p);
+    if (a && a.is !== 'none') return a;
+    if (a) answered.push(a);
+  }
+  const unchecked = [];
+  for (const srv of all.filter((s) => !up.includes(s))) {
+    busy = `Starting ${srv.name}…`;
+    pushState();
+    try {
+      allowedOrigins.add(new URL((await startLocal(srv)).url).origin);
+    } catch (e) {
+      console.error(`[shell] ${srv.name} did not start to say what ${p} is: ${(e && e.message) || e}`);
+      unchecked.push(srv.name);
+      continue;
+    } finally {
+      busy = null;
+      pushState();
+    }
+    const a = await askWhere(srv, p);
+    if (a && a.is !== 'none') return a;
+    if (a) answered.push(a);
+  }
+  const none = answered.find((a) => a.srv.id === host.id) || answered[0];
+  if (none) return { ...none, unchecked };
+  let dir = false;
+  try {
+    dir = fs.statSync(p).isDirectory();
+  } catch {}
+  return { is: 'none', dir, name: path.basename(p) || p, refusal: '', srv: host, at: null, as: 'shell', signedOut: false, unchecked };
+}
+
+// One local server's answer about `p`, or null when it gives none (an older
+// server without the route, 404 or 405; a refusal; no answer within
+// WHERE_MS; a server that stopped meanwhile): logged, never thrown. It is
+// asked as the account that would navigate: through the window's session
+// while the window shows that server signed in, else as the shell's account
+// there (localServer), the one openServer signs the window in with. The
+// window's own server asked that way, the window being signed out there, is
+// marked `signedOut`, and landOn stops an answer that would take the window
+// there. A 401 through the window (signed out since its session was read) is
+// asked once more as the shell.
+async function askWhere(srv, p) {
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer in ${WHERE_MS / 1000} s`)), WHERE_MS);
+  });
+  try {
+    return await Promise.race([whereOn(srv, p), late]);
+  } catch (e) {
+    console.error(`[shell] ${srv.name} did not say what ${p} is: ${(e && e.message) || e}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function whereOn(srv, p) {
+  const origin = localOrigin(srv);
+  const where = (api) => api(origin, '/api/folder-links/where', {
+    method: 'POST', headers: { ...JSON_TYPE, ...shellWord(origin) }, body: JSON.stringify({ path: p }),
+  });
+  let signedOut = false;
+  if (current && current.id === srv.id && content) {
+    const api = serverApi(content.webContents.session);
+    const info = await api(origin, '/api/session').catch(() => null);
+    if (info && info.user) {
+      try {
+        return { ...(await where(api)), srv, at: { origin, api }, as: 'window', signedOut: false };
+      } catch (e) {
+        if (e.status !== 401) throw e;
+      }
+    }
+    signedOut = true;
+  }
+  const own = await localServer(srv.id);
+  return { ...(await where(own.api)), srv, at: { origin: own.origin, api: own.api }, as: 'shell', signedOut };
+}
+
+// An answer that would take the window to the server it came from while the
+// window is signed out there (whereIs asked that server as the shell only
+// to learn what the path is): stopped, with what to do.
+function landOn(r, name) {
+  if (r.signedOut) throw new Error(`Sign in to ${r.srv.name}, then open ${name} again.`);
+}
+
+// The window on server `srvId` (opened when another shows, signed into when
+// it is a local one), then at `at` of its workspace `ws` (openGammaWorkspace).
+async function showAt(srvId, ws, at) {
+  if (!current || current.id !== srvId) {
+    await openServer(srvId);
+    buildMenu();
+  }
+  await openGammaWorkspace(ws, at);
+}
+
+// The registry's remote server at the origin of `url`, or null.
+function remoteAt(url) {
+  const origin = registry.originOf(url);
+  return registry.load().servers.find((s) => s.type === 'remote' && registry.originOf(s.url) === origin) || null;
+}
+
+function hostName(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return String(url || '');
+  }
+}
+
+// Where a vault's folder `folder` opens: that folder, or the library for a
+// vault of the whole library (`root`).
+const folderAt = (folder) => (folder && folder !== 'root' ? { folder } : {});
+
+// What a notice adds for the local servers whereIs could not ask (`names`).
+const uncheckedSaid = (names) => (names || []).map((n) => ` Gamma could not check ${n}'s synced vaults: it did not start.`).join('');
+
+// The work folders *Open with Gamma* made in this run of the app, `{ srv, ws,
+// linkId, name }`. While one still waits for its files to be chosen, the
+// verb makes no other (stillChoosing): a dozen folders selected by mistake
+// write one marker, not a dozen, and never reach a workspace's cap.
+const waiting = [];
+
+// The first of `waiting` that still chooses its files (GET
+// /api/folder-links/<id> as the shell's account there), or null. Those
+// saved, cancelled or gone, and those that cannot be asked any more, are
+// dropped.
+async function stillChoosing() {
+  for (const w of [...waiting]) {
+    let on = false;
+    try {
+      const at = await localServer(w.srv);
+      on = Boolean((await at.api(at.origin, `/api/folder-links/${encodeURIComponent(w.linkId)}`, { headers: { 'X-Gamma-Workspace': w.ws } })).choosing);
+    } catch {}
+    if (on) return w;
+    waiting.splice(waiting.indexOf(w), 1);
+  }
+  return null;
+}
+
+// A work folder of the directory `dir`, made as *Add a synced vault…* makes
+// one (workFolderOf: the broad-place question, vaultPlace, the preview), its
+// tracking dialog open with `tick` ticked; remembered in `waiting`, and the
+// bar says where it went (`unchecked`: the servers whereIs could not ask).
+// → the link, or null when asked off or refused by the preview.
+async function newWorkFolder(dir, tick = '', unchecked = []) {
+  const made = await workFolderOf(dir, '', tick);
+  if (!made) return null;
+  waiting.push({ srv: made.srv.id, ws: made.ws.id, linkId: made.link.id, name: made.name });
+  showNotice(`“${made.name}” is a work folder of ${made.ws.name} on ${made.srv.name} now: choose the files it tracks.${uncheckedSaid(unchecked)}`);
+  return made.link;
+}
+
+// A directory opened with Gamma: its vault's folder (openVaultFolder), the
+// one vault it holds (several: the bar names them), else a new work folder
+// of this computer's server (newWorkFolder), one at a time; a place no
+// vault may have is refused with the server's words. The Mac App Store
+// build asks for it in the picker first, opened at it: its servers reach a
+// directory only once the picker granted it.
+async function openFolderWithGamma(dir) {
+  if (process.mas) {
+    const picked = await pickDirectory('Open with Gamma',
+      'Choose this folder to let Gamma read it: the App Store version reaches a folder only once you choose it here.', dir);
+    if (!picked) return {};
+    const link = await addDirectoryVault(picked);
+    return link ? { workspace: link.workspace_id, folder: link.folder_id, track: link.id } : {};
+  }
+  const r = await whereIs(dir);
+  if (r.is === 'hidden') throw new Error(`${dir} is kept by another account on this computer.`);
+  if (r.is === 'vault') {
+    const opened = await openVaultFolder(r, r.link, dir, r);
+    if (opened.said) showNotice(opened.said);
+    return opened.at;
+  }
+  const vaults = r.is === 'around' ? r.vaults || [] : [];
+  if (vaults.length > 1) {
+    showNotice(`${dir} holds ${vaults.length} synced vaults (${vaults.map((v) => `“${v.name}”`).join(', ')}): open one of their folders with Gamma, or pick it in the sync panel.`);
+    return {};
+  }
+  if (vaults.length === 1) {
+    const [v] = vaults;
+    const opened = await openVaultFolder(r, { ...v, kind: 'folder' }, dir, { folder: v.folder });
+    showNotice(`${dir} holds the ${v.work ? 'work folder' : 'synced vault'} “${v.name}”, which opened: a work folder is never inside or around another.`);
+    return opened.at;
+  }
+  if (r.refusal) throw new Error(r.refusal);
+  const w = await stillChoosing();
+  if (w) {
+    showNotice(`Choose the files of “${w.name}” first, then open ${dir} with Gamma again.`);
+    return {};
+  }
+  const link = await newWorkFolder(dir, '', r.unchecked);
+  return link ? { workspace: link.workspace_id, folder: link.folder_id, track: link.id } : {};
+}
+
+// The folder of a vault a directory belongs to (`link`, as where names it;
+// `folder`, the directory's folder there, with `rel`, `exact` and `never`
+// for a directory inside it): a work folder still choosing opens its
+// tracking dialog, its maker's alone; else the window on the vault's server
+// (for a vault of another server, that server, which the registry must
+// hold) at that folder, a vault of the whole library at the library. A
+// paused vault opens as it is; a kept folder is never raised to a work
+// folder from here. → `{ at, said }`: the entry openWithGamma answers, and
+// the notice ('' for none).
+async function openVaultFolder(r, link, dir, { folder, rel = '', exact = true, never = '' } = {}) {
+  const name = path.basename(dir) || dir;
+  const W = link.name;
+  if (link.work && link.choosing) {
+    if (!link.mine) throw new Error(`Only the account that made the work folder “${W}” chooses what it tracks.`);
+    landOn(r, name);
+    await chooseFiles(r.srv.id, link.id);
+    return { at: { workspace: link.workspace, folder: link.folder, track: link.id }, said: `“${W}” waits for its files to be chosen.` };
+  }
+  if (link.remote_url) {
+    const nas = remoteAt(link.remote_url);
+    if (!nas) throw new Error(`${dir} is synced with ${hostName(link.remote_url)}: add that server to Gamma to open it here.`);
+    await showAt(nas.id, link.workspace, folderAt(folder));
+    return { at: { workspace: link.workspace, folder }, said: '' };
+  }
+  landOn(r, name);
+  await showAt(r.srv.id, link.workspace, folderAt(folder));
+  let said = '';
+  if (never) said = `Gamma never tracks ${rel}: ${never}. “${W}” opened.`;
+  else if (!exact) {
+    said = `Nothing in ${rel} is tracked yet: “${W}” opened at ${await folderName(r, link, folder)}.${link.work ? ' Choose files… picks what it tracks.' : ''}`;
+  }
+  return { at: { workspace: link.workspace, folder }, said };
+}
+
+// Folder `folder` of a vault's workspace as a notice names it: “<the
+// vault>” for its own, else as that server's folder list does.
+async function folderName(r, link, folder) {
+  if (!folder || folder === link.folder) return `“${link.name}”`;
+  try {
+    const tree = await r.at.api(r.at.origin, '/api/sync/folders', { headers: { 'X-Gamma-Workspace': link.workspace } });
+    const f = (tree.folders || []).find((x) => x.id === folder);
+    if (f && f.path && f.path.length) return `“${f.path[f.path.length - 1]}”`;
+  } catch {}
+  return 'its nearest folder';
+}
+
+// A file opened with Gamma: inside a vault, as openVaultFile says; a vault of
+// one file, its page; else it is read where it is under Opened files
+// (readFile), a Markdown file outside every vault asking first (editOrView).
+// The Mac App Store build opens PDFs only, added to the library (addPdf).
+async function openFileWithGamma(file) {
+  const name = path.basename(file);
+  if (process.mas) {
+    if (/\.pdf$/i.test(name)) return addPdf(file);
+    throw new Error('This build of Gamma opens PDFs only.');
+  }
+  const r = await whereIs(file);
+  if (r.is === 'vault') return openVaultFile(r, file);
+  if (r.is === 'file_vault') {
+    landOn(r, name);
+    await showAt(r.srv.id, r.workspace, r.page);
+    return { workspace: r.workspace, page: r.page };
+  }
+  if (r.is === 'none' && MARKDOWN.test(name)) return editOrView(file, r);
+  return readFile(file, { more: uncheckedSaid(r.unchecked) });
+}
+
+// A file inside a vault's directory (`r`, where's answer): one its scan
+// never tracks is refused, and so is one whose page is in Recently deleted;
+// one with a page opens it, its viewer following its format (no new page,
+// nothing copied); a work folder's file it does not track yet opens the
+// tracking dialog with it ticked, its maker's alone; one it tracks with no
+// page yet is opened by the server (POST /api/folder-links/open, whose
+// round reads it), unless the vault is paused; a file the vault does not
+// read (a kept folder's that is not its own) is read as a lone file, having
+// one reader. A vault of another server: its page there, the host's dialog
+// for a work folder's file it does not track yet, never a page here for one
+// it tracks.
+async function openVaultFile(r, file) {
+  const name = path.basename(file);
+  const { link } = r;
+  const W = link.name;
+  if (r.never) throw new Error(`Gamma never tracks ${name}: ${r.never}.`);
+  if (r.trashed) throw new Error(`${name} is a file of “${W}”, whose page is in Recently deleted: restore it there.`);
+  if (r.page) {
+    if (link.remote_url) {
+      const nas = remoteAt(link.remote_url);
+      if (!nas) throw new Error(`${name} is synced with ${hostName(link.remote_url)}: add that server to Gamma to open it here.`);
+      await showAt(nas.id, link.workspace, r.page);
+    } else {
+      landOn(r, name);
+      await showAt(r.srv.id, link.workspace, r.page);
+    }
+    return { workspace: link.workspace, page: r.page };
+  }
+  if (link.work && (link.choosing || !r.tracked)) {
+    if (!link.mine) throw new Error(`Only the account that made the work folder “${W}” chooses what it tracks: ask it to track ${name}.`);
+    landOn(r, name);
+    await chooseFiles(r.srv.id, link.id, r.rel);
+    showNotice(`${name} is not tracked by “${W}” yet: tick it and save to open it.`);
+    return { workspace: link.workspace, folder: link.folder, track: link.id, tick: r.rel };
+  }
+  if (!link.work) return readFile(file);
+  if (link.remote_url) throw new Error(`${name} has not reached ${hostName(link.remote_url)} yet: it opens there after the work folder's next round.`);
+  if (link.paused) throw new Error(`“${W}” is paused: resume it in the sync panel, then open ${name} again.`);
+  landOn(r, name);
+  busy = `Opening ${name}…`;
+  pushState();
+  let opened;
+  try {
+    opened = await r.at.api(r.at.origin, '/api/folder-links/open', {
+      method: 'POST',
+      headers: { 'X-Gamma-Workspace': link.workspace, ...JSON_TYPE, ...shellWord(r.at.origin) },
+      body: JSON.stringify({ path: file }),
+    });
+  } finally {
+    busy = null;
+    pushState();
+  }
+  await showAt(r.srv.id, opened.workspace, opened.page);
+  return { workspace: opened.workspace, page: opened.page };
+}
+
+// The answers of the question about a Markdown file outside every vault.
+const EDIT = 0;
+const VIEW = 1;
+
+// A Markdown file outside every vault. A note is edited only through a work
+// folder, whose pull writes Gamma's edits back to the file and settles a
+// change made in another editor meanwhile, and Gamma never writes a lone
+// file: so the person is asked, each time, whether to make the file's
+// project (openFiles.projectDir: its repository, else its own directory) a
+// work folder with the file ticked (Edit in Gamma), or to read the file as
+// it is (Just view it: readFile, read-only in the code view). Not asked
+// when neither the project nor the file's directory can be a work folder (a
+// refused place, a directory holding a vault): the file is read and the
+// notice says why; nor while a work folder this run made still chooses its
+// files: nothing opens. Edit in Gamma goes on as a folder opened with Gamma
+// (newWorkFolder: the broad-place question, the preview, its tracking
+// dialog), and whatever stops it on the way opens nothing: the person asked
+// to edit, not to read. Under the test harness the question takes Just view
+// it.
+async function editOrView(file, r) {
+  const name = path.basename(file);
+  const own = path.dirname(file);
+  const project = openFiles.projectDir(file, { places: knownPlaces() });
+  let dir = '';
+  let reason = '';
+  let unchecked = r.unchecked || [];
+  for (const d of project === own ? [own] : [project, own]) {
+    const a = await whereIs(d);
+    if (a.unchecked) unchecked = a.unchecked;
+    if (a.is === 'none' && !a.refusal) {
+      dir = d;
+      break;
+    }
+    reason = a.is === 'none' ? a.refusal : `${d} holds a synced vault, so it cannot be a work folder.`;
+  }
+  if (!dir) return readFile(file, { more: ` ${reason}${uncheckedSaid(unchecked)}` });
+  const w = await stillChoosing();
+  if (w) {
+    showNotice(`Choose the files of “${w.name}” first, then open ${name} again.`);
+    return {};
+  }
+  const repo = fs.existsSync(path.join(dir, '.git'));
+  const choice = await ask({
+    type: 'question', buttons: ['Edit in Gamma', 'Just view it'], defaultId: EDIT, cancelId: VIEW,
+    message: `Edit ${name} in Gamma?`,
+    detail: `${name} is in no work folder. Edit in Gamma makes ${dir} a work folder: Gamma writes a hidden .gamma folder there, asks which of its files to track, and saves your edits back to ${name}. Just view it opens the file read-only.${repo ? ` ${dir} is the repository ${name} is in.` : ''}`,
+  }, VIEW);
+  if (choice !== EDIT) return readFile(file, { more: uncheckedSaid(unchecked), hint: true });
+  const tick = path.relative(dir, file).split(path.sep).join('/');
+  const link = await newWorkFolder(dir, tick, unchecked);
+  return link ? { workspace: link.workspace_id, folder: link.folder_id, track: link.id, tick } : {};
 }
 
 // An error in a native message box. The test scripts' minimized runs log it
@@ -2336,25 +2822,33 @@ function errorBox(opts) {
   else (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).catch(() => {});
 }
 
-// A PDF read where it is: `POST /api/folder-links/open` on a local server,
-// never a remote one, so a paper opened on a train is not sent to the NAS.
-// It lands in the workspace the window shows when that is a local server's,
-// the account writes there and it is no clone, else in the host's personal
-// workspace (openFiles.readerPlace), as a page inside *Opened files*, and
-// the bar says where. Before the host takes it, a page of the workspace
-// the window shows that carries those bytes already opens instead
-// (openCarried): a paper annotated on the NAS, in a clone or in a workspace
-// the account only reads opens its page there. A workspace others see asks
-// first, its members being able to read the file through the page, and
-// offers the account's own. The server opens a file inside a vault as that
-// vault's page, bytes a page of the workspace stores as that page, and a
-// file opened before as its page. The annotations
-// another reader saved in a new page's file become Gamma's
-// (importAnnotations). `openAddsToLibrary` in the account's profile on the
-// open server, and the Mac App Store build, whose servers reach only the
-// folders the app held when they started, add the file instead (addPdf).
-async function readPdf(file) {
-  if (process.mas) return addPdf(file);
+// A file read where it is, of any format Gamma can show: `POST
+// /api/folder-links/open` on a local server, never a remote one, so a paper
+// opened on a train is not sent to the NAS. It lands in the workspace the
+// window shows when that is a local server's, the account writes there and
+// it is no clone, else in the host's personal workspace
+// (openFiles.readerPlace), as a page inside *Opened files* in the viewer of
+// its format, and the bar says where. Before the host takes a PDF, a page
+// of the workspace the window shows that carries those bytes already opens
+// instead (openCarried): a paper annotated on the NAS, in a clone or in a
+// workspace the account only reads opens its page there. A workspace others
+// see asks first, its members being able to read the file through the
+// page, and offers the account's own. The server opens a file inside a
+// vault as that vault's page, bytes a page of the workspace stores as that
+// page, and a file opened before as its page; a Markdown file outside every
+// vault is a text document there, read-only. The annotations another reader
+// saved in a new page's PDF become Gamma's (importAnnotations).
+// `openAddsToLibrary` in the account's profile on the open server, and the
+// Mac App Store build, whose servers reach only the folders the app held
+// when they started, add a PDF instead (addPdf); that build opens no other
+// file. `more`: words the notice adds; `hint`: a lone Markdown file whose
+// question was answered Just view it, and the notice says how to edit it.
+async function readFile(file, { more = '', hint = false } = {}) {
+  const pdf = /\.pdf$/i.test(file);
+  if (process.mas) {
+    if (pdf) return addPdf(file);
+    throw new Error('This build of Gamma opens PDFs only.');
+  }
   await surfaceWindow();
   if (opening) await opening.catch(() => {});
   if (!current) {
@@ -2362,13 +2856,14 @@ async function readPdf(file) {
     buildMenu();
   }
   const api = serverApi(content.webContents.session);
-  if (await addsToLibrary(api, openOrigin())) return addPdf(file);
+  if (pdf && await addsToLibrary(api, openOrigin())) return addPdf(file);
   const name = path.basename(file);
   // (a remote's session is not asked: a NAS out of reach still lets the file be read here)
   let info = current.type === 'local' ? await api(openOrigin(), '/api/session') : null;
   let place = info && openFiles.readerPlace(info, currentWsId());
   if (!place) {
-    const carried = await openCarried(api, file);
+    // Only a PDF is looked for by its hash: another server holds no page of a file read here.
+    const carried = pdf ? await openCarried(api, file) : null;
     if (carried) return carried;
     const host = hostOf();
     if (current.id !== host.id) {
@@ -2380,7 +2875,7 @@ async function readPdf(file) {
     if (!mine) throw new Error(`Sign in to ${current.name}, then open the file again.`);
     place = { ws: mine, audience: '', mine: null };
   }
-  if (current.type !== 'local') throw new Error('A PDF is read where it is by a server on this computer only.');
+  if (current.type !== 'local') throw new Error('A file is read where it is by a server on this computer only.');
   const at = current; // the server it is read on, whatever the window opens meanwhile
   let ws = place.ws;
   // A page of a workspace others see reads the file for each of them: asked
@@ -2405,15 +2900,17 @@ async function readPdf(file) {
       body: JSON.stringify({ path: file }),
     });
     const headers = { 'X-Gamma-Workspace': opened.workspace };
-    if (opened.created) {
+    // (a server older than `format` opened PDFs only)
+    if (opened.created && (opened.format ? opened.format === 'pdf' : pdf)) {
       const page = await api(origin, `/api/blocks/${encodeURIComponent(opened.page)}`, { headers });
       const doc = (page.properties || {}).doc;
       if (doc && doc.format === 'pdf' && doc.hash) await importAnnotations(api, origin, headers, opened.page, doc.hash);
     }
     // Said always, a page that was there already too: where the file is read.
     const where = ((info.workspaces || []).find((w) => w.id === opened.workspace) || ws).name;
-    showNotice(opened.created ? `${opened.title || name} is read from this computer, under Opened files in ${where} on ${at.name}.`
-      : `${opened.title || name} is read from this computer, in ${where} on ${at.name}.`);
+    const edit = hint && opened.format === 'text' && MARKDOWN.test(name) ? ' To edit it as a note, open it with Gamma again and pick Edit in Gamma.' : '';
+    showNotice(`${opened.created ? `${opened.title || name} is read from this computer, under Opened files in ${where} on ${at.name}.`
+      : `${opened.title || name} is read from this computer, in ${where} on ${at.name}.`}${edit}${more}`);
     if (!current || current.id !== at.id) await openServer(at.id);
     await openGammaWorkspace(opened.workspace, opened.page);
     return { workspace: opened.workspace, page: opened.page };
@@ -2519,6 +3016,8 @@ async function carryPage(wsId, pageId) {
     throw new Error('Only the account that opened this file may take it to another server: the file is on that account\'s computer.');
   }
   if (state.reader.missing) throw new Error('The file this page reads is not there: locate it first.');
+  // Before anything is asked: another server stores only a PDF from here (its carried routes refuse the rest).
+  if (state.reader.format && state.reader.format !== 'pdf') throw new Error('Only a PDF is carried to another server.');
   const page = await api(origin, `/api/blocks/${encodeURIComponent(pageId)}`, { headers });
   const title = page.content || 'Untitled';
   // The page's own PDF (its `doc`: a duplicated page's `copy` owns none).
@@ -2672,11 +3171,11 @@ async function apiBytes(ses, origin, apiPath, init) {
   return Buffer.from(await r.arrayBuffer());
 }
 
-// Server → Open a PDF…: a PDF from the native picker, read where it is as
-// one the system hands over (openPdfFiles).
+// Server → Open a PDF…: a PDF from the native picker, opened as one the
+// system hands over (openWithGamma).
 async function openPdfDialog() {
   const file = await pickPdf('Open a PDF', 'Choose a PDF on this computer to open in Gamma.', 'Open');
-  if (file) await openPdfFiles([file]);
+  if (file) await openWithGamma([file]);
 }
 
 async function addPdf(file) {
@@ -2924,15 +3423,18 @@ async function offerBackground(what) {
 
 // Navigate the open server to one of its Gamma workspaces, or in it to a page
 // (`page`, or the second argument as a string), to a folder (`folder`), or to
-// a work folder's tracking dialog (`track`, its link's id, with its folder).
+// a work folder's tracking dialog (`track`, its link's id, with its folder),
+// a file ticked in it (`tick`, its path in the work folder, which the page
+// reads and drops from the address at once, as it does `track`).
 function openGammaWorkspace(id, at = {}) {
   if (!current || !content) throw new Error('No server open');
-  const { page, folder, track } = typeof at === 'string' ? { page: at } : at || {};
+  const { page, folder, track, tick } = typeof at === 'string' ? { page: at } : at || {};
   const target = new URL(current.url);
   const q = new URLSearchParams({ ws: String(id || '') });
   if (page) q.set('page', page);
   if (folder) q.set('folder', folder);
   if (track) q.set('track', track);
+  if (track && tick) q.set('tick', tick);
   target.search = '?' + q;
   return loadPage(content.webContents, target.href);
 }
@@ -3473,6 +3975,16 @@ async function runSmoke() {
 
 // ----------------------------------------------------------------- boot -----
 
+// Whether a start goes hidden into the tray: started at login (`--hidden`,
+// or `wasOpenedAtLogin` on macOS, which passes a login item no arguments)
+// with the background on, and naming no file or folder (`files`): no
+// window, the servers run in the background for the clones, the Zotero
+// links and the synced vaults. A start that names one shows it.
+function bootHidden(files) {
+  return !files.length && Boolean(registry.getSettings().background) && (process.argv.includes('--hidden') ||
+    (process.platform === 'darwin' && Boolean((app.getLoginItemSettings() || {}).wasOpenedAtLogin)));
+}
+
 app.whenReady().then(async () => {
   if (!primary) return; // quitting: the running app has the command line
   registry.init(app.getPath('userData'));
@@ -3501,34 +4013,34 @@ app.whenReady().then(async () => {
   const settings = registry.getSettings();
   if (settings.background) ensureTray();
   applyLoginItem();
-  const files = [...earlyPdfs.splice(0), ...openFiles.pdfPaths(process.argv.slice(1), process.cwd())];
-  // Started at login (`--hidden`, or `wasOpenedAtLogin` on macOS, which
-  // passes a login item no arguments): no window, the servers run in the
-  // background for the clones, the Zotero links and the synced vaults.
-  const hidden = !files.length && Boolean(settings.background) && (process.argv.includes('--hidden') ||
-    (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin));
-  if (hidden) startBackgroundHosts();
+  const files = [...early.splice(0), ...handedOver];
+  if (bootHidden(files)) startBackgroundHosts();
   else showWindow().finally(startBackgroundHosts);
   scheduleKeeping(3000); // what the servers keep, once they are up
   booted = true;
-  if (files.length) openPdfFiles(files);
+  if (files.length) openWithGamma(files);
 
   // The Dock icon: the window back, as Window → Show Gamma brings it.
   app.on('activate', () => showWindow());
 });
 
-// A second start's command line (the lock above): its PDFs are added, and
-// the window comes forward either way — unless it was a login start.
-app.on('second-instance', (_event, argv, cwd) => {
-  const files = openFiles.pdfPaths(argv.slice(1), cwd);
-  if (files.length) openPdfFiles(files);
+// A second start (the lock above): the files and folders it names are
+// opened, as it parsed them itself (`data.paths`, which no reordering of
+// argv by Chromium touches), else as its command line names them (an older
+// start passes no data; a packaged one has no app path in it), and the
+// window comes forward either way — unless it was a login start.
+app.on('second-instance', (_event, argv, cwd, data) => {
+  const paths = Array.isArray(data && data.paths) ? data.paths
+    : openFiles.openedPaths(openFiles.launchArgs(argv, false), cwd).map((i) => i.path);
+  if (paths.length) openWithGamma(paths, cwd);
   else if (booted && !argv.includes('--hidden')) showWindow();
 });
 
-// macOS hands a file over as an event instead, at launch before `ready` too.
+// macOS hands a file or a folder over as an event instead (Open With, a drop
+// on the Dock icon, `open -a Gamma`), at launch before `ready` too.
 app.on('open-file', (event, file) => {
   event.preventDefault();
-  openPdfFiles(openFiles.pdfPaths([file]));
+  openWithGamma([file]);
 });
 
 app.on('window-all-closed', () => {
@@ -3595,6 +4107,11 @@ if (process.env.GAMMA_SHELL_TEST) {
       content = view;
       win = window;
     },
+    // main.test.js: the app up (`on`) or not yet, as the boot sets it; → what was handed over meanwhile.
+    pretendBooted: (on = true) => {
+      booted = on;
+      return early.splice(0);
+    },
     hintServers,
     shellSecret: SHELL_SECRET,
     listFolders,
@@ -3603,8 +4120,12 @@ if (process.env.GAMMA_SHELL_TEST) {
     keeping: () => keepingState,
     startLocal,
     startBackgroundHosts,
-    openPdfFiles,
-    readPdf,
+    openWithGamma,
+    readFile,
+    whereIs,
+    broadOk,
+    bootHidden,
+    waiting,
     // Gamma's API on the open server in a named workspace, as the shell calls
     // it. A page's own fetch cannot do that: Gamma's wrapper stamps the
     // workspace the page has settled on, or none before it has.
