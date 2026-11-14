@@ -35,17 +35,21 @@ overriding it; `demo_mode`, `GAMMA_DEMO` overriding it —
 docs/dev/guests.md). Other modules keep their
 server-wide values in the same KV through ``_get_raw``/``_set_raw``: the
 cloud sign-in (`cloud_*`, gamma/cloud_auth.py), the shared AI providers
-(`ai_providers`, gamma/ai_settings.py) and the off-site copies (`offsite`,
-gamma/offsite.py, which reads it on a connection of its own).
+(`ai_providers`, gamma/ai_settings.py), and the off-site copies (`offsite`,
+gamma/offsite.py) and the network proxy (`proxy`, gamma/proxy_settings.py),
+which read theirs with ``_peek_raw``, on a connection of their own.
 """
 
 import re
+import sqlite3
+from contextlib import closing
 from ipaddress import IPv6Address
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
-from . import config
+from . import config, db
 from .db import account_name, connect_users_db, page_now
 
 MB = 1024 * 1024
@@ -81,6 +85,20 @@ def _get_raw(key: str, default: str = "") -> str:
     with connect_users_db() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row[0] if row else default
+
+
+def _peek_raw(key: str) -> str:
+    """A stored value, "" when there is none, read on a connection of its
+    own, closed at once, that never creates users.db: it works before the
+    schema guard (manage.py) and on an empty data directory, and holds
+    nothing a restore's in-use check would see. sqlite3.Error when users.db
+    cannot be read."""
+    path = Path(db.USERS_DB)
+    if not path.is_file():
+        return ""
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, timeout=5)) as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row and row[0] else ""
 
 
 def _set_raw(key: str, value: str) -> None:

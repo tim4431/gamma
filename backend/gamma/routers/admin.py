@@ -32,7 +32,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, guests, hosted, integrity, jobs,
-                offsite, workspaces)
+                offsite, proxy_settings, workspaces)
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -440,6 +440,76 @@ def run_offsite(request: Request):
     the GET's ``status.running``."""
     require_admin(request)
     return offsite.run_now()
+
+
+# --- the network proxy (gamma/proxy_settings.py) -----------------------------
+# Settings → Administration → Network proxy: how this server reaches the
+# internet. The password is write-only: a GET says whether one is set, a PUT
+# or a Test without one keeps the saved one for the same proxy host and user
+# name, and is refused with 400 for another, so the saved password never
+# goes to a proxy it wasn't typed for. A hosted container's network is the
+# operator's: a PUT is refused with 409. A change redirects every outbound
+# connection, so like the public URL it is refused cross-origin.
+
+class ProxySettingsRequest(BaseModel):
+    mode: str | None = None         # system | none | manual
+    server: str | None = None       # http://host:port or socks5://host:port; a sign-in in it moves to the fields
+    username: str | None = None
+    password: str | None = None     # only when changing it: absent or "" keeps the saved one (same host, user)
+    bypass: str | None = None       # "Don't use the proxy for": hosts, domains, IP addresses and ranges
+    proxy_dns: bool | None = None   # the proxy resolves the names of the links people open
+
+
+class ProxyTestRequest(ProxySettingsRequest):
+    url: str | None = None          # an address to try besides the fixed ones
+
+
+def _refuse_cross_origin_proxy(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if (request.headers.get("sec-fetch-site") == "cross-site"
+            or (origin and urlsplit(origin).netloc.lower() != request.url.netloc.lower())):
+        raise HTTPException(403, "Cross-origin network proxy changes are not allowed.")
+
+
+@router.get("/proxy")
+def get_proxy(request: Request):
+    """``proxy_settings.public``: the mode, the server, the username,
+    ``password_set``, the bypass list and its default, ``proxy_dns``,
+    ``managed`` and what ``system`` mode finds."""
+    require_admin(request)
+    return proxy_settings.public()
+
+
+@router.put("/proxy")
+def update_proxy(payload: ProxySettingsRequest, request: Request):
+    """Save the fields sent (a field left out stays as it is); the GET's
+    answer. 400 with the reason when one is wrong, 409 on a hosted
+    container."""
+    require_admin(request)
+    _refuse_cross_origin_proxy(request)
+    try:
+        return proxy_settings.save(payload.model_dump(exclude_none=True))
+    except proxy_settings.ManagedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Sync def: a handful of fetches in parallel, up to 10 s each.
+@router.post("/proxy/test")
+def test_proxy(request: Request, payload: ProxyTestRequest | None = None):
+    """Try the saved setting, or the unsaved fields sent laid over it,
+    against a few destinations and ``url``: ``{results: [...]}``
+    (``proxy_settings.test``), nothing saved. 400 when a field or the
+    address is wrong."""
+    require_admin(request)
+    _refuse_cross_origin_proxy(request)
+    fields = payload.model_dump(exclude_none=True) if payload else {}
+    url = fields.pop("url", "")
+    try:
+        return proxy_settings.test(fields, url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # --- server backups (gamma/backups.py) ---------------------------------------

@@ -1800,6 +1800,158 @@ export async function settingsScenarios(env) {
     }
   });
 
+  // Settings → Network proxy (SettingsProxy.jsx, gamma/proxy_settings.py,
+  // docs/dev/network_proxy.md): an admin's pane under Administration. The
+  // proxy is the unreachable 127.0.0.1:1, so the Test's sites all fail
+  // there and nothing leaves this machine; the address typed beside Test is
+  // a stand-in site on loopback, which is always reached directly.
+  await step("settings: Network proxy is an admin's pane; Manual is tested against an unreachable proxy, saved with a write-only password, read back after a reload, and set back to the system's", async () => {
+    const site = http.createServer((req, res) => { res.writeHead(204); res.end(); });
+    site.unref();
+    await new Promise((resolve) => site.listen(0, "127.0.0.1", resolve));
+    const { ctx, page } = await setup();
+    let admin = false;
+    try {
+      await openSettings(page);
+      assertEq(await nav(page, "Network proxy").count(), 0, "a member has no Network proxy pane");
+      const box = page.getByRole("searchbox", { name: "Search settings" });
+      await box.fill("socks5");
+      await page.getByText('No settings found. Try "model", "PDF", or "storage".', { exact: true }).waitFor();
+      await box.fill("");
+      await server.manage("set-admin", "settings-user", "on");
+      admin = true;
+      const before = await user.api("/api/admin/proxy");
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      // The search finds the pane's rows; one shown only under Manual lands
+      // on the Proxy row, which offers Manual.
+      await box.fill("socks5");
+      const results = page.locator(".settingsSearchResult");
+      await results.first().waitFor();
+      assertEq(await results.first().locator(".settingLabel").innerText(), "Network proxy", "the pane leads an admin's matches");
+      await results.filter({ has: page.getByText("Proxy server", { exact: true }) }).click();
+      const proxyRow = row(page, "Proxy");
+      await proxyRow.waitFor();
+      assertEq(await nav(page, "Network proxy").getAttribute("aria-current"), "page", "the match opens Network proxy");
+      await until(async () => proxyRow.evaluate((el) => el === document.activeElement), { what: "the jump to focus the Proxy row" });
+
+      const mode = (name) => proxyRow.getByRole("button", { name, exact: true });
+      const pressed = async (name) => (await mode(name).getAttribute("aria-pressed")) === "true";
+      const hint = () => proxyRow.locator(".settingDesc").innerText();
+      assert(await pressed("Use system settings"), "the system's settings by default");
+      const { system } = before;
+      const found = system.proxy ? `Uses ${system.proxy}, from ${system.from === "environment" ? "the server's environment" : "this computer's network settings"}`
+        : system.http ? `Uses ${system.http} for http:// addresses only; https connects directly`
+        : system.unsupported ?`${system.unsupported} can't be used, so this server connects directly` : "No system proxy found: connects directly";
+      assertEq(await hint(), found, "the hint says what the system's settings give");
+      const connection = page.locator('.settingsPane .setSection[data-setting="Connection"]');
+      assertEq(await connection.getByRole("button").count(), 0, "no Save on the rule");
+
+      // Manual: the address, the sign-in, the list and the name lookups.
+      await mode("Manual").click();
+      assertEq(await hint(), "Uses the proxy below");
+      const address = row(page, "Proxy server").getByLabel("Proxy server", { exact: true });
+      const username = row(page, "Sign-in").getByLabel("Username", { exact: true });
+      const password = row(page, "Sign-in").getByLabel("Password", { exact: true });
+      const bypassRow = row(page, "Don't use the proxy for");
+      const bypass = bypassRow.getByLabel("Don't use the proxy for", { exact: true });
+      const reset = bypassRow.getByRole("button", { name: "Reset to defaults", exact: true });
+      await address.waitFor();
+      assertEq(await bypass.inputValue(), before.default_bypass, "the list starts as the defaults");
+      assertEq(await reset.count(), 0, "nothing to reset");
+      assert(!await page.getByRole("checkbox", { name: "Let the proxy look up names", exact: true }).isChecked(), "the proxy looks up no names by default");
+      const save = connection.getByRole("button", { name: "Save", exact: true });
+      // An https:// proxy is refused in the server's words, and nothing is saved.
+      await address.fill("https://127.0.0.1:1");
+      await save.click();
+      await page.getByRole("alert").filter({ hasText: "An https:// proxy isn't supported yet" }).waitFor();
+      assertEq((await user.api("/api/admin/proxy")).mode, before.mode, "a refused save changes nothing");
+      // The refusal was about the draft before an edit, so the edit drops it.
+      await address.fill("http://127.0.0.1:1");
+      await page.getByRole("alert").filter({ hasText: "An https:// proxy isn't supported yet" }).waitFor({ state: "detached" });
+      await username.fill("e2e-proxy");
+      await password.fill("e2e-proxy-secret");
+
+      // Test tries the draft: each site through the proxy, which is not
+      // there, and the typed address directly. The tag says which way.
+      const port = site.address().port;
+      const testRow = row(page, "Test the connection");
+      await testRow.getByLabel("Address to test", { exact: true }).fill(`http://127.0.0.1:${port}/`);
+      await testRow.getByRole("button", { name: "Test", exact: true }).click();
+      const lines = page.locator(".settingsPane .aiKeyCheck");
+      await until(async () => (await lines.count()) >= 5, { what: "a line per site the Test tried", timeout: 30000 });
+      const tried = await lines.evaluateAll((els) => els.map((el) => {
+        const tag = el.querySelector(".uiTag");
+        return { text: el.textContent, ok: el.classList.contains("aiTestOk"), tag: tag?.textContent, title: tag?.title };
+      }));
+      for (const name of ["OpenAI", "Anthropic", "Zotero", "arXiv"]) {
+        const line = tried.find((l) => l.text.includes(name));
+        assert(line && !line.ok && line.tag === "Proxy", `${name} went through the proxy and failed: ${JSON.stringify(line)}`);
+      }
+      const openai = tried.find((l) => l.text.includes("OpenAI")).text;
+      assert(openai.includes("Couldn't reach the proxy at 127.0.0.1:1"), `the line says why: ${openai}`);
+      const own = tried.filter((l) => l.tag === "Direct");
+      assertEq(own.length, 1, "only the typed address went directly");
+      assert(own[0].ok && own[0].title === "loopback" && own[0].text.includes(`127.0.0.1:${port}`) && /\b204 · \d+ ms$/.test(own[0].text),
+        `the typed address, reached on loopback: ${JSON.stringify(own[0])}`);
+      // The lines are about what was tried: an edit clears them.
+      await username.fill("e2e-proxy-user");
+      await until(async () => (await lines.count()) === 0, { what: "an edit to clear the Test's lines" });
+
+      await save.click();
+      await save.waitFor({ state: "detached" });
+      const stored = await user.api("/api/admin/proxy");
+      for (const [key, value] of Object.entries({ mode: "manual", server: "http://127.0.0.1:1", username: "e2e-proxy-user", password_set: true, proxy_dns: false })) {
+        assertEq(stored[key], value, `the server stored ${key}`);
+      }
+      assert(!(await (await user.api("/api/admin/proxy", { raw: true })).text()).includes("e2e-proxy-secret"), "the password never comes back");
+
+      // Reloaded, the pane reads them back; the password stays on the server.
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await openSettings(page);
+      await nav(page, "Network proxy").click();
+      await address.waitFor();
+      assert(await pressed("Manual"), "Manual, as saved");
+      assertEq(await address.inputValue(), "http://127.0.0.1:1");
+      assertEq(await username.inputValue(), "e2e-proxy-user");
+      assertEq(await password.inputValue(), "", "the password is never shown");
+      assertEq(await password.getAttribute("placeholder"), "password set — type to replace");
+      // The stored password goes with this user name only: without one, the box asks for a password.
+      await username.fill("");
+      await until(async () => (await password.getAttribute("placeholder")) === "Password", { what: "an emptied user name to drop the kept password's placeholder" });
+      await username.fill("e2e-proxy-user");
+      // An edited list offers its defaults back; put back, nothing is left to save.
+      await bypass.fill(`${before.default_bypass}, example.org`);
+      await save.waitFor();
+      await reset.click();
+      assertEq(await bypass.inputValue(), before.default_bypass, "Reset to defaults puts the list back");
+      await reset.waitFor({ state: "detached" });
+      await save.waitFor({ state: "detached" });
+
+      // Back to the system's settings: the manual rows go, and the proxy
+      // typed under Manual stays stored for the next time.
+      await mode("Use system settings").click();
+      await address.waitFor({ state: "detached" });
+      await save.click();
+      await save.waitFor({ state: "detached" });
+      const back = await user.api("/api/admin/proxy");
+      assertEq(back.mode, "system", "the system's settings again");
+      assertEq(back.server, "http://127.0.0.1:1", "the manual proxy is kept");
+      assertNoProblems(page, [/PUT \/api\/admin\/proxy -> 400/]);
+    } finally {
+      await ctx.close();
+      site.closeAllConnections();
+      await new Promise((resolve) => site.close(resolve));
+      if (admin) {
+        try {
+          await user.api("/api/admin/proxy", { method: "PUT", body: { mode: "system", server: "", username: "", proxy_dns: false } });
+        } finally { await server.manage("set-admin", "settings-user", "off"); }
+      }
+    }
+  });
+
   // Settings → Workspaces → Data: the export and the merge are background
   // jobs (docs/dev/tasks.md) — the export's file downloads by itself once
   // it is ready, a merge into the open workspace reloads the library.

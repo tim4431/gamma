@@ -52,7 +52,7 @@ from typing import NamedTuple
 from websockets.asyncio.client import connect as _ws_connect
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
-from . import config, sync_clock, zotero_account, zotero_sync
+from . import config, net_proxy, sync_clock, zotero_account, zotero_sync
 from .db import connect_pages_db, connect_users_db
 from .logbuf import log
 from .zotero_remote import get_state
@@ -72,10 +72,35 @@ REFUSED = ("Zotero's live updates refused this server (WebSocket close {code}{re
            "to get live updates again")
 
 
-def connect(url: str):
-    """Open the stream's WebSocket, as ``async with connect(url) as ws``.
-    The tests replace it."""
-    return _ws_connect(url, open_timeout=HELLO_S, close_timeout=CLOSE_S)
+# The blocking dials of ``connect``, off the loop's own executor (the link
+# reads'), so a dial left behind by a timeout or a stop holds up neither.
+_DIAL = ThreadPoolExecutor(2, thread_name_prefix="zotero-stream-dial")
+
+
+def _close_late(dial) -> None:
+    """Close the socket a dial given up on delivers after all."""
+    if not dial.cancelled() and dial.exception() is None:
+        dial.result().close()
+
+
+@contextlib.asynccontextmanager
+async def connect(url: str):
+    """Open the stream's WebSocket, as ``async with connect(url) as ws``, on
+    a socket of the server's network route (gamma/net_proxy.py; for wss the
+    TLS name stays the URL's host), the dial and the opening within
+    HELLO_S. The tests replace it."""
+    dial = _DIAL.submit(net_proxy.socket_for, url, HELLO_S)
+    try:
+        async with asyncio.timeout(HELLO_S):
+            sock = await asyncio.wrap_future(dial)
+            ws = await _ws_connect(url, open_timeout=None, close_timeout=CLOSE_S, proxy=None, sock=sock)
+    except BaseException:
+        dial.add_done_callback(_close_late)  # at once when it is done, else when the thread delivers
+        raise
+    try:
+        yield ws
+    finally:
+        await ws.close()  # 1000 however the block ends, a stop's cancel included
 
 
 class Link(NamedTuple):

@@ -20,6 +20,8 @@ import os
 import secrets
 from pathlib import Path
 
+from . import net_proxy
+
 CONNECT_TIMEOUT_S = 10
 READ_TIMEOUT_S = 60
 LIST_PAGE = 1000  # what one listing returns at most, and what ``check`` counts up to
@@ -95,7 +97,9 @@ class Client:
                 # the checksums boto3 adds by default are refused by some S3-compatible stores
                 request_checksum_calculation="when_required", response_checksum_validation="when_required",
                 connect_timeout=CONNECT_TIMEOUT_S, read_timeout=READ_TIMEOUT_S,
-                retries={"max_attempts": max(1, attempts), "mode": "standard"}))
+                retries={"max_attempts": max(1, attempts), "mode": "standard"},
+                # the server's network route, never botocore's own reading of the environment
+                proxies=net_proxy.botocore_proxies(endpoint or None)))
         except ValueError as e:  # an endpoint boto3 cannot use
             raise S3ConfigError(f"the endpoint {endpoint!r} cannot be used: {e}") from e
         self._client_error, self._boto_error = ClientError, BotoCoreError

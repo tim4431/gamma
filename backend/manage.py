@@ -47,7 +47,7 @@ import bcrypt
 
 import json
 
-from gamma import backups as backups_mod, cloud_auth, cloud_sync, guests, migrations, workspaces
+from gamma import backups as backups_mod, cloud_auth, cloud_sync, guests, migrations, net_proxy, workspaces
 from gamma.db import SchemaOutdated, account_id, connect_users_db, ws_dir
 from gamma.seed import create_account
 
@@ -495,6 +495,7 @@ def litestream_config(args: list):
 
 
 def main():
+    net_proxy.install()  # the commands' bare urlopens (Gamma Cloud) take the network proxy, as the server's do
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)

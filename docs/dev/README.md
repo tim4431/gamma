@@ -105,6 +105,7 @@ These describe the implementation unless explicitly marked as plans.
 | A page's highlights found again by their text after its PDF is replaced, the rough matches drawn dashed, the ones not found drawn hollow with their closest match, the review card of both, moving one by hand; a text file's ranges found again by their quote and context when the file changes | [Highlights after a PDF replacement](highlight_relocation.md) |
 | MCP, integration tokens, OAuth, and assistant plugins | [MCP](mcp.md) |
 | Preferences, Settings panes, notices, and backup tasks | [Settings](settings.md) |
+| The server's network proxy: the three modes, routing by destination and the bypass list, HTTP and SOCKS5 tunnels, guarded fetches pinned through the proxy, the Zotero stream, S3 and the local agents, the hosted lock, the admin API and its Test | [Network proxy](network_proxy.md) |
 | Themes, controls, menus, dialogs, and editor interactions | [UI design](ui-design.md) |
 | Command catalogs, dispatch, and keybindings | [Hotkeys](hotkeys.md) |
 | The note editor's @ menu: dates, people and page links as chips, reminders and their delivery | [Mentions and reminders](mentions.md) |

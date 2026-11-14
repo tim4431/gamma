@@ -33,6 +33,13 @@ _SCRUB_RULES = (
     (re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/-]{8,}={0,2}"), "Bearer ***"),
     # OpenAI/Anthropic-style keys (sk-, sk-proj-, sk-ant-…)
     (re.compile(r"\bsk-[A-Za-z0-9_-]{8,}"), "sk-***"),
+    # A sign-in in a URL (a proxy's: http://user:pass@host:port), up to the
+    # last @ of the address, and a Basic (Proxy-)Authorization, which the
+    # key=value rule below would leave half shown. The scheme is bounded:
+    # unbounded, a long a.a.a… line (a request path anyone can send) costs
+    # time quadratic in its length
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^\s/?#'\"]+@"), r"\1***@"),
+    (re.compile(r"(?i)\b(authorization['\"]?\s*[=:]\s*['\"]?)basic\s+[A-Za-z0-9+/=]+"), r"\1Basic ***"),
     # key=value / key: value shapes (query strings, exception messages that
     # echo request bodies or headers)
     (re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization)(\s*[=:]\s*)[^\s&'\"]+"),

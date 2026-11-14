@@ -15,8 +15,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
-from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, offsite, reports, sync_engine
-from . import trash, upload_gc, version, workspaces, ws_backup, zotero_stream
+from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, offsite, reports
+from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
 from .feedback import listeners as feedback_listeners, requests as feedback_requests
 from .computers import channel as computer_channel
 from . import local_agents
@@ -386,6 +386,7 @@ def create_app() -> FastAPI:
     setup_logging()
     _silence_windows_connection_reset()
     _verify_https_with_certifi_when_no_cas()
+    net_proxy.install()  # route every bare urlopen (its TLS context is made at the first https request)
     log.info(f"[startup] Gamma {version.label()}")
     try:
         check_publish_config()

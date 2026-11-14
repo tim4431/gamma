@@ -3,7 +3,7 @@
 // Step/Field/DialogButtons for the editor dialogs they open, NavAccountCard
 // on the rail, plus the small shared controls (Segmented,
 // PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
-// PasswordInput, CopyField, AccountPicker, PersonRow, LogBox, Stat/StatText, Empty,
+// PasswordInput, TestResult, CopyField, AccountPicker, PersonRow, LogBox, Stat/StatText, Empty,
 // WorkspaceFolder, QuotaMeter/PercentMeter, RingMeter/StorageRing,
 // KeyCaps/KeyBinding).
 // New settings UI should reuse these; bespoke classes are for layout only.
@@ -425,6 +425,21 @@ export function DialogButtons({ footnote, children }) {
       {footnote ? <span className="setFootnote" role="status">{footnote}</span> : null}
       {children}
     </div>
+  );
+}
+
+// A Test button's answer, in the AI editor's key-check look: testing, ✓
+// what was found, or ✗ why it failed. `test` is null (nothing tried), {busy}
+// or {ok, message}; the message may be an element (Network proxy's lines
+// carry a route tag). It is its own live region unless `live` is false:
+// lines inside one region that reads them out together.
+export function TestResult({ test, live = true }) {
+  if (!test) return null;
+  return (
+    <span className={`aiKeyCheck ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`} role={live ? "status" : undefined}>
+      {test.busy ? <><span className="transferSpin inline" /> {t("Testing…")}</>
+        : <>{test.ok ? <CheckIcon size={14} /> : <XIcon size={14} />} {test.message}</>}
+    </span>
   );
 }
 
