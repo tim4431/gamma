@@ -29,8 +29,8 @@ directory never has two agents in it. A run (``_Run``):
    off (``stop_agent``), the vault paused or removed, the server closing, or
    ``RUN_TIMEOUT_S`` after the turn began;
 5. once the turn is done, compares the files, writes each answer as the
-   agent's reply signed with its label (``agent_id`` ``local:<name>``, so the
-   comment reads as an agent on this computer's) and records the thread's
+   agent's reply, signed as this computer's agent (``agent_id``
+   ``computer:<this computer>:<name>``, gamma/agents.py) and records the thread's
    session (``store.answered_thread``), resolves the fixed ones in which a
    person said nothing the run did not read, and sets the request ``done`` with
    the summary and the files changed, or
@@ -1211,7 +1211,7 @@ def _said(event: dict, tracked: set[str] | None = None) -> str:
     if kind == "search":
         return "Searching the sources"
     if kind == "gamma":
-        return f"Reading Gamma: {event['tool']}" if event.get("tool") else "Reading Gamma"
+        return events.gamma_words(event.get("tool") or "", now=True)
     return "Working"
 
 
@@ -1321,7 +1321,7 @@ class _Turning:
 
     def _tools(self) -> None:
         """Gamma's tools for a turn of this server (``tools.mint``), once:
-        the owner's token of the workspace, named with the agent's label,
+        the owner's token of the workspace, named with the agent's id,
         living the run's timeout and ``TOKEN_SLACK_S``. A chat turn mints
         them before its prompt, which says whether it has them. A turn of
         another server's work folder gets none here (step 4.2 of
@@ -1329,7 +1329,7 @@ class _Turning:
         one)."""
         if self._token or self.home.remote:
             return
-        minted = tools.mint(self.owner, self.ws, self.label, _run_timeout() + TOKEN_SLACK_S)
+        minted = tools.mint(self.owner, self.ws, self.agent, _run_timeout() + TOKEN_SLACK_S)
         if minted:
             self.gamma, self._token = minted
             self._token_until = time.monotonic() + _run_timeout() + TOKEN_SLACK_S

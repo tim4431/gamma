@@ -3,7 +3,8 @@
 // and the calls that changed something are listed apart, grouped by where
 // the change landed — the library (renamed, filed, saved or restored pages;
 // renamed, made, applied or deleted folders and labels) or the notes
-// (edited, added or moved blocks). A call that changed several pages is one
+// (edited, added or moved blocks, and what the agent wrote as itself: its
+// comments, the threads it resolved, its highlights). A call that changed several pages is one
 // step and one change, counted by its pages in the library list
 // (`changeCount`). While a reply streams, the
 // {"step"} line the server sends before each call names what is running now,
@@ -13,12 +14,14 @@
 // its own, not as a failure.
 import { t, tn } from "../shared/i18n/i18n.js";
 
-const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore", "label"]);
+const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore", "label", "comment",
+  "resolve", "highlight"]);
 const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page", "delete_page",
   "rename_folder", "create_label", "rename_label", "label_page", "delete_folder", "delete_label"]);
 // The note-block mutators: their actions carry the page id(s) they touched,
-// so the open page's block tree can reload and show the change.
-export const BLOCK_TOOLS = ["edit_block", "create_block", "move_block", "delete_block"];
+// so the open page's block tree can reload and show the change. A highlight
+// is a block the agent made.
+export const BLOCK_TOOLS = ["edit_block", "create_block", "move_block", "delete_block", "highlight"];
 
 // A call that changed something (listed in the reply, and ChatDock refreshes
 // the home feed after one). Actions saved before `noop` existed mark a
@@ -191,6 +194,9 @@ export function runningLabel(step, titleOf = () => "") {
     case "create_block": return t("Adding a note…");
     case "move_block": return t("Moving a note…");
     case "delete_block": return t("Deleting a note…");
+    case "comment": return args.thread_id ? t("Replying in a comment thread…") : t("Writing a comment…");
+    case "resolve": return t("Resolving a comment thread…");
+    case "highlight": return t("Highlighting a passage…");
     default: return t("Working…");
   }
 }
@@ -223,6 +229,10 @@ export function helperStatus(h) {
 export function noteChangeText(a, page) {
   if (a.kind === "create") return t("Added a note in {page}", { page });
   if (a.kind === "delete") return t("Deleted a note in {page}", { page });
+  if (a.kind === "comment") return a.reply ? t("Replied in a comment thread in {page}", { page })
+    : t("Commented in {page}", { page });
+  if (a.kind === "resolve") return t("Resolved a comment thread in {page}", { page });
+  if (a.kind === "highlight") return t("Highlighted a passage in {page}", { page });
   if (a.kind === "move") return a.src_page_id && a.src_page_id !== a.page_id
     ? t("Moved a note to {page}", { page }) : t("Moved a note in {page}", { page });
   return {

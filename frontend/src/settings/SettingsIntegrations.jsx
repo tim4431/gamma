@@ -6,7 +6,8 @@ import { MorphText } from "../shared/ui/MotionWidgets";
 import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
-import { WorkspacePicker, accessBody, accessOf, edits as editsIn } from "./WorkspacePicker";
+import { WorkspacePicker } from "./WorkspacePicker";
+import { accessBody, accessOf, edits as editsIn } from "./workspaceAccess.js";
 import { useSettingsRead } from "./settingsReads.js";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -15,9 +16,9 @@ const ASSISTANTS = [["claude", t("Claude Code")], ["codex", t("Codex")], ["dsh",
 const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Linux")]];
 
 // One connected assistant: how it signed in, what it may read, where it may
-// also edit notes (and whether it answers feedback: a `feedback` connection replies to and resolves the
-// comments on work folders' files, docs/dev/annotations.md), when it was
-// connected and when its access lapses. OAuth connections are minted with an
+// also comment (the Comment level: comments, replies, resolves and
+// highlights under its own name, docs/dev/mcp.md) and where it may edit
+// notes, when it was connected and when its access lapses. OAuth connections are minted with an
 // " (OAuth)" suffix on the client's name (mcp_oauth_provider.py). A
 // `computer` token is a computer's channel (docs/dev/computers.md): the
 // desktop app mints it as "Gamma desktop: <its name>" to show this server
@@ -37,12 +38,14 @@ function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   const editing = (item.edit_workspaces || []).map((id) => names.get(id)).filter(Boolean);
   const edits = item.edit_all ? t("edits notes wherever you edit")
     : editing.length ? t("edits notes in {workspaces}", { workspaces: editing.join(", ") }) : null;
+  const commenting = (item.comment_workspaces || []).map((id) => names.get(id)).filter(Boolean);
+  const comments = item.comment_all ? t("comments everywhere")
+    : commenting.length ? t("comments in {workspaces}", { workspaces: commenting.join(", ") }) : null;
   const connected = item.created_at ? t("Connected {date}", { date: dateOf(item.created_at) }) : null;
   const parts = (computer ? [spaces.length ? t("Shows its synced folders and files of {workspaces}", { workspaces: spaces.join(", ") }) : t("Shows its synced folders and files"),
     connected, expiry]
-    : [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads, edits,
-      edits && item.asks === false ? t("changes without asking") : null,
-      item.scope === "feedback" ? t("answers feedback") : null, connected, expiry]).filter(Boolean);
+    : [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads, comments, edits,
+      edits && item.asks === false ? t("changes without asking") : null, connected, expiry]).filter(Boolean);
   return <Row icon={computer ? MonitorIcon : oauth ? LinkIcon : KeyIcon} label={name}
     hint={<>{parts.join(" · ")}{daysLeft <= 0 ? <span className="uiTag warn">{t("Expired")}</span> : null}</>}>
     <div className="integrationActions">
@@ -109,8 +112,8 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
   };
   const failure = (where) => failed?.where === where ? <FormNotice>{failed.text}</FormNotice> : null;
   const post = (url, body) => apiJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  // A read or feedback token reads the workspaces ticked; a write token is
-  // the open workspace's alone.
+  // A read token reads the workspaces ticked, at their levels; a write
+  // token is the open workspace's alone.
   const create = () => run("create", async () => {
     setSecret(await post(endpoint, { name: name.trim(), scope, ...(scope !== "write" ? accessBody(access) : {}) }));
     await refresh();
@@ -132,12 +135,12 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
   });
   const spaces = data?.workspaces || [];
   const names = new Map(spaces.map((w) => [w.id, w.name]));
-  const picking = spaces.length > 1;
   const chosen = access.all || access.ids.length > 0;
   const platformPick = <div role="group" aria-label={t("Terminal platform")}>
     <Segmented value={platform} onChange={setPlatform} options={PLATFORMS} />
   </div>;
-  const picker = (label) => <WorkspacePicker workspaces={spaces} value={access} onChange={setAccess} disabled={busy} label={label} />;
+  const picker = (label) => <WorkspacePicker workspaces={spaces} value={access} onChange={setAccess} disabled={busy}
+    label={label} roles />;
   // Claude Code, Codex and other assistants sign in through the browser,
   // which needs a confirmed address; DeepSeek Harness's setup command signs
   // in for it, which needs none.
@@ -222,7 +225,7 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
     </>}
   </>;
   return <>
-    <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Let Claude Code, Codex, DeepSeek Harness or another MCP assistant read your library. One connection can read several workspaces, and edit the notes of those you mark Edit.")}</PaneHead>
+    <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Let Claude Code, Codex, DeepSeek Harness or another MCP assistant read your library. One connection can read several workspaces, comment in those you mark Comment and edit the notes of those you mark Edit.")}</PaneHead>
     {loadError ? <FormNotice>{t("Could not load your connections. {loadError}", { loadError: loadError })}{" "}
       <button type="button" className="uiBtn sm" onClick={() => refresh()}>{t("Try again")}</button>
     </FormNotice> : null}
@@ -240,7 +243,7 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
       </button>}>
       {data ? data.tokens.length ? data.tokens.map((item) => <React.Fragment key={item.id}>
         <ConnectionRow item={item} names={names} busy={busy} onRevoke={revoke}
-          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row), asks: row.asks !== false })} />
+          onEdit={(row) => setEditing(editing?.id === row.id ? null : { id: row.id, access: accessOf(row, spaces), asks: row.asks !== false })} />
         {editing?.id === item.id ? <div className="integrationDetails integrationEdit">
           <WorkspacePicker workspaces={spaces} value={editing.access} disabled={busy} roles={item.scope !== "write"}
             label={t("Workspaces {name} may read", { name: item.name })} onChange={(value) => setEditing({ ...editing, access: value })} />
@@ -275,13 +278,11 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
         {failure("create")}
         <Row icon={ShieldIcon} label={t("Scope")} hint={scope === "write"
           ? t("Read and write: what an offline copy of this workspace on another Gamma (Settings → Workspaces → Clones and Zotero links there) signs in with. Assistants only need read.")
-          : scope === "feedback"
-            ? t("For a local agent or script that replies to and resolves comments on your synced folders' files. It can change nothing else. The HTTP API answers in the first workspace.")
-            : t("Read-only: assistants and scripts. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
-          <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["feedback", t("Read and answer feedback")], ["write", t("Read and write")]]} />
+          : t("Read: assistants and scripts, which comment where you mark Comment and edit notes where you mark Edit. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
+          <Segmented value={scope} onChange={setScope} options={[["read", t("Read")], ["write", t("Read and write")]]} />
         </Row>
-        {scope !== "write" && picking ? <Row icon={FoldersIcon} label={t("Workspaces")} hint={t("What an assistant with this token may read. The HTTP API reads the first one.")} /> : null}
-        {scope !== "write" && picking ? picker(t("Workspaces the token may read")) : null}
+        {scope !== "write" ? <Row icon={FoldersIcon} label={t("Workspaces")} hint={t("What an assistant with this token may read, and where it may comment or edit. The HTTP API works in the first one.")} /> : null}
+        {scope !== "write" ? picker(t("Workspaces the token may read")) : null}
         {secret ? <div className="integrationDetails">
           <p>{t("Copy this token now. Gamma will not show it again. Keep it private.")}</p>
           <CopyField label={t("New integration token")} value={secret.token} action="Copy token" />

@@ -29,7 +29,7 @@ test("one sentence per kind, with the actor, the page and the workspace", () => 
     "a deleted account and an untitled page");
 });
 
-test("an agent's write names the agent, its avatar's title the account whose connection it wrote through", () => {
+test("an agent's write names the agent, its avatar's title the account it wrote for", () => {
   const at = "2026-10-20T10:00:00.000000Z";
   const by = (kind) => item("a", at, { kind, actor: "tim", agent: "Claude Code" });
   assert.equal(inboxSentence(by("reply")), "Claude Code replied to a comment on Draft");
@@ -37,8 +37,8 @@ test("an agent's write names the agent, its avatar's title the account whose con
   assert.equal(inboxSentence(by("comment")), "Claude Code commented on Draft");
   assert.equal(inboxSentence(by("comment_mention")), "Claude Code mentioned you in a comment on Draft");
   assert.equal(inboxActor(by("reply")), "Claude Code", "the row's avatar takes the agent's initial");
-  assert.equal(inboxActorTitle(by("reply")), "Claude Code, with tim's connection");
-  assert.equal(inboxActorTitle({ ...by("reply"), actor: "" }), "Claude Code, with Someone's connection", "the account gone");
+  assert.equal(inboxActorTitle(by("reply")), "Claude Code, for tim");
+  assert.equal(inboxActorTitle({ ...by("reply"), actor: "" }), "Claude Code, for Someone", "the account gone");
   assert.equal(inboxActor(item("a", at, { agent: "" })), "ann");
   assert.equal(inboxActorTitle(item("a", at)), "ann", "a person's item, without an agent field too");
 });

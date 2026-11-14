@@ -280,8 +280,8 @@ export async function feedbackScenarios(env) {
     });
 
     let token = null;
-    await step("feedback: a script with a feedback token takes the request, rebuilds the paper, replies, resolves and is refused everything else", async () => {
-      token = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Claude Code", scope: "feedback" } });
+    await step("feedback: a script with a token at the Comment level takes the request, rebuilds the paper, replies, resolves and is refused a note's edit", async () => {
+      token = await user.api("/api/integrations/tokens", { method: "POST", body: { name: "Claude Code", comment_workspaces: [user.ws] } });
       const agent = async (pathname, { method = "GET", body } = {}) => {
         const r = await fetch(`${server.base}${pathname}`, { method, headers: { Authorization: `Bearer ${token.token}`,
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}) }, body: body !== undefined ? JSON.stringify(body) : undefined });
@@ -310,12 +310,10 @@ export async function feedbackScenarios(env) {
         assertEq((await agent(`/api/comments/${th.id}/resolve`, { method: "POST", body: { resolved: true } })).status, 200);
       }
       assertEq((await agent(`/api/feedback/requests/${request.id}/state`, { method: "POST", body: { state: "done" } })).status, 200);
-      // refused: a new thread, a block edit, a comment edit, a reopen
-      assertEq((await agent(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: main.id, body: "a new thread" } })).status, 403);
+      // it comments, as a person may, and changes no note: its own reply it edits, a block edit is refused
       assertEq((await agent(`/api/blocks/${passageBlock}`, { method: "PUT", body: { content: "renamed" } })).status, 403);
       const replyId = (await threadsOf(main.id)).find((th) => th.id === inkThread.id).comments[1].id;
-      assertEq((await agent(`/api/comments/${replyId}`, { method: "PATCH", body: { body: "edited" } })).status, 403);
-      assertEq((await agent(`/api/comments/${passageThread.id}/resolve`, { method: "POST", body: { resolved: false } })).status, 403);
+      assertEq((await agent(`/api/comments/${replyId}`, { method: "PATCH", body: { body: `Done for ${inkThread.id.slice(0, 4)}` } })).status, 200);
     });
 
     await step("feedback: the person hears of the agent's replies and resolves, the dialog says the request is done, and the files follow", async () => {

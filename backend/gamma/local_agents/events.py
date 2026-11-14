@@ -69,6 +69,10 @@ MAX_REASON = 2000
 
 KINDS = ("read", "edit", "run", "search", "gamma", "other")   # gamma: a call of Gamma's tools, named by its ``tool``
 GAMMA_TOOL = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+# Gamma's tools that write as the agent (gamma/ai_tools.py WRITING_TOOLS,
+# frontend chat/computer/computerChat.js GAMMA_WRITES): a call of one is
+# worded as a write.
+GAMMA_WRITES = ("comment", "resolve", "highlight")
 
 # Gamma's MCP endpoint as a turn's agent is given it (gamma/local_agents/
 # tools.py): the server's name in the agent's config, and the variable of
@@ -128,9 +132,20 @@ def tool(tool_id: str, kind: str, title: str, status: str, *, path: str = "", co
     return event
 
 
+def gamma_words(name: str, *, now: bool = False) -> str:
+    """A call of Gamma's tool ``name`` in words, as the chat says it
+    (computerChat.js ``stepText``, ``stepNow``): "Read Gamma: read_page",
+    "Wrote in Gamma: comment"; ``now``, while it runs: "Reading Gamma: …",
+    "Writing in Gamma: …"."""
+    if not name:
+        return "Reading Gamma" if now else "Read Gamma"
+    lead = ("Writing in" if now else "Wrote in") if name in GAMMA_WRITES else ("Reading" if now else "Read")
+    return f"{lead} Gamma: {name}"
+
+
 def gamma_step(tool_id: str, name: str, status: str) -> dict:
     """A call of Gamma's tool ``name`` (Read Gamma: read_page)."""
-    return tool(tool_id, "gamma", f"Read Gamma: {name}", status, name=name)
+    return tool(tool_id, "gamma", gamma_words(name), status, name=name)
 
 
 def ask(ask_id: str, kind: str, *, step: str = "", command: str | None = None, cwd: str | None = None,

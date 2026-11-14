@@ -24,6 +24,7 @@ import json
 from typing import NamedTuple
 
 from .. import comments, highlights, storage
+from ..agents import Agent
 from ..blocks_store import PATH_SEP, folder_paths, live_pages, load_props, pages_in_folder
 from ..documents.model import file_hash, is_image, page_document
 from ..highlights import COORDS
@@ -45,13 +46,12 @@ LINED = ("lines",)                          # the kinds that have lines in a tex
 ON_THIS_BUILD = ("exact", "rough", "estimate")  # a place on the page's current file
 
 # How to answer, the same in every document (and in a request's file, with
-# its own state route): the comment routes and the MCP tools.
+# its own state route): the comment routes and the MCP tools (the writing
+# tools of gamma/ai_tools.py, docs/dev/annotations.md "The writing tools").
 ANSWER = {"reply": "POST /api/pages/{page_id}/comments {block_id, thread_id, body}",
           "resolve": "POST /api/comments/{id}/resolve {resolved: true}",
           "request_state": "POST /api/feedback/requests/{request_id}/state {state, detail}",
-          "mcp": ["reply_feedback", "resolve_feedback"]}
-# Until step 3.3 the MCP tools answer a work folder's threads alone: outside one they go unnamed.
-ANSWER_OUTSIDE = {k: v for k, v in ANSWER.items() if k != "mcp"}
+          "mcp": ["comment", "resolve", "highlight"]}
 
 
 class AnnotationError(Exception):
@@ -465,20 +465,28 @@ def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[
     return picture, before
 
 
+def link_of(ws: str, page_id: str, block_id: str, link_base: str = "", thread_id: str = "") -> str:
+    """An entry's link: the page, at the block its thread (``thread_id``)
+    is on or the highlight, after ``link_base`` (MCP's absolute base; ""
+    for the chat, whose links are a query alone). What the writing tools
+    answer with for what they make (gamma/ai_tools.py)."""
+    link = f"{link_base}?ws={ws}&page={page_id}&block={block_id}"
+    return f"{link}&thread={thread_id}" if thread_id else link
+
+
 def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions: dict | None, memo: dict,
            places: bool = False) -> dict:
     """The item's entry: a thread's with its state, its Send and its
     comments; a highlight's with neither state nor Send and no comments."""
     thread, view = item.thread, item.view
     picture, before = _pictures(ws, conn, item, regions, memo)
-    link = f"{link_base}?ws={ws}&page={item.page_id}&block={item.block_id}"
     out = {"id": item.id, "type": "thread" if thread else "highlight", "file": item.file,
            "format": view["format"] if view else "markdown", "page_id": item.page_id, "block_id": item.block_id,
            "kind": item.kind, "where": item.where, "source": _source(ws, conn, item, live_sources),
            "picture": picture, "before": before,
            "state": ("resolved" if thread["resolved_at"] else "open") if thread else None,
            "sent": _sent(thread.get("sent")) if thread else None,
-           "link": f"{link}&thread={item.id}" if thread else link,
+           "link": link_of(ws, item.page_id, item.block_id, link_base, item.id if thread else ""),
            "comments": [_comment(c) for c in thread["comments"]] if thread else []}
     if places and item.kind in PLACED and item.place:
         place = item.place
@@ -488,10 +496,14 @@ def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions
 
 
 def _comment(c: dict) -> dict:
+    """A comment as the document gives it: an agent's ``agent`` its label
+    ("Codex on TIM-PC") with its ``agent_kind``, ``by`` the person it wrote
+    for."""
     out = {"id": c["id"], "by": c["author"], "agent": c["agent"], "at": c["created_at"], "body": c["body"],
            "deleted": c["deleted"]}
-    if c.get("agent_kind"):  # only a local agent's comment says so: every other entry stays as it was
-        out["agent_kind"] = c["agent_kind"]
+    if c.get("agent_kind"):
+        out.update(agent=Agent("", c["agent_kind"], c["agent"], c.get("agent_on") or "").label,
+                   agent_kind=c["agent_kind"])
     return out
 
 
@@ -584,7 +596,7 @@ def document(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None 
         doc["truncated"] = total - len(out)
     if cut:
         doc["truncated_threads"] = cut
-    doc["answer"] = ANSWER if w else ANSWER_OUTSIDE
+    doc["answer"] = ANSWER
     doc["entries"] = out
     return doc
 

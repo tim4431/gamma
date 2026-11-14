@@ -39,6 +39,7 @@ ops.py             block operations: THE write path for a page's blocks
 textmerge.py       three-way merge of one block's text (ops.py `set` with `base`)
 collab.py          live rooms: who is on a page, the fan-out of applied operations
 comments.py        comments: threads on a note, a page or a highlight, following their blocks (docs/dev/comments.md)
+agents.py          who an agent is: its id, kind, name and computer, the agent a request or a token writes as, a block's stamp (docs/dev/comments.md "Who wrote a comment")
 inbox.py           each account's Inbox: mentions, replies, resolves, shares, invitations and requests to join, settled when read (docs/dev/comments.md)
 sync_tree.py       a page's tree as a flat snapshot, and the ops between two (the mirror's pure half)
 sync_engine.py     mirrors: a local workspace kept in step with one on another Gamma server (docs/dev/mirror.md)
@@ -60,7 +61,7 @@ md_lens.py         the lens between a Markdown file and a page's blocks
 linked_files.py    files read where they are on this computer: a vault's PDFs, Opened files, the follow worker
 documents/         a page's document (docs/dev/documents.md): formats (the format registry), model (the stored shape and its view), text (a document's text for the index and the chat), text_anchors (a text file's highlight ranges placed again after it changes, docs/dev/highlight_relocation.md "Text files")
 work_folders/      a work folder's rules: the library switch, the op rule, .gammaignore, the tracking dialog, the takeover, its Detach (detach), a file's path in it (paths), files found by name or path (file_search) (docs/dev/work_folders.md)
-annotations/       the highlights and comment threads of a page, a folder or the library as entries an agent reads and answers, the annotation files a work folder or a followed file writes on disk, a work folder's Sends (docs/dev/annotations.md)
+annotations/       the highlights and comment threads of a page, a folder or the library as entries an agent reads and answers, the writing tools' hand (hand: a comment, a reply, a resolve, a highlight as an agent) and their places (places: a PDF quote, a text file's lines, a note, the page), the annotation files a work folder or a followed file writes on disk, a work folder's Sends (docs/dev/annotations.md)
 zotero_sync.py     Zotero links: a personal workspace kept in step with a Zotero library (docs/dev/zotero_sync.md): the registry, the round, conflicts, the clock
 zotero_sync_rows.py    what the engine's parts share: the link's row, the round's state, pages.db rows, conflict rows and log lines
 zotero_sync_reads.py   what a round's units read of both sides: a page, the projections compared, Zotero's objects read ahead

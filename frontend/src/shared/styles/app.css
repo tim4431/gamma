@@ -1399,6 +1399,15 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   font-size: var(--fs-sm);
 }
 
+/* Who made a highlight when an agent did, under its passage (BlockTree). */
+.blockMadeBy {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: 6px; min-width: 0;
+  font-size: var(--fs-xs); color: var(--text-muted);
+}
+.blockMadeBy > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blockMadeBy .agentAvatar { flex-shrink: 0; width: 16px; height: 16px; border: none; }
+
 /* Area-selection crop on a note card — quote-style left border in the
    highlight's color; clicking anywhere on the card already jumps the PDF. */
 .blockAreaSnap {
@@ -7139,6 +7148,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-2xs); font-weight: 600; line-height: 1; letter-spacing: 0;
   border: 1.5px solid var(--bg-surface); user-select: none;
 }
+/* an agent's avatar (AgentAvatar): its kind's icon on a neutral disc */
+.peerAvatar.agentAvatar { background: var(--bg-active); color: var(--text-secondary); }
 .presenceBar { display: inline-flex; align-items: center; margin-left: 10px; vertical-align: middle; }
 .presenceBar .peerAvatar { margin-left: -6px; cursor: pointer; transition: transform var(--dur-fast); }
 .presenceBar .peerAvatar:first-child { margin-left: 0; }

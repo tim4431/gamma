@@ -389,6 +389,10 @@ def test_codex_gets_gammas_server_beside_the_rule_that_starts_no_other(monkeypat
     # the call is a gamma step named by its tool (it failed: nothing answers there)
     assert _gamma_steps(out) == [("gamma", "list_pages", "started"), ("gamma", "list_pages", "failed")]
     assert next(e for e in out if e["type"] == "tool")["title"] == "Read Gamma: list_pages"
+    # a writing tool's call is worded as a write, done and while it runs
+    assert [events.gamma_words(name) for name in ("comment", "resolve", "highlight", "")] == [
+        "Wrote in Gamma: comment", "Wrote in Gamma: resolve", "Wrote in Gamma: highlight", "Read Gamma"]
+    assert events.gamma_words("comment", now=True) == "Writing in Gamma: comment"
     started = next(m for m in requests_in(log) if m.get("method") == "thread/start")["params"]
     assert started["config"] == {
         "mcp_servers": {"fake_server": {"enabled": False}, "gamma_turn": {
@@ -521,15 +525,17 @@ def test_a_turns_token_opens_mcp_in_its_workspace_alone_and_nothing_else(reader,
         assert reader.client.delete(f"/api/integrations/tokens/{token_id}").json()["revoked"] is False
         assert reader.client.patch(f"/api/integrations/tokens/{token_id}",
                                    json={"all_workspaces": True}).status_code == 404
-        # MCP: the read tools, in its workspace alone
+        # MCP: the read tools and the writing tools, in its workspace alone; no note edits
         connection = integrations.resolve_connection(token)
-        assert (connection.scope, connection.workspaces, connection.editable, connection.name) == (
-            "turn", [reader.ws], (), "Claude Code")
+        assert (connection.scope, connection.workspaces, connection.editable, connection.commentable,
+                connection.name) == ("turn", [reader.ws], (), (reader.ws,), "Claude Code")
         offered = {t["name"] for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
-        assert offered == mcp_server.READ_TOOLS | {"list_workspaces", "read_gamma_link", "export_page"}
+        assert offered == mcp_server.READ_TOOLS | mcp_server.WRITING_TOOLS | {"list_workspaces", "read_gamma_link",
+                                                                              "export_page"}
         read = call(client, token, "list_workspaces", {})["structuredContent"]["workspaces"]
         assert [w["id"] for w in read] == [reader.ws]
-        assert call(client, token, "reply_feedback", {"thread_id": "t", "body": "hi"})["isError"]
+        unknown = call(client, token, "resolve", {"thread_id": "nosuchthread"})  # past the level, to the thread
+        assert unknown["isError"] and "No comment thread has that id" in unknown["content"][0]["text"]
         assert call(client, token, "edit_block", {"block_id": reader.page["id"], "content": "x"})["isError"]
     finally:
         integrations.drop(token_id)

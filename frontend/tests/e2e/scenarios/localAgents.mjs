@@ -28,6 +28,9 @@ const BUILD = "latexmk -pdf main.tex";
 // reads the page through them and quotes what it read.
 const TOKEN_ENV = "GAMMA_AGENT_MCP_TOKEN";
 const READ_ASK = "what did I highlight?";
+// 3.3: this message's turn comments on a passage of its page through them.
+const COMMENT_ASK = "ask the authors about noon";
+const NOON = "Marigolds open at noon";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -57,7 +60,9 @@ export async function localAgentScenarios(env) {
       edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }],
       // 2.7: this message's turn reads its page with Gamma's tools and answers with what it read
       turns: { [READ_ASK]: { gamma: [{ tool: "read_page", arguments: { page_id: "$page" } }], edits: [], delay: 0, typing: 0,
-        chat: "From Gamma:\n\n{gamma}" } } }),
+        chat: "From Gamma:\n\n{gamma}" },
+      [COMMENT_ASK]: { gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: NOON, pdf_page: 1, body: "Is noon right here?" } }],
+        edits: [], delay: 0, typing: 0, chat: "Commented:\n\n{gamma}" } } }),
   } });
   try {
     await server.start();
@@ -265,15 +270,18 @@ export async function localAgentScenarios(env) {
       assertEq(turn.sandboxPolicy?.networkAccess, false, "a sandbox without network");
     });
 
-    await step("local-agents: Codex's replies are signed Codex on the person's computer and the threads it fixed are resolved", async () => {
+    await step("local-agents: Codex's replies are signed Codex on this computer, for the person, and the threads it fixed are resolved", async () => {
       const stored = await threadsOf(main.id);
+      let computer = "";
       for (const th of threads) {
         const got = stored.find((s) => s.id === th.id);
         assert(got?.resolved_at, `${th.id} is resolved`);
         const reply = got.comments[1];
         assertEq(JSON.stringify([reply?.agent, reply?.agent_kind, reply?.author, reply?.body]),
-          JSON.stringify(["Codex", "local", "la-user", `Done for ${th.id}.`]), "the reply");
+          JSON.stringify(["Codex", "computer", "la-user", `Done for ${th.id}.`]), "the reply");
+        computer = reply.agent_on;
       }
+      assert(computer, "the reply names the computer Codex ran on");
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
@@ -285,9 +293,10 @@ export async function localAgentScenarios(env) {
         await row.click();
         const reply = page.locator(".commentThread .commentItem.reply", { has: page.locator(".commentAuthor", { hasText: "Codex" }) }).first();
         await reply.waitFor({ timeout: 10000 });
-        const byline = "Written by Codex on la-user's computer";
-        assertEq(await reply.locator(".commentAuthor").getAttribute("title"), byline, "the byline names the computer");
-        assertEq(await reply.locator(":scope > [title]").first().getAttribute("title"), byline, "and so does the avatar");
+        const byline = `Written by Codex on ${computer}, for la-user`;
+        assertEq(await reply.locator(".commentAuthor").getAttribute("title"), byline, "the byline names the computer and the person");
+        assertEq(await reply.locator(".commentFor").textContent(), `on ${computer}, for la-user`, "after the agent's name");
+        assertEq(await reply.locator(":scope > .agentAvatar").getAttribute("title"), byline, "and so does the agent's avatar");
         await page.keyboard.press("Escape");
         assertNoProblems(page);
       } finally { await ctx.close(); }
@@ -720,6 +729,44 @@ export async function localAgentScenarios(env) {
         JSON.stringify(["done", [["gamma", "read_page", "completed"]]]), "the turn and its step as stored");
       await until(async () => server.log().includes(`[agents] the token of ${turned.turn_id} deleted`),
         { what: "the server deleted the turn's token" });
+    });
+
+    // Step 3.3: the writing tools, through the same token.
+    await step("local-agents: Codex comments on a PDF's passage through Gamma's tools: the thread reads Codex on this computer, for the person, and the passage's highlight names it", async () => {
+      const up = await user.upload("/api/uploads", makePdf([[NOON, "and close at dusk"]]), "marigold.pdf", "application/pdf");
+      const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+        body: { default_title: "Marigold paper", source_url: up.source_url, original_filename: "marigold.pdf" } });
+      const before = heard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(paper.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await openChat(page);
+        await dock.locator(".computerStrip").waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(COMMENT_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.locator(".chatBubble.ai", { hasText: "Commented:" }).waitFor({ timeout: 40000 });
+        const called = heard().slice(before).find((e) => e.gamma === "comment");
+        assert(called && called.http === 200 && !called.error && called.text.includes(`ok — commented on page 1, “${NOON}”`),
+          `the call commented: ${JSON.stringify(called)}`);
+        const thread = (await threadsOf(paper.id)).find((th) => th.comments[0]?.body === "Is noon right here?");
+        assert(thread, "the thread is on the page");
+        const [comment] = thread.comments;
+        assertEq(JSON.stringify([comment.author, comment.agent, comment.agent_kind]), JSON.stringify(["la-user", "Codex", "computer"]),
+          "written for its account, by Codex");
+        const computer = comment.agent_on;
+        assert(computer, "the comment names the computer Codex ran on");
+        // the highlight it made says who made it
+        await page.locator(`[data-page="1"] [data-hl-id][title="Highlighted by Codex on ${computer}, for la-user"]`).first()
+          .waitFor({ timeout: 10000 });
+        await page.goto(`${at(paper.id)}&thread=${thread.id}`);
+        const item = page.locator(".commentItem", { hasText: "Is noon right here?" }).first();
+        await item.waitFor({ timeout: 10000 });
+        assertEq(await item.locator(".commentAuthor").textContent(), "Codex", "the agent's name");
+        assertEq(await item.locator(".commentFor").textContent(), `on ${computer}, for la-user`, "on its computer, for the person");
+        assertEq(await item.locator(":scope > .agentAvatar").getAttribute("data-agent"), "computer", "a computer agent's avatar");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
     });
 
     await step("local-agents: a running turn is a Background tasks row, whose Stop ends it", async () => {

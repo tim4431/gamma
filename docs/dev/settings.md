@@ -646,7 +646,10 @@ AI:
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
   each column's menu offers the Read library / Read & search / Ask before
   changes / Allow all presets. Web search, fetching and using connected
-  journal sign-ins have separate rows. Under the table, two switches:
+  journal sign-ins have separate rows; the last of the changes, **Comments
+  and highlights** (`comment`, Ask by default), is what the agent writes
+  under its own name: comments, replies, resolves and highlights
+  ([ai_tools.md](ai_tools.md) "comment / resolve / highlight"). Under the table, two switches:
   **Fetch blocked papers in the background** (`fetchInBackground`, the
   handoff card hands a stopped fetch to Gamma Connector by itself) and
   **Read long papers with a helper** (`delegateReads`, the `read_paper`
@@ -673,28 +676,28 @@ AI:
   while browser sign-in is unavailable. **Connected assistants** lists each
   connection: how it signed in (browser sign-in — the `(OAuth)` suffix the
   provider mints — or token), what it reads ("Reads A, B", all workspaces, or
-  read and write for a token's workspace), where it edits notes ("edits
-  notes in Lab", "edits notes wherever you edit") and "changes without
-  asking" once it no longer asks first, "answers feedback" for a
-  feedback connection, the connected and expiry dates, an
-  icon-only **Choose workspaces** (read and feedback connections) that opens
-  the checklist under the row, with View or Edit on each workspace ticked,
-  **Ask me before each change it makes** once one is Edit, and Save and
-  Cancel, and an icon-only
+  read and write for a token's workspace), where it comments ("comments in
+  Lab", "comments everywhere"), where it edits notes ("edits notes in Lab",
+  "edits notes wherever you edit") and "changes without asking" once it no
+  longer asks first, the connected and expiry dates, an
+  icon-only **Choose workspaces** (read connections) that opens
+  the checklist under the row, with View, Comment or Edit on each workspace
+  ticked, **Ask me before each change it makes** once one is Edit, and Save
+  and Cancel, and an icon-only
   Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
-  its scope as a `Segmented` (read-only for assistants; read and answer
-  feedback for an agent or script that replies to and resolves the comments
-  on work folders' files, [annotations.md](annotations.md) "Tokens and MCP"; read
-  and write for an offline copy of the open workspace on another Gamma,
-  [mirror.md](mirror.md)) and, but for read and write, its workspaces. The
-  checklist (`WorkspacePicker.jsx`, the page
-  picker's `.docPickerItem` rows) leads with **All workspaces, and those added
-  later**; the pane shows it only to an account with more than one workspace,
-  the MCP consent screen always. With `roles` (a connection's editor and the
-  consent screen) each ticked row, or "All workspaces", ends in the share
-  popover's View / Edit `Segmented` (eye and pen): Edit lets the connection
-  change notes there ([mcp.md](mcp.md) "Editing notes"); a workspace the
-  account only views says *view only* instead. Each command box carries its copy button in
+  its scope as a `Segmented` (read for assistants and scripts, at the levels
+  its checklist gives each workspace; read and write for an offline copy of
+  the open workspace on another Gamma, [mirror.md](mirror.md)) and, for a
+  read token, its workspaces with their levels. The checklist
+  (`WorkspacePicker.jsx`, the page picker's `.docPickerItem` rows) leads with
+  **All workspaces, and those added later**. With `roles` (the Tokens pane, a
+  connection's editor and the consent screen) each ticked row, or "All
+  workspaces", ends in the share popover's kind of `Segmented`, View /
+  Comment / Edit (the eye, the speech bubble, the pen, each with its tooltip):
+  Comment lets the connection comment, reply, resolve and highlight there
+  under its own name ([mcp.md](mcp.md) "The Comment level"), Edit also lets
+  it change notes ([mcp.md](mcp.md) "Editing notes"); a workspace the account
+  only views offers View and Comment. Each command box carries its copy button in
   its corner (a check for two seconds after a copy). The pane reads its
   connections through the dialog's reads (`PANE_READS.integrations`,
   "What a pane reads" below), again in place when the window comes back

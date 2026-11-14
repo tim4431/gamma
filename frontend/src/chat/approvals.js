@@ -82,6 +82,11 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
       if (preview.existed) return t("File “{title}” in {folder}", { title, folder: preview.to });
       return preview.to ? t("Save “{title}” to {folder}", { title, folder: preview.to })
         : t("Save “{title}” to the library root", { title });
+    case "comment":
+      return (preview.reply ?? !!args.thread_id) ? t("Reply in a comment thread in “{title}”", { title })
+        : t("Comment on “{title}”", { title });
+    case "resolve": return t("Resolve a comment thread in “{title}”", { title });
+    case "highlight": return t("Highlight a passage in “{title}”", { title });
     case "restore_page": return t("Restore “{title}” from Recently deleted", { title });
     case "delete_page": return t("Move “{title}” to Recently deleted", { title });
     case "rename_folder": return t("Rename the folder “{title}”", { title });
@@ -108,6 +113,23 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
     case "fetch_paper": return t("Fetch {source}", { source: args.source || t("a document") });
     default: return permission ? t("Use “{permission}”", { permission }) : t("Use a tool");
   }
+}
+
+// Where a writing tool's call writes (a comment, a resolve, a highlight:
+// the preview's `place`, gamma/ai_tools.py _card_place, {kind, page?,
+// lines?, quote?}), in the user's language; "" for none.
+export function placeText(place) {
+  if (!place) return "";
+  const [first, last] = place.lines || [];
+  const where = {
+    passage: () => t("Page {page}", { page: place.page }),
+    area: () => t("Page {page}", { page: place.page }),
+    ink: () => t("Page {page}", { page: place.page }),
+    region: () => t("A region of the picture"),
+    lines: () => (first === last ? t("Line {line}", { line: first }) : t("Lines {first}–{last}", { first, last })),
+    file: () => t("The page itself"),
+  }[place.kind]?.() || t("A note");
+  return place.quote ? t("{place}: “{quote}”", { place: where, quote: place.quote }) : where;
 }
 
 // What a deletion takes, as the server names it (gamma/ai_tools.py

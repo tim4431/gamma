@@ -3,9 +3,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  GAMMA, agentChoice, asksNewChat, chatAgents, computerAgents, gammaAgent, keeperAgent, localAgent, mentionAgent, newChatQuestion,
-  pickAgent,
+  GAMMA, agentChoice, agentKind, asksNewChat, chatAgents, computerAgents, gammaAgent, keeperAgent, localAgent, madeBy, mentionAgent,
+  newChatQuestion, pickAgent, stampLabel,
 } from "../src/chat/agents.js";
+import { blockAgent } from "../src/shared/model/blockModel.js";
 
 const models = [{ id: "gpt-5.5", label: "GPT-5.5", efforts: ["low", "high"], effort: "high", default: true },
   { id: "gpt-mini", label: "GPT Mini", efforts: [], effort: null, default: false }];
@@ -119,4 +120,20 @@ test("the agent a comment names: the page's computer's, else the account's first
   assert.deepEqual(mentionAgent(chatAgents({ computers: [pc()] }), null),
     { name: "codex", label: "Codex", ready: true, problem: "", computer: "TIM-PC", online: true });
   assert.equal(mentionAgent(chatAgents(), work), null, "no agent on");
+});
+
+test("who made what an agent made: its kind by its id, its name, its computer and its person", () => {
+  assert.deepEqual(["", GAMMA, "computer:PC:codex", "computer::claude", "3f9a"].map(agentKind),
+    ["", "gamma", "computer", "computer", "connection"]);
+  assert.equal(madeBy({ name: "Codex", on: "TIM-PC", person: "tim" }), "Codex on TIM-PC, for tim");
+  assert.equal(madeBy({ id: GAMMA, name: "Gamma AI", person: "tim" }), "Gamma AI, for tim");
+  assert.equal(madeBy({ name: "Claude Code" }), "Claude Code", "no computer, no person");
+  // a block's stamp (gamma/agents.py stamp), read off its properties
+  const stamp = { id: "computer:PC:codex", name: "Codex", on: "TIM-PC", for: "tim" };
+  assert.equal(stampLabel(blockAgent({ properties: { agent: stamp } })), "Codex on TIM-PC, for tim");
+  assert.equal(stampLabel({ id: "tok1", name: "Claude Code", for: "tim" }), "Claude Code, for tim");
+  for (const props of [{}, { agent: "Codex" }, { agent: { id: "x", name: "" } }, null]) {
+    assert.equal(blockAgent({ properties: props }), null, JSON.stringify(props));
+  }
+  assert.equal(stampLabel(null), "");
 });

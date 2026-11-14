@@ -122,13 +122,14 @@ def _changes(ws):
         return conn.execute("SELECT MAX(seq) FROM page_changes").fetchone()[0]
 
 
-def _bearer(user, ws, scope, name="Script"):
-    """A client holding a new token of ``user``'s for ``ws``, and the
-    token's id."""
+def _bearer(user, ws, scope, name="Script", comments=""):
+    """A client holding a new token of ``user``'s for ``ws``, at the Comment
+    level of ``comments`` (integrations.comment_grant's stored value), and
+    the token's id."""
     from gamma.app import app
     from gamma.integrations import create_token
 
-    item = create_token(account_of(user), ws, name, 1, scope=scope)
+    item = create_token(account_of(user), ws, name, 1, scope=scope, comments=comments)
     c = TestClient(app)
     c.headers["Authorization"] = f"Bearer {item['token']}"
     return c, item["id"]
@@ -515,23 +516,26 @@ def test_a_retry_is_the_same_writers(own):
     assert _post(own, page["id"], page["id"], "scripted", id="cmWriter2").status_code == 409
 
 
-def test_a_feedback_token_replies_and_resolves_on_a_work_folders_files_only(own, work):
+def test_a_token_at_the_comment_level_comments_and_writes_nothing_else(own, work):
     ws = workspace_of("cm_own")
     root = thread_on(own, work.file, work.file, "use the viridis palette")["id"]
     elsewhere = thread_on(own, work.paper, work.paper, "a library page's thread")["id"]
-    bearer, token_id = _bearer("cm_own", ws, "feedback", "Claude Code")
+    reader, _ = _bearer("cm_own", ws, "read", "Codex")
+    r = _post(reader, work.file, work.file, "a reader's", thread_id=root)
+    assert r.status_code == 403 and r.json()["detail"] == "this token is read-only"
+    assert reader.post(f"/api/comments/{root}/resolve", json={"resolved": True}).status_code == 403
+    bearer, token_id = _bearer("cm_own", ws, "read", "Claude Code", comments=json.dumps([ws]))
     assert [t["id"] for t in _threads(bearer, work.file)] == [root]
     reply = _ok(_post(bearer, work.file, work.file, "Switched to viridis (plot.py:12).", thread_id=root))["comment"]
     assert _stored(ws, reply["id"])[:2] == ("Claude Code", token_id)
-    assert _post(bearer, work.file, work.file, "a new thread").status_code == 403
-    assert bearer.patch(f"/api/comments/{reply['id']}", json={"body": "x"}).status_code == 403
-    assert bearer.delete(f"/api/comments/{reply['id']}").status_code == 403
+    # a new thread, on a library page as on a file; its own comments it edits and deletes, as a write token does
+    opened = _ok(_post(bearer, work.paper, work.paper, "a question of its own"))["thread"]["id"]
+    _ok(_post(bearer, work.paper, work.paper, "answered", thread_id=elsewhere))
+    assert _ok(bearer.patch(f"/api/comments/{reply['id']}", json={"body": "Switched (plot.py:12)."}), 200)
+    assert bearer.delete(f"/api/comments/{opened}").status_code == 200
     assert _ok(bearer.post(f"/api/comments/{root}/resolve", json={"resolved": True}), 200)["thread"]["resolved_agent"] \
         == "Claude Code"
-    assert bearer.post(f"/api/comments/{root}/resolve", json={"resolved": False}).status_code == 403
-    r = _post(bearer, work.paper, work.paper, "not feedback", thread_id=elsewhere)
-    assert r.status_code == 403 and "work folder" in r.text
-    assert bearer.post(f"/api/comments/{elsewhere}/resolve", json={"resolved": True}).status_code == 403
+    assert _ok(bearer.post(f"/api/comments/{root}/resolve", json={"resolved": False}), 200)
     # writes elsewhere stay refused: it is a read token but for these
     assert bearer.post(f"/api/pages/{work.file}/ops", json={"client": "t", "ops": [
         {"op": "set", "id": work.file, "content": "renamed"}]}).status_code == 403
@@ -730,20 +734,102 @@ def test_the_send_waiting_on_a_thread(own):
     assert sent[first]["state_by"] == "Codex"
 
 
-def test_a_local_agents_comment_says_so(own):
-    """A comment whose ``agent_id`` is ``local:…`` (an agent on this
-    computer, gamma/local_agents) carries ``agent_kind`` local; a token's
-    and a person's have no such key."""
-    ws = workspace_of("cm_own")
-    page = make_page(own, "Local agent page")
+def test_an_agents_comment_is_its_accounts_and_names_the_agent(own, monkeypatch):
+    """A comment an agent wrote is its account's (``author``) and names the
+    agent (gamma/agents.py): its name, its ``agent_kind`` and, for a
+    computer's agent, ``agent_on``, the computer as it is called now (this
+    computer where agents run here, a channel's computer by what it last
+    announced, none for one no longer known); a person's comment has none
+    of those keys. The write's event carries the agent's label and id, a
+    resolve keeps the label, and a computer renamed reads renamed."""
+    from gamma import agents, local_agents
+    from gamma.computers import channel
+    from gamma.db import connect_users_db, page_now
+
+    monkeypatch.setattr(local_agents, "enabled", lambda: True)
+    monkeypatch.setattr(channel, "computer_name", lambda: "TIM-PC")
+    ws, me = workspace_of("cm_own"), account_of("cm_own")
+    page = make_page(own, "Agents page")
     thread = thread_on(own, page["id"], page["id"], "fix it")["id"]
+    with connect_users_db() as users:
+        users.execute("INSERT INTO computers (token_id, user_id, workspace_id, computer, name, seen_at, created_at) "
+                      "VALUES ('cmTok', ?, ?, 'LAPTOP-ID', 'LAPTOP', ?, ?)", (me, ws, page_now(), page_now()))
+    writers = [agents.here("codex"), agents.computer_agent("LAPTOP-ID", "claude"), agents.computer_agent("", "codex"),
+               agents.gamma(), agents.Agent("tok1", "connection", "Script")]
     with connect_pages_db(ws) as conn:
-        for agent, agent_id in (("Codex", "local:codex"), ("Script", "tok1")):
-            comments.create(conn, page["id"], block_id=page["id"], body=f"{agent} here", author=account_of("cm_own"),
-                            author_name="cm_own", thread_id=thread, agent=agent, agent_id=agent_id)
+        events = [comments.create(conn, page["id"], block_id=page["id"], body="done", author=me, author_name="cm_own",
+                                  thread_id=thread, agent=agent)["event"] for agent in writers]
         got = comments.thread_of(conn, thread)["comments"]
-    assert [(c["agent"], c.get("agent_kind")) for c in got] == [("", None), ("Codex", "local"), ("Script", None)]
-    assert "agent_kind" not in got[0] and "agent_kind" not in got[2]
+    assert [(c["author"], c["agent"], c.get("agent_kind"), c.get("agent_on")) for c in got] == [
+        ("cm_own", "", None, None), ("cm_own", "Codex", "computer", "TIM-PC"),
+        ("cm_own", "Claude Code", "computer", "LAPTOP"), ("cm_own", "Codex", "computer", None),
+        ("cm_own", "Gamma AI", "gamma", None), ("cm_own", "Script", "connection", None)]
+    assert "agent_kind" not in got[0] and "agent_on" not in got[3]
+    assert [(e["agent"], e["agent_id"]) for e in events] == [
+        ("Codex on TIM-PC", agents.here("codex").id), ("Claude Code", "computer:LAPTOP-ID:claude"),
+        ("Codex", "computer::codex"), ("Gamma AI", "gamma"), ("Script", "tok1")]
+    with connect_users_db() as users:
+        users.execute("UPDATE computers SET name = 'LAPTOP 2' WHERE token_id = 'cmTok'")
+    with connect_pages_db(ws) as conn:
+        assert comments.thread_of(conn, thread)["comments"][2]["agent_on"] == "LAPTOP 2", "the computer as called now"
+        out = comments.resolve(conn, thread, page_id=page["id"], resolved=True, by=me,
+                               agent=agents.computer_agent("LAPTOP-ID", "claude", "LAPTOP 2"))
+    assert (out["thread"]["resolved_agent"], out["thread"]["resolved_by"]) == ("Claude Code on LAPTOP 2", "cm_own")
+
+
+def test_another_accounts_computer_never_names_an_agents(own, monkeypatch):
+    """A computer's id is what its channel announces: another account that
+    announces the author's computer id (read from a block's stamp) under
+    its own name leaves the author's agent named by the author's computer,
+    and this computer by its own name."""
+    from gamma import agents, local_agents
+    from gamma.computers import channel
+    from gamma.db import connect_users_db, page_now
+
+    monkeypatch.setattr(local_agents, "enabled", lambda: True)
+    monkeypatch.setattr(channel, "computer_name", lambda: "TIM-PC")
+    ws, me = workspace_of("cm_own"), account_of("cm_own")
+    make_user("cm_spoof", "pw")
+    spoof = account_of("cm_spoof")
+    page = make_page(own, "Spoofed page")
+    thread = thread_on(own, page["id"], page["id"], "fix it")["id"]
+    with connect_users_db() as users:
+        users.executemany("INSERT INTO computers (token_id, user_id, workspace_id, computer, name, seen_at, created_at) "
+                          "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                          [("cmTokMine", me, ws, "MINE-ID", "LAPTOP", "2026-11-01", "2026-11-01"),
+                           ("cmTokEvil", spoof, ws, "MINE-ID", "EVIL", page_now(), page_now()),
+                           ("cmTokHere", spoof, ws, agents.here_id(), "EVIL", page_now(), page_now())])
+    with connect_pages_db(ws) as conn:
+        for agent in (agents.computer_agent("MINE-ID", "codex"), agents.here("claude")):
+            comments.create(conn, page["id"], block_id=page["id"], body="done", author=me, author_name="cm_own",
+                            thread_id=thread, agent=agent)
+        got = comments.thread_of(conn, thread)["comments"]
+    assert [c.get("agent_on") for c in got[1:]] == ["LAPTOP", "TIM-PC"]
+    with connect_users_db() as users:
+        users.execute("DELETE FROM computers WHERE token_id IN ('cmTokMine', 'cmTokEvil', 'cmTokHere')")
+
+
+def test_an_agent_edits_and_deletes_only_what_it_wrote(own):
+    """The agent that wrote a comment edits it, as its account; the
+    account's own session or another agent of it may not. Deleting: the
+    account's session deletes the agent's comment, another agent may not."""
+    from gamma import agents
+
+    ws, me = workspace_of("cm_own"), account_of("cm_own")
+    page = make_page(own, "Agent edits page")
+    codex, other = agents.computer_agent("PC", "codex", "PC"), agents.Agent("tok2", "connection", "Script")
+    with connect_pages_db(ws) as conn:
+        made = comments.create(conn, page["id"], block_id=page["id"], body="first", author=me, author_name="cm_own",
+                               agent=codex)["comment"]["id"]
+        for writer in (None, other):
+            with pytest.raises(HTTPException) as refused:
+                comments.edit(conn, made, page_id=page["id"], body="x", author=me, agent=writer)
+            assert refused.value.status_code == 403
+        assert comments.edit(conn, made, page_id=page["id"], body="second", author=me,
+                             agent=codex)["event"]["agent_id"] == codex.id
+        with pytest.raises(HTTPException):
+            comments.delete(conn, made, page_id=page["id"], user=me, agent=other)
+        assert comments.delete(conn, made, page_id=page["id"], user=me)["removed"] == [made]
 
 
 def test_the_open_count_is_the_windows(own):

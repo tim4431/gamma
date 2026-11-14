@@ -2,7 +2,8 @@
 // "In the app"): the thread popover (ThreadPopover.jsx) lists a block's
 // threads, and the PDF's margin (CommentMargin.jsx) shows one card per
 // thread beside its highlight or ink group. Each comment with its author
-// (an agent by its name, with whose connection it wrote), time and text
+// (an agent by its kind's avatar and its name, then its computer and the
+// person it wrote for, "on TIM-PC, for tim"), time and text
 // rendered as a note is (so @people and [[links]] work, and in a work
 // folder maker's own comments its agent's @name), its "⋯" menu (Edit,
 // Copy link, Report on anyone else's, Delete), the
@@ -19,13 +20,13 @@ import { CheckIcon, FlagIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } fr
 import ListMotion from "../shared/ui/ListMotion";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import { StateDetail, StateTag } from "../shared/ui/StateTag";
-import { PersonAvatar } from "../collaboration/Presence";
+import { AgentAvatar, PersonAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { MentionContext } from "../editor/MentionMenu";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { CommentComposer, hasDraft } from "./CommentComposer";
-import { authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen, sentChip } from "./comments.js";
+import { agentFor, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen, sentChip } from "./comments.js";
 import { openReport } from "../support/reportContent.js";
 import { ThreadPlaceContext } from "./threadPlaceContext.js";
 
@@ -37,6 +38,13 @@ const PLACE_TEXT = {
   lost: () => t("The passage was not found in the new version"),
   earlier: () => t("Drawn on an earlier version"),
 };
+
+// The avatar of a comment's writer: an agent's by its kind, else its
+// author's (the Comments window's rows draw it too).
+export function CommentAvatar({ comment }) {
+  return comment.agent ? <AgentAvatar kind={comment.agent_kind} title={authorTitle(comment)} />
+    : <PersonAvatar name={comment.author || "?"} title={comment.author} />;
+}
 
 // A comment's text, rendered as a note is. One put off (`later`) is drawn
 // once it comes within a screen of the view (the popover's list, else the
@@ -94,10 +102,11 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
   const text = <CommentText comment={comment} later={later.has(comment.id)} labelsFor={labelsFor} onBlockRefClick={onBlockRefClick} />;
   return (
     <div className={`commentItem rowMenuHost${reply ? " reply" : ""}`} data-motion-key={comment.id} data-comment-id={comment.id}>
-      <PersonAvatar name={who || "?"} title={byline} />
+      <CommentAvatar comment={comment} />
       <div className="commentMain">
         <div className="commentMeta">
           <span className="commentAuthor" title={comment.agent ? byline : undefined}>{who || t("Someone")}</span>
+          {comment.agent ? <span className="commentFor" title={byline}>{agentFor(comment)}</span> : null}
           <span className="commentTime" title={fmtDate(comment.created_at, { dateStyle: "medium", timeStyle: "short" })}>
             {formatRelativeTime(comment.created_at)}
           </span>

@@ -4,7 +4,7 @@ stand-in Codex (tests/fake_agents/) through the real processes, on the
 sample paper (samples/synctex/paper) as a work folder of this computer.
 
 The Send of the account that turned the agent on is claimed, the turn edits the folder, its answers come
-back as replies signed Codex (``agent_kind`` local), the fixed ones are
+back as replies signed Codex on this computer (``agent_kind`` computer), the fixed ones are
 resolved and the request is done with its summary and the files it changed;
 the progress shows on the way, no path outside the folder in it; a reply
 loads nothing by itself (no image, no raw HTML: ``prompt.inert``). Another
@@ -196,9 +196,9 @@ def test_a_makers_send_is_answered(lab, disk, monkeypatch):
     for thread_id in f.threads:
         thread = threads[thread_id]
         reply = thread["comments"][-1]
-        assert (reply["agent"], reply.get("agent_kind"), reply["author"]) == ("Codex", "local", OWNER)
+        assert (reply["agent"], reply.get("agent_kind"), reply["author"]) == ("Codex", "computer", OWNER)
         assert reply["body"] == f"Done for {thread_id}."
-        assert thread["resolved_at"] and thread["resolved_agent"] == "Codex"
+        assert reply["agent_on"] and thread["resolved_at"] and thread["resolved_agent"] == f"Codex on {reply['agent_on']}"
     assert all("agent_kind" not in c for c in threads[f.threads[0]]["comments"][:-1])
 
     # the progress on the way, no path outside the folder and no whole command in it
@@ -307,7 +307,7 @@ def test_a_tokens_state_change_is_refused_while_it_runs(lab, disk, monkeypatch):
     sent = _send(lab.owner, f)
     _turn_started(lab, sent["id"])
     helper = fresh_client()
-    helper.headers["Authorization"] = f"Bearer {token_for(lab.owner, 'feedback', 'Helper')}"
+    helper.headers["Authorization"] = f"Bearer {token_for(lab.owner, 'read', 'Helper', comments=True)}"
     r = helper.post(f"/api/feedback/requests/{sent['id']}/state", json={"state": "done"})
     assert r.status_code == 409 and r.json()["detail"] == "Codex on this computer is answering this request."
     _withdraw(lab, sent["id"])
@@ -362,7 +362,7 @@ def test_an_answer_not_in_the_form_asked_for(lab, disk, monkeypatch):
 def test_nothing_new_since_the_last_answers(lab, disk):
     f = _folder(lab, disk)
     helper = fresh_client()
-    helper.headers["Authorization"] = f"Bearer {token_for(lab.owner, 'feedback', 'Helper')}"
+    helper.headers["Authorization"] = f"Bearer {token_for(lab.owner, 'read', 'Helper', comments=True)}"
     for thread_id in f.threads:  # an agent answered each, and no one said anything since
         r = helper.post(f"/api/pages/{f.page}/comments", json={"block_id": f.page, "thread_id": thread_id,
                                                                "body": "Looked at it."})
@@ -387,17 +387,17 @@ def test_too_many_comments_at_once(lab, disk, monkeypatch):
 
 
 def test_no_reply_written_fails_the_request(lab, disk, monkeypatch):
-    from gamma.annotations import agent
+    from gamma.annotations import hand
 
     def refused(*args, **kw):
-        raise ValueError("This connection's account cannot comment in this workspace.")
+        raise ValueError("This account cannot comment in this workspace.")
 
-    monkeypatch.setattr(agent, "reply", refused)
+    monkeypatch.setattr(hand, "reply", refused)
     f = _folder(lab, disk)
     sent = _send(lab.owner, f)
     assert runner.wait_idle(30)
     got = _request(lab, sent["id"])
-    assert (got["state"], got["detail"]) == ("failed", "This connection's account cannot comment in this workspace.")
+    assert (got["state"], got["detail"]) == ("failed", "This account cannot comment in this workspace.")
     assert all(not t["resolved_at"] for t in _threads(lab, f).values())
 
 
@@ -848,18 +848,18 @@ def test_an_error_before_the_turn_is_read_ends_its_process(lab, disk, monkeypatc
 
 
 def test_a_withdraw_while_the_answers_are_written(lab, disk, monkeypatch):
-    from gamma.annotations import agent
+    from gamma.annotations import hand
 
-    reply = agent.reply
+    reply = hand.reply
     calls = []
 
-    def withdrawn_after_one(connection, ws, base, args, **kw):
-        calls.append(args["thread_id"])
-        out = reply(connection, ws, base, args, **kw)
+    def withdrawn_after_one(conn, writer, ws, thread_id, body, **kw):
+        calls.append(thread_id)
+        out = reply(conn, writer, ws, thread_id, body, **kw)
         _withdraw(lab, "larAnswerWithdraw")
         return out
 
-    monkeypatch.setattr(agent, "reply", withdrawn_after_one)
+    monkeypatch.setattr(hand, "reply", withdrawn_after_one)
     f = _folder(lab, disk)
     sent = _send(lab.owner, f, id="larAnswerWithdraw")
     assert runner.wait_idle(60)

@@ -47,7 +47,7 @@ import pytest
 
 from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, token_for
 from fake_agents import read_log, requests_in, script_agent, serve_mcp, turns_in
-from gamma import folder_links, integrations, ops, workspaces
+from gamma import agents, folder_links, integrations, ops, workspaces
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.local_agents import catalog, chats, runner, store, tools
 from gamma.vault import store as vault_store
@@ -366,13 +366,13 @@ def test_a_turn_reads_gamma_with_a_token_of_its_own_gone_when_it_ends(lab, disk,
     reads = [{"tool": "list_pages", "arguments": {"title_contains": "Heliotrope"}}]
     with serve_mcp() as url:
         monkeypatch.setattr(tools, "_url", url)
-        # stopped: the token, the owner's of the workspace named with the agent's label, goes with the turn
+        # stopped: the token, the owner's of the workspace named with the agent's id, goes with the turn
         script_agent(monkeypatch, disk.log, delay=30, gamma=reads)
         made = _say(lab.owner, f.page, "Read the minutes.")
         _running(lab, made["turn"]["id"])
         _until(lambda: [s for s in _reply(lab, f.page)["steps"] if s["status"] == "completed"])
         [(user, ws, name, expires)] = _turn_tokens()
-        assert (user, ws, name) == (lab.user, lab.ws, "Codex")
+        assert (user, ws, name) == (lab.user, lab.ws, agents.here("codex").id)
         assert expires <= time.time() + runner._run_timeout() + runner.TOKEN_SLACK_S + 1
         called = [e for e in read_log(disk.log) if "gamma" in e][-1]
         assert called["http"] == 200 and minutes["id"] in called["text"]

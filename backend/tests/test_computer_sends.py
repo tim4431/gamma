@@ -331,7 +331,7 @@ def test_a_claim_is_one_write_keyed_by_its_run(lab, pc):
     r = laptop.post(f"/api/computers/sends/{sent['id']}/claim", json={"run": "run-1", "agent": "codex"})
     assert (r.status_code, r.json()["detail"]) == (409, "Another run holds this request.")
     # a token's change of the request the computer holds is refused; the requester may still withdraw
-    r = _bearer(token_for(lab.maker, "feedback", "Claude Code")).post(
+    r = _bearer(token_for(lab.maker, "read", "Claude Code", comments=True)).post(
         f"/api/feedback/requests/{sent['id']}/state", json={"state": "done"})
     assert (r.status_code, r.json()["detail"]) == (409, "Codex on TIM-PC is answering this request.")
     # not this computer's: another account's Send, another account's computer, another agent, a bad run id
@@ -376,7 +376,8 @@ def test_the_answers_are_written_here_as_the_agents_once(lab, pc):
     assert all(t["answered"] for t in record["threads"])
     fixed, kept = _comments(lab, fix), _comments(lab, keep)
     reply = fixed["comments"][-1]
-    assert (reply["id"], reply["agent"], reply.get("agent_kind")) == ("cpsReplyFix1", "Codex", "local")
+    assert (reply["id"], reply["agent"], reply.get("agent_kind"), reply.get("agent_on")) == (
+        "cpsReplyFix1", "Codex", "computer", "TIM-PC"), "signed as the agent of the computer that announced itself"
     assert reply["body"] == "Defined it in 2.1. [x](http://evil.example/a.png)"     # inert: no picture loads
     assert fixed["resolved_at"] and not kept["resolved_at"]
     # a retry writes nothing twice and answers the same
@@ -429,7 +430,7 @@ def test_an_agent_taking_a_withdrawn_request_again_ends_the_computers_run(lab, p
     sent = _send(lab, t)
     _claim(pc, sent["id"], run="run-a")
     _ok(lab.maker.post(f"/api/feedback/requests/{sent['id']}/state", json={"state": "failed"}))  # the computer sleeps
-    agent = _bearer(token_for(lab.maker, "feedback", "Claude Code"))
+    agent = _bearer(token_for(lab.maker, "read", "Claude Code", comments=True))
     _ok(agent.post(f"/api/feedback/requests/{sent['id']}/state", json={"state": "running", "detail": "On it"}))
     with connect_pages_db(lab.ws) as conn:
         assert conn.execute("SELECT ended FROM feedback_request_runs WHERE request_id = ?",

@@ -29,6 +29,7 @@ import { itemTypeFields, itemTypeLabel, itemTypeOf } from "../shared/lib/itemTyp
 import { fmtClock } from "../replay/clock.js";
 import { fmtBytes } from "../shared/lib/format.js";
 import { isPdf, pageDocument, uploadUrl } from "../documents/pageDocument.js";
+import { stampLabel } from "../chat/agents.js";
 
 // A table's own entry for a key: a stored key named like an Object
 // member ("constructor", "toString") is no entry.
@@ -195,6 +196,7 @@ export const CATALOG = {
   // timing and display
   t0: { section: "timing", type: "time", label: T("Written"), hint: T("When this was written; replay and recordings line notes up by it.") },
   transcript: { section: "timing", type: "flag", label: T("Transcript"), hint: T("Written by a recording's transcription.") },
+  agent: { section: "timing", type: "text", label: T("Made by"), hint: T("The agent that made it and the person it acted for, whose block it is.") },
   collapsed: { section: "timing", type: "flag", label: T("Folded"), hint: T("Whether the page opens with this block folded; your own folding may differ.") },
   linked_highlight_id: { section: "timing", type: "block", label: T("Attached to"), hint: T("The highlight on the PDF this note is attached to.") },
   zotero_readonly: { section: "timing", type: "flag", label: T("Zotero"), hint: T("A Zotero link does not write this block back.") },
@@ -907,6 +909,9 @@ function keyRow(section, key, value, ctx) {
   }
   if (key === "collapsed" && typeof value === "boolean") {
     return makeRow(section, [key], { type: "flag", value, display: { text: value ? t("Folded") : t("Unfolded"), tone: null } });
+  }
+  if (key === "agent" && isRecord(value) && stampLabel(value)) {
+    return makeRow(section, [key], { type: "text", value, display: plain(stampLabel(value)) });
   }
   if (key === "transcript" && value === true) {
     return makeRow(section, [key], { type: "flag", value, display: { text: t("Transcript"), tone: null } });

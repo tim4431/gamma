@@ -472,12 +472,17 @@ def work_props(folder_id, file_name, *, library=False, doc=None, directory="") -
     return props
 
 
-def token_for(owner, scope="write", name="Script") -> str:
+def token_for(owner, scope="write", name="Script", *, comments=False) -> str:
     """A token the account of the client ``owner`` makes by hand (Settings →
     AI → Integrations → Tokens, ``POST /api/integrations/tokens``) for the
     workspace it has open (its ``X-Gamma-Workspace``, else its own), of
-    ``scope`` and named ``name``: what a script or a local agent holds."""
-    r = owner.post("/api/integrations/tokens", json={"name": name, "scope": scope})
+    ``scope`` and named ``name``, at the Comment level there with
+    ``comments`` (a read token): what a script or a local agent holds."""
+    level = {}
+    if comments:
+        ws = owner.headers.get("X-Gamma-Workspace") or owner.get("/api/session").json()["default_workspace"]
+        level = {"comment_workspaces": [ws]}
+    r = owner.post("/api/integrations/tokens", json={"name": name, "scope": scope, **level})
     assert r.status_code == 201, r.text
     return r.json()["token"]
 

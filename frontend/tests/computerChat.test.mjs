@@ -57,6 +57,8 @@ test("a step in words, done and while it runs", () => {
   assert.equal(stepText({ kind: "other" }), "Worked");
   assert.equal(stepText({ kind: "gamma", tool: "read_page" }), "Read Gamma: read_page", "a call of Gamma's tools, by its name");
   assert.equal(stepText({ kind: "gamma", tool: "" }), "Read Gamma");
+  assert.equal(stepText({ kind: "gamma", tool: "comment" }), "Wrote in Gamma: comment", "a writing tool's call, as a write");
+  assert.equal(stepNow({ kind: "gamma", tool: "highlight" }), "Writing in Gamma: highlight");
   assert.equal(stepNow({ kind: "edit", path: "main.tex" }), "Editing main.tex");
   assert.equal(stepNow({ kind: "run", program: "latexmk" }), "Running latexmk");
   assert.equal(stepNow({ kind: "search" }), "Searching the sources");
@@ -429,6 +431,10 @@ test("the transcript's shape: a turn done, with its steps as plain chips, its mo
   assert.deepEqual(reads[2], { kind: "view", summary: "Read Gamma: view_pdf_page", error: true });
   assert.equal(splitActions(reads).failed, 1);
   assert.equal(reads.filter(isChange).length, 0, "a read changes nothing");
+  // a writing tool's call is a step of its own, never listed among the reply's changes
+  const writes = ["comment", "resolve", "highlight"].map((tool) => stepChip({ kind: "gamma", tool, status: "completed" }));
+  assert.deepEqual(writes.map((c) => c.kind), ["write", "write", "write"]);
+  assert.equal(writes.filter(isChange).length, 0);
 });
 
 test("the transcript's shape: a turn under way is partial, its pill the agent at work, its asks drawn here only", () => {

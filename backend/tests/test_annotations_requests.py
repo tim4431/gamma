@@ -66,7 +66,7 @@ def lab(anon_module):
     share = _ok(owner.post(f"/api/share/folder/{W}", json={"audience": "anyone", "role": "edit"}))["token"]
     return SimpleNamespace(ws=ws, owner=owner, editor=editor, viewer=viewer, W=W, main=main, fig=fig,
                            library=library, t=t, share=share, anon=anon_module,
-                           agent=_bearer(token_for(owner, "feedback", "Claude Code")),
+                           agent=_bearer(token_for(owner, "read", "Claude Code", comments=True)),
                            script=_bearer(token_for(owner, "write", "Script")),
                            reader=_bearer(token_for(owner, "read", "Reader")))
 

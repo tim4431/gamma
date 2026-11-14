@@ -6,10 +6,12 @@
 // A thread is the server's `{id, block_id, page_id, resolved_at,
 // resolved_by, resolved_agent, made_on, sent, created_at, last_at,
 // comments}`, its comments oldest first, each `{id, thread_id, author,
-// agent, body, created_at, updated_at, deleted}`. A thread's root has
-// `thread_id === id`; `author` is a username, and `agent` the name of the
-// integration token that wrote it through the author's connection ("" for
-// the person's own); `made_on` the file the thread was opened on, `sent`
+// agent, body, created_at, updated_at, deleted, agent_kind?, agent_on?}`. A
+// thread's root has `thread_id === id`; `author` is a username, and `agent`
+// the name of the agent that wrote it for the author ("" for the person's
+// own), with its `agent_kind` (chat/agents.js agentKind's kinds) and, for a
+// computer's agent, the computer it runs on, `agent_on`; `made_on` the file
+// the thread was opened on, `sent`
 // the Send waiting on it (docs/dev/annotations.md).
 import { t } from "../shared/i18n/i18n.js";
 import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlock, pdfAnchorOf, textSpan } from "../shared/model/blockModel.js";
@@ -17,6 +19,7 @@ import { plainSnippet } from "../search/snippets.js";
 import { agentAway, peopleIn } from "../editor/mentions.js";
 import { AGENT_MAX } from "../feedback/feedbackView.js";
 import { agentWorking } from "../vault/vaultState.js";
+import { GAMMA, madeBy } from "../chat/agents.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
 
@@ -228,19 +231,26 @@ export const canReportComment = (comment, me) => !comment.deleted && (!me || com
 // A comment whose text was changed after it was written.
 export const isEdited = (comment) => !comment.deleted && !!comment.updated_at && comment.updated_at !== comment.created_at;
 
-// Who a comment reads as written by: the agent that wrote it through its
-// author's connection ("Claude Code"), else its author. `authorTitle` is
-// its avatar's title, which names the connection for an agent, or the
-// computer for an agent Gamma ran there (`agent_kind` "local",
-// docs/dev/local_agents.md: its author is the person who sent it the
-// comments).
-export const authorLabel = (comment) => comment.agent || comment.author;
+// Who a comment reads as written by: the agent that wrote it ("Codex",
+// "Claude Code", Gamma AI; gamma/agents.py), else its author, whose
+// comment it is either way. `agentFor` is what the byline adds after an
+// agent's name: the computer it runs on and the person it wrote for ("on
+// TIM-PC, for tim"). `authorTitle` is the avatar's title, the whole of it
+// (chat/agents.js madeBy), a connection's said as written with the
+// person's connection.
+const agentId = (comment) => (comment.agent_kind === "gamma" ? GAMMA : "");
+export const authorLabel = (comment) => (comment.agent ? madeBy({ id: agentId(comment), name: comment.agent }) : comment.author);
+export function agentFor(comment) {
+  if (!comment.agent) return "";
+  const person = comment.author || t("Someone");
+  return comment.agent_on ? t("on {computer}, for {person}", { computer: comment.agent_on, person })
+    : t("for {person}", { person });
+}
 export function authorTitle(comment) {
   if (!comment.agent) return comment.author;
-  const who = comment.author || t("Someone");
-  return comment.agent_kind === "local"
-    ? t("Written by {agent} on {who}'s computer", { agent: comment.agent, who })
-    : t("Written by {agent} with {who}'s connection", { agent: comment.agent, who });
+  const person = comment.author || t("Someone");
+  if (comment.agent_kind === "connection") return t("Written by {agent} with {who}'s connection", { agent: comment.agent, who: person });
+  return t("Written by {agent}", { agent: madeBy({ id: agentId(comment), name: comment.agent, on: comment.agent_on, person }) });
 }
 
 // A Send its requester withdrew: the server's `failed` with "withdrawn".

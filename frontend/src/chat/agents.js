@@ -159,6 +159,26 @@ export function newChatQuestion(next) {
 // An agent as the picker names it: "Codex", "Codex on TIM-PC".
 export const agentChoice = (agent) => (agent?.where ? t("{agent} on {computer}", { agent: agent.label, computer: agent.where }) : agent?.label || "");
 
+// The kind of agent an id names (gamma/agents.py): Gamma AI's "gamma", a
+// computer's agent's "computer:<computer>:<name>", else the integration
+// token's id of a connection; "" for none (a person).
+export const agentKind = (id) => (!id ? "" : id === GAMMA ? "gamma" : String(id).startsWith("computer:") ? "computer" : "connection");
+
+// Who an agent that wrote or made something is, with the person it acted
+// for: "Codex on TIM-PC, for tim", "Gamma AI, for tim". `id` and `name` the
+// agent's, `on` its computer ("" for none, or one no longer known),
+// `person` the account's username. A comment's agent (comments.js) and a
+// block's `properties.agent` (blockModel.js blockAgent) read alike.
+export function madeBy({ id = "", name = "", on = "", person = "" }) {
+  const agent = id === GAMMA ? t("Gamma AI") : name;
+  const who = on ? t("{agent} on {computer}", { agent, computer: on }) : agent;
+  return person ? t("{agent}, for {person}", { agent: who, person }) : who;
+}
+
+// The same of a block an agent made, from its stamp (`properties.agent`,
+// blockModel.js blockAgent); "" for a person's block.
+export const stampLabel = (stamp) => (typeof stamp?.name === "string" && stamp.name ? madeBy({ id: stamp.id, name: stamp.name, on: stamp.on || "", person: stamp.for || "" }) : "");
+
 // The agent a comment on the page can name (`@codex`), which the comment
 // then is a Send to: the computer's agent of the page's work folder that
 // another computer keeps, else, on a file of a work folder kept here

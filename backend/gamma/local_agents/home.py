@@ -6,8 +6,8 @@ home.
 
 ``LocalHome`` is a work folder of this server: the runner's in-process reads
 and writes of its pages.db, as they always were (``requests.claim`` and
-``set_state``, ``requests.entries_of``, the comments, ``annotations.agent``'s
-``reply`` and ``resolve`` signed ``local:<agent>``).
+``set_state``, ``requests.entries_of``, the comments, ``annotations.hand``'s
+``reply`` and ``resolve`` signed as this computer's agent, ``agents.here``).
 
 ``HttpHome`` is a work folder of another Gamma server (a NAS; step 4c of
 docs/research/agent-collab.md), spoken to with this computer's token of that
@@ -33,8 +33,9 @@ runs it:
 - **The progress** (``POST .../progress {run, detail}``) and **the end with
   the answers** (``POST .../answers {run, replies, state, summary, changed,
   error?}``): the replies, held until the end, are written by that server
-  as the agent's (``annotations.agent.reply`` with ``local:<agent>`` and the
-  claim's ``seen``), each with an id minted here once per run and thread
+  as the agent's (``annotations.hand.reply`` signed as this computer's
+  agent there, ``agents.of_channel``, with the claim's ``seen``), each with
+  an id minted here once per run and thread
   (``reply_id``), so a retry writes none twice; ``changed`` names only the
   files the vault tracks, relative to the folder.
 
@@ -205,35 +206,38 @@ class LocalHome:
     def pictures(self, todo: list[dict], root: Path) -> None:
         """The annotation files' pass writes a local work folder's."""
 
-    def _connection(self, run):
-        from .. import comments
-        from ..integrations import Connection
+    def _signed(self, run):
+        """Who an answer is written as (``hand.Writer``): the owner, signed
+        as this computer's agent (``agents.here``)."""
+        from ..agents import here
+        from ..annotations.hand import Writer
 
-        # Signed as the agent's label; its id ``local:<name>`` makes the
-        # comment read as an agent on this computer's (comments.LOCAL_AGENT).
-        return Connection(user_id=run.owner, workspaces=[self.ws], scope="feedback",
-                          token_id=f"{comments.LOCAL_AGENT}{run.agent}", name=run.label, username=run.owner_name)
+        return Writer(run.owner, run.owner_name, here(run.agent))
 
     def reply(self, run, thread_id: str, body: str) -> None:
         """The answer written as the agent's reply, saying when the run read
         the thread (``seen``), and its thread's session recorded.
         ValueError for a refusal."""
+        from ..annotations import hand
         from ..blocks_store import new_block_id
-        from ..annotations import agent as feedback_agent
+        from ..db import connect_pages_db
 
-        _, out = feedback_agent.reply(self._connection(run), self.ws, "", {"thread_id": thread_id, "body": body,
-                                                                           "id": new_block_id()}, seen=run.seen_at)
-        run._answered(thread_id, out["comment_id"])
+        with connect_pages_db(self.ws) as conn:
+            out = hand.reply(conn, self._signed(run), self.ws, thread_id, body, comment_id=new_block_id(),
+                             seen=run.seen_at)
+        run._answered(thread_id, out["comment"]["id"])
 
     def resolve(self, run, thread_id: str) -> None:
         """The fixed thread resolved, unless a person said in it what the
         run did not read. ValueError for a refusal."""
-        from ..annotations import agent as feedback_agent
+        from ..annotations import hand
+        from ..db import connect_pages_db
         from .runner import _spoken_after
 
         unread = _spoken_after(self.ws, {thread_id: (run.seen_at, set(run.read.get(thread_id, ())))})
         if not unread:
-            feedback_agent.resolve(self._connection(run), self.ws, "", {"thread_id": thread_id}, seen=run.seen_at)
+            with connect_pages_db(self.ws) as conn:
+                hand.resolve(conn, self._signed(run), self.ws, thread_id, seen=run.seen_at)
 
 
 # --- another server's work folder -------------------------------------------------------

@@ -10,9 +10,10 @@ Notion's Notify me), their thread resolved by someone else
 shared with them (``shared``), added to a shared workspace (``invited``),
 someone without an account here asking to join through a share they
 manage (``join_request``: its actor is ``cloud:<subject>``, its snippet the
-cloud username; gamma/join_requests.py). An item an integration token's
-write made carries the token's display name (``agent``), and its actor, the
-token's account, is told too: what an agent writes is no one's keystrokes.
+cloud username; gamma/join_requests.py). An item an agent's write made
+(gamma/agents.py: a connection, a computer's agent) carries the agent's
+label (``agent``), and its actor, the agent's account, is told too: what an
+agent writes is no one's keystrokes.
 A notes-index scan could find a block that says ``@alice``, but not who
 typed it or when, and would notify again on every edit; so the producers
 write the row, after their own commit, through ``emit``, which never

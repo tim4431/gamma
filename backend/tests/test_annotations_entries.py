@@ -537,28 +537,31 @@ def test_states_a_tombstone_and_a_send(paper):
     assert _entry(p, tomb)["sent"] == {"request_id": sent["id"], "state": "sent", "at": sent["at"]}
 
 
-def test_a_local_agents_comment_and_who_took_the_send(paper):
-    """A reply an agent on this computer wrote (``agent_id`` ``local:…``)
-    carries ``agent_kind`` local into the entry and reads "on …'s
-    computer"; a token's and a person's carry no such key. A claimed Send
-    names who took it."""
+def test_an_agents_comment_and_who_took_the_send(paper):
+    """A reply an agent wrote carries its label (a computer's agent with
+    its computer, "Codex on TIM-PC") and its ``agent_kind`` into the entry
+    and reads "**Codex on TIM-PC**, for tim"; a person's carries no such
+    key. A claimed Send names who took it."""
+    from gamma import agents
+
     p = paper
     with connect_pages_db(p.ws) as conn:
         page = create_page(conn, "local", work_props(p.M, "local.pdf"), actor=p.account, client=DISK_CLIENT)["id"]
     thread = thread_on(p.own, page, page, "tighten the abstract")["id"]
     with connect_pages_db(p.ws) as conn:
-        for agent, agent_id in (("Codex", "local:codex"), ("Claude Code", "tok1")):
-            comments.create(conn, page, block_id=page, body=f"{agent} did it", author=p.account, author_name=USER,
-                            thread_id=thread, agent=agent, agent_id=agent_id)
+        for agent in (agents.computer_agent("PC", "codex", "TIM-PC"), agents.Agent("tok1", "connection", "Claude Code")):
+            comments.create(conn, page, block_id=page, body=f"{agent.name} did it", author=p.account,
+                            author_name=USER, thread_id=thread, agent=agent)
         sent = requests.create(p.ws, conn, entries.resolve_scope(conn, page), by=p.account, by_name=USER)["request"]
         assert requests.claim(p.ws, conn, sent["id"], by_name="Codex", detail="Starting Codex")["state"] == "running"
     got = _entry(p, thread)
-    assert [c.get("agent_kind") for c in got["comments"]] == [None, "local", None]
-    assert "agent_kind" not in got["comments"][0] and "agent_kind" not in got["comments"][2]
+    assert [(c["agent"], c.get("agent_kind")) for c in got["comments"]] == [
+        ("", None), ("Codex", "computer"), ("Claude Code", "connection")]
+    assert "agent_kind" not in got["comments"][0]
     assert got["sent"] == {"request_id": sent["id"], "state": "running", "at": sent["at"], "detail": "Starting Codex",
                            "state_by": "Codex"}
     text = markdown.render_entry(got)
-    assert f"> **Codex** (on {USER}'s computer) · " in text and f"> **Claude Code** ({USER}'s connection) · " in text
+    assert f"> **Codex**, for {USER} · " in text and f"> **Claude Code**, for {USER} · " in text
 
 
 def test_a_document_is_cut_past_its_entries(paper, monkeypatch):
@@ -635,7 +638,7 @@ def test_the_library_its_folders_and_pages_with_their_highlights(paper):
     commented = thread_on(p.own, shelf, "fbeB2", "say more")["id"]
     doc = _document(p, F)
     assert (doc["scope"], doc["work_folder"]) == ({"kind": "library_folder", "id": F, "name": "fbe-shelf"}, None)
-    assert doc["answer"] == entries.ANSWER_OUTSIDE and "mcp" not in doc["answer"]
+    assert doc["answer"] == entries.ANSWER and doc["answer"]["mcp"] == ["comment", "resolve", "highlight"]
     assert [(e["id"], e["type"], e["file"]) for e in doc["entries"]] == [
         ("fbeB3", "highlight", "deep paper"), ("fbeB1", "highlight", "shelf paper"), (commented, "thread", "shelf paper")]
     bare = doc["entries"][1]
@@ -769,7 +772,7 @@ with the note written on it: read it as context.
 > **tim** · 2026-11-10 13:58
 > lambda is never introduced.
 
-> **Claude Code** (tim's connection) · 2026-11-10 14:06
+> **Claude Code**, for tim · 2026-11-10 14:06
 > Defined in 3.1 (sections/method.tex:112).
 
 ### 2. Page 5 · area
@@ -830,8 +833,9 @@ with the note written on it: read it as context.
 
 ## How to answer
 
-- Reply: `POST /api/pages/{page_id}/comments` with `{"block_id", "thread_id", "body"}`, or `reply_feedback`.
-- Resolve: `POST /api/comments/{id}/resolve` with `{"resolved": true}`, or `resolve_feedback`.
+- Reply: `POST /api/pages/{page_id}/comments` with `{"block_id", "thread_id", "body"}`, or the `comment` tool with `thread_id`.
+- Resolve: `POST /api/comments/{id}/resolve` with `{"resolved": true}`, or the `resolve` tool.
+- Ask or point something out: the `comment` tool on a place (a PDF quote with its page, a file's lines, a note), and `highlight` to mark a passage.
 - The JSON form with every id is `open.json` beside this file.
 """
 
@@ -841,14 +845,16 @@ def test_the_markdown_of_a_fixed_document():
     assert markdown.render(json.loads(json.dumps(FIXED))) == EXPECTED  # what open.json reads back gives the same
 
 
-def test_the_markdown_of_a_local_agents_reply():
-    """Only the reply's line changes when an agent on this computer wrote it."""
+def test_the_markdown_of_a_computer_agents_reply():
+    """Only the reply's line changes when a computer's agent wrote it: its
+    label names the computer."""
     first = FIXED["entries"][0]
     local = {**FIXED, "entries": [{**first, "comments": [first["comments"][0],
-                                                         {**first["comments"][1], "agent_kind": "local"}]},
+                                                         {**first["comments"][1], "agent": "Codex on TIM-PC",
+                                                          "agent_kind": "computer"}]},
                                   *FIXED["entries"][1:]]}
-    assert markdown.render(local) == EXPECTED.replace("> **Claude Code** (tim's connection) · ",
-                                                      "> **Claude Code** (on tim's computer) · ")
+    assert markdown.render(local) == EXPECTED.replace("> **Claude Code**, for tim · ",
+                                                      "> **Codex on TIM-PC**, for tim · ")
 
 
 def test_the_markdown_with_nothing_open():
@@ -857,7 +863,7 @@ def test_the_markdown_with_nothing_open():
                                     "## How to answer\n\n" + EXPECTED.split("## How to answer\n\n")[1])
     assert markdown.render({**doc, "state": "resolved"}).split("\n")[2] == "No resolved comments and no highlights."
     library = markdown.render({**doc, "scope": {"kind": "home", "id": "home", "name": ""}, "work_folder": None})
-    assert library.startswith("# Annotations on the library\n") and "_feedback`" not in library
+    assert library.startswith("# Annotations on the library\n") and "the `comment` tool with `thread_id`" in library
 
 
 def test_the_markdowns_picture_modes():

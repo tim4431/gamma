@@ -135,6 +135,34 @@ crumbs. The Files window is a view of the folders, which stay the model
 with the labels: it lists a folder's top pages, not a page tree. A Logseq-style zoom-in on a
 block's subtree is another thing and is still open (below).
 
+**Made by an agent.** A block an agent makes carries who made it:
+`properties.agent = {id, name, on?, for}` (`gamma/agents.py` `stamp`; the
+ids are [comments.md](comments.md) "Who wrote a comment"'s), `on` a
+computer agent's computer as it was called then, `for` the username of the
+account it acted for. The block stays that account's: its op's actor is
+the account, so no role check, op log or follow reads the agent. The
+writers: `create_block` and the writing tools' highlights (`highlight`, and
+the passage a `comment` on a quote highlights: `annotations/hand.py`), by
+Gamma AI (the chat's scope carries the stamp, `routers/ai.py`), a
+connection through MCP (`mcp_server._writes`) and a computer agent's turn
+through its token.
+`clip_region` makes no block: its picture is an upload a note embeds.
+The key is the server's (`ops.SERVER_KEYS`): a client's op batch cannot
+set it (`ops.client_ops`, at `POST /pages/{id}/ops`, drops it from an
+insert's and a set's props), only the mirror's batch, which copies a
+block whole. So when the app undoes the delete of an agent's block, or
+moves one to another page by re-inserting it, the block comes back as the
+person's.
+Every copy of the block itself keeps the key, as it keeps every property:
+the op log and a mirror's round, a Gamma export and a backup merge. A
+vault's file holds no property: its text is the block's while the lens
+keeps the block, and a block made from the file is the person's. A
+Duplicate, of blocks or of a page, drops it (`blockModel.js` `freshCopy`,
+App's `duplicatePage`): the copy is the copier's own. The app says it on a
+highlight: its row in Notes and its tooltip on the PDF read *Highlighted by
+Codex on TIM-PC, for tim* (`blockModel.js` `blockAgent`, `chat/agents.js`
+`stampLabel`), and the Properties popover shows any block's under *Made by*.
+
 ## Where the code still says "page = PDF" (inventory, 2026-09-02)
 
 The entries keep the names of their time. The helpers they name

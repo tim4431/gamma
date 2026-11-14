@@ -43,7 +43,7 @@ made the agents the computer's, where they were each vault's.
 
 `__init__.py` imports only `config` and `version`: `folder_links`, the
 feedback modules and the routers import the rest inside their functions,
-and the runner imports `gamma.annotations.agent` and `folder_links` inside
+and the runner imports `gamma.annotations.hand` and `folder_links` inside
 its own, so no cycle forms at import. `tools.py`, which the session
 middleware imports, imports `integrations` inside `mint`.
 
@@ -304,11 +304,12 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
    folder was detached.", "Stopped: the synced folder changed on this
    computer." or "Stopped: Gamma is closing."
 8. **The answers.** The turn ended well and `prompt.answers` keeps some:
-   each is written by `gamma.annotations.agent.reply` with a connection of
-   the requester (`integrations.Connection(user_id=<maker>,
-   workspaces=[ws], scope="feedback", token_id="local:<name>",
-   name=<label>, username=<maker's username>)`), so the reply is signed
-   with the label and its `agent_id` is `local:codex`, and the thread's row
+   each is written by `gamma.annotations.hand.reply` as the requester
+   (`hand.Writer(<maker>, <maker's username>, agents.here(name))`),
+   signed as this computer's agent: the reply is the
+   maker's, its `agent` is the label (Codex) and its `agent_id`
+   `computer:<this computer>:codex` ([comments.md](comments.md) "Who wrote
+   a comment"), so it reads *Codex on TIM-PC, for tim*, and the thread's row
    in `agent_threads` records the reply, the turn's session and the
    directory; a `fixed` one is resolved too (`agent.resolve`), unless a
    person wrote or edited a comment in it after `seen_at` (a word the agent
@@ -459,7 +460,7 @@ working on waits behind it. These rules keep it from being lost:
 
 - The run notes when it reads its entries (`seen_at`) and the ids of the
   comments it read, by thread (`read`). Its replies and resolves pass
-  `seen_at` on (`annotations.agent.reply` and `resolve` take `seen=`, never
+  `seen_at` on (`annotations.hand.reply` and `resolve` take `seen=`, never
   from a tool's arguments, and put it on the event): `requests.answered`
   with an event's `seen` answers only the requests made by then. Without
   it (a token's write) a reply answers every waiting request made before
@@ -556,8 +557,10 @@ computer side stays local (4d).
   [annotations.md](annotations.md) "The files"), and the end: the replies (each with
   an id derived from the run and its thread, so a retry writes nothing
   twice), the summary and the changed files the vault tracks (relative),
-  in one `answers` call. The NAS writes the replies itself, signed
-  `local:<agent>` with the agent's label (`annotations.agent.answer_run`,
+  in one `answers` call. The NAS writes the replies itself, signed as
+  this computer's agent there (`agents.of_channel`: `computer:<this
+  computer's id for the NAS>:<agent>`, named with the computer the
+  channel announced; `annotations.hand.answer_run`,
   with the `seen` it stamped at the claim), resolves a thread only when no
   person wrote in it after the run read it, and ends the request (only
   from that run while it holds it, so a withdraw is never overwritten).
@@ -799,8 +802,11 @@ steps").
      folder's `list_pages`, the library's `list_folders` and `list_pages`,
      `list_annotations` with the page's, the folder's or the library's
      (`home`) scope and `read_annotation`, then
-     `search_library`, `cite` and `read_chats` for the rest; nothing of the
-     page is pasted, and outside a vault Gamma's pages are read with them.
+     `search_library`, `cite` and `read_chats` for the rest, and last the
+     three that write under its own name, for the owner: `comment` (a reply
+     by `thread_id`, or a new thread on a PDF quote with its page, a text
+     file's lines, a note or the page), `resolve` and `highlight`; nothing of
+     the page is pasted, and outside a vault Gamma's pages are read with them.
      Without them (no address learned, a far turn) the message and the
      selections are what it is given of the pages.
   4. The session: the conversation's in vaults.db `agent_conversations`
@@ -1125,13 +1131,17 @@ sends draws, words or answers the card. Step 5b of
 
 Step 2.7 of
 [agents-as-participants-plan.md](../research/agents-as-participants-plan.md)
-gives a turn of this server Gamma's read tools: the agent calls this
-server's own MCP endpoint ([mcp.md](mcp.md)) with a token of the turn's
-(`tools.py`, `runner._Turning._tools`).
+gives a turn of this server Gamma's read tools, and step 3.3 its writing
+tools (`comment`, `resolve`, `highlight`, [mcp.md](mcp.md) "The Comment
+level"): the agent calls this server's own MCP endpoint ([mcp.md](mcp.md))
+with a token of the turn's (`tools.py`, `runner._Turning._tools`). What it
+writes is signed and stamped as this computer's agent, for the turn's owner,
+and the owner can delete it; notes it changes only through the turn's asks.
 
 - **The token** (`integrations.mint_turn`): scope `turn`, the turn owner's,
-  of the turn's workspace alone, named with the agent's label (`Codex`,
-  `Claude Code`), living the run's timeout (`RUN_TIMEOUT_S`) and
+  of the turn's workspace alone, named with the agent's id
+  (`computer:<this computer>:codex`, `agents.here`: what it writes through
+  MCP is that agent's, `agents.of_token`), living the run's timeout (`RUN_TIMEOUT_S`) and
   `TOKEN_SLACK_S` (60 s). It is minted when the turn starts, once, for a
   chat turn (`_ChatTurn`, before its prompt and the folder's snapshot) and
   a Send's run (`_Run`) of this server; each start of the agent (a retry
@@ -1172,9 +1182,11 @@ server's own MCP endpoint ([mcp.md](mcp.md)) with a token of the turn's
   comments are in it.
 - **A step** of a call is of kind `gamma` with the tool's name (`tool`:
   `read_page`, `list_pages`, …): the runner keeps `{id, kind: "gamma",
-  status, tool}`, the export words it "Read Gamma: read_page", and the
-  chat's chip is the kind Gamma AI's own call of that tool is
-  (`computerChat.stepChip`).
+  status, tool}`, the export words it "Read Gamma: read_page", a writing
+  tool's "Wrote in Gamma: comment" (`events.gamma_words`, the chat's
+  `stepText` and `stepNow` alike), and the chat's chip is the kind Gamma
+  AI's own call of that tool is (`computerChat.stepChip`), a writing tool's
+  the kind `write`, which lists no change under the reply.
 - **A far turn** (one this computer runs for another server's work folder
   over the channel, "A work folder of another server") gets no token here:
   this server's token reads this server, not that one. Step 4.2 has that
@@ -1609,8 +1621,11 @@ either agent.
   Codex and withdraw: what it changed already stays in the files." only on
   a running request a run on this computer holds (`local`); nothing here
   stops an outside agent.
-- **Comments** (`comments/comments.js`): `authorTitle` of a comment with
-  `agent_kind: "local"` reads "Written by Codex on tim's computer";
+- **Comments** (`comments/comments.js`): a computer agent's comment
+  (`agent_kind: "computer"`, `agent_on` its computer) reads *Codex* with
+  *on TIM-PC, for tim* after it (`agentFor`) beside its bot avatar
+  (`AgentAvatar`), and its `authorTitle` "Written by Codex on TIM-PC, for
+  tim";
   `sentChip` of a running Send with `state_by` reads *Codex is working…*
   with a spinner, and one waiting, *Waiting for Codex* (the agent that
   answers the reader's Sends) or *Waiting for TIM-PC*.
@@ -1872,8 +1887,9 @@ are drawn in the bar over the whole window and answered with `POST
   answers in its final message, and Gamma writes the replies. Nothing is
   started with a bypass flag.
 - **The turn's token** ("Gamma's tools"). The one Gamma credential an agent
-  holds: Gamma's read tools on MCP, in the turn's workspace alone, as the
-  turn's owner; refused by every route of the HTTP API; gone when the turn
+  holds: Gamma's read tools on MCP, and its comments, resolves and
+  highlights, in the turn's workspace alone, as the turn's owner and signed
+  as the agent; refused by every route of the HTTP API; gone when the turn
   ends and at the next start, and never more than 60 s past its turn's
   deadline (the run's timeout from the agent's start, moved while an ask
   holds the turn). It reaches
@@ -2056,7 +2072,7 @@ are drawn in the bar over the whole window and answered with `POST
   excludes kept with the token's variable added once, a Gamma that did
   not start or connect marked `gamma_down`.
 - `tests/test_local_agents_runner.py`: the whole loop on the sample paper
-  as a work folder (replies signed Codex with `agent_kind` local, the fixed
+  as a work folder (replies signed Codex with `agent_kind` computer, the fixed
   ones resolved, `done` with the summary and the changed files, progress
   with no path outside the folder and no untracked file named), another
   member's Send not taken, a token's refused and one made before the agent
@@ -2168,9 +2184,9 @@ are drawn in the bar over the whole window and answered with `POST
   request's `local`, a pause, a relink and a removal stopping the run.
 - `tests/test_migrations.py` (`test_v58_*`): `via`.
 - `tests/test_annotations_requests.py` (`claim`, `only_from`,
-  `change_listeners`), `tests/test_comments.py` (`agent_kind`, `state_by`),
-  `tests/test_annotations_entries.py` (the local comment's Markdown, the
-  pinned output unchanged).
+  `change_listeners`), `tests/test_comments.py` (`agent_kind`, `agent_on`,
+  `state_by`), `tests/test_annotations_entries.py` (a computer agent's
+  comment's Markdown), `tests/test_agents.py` (who an agent is).
 - Frontend: `tests/feedbackView.test.mjs`, `tests/feedbackText.test.mjs`,
   `tests/comments.test.mjs` (the hint, the refusal's words),
   `tests/chatAgents.test.mjs` (the agents' list, the picker's rules, the

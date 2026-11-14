@@ -148,7 +148,8 @@ export async function remoteSendScenarios(env) {
       assert(got?.resolved_at, `${threadId} is resolved on the NAS`);
       const reply = got.comments.at(-1);
       assertEq(JSON.stringify([reply?.agent, reply?.agent_kind, reply?.author, reply?.body]),
-        JSON.stringify(["Codex", "local", "rs-alice", `Done for ${threadId}.`]), "Codex's reply, signed as an agent on the maker's computer");
+        JSON.stringify(["Codex", "computer", "rs-alice", `Done for ${threadId}.`]), "Codex's reply, signed as the maker's computer's agent");
+      assert(reply.agent_on, "named with the computer it ran on");
     };
 
     let link = null, name = "";

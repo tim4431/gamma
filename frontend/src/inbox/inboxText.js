@@ -31,13 +31,13 @@ export function inFilter(item, filter) {
 export const isFolderShare = (item) => (item.kind === "shared" || item.kind === "join_request")
   && !item.page_id && !!item.block_id;
 
-// Who the item is from: the agent that wrote through an account's
-// connection, the account, or the Gamma Cloud username asking to join.
-// `inboxActorTitle` is the row's avatar's title, which names the connection
-// for an agent.
+// Who the item is from: the agent that wrote for an account (its label,
+// "Codex on TIM-PC", gamma/agents.py), the account, or the Gamma Cloud
+// username asking to join. `inboxActorTitle` is the row's avatar's title,
+// which names the person an agent wrote for.
 export const inboxActor = (item) => item.agent || (item.kind === "join_request" ? item.snippet : item.actor) || "";
 export const inboxActorTitle = (item) => (item.agent
-  ? t("{agent}, with {who}'s connection", { agent: item.agent, who: item.actor || t("Someone") })
+  ? t("{agent}, for {person}", { agent: item.agent, person: item.actor || t("Someone") })
   : inboxActor(item));
 
 // What happened, in one sentence.

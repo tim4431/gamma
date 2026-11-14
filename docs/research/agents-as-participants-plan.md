@@ -1,6 +1,6 @@
 # Agents as participants: the build plan
 
-Status: **a plan, partly built**: steps 1, 2, 3.1 and 3.2 are built, each
+Status: **a plan, partly built**: steps 1, 2 and 3.1-3.4 are built, each
 step's "As built" saying where the build differs. Written 2026-11-14
 against `dev` @ b4870d47, after a survey of the code behind work folders, local agents,
 computers and feedback. The file and line references were read then, so
@@ -892,6 +892,71 @@ vault's files under its lock. The browser step is in
   Docs: [dev/mcp.md](../dev/mcp.md), [dev/ai_tools.md](../dev/ai_tools.md),
   [dev/comments.md](../dev/comments.md).
 
+**As built** (3.3). The three tools are the registry's
+(`ai_tools.WRITING_TOOLS`, permission `comment`, both scopes), marked
+`commenting`: they are armed where the scope may comment (`can_comment`,
+`auth.can_comment`, a viewer's chat too), not only where it edits, and
+`run_agent_tool` refuses them without it. The hand is `annotations/hand.py`
+with a `Writer` (the account, its username, the `Agent`) in place of a
+`Connection`, which the Send's `answer_run` and the local home write with
+too; the places are a module of their own, `annotations/places.py`, and the
+PDF's finder is `highlight_relocate.place_quote` (`find_passage` over the
+named page and one either side, `rects_for_span` in the display frame). Only
+an exact copy, as the finders fold text, places a quote: a rough match, even
+past `ROUGH_APPLY`, is the closest passage and refused, since the agent
+copied the text and anything less is a guess; a secrets file's text is never
+said back, and a quote on one is refused before any match (its lines are
+named whole), so the answer is no oracle for its text. A new highlight is a
+block, an edit: the hand makes one only where the account edits
+(`hand.may_mark`), so a viewer's agent (its chat, a token at the Comment
+level, a turn) comments, replies and resolves, and its `highlight` or
+`comment` on a passage or lines is refused, before the card asks. A call
+made again (the same agent's same words for the same account on the same
+place within `hand.REPEAT_S`, 300 s) is refused naming what the first
+wrote, and a place keeps one highlight of each agent per account (the
+stamp's `for`: Gamma AI's id is every account's); the tools take no `id` (the old
+`reply_feedback`'s), and a Send keeps its minted ids through `comment_id`.
+A thread may be on any page of the library, a library page's as a file's.
+Each answers with the entry's link as the reader gives it
+(`entries.link_of`, `&thread=` for a thread). The level is
+`integration_tokens.comments` (users.db global step 61,
+`integration_comments`), shaped as `edits` by `comment_grant`; `editing()`
+became `named()`, read for both. The edit level comments as well, a `write`
+token comments in its workspace and a turn's token in its own
+(`integrations.comments_in`). The HTTP API takes a commenting token's
+comments in its own workspace (`Grant.comments`, `auth.token_comments`):
+every comment write a person may make, a new thread, its own edits and
+deletes and a reopen too, so `require_commenter` lost its `answer`; the
+Send's state route reads the same. `gamma:feedback` stays as
+`mcp_oauth.COMMENT_SCOPE`: a client asking for it finds the open workspace
+at Comment on the consent page (`comments_asked`), and the token response
+names it when the token comments anywhere, at the Comment or the Edit level.
+A chat driven by a token signs as its connection (`agents.of_request`), not
+as Gamma AI. MCP's `_change` became `_writes`,
+shared by the note tools and the writing tools, which never ask first.
+Gamma AI's card words the place (`approvals.placeText`), its steps and
+changes have their sentences, a highlight is one of `BLOCK_TOOLS`, and
+`ai_agent.STEP_ARGS` gains `thread_id`; a computer agent's call of one is
+worded "Wrote in Gamma: comment" (`events.gamma_words`, `computerChat`'s
+`stepText`), its chip of the kind `write`, listed under no reply's changes.
+The picker's levels are View /
+Comment / Edit (the speech bubble between the eye and the pen), a viewer's
+workspace offering View and Comment in place of its *view only* tag (an
+Edit stored there before the account lost its role is held as Comment,
+`settings/workspaceAccess.js` `accessOf`, so a save sends what it shows); the
+Tokens pane's scope is Read or Read and write, a read token taking the
+levels, and the consent page's feedback switch is gone. The new tests are
+`test_annotations_hand.py`, named so beside the reader's
+`test_annotations_tools.py`. Browser steps: a token made at Comment
+(`settings`), a client asking for `gamma:feedback` starting at Comment and
+its comment landing under its name (`mcp`), an assistant's comment on a PDF
+quote highlighting the passage live and a quote not there refused with the
+closest, Gamma AI's the same from a PDF's chat once its card is allowed (a
+stand-in model on the OpenAI wire), its highlight's tooltip and the thread
+naming it (`comments`), the fake Codex commenting through its turn's token
+as *Codex on …, for* its person (`localAgents`), and the Send script's token
+at Comment (`feedback`).
+
 ### 3.4 Identity
 
 - **New** `backend/gamma/agents.py`: an agent's id (`gamma`,
@@ -905,6 +970,52 @@ vault's files under its lock. The browser step is in
   {person}* in the byline (`comments.js:230-246`, `Thread.jsx:97`); a
   highlight's popover and its row in Notes say who made it.
 - Tests: `test_comments.py`, the comment components' unit tests.
+
+**As built** (3.4). `gamma/agents.py` holds `Agent(id, kind, name, on)`,
+`on` a computer agent's computer by its name and `label` "Codex on
+TIM-PC". This computer is in no registry of its own server, so its id is
+`here_id()`, an HMAC of the install's id as its id for another server is;
+a channel's computer is its `computers.computer` (`of_channel`), and a
+token's agent is its connection's (`of_token`, `of_request`,
+`of_connection`), a turn's this computer's agent (`here`). A turn's token is now named with its agent's id
+(`tools.mint` takes the agent, not its label), so what it writes through
+MCP once 3.3 lets it is that agent's. `read_all` names a computer's agent
+by its computer as called now: this computer by its own name where agents
+run here, another by the name it announced for the comment's author
+(`registry.names_of` by account and computer; `read_all` is keyed by
+account and agent id), since a computer's id is what its channel says and
+another account could announce the same one. A comment's `agent` keeps the agent's name
+("Codex"), not the label; the reader adds `agent_kind` (`gamma`,
+`computer`, `connection`) to every agent's comment, where only a local
+one's had it, and `agent_on`, so the client words "on TIM-PC" itself;
+`resolved_agent` and the write's event (so the Inbox's item) carry the
+label. The writers take an `Agent` (`comments.create`, `edit`, `delete`,
+`resolve`; `annotations.agent.reply`, `resolve`, `answer_run`) in place of
+the name and id strings, and `comments.LOCAL_AGENT` is gone. Step 60
+(`comment_agent_ids`) knows an old comment's computer from pages.db alone:
+a `feedback_request_runs` row of a Send naming its thread is another
+computer's run (its token's `computers` row), a Send with none was run here
+(`here_id`, where agents run on this server), and vaults.db's `agent_runs`
+is not read; a Send swept or a token gone leaves `computer::<name>`, which
+reads as the agent alone. The account's agents (`of_account`) count a
+`write` token beside the `feedback` one (`COMMENTING`: a write token
+comments as it writes notes); nothing calls it yet, 3.5's tick will. The
+block's stamp is `{id, name, on?, for}`: `on` beyond the plan's three
+keys, for the same reason as a comment's `agent_on`, and stamped by Gamma
+AI's `create_block` (the chat's scope, `routers/ai.py`) and a connection's
+through MCP (`mcp_server._change`); `clip_region` makes no block. The key
+is the server's: a client's op batch cannot set it (`ops.client_ops` at
+`POST /pages/{id}/ops`), only the mirror's. The op
+log, a mirror, a Gamma export and a backup keep it with the block, a
+vault's file holds no property, and a Duplicate drops it: the copy is the
+copier's. The interface: `AgentAvatar` (`Presence.jsx`, by
+`AgentChip.agentKindIcon`) in a thread and the Comments window's rows,
+the name followed by *on TIM-PC, for tim* (`comments.agentFor`), the
+title "Written by Codex on TIM-PC, for tim" (a connection's keeps "with
+tim's connection"), the Inbox's "Codex on TIM-PC, for tim". A highlight has
+no popover of its own: its tooltip on the PDF, its row in Notes (under the
+passage) and the Properties popover (*Made by*) say who made it
+(`blockModel.blockAgent`, `agents.stampLabel`).
 
 ### 3.5 A comment sent to an agent
 
@@ -1034,8 +1145,8 @@ answered on the phone.
 | Where | Change | How |
 |---|---|---|
 | vaults.db | `computer_agents`, `agent_dirs`, `agent_dir_grants` new and `agent_folders`, `agent_policies`, `agent_grants` unread (built, 2.1, 2.2); `agent_people` new, `agent_runs`, `agent_threads` unread (later) | additive, with one carry-over at start (2.1) |
-| users.db | `integration_tokens.comments`; `feedback` tokens become commenting `read` tokens; `computer_links.asks`; `computers.assistants` reshaped | one global step, the next free number after 58 |
-| pages.db | `computer_chats` keeps its name, `page_id` becoming `bucket`, with `dir`, and `computer_chat_runs` gains `bucket` (built, 2.5: workspace step 59, `computer_chat_buckets`); `thread_id` later; the three `feedback_request*` tables dropped; `comments.agent_id` `local:<name>` rewritten to the new id | one workspace step, in `LOCAL_STEPS` as 54 and 58 are: no copy of a workspace syncs these tables |
+| users.db | `integration_tokens.comments`; `feedback` tokens become commenting `read` tokens (built, 3.3: global step 61, `integration_comments`); `computer_links.asks`; `computers.assistants` reshaped | one global step, the next free number after 58 |
+| pages.db | `computer_chats` keeps its name, `page_id` becoming `bucket`, with `dir`, and `computer_chat_runs` gains `bucket` (built, 2.5: workspace step 59, `computer_chat_buckets`); `thread_id` later; the three `feedback_request*` tables dropped; `comments.agent_id` `local:<name>` rewritten to the new id (built, 3.4: workspace step 60, `comment_agent_ids`) | one workspace step, in `LOCAL_STEPS` as 54 and 58 are: no copy of a workspace syncs these tables |
 | data.db | `feedback_pictures` renamed | rebuilt on demand, no step |
 | The directory | `.gamma/feedback/` removed, `.gamma/annotations/` written | at the vault's first round |
 

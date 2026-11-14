@@ -327,7 +327,7 @@ def test_a_request_answered_before_a_pass_drew_its_pictures_gets_them_at_the_nex
     r = owner.post("/api/feedback/requests", json={"scope": w, "threads": [thread["id"]]})
     assert r.status_code == 201, r.text
     request = r.json()["request"]
-    agent = _bearer(token_for(owner, "feedback", "Claude Code"))
+    agent = _bearer(token_for(owner, "read", "Claude Code", comments=True))
     r = agent.post(f"/api/feedback/requests/{request['id']}/state", json={"state": "done"})
     assert r.status_code == 200, r.text
     file = here / "requests" / f"{request['id']}.json"
@@ -491,7 +491,7 @@ def test_a_requests_file_is_written_at_once_keeps_its_pictures_and_goes_once_don
     assert (file.parent / entry["picture"]).resolve() == (here / pictures[ta["id"]]).resolve()
 
     # an answer rewrites the request file: its entries as they are now
-    agent = _bearer(token_for(owner, "feedback", "Claude Code"))
+    agent = _bearer(token_for(owner, "read", "Claude Code", comments=True))
     r = agent.post(f"/api/pages/{page}/comments", json={"block_id": a, "thread_id": ta["id"], "body": "moved it"})
     assert r.status_code == 201, r.text
     _pass()

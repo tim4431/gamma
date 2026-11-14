@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, cardedAnchors,
+  abandonedCommentHighlight, addComment, agentFor, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, cardedAnchors,
   commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, isWithdrawn, keepThreads,
   laterComments, mentionHint, popoverThreads, resolveThread, sendRefusal, sendState, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
 } from "../src/comments/comments.js";
@@ -130,19 +130,28 @@ test("who may edit and delete: the author, and for deleting the owner too; a tom
   assert.ok(!canDeleteComment({ ...mine, deleted: true }, "ann", true));
 });
 
-test("an agent's comment: its name on the line and the connection in the title; the person deletes it, never edits it", () => {
-  const agents = c("x", "x", "ann", "t", { agent: "Claude Code" });
+test("an agent's comment: its name on the line, then its computer and its person; the person deletes it, never edits it", () => {
+  const agents = c("x", "x", "ann", "t", { agent: "Claude Code", agent_kind: "connection" });
   assert.equal(authorLabel(agents), "Claude Code");
+  assert.equal(agentFor(agents), "for ann");
   assert.equal(authorTitle(agents), "Written by Claude Code with ann's connection");
   assert.equal(authorTitle({ ...agents, author: "" }), "Written by Claude Code with Someone's connection", "an account gone");
-  const local = c("z", "z", "tim", "t", { agent: "Codex", agent_kind: "local" });
+  const local = c("z", "z", "tim", "t", { agent: "Codex", agent_kind: "computer", agent_on: "TIM-PC" });
   assert.equal(authorLabel(local), "Codex");
-  assert.equal(authorTitle(local), "Written by Codex on tim's computer", "an agent Gamma ran on the computer");
-  assert.equal(authorTitle({ ...local, author: "" }), "Written by Codex on Someone's computer");
+  assert.equal(agentFor(local), "on TIM-PC, for tim", "the byline after the agent's name");
+  assert.equal(authorTitle(local), "Written by Codex on TIM-PC, for tim", "a computer's agent");
+  assert.equal(authorTitle({ ...local, author: "" }), "Written by Codex on TIM-PC, for Someone");
+  const unknown = c("u", "u", "tim", "t", { agent: "Codex", agent_kind: "computer" });
+  assert.equal(agentFor(unknown), "for tim", "a computer no longer known");
+  assert.equal(authorTitle(unknown), "Written by Codex, for tim");
+  const gamma = c("g", "g", "tim", "t", { agent: "Gamma AI", agent_kind: "gamma" });
+  assert.equal(authorLabel(gamma), "Gamma AI");
+  assert.equal(authorTitle(gamma), "Written by Gamma AI, for tim");
   assert.ok(!canEditComment(local, "tim"));
   const own = c("y", "y", "ann", "t", { agent: "" });
   assert.equal(authorLabel(own), "ann");
   assert.equal(authorTitle(own), "ann");
+  assert.equal(agentFor(own), "", "a person's line adds nothing");
   assert.ok(!canEditComment(agents, "ann"), "the agent's to change");
   assert.ok(canEditComment(own, "ann"));
   assert.ok(canDeleteComment(agents, "ann"), "the person's to delete");

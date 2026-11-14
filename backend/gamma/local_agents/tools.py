@@ -12,7 +12,7 @@ sends one before any turn; a server reached only through a proxy or from
 other computers learns none, and its turns run without Gamma's tools.
 
 The token (``mint``) is ``integrations.mint_turn``'s: the turn's account
-and workspace, the agent's label, the turn's timeout. It reaches the agent
+and workspace, the agent's id as its name, the turn's timeout. It reaches the agent
 in ``events.TOKEN_ENV`` of that one process (``events.Gamma``), never on its
 command line, in its prompt or in a file. The runner deletes it when the
 turn ends, however it ends (``integrations.drop``), keeps it alive while the
@@ -52,17 +52,19 @@ def mcp_url() -> str:
     return _url
 
 
-def mint(user_id: str, ws: str, label: str, seconds: float) -> tuple[events.Gamma, str] | None:
-    """Gamma's tools for one turn of ``label`` for ``user_id`` in ``ws``:
-    ``(events.Gamma(url, token), the token's id)``, the token living
-    ``seconds``; None while this server's address is unknown (the turn
-    runs without them)."""
-    from .. import integrations  # local: integrations imports workspaces
+def mint(user_id: str, ws: str, agent: str, seconds: float) -> tuple[events.Gamma, str] | None:
+    """Gamma's tools for one turn of the agent ``agent`` for ``user_id`` in
+    ``ws``: ``(events.Gamma(url, token), the token's id)``, the token named
+    with the agent's id (gamma/agents.py ``here``: what it writes is that
+    agent's) and living ``seconds``; None while this server's address is
+    unknown (the turn runs without them)."""
+    from .. import agents, integrations  # local: integrations imports workspaces
 
     url = mcp_url()
+    me = agents.here(agent)
     if not url:
-        log.info(f"[agents] no request came to this server from this computer yet: {label} runs without "
+        log.info(f"[agents] no request came to this server from this computer yet: {me.name} runs without "
                  "Gamma's tools")
         return None
-    token_id, token = integrations.mint_turn(user_id, ws, label, seconds)
+    token_id, token = integrations.mint_turn(user_id, ws, me.id, seconds)
     return events.Gamma(url, token), token_id
