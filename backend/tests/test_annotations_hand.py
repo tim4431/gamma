@@ -312,7 +312,7 @@ def _listed(client, token):
     return {t["name"] for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
 
 
-def test_the_level_gates_the_tools(client, tim):
+def test_the_level_gates_the_tools(client, tim, anon):
     ws, notes = workspace_of(USER), tim.pages["notes"]
     reader = _token(tim)
     commenter = _token(tim, comment_workspaces=[ws])
@@ -323,8 +323,8 @@ def test_the_level_gates_the_tools(client, tim):
         assert not WRITING & _listed(client, reader["token"])
         refused = call(client, reader["token"], "comment", {"page_id": notes, "body": "sneaky"})
         assert refused["isError"] and "give it the Comment level" in refused["content"][0]["text"]
-        http = client.post(f"/api/pages/{notes}/comments", json={"block_id": notes, "body": "sneaky"},
-                           headers={"Authorization": f"Bearer {reader['token']}"})
+        http = anon.post(f"/api/pages/{notes}/comments", json={"block_id": notes, "body": "sneaky"},
+                         headers={"Authorization": f"Bearer {reader['token']}"})
         assert http.status_code == 403 and http.json()["detail"] == "this token is read-only"
         # the Comment level: the three tools, written as the connection, and the HTTP API comments too
         assert WRITING <= _listed(client, commenter["token"])
@@ -338,8 +338,8 @@ def test_the_level_gates_the_tools(client, tim):
         with connect_pages_db(ws) as conn:
             assert conn.execute("SELECT agent_id FROM comments WHERE id = ?",
                                 (thread["id"],)).fetchone()[0] == commenter["id"]
-        http = client.post(f"/api/pages/{notes}/comments", json={"block_id": notes, "body": "Over HTTP."},
-                           headers={"Authorization": f"Bearer {commenter['token']}"})
+        http = anon.post(f"/api/pages/{notes}/comments", json={"block_id": notes, "body": "Over HTTP."},
+                         headers={"Authorization": f"Bearer {commenter['token']}"})
         assert http.status_code == 201, http.text
         # a write token comments in its one workspace, as it writes there
         assert WRITING <= _listed(client, writer["token"])
@@ -352,7 +352,7 @@ def test_the_level_gates_the_tools(client, tim):
             tim.delete(f"/api/integrations/tokens/{item['id']}")
 
 
-def test_a_turns_token_comments_as_its_agent(client, tim):
+def test_a_turns_token_comments_as_its_agent(client, tim, anon):
     ws, pdf = workspace_of(USER), tim.pages["pdf"]
     agent = agents.computer_agent(agents.here_id(), "codex", "TIM-PC")
     token_id, token = integrations.mint_turn(account_of(USER), ws, agent.id, 60)
@@ -369,8 +369,8 @@ def test_a_turns_token_comments_as_its_agent(client, tim):
         thread = _threads(tim, pdf)[asked["structuredContent"]["thread_id"]]
         assert [(c["agent"], c["agent_kind"]) for c in thread["comments"]] == [("Codex", "computer")]
         # its workspace alone, and never the HTTP API
-        http = client.post(f"/api/pages/{pdf}/comments", json={"block_id": pdf, "body": "x"},
-                           headers={"Authorization": f"Bearer {token}"})
+        http = anon.post(f"/api/pages/{pdf}/comments", json={"block_id": pdf, "body": "x"},
+                         headers={"Authorization": f"Bearer {token}"})
         assert http.status_code == 403
     finally:
         integrations.drop(token_id)
