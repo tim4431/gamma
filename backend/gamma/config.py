@@ -2,6 +2,7 @@
 a few modules read their own GAMMA_* variable beside the code that uses it."""
 
 import os
+import sys
 from pathlib import Path
 
 # Where all persistent state lives: users.db (accounts, sessions, workspaces,
@@ -72,12 +73,55 @@ def vault_keep_bytes() -> int:
     return max(0, mb) * 1024 * 1024
 
 
+SHELL_SECRET_VAR = "GAMMA_SHELL_SECRET"
+_shell_secret: str | None = None   # once read; None until then
+
+
 def shell_secret() -> str:
     """What the desktop app sends as ``X-Gamma-Shell`` on the routes that
     take a path on this computer (routers/folder_links.py): a page of Gamma
     never names a path, the shell's native dialog does. GAMMA_SHELL_SECRET,
-    made anew at each start of the app; empty (dev, tests) means no check."""
-    return os.environ.get("GAMMA_SHELL_SECRET", "")
+    made anew at each start of the app; empty (dev, tests) means no check
+    on those routes, and refuses the ones that never pass unchecked
+    (``_shell_strict``). Read once, at the app's start (``create_app``),
+    and taken off this process's environment then (``_take_env``), so no
+    process this server starts, nor anything that reads its environment
+    later, finds it. The variable set again is read again: how a test sets
+    it (conftest forgets the one read after each test)."""
+    global _shell_secret
+    if _shell_secret is None or SHELL_SECRET_VAR in os.environ:
+        _shell_secret = _take_env(SHELL_SECRET_VAR)
+    return _shell_secret
+
+
+def _take_env(name: str) -> str:
+    """The variable's value, taken out of ``os.environ`` ("" for none). On
+    Linux and macOS its bytes in the environment the process began with are
+    zeroed first: /proc/<pid>/environ (Linux) and KERN_PROCARGS2, what
+    ``ps eww`` reads (macOS), show that block whatever unsetenv did since
+    (Windows keeps no such copy). Never raises."""
+    value = os.environ.get(name, "")
+    if value and (sys.platform.startswith("linux") or sys.platform == "darwin"):
+        try:
+            import ctypes
+
+            libc = ctypes.CDLL(None)
+            if sys.platform == "darwin":                     # a dylib cannot reach the bare ``environ``: char ***
+                ns_environ = libc._NSGetEnviron
+                ns_environ.restype = ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))
+                environ = ns_environ().contents
+            else:
+                environ = ctypes.POINTER(ctypes.c_void_p).in_dll(libc, "environ")
+            prefix, i = f"{name}=".encode(), 0
+            while environ[i]:
+                entry = ctypes.string_at(environ[i])
+                if entry.startswith(prefix):
+                    ctypes.memset(environ[i] + len(prefix), 0, len(entry) - len(prefix))
+                i += 1
+        except (OSError, ValueError, AttributeError):
+            pass
+    os.environ.pop(name, None)
+    return value
 
 
 # Keep these reads lazy, as before: server settings and publisher sessions

@@ -29,9 +29,11 @@ the control protocol the Agent SDK speaks: stream-json both ways). It
 writes ``initialize`` and the prompt as a user message (``client_composed``:
 no ``@path`` or ``/command`` read in it) and keeps stdin open until the
 turn's ``result``, since closing it cancels a prompt. A ``can_use_tool``
-for Bash is an ``ask`` event keyed by its ``request_id``, answered allow
-(with the input as asked, never a permission rule written anywhere) or deny
-with the owner's note. Gamma itself denies at once, never asking, every
+for Bash is an ``ask`` event keyed by its ``request_id`` (``background``
+when it asks to run in the background), answered allow (with the input cut
+to ``ALLOWED_INPUT``: the command as asked, in the foreground, so Stop ends
+it; never a permission rule written anywhere) or deny with the owner's note
+("The owner declined: …", Gamma's own "Gamma declined: …"). Gamma itself denies at once, never asking, every
 other tool that reaches it: ``acceptEdits`` accepts the edits inside the
 directory before it is asked, so an edit that reaches it is one
 ``--restricted`` leaves to a person or the handler (a settings, git or
@@ -85,6 +87,22 @@ CHANGE_REFUSED = events.CHANGE_REFUSED
 TOOL_REFUSED = "Gamma does not offer that tool here."
 STOPPED = "The owner stopped the turn."
 INIT, INTERRUPT = "gamma-init", "gamma-stop"   # the ids of Gamma's own control requests
+# What an allowed Bash call runs with: the command the person read, its
+# description and its timeout, nothing else (``run_in_background`` would let
+# it outlive Stop and the turn).
+ALLOWED_INPUT = ("command", "description", "timeout")
+
+
+def allowed_input(args: dict) -> dict:
+    """A Bash call's input cut to ``ALLOWED_INPUT``: the command as its ask
+    showed it, the description when it is text, the timeout when it is a
+    whole number."""
+    out = {"command": str(args.get("command") or "")}
+    if isinstance(args.get("description"), str):
+        out["description"] = args["description"]
+    if isinstance(args.get("timeout"), int) and not isinstance(args.get("timeout"), bool):
+        out["timeout"] = args["timeout"]
+    return out
 
 
 def command(argv: list[str], *, schema: dict | None = None, session: str = "", ask: bool = False,
@@ -296,7 +314,8 @@ class ClaudeTurn(events.Turn):
         if name == "Bash" and not request.get("blocked_path"):
             self._asked(request_id, (request_id, tool_id, args))
             yield events.ask(request_id, "command", step=tool_id, command=str(args.get("command") or ""), cwd=".",
-                             reason=str(args.get("description") or "").strip())
+                             reason=str(args.get("description") or "").strip(),
+                             background=bool(args.get("run_in_background")))
             return
         refused = CHANGE_REFUSED if name in EDITS or name == "Bash" else TOOL_REFUSED
         self._respond(request_id, {"behavior": "deny", "message": refused, "toolUseID": tool_id})
@@ -309,12 +328,14 @@ class ClaudeTurn(events.Turn):
         self._send({"type": "control_response",
                     "response": {"subtype": "success", "request_id": request_id, "response": response}})
 
-    def _reply(self, held, decision: str, note: str) -> None:
+    def _reply(self, held, decision: str, note: str, by: str) -> None:
         request_id, tool_id, args = held
-        if decision == "deny":
+        if decision == "deny" and by == "gamma":
+            answer = {"behavior": "deny", "message": f"Gamma declined: {note}" if note else "Gamma declined."}
+        elif decision == "deny":
             answer = {"behavior": "deny", "message": "The owner declined" + (f": {note}" if note else ".")}
-        else:  # once or in this chat: this call, as asked; Gamma keeps the chat's grant itself
-            answer = {"behavior": "allow", "updatedInput": args}
+        else:  # once or in this chat: this call, as asked and shown; Gamma keeps the chat's grant itself
+            answer = {"behavior": "allow", "updatedInput": allowed_input(args)}
         self._respond(request_id, {**answer, "toolUseID": tool_id})
 
     def _on_stop(self) -> float:

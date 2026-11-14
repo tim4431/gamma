@@ -82,6 +82,74 @@ for (const name of ['BaseWindow', 'WebContentsView', 'Menu', 'Tray', 'clipboard'
   electron[name] = stub();
 }
 electron.dialog = stub({ showMessageBox: async () => ({ response: 0 }) }); // an error box (errorBox), shown to no one
+electron.Menu = stub({ buildFromTemplate: (template) => template }); // a menu is its template, to be read
+
+// The window main.js makes (createWindow) and its two views, recorded in
+// `windows`: each emits what a test makes it emit (`focus`, `blur`,
+// `resize`, `closed`; a view's webContents its `input-event`s and its
+// session's `will-download`), and keeps what main.js did to it.
+class Emitter {
+  constructor() { this.handlers = new Map(); }
+  on(ev, fn) {
+    if (!this.handlers.has(ev)) this.handlers.set(ev, []);
+    this.handlers.get(ev).push(fn);
+    return this;
+  }
+  emit(ev, ...args) { for (const fn of this.handlers.get(ev) || []) fn(...args); }
+}
+const windows = [];
+class FakeContents extends Emitter {
+  constructor() {
+    super();
+    Object.assign(this, { url: '', sent: [], session: new Emitter() });
+  }
+  isDestroyed() { return false; }
+  isLoading() { return false; }
+  getURL() { return this.url; }
+  async loadFile(file) { this.url = require('url').pathToFileURL(file).href; }
+  async loadURL(url) { this.url = url; }
+  send(channel, state) { this.sent.push([channel, state]); }
+  setWindowOpenHandler() {}
+  focus() {}
+  close() {}
+}
+class FakeView {
+  constructor() { Object.assign(this, { bounds: null, visible: true, webContents: new FakeContents() }); }
+  setBounds(b) { this.bounds = b; }
+  getBounds() { return this.bounds; }
+  setVisible(on) { this.visible = on; }
+  setBackgroundColor() {}
+}
+class FakeWindow extends Emitter {
+  constructor(opts) {
+    super();
+    Object.assign(this, { opts, focused: false, visible: Boolean(opts.show), minimized: false, title: opts.title, flashed: [], inactive: 0,
+      contentView: { views: [], addChildView: (v) => this.contentView.views.push(v) } });
+    windows.push(this);
+  }
+  isDestroyed() { return false; }
+  isMinimized() { return this.minimized; }
+  isMaximized() { return false; }
+  isVisible() { return this.visible; }
+  isFocused() { return this.focused; }
+  getContentSize() { return [1360, 900]; }
+  getNormalBounds() { return { x: 0, y: 0, width: 1360, height: 900 }; }
+  setTitle(t) { this.title = t; }
+  flashFrame(on) { this.flashed.push(on); }
+  showInactive() { this.inactive += 1; this.visible = true; this.minimized = false; }
+  show() { this.visible = true; }
+  focus() { this.focused = true; this.emit('focus'); }
+  blur() { this.focused = false; this.emit('blur'); }
+  close() { this.emit('close'); this.emit('closed'); }
+  restore() {}
+  minimize() { this.minimized = true; }
+  maximize() {}
+  setBackgroundColor() {}
+  setTitleBarOverlay() {}
+  setFocusable() {}
+}
+electron.BaseWindow = FakeWindow;
+electron.WebContentsView = FakeView;
 const resolveFilename = Module._resolveFilename;
 Module._resolveFilename = function (request, ...rest) {
   return request === 'electron' ? 'electron' : resolveFilename.call(this, request, ...rest);
@@ -568,7 +636,7 @@ test('the agent of a work folder of another server this computer is shown on: of
 
   // never asking in the chat: refused before anything is asked or sent
   const asks = shell.asked.length;
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask'), /^Error: Asking in the chat is for a work folder of this computer's server\.$/);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask'), /^Error: Asking in the chat is for a work folder of this computer's server: for one of another server, choose Ask on this computer\.$/);
   assert.equal(await shell.setAgentRuns(s.srv.id, 'v1', 'never'), false);
   assert.equal(shell.asked.length, asks, 'nothing asked');
   assert.equal(patches().length, 1);
@@ -714,7 +782,7 @@ test('what a work folder\'s agent may run, from the panel: Ask is asked first wi
   // the same again changes nothing; another word is refused; Nothing more asks nothing and carries no word
   const asks = shell.asked.length;
   assert.equal(await shell.setAgentRuns(s.srv.id, 'v1', 'ask'), false);
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'always'), /never or ask/);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'always'), /never, ask or computer, not always/);
   await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'never');
   const off = patches().at(-1);
   assert.deepEqual(off.body, { agent_runs: 'never' });
@@ -2693,5 +2761,420 @@ test('an http:// address that sends the window to https:// on its own host is fo
   } finally {
     shell.allowedOrigins.delete('http://nas.lan:5000');
     shell.pretendShown(null, null);
+  }
+});
+
+// --- an agent's ask on this computer -------------------------------------
+// A work folder of another server whose agent may ask on this computer
+// (setAgentRuns 'computer'), and the card the host's asks draw in the bar:
+// over the whole window, the content view hidden, armed after a quiet
+// focused second, answered only for a press made since, and what the bar
+// says of each answer.
+
+// A work folder of NAS kept by the host, its agent on and `runs`, reached as `plain` says.
+const farWork = (runs = 'never', more = {}) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'https://nas.lab:5001', plain: '', token_id: 't1',
+  push: 'everything', work: true, mine: true, agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: null, runs }, ...more });
+const SHOWN = { links: [{ id: 'c1', remote_url: 'https://nas.lab:5001', workspace_id: 'nas-ws', account: 'u_1', username: 'alice',
+  status: { state: 'connected', error: '', at: '2026-11-13T10:00:00Z' } }] };
+
+// An ask as the host lists it (`GET /api/local-agents/asks`).
+const askOf = (id, more = {}) => ({
+  id, turn_id: 't1', link_id: 'v1', agent: 'codex', label: 'Codex', kind: 'command', command: 'curl -L https://example.org/refs.bib -o refs.bib',
+  dir: 'C:\\Papers', folder: 'C:\\Papers', file: '', host: 'example.org', reason: 'Fetch the bibliography the paper cites.',
+  server: { origin: 'https://nas.lab:5001', account: 'alice' }, at: '2026-11-13T10:02:00Z', expires_at: '2026-11-13T10:12:00Z', ...more,
+});
+
+// The arming timer main.js set last, still due.
+const armTimer = () => timers.filter((t) => !t.cleared && t.ms === 1000).at(-1);
+// A timer run, as it comes due: it is not due again.
+const fire = (t) => { t.cleared = true; t.fn(); };
+
+// The host, and a window made as the app makes it (showWindow: on the
+// launcher), `focused` or not, with its two views. The host lists `asks`
+// at `version`; its answer route answers `answerWith(id, body)`.
+async function askingWindow({ focused = true } = {}) {
+  const host = server('Host');
+  Object.assign(host.fake, { asks: [], version: 0, fail: null });
+  shell.forgetSurfaced();
+  host.fake.routes = (p, init) => {
+    if (p === '/api/local-agents/asks') return { version: host.fake.version, asks: host.fake.asks };
+    if (p.startsWith('/api/local-agents/asks/') && init.method === 'POST') {
+      if (host.fake.fail) return host.fake.fail();
+      host.fake.version += 1;
+      return { answered: true, version: host.fake.version };
+    }
+    if (p === '/api/computer-links') return SHOWN;
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') return farWork('never');
+    return null;
+  };
+  await shell.showWindow();
+  const w = windows.at(-1);
+  w.focused = focused;
+  const [content, bar] = w.contentView.views;
+  return { host, w, content, bar };
+}
+
+function closeAsking() {
+  shell.stopAsks();
+  if (shell.hasWindow()) windows.at(-1).close();
+  shell.pretendShown(null, null);
+}
+
+// The card shown `key`, drawn by the bar and armed.
+function armedCard(key) {
+  assert.equal(shell.agentAskDrawn(key), true);
+  fire(armTimer());
+  assert.equal(shell.agentAsk().armed, true);
+}
+
+test('Ask on this computer from the panel: refused for a folder of this server and over plain http, asked first with who writes what is asked, then set with the shell\'s word; an older server is said', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const s = server('Host');
+  let older = true;
+  s.fake.vaults = [farWork('never')];
+  s.fake.routes = (p, init) => {
+    if (p === '/api/local-agents') return { agents: [{ name: 'codex', label: 'Codex', found: true, ready: true, problem: '' }] };
+    if (p === '/api/computer-links') return { links: [{ ...SHOWN.links[0], remote_url: s.fake.vaults[0].remote_url }] }; // shown where the folder is
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') return { ...farWork(JSON.parse(init.body).agent_runs), older };
+    return null;
+  };
+  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
+  try {
+    await shell.refreshKeeping();
+    const [item] = shell.keeping().items;
+    assert.deepEqual([item.agentRuns, item.secure], ['never', true]);
+
+    await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'computer');
+    assert.deepEqual(patches(), [], 'Cancel, the default, under the harness');
+    assert.equal(shell.asked.at(-1), 'Let Codex ask on this computer to run more in C:\\Papers? In a chat on NAS, Codex can then ask you to run a command with the network or to change files outside this folder.' +
+      ' The question shows here only, in Gamma\'s window, and nothing of it runs until you allow it there, one command at a time.' +
+      ' Whoever can sign in to NAS as alice, and whoever runs NAS, writes what Codex is asked to do: read each command before you allow it.' +
+      ' A command you allow runs as you, with your files and the network.');
+    shell.answers.push(0);
+    await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'computer');
+    const [on] = patches();
+    assert.deepEqual(on.body, { agent_runs: 'computer' });
+    assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret);
+    assert.equal(on.headers['X-Gamma-Workspace'], undefined, 'the account\'s, no workspace of the host');
+    assert.equal(shell.notice(), 'Codex may now ask on this computer to run more on Papers. NAS runs an older Gamma: its page will not say that Codex waits here. The question still shows in this window.');
+
+    // asking in the chat is not for it; over plain http nothing is asked or sent
+    const asks = shell.asked.length;
+    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'ask', true), /choose Ask on this computer\.$/);
+    s.fake.vaults = [farWork('never', { remote_url: 'http://nas.lan:9001', plain: 'lan' })];
+    await shell.refreshKeeping();
+    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'computer'), /^Error: Ask on this computer needs https: nas\.lan:9001 is reached over plain http\.$/);
+    // a work folder of this computer's server asks in the chat instead
+    s.fake.vaults = [farWork('never', { remote_url: '', workspace_id: 'mine' })];
+    await shell.refreshKeeping();
+    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'computer', true), /^Error: Ask on this computer is for a work folder of another server: here the agent asks in the chat\.$/);
+    assert.equal(shell.asked.length, asks, 'nothing asked');
+    assert.equal(patches().length, 1);
+    // back to Nothing more asks nothing and carries no word
+    older = false;
+    s.fake.vaults = [farWork('computer')];
+    await shell.refreshKeeping();
+    await shell.setAgentRuns(s.srv.id, 'v1', 'never');
+    assert.equal(patches().at(-1).headers['X-Gamma-Shell'], undefined);
+  } finally {
+    shell.stopAsks();
+  }
+});
+
+test('a card covers the whole window with the page hidden and the title Gamma, waits behind the one shown, and goes with the queue', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const { w, content, bar } = await askingWindow();
+  try {
+    assert.deepEqual([bar.bounds.height, content.visible], [38, true]);
+    let card = shell.pretendAsks([askOf('a1')]);
+    assert.deepEqual([card.key, card.title, card.armed, card.count], ['a1', 'Codex wants to run a command', false, '']);
+    assert.deepEqual([bar.bounds.height, content.visible, w.title], [900, false, 'Gamma'], 'the bar over the whole window, the page hidden');
+    const sent = bar.webContents.sent.filter(([ch]) => ch === 'shell:state').at(-1)[1];
+    assert.equal(sent.agentAsk.key, 'a1', 'the bar is handed the card');
+    content.webContents.emit('page-title-updated', {}, 'Secret page title');
+    assert.equal(w.title, 'Gamma', 'the page names nothing meanwhile');
+    // an older ask that comes after waits behind it; the count says so
+    card = shell.pretendAsks([askOf('a0', { at: '2026-11-13T10:00:00Z' }), askOf('a1')]);
+    assert.deepEqual([card.key, card.count], ['a1', '1 of 2 waiting']);
+    // a page's download meanwhile is cancelled
+    let cancelled = 0;
+    content.webContents.session.emit('will-download', {}, { cancel: () => { cancelled += 1; }, getFilename: () => 'x.zip', setSavePath: noop });
+    assert.equal(cancelled, 1);
+    // the shown ask goes unanswered here (withdrawn, Stop on the NAS): the next one is drawn afresh and says so
+    shell.agentAskDrawn('a1');
+    card = shell.pretendAsks([askOf('a0', { at: '2026-11-13T10:00:00Z' })]);
+    assert.deepEqual([card.key, card.armed, armTimer()], ['a0', false, undefined]);
+    assert.ok(card.notes.includes('The question before this one went away: this is another one.'));
+    // the launcher meanwhile keeps it
+    shell.loadLauncher();
+    assert.equal(shell.agentAsk().key, 'a0');
+    // none left: the strip again, the page shown, its title back
+    shell.pretendAsks([]);
+    assert.equal(shell.agentAsk(), null);
+    assert.deepEqual([bar.bounds.height, content.visible, w.title], [38, true, 'Secret page title']);
+  } finally {
+    closeAsking();
+  }
+});
+
+test('the buttons arm a quiet, focused second after the bar drew the card; a press before that counts the second again, an answer needs a press after it, a blur disarms', async () => {
+  fresh();
+  const { host, w } = await askingWindow({ focused: false });
+  const posts = () => host.fake.calls.filter((c) => c.path.startsWith('/api/local-agents/asks/') && c.method === 'POST');
+  try {
+    shell.pretendAsks([askOf('a1')]);
+    assert.equal(armTimer(), undefined, 'nothing counts before the bar drew it');
+    shell.agentAskDrawn('a1');
+    assert.equal(armTimer(), undefined, 'nor while the window has not the focus');
+    w.focus();
+    const first = armTimer();
+    assert.ok(first, 'the focus starts the count');
+    shell.pressed('mouseDown'); // a press at 900 ms
+    assert.equal(first.cleared, true, 'counted again');
+    const second = armTimer();
+    assert.notEqual(second, first);
+    assert.equal(shell.agentAsk().armed, false, 'not armed at 1100 ms either');
+    assert.equal(await shell.answerAgentAsk('a1', 'once'), false, 'an answer before arming is no answer');
+    fire(second);
+    assert.equal(shell.agentAsk().armed, true);
+    assert.equal(await shell.answerAgentAsk('a1', 'once'), false, 'nor one whose press came before arming');
+    shell.pressed('mouseDown');
+    assert.equal(await shell.answerAgentAsk('a0', 'once'), false, 'nor another card\'s');
+    assert.equal(await shell.answerAgentAsk('a1', 'always'), false, 'nor another decision');
+    assert.deepEqual(posts(), []);
+    // a blur disarms; the focus counts afresh
+    w.blur();
+    assert.equal(shell.agentAsk().armed, false);
+    w.focus();
+    fire(armTimer());
+    shell.pressed('mouseDown');
+    assert.equal(await shell.answerAgentAsk('a1', 'once'), true);
+    const [post] = posts();
+    assert.deepEqual([post.path, post.body, post.headers['X-Gamma-Shell']], ['/api/local-agents/asks/a1', { decision: 'once' }, shell.shellSecret]);
+    assert.equal(shell.notice(), 'Allowed once: Codex goes on.');
+    assert.equal(shell.agentAsk(), null, 'answered, the card goes');
+    // a resize or a move counts the second again too
+    shell.pretendAsks([askOf('a2')]);
+    shell.agentAskDrawn('a2');
+    const t = armTimer();
+    w.emit('resize');
+    assert.equal(t.cleared, true);
+    w.emit('move');
+    const moved = armTimer();
+    assert.ok(moved);
+    // a key (Chromium's rawKeyDown) and a wheel too; a button let go does not
+    shell.pressed('rawKeyDown');
+    assert.equal(moved.cleared, true, 'a key counts it again');
+    const keyed = armTimer();
+    shell.pressed('mouseWheel');
+    assert.equal(keyed.cleared, true, 'a wheel too');
+    const wheeled = armTimer();
+    shell.pressed('mouseUp');
+    assert.equal(wheeled.cleared, false);
+    // a tap on a touchscreen reaches the bar as touchStart (its click is made in the page): it counts again, and it answers
+    shell.pressed('touchStart');
+    assert.equal(wheeled.cleared, true, 'a tap counts it again');
+    fire(armTimer());
+    shell.pressed('touchStart');
+    assert.equal(await shell.answerAgentAsk('a2', 'deny'), true, 'a tap is the press an answer needs');
+    assert.equal(shell.notice(), 'Declined: Codex goes on without it.');
+  } finally {
+    closeAsking();
+  }
+});
+
+test('a window closed and made again draws the card again, disarmed until drawn; a card with no window makes one on the launcher, inactive, flashed, notified, with the tray\'s line', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const { w } = await askingWindow();
+  try {
+    shell.pretendAsks([askOf('a1')]);
+    armedCard('a1');
+    w.close();
+    assert.equal(shell.hasWindow(), false);
+    await shell.showWindow();
+    windows.at(-1).focused = true;
+    assert.equal(shell.agentAsk().armed, false, 'a new window starts disarmed');
+    assert.equal(armTimer(), undefined);
+    shell.agentAskDrawn('a1');
+    assert.ok(armTimer(), 'armed once the new bar drew it');
+    windows.at(-1).close();
+
+    // no window at all: one made for the card
+    shell.notifications.length = 0;
+    shell.pretendAsks([]);
+    shell.pretendAsks([askOf('a2', { folder: 'C:\\Users\\tim\\Papers\\cavity' })]);
+    assert.equal(shell.hasWindow(), true);
+    const made = windows.at(-1);
+    assert.deepEqual([made.opts.show, made.inactive], [false, 1], 'shown without the focus');
+    assert.match(shell.launcherUrl(), /\/ui\/launcher\.html\?/, 'on the launcher: bundled, nothing loaded from a server');
+    assert.deepEqual(made.flashed, [true]);
+    assert.deepEqual(shell.notifications, [{ title: 'Codex asks to run a command', body: 'From NAS, in cavity. Answer it in Gamma\'s window.' }]);
+    assert.equal(shell.surfaced.at(-1), 'a2');
+    // the tray's first line while it waits
+    assert.deepEqual(shell.trayMenu().slice(0, 2).map((i) => i.label || i.type), ['Answer Codex…', 'separator']);
+    // a second card within the minute raises no second notification, the window not focused since
+    shell.pretendAsks([askOf('a3')]);
+    assert.equal(shell.notifications.length, 1);
+    assert.deepEqual(shell.trayMenu()[0].label, 'Answer Codex…');
+  } finally {
+    closeAsking();
+  }
+});
+
+test('what an answer says: gone meanwhile nothing was allowed and a list read before it does not bring it back; a timeout after it left is unsure; a refusal keeps the card and arms again; Stop declines, then the folder asks no more', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const { host } = await askingWindow();
+  const posts = () => host.fake.calls.filter((c) => c.path.startsWith('/api/local-agents/asks/') && c.method === 'POST');
+  try {
+    // 409: the agent no longer waits for it
+    host.fake.fail = () => ({ failWith: 409, body: { detail: 'Codex no longer waits for that.' } });
+    shell.pretendAsks([askOf('a1'), askOf('a2', { at: '2026-11-13T10:05:00Z' })]);
+    armedCard('a1');
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a1', 'deny');
+    assert.equal(shell.notice(), 'Codex no longer waits for that: nothing was allowed.');
+    assert.equal(shell.agentAsk().key, 'a2');
+    assert.equal(shell.agentAsk().notes.some((n) => /went away/.test(n)), false, 'answered here: no replacement to say');
+    shell.pretendAsks([askOf('a1'), askOf('a2', { at: '2026-11-13T10:05:00Z' })]);
+    assert.equal(shell.agentAsk().key, 'a2', 'a list read before the answer does not bring it back');
+
+    // a timeout after the request left: unsure, the card stays and arms again
+    host.fake.fail = () => { throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); };
+    armedCard('a2');
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a2', 'once');
+    assert.equal(shell.notice(), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
+    assert.equal(shell.agentAsk().key, 'a2');
+    assert.ok(armTimer(), 'armed again');
+    // refused by the host (a 403): could not answer, the card stays
+    host.fake.fail = () => ({ failWith: 403, body: { detail: 'Only the desktop app answers on this computer.' } });
+    fire(armTimer());
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a2', 'once');
+    assert.match(shell.notice(), /^Could not answer Codex: Only the desktop app answers on this computer\. Without an answer it is declined at .+\.$/);
+    assert.equal(shell.agentAsk().key, 'a2');
+
+    // Stop asking: a decline, then the folder's policy back to never with the shell's word
+    host.fake.fail = null;
+    fire(armTimer());
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a2', 'stop');
+    assert.deepEqual(posts().at(-1).body, { decision: 'deny' });
+    const patch = host.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH').at(-1);
+    assert.deepEqual([patch.body, patch.headers['X-Gamma-Shell']], [{ agent_runs: 'never' }, shell.shellSecret]);
+    assert.equal(shell.notice(), 'Declined, and Codex no longer asks on this computer for NAS.');
+    assert.equal(shell.agentAsk(), null);
+
+    // an answer left unsure, then a 409 for the next one: the first may be the one taken, so never "nothing was allowed"
+    shell.pretendAsks([askOf('a5')]);
+    host.fake.fail = () => { throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); };
+    armedCard('a5');
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a5', 'once');
+    assert.equal(shell.notice(), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
+    host.fake.fail = () => ({ failWith: 409, body: { detail: 'Codex no longer waits for that.' } });
+    fire(armTimer());
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a5', 'deny');
+    assert.equal(shell.notice(), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
+    assert.equal(shell.agentAsk(), null, 'the ask is gone all the same');
+    host.fake.fail = null;
+
+    // the host not running: could not answer, nothing sent
+    shell.pretendAsks([askOf('a3')]);
+    armedCard('a3');
+    shell.pressed('mouseDown');
+    running.clear();
+    const before = posts().length;
+    await shell.answerAgentAsk('a3', 'once');
+    assert.match(shell.notice(), /^Could not answer Codex: That server is not running\./);
+    assert.equal(posts().length, before);
+  } finally {
+    closeAsking();
+  }
+});
+
+test('the asks are followed on the host while it keeps a folder that may ask here, with the shell\'s word, each read held; the host stopping empties the queue', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const { host } = await askingWindow();
+  const reads = () => host.fake.calls.filter((c) => c.path === '/api/local-agents/asks' && c.method === 'GET');
+  let release = () => {};
+  let held = null;
+  try {
+    host.fake.vaults = [farWork('never')];
+    await shell.refreshKeeping();
+    assert.equal(shell.following(), '', 'no folder asks here: nothing followed');
+    // the host holds a read until its list changes
+    const answerOf = host.fake.answer.bind(host.fake);
+    host.fake.answer = async (p, init, url) => {
+      if (p === '/api/local-agents/asks' && new URLSearchParams(url.search).get('after') === String(host.fake.version)) {
+        await new Promise((r) => { release = r; held = url; });
+      }
+      return answerOf(p, init, url);
+    };
+    Object.assign(host.fake, { vaults: [farWork('computer')], version: 1, asks: [askOf('a1')] });
+    await shell.refreshKeeping();
+    assert.equal(shell.following(), host.srv.id);
+    await until(() => shell.agentAsk() && held, 'the first read gives the list, the next one is held');
+    const q = new URLSearchParams(reads()[0].query);
+    assert.deepEqual([q.get('after'), q.get('wait'), reads()[0].headers['X-Gamma-Shell']], ['-1', '20', shell.shellSecret],
+      'the first read answered at once');
+    assert.equal(new URLSearchParams(held.search).get('after'), '1');
+    // the ask goes there (answered elsewhere, Stop on the NAS): the held read gives the new list
+    Object.assign(host.fake, { version: 2, asks: [] });
+    release();
+    await until(() => !shell.agentAsk(), 'the card goes with the list');
+    await until(() => new URLSearchParams(held.search).get('after') === '2', 'held again');
+    // the host stops: the read fails, the queue empties, nothing is followed
+    shell.pretendAsks([askOf('a9')]);
+    host.fake.answer = async () => { throw new Error('net::ERR_CONNECTION_RESET'); };
+    running.clear();
+    Object.assign(host.fake, { version: 3 });
+    release();
+    await until(() => shell.following() === '', 'the follower ends with the host');
+    assert.equal(shell.agentAsk(), null, 'nothing shown can be answered');
+  } finally {
+    release();
+    closeAsking();
+  }
+});
+
+test('a redirect to this computer\'s server is judged by the address it comes from: a remote server\'s goes nowhere, opened from the launcher or reloaded; a local server\'s within itself passes', async () => {
+  fresh();
+  const { content } = await askingWindow();
+  const wc = content.webContents;
+  const LOCAL = 'http://127.0.0.1:50999';
+  const NAS = 'https://nas.lab:5001';
+  for (const o of [LOCAL, NAS]) shell.allowedOrigins.add(o); // both opened before: the host's origin stays allowed
+  // a main-frame load from `from` (the shell's own: no initiator) redirected to `to`, after `hops`; whether the guard refused it
+  const refused = (from, to, hops = []) => {
+    wc.emit('did-start-navigation', {}, from, false, true);
+    for (const hop of hops) wc.emit('did-redirect-navigation', {}, hop, false, true);
+    const event = { initiator: null, isMainFrame: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    wc.emit('will-redirect', event, to);
+    return event.defaultPrevented;
+  };
+  const opens = shell.externalOpens.length;
+  try {
+    assert.match(wc.getURL(), /\/ui\/launcher\.html/, 'the launcher is shown: a page of this computer\'s');
+    assert.equal(refused(`${NAS}/`, `${LOCAL}/?ws=mine&page=p1`), true, 'the NAS opened from the launcher sends the window to the host');
+    wc.url = `${NAS}/?ws=nas-ws`;
+    assert.equal(refused(`${NAS}/?ws=nas-ws`, `${LOCAL}/?ws=mine`), true, 'nor on Reload of a NAS page');
+    assert.equal(refused(`${LOCAL}/`, `${LOCAL}/?ws=mine`, [`${NAS}/`]), true, 'nor through a hop of its own');
+    assert.equal(shell.externalOpens.length, opens, 'and nothing is opened for it');
+    // the host's own redirect within itself, whatever the page shown; a frame's start is not the window's
+    assert.equal(refused(`${LOCAL}/`, `${LOCAL}/?ws=mine`), false);
+    wc.emit('did-start-navigation', {}, `${NAS}/frame`, false, false);
+    const event = { initiator: null, isMainFrame: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    wc.emit('will-redirect', event, `${LOCAL}/?ws=lab`);
+    assert.equal(event.defaultPrevented, false);
+  } finally {
+    for (const o of [LOCAL, NAS]) shell.allowedOrigins.delete(o);
+    closeAsking();
   }
 });

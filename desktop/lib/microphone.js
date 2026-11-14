@@ -1,7 +1,9 @@
 // The microphone, for recording into a note and dictating to the assistant
 // (docs/architecture.md "The microphone"). Electron gives a page every
 // permission it asks for unless a handler decides, and this handler keeps
-// that, except for the microphone on macOS. There the system asks the user
+// that for what lib/permissions.js hands it (a page of this computer's
+// requests, a remote page's microphone or camera once the person allowed
+// it), except for the microphone on macOS. There the system asks the user
 // once whether Gamma may use it, with the app's NSMicrophoneUsageDescription
 // (electron-builder.cjs), and a build signed with the hardened runtime or the
 // App Sandbox needs the audio-input entitlement besides. Electron does not

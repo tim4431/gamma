@@ -2,9 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  CHANGES_SHOWN, NOTE_MAX, SOURCES_MAX, answerBody, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, chatPath, currentStep,
-  diffRows, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, modelChoice, modelDisplay, offersMenu, retryOf, sourceNote, sourcesBody,
-  sideMark, stepNow, stepText, stripLine, turnBody, turnChanges, turnLabel,
+  CHANGES_SHOWN, NOTE_MAX, SOURCES_MAX, answerBody, askCommand, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, chatPath,
+  currentStep, diffRows, drawsAsks, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, markParts, modelChoice, modelDisplay, offersMenu,
+  retryOf, scrolledToEnd, sideMark, sourceNote, sourcesBody, stepNow, stepText, stripLine, turnBody, turnChanges, turnLabel, waitsThere,
 } from "../src/chat/computer/computerChat.js";
 import { keeperComputer } from "../src/vault/vaultState.js";
 
@@ -140,6 +140,29 @@ test("what the agent asks: the card's title, where a command runs, what allowing
   ]);
   assert.deepEqual(diffRows(""), []);
   assert.deepEqual(diffRows(undefined), []);
+});
+
+test("an asked command as its card draws it: the wrapper's command first, its lines, what would not show marked", () => {
+  const plain = { kind: "command", command: "latexmk -pdf main.tex" };
+  assert.deepEqual(askCommand(plain), { main: "latexmk -pdf main.tex", through: "", lines: 0 });
+  const wrapped = { kind: "command", command: "pwsh.exe -Command 'latexmk -pdf main.tex'", inner: "latexmk -pdf main.tex", shell: "PowerShell" };
+  assert.deepEqual(askCommand(wrapped), { main: "latexmk -pdf main.tex", through: "Through PowerShell: pwsh.exe -Command 'latexmk -pdf main.tex'", lines: 0 });
+  assert.equal(askCommand({ ...wrapped, shell: "" }).main, wrapped.command, "no shell named: the whole command");
+  assert.equal(askCommand({ command: "a\nb\nc", lines: 3 }).lines, 3);
+  assert.equal(askCommand({ command: "a", lines: 1 }).lines, 0, "one line is not counted");
+  const marked = { kind: "command", command: "echo \u202egnp.exe", command_shown: "echo ⟨U+202E⟩gnp.exe", marked: 1 };
+  assert.equal(askCommand(marked).main, "echo ⟨U+202E⟩gnp.exe", "the server's shown form");
+  assert.deepEqual(markParts(askCommand(marked).main, marked.marked),
+    [{ text: "echo ", mark: false }, { text: "⟨U+202E⟩", mark: true }, { text: "gnp.exe", mark: false }]);
+  assert.deepEqual(markParts("say ⟨U+202E⟩", 0), [{ text: "say ⟨U+202E⟩", mark: false }], "an ask that holds none: the agent's own letters");
+  assert.deepEqual(askCommand(null), { main: "", through: "", lines: 0 });
+});
+
+test("Allow waits until a box was scrolled to its end, or had nothing to scroll", () => {
+  assert.equal(scrolledToEnd(null), true, "no box");
+  assert.equal(scrolledToEnd({ scrollTop: 0, clientHeight: 100, scrollHeight: 100 }), true, "nothing to scroll");
+  assert.equal(scrolledToEnd({ scrollTop: 0, clientHeight: 100, scrollHeight: 400 }), false);
+  assert.equal(scrolledToEnd({ scrollTop: 299, clientHeight: 100, scrollHeight: 400 }), true, "within 2 px of its end");
 });
 
 test("an answer posts the decision, and a decline's note when one was written", () => {
@@ -278,6 +301,33 @@ test("another computer's agent: a message goes while it is away, and its turn wa
   assert.equal(turnLabel(agent({ state: "queued" }), "Codex", "TIM-PC"), "Waiting for TIM-PC");
   assert.equal(turnLabel(agent({ state: "running" }), "Codex", "TIM-PC"), "Codex is working…", "running: it came back");
   assert.equal(turnLabel(agent({ state: "queued" }), "Codex", ""), "Codex is working…");
+});
+
+test("another computer's turn that asks: the page says it waits for the answer on that computer, and draws no card", () => {
+  const now = new Date(2026, 10, 13, 18, 0);
+  const since = new Date(2026, 10, 13, 14, 2).toISOString();
+  const waiting = agent({ state: "running", waiting: true, steps: [{ kind: "run", program: "curl", status: "asked" }] });
+  const running = { ...remote, turn: { turn_id: "t1", state: "running", ahead: false } };
+  assert.equal(waitsThere(running, waiting), true);
+  assert.equal(waitsThere(ready, { ...waiting }), false, "this computer's agent asks in the chat");
+  assert.equal(waitsThere(running, agent({ state: "running", waiting: false })), false);
+  assert.deepEqual(stripLine(running, waiting, now), { text: "Waiting for your answer on TIM-PC", kind: "asking" });
+  assert.equal(turnLabel(waiting, "Codex", "", "TIM-PC"), "Codex is waiting for your answer on TIM-PC");
+  // the computer away while it waits: away wins
+  const gone = { ...offline(since), turn: running.turn };
+  assert.match(stripLine(gone, waiting, now).text, /^Waiting for your answer on TIM-PC, offline since 2:02/);
+  assert.equal(stripLine(gone, waiting, now).kind, "away");
+  assert.deepEqual(stripLine({ ...offline(null), turn: running.turn }, waiting, now),
+    { text: "Waiting for your answer on TIM-PC, which is offline", kind: "away" });
+  assert.equal(turnLabel(waiting, "Codex", "TIM-PC", "TIM-PC"), "Waiting for your answer on TIM-PC, which is offline");
+  assert.equal(stripLine({ ...running, paused: true }, waiting, now).kind, "paused");
+  // an ended turn's flag waits for nothing
+  const ended = agent({ waiting: true, steps: [{ kind: "run", program: "curl", status: "declined" }] });
+  assert.equal(stripLine(remote, ended, now).text, "Codex on TIM-PC · paper");
+  assert.equal(turnLabel(ended, "Codex", "", "TIM-PC"), "1 step");
+  assert.equal(stepText(waiting.steps[0]), "Asked to run curl");
+  assert.equal(drawsAsks(ready), true);
+  assert.equal(drawsAsks(remote), false, "another computer's asks are answered there");
 });
 
 test("another computer's agent: no menu on the strip, no terminal", () => {

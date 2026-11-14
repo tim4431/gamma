@@ -75,20 +75,42 @@ turn it is, and the channel queues each for its vault
 ones stopped there (``stop_remote_chat``). The turn is claimed there for
 this computer's run of it, its message written there at most every
 ``home.WRITE_EVERY_S`` (the last tried again while that server cannot be
-reached), and a turn there never asks.
+reached, a lost one by the next flush), and a turn there asks only on this
+computer (below).
 
-A chat turn of a vault whose agent may ask (``store.runs_of`` ``ask``, read
-at the turn's start; a Send never asks) starts its agent with ``ask``. Each
-ask the agent makes is held for the turn under an id of Gamma's and written
-in the message (``asks``, its step ``asked``) until the person answers it
-(``answer_chat``: the step ``allowed`` or ``declined``), the agent
-withdraws it, ``ASK_TIMEOUT_S`` passes (Gamma declines it) or the turn
-stops (its agent declines what waits). A command the person allowed in
+A chat turn of a vault whose agent may ask (``ask_refusal``, read at the
+turn's start: ``store.runs_of`` ``ask`` for a work folder of this server,
+``computer`` for one of another; a Send never asks) starts its agent with
+``ask``. Each ask the agent makes is held for the turn under an id of
+Gamma's and written in the message (``asks``, its step ``asked``) until the
+person answers it (``answer_chat``: the step ``allowed`` or ``declined``),
+the agent withdraws it, ``ASK_TIMEOUT_S`` passes (Gamma declines it) or the
+turn stops (its agent declines what waits). A command the person allowed in
 this chat (``store.grant``) is answered at once when the agent asks exactly
 it again, in the same directory and to the same network host, never shown.
 What may run set back to never (``runs_never``) declines what waits, and
 whatever the turn asks after. The time an ask waits counts toward neither the
-turn's deadline nor its agent's silence.
+turn's deadline nor its agent's silence. A turn holds at most ``MAX_ASKS``
+asks and, after ``MAX_DECLINES`` declines of the person's in a row, asks no
+more; a file change asking to write below a root for the rest of the
+session (Codex's ``grantRoot``) is declined unseen.
+
+A turn of another server's work folder asks on this computer (step 5b of
+docs/research/agent-collab.md): its vault's policy ``computer``, the
+desktop app's secret set and that server reached securely
+(``remote_servers.plain`` ""), each checked again at every ask. What it
+asks is held here and never written there: that server's message learns
+``waiting`` and the step's status, its step ids none of this computer's.
+The desktop app reads the asks of the account's vaults
+(``computer_asks``, held while nothing changes: ``wait_asks``) and answers
+them in its own window (``answer_computer``, the one way to answer such a
+turn); an ask comes only while the app has read them lately
+(``SHELL_SEEN_S``, else it waits ``SHELL_GRACE_S`` for its first read), and
+one this computer cannot show whole (``FAR_MAX_COMMAND``,
+``FAR_MAX_LINES``, ``FAR_MAX_PATHS``, a cut diff, a host that does not
+read as one) is declined unseen. Such a turn's waiting moves its deadline
+by ``FAR_WAIT_S`` in all, and its writes after an ask or an answer go to
+the flush thread, so an answer never waits on that server.
 
 Locking: ``_lock`` guards the queues, the workers, the active runs and their
 stop events, and nothing else; no call into ``requests``, ``store``,
@@ -105,12 +127,14 @@ import shlex
 import threading
 import time
 import traceback
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import HTTPException
 
+from .. import config, remote_servers
 from ..blocks_store import new_block_id
-from ..db import connect_pages_db, page_now
+from ..db import connect_pages_db, format_stamp, page_now
 from ..feedback import requests
 from ..feedback.entries import FeedbackError
 from ..logbuf import log
@@ -134,6 +158,26 @@ CHAT_EVERY_S = 0.5                # a chat turn's message is written at most thi
 ASK_TIMEOUT_S = 600               # an ask nobody answers this long is declined
 ASK_EXPIRED = "No answer within 10 minutes."
 RUNS_NEVER = "The owner no longer lets you ask to run commands in this folder."
+MAX_ASKS = 20                     # asks one chat turn may hold for the person; the rest are declined
+MAX_DECLINES = 3                  # declines in a row after which a turn's asks are declined unseen
+SHELL_SEEN_S = 60                 # an ask on this computer is held while the desktop app read the asks this recently
+SHELL_GRACE_S = 15                # else it waits this long for the app's first read
+FAR_WAIT_S = 600                  # a remote turn's deadline moves at most this much in all while it waits
+FAR_MAX_COMMAND = 8000            # characters of a command a remote ask may hold
+FAR_MAX_LINES = 200               # lines of it
+FAR_MAX_PATHS = 20                # paths of a remote files ask
+COMPUTER_DECISIONS = ("once", "deny")   # what the desktop app answers an ask on this computer
+ASKED_TOO_OFTEN = ("This turn asked 20 times: Gamma declines the rest of its asks. Finish without them, or say "
+                   "what you still need.")
+DECLINED_OFTEN = ("The owner declined three asks in a row: Gamma declines the rest of this turn's asks. Finish "
+                  "without them, or say what you still need.")
+NOT_SECURE = "Gamma asks on this computer only for a server reached over https."
+NOBODY_HERE = "Nobody can answer on this computer now."
+TOO_LONG = "This ask is too long to read on this computer."
+HOST_UNREAD = "Gamma could not read the network address this command reaches."
+ONE_AT_A_TIME = "Gamma allows file changes one at a time."
+FAR_ASKS = "This is answered on the computer that runs the agent."
+NO_ASK_HERE = "No question on this computer has that id."
 
 # The kinds of work a vault's queue holds: a Send's run, a chat's turn.
 SEND, CHAT = "send", "chat"
@@ -159,6 +203,13 @@ _active: dict[tuple[str, str, str], dict] = {}
 _chats: dict[str, dict] = {}
 _slots = threading.BoundedSemaphore(MAX_RUNS)
 _registered = False
+# The asks waiting on this computer (remote turns'): a version that rises at
+# each change, which the desktop app's read waits on, and when the app last
+# read them (monotonic; never yet: monotonic counts from boot on Windows and
+# Linux, so 0.0 would read as just after one).
+_asks_cond = threading.Condition()
+_asks_version = 0
+_shell_seen = float("-inf")
 
 
 def _run_timeout() -> float:
@@ -575,6 +626,119 @@ def runs_never(link_id: str) -> None:
             log.warning(f"[agents] declining the asks of chat turn {turning.turn_id}: {e}")
 
 
+# --- asking on this computer -------------------------------------------------------------------
+
+def ask_refusal(link: dict | None, remote: bool) -> str:
+    """Why a chat turn of the vault ``link`` may not ask now, "" when it
+    may: one of a work folder of this server while its policy is ``ask``;
+    one of another server's (``remote``) while its policy is ``computer``,
+    the desktop app's secret is set (without it there is no window to ask
+    in) and that server is reached securely (https, or this computer). The
+    app's presence is each ask's (``_ChatTurn._asked``)."""
+    if link is None:
+        return RUNS_NEVER
+    runs = store.runs_of(link["id"])
+    if not remote:
+        return "" if runs == "ask" else RUNS_NEVER
+    if runs != "computer" or not link["remote_url"]:
+        return RUNS_NEVER
+    if not config.shell_secret():
+        return NOBODY_HERE
+    if remote_servers.plain(link["remote_url"]) != "":
+        return NOT_SECURE
+    return ""
+
+
+def _asks_changed() -> None:
+    """The asks waiting on this computer gained or lost one: the version
+    rises, and the desktop app's read waiting on it answers."""
+    global _asks_version
+    with _asks_cond:
+        _asks_version += 1
+        _asks_cond.notify_all()
+
+
+def asks_version() -> int:
+    with _asks_cond:
+        return _asks_version
+
+
+def shell_listening() -> bool:
+    """Whether the desktop app read the asks within ``SHELL_SEEN_S``."""
+    return time.monotonic() - _shell_seen <= SHELL_SEEN_S
+
+
+def wait_shell(timeout: float) -> bool:
+    """Whether the desktop app reads the asks within ``timeout`` seconds
+    (at once when it read them lately)."""
+    end = time.monotonic() + timeout
+    with _asks_cond:
+        while not shell_listening():
+            left = end - time.monotonic()
+            if left <= 0:
+                return False
+            _asks_cond.wait(left)
+        return True
+
+
+def wait_asks(after: int, timeout: float) -> int:
+    """The desktop app reads the asks: it is heard (``_shell_seen``, which
+    wakes an ask waiting for it), and the read is held while the version
+    is ``after``, at most ``timeout`` seconds (20 at most) → the version."""
+    global _shell_seen
+    end = time.monotonic() + max(0.0, min(float(timeout), 20.0))
+    with _asks_cond:
+        _shell_seen = time.monotonic()
+        _asks_cond.notify_all()
+        while _asks_version == after:
+            left = end - time.monotonic()
+            if left <= 0:
+                break
+            _asks_cond.wait(left)
+        _shell_seen = time.monotonic()
+        return _asks_version
+
+
+def _remote_turnings() -> list:
+    """The chat turns of other servers' work folders running here."""
+    with _lock:
+        return [run["chat"] for (_, kind, _), run in _active.items()
+                if kind == CHAT and run.get("chat") is not None and run["chat"].home.remote]
+
+
+def computer_asks(user_id: str) -> list[dict]:
+    """The asks waiting on remote turns of the vaults ``user_id`` made,
+    oldest first, each as the desktop app draws it (``_ChatTurn._card``)."""
+    held = []
+    for turning in _remote_turnings():
+        if turning.maker != user_id:
+            continue
+        with turning._asking:
+            held += [(ask["since"], ask["card"]) for ask in turning.asks.values() if ask.get("card")]
+    return [dict(card) for _, card in sorted(held, key=lambda pair: pair[0])]
+
+
+def answer_computer(ask_id: str, decision: str, user_id: str) -> int:
+    """The desktop app's answer to the ask ``ask_id`` of a remote turn of a
+    vault ``user_id`` made: ``once`` or ``deny`` (``_ChatTurn._answer_here``)
+    → the asks' version once the agent has it. ChatError 404 for no such
+    ask (or another account's), 400 for another decision, 409 as
+    ``_answer_here`` says, or for a turn that ended."""
+    for turning in _remote_turnings():
+        with turning._asking:
+            found = ask_id in turning.asks or ask_id in turning.answered
+        if found and turning.maker == user_id:
+            break
+    else:
+        raise chats.ChatError(404, NO_ASK_HERE)
+    if decision not in COMPUTER_DECISIONS:
+        raise chats.ChatError(400, "On this computer an ask is allowed once or declined.")
+    if turning._ended:
+        raise chats.ChatError(409, "This turn has ended.")
+    turning._answer_here(ask_id, decision)
+    return asks_version()
+
+
 def stop_link(link_id: str) -> None:
     """Stop the run of the vault ``link_id``, if one runs: its agent was
     turned off or changed, the vault paused, relinked, removed or its push
@@ -605,6 +769,7 @@ def shutdown(timeout: float = 5.0) -> None:
             queue.clear()
         _queued.clear()
     procs.stop_all(timeout)
+    _asks_changed()   # what the desktop app reads goes with the runs
 
 
 def wait_idle(timeout: float = 30) -> bool:
@@ -620,8 +785,9 @@ def wait_idle(timeout: float = 30) -> bool:
 
 
 def reset() -> None:
-    """Stop and forget every queue, worker and run (tests)."""
-    global _slots
+    """Stop and forget every queue, worker and run, and that the desktop
+    app read the asks (tests)."""
+    global _slots, _shell_seen
     with _lock:
         for run in _active.values():
             run["reason"] = run["reason"] or CLOSING
@@ -636,6 +802,8 @@ def reset() -> None:
         _active.clear()
         _chats.clear()
         _slots = threading.BoundedSemaphore(MAX_RUNS)
+    _shell_seen = float("-inf")
+    _asks_changed()
 
 
 # --- the startup -------------------------------------------------------------------------
@@ -905,13 +1073,18 @@ _WRAPPER_FLAGS = re.compile(r"^(?:-(?:command|c|lc|ic|noprofile|nologo|nonintera
 def _program(command: str) -> str:
     """The name of the program a command line runs (``latexmk`` of
     ``latexmk -pdf main.tex``, and of ``powershell.exe -Command 'latexmk
-    -pdf main.tex'``), never its arguments."""
+    -pdf main.tex'``), never its arguments: the inner command of a shell
+    wrapper first (``events.unwrap_shell``, what an ask shows), its own
+    reading of a wrapper only where that gives none."""
     def words(line: str) -> list[str]:
         try:
             return shlex.split(line, posix=True)
         except ValueError:
             return line.split()
 
+    unwrapped = events.unwrap_shell(command)
+    if unwrapped:
+        command = unwrapped[1]
     parts = words(command.replace("\\", "/")) if command.strip() else []
     for _ in range(3):  # a wrapper inside a wrapper, at most
         if not parts:
@@ -1084,6 +1257,7 @@ class _Turning:
             now = time.monotonic()
             if self._waiting():
                 deadline += now - last
+                self._waited(now - last)
             last = now
             if self.stop.is_set():
                 turn.stop()
@@ -1098,8 +1272,12 @@ class _Turning:
             ended.wait(0.1)
 
     def _waiting(self) -> bool:
-        """Whether the turn waits for the person now (an ask)."""
+        """Whether the turn waits for the person now (an ask): its deadline
+        moves meanwhile."""
         return False
+
+    def _waited(self, seconds: float) -> None:
+        """The turn waited ``seconds`` more for the person (``_waiting``)."""
 
     def _stopping(self) -> None:
         """Called on the watching thread once it stopped the turn."""
@@ -1507,8 +1685,13 @@ class _ChatTurn(_Turning):
         self.gone = False               # its message is gone: nothing more is written in it
         self.ask = False                # its agent may ask (the vault's policy at its start)
         self.asks: dict[str, dict] = {}  # Gamma's id -> an ask that waits: {key, kind, command, cwd, host, step,
-        #                                   since, shown}
+        #                                   since, shown, card (a remote turn's: what the desktop app draws)}
         self.answered: set[str] = set()  # the asks that waited and wait no more
+        self.held = 0                   # asks held for the person
+        self.declines = 0               # the person's declines in a row
+        self.waited = 0.0               # seconds a remote turn waited for the person (its deadline moved so)
+        self.file = ""                  # the page's path from this computer's vault rows ("" for none)
+        self.maker = ""                 # the account that made the vault
         self._io = threading.Lock()     # one write of the message at a time, the newest last
         self._asking = threading.Lock()  # the asks and the steps, which the person's answer changes too
         self._written_at = 0.0
@@ -1620,8 +1803,9 @@ class _ChatTurn(_Turning):
         argv = catalog.command(self.agent)
         if argv is None:
             self._fail(f"{self.label} is not on this computer.")
-        # Another server's turn never asks (asking is for a work folder of this server).
-        self.ask = not self.home.remote and store.runs_of(self.link_id) == "ask"
+        # Another server's turn asks only on this computer (``ask_refusal``), each ask checked again.
+        self.ask = not ask_refusal(link, self.home.remote)
+        self.maker = link["created_by"]
 
         # 2. running
         self.root = Path(link["path"])
@@ -1636,6 +1820,7 @@ class _ChatTurn(_Turning):
         # 3. the prompt and the session
         owner = self.home.owner(link)
         file, folder, selections = self.home.where(self, link, context)
+        self.file = self.home.vault_file(self, link)   # what an ask names: never the other server's word
         earlier = context["earlier"]
         session = self._session(link)
         self.fresh = bool(earlier) and not session
@@ -1732,7 +1917,11 @@ class _ChatTurn(_Turning):
                     self.run["detail"] = _said(event, self.tracked)
         elif kind == "ask":
             if self._asked(event):
-                self._show(force=True)
+                if self.home.remote:
+                    _asks_changed()
+                    self._show_later()
+                else:
+                    self._show(force=True)
                 return None
         elif kind == "ask_gone":
             with self._asking:
@@ -1741,6 +1930,8 @@ class _ChatTurn(_Turning):
                 if ask_id:
                     self.answered.add(ask_id)
             if held is not None:
+                if self.home.remote:
+                    _asks_changed()
                 self._settle(held, "failed")
         self._show()
         return None
@@ -1763,28 +1954,69 @@ class _ChatTurn(_Turning):
         return events.rel_path(str(cwd or "").strip() or ".", str(self.root)) or "."
 
     def _asked(self, event: dict) -> bool:
-        """The agent asks: while the vault's agent may no longer ask
-        (``store.runs_of`` set back to never), Gamma declines it, never
-        shown; a command the person allowed in this conversation, exactly
-        it in the same directory and to the same network host, is answered
-        at once, never shown; any other ask is held, in the message
-        (``asks``) with its step ``asked`` → whether it was held."""
+        """The agent asks. Gamma declines it, never shown, in this order:
+        while the vault's agent may no longer ask (``ask_refusal``: set back
+        to never, a remote turn's server no longer reached securely or the
+        desktop app's secret gone), a remote turn's ask of another kind than
+        a command or a file change, a file change asking to write below a
+        root for the rest of the session (every turn), a remote ask this
+        computer cannot show whole or whose host does not read as one, a
+        turn past ``MAX_ASKS`` or ``MAX_DECLINES``, and a remote ask the
+        desktop app is not there to answer (``SHELL_SEEN_S``, waiting up to
+        ``SHELL_GRACE_S`` for its first read). A command the person allowed
+        in a local conversation, exactly it in the same directory and to
+        the same network host, is answered at once, never shown; a remote
+        turn looks up no grant. Any other ask is held, in the message
+        (``asks``) with its step ``asked``, a remote turn's for the desktop
+        app alone (``card``) → whether it was held."""
+        from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+        remote = self.home.remote
         kind = event.get("kind") if event.get("kind") in events.ASK_KINDS else "tool"
-        command = str(event.get("command") or "").strip()
+        raw = str(event.get("command") or "")
+        command = raw.strip()
         cwd, host = self._grant_cwd(event.get("cwd") or "."), str(event.get("host") or "").strip()
-        if store.runs_of(self.link_id) != "ask":
-            self.turn.answer(event["id"], "deny", RUNS_NEVER)
+        link = folder_links.get_link(self.link_id)
+        refusal = ask_refusal(link, remote)
+        if not refusal and remote and kind not in ("command", "files"):
+            refusal = RUNS_NEVER
+        if not refusal and event.get("grant_root"):
+            refusal = ONE_AT_A_TIME
+        if not refusal and remote:
+            if kind == "command" and (len(raw) > FAR_MAX_COMMAND or raw.count("\n") + 1 > FAR_MAX_LINES):
+                refusal = TOO_LONG
+            elif event.get("diff_cut") or len(event.get("paths") or []) > FAR_MAX_PATHS:
+                refusal = TOO_LONG
+            elif host and not events.host_ok(host):
+                refusal = HOST_UNREAD
+        if refusal:
+            self.turn.answer(event["id"], "deny", refusal, by="gamma")
             return False
-        if kind == "command" and command and store.granted(self.conversation_id, command, link_id=self.link_id,
-                                                           cwd=cwd, host=host):
+        if not remote and kind == "command" and command and store.granted(
+                self.conversation_id, command, link_id=self.link_id, cwd=cwd, host=host):
             self.turn.answer(event["id"], "once")
+            return False
+        if self.held >= MAX_ASKS or self.declines >= MAX_DECLINES:
+            self.turn.answer(event["id"], "deny", ASKED_TOO_OFTEN if self.held >= MAX_ASKS else DECLINED_OFTEN,
+                             by="gamma")
+            return False
+        if remote and not shell_listening() and not wait_shell(SHELL_GRACE_S):
+            self.turn.answer(event["id"], "deny", NOBODY_HERE, by="gamma")
             return False
         ask_id = new_block_id()
         shown = {"id": ask_id, "kind": kind}
         if "command" in event:
             # exactly as the agent gave it, nothing rewritten: the person sees
-            # what runs before it does
-            shown["command"] = str(event["command"] or "")
+            # what runs before it does (what would not show marked beside it)
+            shown["command"] = raw
+            marked, count = events.shown_text(raw)
+            if count:
+                shown["command_shown"], shown["marked"] = marked, count
+            if raw.count("\n"):
+                shown["lines"] = raw.count("\n") + 1
+            unwrapped = events.unwrap_shell(raw) if not count else None
+            if unwrapped:
+                shown["shell"], shown["inner"] = unwrapped
         if "cwd" in event:
             shown["cwd"] = self._shown_path(str(event["cwd"] or "."))
         if host:
@@ -1797,17 +2029,23 @@ class _ChatTurn(_Turning):
             shown["reason"] = _relative(str(event["reason"]), self.root)[:events.MAX_REASON]
         if kind == "tool":
             shown["tool"] = events.one_line(str(event.get("tool") or ""), 100)
-        shown["at"] = page_now()
-        step_id = str(event.get("step") or "") or f"ask:{ask_id}"
+        if event.get("background"):
+            shown["background"] = True
+        now = datetime.now(timezone.utc)
+        shown["at"], shown["expires_at"] = format_stamp(now), format_stamp(now + timedelta(seconds=ASK_TIMEOUT_S))
+        # a step's id never the ask's: a remote turn's steps reach the other server
+        step_id = str(event.get("step") or "") or f"ask:{new_block_id()}"
         if kind == "command":
             step = _step({"id": step_id, "kind": "run", "command": command, "status": "asked"})
         elif kind == "files":
             step = _step({"id": step_id, "kind": "edit", "path": (event.get("paths") or [""])[0], "status": "asked"})
         else:
             step = _step({"id": step_id, "kind": "other", "status": "asked"})
+        card = self._card(event, shown, link) if remote else None
         with self._asking:
+            self.held += 1
             self.asks[ask_id] = {"key": event["id"], "kind": kind, "command": command, "cwd": cwd, "host": host,
-                                 "step": step_id, "since": time.monotonic(), "shown": shown}
+                                 "step": step_id, "since": time.monotonic(), "shown": shown, "card": card}
             at = self._step_at.get(step_id)
             if at is not None:
                 self.steps[at]["status"] = "asked"
@@ -1816,7 +2054,59 @@ class _ChatTurn(_Turning):
                 self.steps.append(step)
         return True
 
+    def _card(self, event: dict, shown: dict, link: dict) -> dict:
+        """A remote turn's ask as the desktop app draws it: every string
+        through ``events.shown_text`` (how many it marked in all,
+        ``marked``), paths absolute on this computer, the agent's reason one
+        line, the server by its origin and the account there, the page's
+        file only as this computer's vault rows name it. Nothing in it is
+        that server's word but the account's name."""
+        count = 0
+
+        def mark(text: str) -> str:
+            nonlocal count
+            out, n = events.shown_text(text)
+            count += n
+            return out
+
+        def where(path: str) -> str:
+            return os.path.normpath(path if Path(path).is_absolute() or re.match(r"^[A-Za-z]:", path)
+                                    else os.path.join(str(self.root), path))
+
+        card = {"id": shown["id"], "turn_id": self.turn_id, "link_id": self.link_id, "agent": self.agent,
+                "label": self.label, "kind": shown["kind"]}
+        if "command" in shown:
+            card["command"] = mark(shown["command"])
+            for key in ("lines", "inner", "shell"):
+                if key in shown:
+                    card[key] = shown[key]
+        if shown.get("background"):
+            card["background"] = True
+        card.update(dir=mark(where(str(event.get("cwd") or "."))), folder=mark(str(link["path"])), file=mark(self.file))
+        if shown.get("host"):
+            card["host"] = mark(shown["host"])
+        if "paths" in event:
+            card["paths"] = [mark(where(str(p))) for p in event["paths"]]
+        if "diff" in shown:
+            card["diff"] = mark(shown["diff"])
+        if event.get("reason"):
+            card["reason"] = mark(events.one_line(str(event["reason"]), 300))
+        card["server"] = {"origin": remote_servers.origin_of(link["remote_url"]),
+                          "account": mark(events.one_line(self.home.username, 64))}
+        if count:
+            card["marked"] = count
+        card["at"], card["expires_at"] = shown["at"], shown["expires_at"]
+        return card
+
     def answer(self, ask_id: str, decision: str, note: str = "") -> None:
+        """The person's answer in the chat (``answer_chat``): a remote
+        turn's asks are answered on this computer alone
+        (``answer_computer``), 409 here; else ``_answer_here``."""
+        if self.home.remote:
+            raise chats.ChatError(409, FAR_ASKS)
+        self._answer_here(ask_id, decision, note)
+
+    def _answer_here(self, ask_id: str, decision: str, note: str = "") -> None:
         """The person's answer to the ask ``ask_id`` (``events.DECISIONS``),
         ``note`` what a decline tells the agent: it leaves the message, its
         step reads allowed or declined, and Allow in this chat on a command
@@ -1835,22 +2125,27 @@ class _ChatTurn(_Turning):
         if not self._decide(ask_id, decision, note):
             raise chats.ChatError(409, f"{self.label} no longer waits for that.")
 
-    def _decide(self, ask_id: str, decision: str, note: str) -> bool:
-        """The ask answered with ``decision``, once → whether the agent took
-        the answer. Allow in this chat is kept (``store.grant``: the
-        command, its directory, its host) only while the vault's agent may
-        still ask and is still this turn's."""
+    def _decide(self, ask_id: str, decision: str, note: str, by: str = "owner") -> bool:
+        """The ask answered with ``decision``, once, by the person (``by``
+        ``owner``: a decline counts toward ``MAX_DECLINES``, an allow sets
+        the count back) or by Gamma → whether the agent took the answer.
+        Allow in this chat is kept (``store.grant``: the command, its
+        directory, its host) only while the vault's agent may still ask and
+        is still this turn's. A remote turn's message is written by the
+        flush, so the desktop app's answer never waits on that server."""
         answered = "declined" if decision == "deny" else "allowed"
         with self._asking:
             held = self.asks.pop(ask_id, None)
             self.answered.add(ask_id)
             if held is None:
                 return False
+            if by == "owner":
+                self.declines = self.declines + 1 if decision == "deny" else 0
             # The step reads the answer before the agent hears it: what the
             # agent then says of a declined step changes nothing (the tool
             # event's guard), whichever thread comes first.
             self._mark(held, "asked", answered)
-        written = self.turn is not None and self.turn.answer(held["key"], decision, note)
+        written = self.turn is not None and self.turn.answer(held["key"], decision, note, by=by)
         if written and decision == "chat" and held["kind"] == "command" and held["command"]:
             try:
                 if (store.runs_of(self.link_id) == "ask"
@@ -1862,17 +2157,21 @@ class _ChatTurn(_Turning):
         if not written:
             with self._asking:
                 self._mark(held, answered, "failed")
-        self._show(force=True)
+        if self.home.remote:
+            _asks_changed()
+            self._show_later()
+        else:
+            self._show(force=True)
         return written
 
     def decline_all(self, note: str) -> None:
-        """Every ask that waits declined with ``note`` (what may run was set
-        back to never), the turn going on: the cards leave the message,
-        their steps declined."""
+        """Every ask that waits declined by Gamma with ``note`` (what may
+        run was set back to never), the turn going on: the cards leave the
+        message, their steps declined."""
         with self._asking:
             waiting = list(self.asks)
         for ask_id in waiting:
-            self._decide(ask_id, "deny", note)
+            self._decide(ask_id, "deny", note, by="gamma")
 
     def _settle(self, held: dict, status: str) -> None:
         """An ask that waits no more: its step ``status``, the message
@@ -1889,7 +2188,16 @@ class _ChatTurn(_Turning):
             self.steps[at]["status"] = status
 
     def _waiting(self) -> bool:
+        """An ask waits; a remote turn's deadline moves by ``FAR_WAIT_S`` in
+        all, so it holds a slot of this computer's at most that much past
+        its own."""
+        if self.home.remote:
+            return bool(self.asks) and self.waited < FAR_WAIT_S
         return bool(self.asks)
+
+    def _waited(self, seconds: float) -> None:
+        if self.home.remote:
+            self.waited += seconds
 
     def _stopping(self) -> None:
         """The turn stops or ended: its agent declines what waits (the
@@ -1903,6 +2211,8 @@ class _ChatTurn(_Turning):
                 if at is not None and self.steps[at]["status"] == "asked":
                     self.steps[at]["status"] = "declined"
         if left:
+            if self.home.remote:
+                _asks_changed()
             try:
                 self._show(force=True)
             except Exception as e:  # noqa: BLE001 — the turn's end writes it
@@ -1919,7 +2229,7 @@ class _ChatTurn(_Turning):
             expired = [ask_id for ask_id, held in self.asks.items() if now - held["since"] >= ASK_TIMEOUT_S]
         try:
             for ask_id in expired:
-                self._decide(ask_id, "deny", ASK_EXPIRED)
+                self._decide(ask_id, "deny", ASK_EXPIRED, by="gamma")
             if self._dirty and not self.home.remote:
                 self._show()
             elif (self._dirty and now - self._written_at >= home.WRITE_EVERY_S
@@ -1942,18 +2252,32 @@ class _ChatTurn(_Turning):
         """The message as the turn has it: its text (its paragraphs, the last
         one growing with its deltas, or the done's own, without this
         computer's paths and ``prompt.inert``), its
-        steps, the asks that wait (``_asked``) and ``fresh``."""
+        steps, the asks that wait (``_asked``; another server's message
+        takes none of them, ``home.CHAT_FIELDS``, but ``waiting``) and
+        ``fresh``."""
         with self._asking:
             paragraphs = [p.strip() for p in self.paragraphs]
             steps = [dict(s) for s in self.steps]
             asks = [dict(held["shown"]) for held in self.asks.values()]
         text = prompt.inert(_redact("\n\n".join(p for p in paragraphs if p), self.root)) if self.root else ""
-        return {"text": text[:chats.MAX_TEXT], "steps": steps, "asks": asks, "fresh": self.fresh}
+        out = {"text": text[:chats.MAX_TEXT], "steps": steps, "asks": asks, "fresh": self.fresh}
+        if self.home.remote:
+            out["waiting"] = bool(asks)
+        return out
+
+    def _show_later(self) -> None:
+        """Another server's message written by the flush thread within a
+        tick (``_tick``), not on this one: what an ask or an answer
+        changed. Takes no lock: a write that hangs there holds ``_io``, and
+        the change is the next write's whatever this one carries."""
+        self._dirty, self._written_at = True, float("-inf")
 
     def _show(self, *, force: bool = False, **more) -> None:
         """The message's text and steps (and ``more``) written, at most every
         ``CHAT_EVERY_S`` (another server's, ``home.WRITE_EVERY_S``) unless
-        ``force``; a message gone stops the turn."""
+        ``force``; a message gone stops the turn. A write that did not reach
+        another server (``home.missed``) leaves the message to write again
+        (the flush, ``_tick``), as does a change made while it went."""
         every = home.WRITE_EVERY_S if self.home.remote else CHAT_EVERY_S
         with self._io:
             if self._ended:   # a write of the progress that waited behind the end
@@ -1964,6 +2288,7 @@ class _ChatTurn(_Turning):
                 return
             self._written_at, self._dirty = now, False
             if self.home.write(self, {**self._progress(), **more}):
+                self._dirty = self._dirty or self.home.missed
                 return
             self.gone = True
         with _lock:

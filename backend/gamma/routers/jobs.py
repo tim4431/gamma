@@ -205,7 +205,8 @@ def _far_turns(user_id: str, ws: str) -> list[dict]:
     """The account's turns of the chat's computer side queued or running on
     another computer (step 4d, ``chats.remote_turns``: kept in the
     workspaces its computers keep a work folder of with an agent, and the
-    one the request works in), as ``_computer_turns`` gives them, newest
+    one the request works in), as ``_computer_turns`` gives them (phase
+    ``asking`` while an ask waits for an answer on that computer), newest
     first; Stop the same route."""
     from ..computers import registry
     from ..local_agents import chats
@@ -213,7 +214,8 @@ def _far_turns(user_id: str, ws: str) -> list[dict]:
     rows = []
     try:
         for each in sorted({*registry.workspaces_of(user_id), *([ws] if ws else [])}):
-            rows += [_turn_row(user_id, turn, turn["title"]) for turn in chats.remote_turns(each, user_id)]
+            rows += [_turn_row(user_id, turn, turn["title"], asking=turn["asking"])
+                     for turn in chats.remote_turns(each, user_id)]
     except Exception:  # noqa: BLE001 — the tray never breaks over the agents
         log.exception("[jobs] could not read the chat turns run on other computers")
         return []

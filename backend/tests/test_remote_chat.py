@@ -24,9 +24,9 @@ another account's turn never run; the routes' gates; Stop of a queued and a
 running turn; a write retried or late never going backwards; a 409 stopping
 the turn; a follow-up resuming the session here, a lost one taking the
 earlier messages along; the model and effort checked there and here; a turn
-there never asking; recovery failing an open turn there, and the channel's
-next announce one whose end, or whose claim, never reached it, never one
-claimed again here; a Stop there of a turn left open here ending it; a turn
+there never asking in the chat (test_remote_asks.py asks on this computer);
+recovery failing an open turn there, and the channel's next announce one
+whose end, or whose claim, never reached it, never one claimed again here; a Stop there of a turn left open here ending it; a turn
 whose agent was turned off while it waited failing there with why; the
 watch of a turn there never waiting on a write; Background tasks there.
 The local chat is test_local_agents_chat.py's."""
@@ -367,7 +367,7 @@ def test_the_watch_of_a_turn_there_never_waits_on_a_write_there(lab, nas):
         held.wait(10)
         return True
 
-    turning.home = SimpleNamespace(remote=True, write=write)
+    turning.home = SimpleNamespace(remote=True, write=write, missed=False)
     turning._dirty = True
     began = time.monotonic()
     turning._tick()                                                        # the watcher: handed to a writer
@@ -595,13 +595,13 @@ def test_the_model_and_effort_are_checked_there_and_again_here(lab, nas):
     assert (reply["state"], reply["error"]) == ("failed", "Codex does not offer that model on this computer.")
 
 
-def test_a_turn_there_never_asks(lab, nas):
+def test_a_turn_there_never_asks_in_the_chat(lab, nas):
     f = _made(lab, nas, "RC asks")
-    store.set_runs(f.id, "ask", by=lab.user)                               # even were it let: a turn there never asks
+    store.set_runs(f.id, "ask", by=lab.user)                               # the chat's policy: not one of a turn there
     f.turn.once()
     turn_id = _say(lab.owner, f.page)["turn"]["id"]
     r = lab.owner.post(f"/api/local-agents/chat/turns/{turn_id}/asks/a1", json={"decision": "once"})
-    assert (r.status_code, r.json()["detail"]) == (409, "Asking is for a work folder of this computer's server.")
+    assert (r.status_code, r.json()["detail"]) == (409, "This is answered on the computer that runs the agent.")
     f.turn.once()
     assert runner.wait_idle(60)
     settle_probes()

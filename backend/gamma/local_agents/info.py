@@ -4,7 +4,7 @@ folder-links API's links (``_info``) and a page's chip
 runs}``, ``running`` what it works on now, ``{kind: "send", request_id,
 detail}`` for a Send or ``{kind: "chat", request_id: null, detail}`` for a
 turn of the chat's computer side, or null, ``runs`` what it may run
-(``never`` or ``ask``, ``store.runs_of``); and null for a vault with no
+(``never``, ``ask`` or ``computer``, ``store.runs_of``); and null for a vault with no
 agent, one that is no work folder (of this server or another,
 ``folder_links.agent_folder``), and on a server that runs no agents.
 

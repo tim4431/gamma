@@ -24,7 +24,13 @@ short only where they end; a grant is the command in its directory to its
 host; set back to never, what waits and what comes is declined; Codex's
 input to a running terminal and a change to a protected part are declined
 unasked, its diffs name each change and are cut at a line; Claude Code's
-ask turn runs each command in the folder."""
+ask turn runs each command in the folder. What an ask shows is marked where
+it would not show, a wrapper's inner command read out of it only on an
+exact round trip; Claude Code runs an allowed command with its command,
+description and timeout alone, in the foreground; Gamma's declines are
+worded as Gamma's; a file change asking for a root is declined unseen; a
+turn holds 20 asks at most and asks no more after three declines in a row.
+Asking on this computer is test_remote_asks.py's."""
 
 import threading
 import time
@@ -97,7 +103,7 @@ def test_what_the_agent_may_run_is_the_computers_word(lab, disk, monkeypatch):
     assert _patch(lab.owner, f.id, 400, SHELL, agent_runs="ask")["detail"] == "Turn an agent on first."
     store.set_agent(f.id, "codex", by=lab.user)
     assert _patch(lab.owner, f.id, 400, SHELL, agent_runs="always")["detail"] == (
-        "What an agent may run is never or ask.")
+        "What an agent may run is never, ask or computer.")
     assert _patch(lab.owner, f.id, 403, agent_runs="ask")["detail"] == (
         "Only the desktop app may let an agent ask to run commands in this folder.")
     assert store.runs_of(f.id) == "never" and _links(lab.owner)[f.id]["agent"]["runs"] == "never"
@@ -209,7 +215,7 @@ def test_codex_relays_what_it_asks(work, monkeypatch):
     got = _reading(turn)
     first = _until(lambda: next((e for e in got if e["type"] == "ask"), None))
     assert first == {"type": "ask", "id": "100", "kind": "command", "step": "ap0", "command": BUILD, "cwd": ".",
-                     "host": "ctan.org", "reason": "To fetch a package. (network: ctan.org)"}
+                     "host": "ctan.org", "reason": "To fetch a package."}   # the host its own field alone
     time.sleep(2.5)
     assert turn.answer("100", "deny", "Use the copy in the folder.") and not turn.answer("100", "once")
     files = _until(lambda: next((e for e in got if e["type"] == "ask" and e["kind"] == "files"), None))
@@ -311,7 +317,7 @@ def test_a_command_asked_allowed_once_and_its_wait_is_not_the_turns(lab, disk, m
     reply = _waiting(lab, f.page)
     [card] = reply["asks"]
     assert card == {"id": card["id"], "kind": "command", "command": BUILD, "cwd": ".", "reason": "To see the change.",
-                    "at": card["at"]} and card["at"]
+                    "at": card["at"], "expires_at": card["expires_at"]} and card["at"] < card["expires_at"]
     assert reply["state"] == "running"
     assert reply["steps"] == [{"id": "ap0", "kind": "run", "status": "asked", "program": "latexmk"}]
     told = next(m["params"] for m in requests_in(disk.log) if m.get("method") == "turn/start")["input"][0]["text"]
@@ -397,7 +403,7 @@ def test_an_ask_nobody_answers_is_declined(lab, disk, monkeypatch):
     assert (reply["state"], reply["text"], reply["asks"]) == ("done", "Did not run it.", [])
     assert reply["steps"][0]["status"] == "declined"
     assert [a["result"] for a in _answers(disk.log)] == [{"decision": "decline"}]
-    assert _steers(disk.log) == ["The owner declined that: No answer within 10 minutes."]
+    assert _steers(disk.log) == ["Gamma declined that: No answer within 10 minutes."]   # Gamma's, not the owner's
 
 
 def test_a_declined_step_reads_declined_though_the_agent_says_so_first(lab, disk, monkeypatch):
@@ -588,8 +594,8 @@ def test_allowed_in_this_chat_is_the_command_in_its_directory_to_its_host(lab, d
     conversation, seen = made["conversation"]["id"], set()
     card = _next_card(lab, f.page, seen)
     # the command exactly as the agent gave it; the host a field of its own
-    assert {k: card[k] for k in ("command", "cwd", "host", "reason")} == {
-        "command": odd, "cwd": ".", "host": "ctan.org", "reason": "Network: ctan.org"}
+    assert {k: card[k] for k in ("command", "cwd", "host")} == {"command": odd, "cwd": ".", "host": "ctan.org"}
+    assert "reason" not in card
     _answer(lab.owner, made["turn"]["id"], card["id"], decision="chat")
     assert runner.wait_idle(60)
     assert store.granted(conversation, odd, link_id=f.id, cwd=".", host="ctan.org")
@@ -626,7 +632,7 @@ def test_what_may_run_set_back_to_never_declines_what_waits_and_what_comes(lab, 
     assert reply["steps"] == [{"id": "ap0", "kind": "run", "status": "declined", "program": "latexmk"},
                               {"id": "ap1", "kind": "run", "status": "failed", "program": "make"}]
     assert [a["result"] for a in _answers(disk.log)] == [{"decision": "decline"}, {"decision": "decline"}]
-    assert _steers(disk.log) == [f"The owner declined that: {runner.RUNS_NEVER}"] * 2
+    assert _steers(disk.log) == [f"Gamma declined that: {runner.RUNS_NEVER}"] * 2
 
     # Allow in this chat that lands once what may run is never, or the agent is another: no grant
     for meanwhile in (lambda: store.set_runs(f.id, "never", by=lab.user),
@@ -709,3 +715,126 @@ def test_claude_codes_ask_turn_runs_each_command_in_the_folder(work, monkeypatch
     assert "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR" in asked
     assert "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR" not in plain
     assert "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR" not in procs.child_env()  # this driver's alone
+
+
+# --- what an ask shows, what Gamma reads of it, and its caps (step 5b) ----------------------------------
+
+def test_shown_text_marks_what_does_not_show():
+    for ch in ("\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "\u200b", "\ufeff", "\u2028", "\u2029", "\x00", "\r",
+               "\x1b"):
+        assert events.shown_text(f"a{ch}b") == (f"a⟨U+{ord(ch):04X}⟩b", 1), repr(ch)
+    assert events.shown_text("make\n\tall é 中") == ("make\n\tall é 中", 0)   # a newline and a tab show
+    assert events.shown_text("") == ("", 0)
+
+
+def test_host_ok():
+    for host in ("example.org", "ctan.org:443", "10.0.0.1", "10.0.0.1:8080", "[::1]", "[2001:db8::1]:443", "localhost"):
+        assert events.host_ok(host), host
+    for host in ("", "evil example", "a/b", "[::1", "[nothex]", "x:99999", "x:0", "é.org", "x" * 254, "a\u202eb"):
+        assert not events.host_ok(host), host
+
+
+def test_unwrap_shell_gives_the_inner_command_only_on_a_round_trip():
+    ps = r'"C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"'
+    assert events.unwrap_shell(f"{ps} -Command 'latexmk -pdf main.tex'") == ("PowerShell", "latexmk -pdf main.tex")
+    assert events.unwrap_shell("pwsh -NoProfile -NoLogo -Command 'echo ''it''s'''") == ("PowerShell", "echo 'it's'")
+    assert events.unwrap_shell("bash -lc 'make figures'") == ("bash", "make figures")
+    assert events.unwrap_shell("/bin/zsh -c 'echo '\\''hi'\\'''") == ("zsh", "echo 'hi'")
+    assert events.unwrap_shell("sh -c 'echo '\"'\"'hi'\"'\"''") == ("sh", "echo 'hi'")
+    assert events.unwrap_shell("bash -lc 'printf \"%s\" `date` $(id)\nmake'") == (
+        "bash", 'printf "%s" `date` $(id)\nmake')
+    for command in (f"{ps} -Command 'latexmk' ; rm -rf ~",          # an argument after it
+                    f"{ps} -Command 'a'b'",                          # a lone quote: not PowerShell's quoting
+                    f"{ps} -Command 'echo \u2018hi\u2019'",          # a quote PowerShell reads as one
+                    "bash -lc 'make' extra", "bash -lc 'make''x'", 'bash -lc "make"', "bash -x -c 'make'",
+                    "bash -lc 'make\u202e'",                         # a body with a character that would not show
+                    "python -c 'print(1)'", "latexmk -pdf main.tex", "", "bash -lc ''", "pwsh -Command ''"):
+        assert events.unwrap_shell(command) is None, command
+
+
+def test_program_names_what_unwrap_shell_gives():
+    assert runner._program("pwsh -NoProfile -Command 'latexmk -pdf main.tex'") == "latexmk"
+    assert runner._program("bash -lc 'echo '\\''hi'\\'' && make'") == "echo"
+    assert runner._program("cmd /d /c \"python build.py\"") == "python"   # no round trip: its own reading
+
+
+def test_claude_code_allows_the_command_alone_in_the_foreground(work, monkeypatch):
+    script_agent(monkeypatch, work.log, ask=[{"command": BUILD, "description": "Build the PDF", "background": True,
+                                              "timeout": 60000, "extra": "anything"}])
+    turn = events.start("claude", argv=ARGV["claude"], cwd=str(work.root), prompt=_chat_prompt(), ask=True)
+    got = _reading(turn)
+    asked = _until(lambda: next((e for e in got if e["type"] == "ask"), None))
+    assert (asked["command"], asked["background"]) == (BUILD, True)
+    assert turn.answer("req-0", "once") and _ended(got)["ok"]
+    assert _answers(work.log)[0]["response"]["response"] == {
+        "behavior": "allow", "updatedInput": {"command": BUILD, "description": "Build the PDF", "timeout": 60000},
+        "toolUseID": "toolu_ask0"}                                     # never run_in_background, nor anything else
+    assert claude.allowed_input({"command": 5, "description": 1, "timeout": True}) == {"command": "5"}
+
+
+def test_gammas_declines_are_worded_as_gammas(work, monkeypatch):
+    script_agent(monkeypatch, work.log, ask=[{"command": BUILD}])
+    turn = events.start("codex", argv=ARGV["codex"], cwd=str(work.root), prompt=_chat_prompt(), ask=True)
+    got = _reading(turn)
+    _until(lambda: any(e["type"] == "ask" for e in got))
+    assert turn.answer("100", "deny", runner.TOO_LONG, by="gamma")
+    _ended(got)
+    assert _steers(work.log) == [f"Gamma declined that: {runner.TOO_LONG}"]
+    work.log.unlink()
+    turn = events.start("claude", argv=ARGV["claude"], cwd=str(work.root), prompt=_chat_prompt(), ask=True)
+    got = _reading(turn)
+    _until(lambda: any(e["type"] == "ask" for e in got))
+    assert turn.answer("req-0", "deny", runner.TOO_LONG, by="gamma")
+    _ended(got)
+    assert _answers(work.log)[0]["response"]["response"]["message"] == f"Gamma declined: {runner.TOO_LONG}"
+
+
+def test_a_file_change_with_grant_root_is_declined_unseen(lab, disk, monkeypatch):
+    f = _asking(lab, disk)
+    script_agent(monkeypatch, disk.log, ask=[{"path": "main.tex", "diff": "+x\n", "grant_root": str(f.root)},
+                                             {"command": BUILD}])
+    made = _say(lab.owner, f.page, "Change the title, then rebuild.")
+    [card] = _waiting(lab, f.page)["asks"]
+    assert card["kind"] == "command"                                   # the file change never reached the person
+    _answer(lab.owner, made["turn"]["id"], card["id"], decision="once")
+    assert runner.wait_idle(60)
+    assert _steers(disk.log) == [f"Gamma declined that: {runner.ONE_AT_A_TIME}"]
+    assert [a["result"] for a in _answers(disk.log)] == [{"decision": "decline"}, {"decision": "accept"}]
+
+
+def test_a_card_marks_what_would_not_show_and_names_a_wrappers_command(lab, disk, monkeypatch):
+    f = _asking(lab, disk)
+    wrapped, hidden = "pwsh -Command 'latexmk -pdf main.tex'", "make\u202e all\nmake clean"
+    script_agent(monkeypatch, disk.log, ask=[{"command": wrapped}, {"command": hidden}])
+    made = _say(lab.owner, f.page, "Rebuild.")
+    seen = set()
+    card = _next_card(lab, f.page, seen)
+    assert (card["command"], card["shell"], card["inner"]) == (wrapped, "PowerShell", "latexmk -pdf main.tex")
+    assert "marked" not in card and "lines" not in card and "command_shown" not in card
+    assert _reply(lab, f.page)["steps"][0]["program"] == "latexmk"
+    _answer(lab.owner, made["turn"]["id"], card["id"], decision="deny")
+    card = _next_card(lab, f.page, seen)
+    assert (card["command"], card["command_shown"], card["marked"], card["lines"]) == (
+        hidden, "make⟨U+202E⟩ all\nmake clean", 1, 2)
+    assert "inner" not in card
+    _answer(lab.owner, made["turn"]["id"], card["id"], decision="deny")
+    assert runner.wait_idle(60)
+
+
+def test_a_turn_holds_at_most_twenty_asks_and_three_declines_in_a_row(lab, disk, monkeypatch):
+    f = _asking(lab, disk)
+    monkeypatch.setattr(runner, "MAX_ASKS", 2)
+    script_agent(monkeypatch, disk.log, ask=[{"command": f"make t{n}"} for n in range(3)])
+    made, seen = _say(lab.owner, f.page, "Make them."), set()
+    for _ in range(2):
+        _answer(lab.owner, made["turn"]["id"], _next_card(lab, f.page, seen)["id"], decision="once")
+    assert runner.wait_idle(60)
+    assert _steers(disk.log) == [f"Gamma declined that: {runner.ASKED_TOO_OFTEN}"]
+    monkeypatch.setattr(runner, "MAX_ASKS", 20)
+    script_agent(monkeypatch, disk.log, ask=[{"command": f"make u{n}"} for n in range(4)])
+    made = _say(lab.owner, f.page, "Make the others.")
+    for _ in range(3):
+        _answer(lab.owner, made["turn"]["id"], _next_card(lab, f.page, seen)["id"], decision="deny")
+    assert runner.wait_idle(60)
+    assert _steers(disk.log)[-1] == f"Gamma declined that: {runner.DECLINED_OFTEN}"
+    assert len(seen) == 5                                              # the fourth never reached the person

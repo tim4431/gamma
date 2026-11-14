@@ -181,11 +181,15 @@ def forget_threads(link_id: str) -> None:
 
 # --- what an agent may run ------------------------------------------------------------------
 
-RUNS = ("never", "ask")   # never: as it always did; ask: its chat's turns may ask the person
+# never: as it always did; ask: its chat's turns may ask the person in the chat (a work folder of this
+# server); computer: the turns of a work folder of another server may ask the person at this computer, in
+# the desktop app's window (runner.ask_refusal)
+RUNS = ("never", "ask", "computer")
 
 
 def runs_of(link_id: str) -> str:
-    """What the vault's agent may run: ``ask`` or ``never``."""
+    """What the vault's agent may run: ``ask``, ``computer`` or ``never``
+    (an older app reads ``computer`` as ``never``)."""
     return policies_of([link_id]).get(link_id, "never")
 
 
@@ -402,6 +406,14 @@ def get_turn(turn_id: str) -> dict | None:
     this computer's record alone (``open_turns``)."""
     with connect_vaults_db() as conn:
         row = conn.execute(f"{_TURN_SELECT} WHERE id = ? AND ws != link_id", (turn_id,)).fetchone()
+    return dict(zip(_TURN_COLUMNS, row)) if row else None
+
+
+def claimed_of(turn_id: str) -> dict | None:
+    """The turn of another server's page this computer claimed
+    (``claimed_turn``'s row), None for none."""
+    with connect_vaults_db() as conn:
+        row = conn.execute(f"{_TURN_SELECT} WHERE id = ? AND ws = link_id", (turn_id,)).fetchone()
     return dict(zip(_TURN_COLUMNS, row)) if row else None
 
 

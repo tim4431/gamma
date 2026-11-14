@@ -64,6 +64,10 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     grantFolder: (id) => ipcRenderer.invoke('shell:grant-folder', id),
     setDataRoot: (dir, opts) => ipcRenderer.invoke('shell:set-data-root', dir, opts),
     barExpand: (on) => ipcRenderer.invoke('shell:bar-expand', on),
+    // An agent's question on this computer, the bar's alone (main.js barOnly):
+    // the card `key` drawn, and its answer (`once`, `deny` or `stop`).
+    agentAskDrawn: (key) => ipcRenderer.invoke('shell:agent-ask-drawn', key),
+    answerAgentAsk: (key, decision) => ipcRenderer.invoke('shell:answer-agent-ask', key, decision),
     updateCheck: () => ipcRenderer.invoke('shell:update-check'),
     updateInstall: () => ipcRenderer.invoke('shell:update-install'),
     onState: (cb) => {

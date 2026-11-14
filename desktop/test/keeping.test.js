@@ -214,7 +214,33 @@ test('turning on the agent of a work folder of another server says what that ser
   assert.equal(keeping.vault(local, { ...link, plain: 'anything' }, servers).plain, '');
   assert.match(keeping.agentAsk(far('https://nas.example.org', ''), 'claude').detail,
     /runs no commands\. Whoever can sign in to NAS as your account, and whoever runs NAS, can send work to Claude Code here\. Claude Code reads your files/);
-  assert.equal(keeping.FAR_RUNS_RULE, 'Asking in the chat is for a work folder of this computer\'s server.');
+  assert.equal(keeping.FAR_RUNS_RULE, 'Asking in the chat is for a work folder of this computer\'s server: for one of another server, choose Ask on this computer.');
+});
+
+test('Ask on this computer: read from the link, secure only where the list says so, asked with who writes what the agent is asked, Cancel the default', () => {
+  const link = { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Paper', remote_url: 'https://nas.lab:5001', pull: true, push: 'everything', work: true,
+    mine: true, status: {}, agent: { name: 'codex', label: 'Codex', ready: true, runs: 'computer' } };
+  const far = keeping.vault(local, { ...link, plain: '' }, servers);
+  assert.deepEqual([far.agentRuns, far.secure], ['computer', true]);
+  assert.equal(keeping.vault(local, { ...link, plain: 'lan', remote_url: 'http://nas.lan:9001' }, servers).secure, false);
+  assert.equal(keeping.vault(local, { ...link, plain: undefined }, servers).secure, false, 'a list that says nothing is not secure');
+  assert.equal(keeping.vault(local, { ...link, remote_url: '', plain: '' }, servers).secure, true, 'a local folder');
+  assert.equal(keeping.vault(local, { ...link, agent: { ...link.agent, runs: 'always' } }, servers).agentRuns, 'never');
+
+  const item = { name: 'Paper', dest: 'C:\\Paper', remote: 'NAS', agent: 'codex', agentLabel: 'Codex', computer: { state: 'connected', who: 'alice' } };
+  const q = keeping.runsComputerAsk(item);
+  assert.equal(q.message, 'Let Codex ask on this computer to run more in C:\\Paper?');
+  assert.equal(q.detail, 'In a chat on NAS, Codex can then ask you to run a command with the network or to change files outside this folder.' +
+    ' The question shows here only, in Gamma\'s window, and nothing of it runs until you allow it there, one command at a time.' +
+    ' Whoever can sign in to NAS as alice, and whoever runs NAS, writes what Codex is asked to do: read each command before you allow it.' +
+    ' A command you allow runs as you, with your files and the network.');
+  assert.deepEqual([q.buttons, q.defaultId, q.cancelId], [['Ask on this computer', 'Cancel'], 1, 1]);
+  assert.match(keeping.runsComputerAsk({ ...item, agent: 'claude', agentLabel: 'Claude Code', computer: null }).detail,
+    /^In a chat on NAS, Claude Code can then ask you to run a command, such as your build\. .* sign in to NAS as your account,/);
+  assert.equal(keeping.runsSaid(item, 'computer'), 'Codex may now ask on this computer to run more on Paper.');
+  assert.equal(keeping.plainRule(item), 'Ask on this computer needs https: NAS is reached over plain http.');
+  assert.equal(keeping.olderServer(item), 'NAS runs an older Gamma: its page will not say that Codex waits here. The question still shows in this window.');
+  assert.equal(keeping.NEAR_COMPUTER_RULE, 'Ask on this computer is for a work folder of another server: here the agent asks in the chat.');
 });
 
 test('letting a work folder\'s agent ask in the chat is asked with what it may ask for and the risk; the outcome is said', () => {

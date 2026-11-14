@@ -384,6 +384,7 @@ async def zotero_live():
 
 
 def create_app() -> FastAPI:
+    config.shell_secret()  # read once and taken off the environment, before anything starts a process
     setup_logging()
     _silence_windows_connection_reset()
     _verify_https_with_certifi_when_no_cas()

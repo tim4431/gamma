@@ -1513,6 +1513,69 @@ async function main() {
       return opened.join(', ');
     });
 
+    await step('an agent\'s ask on this computer: the bar\'s card covers the whole window with the page hidden, its buttons inside a small window, Allow once shut until the command is read to its end, Escape and a press on the layer answering nothing, Decline sent once; the launcher cannot answer', async () => {
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      const size = await app.evaluate(({ BaseWindow }) => {
+        const w = BaseWindow.getAllWindows()[0];
+        const before = w.getNormalBounds();
+        w.setBounds({ ...before, width: 720, height: 480 });
+        return before;
+      });
+      const command = Array.from({ length: 40 }, (_, i) => `echo line ${i + 1}`).join('\n');
+      try {
+        await hook(app, (s, c) => {
+          s.askAnswers.length = 0;
+          s.pretendAsks([{ id: 'e2e-ask', turn_id: 't1', link_id: 'v-none', agent: 'codex', label: 'Codex', kind: 'command', command: c, lines: 40,
+            dir: 'C:\\Papers', folder: 'C:\\Papers', file: '', reason: 'Build the paper.', server: { origin: 'https://nas.example', account: 'alice' },
+            at: new Date().toISOString(), expires_at: new Date(Date.now() + 600_000).toISOString() }]);
+        }, command);
+        await bar.waitForSelector('#agentAskLayer:not([hidden]) #agentAsk');
+        const b = await hook(app, (s) => s.bounds());
+        assert.equal(b.bar.height, await app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].getNormalBounds().height), 'the bar over the whole window');
+        assert.equal(b.contentVisible, false, 'the page hidden');
+        assert.equal((await bar.textContent('#askTitle')).trim(), 'Gamma · Approval needed on this computer');
+        assert.equal(await bar.isVisible('#wsBtn'), false, 'the page\'s names leave the strip');
+        // every button inside the window, the footer never scrolled away
+        const inside = await bar.evaluate(() => [...document.querySelectorAll('#agentAsk [data-answer]')].every((el) => {
+          const r = el.getBoundingClientRect();
+          return r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth;
+        }));
+        assert(inside, 'the buttons are inside a 720×480 window');
+        // armed a second after it was drawn (the test window's focus is taken as given); Allow once waits for the box's end
+        await waitFor(() => hook(app, (s) => s.agentAsk().armed), 'armed', 10_000, 100);
+        await waitFor(async () => !(await bar.isDisabled('#agentAsk-deny')), 'Decline enabled', 5_000, 100);
+        assert.equal(await bar.isDisabled('#agentAsk-once'), true, 'Allow once shut until the command was read');
+        await bar.evaluate(() => { const box = document.getElementById('agentAskCommand'); box.scrollTop = box.scrollHeight; });
+        await waitFor(async () => !(await bar.isDisabled('#agentAsk-once')), 'Allow once once read', 5_000, 100);
+        // Escape and a press on the layer answer nothing and close nothing
+        await bar.keyboard.press('Escape');
+        await bar.mouse.click(5, 300);
+        assert.deepEqual(await hook(app, (s) => s.askAnswers.slice()), []);
+        assert.equal(await bar.isVisible('#agentAsk'), true);
+        // the launcher meanwhile keeps the card, and its bridge cannot answer it (the bar's alone)
+        await hook(app, (s) => s.loadLauncher());
+        content = await findPage(app, isLauncher);
+        assert.equal(await hook(app, (s) => s.agentAsk() && s.agentAsk().key), 'e2e-ask');
+        const fromLauncher = await content.evaluate(() => gammaShell.answerAgentAsk('e2e-ask', 'deny').then(() => 'answered', (e) => String(e.message)));
+        assert.match(fromLauncher, /Not allowed/);
+        await waitFor(() => hook(app, (s) => s.agentAsk().armed), 'armed again after the presses', 10_000, 100);
+        await bar.click('#agentAsk-deny');
+        await waitFor(() => hook(app, (s) => s.agentAsk() === null), 'the card goes', 10_000, 100);
+        assert.deepEqual(await hook(app, (s) => s.askAnswers.slice()), [{ id: 'e2e-ask', decision: 'deny' }], 'Decline sent once');
+        // the host knows no such ask: nothing was allowed, said so
+        assert.equal(await hook(app, (s) => s.notice()), 'Codex no longer waits for that: nothing was allowed.');
+        assert.equal((await hook(app, (s) => s.bounds())).contentVisible, true, 'the page back');
+        return 'card drawn, read, declined once';
+      } finally {
+        await hook(app, (s) => { s.stopAsks(); s.pretendAsks([]); });
+        await app.evaluate(({ BaseWindow }, before) => BaseWindow.getAllWindows()[0].setBounds(before), size);
+        await hook(app, (s, id) => s.openServer(id), ids.alpha); // the steps after start from Alpha
+        content = await findPage(app, (u) => u.startsWith(urls.alpha));
+        await waitLoggedIn(content);
+      }
+    });
+
     await step('Gamma Cloud sign-in: the system browser signs in, the window gets the session through the loopback return', async () => {
       // A server of its own: the window ends up signed in as the cloud account.
       ids.cloud = await hook(app, (s) => s.registry.addLocal('Cloudy').id);

@@ -17,9 +17,13 @@
 // lets its agent ask (the vault's agent `runs: "ask"`), a running turn's
 // message also has `asks`, what the agent waits on the person for:
 // [{id, kind: "command" | "files" | "tool", command, cwd, paths, diff,
-// reason, at}], `cwd` and `paths` relative to the folder, "outside" or
-// "~", `diff` a unified diff; a step asked about reads "asked", then
-// "allowed" or "declined".
+// reason, host, at}], `cwd` and `paths` relative to the folder, "outside"
+// or "~", `diff` a unified diff, `host` the network address a command
+// reaches; a command's `command_shown` is it with every character that
+// would not show written ⟨U+202E⟩ (`marked` how many), `lines` its line
+// count when over one, and `inner` with `shell` the command one shell
+// wrapper runs, when the server could read it back whole. A step asked
+// about reads "asked", then "allowed" or "declined".
 //
 // On a page of another server's work folder (docs/dev/local_agents.md "A
 // work folder of another server") the agent runs on the computer that
@@ -28,7 +32,10 @@
 // connected (`online`) and since when it is not (`since`). The words name
 // that computer, a message waits for it while it is away, and what needs
 // the window to be that computer (the strip's menu, the passages' source
-// lines) is left out.
+// lines) is left out. What the agent asks there is answered on that
+// computer, in its desktop app's window ("Asking on this computer"): the
+// message never carries `asks`, only `waiting: true` while one waits, and
+// the page draws no card.
 import { t, tn } from "../../shared/i18n/i18n.js";
 import { agentWorking, sinceText } from "../../vault/vaultState.js";
 
@@ -54,6 +61,14 @@ export const awayFrom = (info) => (isRemote(info) && info.online === false ? Str
 // folder): only for the agent on this computer, as both need the window to
 // be the computer the folder is on.
 export const offersMenu = (info) => !!info && !isRemote(info);
+
+// Whether the page draws the cards of what the agent asks: only for the
+// agent on this computer; another computer's are answered there.
+export const drawsAsks = (info) => !isRemote(info);
+
+// Whether another computer's turn (its agent's message) waits there for
+// the person's answer.
+export const waitsThere = (info, message) => isRemote(info) && message?.waiting === true;
 
 // The path of /api/local-agents/chat for the page, with the version of the
 // conversation the side holds (the server then answers `same` while it
@@ -217,11 +232,17 @@ export function currentStep(message) {
 // What a turn's pill says: while it is queued or running the agent at work
 // ("Codex is working: Editing sections/intro.tex", or "Codex is working…"
 // before its first step), or while it is queued for another computer that
-// is away (`away`, its name: awayFrom) "Waiting for TIM-PC"; once it ended
-// how many steps it took.
-export function turnLabel(message, label, away = "") {
+// is away (`away`, its name: awayFrom) "Waiting for TIM-PC"; while another
+// computer's turn (`computer`, its name) waits there for the person's
+// answer "Codex is waiting for your answer on TIM-PC", or that it is away;
+// once it ended how many steps it took.
+export function turnLabel(message, label, away = "", computer = "") {
   const agent = message?.label || label;
   if (isLive(message) && message.asks?.length) return t("{agent} is waiting for you", { agent });
+  if (isLive(message) && message.waiting === true && (away || computer)) {
+    return away ? t("Waiting for your answer on {computer}, which is offline", { computer: away })
+      : t("{agent} is waiting for your answer on {computer}", { agent, computer });
+  }
   if (away && message?.role === "agent" && message.state === "queued") return t("Waiting for {computer}", { computer: away });
   if (isLive(message)) return agentWorking(agent, stepNow(currentStep(message)));
   const n = message?.steps?.length || 0;
@@ -283,6 +304,35 @@ export function askPlace(cwd) {
   return t("In {path}", { path: cwd });
 }
 
+// An asked command as its card shows it: `main` in the box (the command one
+// shell wrapper runs when the server read it back whole, else the command
+// with what would not show marked), `through` the note under it naming
+// that wrapper ("" for none), `lines` its line count over one (else 0).
+export function askCommand(ask) {
+  const whole = String(ask?.command_shown || ask?.command || "");
+  const inner = ask?.inner && ask?.shell ? String(ask.inner) : "";
+  return {
+    main: inner || whole,
+    through: inner ? t("Through {shell}: {command}", { shell: String(ask.shell), command: whole }) : "",
+    lines: ask?.lines > 1 ? ask.lines : 0,
+  };
+}
+
+// A shown command in pieces to draw: [{text, mark}], `mark` for a
+// character the server wrote ⟨U+202E⟩ because it would not show. Only for
+// an ask that says it holds some (`marked`): the agent may write the same
+// letters itself.
+const MARK = /(⟨U\+[0-9A-F]{4,6}⟩)/;
+export function markParts(text, marked) {
+  const s = String(text || "");
+  if (!marked) return [{ text: s, mark: false }];
+  return s.split(MARK).filter(Boolean).map((piece) => ({ text: piece, mark: MARK.test(piece) }));
+}
+
+// Whether a box of an ask was read to its end: scrolled there, or nothing
+// to scroll. Allow waits for it.
+export const scrolledToEnd = (el) => !el || el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
+
 // The line under an ask's buttons: what allowing it means.
 export function askRisk(ask) {
   if (ask?.kind === "command") return t("It runs as you, with your files and the network.");
@@ -326,7 +376,9 @@ export function sideMark(computer, jobs = [], pageId = "") {
 // conversation's turn still to end, whose step, or what it asks, the strip
 // names. Another computer is named ("Codex on TIM-PC · paper"), and while
 // it is away the strip says so and that a message waits for it ("TIM-PC is
-// offline since 2:02 PM: a message waits and runs when it connects").
+// offline since 2:02 PM: a message waits and runs when it connects"); a
+// turn of it that waits for the person's answer there says where to answer
+// ("Waiting for your answer on TIM-PC"), and that it is away when it is.
 export function stripLine(info, live = null, now = new Date()) {
   const agent = info?.label || "";
   const remote = isRemote(info);
@@ -338,10 +390,18 @@ export function stripLine(info, live = null, now = new Date()) {
       kind: "paused",
     };
   }
-  if (live?.asks?.length) return { text: t("Waiting for you: {ask}", { ask: askTitle(live.asks[0], live.label || agent) }), kind: "asking" };
-  const turn = info?.turn || (live ? { state: live.state, ahead: false } : null);
   const away = awayFrom(info);
   const when = away ? sinceText(info.since, now) : "";
+  if (isLive(live) && waitsThere(info, live)) {
+    if (!away) return { text: t("Waiting for your answer on {computer}", { computer }), kind: "asking" };
+    return {
+      text: when ? t("Waiting for your answer on {computer}, offline since {when}", { computer: away, when })
+        : t("Waiting for your answer on {computer}, which is offline", { computer: away }),
+      kind: "away",
+    };
+  }
+  if (live?.asks?.length) return { text: t("Waiting for you: {ask}", { ask: askTitle(live.asks[0], live.label || agent) }), kind: "asking" };
+  const turn = info?.turn || (live ? { state: live.state, ahead: false } : null);
   if (away && turn?.state === "queued") {
     return {
       text: when ? t("Waiting for {computer}, offline since {when}: the message runs when it connects", { computer: away, when })
