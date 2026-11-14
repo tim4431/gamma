@@ -142,7 +142,9 @@ export async function workFolderScenarios(env) {
         // the folder's list view: its directory first with what it holds, then the files
         await page.locator(".workList").waitFor({ timeout: 15000 });
         await folderRow(page, "figures").waitFor({ timeout: 15000 });
-        assertEq((await folderRow(page, "figures").locator(".fileRowFormat").innerText()).trim(), "1 file", "figures holds one file");
+        // the row's count follows the page's own read of the folder, after the API's
+        await until(async () => (await folderRow(page, "figures").locator(".fileRowFormat").innerText()).trim() === "1 file",
+          { timeout: 15000, what: "figures holds one file" });
         await fileRow(page, "main.pdf").waitFor();
         await fileRow(page, "notes.md").waitFor();
         const names = (await page.locator(".workList .fileRowName, .workList .folderName").allInnerTexts()).map((s) => s.trim());
