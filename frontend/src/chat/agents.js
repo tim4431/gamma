@@ -9,13 +9,19 @@
 //   {id, kind: "gamma" | "computer", name, label, where, models, efforts,
 //    ready, problem, owner, ...}
 // `id` its name ("gamma", "codex", "claude": what the chat's routes name),
+// `agentId` a computer's agent's id as every agent has one
+// (gamma/agents.py: "computer:<computer>:<name>", what a comment sent to it
+// names; "" while it is not known),
 // `where` the computer it runs on by name ("" for this one, and for Gamma
 // AI), `models` [{id, label, efforts, effort, default}], `efforts` the
 // default model's, `ready` null while it is not known, `problem` why it
 // cannot run ("" while it can), `owner` whether the account may use it (it
-// turned it on). A computer's agent also carries `code` (catalog.code),
-// `version`, `found`, `enabled`, `runs`, and for another computer's
-// `remote: true`, `online` and `since`. Pure: tests/chatAgents.test.mjs.
+// turned it on, or its owner lets it: a co-author's, decision 13 of
+// docs/research/agents-as-participants-plan.md), `lentBy` that owner's
+// username for a co-author ("" for one's own). A computer's agent also
+// carries `code` (catalog.code), `version`, `found`, `enabled`, `runs`, and
+// for another computer's `remote: true`, `online` and `since`. Pure:
+// tests/chatAgents.test.mjs.
 import { T, t } from "../shared/i18n/i18n.js";
 import { modelLabel } from "./modelPrefs.js";
 import { readComputers, vaultAgent } from "../vault/vaultState.js";
@@ -61,24 +67,28 @@ export function gammaAgent(aiInfo, models = []) {
 }
 
 // An agent this computer runs, as GET /api/local-agents lists it (`found`:
-// {name, label, found, version, ready, problem, code, models, enabled,
-// runs, mine}).
+// {id, name, label, found, version, ready, problem, code, models, enabled,
+// runs, mine, lent: {by} | null, people}).
 export function localAgent(found) {
   const label = agentLabel(found.name, found.label);
   const models = Array.isArray(found.models) ? found.models : [];
   return {
-    id: found.name, kind: "computer", name: found.name, label, where: "", models,
+    id: found.name, agentId: String(found.id || ""), kind: "computer", name: found.name, label, where: "", models,
     efforts: defaultModel(models)?.efforts || [], ...stateOf(found.code, found.ready, label, "", found.problem),
-    owner: !!found.mine, code: found.code || "", version: String(found.version || ""), found: found.found,
+    owner: !!found.mine || !!found.lent, lentBy: found.mine ? "" : String(found.lent?.by || ""),
+    code: found.code || "", version: String(found.version || ""), found: found.found,
     enabled: !!found.enabled, runs: found.runs === "ask" ? "ask" : "never", remote: false,
+    people: found.mine && Array.isArray(found.people) ? found.people : [],
   };
 }
 
 // The agents a computer of the account's announced (a page's computers, or
-// GET /api/computers: {name, online, since, assistants}), those it has
-// found: `ready` and `problem` as it said them while it is online, null
-// and "" while it is away; `enabled` whether it is on for this account
-// there, which then may use it (`owner`).
+// GET /api/computers: {id, name, online, since, assistants, lent_by?}),
+// those it has found: `ready` and `problem` as it said them while it is
+// online, null and "" while it is away; `enabled` whether it is on for this
+// account there, which then may use it (`owner`); another account's
+// computer whose agent serves this one (`lent_by`, its owner) lists that
+// agent alone, `lentBy` its owner.
 export function computerAgents(computer) {
   return assistantsOf(computer).filter((a) => a.found !== false && a.code !== "missing").map((a) => announced(a, computer));
 }
@@ -93,17 +103,20 @@ function announced(a, computer) {
   const label = agentLabel(a.name, a.label);
   const models = Array.isArray(a.models) ? a.models : [];
   return {
-    id: a.name, kind: "computer", name: a.name, label, where, models, efforts: defaultModel(models)?.efforts || [],
+    id: a.name, agentId: computer?.id ? `computer:${computer.id}:${a.name}` : "", kind: "computer", name: a.name, label,
+    where, models, efforts: defaultModel(models)?.efforts || [],
     ...(online ? stateOf(a.code, a.ready, label, where) : { ready: null, problem: "" }),
-    owner: !!a.enabled, code: a.code || "", version: String(a.version || ""), found: a.found ?? null,
-    enabled: !!a.enabled, runs: a.runs === "ask" ? "ask" : "never", remote: true, online, since: online ? null : computer.since || null,
+    owner: !!a.enabled, lentBy: String(computer?.lent_by || ""), code: a.code || "", version: String(a.version || ""),
+    found: a.found ?? null, enabled: !!a.enabled, runs: a.runs === "ask" ? "ask" : "never", remote: true, online,
+    since: online ? null : computer.since || null,
   };
 }
 
 // The agent of the first of the page's computers whose work folder of the
 // page's server has one on (its vault's `agent`), which the page's chat,
-// Sends and mentions run on there: the account's (the server tells only
-// it), as its assistant there was announced (not announced: not known),
+// Sends and mentions run on there: the account's, or another account's
+// whose agent serves it (the server tells only them; the account's own
+// first), as its assistant there was announced (not announced: not known),
 // with `folder` the work folder's name and `paused` whether it is paused
 // there; null for none.
 export function keeperAgent(computers) {
@@ -165,33 +178,62 @@ export const agentChoice = (agent) => (agent?.where ? t("{agent} on {computer}",
 export const agentKind = (id) => (!id ? "" : id === GAMMA ? "gamma" : String(id).startsWith("computer:") ? "computer" : "connection");
 
 // Who an agent that wrote or made something is, with the person it acted
-// for: "Codex on TIM-PC, for tim", "Gamma AI, for tim". `id` and `name` the
-// agent's, `on` its computer ("" for none, or one no longer known),
-// `person` the account's username. A comment's agent (comments.js) and a
-// block's `properties.agent` (blockModel.js blockAgent) read alike.
-export function madeBy({ id = "", name = "", on = "", person = "" }) {
-  const agent = id === GAMMA ? t("Gamma AI") : name;
+// for: "Codex on TIM-PC, for tim", "Gamma AI, for tim", and for a
+// co-author's turn its owner too, "alice's Codex on TIM-PC, for bob". `id`
+// and `name` the agent's, `on` its computer ("" for none, or one no longer
+// known), `person` the account's username, `owner` the agent's owner's
+// where that is another account ("" otherwise). A comment's agent
+// (comments.js) and a block's `properties.agent` (blockModel.js blockAgent)
+// read alike.
+export function madeBy({ id = "", name = "", on = "", person = "", owner = "" }) {
+  const named = id === GAMMA ? t("Gamma AI") : name;
+  const agent = owner ? t("{owner}'s {agent}", { owner, agent: named }) : named;
   const who = on ? t("{agent} on {computer}", { agent, computer: on }) : agent;
   return person ? t("{agent}, for {person}", { agent: who, person }) : who;
 }
 
 // The same of a block an agent made, from its stamp (`properties.agent`,
 // blockModel.js blockAgent); "" for a person's block.
-export const stampLabel = (stamp) => (typeof stamp?.name === "string" && stamp.name ? madeBy({ id: stamp.id, name: stamp.name, on: stamp.on || "", person: stamp.for || "" }) : "");
+export const stampLabel = (stamp) => (typeof stamp?.name === "string" && stamp.name ? madeBy({
+  id: stamp.id, name: stamp.name, on: stamp.on || "", person: stamp.for || "", owner: stamp.owner || "",
+}) : "");
 
-// The agent a comment on the page can name (`@codex`), which the comment
-// then is a Send to: the computer's agent of the page's work folder that
-// another computer keeps, else, on a file of a work folder kept here
-// (`vaultState.vault.work_folder`), the first of the account's agents here
-// (the one its Sends run with). {name, label, ready, problem, computer?,
-// online?}, as editor/mentions.js and comments/comments.js read it; null
-// for none.
-export function mentionAgent(agents, vaultState) {
-  const computers = (agents || []).filter((a) => a.kind === "computer");
-  const far = computers.find((a) => a.remote);
-  if (far) return { name: far.name, label: far.label, ready: far.ready, problem: far.problem, computer: far.where, online: far.online };
-  const here = vaultState?.vault?.work_folder ? computers.find((a) => !a.remote) : null;
-  return here ? { name: here.name, label: here.label, ready: here.ready, problem: here.problem } : null;
+// The agents a comment on the page can be sent to (its *Send to* tick and
+// its `@codex`, comments/sendTo.js): the chat's computer agents (chatAgents:
+// the one of the computer that keeps the page's work folder, else those
+// this computer runs that the account turned on), each {id (its agentId),
+// name, label, computer?, online?, ready, problem}, as editor/mentions.js
+// and comments/comments.js read them, `computer` the other computer's name.
+export function commentAgents(agents) {
+  return (agents || []).filter((a) => a.kind === "computer" && a.agentId && a.owner).map((a) => ({
+    id: a.agentId, name: a.name, label: a.label, ready: a.ready, problem: a.problem,
+    ...(a.remote ? { computer: a.where, online: a.online } : {}),
+  }));
+}
+
+// The people an agent of this computer serves for its owner (`people`, the
+// listing's [{server, workspace_id, account, username}]) and whom it may
+// still name, from the workspaces its owner edits with others (`places`, GET
+// /api/local-agents/people: [{server, workspace_id, name, origin, people:
+// [{id, username, role}], error}]): {named: [{key, server, workspace_id,
+// account, username, where}], offered: [{key, place, person, label}]},
+// `where` the workspace's name ("Lab", "Group on https://nas.example"),
+// a place not read yet named by its server alone.
+export function agentPeople(people, places) {
+  const key = (server, ws, account) => `${server}\n${ws}\n${account}`;
+  const placeWords = (place) => (place.origin ? t("{workspace} on {server}", { workspace: place.name, server: place.origin }) : place.name);
+  const at = new Map((places || []).map((p) => [`${p.server}\n${p.workspace_id}`, p]));
+  const named = (people || []).map((p) => {
+    const place = at.get(`${p.server}\n${p.workspace_id}`);
+    return { key: key(p.server, p.workspace_id, p.account), server: p.server, workspace_id: p.workspace_id, account: p.account,
+      username: p.username, where: place ? placeWords(place) : p.server || t("this server") };
+  });
+  const taken = new Set(named.map((p) => p.key));
+  const offered = (places || []).flatMap((place) => (place.people || [])
+    .filter((person) => !taken.has(key(place.server, place.workspace_id, person.id)))
+    .map((person) => ({ key: key(place.server, place.workspace_id, person.id), place, person,
+      label: t("{person} in {workspace}", { person: person.username, workspace: placeWords(place) }) })));
+  return { named, offered };
 }
 
 // What a computer agent's strip says of it until the chat's own read

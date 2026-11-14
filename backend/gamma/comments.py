@@ -47,10 +47,11 @@ STATES = ("open", "resolved", "all")
 
 # The stored columns, in the table's order.
 COLUMNS = ("id, thread_id, block_id, page_id, author, author_name, body, created_at, updated_at, "
-           "resolved_at, resolved_by, deleted_at, orphaned_at, agent, agent_id, resolved_agent, anchor")
+           "resolved_at, resolved_by, deleted_at, orphaned_at, agent, agent_id, resolved_agent, anchor, agent_owner")
 _FIELDS = COLUMNS.split(", ")
 _ROW = ", ".join(f"c.{c}" for c in _FIELDS)
-_AGENT, _AGENT_ID, _RESOLVED_AGENT, _ANCHOR = (_FIELDS.index(c) for c in ("agent", "agent_id", "resolved_agent", "anchor"))
+_AGENT, _AGENT_ID, _RESOLVED_AGENT, _ANCHOR, _AGENT_OWNER = (
+    _FIELDS.index(c) for c in ("agent", "agent_id", "resolved_agent", "anchor", "agent_owner"))
 _PAGE = len(_FIELDS)  # where a ``{_ROW}, b.page_id`` row holds the page its block is on now
 _LIVE_PAGE = "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'"
 
@@ -67,8 +68,8 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     page roots included), oldest first, each ``{id, block_id, page_id,
     resolved_at, resolved_by, resolved_agent, made_on, sent, created_at,
     last_at, comments: [{id, thread_id, author, agent, body, created_at,
-    updated_at, deleted, agent_kind?, agent_on?}]}`` with its comments
-    oldest first. ``state``:
+    updated_at, deleted, agent_kind?, agent_id?, agent_on?, agent_owner?}]}`` with its
+    comments oldest first. ``state``:
     ``open`` (not resolved), ``resolved``, or ``all`` / None. A comment
     whose block was deleted (orphaned) is left out; a tombstone (a root
     deleted while it has replies) comes with ``deleted`` true and no body.
@@ -76,8 +77,11 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     with the comment once the account is gone, ``resolved_by`` to "";
     ``agent`` is the name of the agent that wrote a comment ("" for a
     person), which then carries its ``agent_kind`` (gamma/agents.py
-    ``KINDS``) and, for a computer's agent, ``agent_on``, its computer as it
-    is called now (left out when it is not known); ``resolved_agent`` is the
+    ``KINDS``) and, for a computer's agent, its ``agent_id`` (what a comment
+    sent to it names) and ``agent_on``, its computer as it is called now
+    (left out when it is not known), and ``agent_owner``, the username of
+    the agent's owner where it wrote for a co-author (gamma/agents.py
+    ``owner``, kept with the comment as it was then); ``resolved_agent`` is the
     label of the agent that resolved the thread. ``made_on`` is the file the
     thread was opened on (its anchor's ``doc_id``, "" for none), ``sent``
     the Send waiting on it (``_sent``) or None. The API and the annotations
@@ -152,9 +156,11 @@ def _sent(conn, thread_ids) -> dict[str, dict]:
 
 
 def _threads(conn, rows, state: str | None) -> list[dict]:
-    """``(*COLUMNS, live page id)`` rows, oldest first, folded into threads."""
+    """``(*COLUMNS, live page id)`` rows, oldest first, folded into threads,
+    their agents named in the connection's workspace (``agents.read_all``)."""
     names = _names({r[4] for r in rows} | {r[10] for r in rows if r[10]})
-    writers = agents.read_all({(r[4], r[_AGENT_ID]): r[_AGENT] for r in rows if r[_AGENT_ID]})
+    writers = agents.read_all({(r[4], r[_AGENT_ID], r[_AGENT_OWNER]): r[_AGENT] for r in rows if r[_AGENT_ID]},
+                              getattr(conn, "ws", ""))
     threads: dict[str, dict] = {}
     for r in rows:
         if r[0] == r[1]:
@@ -176,18 +182,22 @@ def _threads(conn, rows, state: str | None) -> list[dict]:
             if state in (None, "all") or (state == "resolved") == bool(t["resolved_at"])]
 
 
-def _comment(row, names: dict, writers: dict[tuple[str, str], Agent]) -> dict:
+def _comment(row, names: dict, writers: dict[tuple[str, str, str], Agent]) -> dict:
     """A comment's row as the API gives it, its agent read from ``writers``
     (``agents.read_all``)."""
     deleted = bool(row[11])
-    writer = writers.get((row[4], row[_AGENT_ID] or ""))
+    writer = writers.get((row[4], row[_AGENT_ID] or "", row[_AGENT_OWNER] or ""))
     out = {"id": row[0], "thread_id": row[1], "author": names.get(row[4]) or row[5],
            "agent": writer.name if writer else "", "body": "" if deleted else row[6], "created_at": row[7],
            "updated_at": row[8], "deleted": deleted}
     if writer:
         out["agent_kind"] = writer.kind
+        if writer.kind == "computer":
+            out["agent_id"] = writer.id
         if writer.on:
             out["agent_on"] = writer.on
+        if writer.owner:
+            out["agent_owner"] = writer.owner
     return out
 
 
@@ -303,9 +313,9 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
         thread_id = thread_id or comment_id
         now = page_now()
         conn.execute(f"INSERT INTO comments ({COLUMNS}) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '', ?)",
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '', ?, ?)",
                      (comment_id, thread_id, block_id, page_id, author, author_name or "", body, now, now,
-                      agent.name if agent else "", agent_id, anchor))
+                      agent.name if agent else "", agent_id, anchor, agent.owner if agent else ""))
         if not agent_id:
             follow_page(conn, page_id, author, now=now)
         thread = thread_of(conn, thread_id)  # under the lock: no batch can hide its block before the answer

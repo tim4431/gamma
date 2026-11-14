@@ -246,8 +246,9 @@ import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
 import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
-import { chatAgents, mentionAgent } from "../chat/agents.js";
+import { chatAgents, commentAgents } from "../chat/agents.js";
 import { useLocalAgents } from "../chat/useLocalAgents.js";
+import { showThreadChat } from "../chat/computer/chatSide.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -3373,7 +3374,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     enterNewBlock, setEnterNewBlock, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
-    inboxSystemNotifications, setInboxSystemNotifications,
+    inboxSystemNotifications, setInboxSystemNotifications, commentSendTo, setCommentSendTo,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, highlightPresets, setHighlightPresets,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
@@ -4916,16 +4917,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // agents this computer runs that the account turned on (GET
   // /api/local-agents, chat/useLocalAgents.js), or on a page of a work
   // folder another computer keeps, that computer's. The comment fields'
-  // `links.agent` is the one a comment names (`@codex`, mentionAgent: the
-  // agent of the computer that keeps the page's work folder, "Codex on
-  // TIM-PC", or the account's first here on a work folder's file), never
-  // MentionContext, which reaches the notes.
+  // `links.agents` are those a comment on the page can be sent to (its
+  // Send to tick and `@codex`, commentAgents: the chat's computer agents,
+  // "Codex on TIM-PC" or this computer's), never MentionContext, which
+  // reaches the notes; `links.sendTo` the tick as the person left it last.
   const pageComputers = pageComputer.computers;
-  const localAgents = useLocalAgents(!shareMode && !!authUser?.user && !authUser?.is_guest);
+  // read once the workspace is chosen: an agent another account lends is of a workspace (`lent`)
+  const localAgents = useLocalAgents(!shareMode && !!authUser?.user && !authUser?.is_guest && wsReady);
   const chatAgentList = useMemo(() => chatAgents({
     aiInfo, models: providerModels(aiInfo?.models, aiProvider), local: localAgents, computers: pageComputers,
   }), [aiInfo, aiProvider, localAgents, pageComputers]);
-  const commentAgent = useMemo(() => mentionAgent(chatAgentList, vaultState), [chatAgentList, vaultState]);
+  const commentAgentList = useMemo(() => commentAgents(chatAgentList), [chatAgentList]);
+  const commentSend = useMemo(() => ({ ticked: commentSendTo, remember: setCommentSendTo }), [commentSendTo, setCommentSendTo]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept
@@ -5289,6 +5292,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // document), flashed, and the
   // popover open on the thread. A note's thread brings the notes over a
   // phone's PDF tab (showInNotes), so the note it is about shows under it.
+  // A thread's Open in chat (comments/Thread.jsx): its page's chat on the
+  // reader's conversation of the thread with its agent
+  // (chat/computer/chatSide.js showThreadChat), where its asks are answered.
+  function openThreadChat(thread) {
+    showThreadChat(thread.page_id, thread.id, thread.agent_chat?.agent || "");
+    if (thread.page_id === focusedBlockId) showChat();
+    else openBlock(thread.page_id, { then: "ask" });
+  }
   function showThread(thread) {
     if (thread.block_id !== focusedBlockId) {
       if (anchorOf(treeById.get(thread.block_id), positionKeyOf(doc))) landOnBlock(thread.block_id);
@@ -10230,7 +10241,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // active card's target; none on a phone. The handlers reach App's latest
   // through a ref, so the value changes only with what the cards show.
   const marginFns = useRef(null);
-  marginFns.current = { commentLabels, openBlockLink, copyThreadLink, onCacheRef, commentSignIn, openThread };
+  marginFns.current = { commentLabels, openBlockLink, copyThreadLink, onCacheRef, commentSignIn, openThread, openThreadChat };
   const commentMargin = useMemo(() => (commentsOn && !isPhone ? {
     threadsByBlock: comments.threadsByBlock,
     target: threadPop?.margin ? threadPop : null,
@@ -10241,7 +10252,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     labelsFor: (body) => marginFns.current.commentLabels(body),
     links: {
       pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache,
-      onCacheRef: (...args) => marginFns.current.onCacheRef(...args), agent: commentAgent,
+      onCacheRef: (...args) => marginFns.current.onCacheRef(...args), agents: commentAgentList, sendTo: commentSend,
+      onOpenChat: (thread) => marginFns.current.openThreadChat(thread), onStopTurn: comments.stopTurn,
     },
     onBlockRefClick: (...args) => marginFns.current.openBlockLink(...args),
     onAdd: comments.add,
@@ -10253,7 +10265,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     onActivate: (blockId, threadId) => marginFns.current.openThread(blockId, null, { threadId, toggle: false, pdf: true }),
     onClose: () => setThreadPop(null),
   } : null), [commentsOn, isPhone, comments.threadsByBlock, threadPop, commentMe, shareMode, workspace?.role, canComment, people, // eslint-disable-line react-hooks/exhaustive-deps
-    pageBlocks, focusedBlockId, treeById, refCache, commentAgent, !!commentSignIn, comments.add, comments.edit, comments.remove, comments.resolve]);
+    pageBlocks, focusedBlockId, treeById, refCache, commentAgentList, commentSend, !!commentSignIn, comments.add, comments.edit, comments.remove,
+    comments.resolve, comments.stopTurn]);
   // A press on a highlight or a region in the viewer: a note's ⊕ waiting
   // for its highlight picks it; else its row in the notes, and the chat is
   // fed as a click on the PDF feeds it (quote as the selection, an area or a
@@ -10514,7 +10527,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Rebuilt when what the handlers close over changes; a click reads the
   // current value, so the cards themselves never re-render for navigation.
   const gammaNav = useMemo(
-    () => ({ openPage: openPageLink, openBlock: openBlockLink, citeSource }),
+    () => ({ openPage: openPageLink, openBlock: openBlockLink, citeSource,
+      openThread: (threadId, blockId, pageId) => openThreadAt(threadId, blockId, pageId || focusedBlockId) }),
     [focusedBlockId, blocks, refCache, shareMode, knownBlocks, pageTitle],
   );
 
@@ -12637,8 +12651,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onStatus={setStatus}
             // what a thread is on: a highlight's quote, else the note's text, else the handwriting's page
             anchorText={(id) => anchorWords(treeById.get(id))}
-            // the agent that answers the reader's Sends, so a row's chip reads as its thread's card
-            agent={commentAgent}
             // on a work folder's file, for a member who may edit: the feedback view (feedback/)
             onFeedback={focusedFile && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
@@ -15365,7 +15377,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             people={people}
             labelsFor={commentLabels}
             // the fields' [[ and @ pickers, as a note row's (rowProps)
-            links={{ pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache, onCacheRef, agent: commentAgent }}
+            links={{ pages: pageBlocks, rootId: focusedBlockId, lookupBlock: (id) => treeById.get(id), refCache, onCacheRef,
+              agents: commentAgentList, sendTo: commentSend, onOpenChat: openThreadChat, onStopTurn: comments.stopTurn }}
             onBlockRefClick={openBlockLink}
             onAdd={comments.add}
             onEdit={comments.edit}

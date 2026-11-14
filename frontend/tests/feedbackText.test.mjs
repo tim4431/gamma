@@ -3,9 +3,12 @@
 // how its place was found, its source line, and a Send's line and state.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { entryHeading, placedText, requestLine, sendWords, sourceText, withdrawTitle } from "../src/feedback/feedbackText.js";
+import { entryHeading, placedText, requestLine, sendState, sendWords, sentChip, sourceText, withdrawTitle } from "../src/feedback/feedbackText.js";
+import { isWithdrawn } from "../src/feedback/feedbackView.js";
 
 const entry = (kind, where = {}) => ({ id: "t1", file: "main.pdf", kind, where });
+// A thread an entry is (the Send chip's tests).
+const page = () => [{ id: "t2", block_id: "b1", page_id: "page", resolved_at: null, comments: [] }];
 
 test("an entry's heading: a passage by its quote, a note under one, an area, handwriting, a note, the whole file", () => {
   assert.equal(entryHeading(entry("passage", { page: 3, quote: "the loss is defined as", placed: "exact" })),
@@ -148,4 +151,47 @@ test("the Send block of the computer that keeps the folder: named with that comp
   assert.equal(sendWords(plan("away", { online: false }), 101).blocked, true, "its limit holds");
   assert.deepEqual(sendWords(plan("not_ready", { problem: "Codex is not signed in on TIM-PC." }), 2).notes,
     [{ tone: "warn", text: "Codex is not signed in on TIM-PC. This Send fails until then." }]);
+});
+
+test("a Send's state, one wording wherever it shows: waiting, the agent at work, done, failed with its reason, withdrawn", () => {
+  const send = (state, detail = "", state_by = "") => ({ request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail, state_by });
+  assert.deepEqual(sendState(send("sent")),
+    { kind: "sent", label: "Waiting for the agent", detail: "", title: "Waiting for the agent", tone: "pending", live: false });
+  assert.deepEqual(sendState(send("running", "Editing sections/method.tex")),
+    { kind: "running", label: "The agent is working…", detail: "Editing sections/method.tex", title: "Editing sections/method.tex", tone: "pending", live: true });
+  assert.equal(sendState(send("running")).title, "The agent is working…");
+  assert.deepEqual(sendState(send("running", "Editing main.tex", "Codex")),
+    { kind: "running", label: "Codex is working…", detail: "Editing main.tex", title: "Editing main.tex", tone: "pending", live: true }, "named by state_by");
+  assert.deepEqual(sendState(send("done", "Fixed both.", "Codex")),
+    { kind: "done", label: "Done by Codex", detail: "Fixed both.", title: "Fixed both.", tone: "ok", live: false });
+  assert.equal(sendState(send("done")).label, "Done");
+  assert.deepEqual(sendState(send("failed", "the build failed")),
+    { kind: "failed", label: "Failed", detail: "the build failed", title: "Failed: the build failed", tone: "failed", live: false });
+  assert.equal(sendState(send("failed")).title, "Failed");
+  assert.deepEqual(sendState(send("failed", "withdrawn", "tim")),
+    { kind: "withdrawn", label: "Withdrawn", detail: "", title: "Withdrawn", tone: "", live: false });
+});
+
+test("the Send chip: a thread's Send in sendState's words; none without one, or withdrawn", () => {
+  const on = (state, detail = "") => ({ ...page()[0], sent: { request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail } });
+  assert.deepEqual(sentChip(on("running", "Editing main.tex")), sendState(on("running", "Editing main.tex").sent));
+  assert.equal(sentChip(on("sent")).label, "Waiting for the agent");
+  assert.ok(isWithdrawn(on("failed", "withdrawn").sent));
+  assert.ok(!isWithdrawn(on("running", "withdrawn").sent));
+  assert.equal(sentChip(on("failed", "withdrawn")), null, "the person took it back");
+  assert.equal(sentChip({ ...page()[0], sent: null }), null);
+  assert.equal(sentChip(page()[0]), null);
+});
+
+test("a waiting Send names the agent that answers the reader's Sends, or the computer that keeps the folder, offline in the title", () => {
+  const on = (state) => ({ ...page()[0], sent: { request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail: "" } });
+  const here = { name: "codex", label: "Codex", ready: true, problem: "" };
+  assert.deepEqual(sentChip(on("sent"), here),
+    { kind: "sent", label: "Waiting for Codex", detail: "", title: "Waiting for Codex", tone: "pending", live: false }, "this computer's own");
+  const there = { ...here, computer: "TIM-PC", online: true };
+  assert.deepEqual(sentChip(on("sent"), there),
+    { kind: "sent", label: "Waiting for TIM-PC", detail: "", title: "Waiting for TIM-PC", tone: "pending", live: false });
+  assert.deepEqual(sentChip(on("sent"), { ...there, ready: null, online: false }),
+    { kind: "sent", label: "Waiting for TIM-PC", detail: "", title: "TIM-PC is offline: this runs when it connects.", tone: "pending", live: false });
+  assert.equal(sentChip(on("running"), { ...there, online: false }).label, "The agent is working…", "taken: the computer is back");
 });

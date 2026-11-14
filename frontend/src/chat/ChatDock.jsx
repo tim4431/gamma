@@ -12,7 +12,7 @@ import { DEFAULT_PICTURE_BUDGET, addPictures, historyPictures, isPictureFile, pi
 import { pictureSrc } from "./pictureSrc.js";
 import { postFile } from "../transfers/FileChip";
 import { stepList } from "../shared/ui/listKeys.js";
-import { DockWindow, useCopied, useTextScale } from "../shared/ui/Widgets";
+import { DockWindow, GammaNavContext, useCopied, useTextScale } from "../shared/ui/Widgets";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import PaperMentionInput from "./PaperMentionInput";
 import ChatTranscript, { SpeedGlyph, UsageLine, knobsLabel } from "./ChatTranscript";
@@ -52,13 +52,13 @@ import FileThemeIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";
 import { chipSegments } from "./chipText";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
+import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
   HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon,
   SettingsIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { UsageRing } from "../shared/ui/UsageRing";
-import { useChatAgent } from "./computer/chatSide.js";
+import { useChatAgent, useChatThread } from "./computer/chatSide.js";
 import {
   computerExportPath, computerHistory, deleteComputerChat, newComputerChat, openComputerChat, useComputerSide,
 } from "./computer/useComputerChat.js";
@@ -348,6 +348,10 @@ export default function ChatDock({
   // same transcript and composer; the draft stays across a pick. A viewer
   // talks to Gamma AI.
   const [wanted, setWanted] = useChatAgent(chatKey);
+  // A comment thread's Open in chat shows its conversation in place of the
+  // page's own (chat/computer/chatSide.js), until Back to the chat.
+  const [threadShown, leaveThread] = useChatThread(chatKey);
+  const gammaNav = useContext(GammaNavContext);
   const agentList = useMemo(() => (readOnly || !agents?.length ? [gammaAgent(aiInfo)] : agents), [agents, readOnly, aiInfo]);
   const agent = pickAgent(agentList, wanted);
   const onComputer = agent?.kind === "computer";
@@ -359,6 +363,7 @@ export default function ChatDock({
   const outerLinks = useContext(PathLinkContext);
   const side = useComputerSide(onComputer ? chatKey : "", agent, {
     page: !!focusedBlockId, dirs: localAgents?.dirs || NO_DIRS, pdfSelections, setPdfSelections, setStatus,
+    thread: onComputer ? threadShown : "",
   });
   // The draft comes back after a remount in the conversation it was typed
   // in; loading another conversation empties it (below).
@@ -1910,10 +1915,13 @@ export default function ChatDock({
       onClick: () => exportRow({ agent: agent.id, active: true, title: side.chat.conversation?.title || "" }) },
     findAction,
     historyAction,
-    { id: "new", icon: PlusIcon, label: t("New chat"), guide: "chat.new", keep: 3,
-      disabled: side.working || side.chat.busy || !side.chat.conversation, onClick: () => side.chat.newChat(),
-      title: side.working ? t("Stop {agent} or wait for it to finish to start a new chat", { agent: side.label })
-        : t("New chat — keeps this conversation in history and starts a fresh one") },
+    // a comment thread's conversation shown: back to the page's own chat in New chat's place
+    side.thread ? { id: "back", icon: ArrowLeftIcon, label: t("Back to the chat"), keep: 3,
+      onClick: leaveThread, title: t("Show this page's chat again: this conversation stays with its comment thread") }
+      : { id: "new", icon: PlusIcon, label: t("New chat"), guide: "chat.new", keep: 3,
+        disabled: side.working || side.chat.busy || !side.chat.conversation, onClick: () => side.chat.newChat(),
+        title: side.working ? t("Stop {agent} or wait for it to finish to start a new chat", { agent: side.label })
+          : t("New chat — keeps this conversation in history and starts a fresh one") },
   ].filter(Boolean);
   const actions = readOnly ? [findAction] : onComputer ? computerActions() : aiOff || !aiKnown ? [] : [
     { id: "export", icon: DownloadIcon, label: t("Export chat"), title: t("Export this conversation or the context the model is sent"),
@@ -2133,7 +2141,17 @@ export default function ChatDock({
         {/* An earlier conversation stays readable; the card follows it. */}
         {visibleMessages.length ? setupCard : null}
       </div>
-      {!readOnly ? (
+      {/* A comment thread's conversation goes on in its thread: its replies
+          sent to the agent are its messages. */}
+      {!readOnly && onComputer && side.thread ? (
+        <div className="chatThreadNote" data-testid="chat-thread-note">
+          <span className="chatThreadNoteText">{t("This conversation answers a comment thread: reply there to go on.")}</span>
+          <button type="button" className="uiBtn sm" onClick={() => gammaNav?.openThread?.(side.thread, "", chatKey)}>
+            {t("Show the thread")}
+          </button>
+          <button type="button" className="uiBtn sm ghost" onClick={leaveThread}>{t("Back to the chat")}</button>
+        </div>
+      ) : !readOnly ? (
       // One box: the context chips on top, the message at full
       // width, then a toolbar — [+], the PDF switch while a PDF is in
       // context, the model chip (with reasoning effort), the mic when a

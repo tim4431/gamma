@@ -4761,6 +4761,23 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-width: 0;
 }
 .chatComposer.off { box-shadow: none; }
+/* In the composer's place while the chat shows a comment thread's
+   conversation (ChatDock: it goes on in its thread). */
+.chatThreadNote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 4px 2px 2px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.chatThreadNote .chatThreadNoteText { flex: 1; min-width: 12em; }
 .chatComposerBar { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .chatComposerSpacer { flex: 1; }
 .chatComposer .chatSelChip { margin: 0 0 2px; }

@@ -21,10 +21,12 @@ import {
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const post = (body) => ({ method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
-// A bucket with the agent picked for it, as one key ("" for no bucket).
-const seatOf = (bucket, agent) => (bucket ? `${bucket}\n${agent}` : "");
+// A bucket with the agent picked for it and the comment thread whose
+// conversation it shows ("" for its own), as one key ("" for no bucket).
+const seatOf = (bucket, agent, thread = "") => (bucket ? `${bucket}\n${agent}\n${thread}` : "");
 const bucketOf = (seat) => seat.split("\n")[0];
 const agentOf = (seat) => seat.split("\n")[1] || "";
+const threadOf = (seat) => seat.split("\n")[2] || "";
 
 // New chat in the bucket (POST /api/local-agents/chat/new): its active
 // conversation with a computer's agent archived, whichever agent it has;
@@ -59,7 +61,9 @@ export const computerExportPath = (id) => `${API}/local-agents/chat/history/${en
 // The side's state for the bucket `pageId` (a page's id, a folder's, or
 // "home"; "" while the side is not shown: nothing is read) with the agent
 // picked for it (`agent`, chat/agents.js: its `name` asked for, its `label`
-// what the words name before the read). `{computer, conversation, read,
+// what the words name before the read), or with `thread` the conversation
+// of that comment thread of the page (its Open in chat). `{computer,
+// conversation, read,
 // error, busy, reload, say, send, answer, stop, newChat, revokeGrants}`:
 //   computer      the strip's facts as the server read them ({agent, label,
 //                 ready, problem, folder, folder_id, paused, turn, models,
@@ -86,12 +90,12 @@ export const computerExportPath = (id) => `${API}/local-agents/chat/history/${en
 //   say(text) is the status pill
 // `setStatus` says what failed, naming the agent as the server read it, or
 // before a read as the agent picked.
-export function useComputerChat(pageId, agent, setStatus) {
+export function useComputerChat(pageId, agent, setStatus, thread = "") {
   const name = agent?.name || "";
   const known = agent?.label || "";
-  // What is held is kept with the bucket and the agent it is of (`seat`),
-  // so another bucket, or another agent picked, never shows the last one's.
-  const seat = seatOf(pageId, name);
+  // What is held is kept with the bucket, the agent and the thread it is of
+  // (`seat`), so another bucket, agent or thread never shows the last one's.
+  const seat = seatOf(pageId, name, thread);
   const [held, setHeld] = useState({ seat: "", computer: null, conversation: null, read: false, error: "" });
   const [busy, setBusy] = useState(false);
   const heldRef = useRef(held);
@@ -114,7 +118,7 @@ export function useComputerChat(pageId, agent, setStatus) {
     const now = heldRef.current.seat === key ? heldRef.current : null;
     const mine = now?.conversation || null;
     try {
-      const answer = await apiJson(`${API}${chatPath(bucketOf(key), mine ? mine.version : null, agentOf(key))}`);
+      const answer = await apiJson(`${API}${chatPath(bucketOf(key), mine ? mine.version : null, agentOf(key), threadOf(key))}`);
       if (n !== asked.current) return;
       setHeld((prev) => ({
         seat: key, computer: answer.computer || null, read: true, error: "",
@@ -266,8 +270,13 @@ const places = new Map();
 //   empty       {text, again} the empty transcript's line, `again` when it
 //               says why the conversation could not be read (Try again);
 //               null until the read
-export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSelections = [], setPdfSelections, setStatus }) {
-  const chat = useComputerChat(bucket, bucket ? agent : null, setStatus);
+//   thread      the comment thread whose conversation the side shows
+//               (`thread`, chatSide.js useChatThread), "" for the bucket's
+//               own: nothing is sent from the chat then (its thread's
+//               replies are its messages)
+export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSelections = [], setPdfSelections, setStatus,
+  thread = "" }) {
+  const chat = useComputerChat(bucket, bucket ? agent : null, setStatus, thread);
   const info = chat.computer || stripFacts(agent);
   const label = info?.label || agent?.label || "";
   const conversation = chat.conversation;
@@ -295,7 +304,7 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   const stopId = liveTurn(conversation)?.turn_id || chat.computer?.turn?.turn_id || "";
   // Off until the conversation was read: one that failed may hold a turn.
   const landed = chat.read && !chat.error;
-  const ready = (text) => landed && !chat.busy && canSend(info, conversation, text);
+  const ready = (text) => landed && !thread && !chat.busy && canSend(info, conversation, text);
 
   async function send(text) {
     if (!ready(text)) return false;
@@ -340,7 +349,8 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   } : null), [folderId, nav, bucket, say]);
 
   const empty = !conversation?.messages?.length && chat.error ? { text: chat.error, again: true }
-    : chat.read ? { text: emptyLine(info, label, where, place, page), again: false } : null;
+    : chat.read ? { text: thread ? t("This comment thread has no conversation of yours with {agent}.", { agent: label })
+      : emptyLine(info, label, where, place, page), again: false } : null;
 
   // The composer's model chip (chat/AgentChip.jsx): the agent's models, its
   // efforts as a section, the choice the conversation's.
@@ -364,7 +374,7 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
 
   return {
     chat, info, label, where, messages, stopId, working: !!stopId, ready, send, retry, chip, grants,
-    place, pickPlace, sources, links, empty,
+    place, pickPlace, sources, links, empty, thread,
   };
 }
 

@@ -24,8 +24,8 @@ import { FormNotice, Segmented, SubDialog } from "../settings/SettingsKit";
 import { FileTextIcon, HighlightIcon, MessageSquareIcon, PenIcon, RectSelectIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
 import { StateTag } from "../shared/ui/StateTag";
-import { anchorSnippet, sentChip } from "../comments/comments.js";
-import { entryHeading, placedText, requestLine, sendWords, sourceText, withdrawTitle } from "./feedbackText.js";
+import { anchorSnippet } from "../comments/comments.js";
+import { entryHeading, placedText, requestLine, sendWords, sentChip, sourceText, withdrawTitle } from "./feedbackText.js";
 import {
   NOTE_MAX, POLL_MS, canWithdraw, firstComment, groupByFile, hasChoice, namesAgent, newestRequests, othersCount, pictureOf, readScope,
   sendAgent, sendBody, threadsOf,

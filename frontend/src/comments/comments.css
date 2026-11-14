@@ -146,6 +146,17 @@
 }
 .commentMeta .commentResolve:hover { color: var(--accent); }
 .commentMetaSpacer { flex: 1; }
+/* An agent's reply's Open in chat, on its author line, quiet beside the "⋯". */
+.commentMeta .commentOpenChat { height: var(--ctl-icon-btn-xs); flex-shrink: 0; font-size: var(--fs-xs); }
+/* The reader's turn of the thread with an agent, at its foot (Thread.jsx):
+   its chip, then Answer in the chat while it asks, and Stop. */
+.commentTurn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--comment-text-x);
+}
+.commentTurn .commentTurnStop { width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); flex-shrink: 0; }
 .commentAuthor { font-weight: 600; color: var(--text-primary); }
 /* an agent's computer and the person it wrote for, after its name */
 .commentFor { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -266,11 +277,23 @@
   overflow-wrap: anywhere;
 }
 .commentField.blockEditorCm .cm-placeholder { font-style: normal; }
-.commentComposerBar { display: flex; align-items: center; gap: var(--space-3); }
+.commentComposerBar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .commentComposerSpacer { flex: 1; }
 .commentTooLong { font-size: var(--fs-xs); color: var(--danger); }
-/* What sending a comment that names the agent on this computer does, or
-   why it cannot run (CommentComposer's hint). */
+/* The Send to {agent} tick under a new comment's or a reply's field, and
+   its agent's menu where there are several (CommentComposer). */
+.commentSendTo { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.commentSendTick {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* Why the agent the comment is sent to cannot answer, or what saving an
+   edit that names an agent does (CommentComposer's hint). */
 .commentAgentHint { font-size: var(--fs-xs); }
 .commentAgentHint:not(.agentProblem) { color: var(--text-muted); }
 .commentComposerBar .commentSend.uiBtn.sm { min-width: var(--ctl-btn-sm); }

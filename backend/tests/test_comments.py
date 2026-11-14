@@ -503,6 +503,26 @@ def test_a_token_signs_what_it_writes(own):
     assert [c["agent"] for c in thread["comments"]] == ["", "Claude Code"]
 
 
+def test_a_comment_sent_to_an_agent_is_stored_whatever_its_turn(own):
+    """``to`` names the agent a comment is sent to (gamma/local_agents/
+    threads.py, test_local_agents_threads.py has the turns): one no agent
+    is, or one a token's comment names, starts none and says why, the
+    comment stored all the same; a thread nobody sent reads no
+    conversation."""
+    ws = workspace_of("cm_own")
+    page = make_page(own, "Sent page")
+    out = _ok(_post(own, page["id"], page["id"], "summarise this", to="gamma"))
+    assert out["turn"] == {"agent": "the agent", "refused": "other", "why": "Gamma knows no agent of that id."}
+    assert out["thread"]["agent_chat"] is None and out["comment"]["body"] == "summarise this"
+    bearer, _ = _bearer("cm_own", ws, "write")
+    scripted = _ok(_post(bearer, page["id"], page["id"], "and this", thread_id=out["thread"]["id"],
+                         to="computer:pc1:codex"))
+    assert scripted["turn"]["refused"] == "other" and scripted["comment"]["agent"]
+    assert "turn" not in _ok(_post(own, page["id"], page["id"], "a comment among people"))
+    assert all(t["agent_chat"] is None for t in _threads(own, page["id"]))
+    assert _post(own, page["id"], page["id"], "x", to="c" * 201).status_code == 422
+
+
 def test_a_retry_is_the_same_writers(own):
     """A comment id a session's comment holds, retried by a token of the
     same account, is taken (and the other way round)."""

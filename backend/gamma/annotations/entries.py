@@ -602,10 +602,11 @@ def document(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None 
 
 
 def entry(ws, conn, entry_id: str, *, paths: dict | None = None, link_base: str = "", sources: bool = True,
-          regions: dict | None = None) -> dict | None:
+          regions: dict | None = None, places: bool = False) -> dict | None:
     """One entry by its id: a thread's in any state, or a highlight's that
     has no thread (one that has is read by its thread's id); None when it
-    is hidden (orphaned, gone) or on no live page."""
+    is hidden (orphaned, gone) or on no live page. ``places`` as for
+    ``entries``."""
     thread = comments.thread_of(conn, entry_id)
     if thread is not None:
         page_id = thread["page_id"]
@@ -620,7 +621,7 @@ def entry(ws, conn, entry_id: str, *, paths: dict | None = None, link_base: str 
     except AnnotationError:
         return None
     found = entries(ws, conn, scope, state="all", paths=paths, link_base=link_base, sources=sources,
-                    ids=[entry_id], regions=regions)
+                    ids=[entry_id], regions=regions, places=places)
     return found[0] if found else None
 
 

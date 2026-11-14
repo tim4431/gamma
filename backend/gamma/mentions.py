@@ -99,7 +99,7 @@ _SPACED_RE = re.compile(rf"(?P<pre>[ \t]*){MENTION_RE.pattern}(?P<post>[ \t]*)")
 def without(text: str, names) -> str:
     """``text`` with the mentions of ``names`` (``@codex``) taken out of its
     prose, its code left as it is, and the spaces they leave collapsed: what
-    a comment that mentions an agent asks of it (gamma/local_agents/mention.py)."""
+    a comment sent to an agent asks of it (gamma/local_agents/threads.py)."""
     names = set(names)
     text = text or ""
     if "@" not in text or not names:

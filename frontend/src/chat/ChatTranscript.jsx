@@ -20,7 +20,7 @@ import ReplyPapers from "./ReplyPapers";
 import StepsPill from "./StepsPill";
 import ApprovalCard, { AskCard } from "./ApprovalCard";
 import ChatErrorCard from "./ChatErrorCard";
-import AgentChanges, { ACTION_ICONS, FileChanges } from "./AgentChanges";
+import AgentChanges, { ACTION_ICONS, FileChanges, ThreadsOpened } from "./AgentChanges";
 import { changeSteps, noteReview } from "./noteReview.js";
 import { declinedSummary } from "./approvals.js";
 import { cachedPercent, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
@@ -389,6 +389,7 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
             </div>
           ) : null}
           {!isUser && m.files ? <FileChanges files={m.files} /> : null}
+          {!isUser && m.threads?.length ? <ThreadsOpened threads={m.threads} /> : null}
           {!isUser && !responding && papers && !m.error ? (
             <ReplyPapers actions={m.actions} text={m.text} {...papers} />
           ) : null}

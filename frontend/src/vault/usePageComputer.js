@@ -9,7 +9,7 @@
 // or an error is "none" for that read alone, never for the window. Each
 // vault names the agent that runs the maker's Sends there (`vault.agent`):
 // the chat's and the comment fields' agent there (chat/agents.js
-// keeperAgent, App's chatAgentList and commentAgent).
+// keeperAgent and commentAgents, App's chatAgentList and commentAgentList).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { readComputers } from "./vaultState.js";

@@ -13,7 +13,10 @@ import { waitForPdf } from "./pdf.mjs";
 // folder, two comments on its PDF, Codex turned on for the computer by the
 // vault's maker, the Feedback dialog naming Codex before and after, Send, the
 // request worked and done with what changed, the replies signed Codex on
-// the person's computer and the threads resolved, and the agent turned off.
+// the person's computer and the threads resolved; a reply ticked Send to
+// Codex (by its @codex) a turn of its thread, its chip, its answer under its
+// name, Open in chat and the next ticked reply resuming the session; and the
+// agent turned off.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 const PAPER = path.join(ROOT, "backend", "tests", "samples", "synctex", "paper");
@@ -108,7 +111,7 @@ export async function localAgentScenarios(env) {
       const area = await user.api("/api/blocks", { method: "POST", body: { parent_id: main.id, content: "",
         properties: { pdf_position: areaOf(place), color: "rgba(255, 226, 143, 0.65)" } } });
       const made = await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: area.id, body } });
-      assert(!("send" in made), "a comment that names no agent sends nothing");
+      assert(!("turn" in made), "a comment sent to no agent starts no turn");
       return made.thread;
     };
     // A thread opened from the Comments window's row, its reply field
@@ -171,11 +174,6 @@ export async function localAgentScenarios(env) {
       span.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     }, [n, words]);
     const conversation = async () => (await user.api(`/api/local-agents/chat?bucket=${main.id}`)).conversation;
-    // The request a mention made, once it is done.
-    const doneRequest = (id) => until(async () => {
-      const found = (await user.api("/api/feedback/requests?after=0")).requests.find((r) => r.id === id);
-      return found?.state === "done" ? found : null;
-    }, { timeout: 40000, what: `request ${id} done` });
 
     let link = null, main = null;
     const threads = [];
@@ -302,81 +300,95 @@ export async function localAgentScenarios(env) {
       } finally { await ctx.close(); }
     });
 
-    // Step 2: @codex in a comment (docs/dev/local_agents.md "A mention in a comment").
+    // Step 3.5 of docs/research/agents-as-participants-plan.md: a comment sent to
+    // an agent (docs/dev/local_agents.md "A comment sent to an agent").
     let caption = null, captionTurn = "";
-    await step("local-agents: in the maker's reply on the PDF the @ menu lists Codex on this computer, and the reply sends that thread to Codex", async () => {
+    await step("local-agents: @codex in a reply ticks Send to Codex, and the reply is a turn of its thread: the chip says Codex is working, then its reply comes under its name", async () => {
       caption = await commentOn(PLACES.v1.figure.rect, "the caption says 2025");
       const before = turnsHeard().length;
+      const sends = (await user.api("/api/feedback/requests?after=0")).requests.length;
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
         await waitForPdf(page, 1);
         const thread = await openThread(page, caption.id);
         await replyField(thread);
+        const tick = thread.locator(".commentSendTo input[type=checkbox]");
+        assertEq(await tick.isChecked(), false, "a thread among people: as the person left the tick, off");
+        assertEq((await thread.locator(".commentSendTick").innerText()).trim(), "Send to Codex", "the tick names the agent");
         await page.keyboard.type("@cod");
         const menu = page.locator(".mentionMenu");
         const row = menu.locator(".refPopupItem.selected");
         await until(async () => (await row.locator(".refPopupText").innerText().catch(() => "")).startsWith("Codex"),
-          { what: "the @ menu offers the folder's agent" });
+          { what: "the @ menu offers the agent" });
         assertEq((await row.locator(".mentionAside").innerText()).trim(), "on this computer", "where it runs");
         assertEq(await menu.locator(".refPopupHead").allInnerTexts().then((h) => h.join("|")), "People", "under People");
         await page.keyboard.press("Enter");
         await menu.waitFor({ state: "detached" });
         await thread.locator(".cmMentionChip", { hasText: "@codex" }).waitFor();
+        await until(() => tick.isChecked(), { what: "@codex ticks the box" });
         await page.keyboard.type("fix this only");
-        assertEq((await thread.locator("[data-agent-hint]").innerText()).trim(), "Sends this thread to Codex on this computer.",
-          "the field says what sending does");
         await page.keyboard.press("Shift+Enter");
-        // the reply is stored, and its Send is the thread's alone
-        const reply = await until(async () => (await threadsOf(main.id)).find((th) => th.id === caption.id)
-          ?.comments.find((c) => c.body === "@codex fix this only"), { what: "the reply is stored" });
-        const request = await doneRequest(reply.id);
-        assertEq(JSON.stringify([request.note, request.threads.map((t) => t.id), request.state_by]),
-          JSON.stringify(["fix this only", [caption.id], "Codex"]), "a Send of the thread, the comment's other words its instruction");
-        // the reply's own @codex is the agent's chip in the maker's comment
+        // the chip follows the turn, with Stop, then the agent's reply lands under its name
+        const chip = thread.locator(".commentTurn .stateTag");
+        await until(async () => (await chip.innerText().catch(() => "")).trim().startsWith("Codex is working"),
+          { timeout: 20000, what: "the chip says Codex is working" });
+        await thread.locator(".commentTurnStop").waitFor();
+        const answer = thread.locator(".commentItem.reply", { hasText: CHAT_REPLY });
+        await answer.waitFor({ timeout: 40000 });
+        assertEq((await answer.locator(".commentAuthor").textContent()).trim(), "Codex", "the reply is Codex's");
+        await thread.locator(".commentTurn").waitFor({ state: "detached", timeout: 10000 });
+        // the reply's own @codex is the agent's chip in the person's comment
         await thread.locator(".commentItem.reply .mentionChip.mention-agent", { hasText: "@codex" }).first().waitFor();
+        // Open in chat: the thread's conversation, its steps and its reply, in the chat
+        await answer.getByRole("button", { name: "Open in chat", exact: true }).click();
+        const dock = page.locator(".dockWindow:has(.chatPanel)");
+        await dock.locator("[data-testid=chat-thread-note]").waitFor({ timeout: 10000 });
+        await dock.locator(".chatBubble.user", { hasText: "fix this only" }).waitFor();
+        await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor();
+        await dock.getByRole("button", { name: "Back to the chat", exact: true }).first().click();
+        await dock.locator("[data-testid=chat-thread-note]").waitFor({ state: "detached" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const stored = (await threadsOf(main.id)).find((th) => th.id === caption.id);
-      assert(stored.resolved_at, "the fixed thread is resolved");
-      assertEq(JSON.stringify([stored.comments.at(-1).agent, stored.comments.at(-1).body]),
-        JSON.stringify(["Codex", `Done for ${caption.id}.`]), "Codex answered it");
+      const [, mine, theirs] = stored.comments;
+      assertEq(mine.body, "@codex fix this only", "the reply is stored as written");
+      assertEq(JSON.stringify([theirs.agent, theirs.agent_kind, theirs.author, theirs.body]),
+        JSON.stringify(["Codex", "computer", "la-user", CHAT_REPLY]), "Codex answered in the thread, for the person");
+      assertEq((await user.api("/api/feedback/requests?after=0")).requests.length, sends, "no Send was made");
       const turns = turnsHeard().slice(before);
       assertEq(turns.length, 1, "one turn");
       captionTurn = turns[0];
       assert(!turnsHeard().slice(0, before).includes(captionTurn), `a session of its own: ${captionTurn}`);
+      const told = heard().filter((e) => e.in?.method === "turn/start").at(-1).in.params.input.map((p) => p.text || "").join("\n");
+      assert(told.includes('"message": "fix this only"') && told.includes(`"thread_id": "${caption.id}"`)
+        && told.includes("the caption says 2025"), `the comment and its thread reach Codex: ${told.slice(0, 600)}`);
     });
 
-    await step("local-agents: a follow-up in the reopened thread resumes the session that answered there", async () => {
+    await step("local-agents: in the thread Codex answered last the tick starts ticked, the field asks Codex to edit, and the reply resumes the session", async () => {
       const before = heard().length;
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
         await waitForPdf(page, 1);
-        const thread = await openThread(page, caption.id, true);
-        await thread.getByRole("button", { name: "Reopen", exact: true }).click();
-        await until(async () => !(await threadsOf(main.id)).find((th) => th.id === caption.id)?.resolved_at, { what: "the thread is open again" });
+        const thread = await openThread(page, caption.id);
         await replyField(thread);
-        await page.keyboard.type("@codex");
-        await page.locator(".mentionMenu .refPopupItem.selected", { hasText: "Codex" }).waitFor();
-        await page.keyboard.press("Enter"); // the row writes "@codex "
+        assertEq(await thread.locator(".commentSendTo input[type=checkbox]").isChecked(), true, "the agent spoke last: ticked");
+        assertEq((await thread.locator(".commentField .cm-placeholder").last().innerText()).trim(), "Ask Codex to edit");
         await page.keyboard.type("keep the British spelling");
         await page.keyboard.press("Shift+Enter");
-        const reply = await until(async () => (await threadsOf(main.id)).find((th) => th.id === caption.id)
-          ?.comments.find((c) => c.body === "@codex keep the British spelling"), { what: "the follow-up is stored" });
-        const request = await doneRequest(reply.id);
-        assertEq(request.note, "keep the British spelling");
+        await thread.locator(".commentItem.reply", { hasText: CHAT_REPLY }).nth(1).waitFor({ timeout: 40000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const since = heard().slice(before);
       const resumed = since.filter((e) => e.in?.method === "thread/resume").map((e) => e.in.params.threadId);
-      assertEq(JSON.stringify(resumed), JSON.stringify([captionTurn]), "Codex's thread/resume of the session that answered");
+      assertEq(JSON.stringify(resumed), JSON.stringify([captionTurn]), "Codex's thread/resume of the thread's session");
       assertEq(since.filter((e) => e.in?.method === "thread/start").length, 0, "no new session");
       assertEq(JSON.stringify(since.filter((e) => e.in?.method === "turn/start").map((e) => e.in.params.threadId)),
         JSON.stringify([captionTurn]), "the turn ran in it");
     });
 
-    await step("local-agents: an edit of an older comment is not sent and says why; a mention in the page's own thread sends the file's open comments", async () => {
+    await step("local-agents: an edit of an older comment is not sent and says why; a resolved thread is refused, the comment stored", async () => {
       const axis = await commentOn(PLACES.v1.equation.rect, "the axis label is missing");
       await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: axis.block_id, thread_id: axis.id, body: "and its units" } });
       const ctx = await desktop();
@@ -395,24 +407,19 @@ export async function localAgentScenarios(env) {
         await page.keyboard.type(" @codex");
         await page.locator(".mentionMenu .refPopupItem.selected", { hasText: "Codex" }).waitFor();
         await page.keyboard.press("Enter");
-        assertEq((await first.locator("[data-agent-hint]").innerText()).trim(), "Mention Codex in a new reply to send this thread again.",
+        assertEq((await first.locator("[data-agent-hint]").innerText()).trim(), "Reply to ask Codex again: only the newest comment is sent.",
           "the field says before saving that an older comment's edit is not sent");
         await first.getByRole("button", { name: "Save", exact: true }).click();
         await until(async () => (await page.textContent(".statusPill").catch(() => "") || "")
-          .includes("Mention Codex in a new reply to send this thread again."), { what: "the status says why it was not sent" });
+          .includes("Reply to ask Codex again: only the newest comment is sent."), { what: "the status says why it was not sent" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
-      assertEq((await user.api("/api/feedback/requests?after=0")).requests.filter((r) => r.threads.some((t) => t.id === axis.id)).length,
-        0, "no Send of that thread");
-      const made = await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: main.id, body: "@codex tidy these up" } });
-      assertEq(JSON.stringify([made.send?.agent, made.send?.scope, made.send?.threads]), JSON.stringify(["Codex", "file", 2]),
-        "the file's open comments: the axis thread and the page's own");
-      assertEq(made.thread.sent?.request_id, made.send.request_id, "the answer's thread carries its Sent chip");
-      const request = await doneRequest(made.send.request_id);
-      assertEq(JSON.stringify(request.threads.map((t) => t.id).sort()), JSON.stringify([axis.id, made.thread.id].sort()));
+      const codex = (await user.api("/api/local-agents")).agents.find((a) => a.name === "codex");
+      await user.api(`/api/comments/${caption.id}/resolve`, { method: "POST", body: { resolved: true } });
       const refused = await user.api(`/api/pages/${main.id}/comments`, { method: "POST",
-        body: { block_id: caption.block_id, thread_id: caption.id, body: "@codex once more" } });
-      assertEq(refused.send?.refused, "closed", "a resolved thread is reopened first");
+        body: { block_id: caption.block_id, thread_id: caption.id, body: "once more", to: codex.id } });
+      assertEq(refused.turn?.refused, "closed", "a resolved thread is reopened first");
+      assertEq(refused.comment.body, "once more", "the comment is stored all the same");
     });
 
     // Step 3a: the chat's computer side (docs/dev/local_agents.md "The chat's computer side").

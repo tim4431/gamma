@@ -9,7 +9,7 @@ retry held, another taker refused); progress and answers only from the run
 that holds the request; the answers written here, signed as the agent with
 the claim's ``seen``, a retry writing nothing twice; a withdraw told once
 and never overwritten; a token's Send and a token's change of a held
-request refused; the held poll woken by a Send; a mention made here; the
+request refused; the held poll woken by a Send; a mention made here a turn of its thread; the
 Feedback document's agent; the pictures of a held thread.
 
 One process plays both sides (as tests/test_computers.py): the routes are
@@ -185,7 +185,7 @@ def test_the_announced_agent_is_its_work_folders_shown_to_its_account_alone(lab)
     found = registry.agent_of(lab.ws, lab.W, account_of(MAKER))
     assert found == {
         "token_id": item["id"], "user_id": account_of(MAKER), "agent": "codex", "label": "Codex", "computer": "TIM-PC",
-        "online": True, "paused": False, "ready": True, "code": ""}
+        "online": True, "paused": False, "ready": True, "code": "", "lent_by": ""}
     assert registry.agent_of(lab.ws, lab.W, account_of(EDITOR)) is None        # another account's computer: none
     assert registry.agent_of(lab.ws, lab.W2, account_of(MAKER)) is None
     assert registry.agent_of(lab.ws, lab.plain, account_of(MAKER)) is None
@@ -221,19 +221,19 @@ def test_another_members_computer_never_takes_the_makers_binding(lab, pc):
     _announce(_bearer(evil["token"]), _kept(lab), name="EVIL-PC", computer_id="cps-evil")   # announced last, online
     assert registry.agent_of(lab.ws, lab.W, account_of(MAKER))["computer"] == "TIM-PC"
     assert registry.agent_of(lab.ws, lab.W, account_of(EDITOR))["computer"] == "EVIL-PC"
-    # the maker's mention, dialog and token Send still name TIM-PC
+    # the maker's mention (a turn of its thread), dialog and token Send still name TIM-PC
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments",
                            json={"block_id": _passage(lab), "body": "@codex please tighten the intro"}), 201)
-    assert [s["id"] for s in _sends(pc)["sends"]] == [r["send"]["request_id"]]
+    assert [t["id"] for t in _ok(pc.c.get("/api/computers/chats"))["turns"]] == [r["turn"]["turn_id"]]
     assert _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]["computer"] == "TIM-PC"
     r = _bearer(token_for(lab.maker, "write")).post("/api/feedback/requests", json={"scope": lab.main})
     assert (r.status_code, r.json()["detail"]) == (403, "Codex on TIM-PC takes Sends made in Gamma, not with a token.")
-    # the editor's own @codex is the editor's Send, never listed to the maker's computer
+    # the editor's own @codex is the editor's turn, never listed to the maker's computer
     r = _ok(lab.editor.post(f"/api/pages/{lab.main}/comments", json={"block_id": _passage(lab), "body": "@codex hi"}),
             201)
-    assert r["send"]["request_id"] not in [s["id"] for s in _sends(pc)["sends"]]
-    assert [s["id"] for s in _ok(_bearer(evil["token"]).get("/api/computers/sends"))["sends"]] == \
-        [r["send"]["request_id"]]
+    assert r["turn"]["turn_id"] not in [t["id"] for t in _ok(pc.c.get("/api/computers/chats"))["turns"]]
+    assert [t["id"] for t in _ok(_bearer(evil["token"]).get("/api/computers/chats"))["turns"]] == \
+        [r["turn"]["turn_id"]]
     # a viewer's computer keeps no agent
     viewer = "cps_viewer"
     make_user(viewer, f"pw-{viewer}")
@@ -484,20 +484,22 @@ def test_the_pictures_of_a_thread_the_computer_holds(lab, pc):
 
 # --- the mention and the Feedback dialog ------------------------------------------------------------------
 
-def test_a_mention_made_here_is_a_send_the_computer_takes(lab, pc):
+def test_a_mention_made_here_is_a_turn_of_its_thread_the_computer_takes(lab, pc):
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments",
                            json={"block_id": _passage(lab), "body": "@codex please tighten the intro"}), 201)
-    send = r["send"]
-    assert (send["agent"], send["scope"], send["threads"]) == ("Codex", "thread", 1)
-    assert [s["id"] for s in _sends(pc)["sends"]] == [send["request_id"]]
-    assert _request(lab, send["request_id"])["note"] == "please tighten the intro"
-    # another member's @codex is no Send; nor the maker's once the agent is off there
+    turn = r["turn"]
+    assert (turn["agent"], turn["state"]) == ("Codex", "queued") and _sends(pc)["sends"] == []
+    assert [t["id"] for t in _ok(pc.c.get("/api/computers/chats"))["turns"]] == [turn["turn_id"]]
+    claimed = _ok(pc.c.post(f"/api/computers/chats/{turn['turn_id']}/claim", json={"run": "cps-run-t", "agent": "codex"}))
+    assert (claimed["turn"]["text"], claimed["turn"]["thread_id"]) == ("please tighten the intro", r["thread"]["id"])
+    assert claimed["thread"]["id"] == r["thread"]["id"] and claimed["thread"]["place"]["page"] == 1
+    # another member's @codex is no turn; nor the maker's once the agent is off there
     r = _ok(lab.editor.post(f"/api/pages/{lab.main}/comments", json={"block_id": lab.main, "body": "@codex hi"}), 201)
-    assert "send" not in r
+    assert "turn" not in r
     _announce(pc.c, _kept(lab), assistants=OFF)
     assert registry.agent_folders(pc.id, lab.ws) == {} and registry.workspaces_of(account_of(MAKER)) == []
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments", json={"block_id": lab.main, "body": "@codex hi"}), 201)
-    assert "send" not in r
+    assert "turn" not in r
 
 
 def test_the_feedback_document_names_the_computers_agent_to_its_maker_alone(lab, pc):

@@ -212,6 +212,10 @@ export const PREFS = {
   // (inbox/useInbox.js): the browser's permission is this device's, so
   // the choice is too.
   inboxSystemNotifications: flag("gamma-inbox-notifications", BROWSER, false),
+  // A comment field's Send to {agent} tick as the person left it last, its
+  // default outside a thread an agent spoke last in (comments/sendTo.js
+  // startsTicked); no Settings row: the tick itself sets it.
+  commentSendTo: flag("gamma-comment-send-to", ACCOUNT, false),
   // Tours offered by themselves the first time a feature comes up
   // (guide/triggers.js); off leaves only Account › Tours.
   suggestTours: flag("gamma-suggest-tours", ACCOUNT, true),

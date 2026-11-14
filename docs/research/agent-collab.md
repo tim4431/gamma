@@ -654,7 +654,7 @@ agent), and a token cannot move them.
 | Step | Builds | State |
 |---|---|---|
 | 1. An agent on this computer answers a Send | the host on the desktop app's own server (`gamma/local_agents/`: finding the agents, the two drivers, the claim and the run, the answers), the folder's agent switched on in the sync panel, "Send to Codex" in the Feedback dialog, the agent's progress, summary and changed files on the request | built: [dev/local_agents.md](../dev/local_agents.md), "As built (step 1)" below |
-| 2. `@codex` in a comment | the mention as a Send of its thread or of the file's open threads, the @ menu's agent row, a follow-up resuming the session that answered, the names settled without reserving them | built: [dev/local_agents.md](../dev/local_agents.md) "A mention in a comment", "As built (step 2)" below |
+| 2. `@codex` in a comment | the mention as a Send of its thread or of the file's open threads, the @ menu's agent row, a follow-up resuming the session that answered, the names settled without reserving them | built: [dev/local_agents.md](../dev/local_agents.md) "A comment sent to an agent" (which replaced "A mention in a comment" in step 3.5 of [agents-as-participants-plan.md](agents-as-participants-plan.md)), "As built (step 2)" below |
 | 3a. The chat's computer side | the switch and the strip, the agent's turns in the chat (its reply, its steps, what it changed), a selected passage sent with its source line, Stop, a turn that outlives its tab, its own conversations and History | built: [dev/local_agents.md](../dev/local_agents.md) "The chat's computer side", "As built (step 3a)" below |
 | 3b. Approvals | approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), what the agent may run set on the computer | built: [dev/local_agents.md](../dev/local_agents.md) "Asking in the chat", "As built (step 3b)" below |
 | 3c. The rest of the side | *Continue in a terminal* and *Show in folder*, the agent's model and effort, the reply as it is typed, the selection's source line as a chip, a Background tasks row | built: [dev/local_agents.md](../dev/local_agents.md) "Its model, its typing, a terminal, the sources, Background tasks", "As built (step 3c)" below; later: View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, a folder's computer chat |
@@ -705,7 +705,7 @@ went otherwise than planned above:
 
 ### As built (step 2)
 
-[dev/local_agents.md](../dev/local_agents.md) "A mention in a comment" is
+[dev/local_agents.md](../dev/local_agents.md) "A comment sent to an agent" (which replaced "A mention in a comment" in step 3.5 of [agents-as-participants-plan.md](agents-as-participants-plan.md)) is
 the reference; where it went otherwise than "The page and the thread"
 planned:
 

@@ -272,9 +272,11 @@ export async function feedbackScenarios(env) {
         assertEq(request.threads.length, 3, "its three threads");
         await until(() => fs.existsSync(path.join(feedbackDir, "requests", `${request.id}.json`)), { timeout: 8000, what: "the request file" });
         assertEq(readJson(path.join(feedbackDir, "requests", `${request.id}.json`)).entries.length, 3, "with three entries");
+        // the dialog's entries carry the Send's chip (a thread's own chip is its turn with an agent's)
+        await until(async () => (await d.locator('.feedbackEntry [data-sent="sent"]').count()) === 3, { timeout: 10000, what: "the entries show Sent" });
+        assertEq(await margin.locator(".commentCard .commentTurn").count(), 0, "no thread has a turn");
         await page.keyboard.press("Escape");
         await d.waitFor({ state: "detached" });
-        await until(async () => (await margin.locator('.commentCard [data-sent="sent"]').count()) === 3, { timeout: 10000, what: "the cards show Sent" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });
@@ -376,7 +378,7 @@ export async function feedbackScenarios(env) {
         }, { timeout: 8000, what: "open.json holds it again" });
         assertEq(openJson().entries.find((e) => e.id === passageThread.id).sent, null, "its request row was answered: no Sent");
         await page.locator(".dockWindow:has(.commentsPanel) .segGroup button", { hasText: "Open (2)" }).click();
-        assertEq(await panel.locator(`.commentsPanelRow[data-thread-id="${passageThread.id}"] [data-sent]`).count(), 0, "no chip on the row");
+        assertEq(await panel.locator(`.commentsPanelRow[data-thread-id="${passageThread.id}"] .stateTag`).count(), 0, "no chip on the row");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });

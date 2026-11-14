@@ -25,6 +25,7 @@ test("the read asks for the bucket, with the version held once there is one and 
   assert.equal(chatPath("p1", 7), "/local-agents/chat?bucket=p1&version=7");
   assert.equal(chatPath("home", null, "claude"), "/local-agents/chat?bucket=home&agent=claude");
   assert.equal(chatPath("f1", 3, "codex"), "/local-agents/chat?bucket=f1&version=3&agent=codex");
+  assert.equal(chatPath("p1", null, "codex", "th1"), "/local-agents/chat?bucket=p1&agent=codex&thread=th1", "a thread's conversation");
 });
 
 test("a message posts its id, the bucket, the text trimmed and the passages with their place", () => {
@@ -112,6 +113,8 @@ test("how a turn ended when it did not answer, and a session not resumed", () =>
 test("the strip: the agent and the folder, what it is at, what it waits for, why it cannot run", () => {
   assert.deepEqual(stripLine(ready), { text: "Codex on this computer · Thesis", kind: "ready" });
   assert.deepEqual(stripLine({ ...ready, folder: "" }), { text: "Codex on this computer", kind: "ready" });
+  assert.deepEqual(stripLine({ ...ready, lent: { by: "alice" } }), { text: "alice's Codex on this computer · Thesis", kind: "ready" },
+    "a co-author's agent names its owner");
   assert.equal(stripLine({ ...ready, ready: null }).text, "Checking Codex…");
   const running = agent({ state: "running", steps: [{ kind: "edit", path: "sections/intro.tex", status: "started" }] });
   assert.deepEqual(stripLine({ ...ready, turn: { turn_id: "t1", state: "running", ahead: false } }, running),
@@ -423,6 +426,10 @@ test("the transcript's shape: a turn done, with its steps as plain chips, its mo
   assert.equal("errorKind" in reply, false);
   assert.equal(shownMessages({ messages: [agent({ model: "gone-model" })] }, info)[0].model, "gone-model", "a model no longer listed by its id");
   assert.equal(shownMessages({ messages: [agent()] }, ready)[0].files, null);
+  // the comment threads its agent opened, which its card lists
+  const opened = [{ id: "th1", page_id: "p1", block_id: "b1", text: "Which spelling?" }];
+  assert.deepEqual(shownMessages({ messages: [agent({ threads: opened })] }, ready)[0].threads, opened);
+  assert.deepEqual(reply.threads, [], "none opened");
   assert.deepEqual(stepChip({ kind: "search" }), { kind: "search", summary: "Searched the sources" });
   // A call of Gamma's tools is the kind Gamma AI's call of that tool is: the pill counts it as a read.
   const reads = [{ kind: "gamma", tool: "read_page", status: "completed" }, { kind: "gamma", tool: "list_pages", status: "completed" },

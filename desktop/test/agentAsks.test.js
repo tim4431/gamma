@@ -58,6 +58,11 @@ test('a command\'s card: what it runs, where, from whom, the agent\'s reason mar
   assert.equal(card.stop, 'Stop Codex asking');
   assert.deepEqual(card.from, { name: 'NAS', origin: 'https://nas.lab:5001', account: 'alice' });
   assert.equal(card.folder, 'cavity');
+
+  // a co-author's turn of the host's own server: whose chat, on this computer, no account of another server
+  const theirs = agentAsks.cardOf([askOf('b', { for: 'bob', server: { origin: '', account: '' } })], servers);
+  assert.deepEqual(theirs.rows.slice(2), [['From', "bob's chat of main.pdf on this computer", false]]);
+  assert.equal(theirs.notes[0], "It runs as you, with your files and the network. A build also runs what this folder's files say, and its workspace's editors can change them.");
 });
 
 test('the inner command of a shell wrapper is shown large, the wrapper under it; lines are counted', () => {

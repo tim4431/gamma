@@ -20,7 +20,11 @@ in a conversation (``agent_dir_grants``), each exactly as it was asked,
 keyed by the directory the turn works in, with the folder below it the
 command runs in and the network host it reaches: consent given for one
 directory and one agent, gone when the agent is turned off or set back to
-never (``set_agent``, ``set_runs``) and with its conversation.
+never (``set_agent``, ``set_runs``) and with its conversation. The people
+an agent's owner lets use it (``agent_people``: a co-author of a workspace
+of this server or of another one this computer is shown on), gone when the
+agent is turned off, so an agent turned on again by another account serves
+none of them.
 
 Before agents were the computer's, each vault had its own (``agent_folders``)
 and what it could run (``agent_policies``), and a chat's grants were keyed
@@ -143,8 +147,9 @@ def set_agent(agent: str, enabled: bool, *, by: str, force: bool = False) -> boo
     or off by its owner → whether that changed it: an agent on already
     keeps its owner and when it was turned on, and one another account
     owns is turned off here only with ``force`` (the desktop shell's word).
-    Turned off, it may run ``never`` again and the grants of its chats go.
-    ValueError for an agent Gamma does not know."""
+    Turned off, it may run ``never`` again, and the grants of its chats and
+    the people its owner named go. ValueError for an agent Gamma does not
+    know."""
     if agent not in AGENTS:
         raise ValueError(f"Gamma knows no agent named {agent}.")
     with connect_vaults_db() as conn:
@@ -158,18 +163,21 @@ def set_agent(agent: str, enabled: bool, *, by: str, force: bool = False) -> boo
                                + owned, args).rowcount > 0
         if changed:
             conn.execute("DELETE FROM agent_dir_grants WHERE agent = ?", (agent,))
+            conn.execute("DELETE FROM agent_people WHERE agent = ?", (agent,))
         return changed
 
 
 def release_account(user_id: str) -> list[str]:
     """The agents the account ``user_id`` owns turned off, as when it is
-    deleted → the agents that changed; the grants of their chats go."""
+    deleted → the agents that changed; the grants of their chats and the
+    people named for them go."""
     with connect_vaults_db() as conn:
         gone = [row[0] for row in conn.execute("SELECT agent FROM computer_agents WHERE set_by = ? AND enabled",
                                                (user_id,))]
         conn.execute("UPDATE computer_agents SET enabled = 0, runs = 'never' WHERE set_by = ? AND enabled",
                      (user_id,))
         conn.executemany("DELETE FROM agent_dir_grants WHERE agent = ?", [(agent,) for agent in gone])
+        conn.executemany("DELETE FROM agent_people WHERE agent = ?", [(agent,) for agent in gone])
     return gone
 
 
@@ -222,6 +230,87 @@ def set_dirs(entries: list[dict]) -> list[dict]:
             conn.execute("INSERT INTO agent_dirs (id, path, name, added_at) VALUES (?, ?, ?, ?)",
                          (dir_id, entry["path"], name, kept.get(dir_id, now)))
     return dirs()
+
+
+# --- the people an agent's owner lets use it -----------------------------------------------------
+
+MAX_PEOPLE = 50        # people one agent serves beside its owner
+_PEOPLE_COLUMNS = ("agent", "server", "workspace_id", "account", "username", "at")
+
+
+def people(agent: str = "") -> list[dict]:
+    """The people the owners let use their agents (decision 13 of
+    docs/research/agents-as-participants-plan.md), or ``agent``'s:
+    ``[{agent, server, workspace_id, account, username, at}]``, ``server``
+    "" for this server and else the address of the owner's channel there
+    (``computer_links.remote_url``), ``account`` the person's account
+    there, ``username`` how Settings names them; in the order they were
+    named."""
+    with connect_vaults_db() as conn:
+        rows = conn.execute(f"SELECT {', '.join(_PEOPLE_COLUMNS)} FROM agent_people WHERE ? = '' OR agent = ? "
+                            "ORDER BY at, rowid", (agent, agent)).fetchall()
+    return [dict(zip(_PEOPLE_COLUMNS, r)) for r in rows]
+
+
+def named(agent: str, server: str, ws: str, account: str) -> bool:
+    """Whether the owner of ``agent`` lets the account ``account`` of the
+    workspace ``ws`` on ``server`` ("" this one) use it."""
+    if not account:
+        return False
+    with connect_vaults_db() as conn:
+        return conn.execute("SELECT 1 FROM agent_people WHERE server = ? AND workspace_id = ? AND account = ? "
+                            "AND agent = ?", (server, ws, account, agent)).fetchone() is not None
+
+
+def name_person(agent: str, server: str, ws: str, account: str, username: str) -> bool:
+    """The account ``account`` of the workspace ``ws`` on ``server`` may
+    use ``agent`` from now on → whether that is new. ValueError past
+    ``MAX_PEOPLE``."""
+    with connect_vaults_db() as conn:
+        if conn.execute("SELECT 1 FROM agent_people WHERE server = ? AND workspace_id = ? AND account = ? "
+                        "AND agent = ?", (server, ws, account, agent)).fetchone():
+            conn.execute("UPDATE agent_people SET username = ? WHERE server = ? AND workspace_id = ? AND account = ? "
+                         "AND agent = ?", (username, server, ws, account, agent))
+            return False
+        if conn.execute("SELECT COUNT(*) FROM agent_people WHERE agent = ?", (agent,)).fetchone()[0] >= MAX_PEOPLE:
+            raise ValueError(f"At most {MAX_PEOPLE} people may use one agent.")
+        conn.execute("INSERT INTO agent_people (server, workspace_id, account, agent, username, at) "
+                     "VALUES (?, ?, ?, ?, ?, ?)", (server, ws, account, agent, username, page_now()))
+    return True
+
+
+def unname_person(agent: str, server: str, ws: str, account: str) -> bool:
+    """The account may no longer use ``agent`` → whether it could."""
+    with connect_vaults_db() as conn:
+        return conn.execute("DELETE FROM agent_people WHERE server = ? AND workspace_id = ? AND account = ? "
+                            "AND agent = ?", (server, ws, account, agent)).rowcount > 0
+
+
+def _lends(agent: str, row: dict, ws: str, account: str) -> bool:
+    """Whether the owner of ``agent`` (its ``enabled_agents()`` row) lets
+    the account ``account`` use it in the workspace ``ws`` of this server,
+    while the owner still edits ``ws``."""
+    from .. import workspaces
+
+    return named(agent, "", ws, account) and workspaces.at_least(workspaces.role_of(ws, row["set_by"]), "editor")
+
+
+def lent_to(ws: str, account: str) -> dict[str, dict]:
+    """``enabled_agents()`` of those another account owns and lets the
+    account ``account`` of the workspace ``ws`` of this server use
+    (``_lends``)."""
+    return {name: row for name, row in enabled_agents().items()
+            if row["set_by"] != account and _lends(name, row, ws, account)}
+
+
+def usable(user_id: str, ws: str, agent: str) -> dict | None:
+    """The ``enabled_agents()`` row of ``agent`` while the account owns it,
+    or its owner lets the account use it in ``ws`` (``lent_to``); None
+    otherwise."""
+    row = enabled_agents().get(agent)
+    if row is None or not user_id:
+        return None
+    return row if row["set_by"] == user_id or _lends(agent, row, ws, user_id) else None
 
 
 def forget_links(live_ids: set[str]) -> None:

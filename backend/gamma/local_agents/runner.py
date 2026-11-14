@@ -102,6 +102,17 @@ asks and, after ``MAX_DECLINES`` declines of the person's in a row, asks no
 more; a file change asking to write below a root for the rest of the
 session (Codex's ``grantRoot``) is declined unseen.
 
+A co-author's turn (decision 13 of
+docs/research/agents-as-participants-plan.md: a person the agent's owner
+named on this computer, ``store.people``) runs as its owner's does, for that
+person: their conversation, their token, their name in the prompt, in the
+directory of the synced folder its page is a file of alone. What it asks is
+allowed once at most (``once`` on the ask; no grant is looked up or kept),
+answered by that person in the chat or by the owner on this computer (its
+ask a card of ``computer_asks`` too); another server's co-author's turn asks
+nothing (step 4.3 of the plan relays asks). The person no longer named
+stops their turn (``stop_person``) and fails the next one when it is taken.
+
 A turn of another server's work folder asks on this computer (step 5b of
 docs/research/agent-collab.md): its agent's ``ask``, the desktop app's
 secret set and that server reached securely
@@ -139,13 +150,13 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from .. import config, integrations, remote_servers
+from .. import agents, config, integrations, remote_servers
 from ..blocks_store import new_block_id
 from ..db import connect_pages_db, format_stamp, page_now
 from ..annotations import requests
 from ..annotations.entries import AnnotationError
 from ..logbuf import log
-from . import catalog, chats, enabled, events, home, procs, prompt, store, tools
+from . import catalog, chats, enabled, events, home, procs, prompt, store, threads, tools
 
 RUN_TIMEOUT_S = 1800              # env GAMMA_AGENT_RUN_TIMEOUT: a turn running this long is stopped
 MAX_RUNS = 2                      # runs at once on this server, at most one per folder
@@ -186,6 +197,9 @@ HOST_UNREAD = "Gamma could not read the network address this command reaches."
 ONE_AT_A_TIME = "Gamma allows file changes one at a time."
 FAR_ASKS = "This is answered on the computer that runs the agent."
 NO_ASK_HERE = "No question on this computer has that id."
+ONCE_ONLY = "A co-author's turn is allowed once at most."
+UNNAMED = "The owner of {agent} on this computer no longer lets you use it."
+LENT_FOLDER = "{agent} works for {person} only on the files of a synced folder."
 
 # The kinds of work a vault's queue holds: a Send's run, a chat's turn.
 SEND, CHAT = "send", "chat"
@@ -197,6 +211,7 @@ SEND, CHAT = "send", "chat"
 # ``stopped``).
 WITHDRAWN, CLOSING, LINK, PERSON = "withdrawn", "closing", "link", "person"
 STOPPED = {"off": "Stopped: the agent was turned off on this computer.",
+           "unnamed": "Stopped: the agent's owner no longer lets you use it.",
            "unoffered": "Stopped: the directory is no longer offered on this computer.",
            "paused": "Stopped: the synced folder was paused.",
            "removed": "Stopped: the synced folder is no longer kept on this computer.",
@@ -747,18 +762,21 @@ def wait_asks(after: int, timeout: float) -> int:
         return _asks_version
 
 
-def _remote_turnings() -> list:
-    """The chat turns of other servers' work folders running here."""
+def _computer_turnings() -> list:
+    """The chat turns running here whose asks are answered on this
+    computer: those of other servers' work folders, and the co-authors'
+    turns of this server's (answered in their chat too)."""
     with _lock:
         return [run["chat"] for (_, kind, _), run in _active.items()
-                if kind == CHAT and run.get("chat") is not None and run["chat"].home.remote]
+                if kind == CHAT and run.get("chat") is not None and (run["chat"].home.remote or run["chat"].lent)]
 
 
 def computer_asks(user_id: str) -> list[dict]:
-    """The asks waiting on remote turns of the vaults ``user_id`` made,
-    oldest first, each as the desktop app draws it (``_ChatTurn._card``)."""
+    """The asks waiting on remote turns of the vaults ``user_id`` made, and
+    on co-authors' turns of the agents it owns, oldest first, each as the
+    desktop app draws it (``_ChatTurn._card``)."""
     held = []
-    for turning in _remote_turnings():
+    for turning in _computer_turnings():
         if turning.maker != user_id:
             continue
         with turning._asking:
@@ -768,11 +786,12 @@ def computer_asks(user_id: str) -> list[dict]:
 
 def answer_computer(ask_id: str, decision: str, user_id: str) -> int:
     """The desktop app's answer to the ask ``ask_id`` of a remote turn of a
-    vault ``user_id`` made: ``once`` or ``deny`` (``_ChatTurn._answer_here``)
-    → the asks' version once the agent has it. ChatError 404 for no such
-    ask (or another account's), 400 for another decision, 409 as
-    ``_answer_here`` says, or for a turn that ended."""
-    for turning in _remote_turnings():
+    vault ``user_id`` made, or of a co-author's turn of its agent: ``once``
+    or ``deny`` (``_ChatTurn._answer_here``) → the asks' version once the
+    agent has it. ChatError 404 for no such ask (or another account's), 400
+    for another decision, 409 as ``_answer_here`` says, or for a turn that
+    ended."""
+    for turning in _computer_turnings():
         with turning._asking:
             found = ask_id in turning.asks or ask_id in turning.answered
         if found and turning.maker == user_id:
@@ -816,6 +835,30 @@ def stop_dirs(paths) -> None:
             if kind == CHAT and not run["link_id"] and run["dir"] in gone and not run["stop"].is_set():
                 run["reason"] = LINK
                 run["stop"].set()
+
+
+def stop_person(agent: str, server: str, ws: str, account: str) -> None:
+    """The account ``account`` of the workspace ``ws`` on ``server`` (""
+    this one) may no longer use ``agent``: its co-author's turns of it that
+    run here stop, failed with why (``unnamed``); one queued fails when it
+    is taken (``_ChatTurn._work``)."""
+    from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+    with _lock:
+        turnings = [(run, run["chat"]) for (_, kind, _), run in _active.items()
+                    if kind == CHAT and run.get("chat") is not None and run["chat"].lent
+                    and run["chat"].agent == agent and run["chat"].person == account]
+    for run, turning in turnings:
+        if turning.home.remote:
+            link = folder_links.get_link(turning.link_id)
+            here = link is not None and (link["remote_url"], link["workspace_id"]) == (server, ws)
+        else:
+            here = not server and turning.ws == ws
+        if here:
+            with _lock:
+                if not run["stop"].is_set():
+                    run["reason"] = "unnamed"
+                    run["stop"].set()
 
 
 def stop_agent(agent: str) -> None:
@@ -1310,7 +1353,8 @@ class _Turning:
         self.ws, self.name, self.link_id, self.run = ws, name, link_id, run
         self.stop = run["stop"]
         self.agent, self.label = "", "the agent"
-        self.owner = ""                 # the account that turned the agent on, whose turn this is
+        self.owner = ""                 # the account that turned the agent on, whose agent works
+        self.person = ""                # the account the turn is for: the owner, or a co-author it serves
         self.turn = None
         self.timed_out = False
         self.steps: list[dict] = []
@@ -1321,7 +1365,8 @@ class _Turning:
 
     def _tools(self) -> None:
         """Gamma's tools for a turn of this server (``tools.mint``), once:
-        the owner's token of the workspace, named with the agent's id,
+        the token of the account the turn is for (its person: the owner, or
+        a co-author's) of the workspace, named with the agent's id,
         living the run's timeout and ``TOKEN_SLACK_S``. A chat turn mints
         them before its prompt, which says whether it has them. A turn of
         another server's work folder gets none here (step 4.2 of
@@ -1329,7 +1374,7 @@ class _Turning:
         one)."""
         if self._token or self.home.remote:
             return
-        minted = tools.mint(self.owner, self.ws, self.agent, _run_timeout() + TOKEN_SLACK_S)
+        minted = tools.mint(self.person or self.owner, self.ws, self.agent, _run_timeout() + TOKEN_SLACK_S)
         if minted:
             self.gamma, self._token = minted
             self._token_until = time.monotonic() + _run_timeout() + TOKEN_SLACK_S
@@ -1854,7 +1899,9 @@ class _ChatTurn(_Turning):
         self.declines = 0               # the person's declines in a row
         self.waited = 0.0               # seconds a remote turn waited for the person (its deadline moved so)
         self.file = ""                  # the page's path from this computer's vault rows ("" for none)
-        self.maker = ""                 # the account that made the vault, else the turn's owner
+        self.maker = ""                 # who answers its asks on this computer: the vault's maker, else the owner
+        self.person_name = ""           # its username
+        self.lent = False               # a co-author's turn (``_work``)
         self._io = threading.Lock()     # one write of the message at a time, the newest last
         self._asking = threading.Lock()  # the asks and the steps, which the person's answer changes too
         self._written_at = 0.0
@@ -1883,22 +1930,35 @@ class _ChatTurn(_Turning):
                 self._push()
 
     def _close(self) -> None:
-        """The turn's end written: its message, then its row."""
+        """The turn's end written: its message (with the threads its agent
+        opened meanwhile, ``threads.opened``: a turn of this server's), then
+        its row."""
         if self.left_open:
             return
         try:
             with self._io:
                 self._ended = True
                 if not self.gone:
+                    opened = {} if self.home.remote else {"threads": self._opened()}
                     self.gone = not self.home.write(self, {
                         **self._progress(), "state": self.end["state"], "error": self.end["error"],
                         "changes": self.changes, "changed": self.changed, "built": self.built,
-                        "ended_at": page_now()}, last=True)
+                        **opened, "ended_at": page_now()}, last=True)
         except Exception as e:  # noqa: BLE001 — the row stays open: the next start fails the message
             log.warning(f"[agents] chat turn {self.turn_id} of workspace {self.ws} left open; the next start "
                         f"fails it: {e}")
             return
         store.end_turn(self.turn_id, state=self.end["state"], error=(self.end["record"] or "")[-MAX_ERROR:])
+
+    def _opened(self) -> list[dict]:
+        """The threads its agent opened for the turn's owner since the turn
+        began running (``threads.opened``), what its answer's card lists;
+        none for a turn that never ran, or when they cannot be read."""
+        try:
+            return threads.opened(self.ws, agents.here(self.agent).id, self.person, self.run.get("since") or "")
+        except Exception as e:  # noqa: BLE001 — the end is written without them
+            log.warning(f"[agents] the threads chat turn {self.turn_id} opened: {e}")
+            return []
 
     def _fail(self, words: str, record: str = "") -> None:
         """The turn failed: ``words`` its message says, ``record`` this
@@ -1946,9 +2006,17 @@ class _ChatTurn(_Turning):
         if link is not None and (link["status"].get(folder_links.PAUSED) or folder_links.choosing(link)):
             self._fail("The synced folder is paused on this computer: send this again once it syncs.")
         self.owner = self.home.whose(link, context)
+        self.person, self.person_name = self.home.person(context)
+        self.lent = self.home.lent(context)
         if not store.owns(self.owner, self.agent):
             self._fail(f"{self.label} was turned off on this computer.")
-        if not self.home.editor(self.owner):
+        if self.lent and not self.home.serves(self.agent, self.person):
+            self._fail(UNNAMED.format(agent=self.label))
+        if self.lent and not self.home.editor(self.owner):
+            self._fail(f"The owner of {self.label} on this computer can no longer edit this workspace.")
+        if self.lent and place["kind"] != "vault":
+            self._fail(LENT_FOLDER.format(agent=self.label, person=self.person_name or "you"))
+        if not self.home.editor(self.person):
             self._fail(f"Only an owner or an editor of this workspace can talk to {self.label}.")
         found = catalog.probe(self.agent, fresh=True, models=False)
         self._check_stop()
@@ -1964,9 +2032,10 @@ class _ChatTurn(_Turning):
         argv = catalog.command(self.agent)
         if argv is None:
             self._fail(f"{self.label} is not on this computer.")
-        # Another server's turn asks only on this computer (``ask_refusal``), each ask checked again.
-        self.ask = not ask_refusal(link, self.home.remote, self.agent)
-        self.maker = link["created_by"] if link is not None else self.owner
+        # Another server's turn asks only on this computer (``ask_refusal``), each ask checked again; a
+        # co-author's there asks nothing.
+        self.ask = not ask_refusal(link, self.home.remote, self.agent) and not (self.lent and self.home.remote)
+        self.maker = link["created_by"] if link is not None and not self.lent else self.owner
 
         # 2. running
         self.root = Path(place["path"])
@@ -1980,8 +2049,8 @@ class _ChatTurn(_Turning):
         self._show(force=True, state="running")
         self._check_stop()
 
-        # 3. the prompt and the session
-        owner = self.home.owner_name(self.owner)
+        # 3. the prompt and the session: the person's words are the instruction
+        owner = self.person_name or "the owner"
         about, selections = self.home.where(self, place, context)
         # what an ask names: never the other server's word
         self.file = self.home.vault_file(self, link) if link is not None else ""
@@ -1989,8 +2058,20 @@ class _ChatTurn(_Turning):
         session = self._session(place)
         self.fresh = bool(earlier) and not session
         self._tools()   # the prompt says whether the turn has them
+        thread, images, pictures = None, [], None
+        if context.get("thread_id"):
+            # a thread's turn: the thread as it is now, its pictures where a vault's files hold them
+            thread = self.home.thread(self, place, context)
+            if thread is None:
+                self._fail("That comment thread is gone.")
+            pictures = self.root if place["kind"] == "vault" and not self.home.remote else None
+            images = prompt.picture_paths([thread], pictures) if pictures else []
 
         def told(with_earlier: bool) -> str:
+            if thread is not None:   # the thread holds what was said before: no earlier messages
+                return prompt.build_thread(agent=self.agent, owner=owner, about=about, place=place,
+                                           message=context["text"], thread=thread, root=pictures, ask=self.ask,
+                                           tools=self.gamma is not None)
             return prompt.build_chat(agent=self.agent, owner=owner, about=about, place=place,
                                      message=context["text"], selections=selections,
                                      earlier=earlier if with_earlier else None, ask=self.ask,
@@ -2000,7 +2081,7 @@ class _ChatTurn(_Turning):
         before = _snapshot(self.root)
         self._check_stop()
         chosen = {"ask": self.ask, "stream": True, "model": self.model, "effort": self.effort,
-                  "title": context.get("title") or ""}
+                  "title": context.get("title") or "", "images": images}
         done = self._turn(argv, self.root, told(not session), session, **chosen)
         if self._resume_refused(done, session):
             # A session this computer no longer has (Claude Code has no
@@ -2095,6 +2176,8 @@ class _ChatTurn(_Turning):
                     _asks_changed()
                     self._show_later()
                 else:
+                    if self.lent:
+                        _asks_changed()
                     self._show(force=True)
                 return None
         elif kind == "ask_gone":
@@ -2104,7 +2187,7 @@ class _ChatTurn(_Turning):
                 if ask_id:
                     self.answered.add(ask_id)
             if held is not None:
-                if self.home.remote:
+                if self.home.remote or self.lent:
                     _asks_changed()
                 self._settle(held, "failed")
         self._show()
@@ -2140,9 +2223,11 @@ class _ChatTurn(_Turning):
         ``SHELL_GRACE_S`` for its first read). A command the person allowed
         in a local conversation, exactly it in the same directory and to
         the same network host, is answered at once, never shown; a remote
-        turn looks up no grant. Any other ask is held, in the message
-        (``asks``) with its step ``asked``, a remote turn's for the desktop
-        app alone (``card``) → whether it was held."""
+        turn and a co-author's look up no grant. Any other ask is held, in
+        the message (``asks``, a co-author's marked ``once``: Allow once and
+        Decline alone) with its step ``asked``, a remote turn's for the
+        desktop app alone (``card``), a co-author's for the desktop app too
+        → whether it was held."""
         from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
         remote = self.home.remote
@@ -2166,7 +2251,7 @@ class _ChatTurn(_Turning):
         if refusal:
             self.turn.answer(event["id"], "deny", refusal, by="gamma")
             return False
-        if not remote and kind == "command" and command and store.granted(
+        if not remote and not self.lent and kind == "command" and command and store.granted(
                 self.conversation_id, command, dir=str(self.root), cwd=cwd, host=host):
             self.turn.answer(event["id"], "once")
             return False
@@ -2205,6 +2290,8 @@ class _ChatTurn(_Turning):
             shown["tool"] = events.one_line(str(event.get("tool") or ""), 100)
         if event.get("background"):
             shown["background"] = True
+        if self.lent:
+            shown["once"] = True
         now = datetime.now(timezone.utc)
         shown["at"], shown["expires_at"] = format_stamp(now), format_stamp(now + timedelta(seconds=ASK_TIMEOUT_S))
         # a step's id never the ask's: a remote turn's steps reach the other server
@@ -2215,7 +2302,7 @@ class _ChatTurn(_Turning):
             step = _step({"id": step_id, "kind": "edit", "path": (event.get("paths") or [""])[0], "status": "asked"})
         else:
             step = _step({"id": step_id, "kind": "other", "status": "asked"})
-        card = self._card(event, shown, link) if remote else None
+        card = self._card(event, shown, link) if remote or self.lent else None
         with self._asking:
             self.held += 1
             self.asks[ask_id] = {"key": event["id"], "kind": kind, "command": command, "cwd": cwd, "host": host,
@@ -2265,8 +2352,10 @@ class _ChatTurn(_Turning):
             card["diff"] = mark(shown["diff"])
         if event.get("reason"):
             card["reason"] = mark(events.one_line(str(event["reason"]), 300))
-        card["server"] = {"origin": remote_servers.origin_of(link["remote_url"]),
-                          "account": mark(events.one_line(self.home.username, 64))}
+        card["server"] = {"origin": remote_servers.origin_of(link["remote_url"]) if link["remote_url"] else "",
+                          "account": mark(events.one_line(self.home.username if self.home.remote else "", 64))}
+        if self.lent:
+            card["for"] = mark(events.one_line(self.person_name, 64))
         if count:
             card["marked"] = count
         card["at"], card["expires_at"] = shown["at"], shown["expires_at"]
@@ -2287,13 +2376,15 @@ class _ChatTurn(_Turning):
         records the grant. ChatError 404 for an ask the turn never had, 409
         for one that waits no more (answered, withdrawn, declined by Gamma)
         or that the agent no longer takes, 400 for Allow in this chat on
-        anything but a command."""
+        anything but a command, and in a co-author's turn (``ONCE_ONLY``)."""
         with self._asking:
             held = self.asks.get(ask_id)
             if held is None:
                 raise chats.ChatError(409 if ask_id in self.answered else 404,
                                       f"{self.label} no longer waits for that." if ask_id in self.answered
                                       else "No question of this turn has that id.")
+            if decision == "chat" and self.lent:
+                raise chats.ChatError(400, ONCE_ONLY)
             if decision == "chat" and held["kind"] != "command":
                 raise chats.ChatError(400, "Only a command can be allowed in this chat.")
         if not self._decide(ask_id, decision, note):
@@ -2320,7 +2411,7 @@ class _ChatTurn(_Turning):
             # event's guard), whichever thread comes first.
             self._mark(held, "asked", answered)
         written = self.turn is not None and self.turn.answer(held["key"], decision, note, by=by)
-        if written and decision == "chat" and held["kind"] == "command" and held["command"]:
+        if written and decision == "chat" and not self.lent and held["kind"] == "command" and held["command"]:
             try:
                 if store.runs_of(self.agent) == "ask" and store.owns(self.owner, self.agent):
                     store.grant(self.conversation_id, held["command"], agent=self.agent, dir=str(self.root),
@@ -2334,6 +2425,8 @@ class _ChatTurn(_Turning):
             _asks_changed()
             self._show_later()
         else:
+            if self.lent:
+                _asks_changed()
             self._show(force=True)
         return written
 
@@ -2384,7 +2477,7 @@ class _ChatTurn(_Turning):
                 if at is not None and self.steps[at]["status"] == "asked":
                     self.steps[at]["status"] = "declined"
         if left:
-            if self.home.remote:
+            if self.home.remote or self.lent:
                 _asks_changed()
             try:
                 self._show(force=True)

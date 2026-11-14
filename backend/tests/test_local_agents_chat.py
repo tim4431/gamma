@@ -560,7 +560,7 @@ def test_the_strip_and_the_refusals(lab, disk, monkeypatch):
     assert strip == {"agent": "codex", "label": "Codex", "ready": True, "problem": "", "models": strip["models"],
                      "folder": strip["folder"], "paused": False, "turn": None, "session": False,
                      "folder_id": f.w, "dir": {"kind": "vault", "name": strip["folder"], "path": f.link["path"]},
-                     "grants": []}
+                     "grants": [], "lent": None}
     assert strip["folder"] and [m["id"] for m in strip["models"]] == ["gpt-fake", "gpt-fake-mini"]
     for text, detail in (("  ", "Write a message first."),
                          ("x" * (chats.MAX_TEXT + 1), f"A message is at most {chats.MAX_TEXT} characters.")):

@@ -22,6 +22,13 @@ agent is said beside it: a comment's ``agent`` (its name) and ``agent_id``,
 a block's ``properties.agent`` (``stamp``). A computer's agent names its
 computer as the computer is called now (``read_all``), so a computer
 renamed reads renamed; a connection keeps the name it wrote with.
+
+A computer's agent may act for a co-author its owner named on the computer
+(docs/dev/local_agents.md "A co-author's turn"): what it writes then is the
+co-author's, the account the turn is for, and the agent carries its
+``owner``, the username of the account whose agent it is, which a block's
+stamp and a comment (``agent_owner``) keep as it was then and a comment's
+reader says.
 """
 
 import base64
@@ -38,13 +45,15 @@ GAMMA_NAME = "Gamma AI"
 
 class Agent(NamedTuple):
     """An agent as a comment or a block names it: ``id``, ``kind`` (one of
-    ``KINDS``), ``name`` ("Gamma AI", "Codex", a connection's display name)
-    and ``on``, a computer's agent's computer by its name ("" when it is not
-    known)."""
+    ``KINDS``), ``name`` ("Gamma AI", "Codex", a connection's display name),
+    ``on``, a computer's agent's computer by its name ("" when it is not
+    known), and ``owner``, the username of the account whose agent it is
+    when it acts for another (a co-author's turn), "" otherwise."""
     id: str
     kind: str
     name: str
     on: str = ""
+    owner: str = ""
 
     @property
     def label(self) -> str:
@@ -70,11 +79,12 @@ def gamma() -> Agent:
     return Agent(GAMMA, "gamma", GAMMA_NAME)
 
 
-def computer_agent(computer: str, name: str, on: str = "") -> Agent:
-    """The agent ``name`` on the computer of id ``computer``, called ``on``."""
+def computer_agent(computer: str, name: str, on: str = "", owner: str = "") -> Agent:
+    """The agent ``name`` on the computer of id ``computer``, called ``on``,
+    ``owner`` its owner's username when it acts for another."""
     from .local_agents import catalog  # local: the agents' package is loaded where an agent is named
 
-    return Agent(f"{COMPUTER}{computer}:{name}", "computer", catalog.label(name), on)
+    return Agent(f"{COMPUTER}{computer}:{name}", "computer", catalog.label(name), on, owner)
 
 
 def here_id() -> str:
@@ -88,12 +98,28 @@ def here_id() -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:22]
 
 
-def here(name: str) -> Agent:
+def here(name: str, person: str = "") -> Agent:
     """The agent ``name`` of this computer, a turn or a Send this server
-    runs."""
+    runs; with ``person`` (the account the turn is for), its ``owner`` when
+    another account owns it (``_owner_here``)."""
     from .computers.channel import computer_name
 
-    return computer_agent(here_id(), name, computer_name())
+    return computer_agent(here_id(), name, computer_name(), _owner_here(name, person) if person else "")
+
+
+def _owner_here(name: str, person: str) -> str:
+    """The username of the account that owns the agent ``name`` here, when
+    it is not ``person``; "" otherwise, and where agents do not run."""
+    if not _runs_agents():
+        return ""
+    from .db import account_names, connect_users_db
+    from .local_agents import store
+
+    owner = (store.agents().get(name) or {}).get("set_by") or ""
+    if not owner or owner == person:
+        return ""
+    with connect_users_db() as conn:
+        return account_names(conn, {owner}).get(owner, "")
 
 
 def of_channel(token_id: str, name: str) -> Agent:
@@ -105,14 +131,15 @@ def of_channel(token_id: str, name: str) -> Agent:
     return computer_agent(found[0], name, found[1]) if found else computer_agent("", name)
 
 
-def of_token(token_id: str, token_name: str, scope: str) -> Agent:
-    """The agent an integration token writes as: a turn's token is its
-    agent's (``integrations.mint_turn`` names it with the agent's id), any
+def of_token(token_id: str, token_name: str, scope: str, user_id: str = "") -> Agent:
+    """The agent an integration token of the account ``user_id`` writes
+    as: a turn's token is its agent's (``integrations.mint_turn`` names it
+    with the agent's id; a co-author's turn names its owner, ``here``), any
     other its connection, named by ``integrations.display_name``."""
     from .integrations import TURN, display_name
 
     if scope == TURN and kind_of(token_name) == "computer":
-        return here(_parts(token_name)[1])
+        return here(_parts(token_name)[1], user_id)
     return Agent(token_id, "connection", display_name(token_name))
 
 
@@ -123,41 +150,47 @@ def of_request(request) -> Agent | None:
 
     if not is_token(request):
         return None
-    return of_token(request.state.token_id, request.state.token_name, request.state.token_scope)
+    return of_token(request.state.token_id, request.state.token_name, request.state.token_scope,
+                    request.state.user_id)
 
 
 def of_connection(connection) -> Agent:
     """The agent an MCP connection (``integrations.Connection``) writes as."""
-    return of_token(connection.token_id, connection.name, connection.scope)
+    return of_token(connection.token_id, connection.name, connection.scope, connection.user_id)
 
 
-def read_all(stored: dict[tuple[str, str], str]) -> dict[tuple[str, str], Agent]:
-    """``{(account id, agent id): Agent}`` for the keys of ``stored``
-    (``{(account id, agent id): the name it was written with}``, the account
-    the agent wrote for): Gamma AI, a computer's agent named by the catalog
-    on its computer as the computer is called now (this computer by its own
-    name; another by the name it last announced here for that account, so
-    no other account's row names it; none for a computer no longer known),
-    a connection by its stored name. One read of the computers for every
-    key."""
+def read_all(stored: dict[tuple[str, str, str], str], ws: str) -> dict[tuple[str, str, str], Agent]:
+    """``{(account id, agent id, owner): Agent}`` for the keys of ``stored``
+    (``{(account id, agent id, owner): the name it was written with}``, the
+    account the agent wrote for and ``owner`` the username of the agent's
+    owner kept with what it wrote, "" for the account's own): Gamma AI, a
+    computer's agent named by the catalog on its computer as the computer
+    is called now (this computer by its own name; another by the name it
+    last announced here for that account, or, for a co-author's, by the
+    name its owner's computer announced in the workspace ``ws`` while its
+    agent served that account, ``registry.names_of``, so no other account's
+    row names it; none for a computer no longer known), with that
+    ``owner``, a connection by its stored name. One read of the computers
+    for every key."""
     from .computers import registry
     from .computers.channel import computer_name
 
     this = here_id() if _runs_agents() else None
-    names = registry.names_of({(user, _parts(i)[0]) for user, i in stored
-                               if kind_of(i) == "computer" and _parts(i)[0] not in ("", this)})
+    names = registry.names_of({(user, _parts(i)[0], owner) for user, i, owner in stored
+                               if kind_of(i) == "computer" and _parts(i)[0] not in ("", this)}, ws)
     out = {}
-    for (user, agent_id), name in stored.items():
+    for (user, agent_id, owner), name in stored.items():
         kind = kind_of(agent_id)
+        key = (user, agent_id, owner)
         if kind == "gamma":
-            out[user, agent_id] = gamma()
+            out[key] = gamma()
         elif kind == "computer":
             computer, agent = _parts(agent_id)
-            on = computer_name() if computer == this else names.get((user, computer), "")
-            out[user, agent_id] = (computer_agent(computer, agent, on) if agent
-                                   else Agent(agent_id, kind, name or "an agent"))
+            on = computer_name() if computer == this else names.get((user, computer, owner), "")
+            out[key] = (computer_agent(computer, agent, on, owner) if agent
+                        else Agent(agent_id, kind, name or "an agent"))
         elif kind:
-            out[user, agent_id] = Agent(agent_id, kind, name or "an agent")
+            out[key] = Agent(agent_id, kind, name or "an agent")
     return out
 
 
@@ -171,24 +204,29 @@ def _runs_agents() -> bool:
 
 def stamp(agent: Agent, person: str) -> dict:
     """What a block an agent makes carries as ``properties.agent``: ``{id,
-    name, on?, for}``, ``for`` the username of the account it acts for,
-    whose block it is (docs/dev/block_centric.md "Made by an agent")."""
-    return {"id": agent.id, "name": agent.name, **({"on": agent.on} if agent.on else {}), "for": person}
+    name, on?, for, owner?}``, ``for`` the username of the account it acts
+    for, whose block it is, ``owner`` the agent's owner's where that is
+    another account (a co-author's turn; docs/dev/block_centric.md "Made by
+    an agent")."""
+    return {"id": agent.id, "name": agent.name, **({"on": agent.on} if agent.on else {}), "for": person,
+            **({"owner": agent.owner} if agent.owner else {})}
 
 
 def of_stamp(made: dict) -> Agent:
     """The agent a stamp (``stamp``) names: what a tool's scope carries
     (``agent``) to say who writes, read back for a comment."""
-    return Agent(made["id"], kind_of(made["id"]), made["name"], made.get("on", ""))
+    return Agent(made["id"], kind_of(made["id"]), made["name"], made.get("on", ""), made.get("owner", ""))
 
 
 def of_account(user_id: str, ws: str) -> list[Agent]:
     """The agents of the account ``user_id`` in the workspace ``ws``: Gamma
-    AI, the agents it turned on on this computer (where agents run here),
-    those its computers shown to ``ws`` announce on for it, and its live
-    connections that may comment there (a write token of ``ws``, a read
-    token at the Comment level or the edit level there:
-    ``integrations.comments_in``), in that order."""
+    AI, the agents it turned on on this computer (where agents run here) and
+    those their owners here let it use in ``ws`` (``store.lent_to``), those
+    its computers shown to ``ws`` announce on for it and those another
+    account's computers announce it may use (``registry.of_account``'s
+    ``lent_by``), and its live connections that may comment there (a write
+    token of ``ws``, a read token at the Comment level or the edit level
+    there: ``integrations.comments_in``), in that order."""
     from .computers import registry
     from .db import connect_users_db
     from .integrations import ALL, comments_in, granted
@@ -198,8 +236,9 @@ def of_account(user_id: str, ws: str) -> list[Agent]:
         from .local_agents import store
 
         out += [here(name) for name, row in store.enabled_agents().items() if row["set_by"] == user_id]
+        out += [here(name, user_id) for name in store.lent_to(ws, user_id)]
     for computer in registry.of_account(user_id, ws):
-        out += [computer_agent(computer["id"], a["name"], computer["name"])
+        out += [computer_agent(computer["id"], a["name"], computer["name"], computer.get("lent_by") or "")
                 for a in computer["assistants"] if isinstance(a, dict) and a.get("enabled") and a.get("name")]
     with connect_users_db() as conn:
         rows = conn.execute("SELECT id, name, scope, workspace_id, workspaces, edits, comments FROM integration_tokens "

@@ -286,6 +286,7 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 | `set-agent {ws, agent, enabled}` (Settings → AI: an agent of this computer turned on or off) | `shell:set-agent-from-page` | `setAgentFromPage` → `setAgent` |
 | `set-agent-runs {ws, agent, ask}` (Settings → AI: what it may run, `ask` or not) | `shell:agent-runs-from-page` | `agentRunsFromPage` → `setAgentRuns` |
 | `agent-dirs {ws, dir}` (Settings → AI: a directory offered to the agents, `dir` "new" or the one moved) | `shell:agent-dirs-from-page` | `agentDirsFromPage` → `agentDirs` |
+| `agent-person {ws, agent, place, person}` (Settings → AI: a person who may use an agent, `place` the workspace's id, `person` the account's) | `shell:agent-person-from-page` | `agentPersonFromPage` → `agentPerson` |
 
 **The agents of this computer** are set from Settings → AI on a page of a
 server on this computer (a remote's page is refused with why), and the
@@ -315,7 +316,20 @@ as the person, with their files and the network), then `PATCH {runs:
 `agentDirs(serverId, dirId)` picks a directory with the native dialog
 (`pickDirectory`) and puts the whole list (`PUT /api/local-agents/dirs`)
 with the shell's word, the picked one added (`dirId` "new") or in place of
-the one `dirId` names (`keeping.dirSaid`).
+the one `dirId` names (`keeping.dirSaid`). `agentPerson(serverId, name,
+placeId, account)` lets a co-author use an agent the window's account owns
+([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "A co-author's
+turn"): it reads whom the owner may name itself (`GET
+/api/local-agents/people`), so the question names the person and the
+workspace as the server says them, never as the page does; it asks, Cancel
+the default (`keeping.personAsk`: *Let bob use Codex on this computer?*,
+what they can then do, and one sentence of consent: their turns run on the
+owner's sign-in, the vendor's terms for personal plans forbid making the
+account available to anyone else, and the owner answers for the account's
+terms), then `POST /api/local-agents/<name>/people` with the shell's word
+(`keeping.personSaid`). Taking a person off is the page's, with its
+session. A page ask carries further ids after its flag (`PAGE_ASKS`' rest,
+each checked as the first one is).
 
 *Continue in a terminal* takes no command from the page: `terminalFromPage`
 asks the open server, which must be one on this computer (a remote's page
@@ -965,7 +979,12 @@ Settings → AI: [docs/dev/local_agents.md](../../docs/dev/local_agents.md)
 sandbox. The question is the host's and is drawn here alone, in the bar,
 in the shell's words; nothing the other server sends draws, words or
 answers it, and it shows no answerable card ("Waiting for your answer on
-TIM-PC" is all its page says).
+TIM-PC" is all its page says). A co-author's turn on the host's own server
+([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "A co-author's
+turn") asks here too, its card naming whose chat it is ("From bob's chat
+of main.pdf on this computer"), while the co-author answers it in their
+chat as well; the follower runs while an agent that may ask serves such a
+person.
 
 ```
 ┌──────────────────────────── the whole window (content view hidden) ───────────────────────────┐

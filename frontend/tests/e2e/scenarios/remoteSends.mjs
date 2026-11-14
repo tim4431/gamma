@@ -20,8 +20,9 @@ import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
 // then comments on a passage of the PDF and sends it from the Feedback dialog,
 // which names Codex on the computer: the stand-in answers on the computer and
 // the NAS has its reply signed Codex, the thread resolved, the request done.
-// An @codex mention in a reply runs the same way; bob sees no agent and his
-// @codex sends nothing, and a token's Send is refused. The computer stopped,
+// An @codex in a reply ticks Send to Codex and is a turn of its thread, which
+// the computer takes over its channel and the NAS answers in the thread; bob
+// sees no agent and his @codex sends nothing, and a token's Send is refused. The computer stopped,
 // alice's Send waits ("Waiting for <host>"), and runs once it is back.
 const PAPER = path.join(ROOT, "backend", "tests", "samples", "synctex", "paper");
 const PLACES = JSON.parse(fs.readFileSync(path.join(PAPER, "places.json"), "utf8"));
@@ -138,7 +139,7 @@ export async function remoteSendScenarios(env) {
       const area = await account.api("/api/blocks", { method: "POST", body: { parent_id: pdf, content: "",
         properties: { pdf_position: areaOf(place), color: "rgba(255, 226, 143, 0.65)" } } });
       const made = await account.api(`/api/pages/${pdf}/comments`, { method: "POST", body: { block_id: area.id, body } });
-      assert(!("send" in made), "a comment that names no agent sends nothing");
+      assert(!("turn" in made), "a comment sent to no agent starts no turn");
       return made.thread;
     };
     const computersOf = async (account) => (await account.api(`/api/pages/${pdf}/computer`)).computers;
@@ -249,7 +250,7 @@ export async function remoteSendScenarios(env) {
     });
 
     let caption = null;
-    await step("remote-sends: in alice's reply on the NAS the @ menu lists Codex on the computer, and the reply's Send runs there the same way", async () => {
+    await step("remote-sends: in alice's reply on the NAS the @ menu lists Codex on the computer, @codex ticks Send to Codex, and the reply is a turn of its thread run there", async () => {
       caption = await commentOn(alice, PLACES.v1.figure.rect, "the caption says 2025");
       const ctx = await alice.context(browser);
       const page = await openPage(ctx, at());
@@ -266,22 +267,30 @@ export async function remoteSendScenarios(env) {
         await page.keyboard.press("Enter");
         await menu.waitFor({ state: "detached" });
         await thread.locator(".cmMentionChip", { hasText: "@codex" }).waitFor();
+        const tick = thread.locator(".commentSendTo input[type=checkbox]");
+        await until(() => tick.isChecked(), { what: "@codex ticks the box" });
+        assertEq((await thread.locator(".commentSendTick").innerText()).trim(), "Send to Codex", "the tick names the agent");
         await page.keyboard.type("fix this only");
-        assertEq((await thread.locator("[data-agent-hint]").innerText()).trim(), `Sends this thread to Codex on ${name}.`,
-          "the field says what sending does");
         await page.keyboard.press("Shift+Enter");
-        const reply = await until(async () => (await threadsOf(pdf)).find((th) => th.id === caption.id)
+        await until(async () => (await threadsOf(pdf)).find((th) => th.id === caption.id)
           ?.comments.find((c) => c.body === "@codex fix this only"), { what: "the reply is stored" });
-        const request = await doneRequest(reply.id);
-        assertEq(JSON.stringify([request.note, request.threads.map((t) => t.id), request.state_by]),
-          JSON.stringify(["fix this only", [caption.id], "Codex"]), "a Send of the thread, the comment's other words its instruction");
+        // the computer takes the turn over its channel; its end is the agent's reply in the thread there
+        const answer = thread.locator(".commentItem.reply", { hasText: "Done: fix this only" });
+        await answer.waitFor({ timeout: 60000 });
+        assertEq((await answer.locator(".commentAuthor").textContent()).trim(), "Codex", "the reply is Codex's");
         // the reply's own @codex is the agent's chip, titled with the computer
         const chip = thread.locator(".commentItem.reply .mentionChip.mention-agent", { hasText: "@codex" }).first();
         await chip.waitFor();
         assertEq(await chip.getAttribute("title"), `Agent: Codex on ${name}`, "the chip names the computer");
         assertNoProblems(page);
       } finally { await ctx.close(); }
-      await answeredThere(caption.id);
+      const reply = (await threadsOf(pdf)).find((th) => th.id === caption.id).comments.at(-1);
+      assertEq(JSON.stringify([reply.agent, reply.agent_kind, reply.author, reply.agent_on]),
+        JSON.stringify(["Codex", "computer", "rs-alice", name]), "signed as the computer's agent there, for alice");
+      assert(!(await requestsOf(alice)).some((r) => r.threads.some((t) => t.id === caption.id)), "no Send of the thread");
+      const told = heard().filter((e) => e.in?.method === "turn/start").at(-1).in.params.input.map((p) => p.text || "").join("\n");
+      assert(told.includes('"message": "fix this only"') && told.includes(`"thread_id": "${caption.id}"`),
+        `the comment and its thread reach Codex on the computer: ${told.slice(0, 600)}`);
     });
 
     let units = null;
@@ -338,7 +347,8 @@ export async function remoteSendScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const d = await openFeedback(page);
-        const send = d.getByRole("button", { name: "Send 1 comment to Codex", exact: true });
+        // the caption's thread, which Codex answered in a turn, is open still: a turn resolves nothing
+        const send = d.getByRole("button", { name: "Send 2 comments to Codex", exact: true });
         await send.waitFor({ timeout: 10000 });
         await until(async () => (await notes(d)).includes(away), { what: `the note says the Send waits: ${JSON.stringify(await notes(d))}` });
         await send.click();
@@ -346,17 +356,18 @@ export async function remoteSendScenarios(env) {
         await row.waitFor({ timeout: 10000 });
         await until(async () => (await row.locator(".feedbackRequestState").innerText()).trim() === `Waiting for ${name}`,
           { what: `the request reads Waiting for ${name}: ${await row.locator(".feedbackRequestState").innerText().catch(() => "")}` });
+        const chip = d.locator(`.feedbackEntry[data-thread-id="${units.id}"] .uiTag[data-sent]`).first();
+        await until(async () => (await chip.innerText().catch(() => "")).trim() === `Waiting for ${name}`,
+          { what: `the entry's chip reads Waiting for ${name}: ${await chip.innerText().catch(() => "")}` });
+        assertEq(await chip.getAttribute("title"), away, "its title says it runs when the computer connects");
         await page.keyboard.press("Escape");
         await d.waitFor({ state: "detached" });
-        const thread = await openThread(page, units.id);
-        const chip = thread.locator(".uiTag[data-sent]").first();
-        await until(async () => (await chip.innerText().catch(() => "")).trim() === `Waiting for ${name}`,
-          { what: `the thread's chip reads Waiting for ${name}: ${await chip.innerText().catch(() => "")}` });
-        assertEq(await chip.getAttribute("title"), away, "its title says it runs when the computer connects");
         assertNoProblems(page);
       } finally { await ctx.close(); }
       request = (await requestsOf(alice)).find((r) => r.threads.some((t) => t.id === units.id));
       assertEq(request?.state, "sent", "the request waits, sent");
+      assertEq(JSON.stringify(request.threads.map((t) => t.id).sort()), JSON.stringify([caption.id, units.id].sort()),
+        "a Send of the file's open threads");
       await sleep(1000);
       assertEq((await requestsOf(alice)).find((r) => r.id === request.id).state, "sent", "and keeps waiting while the computer is away");
 

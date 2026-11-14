@@ -7,8 +7,11 @@
 // server answers (a refused write is put back as it was and said in the
 // status line). The folded maps the rows read keep their identity while
 // they read the same (keepIfSame), so a refetch that changed nothing
-// re-renders no row. `readable` turns false when the page's comments
-// answer 404 or 403 (App then offers no comment controls).
+// re-renders no row. While a thread's turn with an agent is to end (its
+// `agent_chat.turn`, comments.js turnChip) the threads are read every
+// TURN_POLL_MS, so its chip follows the turn and its answer comes. `readable`
+// turns false when the page's comments answer 404 or 403 (App then offers
+// no comment controls).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { guideEvents } from "../guide/events.js";
 import { API, apiJson, makeId } from "../shared/lib/utils";
@@ -17,13 +20,15 @@ import { keepIfSame, sameMap } from "../shared/lib/keepIfSame.js";
 import { t } from "../shared/i18n/i18n.js";
 import { CLIENT_ID } from "../collaboration/usePageCollab";
 import {
-  addComment, deleteComment, editComment, findComment, foldThreads, keepThreads, resolveThread, sendRefusal, upsertThread,
+  addComment, deleteComment, editComment, findComment, foldThreads, keepThreads, resolveThread, turnRefusal, upsertThread,
 } from "./comments.js";
 // The row control's, the PDF badge's and the lazy surfaces' rules: in the
 // startup bundle with the rows that need them.
 import "./comments.css";
 
 const NO_THREADS = [];
+// How often the threads are read again while a turn of one is to end, ms.
+const TURN_POLL_MS = 2000;
 const sameList = (a, b) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
 const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 // Every thread of a page, open and resolved.
@@ -134,19 +139,21 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
   }, [threads]);
 
   const failed = (what, err) => statusRef.current?.(t("Couldn't save the comment: {message}", { message: err?.message || what }));
-  // A write that named the agent on this computer answers its `send`: one
-  // refused is said (the comment is stored either way); one made shows as
-  // the thread's chip, the answer's thread carrying it.
-  const sendSaid = (out) => {
-    const why = sendRefusal(out?.send);
+  // A write sent to an agent answers its `turn`: one refused is said (the
+  // comment is stored either way); one begun shows as the thread's chip,
+  // the answer's thread carrying it.
+  const turnSaid = (out) => {
+    const why = turnRefusal(out?.turn);
     if (why) statusRef.current?.(why);
     return out;
   };
 
-  // A new thread on `blockId`, or a reply in `threadId`. Resolves the
+  // A new thread on `blockId`, or a reply in `threadId`, sent to the agent
+  // `to` (its id; "" for none, CommentComposer's tick unticked; null for a
+  // field with no tick, whose `@name` the server reads). Resolves the
   // comment's id once stored (a new thread's id is its first comment's),
   // false when refused (the composer then keeps the text).
-  const add = useCallback(async (blockId, body, threadId = "") => {
+  const add = useCallback(async (blockId, body, threadId = "", to = null) => {
     const page = pageRef.current;
     if (!page) return false;
     const id = makeId();
@@ -158,10 +165,10 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     try {
       try { await flushRef.current?.(); } catch { /* the save says so itself; the server answers for the block */ }
       const out = await apiJson(`${API}/pages/${encodeURIComponent(page)}/comments`,
-        json("POST", { id, block_id: blockId, body, thread_id: threadId, client: CLIENT_ID }));
+        json("POST", { id, block_id: blockId, body, thread_id: threadId, client: CLIENT_ID, ...(to == null ? {} : { to }) }));
       pendingRef.current.delete(id);
       set(page, (list) => upsertThread(list, out.thread));
-      sendSaid(out);
+      turnSaid(out);
       guideEvents.emit("comment.created", { reply: !!threadId });
       return id;
     } catch (err) {
@@ -201,9 +208,9 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
 
   const edit = useCallback((id, body) => write(
     (list) => editComment(list, id, body, nowStamp()),
-    () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, json("PATCH", { body, client: CLIENT_ID })).then(sendSaid),
+    () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, json("PATCH", { body, client: CLIENT_ID })).then(turnSaid),
     (list, out) => {
-      if (out?.thread) return upsertThread(list, out.thread); // a Send made: the thread with its chip
+      if (out?.thread) return upsertThread(list, out.thread); // a turn begun: the thread with its chip
       const found = out?.comment && findComment(list, id);
       return found ? upsertThread(list, { ...found.thread, comments: found.thread.comments.map((c) => (c.id === id ? out.comment : c)) }) : list;
     },
@@ -220,9 +227,29 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     (list, out) => upsertThread(list, out?.thread),
   ), [write, me]);
 
+  // The reader's turn of a thread with an agent stopped (its chip's Stop:
+  // POST /api/local-agents/chat/turns/{id}/stop), the threads read again.
+  const stopTurn = useCallback(async (thread) => {
+    const turnId = thread?.agent_chat?.turn?.turn_id;
+    if (!turnId) return;
+    try {
+      await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(turnId)}/stop`, json("POST", {}));
+    } catch (err) {
+      statusRef.current?.(t("Couldn't stop {agent}: {message}", { agent: thread.agent_chat.label, message: err.message }));
+    }
+    refresh();
+  }, [refresh]);
+
+  const working = threads.some((th) => th.agent_chat?.turn);
+  useEffect(() => {
+    if (!working) return undefined;
+    const timer = setInterval(refresh, TURN_POLL_MS);
+    return () => clearInterval(timer);
+  }, [working, refresh]);
+
   const here = state.pageId === live;
   return {
     threads, threadsByBlock, countByBlock, loaded: state.loaded && here, readable: !here || state.readable,
-    refresh, prefetch, add, edit, remove, resolve,
+    refresh, prefetch, add, edit, remove, resolve, stopTurn,
   };
 }

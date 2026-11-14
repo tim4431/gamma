@@ -10,7 +10,8 @@
 // reader's (feedbackText.js says its entry's shape), of which it lists the
 // threads alone (`threadsOf`), the requests are GET /api/feedback/requests'
 // records.
-import { isWithdrawn } from "../comments/comments.js";
+// A Send its requester withdrew: the server's `failed` with "withdrawn".
+export const isWithdrawn = (request) => request?.state === "failed" && request.detail === "withdrawn";
 
 // How long the line of instruction may be (the server's cap).
 export const NOTE_MAX = 2000;

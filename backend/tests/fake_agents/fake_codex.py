@@ -61,7 +61,8 @@ key optional):
   ``gamma_turn`` that the thread's config names (``url``, the token read from the variable
   ``bearer_token_env_var`` names), made over HTTP (gamma_call.py) and
   logged ``{"gamma": tool, "http", "error", "text"}``; an argument
-  ``"$page"`` is the id of what a chat turn's prompt is about, and
+  ``"$page"`` is the id of what a chat turn's prompt is about,
+  ``"$thread"`` the comment thread a thread turn's prompt hands over, and
   ``{gamma}`` in ``chat`` the text the last call gave back. A thread whose
   config names that server reports it ``starting`` then ``ready``, or
   ``failed`` when the variable is not set (or ``fail`` is ``gamma_down``);
@@ -256,17 +257,29 @@ def chat_message(prompt: str) -> str | None:
     return json.loads(found.group(1)) if found else None
 
 
-def chat_about(prompt: str) -> str:
-    """The id of what a chat turn's prompt is about ("" for none): its JSON
-    block's ``about``."""
+def chat_block(prompt: str) -> dict:
+    """A chat turn's (or a thread turn's) JSON block, the one with its
+    ``message``; {} for none."""
     for body in re.findall(r"```json\n(.*?)\n```", prompt, re.S):
         try:
             block = json.loads(body)
         except ValueError:
             continue
         if isinstance(block, dict) and "message" in block:
-            return str((block.get("about") or {}).get("id") or "")
-    return ""
+            return block
+    return {}
+
+
+def chat_about(prompt: str) -> str:
+    """The id of what a chat turn's prompt is about ("" for none): its JSON
+    block's ``about``."""
+    return str((chat_block(prompt).get("about") or {}).get("id") or "")
+
+
+def chat_thread(prompt: str) -> str:
+    """The id of the comment thread a thread turn's prompt hands over ("" for
+    a chat's): its JSON block's ``thread``."""
+    return str((chat_block(prompt).get("thread") or {}).get("thread_id") or "")
 
 
 def script_of(prompt: str) -> dict:
@@ -387,9 +400,10 @@ def run_turn() -> None:
     cwd = os.getcwd()
     script = script_of(prompt_of(params))
     gamma = (state["config"].get("mcp_servers") or {}).get(GAMMA) or {}
-    page, said = chat_about(prompt_of(params)), ""
+    named = {"$page": chat_about(prompt_of(params)), "$thread": chat_thread(prompt_of(params))}
+    said = ""
     for n, called in enumerate(script.get("gamma") or [] if gamma.get("url") else []):
-        arguments = {k: page if v == "$page" else v for k, v in (called.get("arguments") or {}).items()}
+        arguments = {k: named.get(v, v) if isinstance(v, str) else v for k, v in (called.get("arguments") or {}).items()}
         body = {"type": "mcpToolCall", "id": f"mc{n}", "server": GAMMA, "tool": called["tool"],
                 "arguments": arguments, "readOnlyHint": True, "status": "inProgress"}
         item("item/started", thread, body)

@@ -636,7 +636,7 @@ export function addHighlightAsBlock(blocks, { id, quote = "", note = "", positio
 }
 
 // The agent that made a block (gamma/agents.py stamp): its stored
-// `properties.agent`, {id, name, on?, for}, or null for a block a person
+// `properties.agent`, {id, name, on?, for, owner?}, or null for a block a person
 // made. The block is the account's either way; this only says who made it.
 export function blockAgent(b) {
   const a = b?.properties?.agent;

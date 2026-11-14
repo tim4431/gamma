@@ -30,7 +30,8 @@ builds the state (``state_of``: this computer's id for that server and its
 name, the app's version, the vaults of that server, workspace and account
 with whether each is paused, and the assistants as the catalog last found
 them, ``catalog.known``: a probe only when none was ever made, each with
-whether it is on for the channel's account and what it may run), announces
+whether it is on for the channel's account, what it may run and the people
+of that workspace its owner lets use it, ``people``), announces
 it when it differs from what was last announced or the server asked, then
 polls (held up to ``POLL_S``). A vault added, paused or removed, or an
 agent turned on or off, nudges the threads (``nudge``), which see it at the
@@ -230,16 +231,18 @@ def computer_id(remote_url: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:22]
 
 
-def assistants(user_id: str) -> list[dict]:
+def assistants(link: dict) -> list[dict]:
     """The agents on this computer as the catalog last found them
     (``catalog.known``: one probe when none was ever made, never one to
     refresh it, so a channel keeps no agent probed), each with the models
     it offers (``[{id, label, efforts, effort, default}]``, at most
     ``MAX_MODELS``: what a chat turn there may ask for), whether it is on
-    for the account ``user_id`` (``enabled``: on, and that account turned
-    it on; another account's agent is not that server's to use) and what it
-    may run then (``runs``, ``never`` or ``ask``); ``[]`` where agents do
-    not run (``local_agents.enabled``)."""
+    for the channel ``link``'s account (``enabled``: on, and that account
+    turned it on; another account's agent is not that server's to use),
+    what it may run then (``runs``, ``never`` or ``ask``) and the people of
+    that server's workspace its owner lets use it (``people``, their account
+    ids there: ``store.people``); ``[]`` where agents do not run
+    (``local_agents.enabled``)."""
     from .. import local_agents
     from ..local_agents import catalog, store
 
@@ -249,12 +252,30 @@ def assistants(user_id: str) -> list[dict]:
     there = []
     for name in catalog.AGENTS:
         found = catalog.known(name)
-        on = name in rows and rows[name]["set_by"] == user_id
+        on = name in rows and rows[name]["set_by"] == link["created_by"]
+        people = [p["account"] for p in store.people(name)
+                  if (p["server"], p["workspace_id"]) == (link["remote_url"], link["workspace_id"])] if on else []
         there.append({"name": name, "label": found["label"], "found": found["found"], "ready": found["ready"],
                       "version": (found["version"] or "")[:64], "code": catalog.code(name, found),
                       "models": list(found.get("models") or [])[:MAX_MODELS], "enabled": on,
-                      "runs": rows[name]["runs"] if on else "never"})
+                      "runs": rows[name]["runs"] if on else "never", "people": people})
     return there
+
+
+def members(link: dict) -> list[dict]:
+    """The people of the channel ``link``'s workspace there who may use an
+    agent of its account's (``GET /api/computers/people``: editors and
+    owners, the account itself left out): ``[{id, username, role}]``.
+    ``gamma_sync.SyncError`` (``Older`` for a server without the route)
+    when that server does not answer it."""
+    found = get(link["id"], with_token=True)
+    if found is None:
+        raise gamma_sync.Unreachable("this computer is no longer shown there")
+    server = gamma_sync.Server(found["remote_url"], found["token"], timeout=folder_links.ASK_TIMEOUT_S)
+    answer = _call(server, "GET", "/api/computers/people")
+    people = answer.get("people") if isinstance(answer.get("people"), list) else []
+    return [{"id": p["id"], "username": str(p.get("username") or "")[:64], "role": str(p.get("role") or "")}
+            for p in people if isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"]]
 
 
 def _vaults_of(link: dict) -> list[dict]:
@@ -298,7 +319,7 @@ def state_of(link: dict) -> dict:
         if vault["kind"] == "folder" and vault["folder_id"] in agents:
             vaults[-1]["agent"] = agents[vault["folder_id"]][1]
     return {"computer": {"id": computer_id(link["remote_url"]), "name": computer_name()},
-            "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link["created_by"])}
+            "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link)}
 
 
 def computer_name() -> str:

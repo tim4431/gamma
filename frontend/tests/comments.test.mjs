@@ -5,8 +5,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   abandonedCommentHighlight, addComment, agentFor, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, cardedAnchors,
-  commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, isWithdrawn, keepThreads,
-  laterComments, mentionHint, popoverThreads, resolveThread, sendRefusal, sendState, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
+  commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, keepThreads,
+  laterComments, popoverThreads, resolveThread, shortCount, threadLink, threadPlace, threadsIn, turnChip, turnRefusal, upsertThread,
 } from "../src/comments/comments.js";
 
 const c = (id, thread, author, at, extra = {}) => ({
@@ -141,6 +141,9 @@ test("an agent's comment: its name on the line, then its computer and its person
   assert.equal(agentFor(local), "on TIM-PC, for tim", "the byline after the agent's name");
   assert.equal(authorTitle(local), "Written by Codex on TIM-PC, for tim", "a computer's agent");
   assert.equal(authorTitle({ ...local, author: "" }), "Written by Codex on TIM-PC, for Someone");
+  const lent = { ...local, author: "bob", agent_owner: "alice" };
+  assert.equal(agentFor(lent), "on TIM-PC, for bob", "a co-author's: the person it wrote for");
+  assert.equal(authorTitle(lent), "Written by alice's Codex on TIM-PC, for bob", "and its owner, where there is room");
   const unknown = c("u", "u", "tim", "t", { agent: "Codex", agent_kind: "computer" });
   assert.equal(agentFor(unknown), "for tim", "a computer no longer known");
   assert.equal(authorTitle(unknown), "Written by Codex, for tim");
@@ -183,91 +186,39 @@ test("what a thread is on, in words: the quote, the text, else a caption-less in
   assert.equal(anchorWords(undefined), "", "a block the page does not show");
 });
 
-test("a Send's state, one wording wherever it shows: waiting, the agent at work, done, failed with its reason, withdrawn", () => {
-  const send = (state, detail = "", state_by = "") => ({ request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail, state_by });
-  assert.deepEqual(sendState(send("sent")),
-    { kind: "sent", label: "Waiting for the agent", detail: "", title: "Waiting for the agent", tone: "pending", live: false });
-  assert.deepEqual(sendState(send("running", "Editing sections/method.tex")),
-    { kind: "running", label: "The agent is working…", detail: "Editing sections/method.tex", title: "Editing sections/method.tex", tone: "pending", live: true });
-  assert.equal(sendState(send("running")).title, "The agent is working…");
-  assert.deepEqual(sendState(send("running", "Editing main.tex", "Codex")),
-    { kind: "running", label: "Codex is working…", detail: "Editing main.tex", title: "Editing main.tex", tone: "pending", live: true }, "named by state_by");
-  assert.deepEqual(sendState(send("done", "Fixed both.", "Codex")),
-    { kind: "done", label: "Done by Codex", detail: "Fixed both.", title: "Fixed both.", tone: "ok", live: false });
-  assert.equal(sendState(send("done")).label, "Done");
-  assert.deepEqual(sendState(send("failed", "the build failed")),
-    { kind: "failed", label: "Failed", detail: "the build failed", title: "Failed: the build failed", tone: "failed", live: false });
-  assert.equal(sendState(send("failed")).title, "Failed");
-  assert.deepEqual(sendState(send("failed", "withdrawn", "tim")),
-    { kind: "withdrawn", label: "Withdrawn", detail: "", title: "Withdrawn", tone: "", live: false });
+test("a thread's chip follows the reader's turn of it: queued, working, waiting for an answer here or on the computer", () => {
+  const on = (turn) => ({ ...page()[0], agent_chat: { conversation_id: "c1", agent: "codex", label: "Codex", turn } });
+  const turn = (extra) => ({ turn_id: "u1", state: "running", asking: false, waiting: false, computer: "", ...extra });
+  assert.equal(turnChip(page()[0]), null, "no conversation");
+  assert.equal(turnChip(on(null)), null, "its turn ended: the agent's reply says the rest");
+  assert.deepEqual(turnChip(on(turn())), { kind: "working", label: "Codex is working…", tone: "pending", live: true, stop: true, open: false });
+  assert.deepEqual(turnChip(on(turn({ state: "queued" }))),
+    { kind: "queued", label: "Waiting for Codex", tone: "pending", live: false, stop: true, open: false });
+  assert.equal(turnChip(on(turn({ state: "queued", computer: "TIM-PC" }))).label, "Waiting for TIM-PC");
+  assert.deepEqual(turnChip(on(turn({ asking: true }))),
+    { kind: "asking", label: "Codex is waiting for you", tone: "pending", live: false, stop: true, open: true }, "its card is in the chat");
+  assert.deepEqual(turnChip(on(turn({ waiting: true, computer: "TIM-PC" }))),
+    { kind: "waiting", label: "Codex is waiting for your answer on TIM-PC", tone: "pending", live: false, stop: true, open: false });
 });
 
-test("the Send chip: a thread's Send in sendState's words; none without one, or withdrawn", () => {
-  const on = (state, detail = "") => ({ ...page()[0], sent: { request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail } });
-  assert.deepEqual(sentChip(on("running", "Editing main.tex")), sendState(on("running", "Editing main.tex").sent));
-  assert.equal(sentChip(on("sent")).label, "Waiting for the agent");
-  assert.ok(isWithdrawn(on("failed", "withdrawn").sent));
-  assert.ok(!isWithdrawn(on("running", "withdrawn").sent));
-  assert.equal(sentChip(on("failed", "withdrawn")), null, "the person took it back");
-  assert.equal(sentChip({ ...page()[0], sent: null }), null);
-  assert.equal(sentChip(page()[0]), null);
-});
-
-test("a waiting Send names the agent that answers the reader's Sends, or the computer that keeps the folder, offline in the title", () => {
-  const on = (state) => ({ ...page()[0], sent: { request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail: "" } });
-  const here = { name: "codex", label: "Codex", ready: true, problem: "" };
-  assert.deepEqual(sentChip(on("sent"), here),
-    { kind: "sent", label: "Waiting for Codex", detail: "", title: "Waiting for Codex", tone: "pending", live: false }, "this computer's own");
-  const there = { ...here, computer: "TIM-PC", online: true };
-  assert.deepEqual(sentChip(on("sent"), there),
-    { kind: "sent", label: "Waiting for TIM-PC", detail: "", title: "Waiting for TIM-PC", tone: "pending", live: false });
-  assert.deepEqual(sentChip(on("sent"), { ...there, ready: null, online: false }),
-    { kind: "sent", label: "Waiting for TIM-PC", detail: "", title: "TIM-PC is offline: this runs when it connects.", tone: "pending", live: false });
-  assert.equal(sentChip(on("running"), { ...there, online: false }).label, "The agent is working…", "taken: the computer is back");
-});
-
-test("a field naming the agent on this computer says what sending does: the thread, or the file's open comments", () => {
-  const agent = { name: "codex", label: "Codex", ready: true, problem: "" };
-  const sends = (text) => ({ text, warn: false });
-  const warns = (text) => ({ text, warn: true });
-  assert.deepEqual(mentionHint({ agent, text: "@codex use the British spelling" }), sends("Sends this thread to Codex on this computer."));
-  assert.deepEqual(mentionHint({ agent, text: "@codex go", file: true }), sends("Sends this file's open comments to Codex on this computer."));
-  assert.deepEqual(mentionHint({ agent: { ...agent, ready: false, problem: "Codex is not signed in." }, text: "@codex go" }), warns("Codex is not signed in."));
-  assert.deepEqual(mentionHint({ agent: { ...agent, ready: null }, text: "@codex go" }), sends("Sends this thread to Codex on this computer."), "still checking");
-  assert.equal(mentionHint({ agent, text: "ask `@codex` later" }), null, "inside code");
-  assert.equal(mentionHint({ agent, text: "@Codex go" }), null, "the name exactly");
-  assert.equal(mentionHint({ agent, text: "@codex again", initial: "@codex go" }), null, "an edit that keeps an old mention sends nothing");
-  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go" }), sends("Sends this thread to Codex on this computer."), "an edit that adds one");
-  // an edit the server will not send says why before it is saved
-  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "not_newest" }),
-    warns("Mention Codex in a new reply to send this thread again."));
-  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "closed" }), warns("Reopen this thread to send it to Codex again."));
-  assert.equal(mentionHint({ agent, text: "go on", initial: "go", refused: "closed" }), null, "no mention, nothing to say");
-  assert.equal(mentionHint({ agent: null, text: "@codex go" }), null);
-});
-
-test("a field naming the agent of the computer that keeps the folder names that computer, and says a Send waits while it is offline", () => {
-  const agent = { name: "codex", label: "Codex", ready: true, problem: "", computer: "TIM-PC", online: true };
-  assert.deepEqual(mentionHint({ agent, text: "@codex go" }), { text: "Sends this thread to Codex on TIM-PC.", warn: false });
-  assert.deepEqual(mentionHint({ agent, text: "@codex go", file: true }), { text: "Sends this file's open comments to Codex on TIM-PC.", warn: false });
-  assert.deepEqual(mentionHint({ agent: { ...agent, ready: null, online: false }, text: "@codex go" }),
-    { text: "Sends this thread to Codex on TIM-PC. TIM-PC is offline: this runs when it connects.", warn: false });
-  assert.deepEqual(mentionHint({ agent: { ...agent, ready: false, problem: "Codex is not signed in on TIM-PC." }, text: "@codex go" }),
-    { text: "Codex is not signed in on TIM-PC.", warn: true });
-  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "closed" }),
-    { text: "Reopen this thread to send it to Codex again.", warn: true });
-});
-
-test("a mention the server did not send to the agent says why, worded here by its code, else in the server's words", () => {
+test("a comment the server sent to no agent says why, worded here by its code, else in the server's words", () => {
   const refused = (code, why = "") => ({ agent: "Codex", refused: code, why });
-  assert.equal(sendRefusal(refused("closed")), "Reopen this thread to send it to Codex again.");
-  assert.equal(sendRefusal(refused("not_newest")), "Mention Codex in a new reply to send this thread again.");
-  assert.equal(sendRefusal(refused("viewer")), "Only the workspace's owners and editors can send comments to Codex.");
-  assert.equal(sendRefusal(refused("too_many")), "Codex takes at most 100 comments at a time: mention it in the threads you want answered.");
-  assert.equal(sendRefusal(refused("writes", "This server takes no writes.")), "Not sent to Codex: This server takes no writes.");
-  assert.equal(sendRefusal(refused("nothing", "Nothing new since the last answers.")), "Not sent to Codex: Nothing new since the last answers.");
-  assert.equal(sendRefusal({ agent: "Codex", request_id: "c1", scope: "thread", threads: 1 }), "", "sent");
-  assert.equal(sendRefusal(undefined), "", "no agent named");
+  assert.equal(turnRefusal(refused("closed")), "Reopen this thread to ask Codex again.");
+  assert.equal(turnRefusal(refused("not_newest")), "Reply to ask Codex again: only the newest comment is sent.");
+  assert.equal(turnRefusal(refused("viewer")), "Only the workspace's owners and editors can send comments to Codex.");
+  assert.equal(turnRefusal(refused("off")), "Turn on Codex in Settings → AI first.");
+  assert.equal(turnRefusal(refused("busy")), "Codex is still working in this thread: wait for it, or stop it.");
+  assert.equal(turnRefusal(refused("folder")), "Codex works for you only on the files of a synced folder.");
+  assert.equal(turnRefusal({ ...refused("offline"), computer: "TIM-PC" }), "TIM-PC is offline: send this again once it connects.");
+  assert.equal(turnRefusal({ ...refused("paused"), computer: "TIM-PC" }),
+    "The synced folder is paused on TIM-PC: Codex starts once it syncs again.");
+  assert.equal(turnRefusal(refused("paused")), "The synced folder is paused on this computer: Codex starts once it syncs again.");
+  assert.equal(turnRefusal(refused("writes", "This server takes no changes now.")),
+    "Gamma takes no changes here now: nothing was sent to Codex.");
+  assert.equal(turnRefusal(refused("elsewhere")), "Codex on that computer does not work on this page.");
+  assert.equal(turnRefusal(refused("not_ready", "Codex is not signed in.")), "Not sent to Codex: Codex is not signed in.");
+  assert.equal(turnRefusal({ agent: "Codex", conversation_id: "c1", turn_id: "u1", state: "queued" }), "", "begun");
+  assert.equal(turnRefusal(undefined), "", "sent to no agent");
 });
 
 test("what became of a thread's place after a rebuild: a highlight moved or lost, ink or a region drawn on an earlier build", () => {

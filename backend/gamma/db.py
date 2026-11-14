@@ -48,7 +48,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 61
+SCHEMA_VERSION = 64
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -677,7 +677,11 @@ USERS_SCHEMA = [
 # unread; agent_dir_grants = a command a person allowed in a conversation of
 # that chat, exactly as asked, keyed by the directory the turn works in, the
 # folder below it the command runs in (``.`` the directory itself) and the
-# network host it reaches ("" none), with the conversation's agent.
+# network host it reaches ("" none), with the conversation's agent;
+# agent_people = a person the agent's owner lets use it (a co-author): the
+# server of the workspace ("" for this server, else the address a channel of
+# the owner's names, computer_links.remote_url), its workspace there, the
+# person's account there, the agent, how Settings names the person, when.
 VAULTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS linked_files (
         ws TEXT NOT NULL,
@@ -827,6 +831,15 @@ VAULTS_SCHEMA = [
         agent TEXT NOT NULL,
         at TEXT NOT NULL,
         PRIMARY KEY (conversation_id, dir, command, cwd, host)
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_people (
+        server TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        account TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        username TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        PRIMARY KEY (server, workspace_id, account, agent)
     )""",
 ]
 
@@ -1006,7 +1019,9 @@ CHATS_SCHEMA = [
 ]
 # computer_chats = the conversations of a chat with a computer's agent
 # (gamma/local_agents/chats.py, docs/dev/local_agents.md "The chat's
-# computer side"), not chats: one account's alone (`user_id`), `bucket`
+# computer side"), not chats: one account's (`user_id`), read by it and by
+# `owner`, the account whose agent it talks to (`user_id` itself but for a
+# co-author's, docs/dev/local_agents.md "A co-author's turn"), `bucket`
 # what it is about as chats.bucket says it (a page's id, a folder block's
 # or "home"), `dir` where its agent works, chosen when it starts
 # (``chats.place_of``): the work folder W its bucket is in (that vault's
@@ -1015,12 +1030,17 @@ CHATS_SCHEMA = [
 # `messages` its JSON messages (the person's and the agent's turns,
 # relative paths only), `version` bumped by every write (the runner's as
 # the turn goes, the routes'), `archived_at` NULL for the bucket's active
-# conversation of that account. Private to the account: a backup carries
-# none and a restore keeps the live rows (ws_backup.PRIVATE_TABLES); no
-# export, share, mirror or read_chats reads it; it goes with the page
+# conversation of that account. `thread_id` names the comment thread a
+# conversation answers ("" for a chat's; docs/dev/local_agents.md "A
+# comment sent to an agent"): its bucket is the thread's page, it is never
+# its bucket's active chat nor in History, and `archived_at` NULL is the
+# thread's conversation of that account. Private to the account: a backup
+# carries none and a restore keeps the live rows (ws_backup.PRIVATE_TABLES);
+# no export, share, mirror or read_chats reads it; it goes with the page
 # deleted for good (ops._purge), and a deleted folder's are filed into the
 # library's (ops, ``chats.file_into_home``). Step 59 gave it `bucket` (was
-# `page_id`) and `dir` (docs/dev/migrations.md).
+# `page_id`) and `dir`, step 62 `thread_id`, step 63 `owner`
+# (docs/dev/migrations.md).
 COMPUTER_CHATS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS computer_chats (
         id TEXT PRIMARY KEY,
@@ -1033,14 +1053,18 @@ COMPUTER_CHATS_SCHEMA = [
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         archived_at TEXT,
-        dir TEXT NOT NULL DEFAULT ''
+        dir TEXT NOT NULL DEFAULT '',
+        thread_id TEXT NOT NULL DEFAULT '',
+        owner TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE INDEX IF NOT EXISTS idx_computer_chats_bucket ON computer_chats(bucket, user_id, archived_at)",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chats_thread ON computer_chats(thread_id, user_id) WHERE thread_id != ''",
     # computer_chat_runs = a turn of such a conversation that runs on another
     # computer (step 4d: a page of a work folder of this server kept on a
     # computer of its maker's with an agent there, gamma/computers/registry.py
     # ``agent_of``; local_agents/chats.py, routers/computers.py): `state`
-    # queued until a run of a computer of `user_id`'s claims it (`holder` its
+    # queued until a run of a computer of its conversation's `owner` claims
+    # it (`holder` its
     # token id, `run` the id it minted, `started_at`), running, then done,
     # failed or stopped; `seq` the last write taken from that run, so a retry
     # or a late one never goes back; `stop` set by the person's Stop of a
@@ -1084,7 +1108,9 @@ COMPUTER_CHATS_SCHEMA = [
 # for a session), `resolved_agent` the one that resolved a root (cleared
 # on reopen); `anchor` (JSON, the root only, NULL on a reply and on a root
 # from before step 54) is the place the thread was opened on
-# (gamma/annotations/anchors.py). Never part of a block, so no block reader
+# (gamma/annotations/anchors.py); `agent_owner` the username of the
+# agent's owner when it wrote for a co-author (gamma/agents.py ``owner``,
+# '' otherwise and on every comment from before step 64). Never part of a block, so no block reader
 # has to skip them; a comment write touches no page.
 COMMENTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS comments (
@@ -1104,7 +1130,8 @@ COMMENTS_SCHEMA = [
         agent TEXT NOT NULL DEFAULT '',
         agent_id TEXT NOT NULL DEFAULT '',
         resolved_agent TEXT NOT NULL DEFAULT '',
-        anchor TEXT
+        anchor TEXT,
+        agent_owner TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE INDEX IF NOT EXISTS idx_comments_block ON comments(block_id)",
     "CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id, created_at)",
