@@ -391,13 +391,21 @@ off-site ones ([api.md](api.md) "Admin").
 
 `proxy_settings.test` tries, in parallel threads, Gamma Cloud (the
 configured issuer, first, only when cloud sign-in is on), then
-`TEST_TARGETS`: OpenAI (`https://api.openai.com/v1/models`), Anthropic
+`TEST_TARGETS`: OpenAI (`https://api.openai.com/v1/models`), ChatGPT
+(`https://chatgpt.com/backend-api/codex/models`, the ChatGPT sign-in's
+calls), Anthropic
 (`https://api.anthropic.com/v1/models`), Zotero (`https://api.zotero.org/`)
 and arXiv (`https://arxiv.org/`), then the admin's `url`. arXiv goes
 through `net_guard.guarded_urlopen`, so the Test exercises the pinned or
 `proxy_dns` path of links; the others through the trusted opener. Each is
 one GET with a 10 s timeout on each socket operation (the Test as a whole
-has no limit), and any HTTP status counts as reached. A result:
+has no limit), and any HTTP status counts as reached, except one that
+refuses the server's network (`net_proxy.refused_network`: OpenAI's
+`unsupported_country_region_territory`, Cloudflare's challenge or block
+page, told by `gamma_sync.blocked`, the one rule for a refusal by
+something in front of a service, [https.md](https.md) "Failures worded"),
+whose line fails with the reason ("403: it doesn't serve the country
+or region this server connects from"). A result:
 
 ```json
 {"name": "OpenAI", "url": "https://api.openai.com/v1/models", "route": "proxy",
@@ -436,17 +444,20 @@ system's proxy settings. What it sends and how it reads is in
   device proxy (urllib reads only variables there, and the apps set none),
   so `system` connects directly. Manual works, since the setting is that
   server's own.
-- **TLS-inspecting proxies.** Outside Windows the server verifies HTTPS
-  against OpenSSL's paths or certifi's bundle, not the macOS Keychain
-  ([api.md](api.md) "Auth model"). A proxy that re-signs HTTPS with a
-  root kept only there fails every https call, which the Test names; give
-  the server that root with `SSL_CERT_FILE`. Off-site copies (boto3)
-  ignore both `SSL_CERT_FILE` and the Windows store: they verify against
-  certifi's bundle, so they need the root in `AWS_CA_BUNDLE` too, on
-  Windows as well. That variable replaces the bundle rather than adding
-  to it, so point it at a file holding certifi's CAs plus the proxy's
-  root, or a bucket the bypass list sends direct fails. The proxy Test
-  does not try S3; the Off-site copies Test shows this failure.
+- **TLS-inspecting proxies.** The server verifies HTTPS against the
+  operating system's trust store (truststore, [https.md](https.md) "One
+  trust store"), so a proxy whose root is installed in the macOS Keychain
+  or Windows' store works, as it does in the browser. On Linux and where
+  truststore is off (`GAMMA_TRUSTSTORE=0`) it is OpenSSL's paths: give the
+  server the root with `SSL_CERT_FILE` there, a file holding certifi's CAs
+  plus the proxy's root, since the variable replaces the bundle. The
+  mobile apps verify against certifi's bundle. Off-site copies (boto3)
+  verify against certifi's bundle, or `AWS_CA_BUNDLE`: on Windows and
+  macOS that bundle is added to the system's store, so an installed root
+  works; on Linux it is used alone, so point `AWS_CA_BUNDLE` at certifi's
+  CAs plus the proxy's root, or a bucket the bypass list sends direct
+  fails. The proxy Test does not try S3; the Off-site copies Test shows
+  this failure.
 
 ## Secrets and logs
 
@@ -456,7 +467,7 @@ The password is stored sealed and is write-only over the API. A
 last `@` before the host) and a Basic `Authorization` or
 `Proxy-Authorization` value. Console output is not scrubbed, as before.
 `publisher-sessions.key`, which seals the password, is not in an off-site
-copy ([debugging.md](debugging.md#off-site-copies-in-a-bucket)); a server
+copy ([debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)); a server
 restored without it reads the password as none.
 
 ## Tests

@@ -10,8 +10,9 @@ db.py              schemas, SCHEMA_VERSION, per-workspace DB paths, the connect 
 db_maintenance.py  SQLite upkeep on the app's every() loop: idle connections closed, a grown WAL truncated, PRAGMA optimize
 migrations.py      versioned data-directory upgrades (snapshot, numbered steps)
 backups.py         server backups: snapshots under backups/ (create, zip, delete, restore)
-backup_schedule.py named backup tasks: UTC cron, per-task retention, OS locking
-offsite.py         off-site copies of the databases and uploads in an S3-compatible bucket (s3.py)
+backup_schedule.py named backup tasks: UTC cron, per-task retention, OS locking, an optional copy to the bucket
+bucket_snapshots.py the backup tasks' snapshots in the S3-compatible bucket: copied, pruned, listed, fetched (s3.py)
+offsite.py         the bucket's settings, and the environment's off-site rounds of the databases and uploads (s3.py)
 proxy_settings.py  the server's network proxy setting: stored, checked, the admin API's view, the Test (docs/dev/network_proxy.md)
 ws_backup.py       one workspace's backup zip: export, restore, stored snapshots, a deleted workspace's final copy
 integrity.py       PRAGMA quick_check of a database; the latest failure per file (the db-damage notice)

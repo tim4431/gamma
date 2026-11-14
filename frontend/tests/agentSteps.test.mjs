@@ -214,16 +214,3 @@ test("a chip says which copy was read, how it came and how long it took", () => 
   assert.equal(chipNote({ ms: 120 }), "");
   assert.equal(chipNote(null), "");
 });
-
-test("a change a planning turn kept for the plan counts apart; the plan's own calls read as one verb", () => {
-  const held = { kind: "error", tool: "rename_page", summary: "Held for the plan: rename_page", error: true, held: true };
-  const declined = { kind: "error", tool: "rename_page", summary: "Not allowed: rename_page", error: true, declined: true };
-  const failed = { kind: "error", tool: "read_page", summary: "error: no such page", error: true };
-  const plan = { kind: "plan", tool: "update_plan", summary: "Planned 2 steps", plan: { steps: [] } };
-  const split = splitActions([held, held, declined, failed, plan]);
-  assert.deepEqual([split.failed, split.declined, split.held], [1, 1, 2]);
-  assert.deepEqual([split.library, split.notes], [[], []], "nothing held is a change");
-  assert.equal(stepsSummary([plan, actions[1], plan]), "3 steps · updated the plan 2 times, read 1 page");
-  assert.equal(stepsSummary([plan]), "1 step · updated the plan");
-  assert.equal(runningLabel({ tool: "update_plan", args: {} }), "Updating the plan…");
-});

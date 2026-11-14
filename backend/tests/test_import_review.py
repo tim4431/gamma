@@ -164,6 +164,15 @@ def test_single_markdown_uses_same_review_contract(guest):
     assert [folder_names(guest)[f] for f in filed] == [["Parent", "child"]]
 
 
+def test_a_reviewed_markdown_file_with_a_slash_in_its_name_makes_no_folder(guest):
+    """The one-entry archive of a reviewed Markdown file names its member
+    as one segment (storage.name_segment): a "/" in the file's name is no
+    directory."""
+    parent = make_folder(guest, "Slash parent")
+    plan = review(guest, b"Content", "markdown-file", name="I/O notes.md", folder=parent)
+    assert [(p["title"], p["folders"]) for p in plan["pages"]] == [("I-O notes", [["Slash parent"]])]
+
+
 def test_a_review_refuses_a_destination_that_is_no_folder(guest):
     result = guest.post("/api/import/review", data={"source": "markdown-zip", "folder": "no-such-folder"},
                         files={"file": ("n.zip", archive({"n.md": "# n"}), "application/zip")})

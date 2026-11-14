@@ -1,8 +1,8 @@
 """Exporting an AI chat conversation with its pictures (gamma/chat_export.py,
 docs/dev/chat_history.md "Exporting a conversation"): every picture the chat
 shows packed beside the transcript, a picture that is gone said so, the
-bare .md when there are none, a reply's plan as a checklist, an archived
-conversation by its id, and the workspace's walls."""
+bare .md when there are none, an archived conversation by its id, and the
+workspace's walls."""
 
 import base64
 import io
@@ -81,30 +81,6 @@ def test_a_conversation_without_pictures_is_a_bare_markdown_file(chatted):
     # A folder's chat and the library's say whose they are.
     assert "AI chat of the folder “readout”" in _export(c, [], "x", ids["readout"]).text
     assert "AI chat of the library · 0 messages" in _export(c, [], "x", "home").text
-
-
-def test_a_replys_plan_is_exported_as_its_checklist(chatted):
-    """The last update_plan that ran is the reply's plan: a checklist after
-    the steps, the step under way marked. A change a planning turn held is
-    no failure."""
-    c, _ = chatted
-
-    def plan(*steps, error=False):
-        return {"kind": "error" if error else "plan", "tool": "update_plan", "summary": "Plan", "result": "…",
-                **({"error": True} if error else {}),
-                "plan": {"steps": [{"step": step, "status": status} for step, status in steps]}}
-
-    held = {"kind": "error", "tool": "rename_page", "summary": "Held for the plan: rename_page",
-            "error": True, "held": True}
-    md = _export(c, [{"role": "user", "text": "Tidy up"}, {"role": "ai", "text": "All done.", "actions": [
-        held,
-        plan(("Rename the papers", "pending"), ("File them", "pending")),
-        plan(("Rename the papers", "completed"), ("File them", "in_progress"), ("Label them", "pending")),
-        plan(("Ignored", "completed"), error=True)]}]).text
-    assert ("**Steps**\n\n- Held for the plan: rename_page\n- Plan\n- Plan\n"
-            "- Plan *(failed)*\n\n**Plan**\n\n- [x] Rename the papers\n"
-            "- [ ] File them *(in progress)*\n- [ ] Label them\n\nAll done.") in md
-    assert "**Plan**" not in _export(c, [{"role": "ai", "text": "No plan here."}]).text
 
 
 def test_every_picture_the_chat_shows_is_packed(with_pdf):

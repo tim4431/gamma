@@ -85,7 +85,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import migrations, net_proxy, pdf_meta, storage, sync_clock, textmerge, workspaces
+from . import gamma_sync, migrations, net_proxy, pdf_meta, remote_servers, storage, sync_clock, textmerge, workspaces
 from . import ink as inkmod
 from cryptography.fernet import InvalidToken
 from fractional_indexing import generate_key_between
@@ -192,7 +192,10 @@ class _OffOriginRedirect(urllib.request.HTTPRedirectHandler):
         return new
 
 
-_file_opener = net_proxy.build_opener(_OffOriginRedirect)  # routed like every urlopen (gamma/net_proxy.py)
+# A file's bytes alone follow a redirect (a file may be served from another origin, with no credential
+# there); every other request to the remote refuses one (``gamma_sync.opener``). Routed like every urlopen
+# (gamma/net_proxy.py).
+_file_opener = net_proxy.build_opener(_OffOriginRedirect)
 
 
 class Remote:
@@ -207,15 +210,27 @@ class Remote:
         self.fetch = fetch or default_fetch or self._urllib_fetch
 
     def _urllib_fetch(self, method, path, body, headers):
+        # a redirect is never followed (gamma_sync.opener): the token goes to the remote's address alone
         req = urllib.request.Request(self.url + path, data=body, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with gamma_sync.opener().open(req, timeout=60) as resp:
                 return resp.status, resp.read()
         except urllib.error.HTTPError as e:
             return e.code, e.read()
-        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+        except (gamma_sync.RedirectRefused, urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
             # (IncompleteRead, the answer cut short, is an HTTPException)
-            raise RemoteError(0, f"cannot reach {self.url}: {e}") from e
+            raise self._unreached(req, e)
+
+    def _unreached(self, req, e) -> "RemoteError":
+        """A request answered with no word of the remote's own, as a
+        RemoteError (status 0): gamma_sync's words for a redirect it refused
+        (``Redirected``, ``Blocked``) or a TLS failure (``CertificateRefused``,
+        ``NotHttps``), from which it is raised, so the status says which
+        (``gamma_sync.status_fields``)."""
+        named = gamma_sync.failure_of(self.url, req.full_url, e)
+        failure = RemoteError(0, str(named) if named else f"cannot reach {self.url}: {e}")
+        failure.__cause__ = named or e
+        return failure
 
     def request(self, method, path, *, body=None, content_type=None, ok=(200,)):
         status, data = self.fetch(method, path, body, self._headers(content_type))
@@ -259,15 +274,16 @@ class Remote:
         return self.fetch == self._urllib_fetch
 
     def _open(self, req, timeout: int, opener=None):
-        """``urlopen`` for the streaming paths, every failure a RemoteError
+        """``opener`` (``gamma_sync.opener``'s, which follows no redirect)
+        for the streaming paths, every failure a RemoteError
         (``_urllib_fetch`` keeps an HTTP error's status and body instead, for
         ``request`` to read the detail from)."""
         try:
-            return (opener.open if opener else urllib.request.urlopen)(req, timeout=timeout)
+            return (opener or gamma_sync.opener()).open(req, timeout=timeout)
         except urllib.error.HTTPError as e:
             raise RemoteError(e.code, (e.read() or b"")[:200].decode("utf-8", "replace")) from e
-        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
-            raise RemoteError(0, f"cannot reach {self.url}: {e}") from e
+        except (gamma_sync.RedirectRefused, urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+            raise self._unreached(req, e)
 
     def get_bytes(self, path, progress=None) -> bytes:
         """A file's bytes; ``progress(done, total)`` as they arrive (total 0
@@ -467,13 +483,16 @@ def _round_whoami(ws: str, mirror: dict, remote: Remote, *, fresh: bool = False)
     return me
 
 
-def _check_remote(remote_url: str, token: str, mode: str, fetch) -> tuple[str, dict, str]:
+def _check_remote(remote_url: str, token: str, mode: str, fetch, *, existing: bool = False) -> tuple[str, dict, str]:
     """Validate the address and the token against the remote's ``whoami``:
     ``(remote_url, me, mode)`` — the mode dropped to ``pull`` when the token
-    or the role may not write."""
+    or the role may not write. Plain http to a host on the internet is
+    refused before any request, unless the mirror is ``existing`` at that
+    address (``remote_servers.refuse_plain_far``)."""
     remote_url = (remote_url or "").strip().rstrip("/")
     if not re.match(r"^https?://[^/\s]+(/[^\s]*)?$", remote_url):
         raise ValueError("the server address must be an http(s) URL")
+    remote_servers.refuse_plain_far(remote_url, existing=existing)
     if mode not in ("two-way", "pull"):
         raise ValueError("mode must be two-way or pull")
     token = (token or "").strip()
@@ -748,7 +767,9 @@ def relink_mirror(ws: str, *, token: str = "", remote_url: str = "", adopt: str 
     wanted = mirror["status"].get("detached_mode") or "two-way"
     if wanted not in ("two-way", "pull"):
         wanted = "two-way"
-    remote_url, me, mode = _check_remote(remote_url or mirror["remote_url"], token or mirror["token"], wanted, fetch)
+    remote_url = (remote_url or mirror["remote_url"]).strip().rstrip("/")
+    remote_url, me, mode = _check_remote(remote_url, token or mirror["token"], wanted, fetch,
+                                         existing=remote_url == mirror["remote_url"])
     token = (token or mirror["token"]).strip()
     remote_ws, remote_name = me["workspace"]["id"], me["workspace"].get("name") or "Workspace"
     patch = {"remote_user": me.get("user"), "remote_role": me.get("role")}
@@ -761,7 +782,7 @@ def relink_mirror(ws: str, *, token: str = "", remote_url: str = "", adopt: str 
         patch["adopt"] = adopt
     with _status_guard:
         _save(ws, **fields)
-    _patch_status(ws, patch, drop=("detached_at", "detached_mode", "last_error"))
+    _patch_status(ws, patch, drop=("detached_at", "detached_mode", "last_error", *gamma_sync.STATUS_KEYS))
     return get_mirror(ws)
 
 
@@ -2538,8 +2559,9 @@ def _held_round(ws: str, fetch=None) -> dict:
     except Exception as e:
         words = ("the stored token cannot be read: the data directory's key changed"
                  if isinstance(e, InvalidToken) else str(e) or repr(e))
-        _patch_status(ws, {"running": False, "last_error": words, "last_attempt": page_now()},
-                      drop=("progress", "version_gap", sync_clock.ASKED))
+        _patch_status(ws, {"running": False, "last_error": words, "last_attempt": page_now(),
+                           **gamma_sync.status_fields(e)},
+                      drop=("progress", "version_gap", sync_clock.ASKED, *gamma_sync.STATUS_KEYS))
         raise
     finally:
         _left.pop(ws, None)
@@ -2670,14 +2692,16 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
                         current.pop(key, None)
             return current
 
-        status = _patch_status(ws, finish, drop=("progress", "version_gap", CAPPED))
+        status = _patch_status(ws, finish, drop=("progress", "version_gap", CAPPED, *gamma_sync.STATUS_KEYS))
         if not errors:
             _clock.settle(ws, started)  # everything written before the round started went out with it
     except Exception as e:  # noqa: BLE001 — whatever happens, the running flag comes down
         # a format mismatch is kept apart from the error's words: the pill and Settings say which side to update
+        # and so is what was in the way of the remote (a redirect, its certificate: gamma_sync.status_fields)
         gap = {"version_gap": {"here": e.here, "remote": e.remote}} if isinstance(e, FormatMismatch) else {}
-        status = _patch_status(ws, {"running": False, "last_error": str(e), "last_attempt": page_now(), **gap},
-                               drop=("progress", "version_gap"))
+        status = _patch_status(ws, {"running": False, "last_error": str(e), "last_attempt": page_now(), **gap,
+                                    **gamma_sync.status_fields(e)},
+                               drop=("progress", "version_gap", *gamma_sync.STATUS_KEYS))
         log.warning(f"[mirror] {ws}: {e}")
     if status.get("last_error"):
         _whoami_seen.pop(ws, None)

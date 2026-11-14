@@ -141,24 +141,48 @@ export function popupMarks(list, colors, style) {
   return { standIn: (i) => by.get(i) || null, rest: list.filter((p) => !taken.has(p.id)) };
 }
 
+// A group's first swatches as dots: a group row's icon.
+const GROUP_DOTS = 6;
+function GroupDots({ colors }) {
+  return (
+    <span className="markGroupDots" aria-hidden="true">
+      {colors.slice(0, GROUP_DOTS).map((c, i) => <span key={i} style={{ background: swatchCss(c) }} />)}
+    </span>
+  );
+}
+
 // The palette's groups with colours, as the radio rows that choose the one
-// the highlight picker shows (palette.pickers.highlight), each with its
-// first swatches.
+// the highlight picker shows (palette.pickers.highlight): MenuItems, each
+// its first swatches, its name, how many more it holds and the check. In a
+// menu its rows; in the popup's fold a radio group, which the arrow keys
+// walk, as the StyleRow above it.
 export function GroupRows({ palette, onPick, act = onClick, menu = false }) {
   const current = palette.pickers?.highlight;
+  const groups = palette.groups.filter((g) => g.colors.length);
+  const stop = groups.some((g) => g.id === current) ? current : groups[0]?.id; // the radio Tab reaches
+  const keys = (e) => {
+    const at = groups.findIndex((g) => g.id === current);
+    const to = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: groups.length - 1 }[e.key];
+    if (to === undefined || menu) return;
+    e.preventDefault();
+    const next = groups[(to + groups.length) % groups.length].id;
+    onPick(next);
+    e.currentTarget.parentElement?.querySelector(`[data-mark-group="${next}"]`)?.focus();
+  };
   return (
     <div className="markGroups" role={menu ? "group" : "radiogroup"} aria-label={t("Color group")}>
-      {palette.groups.filter((g) => g.colors.length).map((g) => (
-        <button key={g.id} type="button" role={menu ? "menuitemradio" : "radio"} aria-checked={g.id === current}
-          className={"markGroup" + (g.id === current ? " selected" : "")} {...act(() => onPick(g.id))}>
-          <span className="markGroupDots" aria-hidden="true">
-            {g.colors.slice(0, 6).map((c, i) => <span key={i} style={{ background: swatchCss(c) }} />)}
-          </span>
-          <span className="markGroupName">{g.name}</span>
-          {g.colors.length > 6 ? <span className="markGroupMore">+{g.colors.length - 6}</span> : null}
-          {g.id === current ? <CheckIcon size={14} /> : null}
-        </button>
-      ))}
+      {groups.map((g) => {
+        const on = g.id === current;
+        const more = g.colors.length > GROUP_DOTS ? `+${g.colors.length - GROUP_DOTS}` : undefined;
+        return (
+          <MenuItem key={g.id} role={menu ? "menuitemradio" : "radio"} aria-checked={on} data-mark-group={g.id}
+            tabIndex={menu || g.id === stop ? undefined : -1} onKeyDown={keys} icon={() => <GroupDots colors={g.colors} />} keys={more}
+            trailing={on ? <>{more ? <span className="ctxMenuKey">{more}</span> : null}<CheckIcon size={14} className="ctxMenuCheck" /></> : undefined}
+            {...act(() => onPick(g.id))}>
+            {g.name}
+          </MenuItem>
+        );
+      })}
     </div>
   );
 }

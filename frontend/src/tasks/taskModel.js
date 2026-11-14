@@ -87,10 +87,16 @@ export function afterFollow(job, read, now = Date.now()) {
     finished_at: new Date(now).toISOString() };
 }
 
-// What the tray button shows: "running" (a spinner) while anything runs or
-// waits, else "failed" (a red dot) for a failure worth a look, "ready" (an
-// accent dot) for a file not downloaded yet, or "".
+// A running task that waits for the person (a computer turn's ask, phase
+// "asking"): nothing spins for it, in its row or on the tray button.
+export const waitsForYou = (task) => task?.state === "running" && task.progress?.phase === "asking";
+
+// What the tray button shows: "ready" (an accent dot) while a task waits
+// for the person, else "running" (a spinner) while anything runs or waits
+// its turn, else "failed" (a red dot) for a failure worth a look, "ready"
+// for a file not downloaded yet, or "".
 export function trayBadge(tasks, quietKinds = new Set(["ai"])) {
+  if (tasks.some(waitsForYou)) return "ready";
   if (tasks.some(isActive)) return "running";
   if (tasks.some((task) => task.state === "failed" && !(task.local && quietKinds.has(task.kind)))) return "failed";
   if (tasks.some((task) => task.state === "done" && task.artifact && !task.downloaded)) return "ready";

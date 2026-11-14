@@ -28,7 +28,7 @@ from . import notability_ntb as ntb
 from .documents.model import document
 from .import_zip import READ_ERRORS
 from .note_app_import import Skip, Stop, compose_pdf, page_kind
-from .storage import content_digest, display_filename, store_pdf
+from .storage import content_digest, display_filename, name_segment, store_pdf
 
 
 def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor: str = "",
@@ -49,7 +49,7 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
     Returns the report. Raises HTTPException 400 (no notes, a Supernote
     file, a bad destination or selection), 413 (a central directory or an
     archive past the limits) or 507 (no disk to unpack)."""
-    name = display_filename(name)  # a browser may send a relative path
+    name = name_segment(display_filename(name))  # the note's path when it is the upload's top
     run = Import(ws, conn, folder, actor, preview, progress)
     return run.run_upload(data, selected, refused=nb.NO_NOTES_REASON, refuse=supernote,
                           find=lambda entries: nb.find_bundles(entries, name), nested=nb.nested_zip)

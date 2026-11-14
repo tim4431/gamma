@@ -242,7 +242,7 @@ export async function cloudSignInScenarios(env) {
         await login.getByRole("alert").filter({ hasText: "This server is read-only" }).waitFor();
         assertEq(await login.getByRole("button", { name: "Continue as guest", exact: true }).count(), 0, "no guest while read-only");
         // a Gamma Cloud server's login page is that one button; the password form folds behind Admin sign-in
-        await login.locator("a.loginCloudBtn.lead").waitFor();
+        await login.locator("a.loginCloudBtn.primary").waitFor();
         assertEq(await login.getByPlaceholder("Username").count(), 0, "the password form is folded away");
         await login.getByRole("button", { name: "Admin sign-in", exact: true }).click();
         await login.getByPlaceholder("Username").waitFor();

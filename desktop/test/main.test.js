@@ -82,6 +82,74 @@ for (const name of ['BaseWindow', 'WebContentsView', 'Menu', 'Tray', 'clipboard'
   electron[name] = stub();
 }
 electron.dialog = stub({ showMessageBox: async () => ({ response: 0 }) }); // an error box (errorBox), shown to no one
+electron.Menu = stub({ buildFromTemplate: (template) => template }); // a menu is its template, to be read
+
+// The window main.js makes (createWindow) and its two views, recorded in
+// `windows`: each emits what a test makes it emit (`focus`, `blur`,
+// `resize`, `closed`; a view's webContents its `input-event`s and its
+// session's `will-download`), and keeps what main.js did to it.
+class Emitter {
+  constructor() { this.handlers = new Map(); }
+  on(ev, fn) {
+    if (!this.handlers.has(ev)) this.handlers.set(ev, []);
+    this.handlers.get(ev).push(fn);
+    return this;
+  }
+  emit(ev, ...args) { for (const fn of this.handlers.get(ev) || []) fn(...args); }
+}
+const windows = [];
+class FakeContents extends Emitter {
+  constructor() {
+    super();
+    Object.assign(this, { url: '', sent: [], session: new Emitter() });
+  }
+  isDestroyed() { return false; }
+  isLoading() { return false; }
+  getURL() { return this.url; }
+  async loadFile(file) { this.url = require('url').pathToFileURL(file).href; }
+  async loadURL(url) { this.url = url; }
+  send(channel, state) { this.sent.push([channel, state]); }
+  setWindowOpenHandler() {}
+  focus() {}
+  close() {}
+}
+class FakeView {
+  constructor() { Object.assign(this, { bounds: null, visible: true, webContents: new FakeContents() }); }
+  setBounds(b) { this.bounds = b; }
+  getBounds() { return this.bounds; }
+  setVisible(on) { this.visible = on; }
+  setBackgroundColor() {}
+}
+class FakeWindow extends Emitter {
+  constructor(opts) {
+    super();
+    Object.assign(this, { opts, focused: false, visible: Boolean(opts.show), minimized: false, title: opts.title, flashed: [], inactive: 0,
+      contentView: { views: [], addChildView: (v) => this.contentView.views.push(v) } });
+    windows.push(this);
+  }
+  isDestroyed() { return false; }
+  isMinimized() { return this.minimized; }
+  isMaximized() { return false; }
+  isVisible() { return this.visible; }
+  isFocused() { return this.focused; }
+  getContentSize() { return [1360, 900]; }
+  getNormalBounds() { return { x: 0, y: 0, width: 1360, height: 900 }; }
+  setTitle(t) { this.title = t; }
+  flashFrame(on) { this.flashed.push(on); }
+  showInactive() { this.inactive += 1; this.visible = true; this.minimized = false; }
+  show() { this.visible = true; }
+  focus() { this.focused = true; this.emit('focus'); }
+  blur() { this.focused = false; this.emit('blur'); }
+  close() { this.emit('close'); this.emit('closed'); }
+  restore() {}
+  minimize() { this.minimized = true; }
+  maximize() {}
+  setBackgroundColor() {}
+  setTitleBarOverlay() {}
+  setFocusable() {}
+}
+electron.BaseWindow = FakeWindow;
+electron.WebContentsView = FakeView;
 const resolveFilename = Module._resolveFilename;
 Module._resolveFilename = function (request, ...rest) {
   return request === 'electron' ? 'electron' : resolveFilename.call(this, request, ...rest);
@@ -526,7 +594,7 @@ test('the agent of a work folder of another server this computer is shown on: of
   fresh();
   registry.addRemote('NAS', 'http://nas.lan:9001');
   const s = server('Host');
-  const far = (agent) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', token_id: 't1', push: 'everything', work: true, mine: true, agent });
+  const far = (agent) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', plain: 'lan', token_id: 't1', push: 'everything', work: true, mine: true, agent });
   const codexOn = { name: 'codex', label: 'Codex', ready: true, problem: '', running: null, runs: 'never' };
   s.fake.vaults = [far(null)];
   s.fake.routes = (p, init) => {
@@ -568,7 +636,7 @@ test('the agent of a work folder of another server this computer is shown on: of
 
   // never asking in the chat: refused before anything is asked or sent
   const asks = shell.asked.length;
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask'), /^Error: Asking in the chat is for a work folder of this computer's server\.$/);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask'), /^Error: Asking in the chat is for a work folder of this computer's server: for one of another server, choose Ask on this computer\.$/);
   assert.equal(await shell.setAgentRuns(s.srv.id, 'v1', 'never'), false);
   assert.equal(shell.asked.length, asks, 'nothing asked');
   assert.equal(patches().length, 1);
@@ -714,7 +782,7 @@ test('what a work folder\'s agent may run, from the panel: Ask is asked first wi
   // the same again changes nothing; another word is refused; Nothing more asks nothing and carries no word
   const asks = shell.asked.length;
   assert.equal(await shell.setAgentRuns(s.srv.id, 'v1', 'ask'), false);
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'always'), /never or ask/);
+  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'always'), /never, ask or computer, not always/);
   await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'never');
   const off = patches().at(-1);
   assert.deepEqual(off.body, { agent_runs: 'never' });
@@ -2282,5 +2350,831 @@ test('a start that names a file or a folder never goes hidden into the tray, a l
   } finally {
     process.argv.pop();
     registry.setSettings({ background: false });
+  }
+});
+
+// ------------------------------------------------ addresses and certificates -----
+
+test('every token minted on another server is asked of the host first, every address sent comes from remoteOf, and the shell follows no redirect', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const fns = new Map(src.split(/\n(?=(?:async )?function \w+\()/).map((f) => [(/function (\w+)/.exec(f) || [])[1], f]));
+  const minting = [...fns].filter(([, f]) => /'\/api\/integrations\/tokens', \{\s*method: 'POST'/.test(f)).map(([name]) => name);
+  assert.deepEqual(minting.sort(), ['addFileVault', 'addFolderVault', 'changePush', 'keepOffline', 'makeRemoteWorkFolder', 'showComputer']);
+  for (const name of minting) {
+    const f = fns.get(name);
+    assert.ok(f.includes('beforeMint(') && f.indexOf('beforeMint(') < f.indexOf('\'/api/integrations/tokens\', {'), `${name} asks the host before it mints`);
+  }
+  // the other two are handed the origin by these
+  for (const name of ['keepOffline', 'addFolderVault', 'addFileVault', 'changePush', 'showComputerOf']) assert.match(fns.get(name), /remoteOf\(/, name);
+  assert.match(fns.get('serverApi'), /redirect: 'error'/);
+});
+
+test('a token for an address over plain http is asked of the host first: refused for the internet, asked once per origin of this network, every time for a link on the internet that exists', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', plain: 'lan', token_id: 'old' })];
+  let check = { origin: 'http://nas.lan:9001', scope: 'lan', plain: true, existing: false, unsure: false, refused: '', warning: 'Clear text.' };
+  computerRoutes(host, nas);
+  const routes = host.fake.routes;
+  host.fake.routes = (p, init) => {
+    if (p === '/api/remote-servers/check') return check;
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') return vaultLink({ ...host.fake.vaults[0], token_id: JSON.parse(init.body).token_id });
+    return routes(p, init);
+  };
+  electron.session.defaultSession.fetch = async (url, init = {}) => nas.fake.answer(new URL(url).pathname, init, new URL(url));
+  const minted = () => nas.fake.calls.filter((c) => c.path === '/api/integrations/tokens' && c.method === 'POST').length;
+  const push = () => shell.setPush(host.srv.id, 'v1', 'pdfs');
+  try {
+    await assert.rejects(push(), (e) => e.quiet === true && e.message === 'Nothing was sent to nas.lan over http://.');
+    assert.equal(shell.asked.at(-1), 'Connect to nas.lan without encryption? Clear text.');
+    assert.equal(minted(), 0, 'Cancel mints nothing');
+    assert.deepEqual(host.fake.calls.filter((c) => c.path === '/api/remote-servers/check').at(-1).body, { url: 'http://nas.lan:9001', vault: 'v1' }, 'the renewed vault named, as the route that takes the token counts it');
+
+    shell.answers.push(0);
+    await push();
+    assert.equal(minted(), 1);
+    assert.equal(registry.plainAccepted('http://nas.lan:9001'), true);
+    let asks = shell.asked.length;
+    await push();
+    assert.deepEqual([shell.asked.length, minted()], [asks, 2], 'asked once per origin');
+
+    // a new link to the internet over http: the host's refusal, nothing minted
+    check = { ...check, scope: 'far', refused: 'nas.lan is on the internet and this address is http://.' };
+    await assert.rejects(push(), /^Error: nas\.lan is on the internet and this address is http:\/\/\.$/);
+    assert.equal(minted(), 2);
+    // a link to the internet that exists: asked each time
+    check = { ...check, refused: '', existing: true, warning: 'In clear.' };
+    shell.answers.push(0, 0);
+    await push();
+    await push();
+    assert.deepEqual(shell.asked.slice(-2), ['Connect to nas.lan without encryption? In clear.', 'Connect to nas.lan without encryption? In clear.']);
+    // a link of this network made before: nothing asked, the origin taken as agreed
+    registry.setPlainAccepted('http://nas.lan:9001', false);
+    check = { ...check, scope: 'lan', existing: true, unsure: true };
+    asks = shell.asked.length;
+    await push();
+    assert.equal(shell.asked.length, asks);
+    assert.equal(registry.plainAccepted('http://nas.lan:9001'), true);
+    // https: nothing asked
+    check = { ...check, plain: false, existing: false };
+    registry.setPlainAccepted('http://nas.lan:9001', false);
+    await push();
+    assert.equal(shell.asked.length, asks);
+  } finally {
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+// The host's move route (POST /api/remote-servers/move): its dry run `plan`,
+// its `answer` to the move, and its `calls`; the window's session records
+// what is revoked at the new address (`revoked`).
+function moveRoutes(host, plan) {
+  const state = { plan, answer: { moved: plan.moved, revoke: [] }, revoked: [] };
+  const routes = host.fake.routes;
+  host.fake.routes = (p, init) => {
+    if (p !== '/api/remote-servers/move') return routes(p, init);
+    return JSON.parse(init.body).dry_run ? state.plan : state.answer;
+  };
+  electron.session.defaultSession.fetch = async (url, init = {}) => {
+    state.revoked.push(`${init.method} ${url} ${(init.headers || {})['X-Gamma-Workspace']} ${init.redirect}`);
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  state.calls = () => host.fake.calls.filter((c) => c.path === '/api/remote-servers/move');
+  return state;
+}
+
+test('a server\'s address changes with its links: a dry run first, asked when it moves any, then moved on the host with the shell\'s word, the tokens it replaced revoked there; a load of the old address goes to the new one', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = registry.addRemote('NAS', 'http://nas.lan:9001');
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  const moves = moveRoutes(host, { kind: 'upgrade', plain: false, moved: { vaults: 0, computers: 0, mirrors: 0 } });
+  try {
+    // no links: the address changes, nothing asked, nothing sent anywhere
+    await shell.moveServer(nas.id, 'https://nas.lan:5001');
+    const [dry] = moves.calls();
+    assert.deepEqual(dry.body, { from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', dry_run: true });
+    assert.equal(dry.headers['X-Gamma-Shell'], shell.shellSecret, 'the shell\'s word');
+    assert.equal(moves.calls().length, 1);
+    assert.deepEqual(shell.asked, []);
+    assert.equal(registry.get(nas.id).url, 'https://nas.lan:5001');
+    assert.equal(shell.rerouted('http://nas.lan:9001/?ws=w1&page=p1#b'), 'https://nas.lan:5001/?ws=w1&page=p1#b');
+    assert.equal(shell.rerouted('https://nas.lan:5001/?ws=w1'), null);
+
+    // links to move, over plain http: asked, Cancel changes nothing
+    moves.plan = { kind: 'downgrade', plain: true, moved: { vaults: 2, computers: 1, mirrors: 1 } };
+    assert.equal(await shell.moveServer(nas.id, 'http://192.168.1.5:9001'), null);
+    assert.equal(shell.asked.at(-1), 'Move the links of https://nas.lan:5001 to http://192.168.1.5:9001? Gamma will send the tokens of 2 synced vaults, this computer and 1 offline copy to http://192.168.1.5:9001, and use http://192.168.1.5:9001 from now on. Only continue if http://192.168.1.5:9001 is the same server. http://192.168.1.5:9001 is http://: the tokens will travel without encryption, and someone on your network could read them.');
+    assert.equal(moves.calls().length, 2, 'only the dry run');
+    assert.equal(registry.get(nas.id).url, 'https://nas.lan:5001');
+
+    // agreed: moved, plain http allowed, the replaced link's token revoked at the new address
+    moves.answer = { moved: moves.plan.moved, revoke: [{ workspace_id: 'team', token_id: 't9' }] };
+    shell.answers.push(0);
+    await shell.moveServer(nas.id, 'http://192.168.1.5:9001');
+    assert.deepEqual(moves.calls().at(-1).body, { from: 'https://nas.lan:5001', to: 'http://192.168.1.5:9001', plain_ok: true });
+    assert.deepEqual(moves.revoked, ['DELETE http://192.168.1.5:9001/api/integrations/tokens/t9 team error']);
+    assert.equal(registry.get(nas.id).url, 'http://192.168.1.5:9001');
+    assert.equal(shell.notice(), 'https://nas.lan:5001 is now http://192.168.1.5:9001: 2 synced vaults, this computer and 1 offline copy follow it.');
+
+    // refused there: the host's words, nothing changed here
+    moves.answer = { failWith: 409, body: { detail: 'https://nas.example.com refused the token of the synced vault “main”.' } };
+    shell.answers.push(0);
+    await assert.rejects(shell.moveServer(nas.id, 'https://nas.example.com'), /refused the token of the synced vault “main”/);
+    assert.equal(registry.get(nas.id).url, 'http://192.168.1.5:9001');
+    const calls = moves.calls().length;
+    assert.equal((await shell.moveServer(nas.id, 'http://192.168.1.5:9001/')).url, 'http://192.168.1.5:9001');
+    assert.equal(moves.calls().length, calls, 'the same address asks nothing of anyone');
+  } finally {
+    sidecar.start = realStart;
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('a redirect to the same server over https moves its links by itself, once; a move that fails leaves the row offering it', async () => {
+  fresh();
+  shell.upgrades.clear();
+  const host = server('Host');
+  const nas = registry.addRemote('NAS', 'http://nas.lan:9001');
+  const redirected = (url, to) => ({ last_error: `${url} now redirects to ${to}`, error_kind: 'redirected', move_to: to, upgrade: true });
+  host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', status: redirected('http://nas.lan:9001', 'https://nas.lan:5001') })];
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  const moves = moveRoutes(host, { kind: 'upgrade', plain: false, moved: { vaults: 1, computers: 0, mirrors: 0 } });
+  try {
+    await shell.refreshKeeping();
+    assert.deepEqual([shell.keeping().items[0].text.replace(/ · .*$/, ''), shell.keeping().items[0].fix], ['Moved to https', undefined]);
+    await until(() => registry.get(nas.id).url === 'https://nas.lan:5001', 'moved by itself');
+    assert.deepEqual(shell.asked, [], 'nobody asked');
+    assert.deepEqual(moves.calls().map((c) => c.body), [{ from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', dry_run: true },
+      { from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', plain_ok: false }]);
+    await until(() => shell.notice() === 'http://nas.lan:9001 is now https://nas.lan:5001: 1 synced vault follows it.', 'said');
+
+    // another server's redirect whose move the host refuses: its row offers it, asked then
+    const other = registry.addRemote('Lab', 'http://lab.lan');
+    host.fake.vaults = [vaultLink({ id: 'v2', workspace_id: 'lab', remote_url: 'http://lab.lan', status: redirected('http://lab.lan', 'https://lab.lan') })];
+    moves.answer = { failWith: 502, body: { detail: 'https://lab.lan is not trusted' } };
+    await shell.refreshKeeping();
+    await until(() => shell.upgrades.get('http://lab.lan') === 'failed', 'the move failed');
+    await shell.refreshKeeping();
+    const [item] = shell.keeping().items;
+    assert.deepEqual(item.fix, { action: 'use-https', button: 'Use https://lab.lan' });
+    assert.equal(registry.get(other.id).url, 'http://lab.lan');
+    assert.equal(moves.calls().filter((c) => c.body.from === 'http://lab.lan' && !c.body.dry_run).length, 1, 'tried once a session');
+    moves.answer = { moved: { vaults: 1 }, revoke: [] };
+    shell.answers.push(0);
+    await shell.keepingAction('vault', host.srv.id, 'v2', 'use-https');
+    assert.match(shell.asked.at(-1), /^Move the links of http:\/\/lab\.lan to https:\/\/lab\.lan\?/);
+    assert.equal(registry.get(other.id).url, 'https://lab.lan');
+  } finally {
+    sidecar.start = realStart;
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('a certificate is trusted only as the launcher\'s card showed it: its record taken once, a stale card shown again, a new one asked first, and the local servers handed the pins', async () => {
+  fresh();
+  const host = server('Host');
+  const pushed = [];
+  host.fake.routes = (p, init) => (p === '/api/remote-servers/pins' && init.method === 'PUT' ? (pushed.push(JSON.parse(init.body).pins), { pins: [] }) : null);
+  const nas = registry.addRemote('NAS', 'https://nas.lan:5001');
+  const view = windowOn(host.fake);
+  shell.pretendShown(null, view, { ...appWindow, setTitle: noop });
+  const served = (file) => ({ data: fs.readFileSync(path.join(__dirname, file), 'utf8'), subjectName: 'nas.lan', issuerName: 'nas.lan',
+    validStart: 1767225600, validExpiry: 2082758400 });
+  const FAILED = 'ERR_CERT_AUTHORITY_INVALID (-202) loading \'https://nas.lan:5001/\'';
+  const card = () => JSON.parse(new URL(view.loaded.at(-1)).searchParams.get('error'));
+  try {
+    shell.certificateRefused('https://nas.lan:5001/?ws=w1', 'net::ERR_CERT_AUTHORITY_INVALID', served('nas.pem'));
+    shell.certificateRefused('https://elsewhere.lan/', 'net::ERR_CERT_AUTHORITY_INVALID', served('nas.pem'));
+    assert.equal(shell.certRecord('https://elsewhere.lan'), null, 'only a registered server\'s');
+    shell.loadLauncher(new Error(FAILED), nas.id);
+    const first = card();
+    assert.deepEqual([first.action, first.summary, first.cert.sha256, first.server],
+      ['trust', 'nas.lan\'s certificate is not from an authority this computer trusts.', 'ce48e27366a4bb077be700fc1bcf08f81392943ca3767b6a0908ce3f9d73e26c', nas.id]);
+    assert.match(first.cert.grouped, /^CE:48:E2/);
+
+    // another nonce than the card's: nothing pinned, the card again with the record there is now
+    assert.equal(await shell.trustCert(nas.id, 'not-the-card', first.cert.sha256), false);
+    assert.deepEqual(registry.getPins(), {});
+    const again = card();
+    assert.equal(again.stale, 'The certificate changed while you were looking at it.');
+    assert.notEqual(again.nonce, first.nonce);
+    assert.equal(await shell.trustCert(nas.id, again.nonce, 'b'.repeat(64)), false, 'another fingerprint than the card\'s');
+
+    const shown = card();
+    assert.equal(await shell.trustCert(nas.id, shown.nonce, shown.cert.sha256), true);
+    assert.equal(registry.getPins()['https://nas.lan:5001'].sha256, shown.cert.sha256);
+    assert.deepEqual(pushed.at(-1), [{ origin: 'https://nas.lan:5001', sha256: shown.cert.sha256, subject: 'nas.lan', issuer: 'nas.lan',
+      not_before: '2026-01-01T00:00:00.000Z', not_after: '2036-01-01T00:00:00.000Z' }]);
+    assert.equal(view.loaded.at(-1), 'https://nas.lan:5001', 'the server opens');
+    assert.equal(await shell.trustCert(nas.id, shown.nonce, shown.cert.sha256), false, 'a record is taken once');
+
+    // the verify proc accepts the pinned one for any port of its host, and only for a failure a pin answers
+    const proc = (hostname, verificationResult, file = 'nas.pem') => {
+      let answer;
+      shell.verifyProc({ hostname, verificationResult, certificate: served(file) }, (a) => { answer = a; });
+      return answer;
+    };
+    assert.equal(proc('nas.lan', 'net::ERR_CERT_AUTHORITY_INVALID'), 0);
+    assert.equal(proc('nas.lan', 'net::ERR_CERT_REVOKED'), -3);
+    assert.equal(proc('nas.lan', 'net::ERR_CERT_AUTHORITY_INVALID', 'nas-renewed.pem'), -3);
+    assert.equal(proc('other.lan', 'net::OK', 'nas-renewed.pem'), -3);
+    assert.equal(shell.accepted.get('other.lan'), 'd8a7da64d061189b7239c44933b04b99b6dae7b2aeaddc6ccd1fa50d7b22e795', 'what the window accepted, by host');
+    // a refusal the network service kept from before the pin is accepted in certificate-error, by the same rule
+    const refused = (url, error, file) => {
+      const event = { prevented: false, preventDefault() { this.prevented = true; } };
+      let allowed = null;
+      shell.certificateError(event, url, error, served(file), (ok) => { allowed = ok; }, true);
+      return [event.prevented, allowed];
+    };
+    assert.deepEqual(refused('https://nas.lan:9443/x', 'net::ERR_CERT_AUTHORITY_INVALID', 'nas.pem'), [true, true], 'any port of the pinned host');
+    assert.deepEqual(refused('https://nas.lan:5001/', 'net::ERR_CERT_REVOKED', 'nas.pem'), [false, null]);
+    assert.deepEqual(refused('https://nas.lan:5001/', 'net::ERR_CERT_AUTHORITY_INVALID', 'nas-renewed.pem'), [false, null]);
+
+    // a renewed certificate: changed, trusted again only once asked
+    shell.certificateRefused('https://nas.lan:5001/', 'net::ERR_CERT_AUTHORITY_INVALID', served('nas-renewed.pem'));
+    shell.loadLauncher(new Error(FAILED), nas.id);
+    const changed = card();
+    assert.deepEqual([changed.action, changed.summary], ['retrust', 'The certificate of nas.lan changed.']);
+    assert.equal(await shell.trustCert(nas.id, changed.nonce, changed.cert.sha256), false, 'Cancel');
+    assert.match(shell.asked.at(-1), /^Trust the new certificate of nas\.lan\? Only if you replaced it on nas\.lan yourself\. Fingerprint: D8:A7:/);
+    assert.equal(registry.getPins()['https://nas.lan:5001'].sha256, shown.cert.sha256);
+    // the card stays, and its button asks again rather than saying the certificate changed meanwhile
+    const asks = shell.asked.length;
+    const loads = view.loaded.length;
+    assert.equal(await shell.trustCert(nas.id, changed.nonce, changed.cert.sha256), false, 'Cancel again');
+    assert.deepEqual([shell.asked.length, view.loaded.length], [asks + 1, loads], 'asked again, no stale card');
+    assert.equal(registry.getPins()['https://nas.lan:5001'].sha256, shown.cert.sha256);
+
+    // forgotten: no pin, and the servers told
+    assert.equal(await shell.forgetCert(nas.id), true);
+    assert.deepEqual([registry.getPins(), pushed.at(-1)], [{}, []]);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+// A certificate as Electron hands it over (test/nas.pem, nas-renewed.pem).
+const servedCert = (file) => ({ data: fs.readFileSync(path.join(__dirname, file), 'utf8'), subjectName: 'nas.lan', issuerName: 'nas.lan',
+  validStart: 1767225600, validExpiry: 2082758400 });
+const NAS_DIGEST = 'ce48e27366a4bb077be700fc1bcf08f81392943ca3767b6a0908ce3f9d73e26c';
+const procSays = (hostname, verificationResult, file = 'nas.pem') => {
+  let answer;
+  shell.verifyProc({ hostname, verificationResult, certificate: servedCert(file) }, (a) => { answer = a; });
+  return answer;
+};
+
+// The pins each local server is handed (PUT /api/remote-servers/pins), recorded beside the routes it had.
+function pinsPushed(host) {
+  const pushed = [];
+  const routes = host.fake.routes;
+  host.fake.routes = (p, init) => (p === '/api/remote-servers/pins' && init.method === 'PUT'
+    ? (pushed.push(JSON.parse(init.body).pins.map((r) => r.origin)), { pins: [] }) : routes(p, init));
+  return pushed;
+}
+
+test('removing a remote drops its pin at once: the verify proc refuses the certificate and the local servers are told', async () => {
+  fresh();
+  const host = server('Host');
+  const pushed = pinsPushed(host);
+  const nas = registry.addRemote('NAS', 'https://nas.lan:5001');
+  registry.setPin('https://nas.lan:5001', { sha256: NAS_DIGEST });
+  await shell.pinsChanged();
+  assert.equal(procSays('nas.lan', 'net::ERR_CERT_AUTHORITY_INVALID'), 0);
+  await shell.removeServer(nas.id);
+  assert.deepEqual(registry.getPins(), {});
+  assert.equal(procSays('nas.lan', 'net::ERR_CERT_AUTHORITY_INVALID'), -3, 'refused at once, not at the next start');
+  assert.deepEqual(pushed.at(-1), []);
+});
+
+test('links move to an https:// address only once its certificate verifies or is pinned there: another host\'s asked with its fingerprint, the same host\'s pin carried, a pin made for a move that did not happen dropped', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = registry.addRemote('NAS', 'https://192.168.1.10:5001');
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  const moves = moveRoutes(host, { kind: 'other', plain: false, moved: { vaults: 1, computers: 0, mirrors: 0 } });
+  const pushed = pinsPushed(host);
+  // the window's session: /api/health at the new address answers as the verify proc does
+  const healthAt = [];
+  electron.session.defaultSession.fetch = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === '/api/health') healthAt.push(u.origin);
+    if (u.pathname === '/api/health' && procSays(u.hostname, 'net::ERR_CERT_AUTHORITY_INVALID') !== 0) {
+      throw new TypeError('fetch failed', { cause: new Error('net::ERR_CERT_AUTHORITY_INVALID') });
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  const moveCalls = () => moves.calls().filter((c) => !c.body.dry_run).length;
+  try {
+    // another address (DHCP gave the NAS .11): its certificate asked first, Cancel moves nothing
+    assert.equal(await shell.moveServer(nas.id, 'https://192.168.1.11:5001'), null);
+    assert.match(shell.asked.at(-1), /^Trust the certificate of 192\.168\.1\.11\? 192\.168\.1\.11's certificate is not from an authority this computer trusts\. .* Fingerprint: CE:48:E2/);
+    assert.deepEqual([registry.getPins(), moveCalls(), registry.get(nas.id).url], [{}, 0, 'https://192.168.1.10:5001']);
+
+    // trusted, then the move agreed: pinned for the new address and handed to the host before the move
+    shell.answers.push(0, 0);
+    await shell.moveServer(nas.id, 'https://192.168.1.11:5001');
+    assert.equal(registry.getPins()['https://192.168.1.11:5001'].sha256, NAS_DIGEST);
+    assert.ok(pushed.some((list) => list.includes('https://192.168.1.11:5001')));
+    assert.deepEqual([moveCalls(), registry.get(nas.id).url], [1, 'https://192.168.1.11:5001']);
+
+    // another port of the same host: the window takes it by that pin, so it is pinned there too, nothing asked of it
+    moves.answer = { failWith: 502, body: { detail: 'https://192.168.1.11 could not be reached.' } };
+    shell.answers.push(0);
+    await assert.rejects(shell.moveServer(nas.id, 'https://192.168.1.11'), /could not be reached/);
+    assert.doesNotMatch(shell.asked.at(-1), /^Trust the certificate/);
+    assert.deepEqual(Object.keys(registry.getPins()), ['https://192.168.1.11:5001'], 'the move failed: its pin dropped again');
+    moves.answer = { moved: moves.plan.moved, revoke: [] };
+    shell.answers.push(0);
+    await shell.moveServer(nas.id, 'https://192.168.1.11');
+    assert.deepEqual(Object.keys(registry.getPins()), ['https://192.168.1.11'], 'the pin moved with the address');
+    assert.deepEqual(pushed.at(-1), ['https://192.168.1.11']);
+
+    // to plain http on another host: nothing fetched, the old address's pin goes, the servers told
+    const fetched = healthAt.length;
+    moves.plan = { kind: 'downgrade', plain: true, moved: { vaults: 1, computers: 0, mirrors: 0 } };
+    shell.answers.push(0);
+    await shell.moveServer(nas.id, 'http://192.168.1.12:9001');
+    assert.deepEqual([healthAt.length, registry.getPins(), pushed.at(-1)], [fetched, {}, []]);
+    assert.equal(procSays('192.168.1.11', 'net::ERR_CERT_AUTHORITY_INVALID'), -3, 'the verify proc no longer takes it');
+  } finally {
+    sidecar.start = realStart;
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('a redirect\'s links move alone when its https:// address is listed already: with or without an entry at the old address', async () => {
+  const redirected = { last_error: 'http://nas.lan:9001 now redirects to https://nas.lan:5001', error_kind: 'redirected', move_to: 'https://nas.lan:5001', upgrade: true };
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  try {
+    for (const both of [false, true]) {
+      fresh();
+      shell.upgrades.clear();
+      const host = server('Host');
+      const secure = registry.addRemote('NAS', 'https://nas.lan:5001');
+      const old = both ? registry.addRemote('Old NAS', 'http://nas.lan:9001') : null;
+      host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', status: redirected })];
+      const moves = moveRoutes(host, { kind: 'upgrade', plain: false, moved: { vaults: 1, computers: 0, mirrors: 0 } });
+      await shell.refreshKeeping();
+      await until(() => shell.upgrades.get('http://nas.lan:9001') !== 'running', 'the move ran');
+      assert.equal(shell.upgrades.get('http://nas.lan:9001'), 'done', `moved (${both ? 'both entries' : 'no entry at the old address'})`);
+      assert.deepEqual(moves.calls().at(-1).body, { from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', plain_ok: false });
+      assert.equal(registry.get(secure.id).url, 'https://nas.lan:5001');
+      if (old) assert.equal(registry.get(old.id).url, 'http://nas.lan:9001', 'no entry renamed onto another');
+    }
+  } finally {
+    sidecar.start = realStart;
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('an http:// address that sends the window to https:// on its own host is followed nowhere, and the launcher offers that address', () => {
+  fresh();
+  const host = server('Host');
+  const nas = registry.addRemote('NAS', 'http://nas.lan:5000');
+  const view = windowOn(host.fake);
+  shell.pretendShown(null, view, { ...appWindow, setTitle: noop });
+  const card = () => JSON.parse(new URL(view.loaded.at(-1)).searchParams.get('error'));
+  try {
+    assert.equal(shell.sentToHttpsBy('https://nas.lan:5001/'), false, 'only an address the window was let to');
+    shell.allowedOrigins.add('http://nas.lan:5000');
+    assert.equal(shell.sentToHttpsBy('http://nas.lan:5001/'), false, 'not https');
+    assert.equal(shell.sentToHttpsBy('https://elsewhere.lan/'), false, 'another host');
+    assert.equal(shell.sentToHttpsBy('https://nas.lan:5001/?ws=w1'), true);
+    shell.loadLauncher(new Error('No page after loading \'http://nas.lan:5000\''), nas.id);
+    assert.deepEqual([card().action, card().to, card().summary], ['https', 'https://nas.lan:5001', 'nas.lan now redirects to https://nas.lan:5001.']);
+    shell.loadLauncher(new Error('ERR_CONNECTION_REFUSED (-102)'), nas.id);
+    assert.equal(card().action, 'retry', 'taken once');
+    // HSTS keeps the port: the name's own https:// is offered
+    shell.sentToHttpsBy('https://nas.lan:5000/');
+    shell.loadLauncher(new Error('No page'), nas.id);
+    assert.deepEqual([card().summary, card().to], ['This name is HTTPS-only in this window.', 'https://nas.lan']);
+    // the content view's will-redirect guard is what records it, and then opens nothing in the browser
+    const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+    assert.match(src, /cwc\.on\('will-redirect', \(event, url\) => guard\(event, url, true\)\)/);
+    assert.match(src, /if \(redirect && event\.isMainFrame !== false && sentToHttpsBy\(url\)\) return;\r?\n\s+if \(\/\^https\?:\/\.test\(url\)/);
+  } finally {
+    shell.allowedOrigins.delete('http://nas.lan:5000');
+    shell.pretendShown(null, null);
+  }
+});
+
+// --- an agent's ask on this computer -------------------------------------
+// A work folder of another server whose agent may ask on this computer
+// (setAgentRuns 'computer'), and the card the host's asks draw in the bar:
+// over the whole window, the content view hidden, armed after a quiet
+// focused second, answered only for a press made since, and what the bar
+// says of each answer.
+
+// A work folder of NAS kept by the host, its agent on and `runs`, reached as `plain` says.
+const farWork = (runs = 'never', more = {}) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'https://nas.lab:5001', plain: '', token_id: 't1',
+  push: 'everything', work: true, mine: true, agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: null, runs }, ...more });
+const SHOWN = { links: [{ id: 'c1', remote_url: 'https://nas.lab:5001', workspace_id: 'nas-ws', account: 'u_1', username: 'alice',
+  status: { state: 'connected', error: '', at: '2026-11-13T10:00:00Z' } }] };
+
+// An ask as the host lists it (`GET /api/local-agents/asks`).
+const askOf = (id, more = {}) => ({
+  id, turn_id: 't1', link_id: 'v1', agent: 'codex', label: 'Codex', kind: 'command', command: 'curl -L https://example.org/refs.bib -o refs.bib',
+  dir: 'C:\\Papers', folder: 'C:\\Papers', file: '', host: 'example.org', reason: 'Fetch the bibliography the paper cites.',
+  server: { origin: 'https://nas.lab:5001', account: 'alice' }, at: '2026-11-13T10:02:00Z', expires_at: '2026-11-13T10:12:00Z', ...more,
+});
+
+// The arming timer main.js set last, still due.
+const armTimer = () => timers.filter((t) => !t.cleared && t.ms === 1000).at(-1);
+// A timer run, as it comes due: it is not due again.
+const fire = (t) => { t.cleared = true; t.fn(); };
+
+// The host, and a window made as the app makes it (showWindow: on the
+// launcher), `focused` or not, with its two views. The host lists `asks`
+// at `version`; its answer route answers `answerWith(id, body)`.
+async function askingWindow({ focused = true } = {}) {
+  const host = server('Host');
+  Object.assign(host.fake, { asks: [], version: 0, fail: null });
+  shell.forgetSurfaced();
+  host.fake.routes = (p, init) => {
+    if (p === '/api/local-agents/asks') return { version: host.fake.version, asks: host.fake.asks };
+    if (p.startsWith('/api/local-agents/asks/') && init.method === 'POST') {
+      if (host.fake.fail) return host.fake.fail();
+      host.fake.version += 1;
+      return { answered: true, version: host.fake.version };
+    }
+    if (p === '/api/computer-links') return SHOWN;
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') return farWork('never');
+    return null;
+  };
+  await shell.showWindow();
+  const w = windows.at(-1);
+  w.focused = focused;
+  const [content, bar] = w.contentView.views;
+  return { host, w, content, bar };
+}
+
+function closeAsking() {
+  shell.stopAsks();
+  if (shell.hasWindow()) windows.at(-1).close();
+  shell.pretendShown(null, null);
+}
+
+// The card shown `key`, drawn by the bar and armed.
+function armedCard(key) {
+  assert.equal(shell.agentAskDrawn(key), true);
+  fire(armTimer());
+  assert.equal(shell.agentAsk().armed, true);
+}
+
+test('Ask on this computer from the panel: refused for a folder of this server and over plain http, asked first with who writes what is asked, then set with the shell\'s word; an older server is said', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const s = server('Host');
+  let older = true;
+  s.fake.vaults = [farWork('never')];
+  s.fake.routes = (p, init) => {
+    if (p === '/api/local-agents') return { agents: [{ name: 'codex', label: 'Codex', found: true, ready: true, problem: '' }] };
+    if (p === '/api/computer-links') return { links: [{ ...SHOWN.links[0], remote_url: s.fake.vaults[0].remote_url }] }; // shown where the folder is
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') return { ...farWork(JSON.parse(init.body).agent_runs), older };
+    return null;
+  };
+  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
+  try {
+    await shell.refreshKeeping();
+    const [item] = shell.keeping().items;
+    assert.deepEqual([item.agentRuns, item.secure], ['never', true]);
+
+    await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'computer');
+    assert.deepEqual(patches(), [], 'Cancel, the default, under the harness');
+    assert.equal(shell.asked.at(-1), 'Let Codex ask on this computer to run more in C:\\Papers? In a chat on NAS, Codex can then ask you to run a command with the network or to change files outside this folder.' +
+      ' The question shows here only, in Gamma\'s window, and nothing of it runs until you allow it there, one command at a time.' +
+      ' Whoever can sign in to NAS as alice, and whoever runs NAS, writes what Codex is asked to do: read each command before you allow it.' +
+      ' A command you allow runs as you, with your files and the network.');
+    shell.answers.push(0);
+    await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'computer');
+    const [on] = patches();
+    assert.deepEqual(on.body, { agent_runs: 'computer' });
+    assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret);
+    assert.equal(on.headers['X-Gamma-Workspace'], undefined, 'the account\'s, no workspace of the host');
+    assert.equal(shell.notice(), 'Codex may now ask on this computer to run more on Papers. NAS runs an older Gamma: its page will not say that Codex waits here. The question still shows in this window.');
+
+    // asking in the chat is not for it; over plain http nothing is asked or sent
+    const asks = shell.asked.length;
+    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'ask', true), /choose Ask on this computer\.$/);
+    s.fake.vaults = [farWork('never', { remote_url: 'http://nas.lan:9001', plain: 'lan' })];
+    await shell.refreshKeeping();
+    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'computer'), /^Error: Ask on this computer needs https: nas\.lan:9001 is reached over plain http\.$/);
+    // a work folder of this computer's server asks in the chat instead
+    s.fake.vaults = [farWork('never', { remote_url: '', workspace_id: 'mine' })];
+    await shell.refreshKeeping();
+    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'computer', true), /^Error: Ask on this computer is for a work folder of another server: here the agent asks in the chat\.$/);
+    assert.equal(shell.asked.length, asks, 'nothing asked');
+    assert.equal(patches().length, 1);
+    // back to Nothing more asks nothing and carries no word
+    older = false;
+    s.fake.vaults = [farWork('computer')];
+    await shell.refreshKeeping();
+    await shell.setAgentRuns(s.srv.id, 'v1', 'never');
+    assert.equal(patches().at(-1).headers['X-Gamma-Shell'], undefined);
+  } finally {
+    shell.stopAsks();
+  }
+});
+
+test('a card covers the whole window with the page hidden and the title Gamma, waits behind the one shown, and goes with the queue', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const { w, content, bar } = await askingWindow();
+  try {
+    assert.deepEqual([bar.bounds.height, content.visible], [38, true]);
+    let card = shell.pretendAsks([askOf('a1')]);
+    assert.deepEqual([card.key, card.title, card.armed, card.count], ['a1', 'Codex wants to run a command', false, '']);
+    assert.deepEqual([bar.bounds.height, content.visible, w.title], [900, false, 'Gamma'], 'the bar over the whole window, the page hidden');
+    const sent = bar.webContents.sent.filter(([ch]) => ch === 'shell:state').at(-1)[1];
+    assert.equal(sent.agentAsk.key, 'a1', 'the bar is handed the card');
+    content.webContents.emit('page-title-updated', {}, 'Secret page title');
+    assert.equal(w.title, 'Gamma', 'the page names nothing meanwhile');
+    // an older ask that comes after waits behind it; the count says so
+    card = shell.pretendAsks([askOf('a0', { at: '2026-11-13T10:00:00Z' }), askOf('a1')]);
+    assert.deepEqual([card.key, card.count], ['a1', '1 of 2 waiting']);
+    // a page's download meanwhile is cancelled
+    let cancelled = 0;
+    content.webContents.session.emit('will-download', {}, { cancel: () => { cancelled += 1; }, getFilename: () => 'x.zip', setSavePath: noop });
+    assert.equal(cancelled, 1);
+    // the shown ask goes unanswered here (withdrawn, Stop on the NAS): the next one is drawn afresh and says so
+    shell.agentAskDrawn('a1');
+    card = shell.pretendAsks([askOf('a0', { at: '2026-11-13T10:00:00Z' })]);
+    assert.deepEqual([card.key, card.armed, armTimer()], ['a0', false, undefined]);
+    assert.ok(card.notes.includes('The question before this one went away: this is another one.'));
+    // the launcher meanwhile keeps it
+    shell.loadLauncher();
+    assert.equal(shell.agentAsk().key, 'a0');
+    // none left: the strip again, the page shown, its title back
+    shell.pretendAsks([]);
+    assert.equal(shell.agentAsk(), null);
+    assert.deepEqual([bar.bounds.height, content.visible, w.title], [38, true, 'Secret page title']);
+  } finally {
+    closeAsking();
+  }
+});
+
+test('the buttons arm a quiet, focused second after the bar drew the card; a press before that counts the second again, an answer needs a press after it, a blur disarms', async () => {
+  fresh();
+  const { host, w } = await askingWindow({ focused: false });
+  const posts = () => host.fake.calls.filter((c) => c.path.startsWith('/api/local-agents/asks/') && c.method === 'POST');
+  try {
+    shell.pretendAsks([askOf('a1')]);
+    assert.equal(armTimer(), undefined, 'nothing counts before the bar drew it');
+    shell.agentAskDrawn('a1');
+    assert.equal(armTimer(), undefined, 'nor while the window has not the focus');
+    w.focus();
+    const first = armTimer();
+    assert.ok(first, 'the focus starts the count');
+    shell.pressed('mouseDown'); // a press at 900 ms
+    assert.equal(first.cleared, true, 'counted again');
+    const second = armTimer();
+    assert.notEqual(second, first);
+    assert.equal(shell.agentAsk().armed, false, 'not armed at 1100 ms either');
+    assert.equal(await shell.answerAgentAsk('a1', 'once'), false, 'an answer before arming is no answer');
+    fire(second);
+    assert.equal(shell.agentAsk().armed, true);
+    assert.equal(await shell.answerAgentAsk('a1', 'once'), false, 'nor one whose press came before arming');
+    shell.pressed('mouseDown');
+    assert.equal(await shell.answerAgentAsk('a0', 'once'), false, 'nor another card\'s');
+    assert.equal(await shell.answerAgentAsk('a1', 'always'), false, 'nor another decision');
+    assert.deepEqual(posts(), []);
+    // a blur disarms; the focus counts afresh
+    w.blur();
+    assert.equal(shell.agentAsk().armed, false);
+    w.focus();
+    fire(armTimer());
+    shell.pressed('mouseDown');
+    assert.equal(await shell.answerAgentAsk('a1', 'once'), true);
+    const [post] = posts();
+    assert.deepEqual([post.path, post.body, post.headers['X-Gamma-Shell']], ['/api/local-agents/asks/a1', { decision: 'once' }, shell.shellSecret]);
+    assert.equal(shell.notice(), 'Allowed once: Codex goes on.');
+    assert.equal(shell.agentAsk(), null, 'answered, the card goes');
+    // a resize or a move counts the second again too
+    shell.pretendAsks([askOf('a2')]);
+    shell.agentAskDrawn('a2');
+    const t = armTimer();
+    w.emit('resize');
+    assert.equal(t.cleared, true);
+    w.emit('move');
+    const moved = armTimer();
+    assert.ok(moved);
+    // a key (Chromium's rawKeyDown) and a wheel too; a button let go does not
+    shell.pressed('rawKeyDown');
+    assert.equal(moved.cleared, true, 'a key counts it again');
+    const keyed = armTimer();
+    shell.pressed('mouseWheel');
+    assert.equal(keyed.cleared, true, 'a wheel too');
+    const wheeled = armTimer();
+    shell.pressed('mouseUp');
+    assert.equal(wheeled.cleared, false);
+    // a tap on a touchscreen reaches the bar as touchStart (its click is made in the page): it counts again, and it answers
+    shell.pressed('touchStart');
+    assert.equal(wheeled.cleared, true, 'a tap counts it again');
+    fire(armTimer());
+    shell.pressed('touchStart');
+    assert.equal(await shell.answerAgentAsk('a2', 'deny'), true, 'a tap is the press an answer needs');
+    assert.equal(shell.notice(), 'Declined: Codex goes on without it.');
+  } finally {
+    closeAsking();
+  }
+});
+
+test('a window closed and made again draws the card again, disarmed until drawn; a card with no window makes one on the launcher, inactive, flashed, notified, with the tray\'s line', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const { w } = await askingWindow();
+  try {
+    shell.pretendAsks([askOf('a1')]);
+    armedCard('a1');
+    w.close();
+    assert.equal(shell.hasWindow(), false);
+    await shell.showWindow();
+    windows.at(-1).focused = true;
+    assert.equal(shell.agentAsk().armed, false, 'a new window starts disarmed');
+    assert.equal(armTimer(), undefined);
+    shell.agentAskDrawn('a1');
+    assert.ok(armTimer(), 'armed once the new bar drew it');
+    windows.at(-1).close();
+
+    // no window at all: one made for the card
+    shell.notifications.length = 0;
+    shell.pretendAsks([]);
+    shell.pretendAsks([askOf('a2', { folder: 'C:\\Users\\tim\\Papers\\cavity' })]);
+    assert.equal(shell.hasWindow(), true);
+    const made = windows.at(-1);
+    assert.deepEqual([made.opts.show, made.inactive], [false, 1], 'shown without the focus');
+    assert.match(shell.launcherUrl(), /\/ui\/launcher\.html\?/, 'on the launcher: bundled, nothing loaded from a server');
+    assert.deepEqual(made.flashed, [true]);
+    assert.deepEqual(shell.notifications, [{ title: 'Codex asks to run a command', body: 'From NAS, in cavity. Answer it in Gamma\'s window.' }]);
+    assert.equal(shell.surfaced.at(-1), 'a2');
+    // the tray's first line while it waits
+    assert.deepEqual(shell.trayMenu().slice(0, 2).map((i) => i.label || i.type), ['Answer Codex…', 'separator']);
+    // a second card within the minute raises no second notification, the window not focused since
+    shell.pretendAsks([askOf('a3')]);
+    assert.equal(shell.notifications.length, 1);
+    assert.deepEqual(shell.trayMenu()[0].label, 'Answer Codex…');
+  } finally {
+    closeAsking();
+  }
+});
+
+test('what an answer says: gone meanwhile nothing was allowed and a list read before it does not bring it back; a timeout after it left is unsure; a refusal keeps the card and arms again; Stop declines, then the folder asks no more', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const { host } = await askingWindow();
+  const posts = () => host.fake.calls.filter((c) => c.path.startsWith('/api/local-agents/asks/') && c.method === 'POST');
+  try {
+    // 409: the agent no longer waits for it
+    host.fake.fail = () => ({ failWith: 409, body: { detail: 'Codex no longer waits for that.' } });
+    shell.pretendAsks([askOf('a1'), askOf('a2', { at: '2026-11-13T10:05:00Z' })]);
+    armedCard('a1');
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a1', 'deny');
+    assert.equal(shell.notice(), 'Codex no longer waits for that: nothing was allowed.');
+    assert.equal(shell.agentAsk().key, 'a2');
+    assert.equal(shell.agentAsk().notes.some((n) => /went away/.test(n)), false, 'answered here: no replacement to say');
+    shell.pretendAsks([askOf('a1'), askOf('a2', { at: '2026-11-13T10:05:00Z' })]);
+    assert.equal(shell.agentAsk().key, 'a2', 'a list read before the answer does not bring it back');
+
+    // a timeout after the request left: unsure, the card stays and arms again
+    host.fake.fail = () => { throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); };
+    armedCard('a2');
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a2', 'once');
+    assert.equal(shell.notice(), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
+    assert.equal(shell.agentAsk().key, 'a2');
+    assert.ok(armTimer(), 'armed again');
+    // refused by the host (a 403): could not answer, the card stays
+    host.fake.fail = () => ({ failWith: 403, body: { detail: 'Only the desktop app answers on this computer.' } });
+    fire(armTimer());
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a2', 'once');
+    assert.match(shell.notice(), /^Could not answer Codex: Only the desktop app answers on this computer\. Without an answer it is declined at .+\.$/);
+    assert.equal(shell.agentAsk().key, 'a2');
+
+    // Stop asking: a decline, then the folder's policy back to never with the shell's word
+    host.fake.fail = null;
+    fire(armTimer());
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a2', 'stop');
+    assert.deepEqual(posts().at(-1).body, { decision: 'deny' });
+    const patch = host.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH').at(-1);
+    assert.deepEqual([patch.body, patch.headers['X-Gamma-Shell']], [{ agent_runs: 'never' }, shell.shellSecret]);
+    assert.equal(shell.notice(), 'Declined, and Codex no longer asks on this computer for NAS.');
+    assert.equal(shell.agentAsk(), null);
+
+    // an answer left unsure, then a 409 for the next one: the first may be the one taken, so never "nothing was allowed"
+    shell.pretendAsks([askOf('a5')]);
+    host.fake.fail = () => { throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); };
+    armedCard('a5');
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a5', 'once');
+    assert.equal(shell.notice(), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
+    host.fake.fail = () => ({ failWith: 409, body: { detail: 'Codex no longer waits for that.' } });
+    fire(armTimer());
+    shell.pressed('mouseDown');
+    await shell.answerAgentAsk('a5', 'deny');
+    assert.equal(shell.notice(), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
+    assert.equal(shell.agentAsk(), null, 'the ask is gone all the same');
+    host.fake.fail = null;
+
+    // the host not running: could not answer, nothing sent
+    shell.pretendAsks([askOf('a3')]);
+    armedCard('a3');
+    shell.pressed('mouseDown');
+    running.clear();
+    const before = posts().length;
+    await shell.answerAgentAsk('a3', 'once');
+    assert.match(shell.notice(), /^Could not answer Codex: That server is not running\./);
+    assert.equal(posts().length, before);
+  } finally {
+    closeAsking();
+  }
+});
+
+test('the asks are followed on the host while it keeps a folder that may ask here, with the shell\'s word, each read held; the host stopping empties the queue', async () => {
+  fresh();
+  registry.addRemote('NAS', 'https://nas.lab:5001');
+  const { host } = await askingWindow();
+  const reads = () => host.fake.calls.filter((c) => c.path === '/api/local-agents/asks' && c.method === 'GET');
+  let release = () => {};
+  let held = null;
+  try {
+    host.fake.vaults = [farWork('never')];
+    await shell.refreshKeeping();
+    assert.equal(shell.following(), '', 'no folder asks here: nothing followed');
+    // the host holds a read until its list changes
+    const answerOf = host.fake.answer.bind(host.fake);
+    host.fake.answer = async (p, init, url) => {
+      if (p === '/api/local-agents/asks' && new URLSearchParams(url.search).get('after') === String(host.fake.version)) {
+        await new Promise((r) => { release = r; held = url; });
+      }
+      return answerOf(p, init, url);
+    };
+    Object.assign(host.fake, { vaults: [farWork('computer')], version: 1, asks: [askOf('a1')] });
+    await shell.refreshKeeping();
+    assert.equal(shell.following(), host.srv.id);
+    await until(() => shell.agentAsk() && held, 'the first read gives the list, the next one is held');
+    const q = new URLSearchParams(reads()[0].query);
+    assert.deepEqual([q.get('after'), q.get('wait'), reads()[0].headers['X-Gamma-Shell']], ['-1', '20', shell.shellSecret],
+      'the first read answered at once');
+    assert.equal(new URLSearchParams(held.search).get('after'), '1');
+    // the ask goes there (answered elsewhere, Stop on the NAS): the held read gives the new list
+    Object.assign(host.fake, { version: 2, asks: [] });
+    release();
+    await until(() => !shell.agentAsk(), 'the card goes with the list');
+    await until(() => new URLSearchParams(held.search).get('after') === '2', 'held again');
+    // the host stops: the read fails, the queue empties, nothing is followed
+    shell.pretendAsks([askOf('a9')]);
+    host.fake.answer = async () => { throw new Error('net::ERR_CONNECTION_RESET'); };
+    running.clear();
+    Object.assign(host.fake, { version: 3 });
+    release();
+    await until(() => shell.following() === '', 'the follower ends with the host');
+    assert.equal(shell.agentAsk(), null, 'nothing shown can be answered');
+  } finally {
+    release();
+    closeAsking();
+  }
+});
+
+test('a redirect to this computer\'s server is judged by the address it comes from: a remote server\'s goes nowhere, opened from the launcher or reloaded; a local server\'s within itself passes', async () => {
+  fresh();
+  const { content } = await askingWindow();
+  const wc = content.webContents;
+  const LOCAL = 'http://127.0.0.1:50999';
+  const NAS = 'https://nas.lab:5001';
+  for (const o of [LOCAL, NAS]) shell.allowedOrigins.add(o); // both opened before: the host's origin stays allowed
+  // a main-frame load from `from` (the shell's own: no initiator) redirected to `to`, after `hops`; whether the guard refused it
+  const refused = (from, to, hops = []) => {
+    wc.emit('did-start-navigation', {}, from, false, true);
+    for (const hop of hops) wc.emit('did-redirect-navigation', {}, hop, false, true);
+    const event = { initiator: null, isMainFrame: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    wc.emit('will-redirect', event, to);
+    return event.defaultPrevented;
+  };
+  const opens = shell.externalOpens.length;
+  try {
+    assert.match(wc.getURL(), /\/ui\/launcher\.html/, 'the launcher is shown: a page of this computer\'s');
+    assert.equal(refused(`${NAS}/`, `${LOCAL}/?ws=mine&page=p1`), true, 'the NAS opened from the launcher sends the window to the host');
+    wc.url = `${NAS}/?ws=nas-ws`;
+    assert.equal(refused(`${NAS}/?ws=nas-ws`, `${LOCAL}/?ws=mine`), true, 'nor on Reload of a NAS page');
+    assert.equal(refused(`${LOCAL}/`, `${LOCAL}/?ws=mine`, [`${NAS}/`]), true, 'nor through a hop of its own');
+    assert.equal(shell.externalOpens.length, opens, 'and nothing is opened for it');
+    // the host's own redirect within itself, whatever the page shown; a frame's start is not the window's
+    assert.equal(refused(`${LOCAL}/`, `${LOCAL}/?ws=mine`), false);
+    wc.emit('did-start-navigation', {}, `${NAS}/frame`, false, false);
+    const event = { initiator: null, isMainFrame: true, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    wc.emit('will-redirect', event, `${LOCAL}/?ws=lab`);
+    assert.equal(event.defaultPrevented, false);
+  } finally {
+    for (const o of [LOCAL, NAS]) shell.allowedOrigins.delete(o);
+    closeAsking();
   }
 });

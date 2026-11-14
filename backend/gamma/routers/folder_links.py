@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import config, folder_links, linked_files, workspaces
+from .. import config, folder_links, linked_files, remote_servers, workspaces
 from ..auth import require_personal_user_id, require_ws, ws_role
 from ..documents.model import page_document
 from ..logbuf import log
@@ -77,7 +77,8 @@ class LinkPatch(BaseModel):
     # A work folder's agent on this computer: "codex" or "claude" on, "" off
     # (docs/dev/local_agents.md).
     agent: str | None = Field(default=None, max_length=32)
-    # What that agent may run: "never", or "ask" (its chat's turns may ask).
+    # What that agent may run: "never", "ask" (its chat's turns may ask in the chat: a work folder of this
+    # server) or "computer" (a work folder of another server: they ask in the desktop app's window).
     agent_runs: str | None = Field(default=None, max_length=16)
     # A new token of the other server for a link to one, kept in place of the
     # link's own once that server takes it (one that may write to push).
@@ -163,6 +164,17 @@ def _from_shell(request: Request, refused: str = "Only the desktop app itself ma
     return user_id
 
 
+def _shell_strict(request: Request, refused: str) -> str:
+    """``_from_shell`` for a route that sends this computer's tokens on or
+    decides what it trusts (routers/remote_servers.py): a server started
+    with no secret refuses it too (403), so it never passes unchecked."""
+    user_id = _account(request)
+    secret = config.shell_secret()
+    if not secret or not secrets.compare_digest(request.headers.get(SHELL_HEADER, "").encode(), secret.encode()):
+        raise HTTPException(status_code=403, detail=refused)
+    return user_id
+
+
 def _mine(request: Request, link_id: str, write: bool = True) -> dict:
     """The link, when the request may see it: a remote source's by the
     account that made it, a local one by a member (editor, to change it)
@@ -243,7 +255,8 @@ def _info(link: dict, can_act: bool = True, agents: dict | None = None) -> dict:
 
     info = {k: v for k, v in link.items() if k not in ("state", "token")}
     info.update(dest=str(folder_links.dest_of(link)), pull=bool(link["pull"]), push=folder_links.push_word(link["push"]),
-                choosing=folder_links.choosing(link), work=folder_links.work_vault(link))
+                choosing=folder_links.choosing(link), work=folder_links.work_vault(link),
+                plain=remote_servers.plain(link["remote_url"]))
     info["agent"] = agents[link["id"]] if agents is not None else agent_info.agent_info(link, can_act=can_act)
     if link["kind"] == "file":
         info["title"] = link["state"].get("title", "")
@@ -273,12 +286,14 @@ def _refused(e: folder_links.LinkError, status: int = 400) -> HTTPException:
 def list_links(request: Request):
     """``{links: [{id, kind, workspace_id, folder_id, page_id, path, notes,
     pull (a bool), push ("off" | "pdfs" | "everything"), library, choosing,
-    work, created_at, cursor, status, dest, remote_url, token_id, title?}]}``
+    work, created_at, cursor, status, dest, remote_url, plain, token_id, title?}]}``
     — every link the account may see, whatever workspace the request names:
     those of this server's workspaces it has a role in (``remote_url``
     empty), and its own to another server (``remote_url`` the other server,
-    ``workspace_id`` the workspace there). A folder link (``kind``
-    ``folder``) has its ``folder_id``, a file link (``file``) its
+    ``workspace_id`` the workspace there; ``plain`` whether that address is
+    plain http, ``remote_servers.plain``, "" | "lan" | "name", no DNS
+    asked: "" reached securely, which Ask on this computer needs). A folder
+    link (``kind`` ``folder``) has its ``folder_id``, a file link (``file``) its
     ``page_id`` and the page's ``title``; ``dest`` is the directory or the
     file. ``work`` says the link keeps a work folder, of this server or of
     another (``folder_links.work_vault``), ``library`` is a work folder's
@@ -292,9 +307,12 @@ def list_links(request: Request):
     them all. A folder vault's ``status``: ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked?, refused?,
     capped?, held?, stopped?, offline?, shared?, upgraded_at?,
-    work_folder_at?, push_off?, paused_at?, folder_path}``
-    (``folder_links._vault_round``), ``shared`` the pages filed in it that a
-    vault beside it, made before it, keeps (``[{page, title}]``)."""
+    work_folder_at?, push_off?, paused_at?, error_kind?, move_to?, upgrade?,
+    cert?, blocked?, folder_path}`` (``folder_links._vault_round``),
+    ``shared`` the pages filed in it that a vault beside it, made before
+    it, keeps (``[{page, title}]``); ``error_kind`` and the rest what the
+    last failure of a vault of another server was
+    (``gamma_sync.status_fields``)."""
     from ..local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
 
     user_id = _account(request)
@@ -326,10 +344,14 @@ def create_link(payload: LinkCreate, request: Request):
     one (of a PDF that is there, for a file link) or another link's, a
     directory holding another folder's files or a vault marker not to be
     adopted, or one of ``folder_links.check_vault``'s refusals, or a server
-    that refuses the token; for a work folder of another server, 409 for
-    its folder there as it stands (a work folder already, inside or around
-    one, not empty, a mark that server refuses: a clone, a Zotero link) and
-    502 for a server that does not answer."""
+    that refuses the token, or plain http to a host on the internet; for a
+    work folder of another server, 409 for its folder there as it stands (a
+    work folder already, inside or around one, not empty, a mark that server
+    refuses: a clone, a Zotero link) and 502 for a server that does not
+    answer. For another server, 409 too for one that redirects, and 502 for
+    a certificate not trusted here, no HTTPS, or a sign-in or proxy in the
+    way, the answer carrying beside its ``detail`` what the status would
+    (``error_kind``, ``move_to``, ``upgrade``, ``cert``, ``blocked``)."""
     user_id = _from_shell(request)
     try:
         if payload.remote_url and (payload.new_folder or payload.adopt):
@@ -351,6 +373,8 @@ def create_link(payload: LinkCreate, request: Request):
                                             payload.pull, new_folder=payload.new_folder, adopt=payload.adopt,
                                             choose=payload.choose, library=payload.library)
     except folder_links.LinkError as e:
+        if e.fields:   # what the other server's failure was: the certificate it served, where it redirected
+            return JSONResponse({"detail": str(e), **e.fields}, status_code=e.status)
         raise _refused(e, e.status)
     if not folder_links.choosing(link):
         folder_links.run_in_background(link["id"])
@@ -606,10 +630,17 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
     (its problem). ``agent_runs`` is what that agent may run
     (``folder_links.set_agent_runs``): ``ask`` lets its chat's turns ask
     the person, which the desktop app asks with its shell's word (403
-    without), for a work folder of this server only (409), ``never`` the
-    maker's alone; the gate of ``agent``, then 400 for another value or a
-    folder with no agent on (after the PATCH's own ``agent``). A resume
-    hands the agent the Sends made since it was turned on that wait."""
+    without), for a work folder of this server only (409); ``computer``
+    lets the turns of a work folder of another server ask the person in the
+    desktop app's window (step 5b), for such a folder only (409), reached
+    securely (409 for plain http), with the shell's word, never unchecked
+    (403, a server without a secret too), the answer's ``older`` true when
+    that server's pages do not say a turn waits here (its whoami without
+    ``computer_asks``; asked once, 15 s at most, false when it does not
+    answer); ``never`` the maker's alone; the gate of ``agent``, then 400
+    for another value or a folder with no agent on (after the PATCH's own
+    ``agent``). A resume hands the agent the Sends made since it was turned
+    on that wait."""
     changes = (payload.notes is not None or payload.push is not None or payload.pull is not None
                or payload.library is not None or bool(payload.token) or payload.agent is not None
                or payload.agent_runs is not None)
@@ -641,9 +672,12 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
     if payload.paused is False:
         folder_links.run_in_background(link_id)
         _hand_waiting(link)
+    out = _info(link)
     if payload.agent is not None:
-        return {**_info(link), "queued": queued}
-    return _info(link)
+        out["queued"] = queued
+    if payload.agent_runs == "computer":
+        out["older"] = _older_there(link_id)
+    return out
 
 
 def _agent_allowed(request: Request, link: dict, agent: str) -> None:
@@ -673,12 +707,17 @@ def _agent_allowed(request: Request, link: dict, agent: str) -> None:
 
 def _runs_allowed(request: Request, link: dict, runs: str, agent: str | None) -> None:
     """The PATCH's gate for ``agent_runs``, in order, past ``_made``: a
-    server that runs agents (404), a work folder (400), ``never`` or
-    ``ask`` (400), an agent on once the PATCH's ``agent`` is set (400);
-    for ``ask``, a work folder of this server (409: asking is in the chat,
-    which a work folder of another server has not here) and the shell's
-    word (403: letting an agent ask to run commands is the computer's
-    decision). ``never`` needs nothing more."""
+    server that runs agents (404), a work folder (400), ``never``, ``ask``
+    or ``computer`` (400), an agent on once the PATCH's ``agent`` is set
+    (400); for ``ask``, a work folder of this server (409: asking is in the
+    chat, which a work folder of another server has not here) and the
+    shell's word (403: letting an agent ask to run commands is the
+    computer's decision); for ``computer``, a work folder of another
+    server (409), reached securely (409 for plain http,
+    ``remote_servers.plain``: what the person reads on the card must come
+    from that server) and the shell's word, never unchecked (403, a server
+    without a secret too: without the desktop app there is no window to
+    ask in). ``never`` needs nothing more."""
     from .. import local_agents
     from ..local_agents import store
 
@@ -687,14 +726,39 @@ def _runs_allowed(request: Request, link: dict, runs: str, agent: str | None) ->
     if not folder_links.agent_folder(link):
         raise HTTPException(status_code=400, detail="Only a work folder can have an agent.")
     if runs not in store.RUNS:
-        raise HTTPException(status_code=400, detail="What an agent may run is never or ask.")
+        raise HTTPException(status_code=400, detail="What an agent may run is never, ask or computer.")
     if not (agent if agent is not None else (store.agent_of(link["id"]) or {}).get("agent")):
         raise HTTPException(status_code=400, detail="Turn an agent on first.")
     if runs == "ask":
         if not folder_links.work_folder_link(link):
             raise HTTPException(status_code=409, detail="Asking in the chat is for a work folder of this computer's "
-                                                        "server.")
+                                                        "server: for one of another server, choose Ask on this "
+                                                        "computer.")
         _from_shell(request, "Only the desktop app may let an agent ask to run commands in this folder.")
+    if runs == "computer":
+        if not link["remote_url"] or not folder_links.work_vault(link):
+            raise HTTPException(status_code=409, detail="Ask on this computer is for a work folder of another "
+                                                        "server: here the agent asks in the chat.")
+        if remote_servers.plain(link["remote_url"]) != "":
+            raise HTTPException(status_code=409, detail=f"{remote_servers._host(link['remote_url'])} is reached "
+                                                        "over plain http: Ask on this computer needs https.")
+        _shell_strict(request, "Only the desktop app may let an agent ask on this computer.")
+
+
+def _older_there(link_id: str) -> bool:
+    """Whether the other server of a work folder that may now ask on this
+    computer runs a Gamma whose pages do not say a turn waits here (its
+    whoami without ``computer_asks``); False for one not reached: the
+    policy is set either way."""
+    link = folder_links.get_link(link_id, with_token=True)
+    if not link or not link["remote_url"]:
+        return False
+    try:
+        who = folder_links.remote_server(link, timeout=folder_links.ASK_TIMEOUT_S).get_json("/api/sync/whoami")
+    except Exception as e:  # noqa: BLE001 — a server not reached, a sealed token that no longer opens
+        log.info(f"[folders] asking {folder_links.server_name(link)} whether its pages say an agent waits: {e}")
+        return False
+    return isinstance(who, dict) and not who.get("computer_asks")
 
 
 def _hand_waiting(link: dict) -> None:

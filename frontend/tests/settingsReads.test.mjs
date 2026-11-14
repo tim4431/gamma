@@ -85,7 +85,7 @@ test("a pane's reads go out together with what they lead to; a prefetch reads on
   await reads.pane("backups", who, { missing: true });
   assert.deepEqual(asked, [], "a prefetch reads nothing it has");
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(!PANE_READS.backups(who).includes("/admin/offsite"), "an account that is not an admin reads no off-site copies");
+  assert.ok(!PANE_READS.backups(who).includes("/admin/offsite"), "an account that is not an admin reads no bucket");
   assert.ok(PANE_READS.backups({ admin: true }).includes("/admin/offsite"));
   assert.equal(PANE_READS.server().filter((path) => path === "/admin/settings").length, 1, "the Server pane reads its settings once");
 });

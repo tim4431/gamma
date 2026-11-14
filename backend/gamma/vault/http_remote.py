@@ -234,11 +234,18 @@ class HttpRemote:
         op client in ``X-Gamma-Client``, so that a write of a route that takes
         none in its body (a page made, its blocks, the trash, a restore, a
         folder deleted, the attachment replaced) is the vault's to the
-        server's work-folder rule (gamma/auth.py ``writer_client``)."""
+        server's work-folder rule (gamma/auth.py ``writer_client``). A
+        refusal by something in front of the server (a sign-in page, a
+        proxy, Cloudflare: ``gamma_sync.blocked``) is ``Unreachable``, never
+        the token's."""
         try:
             status, data = self.server.ask(method, path, obj, headers={CLIENT_HEADER: CLIENT})
         except gamma_sync.Unreachable as e:
             raise Unreachable(str(e)) from e
+        kind = gamma_sync.blocked(status, self.server.last_headers, data)
+        if kind:
+            blocked = gamma_sync.Blocked(self.server.host, status, kind)
+            raise Unreachable(str(blocked)) from blocked
         answer = _decoded(data)
         if answer is None:
             if not 400 <= status < 500 or status in (404, 408, 429):

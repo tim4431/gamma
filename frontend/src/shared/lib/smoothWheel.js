@@ -27,7 +27,7 @@
 export const SMOOTH_MS = 150;
 const TAU_MS = SMOOTH_MS / 3; // the time constant of the approach
 const FRAME_MS = 16; // the first frame after rest counts as this long
-const LINE_PX = 40; // a line of deltaMode 1, as Firefox reports a notch
+export const LINE_PX = 40; // a line of deltaMode 1, as Firefox reports a notch
 const DRIFT_PX = 2; // how far scrollTop may read back from what was written
 const DONE_PX = 1; // this close, the goal is written exactly and the motion ends
 
@@ -55,8 +55,9 @@ export function notchDelta(e, pageHeight, dpr = 1) {
 export const approach = (dt) => 1 - Math.exp(-Math.max(0, dt) / TAU_MS);
 
 // Whether an element between `node` and the scroller can scroll by `dy`
-// itself: the wheel is its.
-function innerScrolls(node, el, dy) {
+// itself: the wheel is its (also the code view's comment column,
+// TextOverlay.jsx, whose wheel scrolls the text beside it).
+export function innerScrolls(node, el, dy) {
   for (let n = node; n && n !== el && n.nodeType === 1; n = n.parentElement) {
     const { overflowY } = getComputedStyle(n);
     if ((overflowY === "auto" || overflowY === "scroll") && n.scrollHeight > n.clientHeight + 1

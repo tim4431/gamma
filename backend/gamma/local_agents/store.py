@@ -181,11 +181,15 @@ def forget_threads(link_id: str) -> None:
 
 # --- what an agent may run ------------------------------------------------------------------
 
-RUNS = ("never", "ask")   # never: as it always did; ask: its chat's turns may ask the person
+# never: as it always did; ask: its chat's turns may ask the person in the chat (a work folder of this
+# server); computer: the turns of a work folder of another server may ask the person at this computer, in
+# the desktop app's window (runner.ask_refusal)
+RUNS = ("never", "ask", "computer")
 
 
 def runs_of(link_id: str) -> str:
-    """What the vault's agent may run: ``ask`` or ``never``."""
+    """What the vault's agent may run: ``ask``, ``computer`` or ``never``
+    (an older app reads ``computer`` as ``never``)."""
     return policies_of([link_id]).get(link_id, "never")
 
 
@@ -237,6 +241,22 @@ def granted(conversation_id: str, command: str, *, link_id: str, cwd: str = ".",
                             "AND host = ? AND link_id = ?",
                             (conversation_id, command.strip(), cwd or ".", (host or "").strip(),
                              link_id)).fetchone() is not None
+
+
+def grants_of(conversation_id: str, *, link_id: str) -> list[dict]:
+    """What the person allowed in the conversation, in the vault
+    ``link_id``: ``[{command, cwd, host}]``, oldest first (the composer's
+    Allowed in this chat chip)."""
+    with connect_vaults_db() as conn:
+        rows = conn.execute("SELECT command, cwd, host FROM agent_grants WHERE conversation_id = ? AND link_id = ? "
+                            "ORDER BY at, command", (conversation_id, link_id)).fetchall()
+    return [{"command": r[0], "cwd": r[1], "host": r[2]} for r in rows]
+
+
+def forget_grants(conversation_id: str) -> None:
+    """The conversation's grants taken back: each command asks again."""
+    with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM agent_grants WHERE conversation_id = ?", (conversation_id,))
 
 
 # --- the runs ------------------------------------------------------------------------------
@@ -386,6 +406,14 @@ def get_turn(turn_id: str) -> dict | None:
     this computer's record alone (``open_turns``)."""
     with connect_vaults_db() as conn:
         row = conn.execute(f"{_TURN_SELECT} WHERE id = ? AND ws != link_id", (turn_id,)).fetchone()
+    return dict(zip(_TURN_COLUMNS, row)) if row else None
+
+
+def claimed_of(turn_id: str) -> dict | None:
+    """The turn of another server's page this computer claimed
+    (``claimed_turn``'s row), None for none."""
+    with connect_vaults_db() as conn:
+        row = conn.execute(f"{_TURN_SELECT} WHERE id = ? AND ws = link_id", (turn_id,)).fetchone()
     return dict(zip(_TURN_COLUMNS, row)) if row else None
 
 

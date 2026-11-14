@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { FAKE_AI_MODELS, fakeAiModels, live, wanted } from "../harness.mjs";
+import http from "node:http";
+import { Account, FAKE_AI_MODELS, fakeAiModels, live, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -586,6 +587,52 @@ export async function chatNavigationScenarios(env) {
       await page.locator(".chatErrorCard.compact", { hasText: "OpenAI is overloaded" }).waitFor();
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: a provider refusing the server's network reads as the network, and its fix opens Network proxy", async () => {
+    // A provider that answers every call as OpenAI does a region it doesn't
+    // serve: the server's network is refused, not the key (net_proxy.refused_network).
+    const provider = http.createServer((req, res) => {
+      req.resume();
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { code: "unsupported_country_region_territory",
+        message: "Country, region, or territory not supported", type: "request_forbidden" } }));
+    });
+    await new Promise((listening) => provider.listen(0, "127.0.0.1", listening));
+    await server.manage("create-user", "refused-admin", "refused-admin-pw");
+    await server.manage("set-admin", "refused-admin", "on");
+    const admin = await new Account(server, "refused-admin", "refused-admin-pw").login();
+    await admin.api("/api/ai/providers", { method: "POST", body: {
+      protocol: "openai", name: "OpenAI", api_key: "sk-refused", models: "gpt-x",
+      base_url: `http://127.0.0.1:${provider.address().port}/v1`,
+    } });
+    const chatPage = await admin.api("/api/pages", { method: "POST", body: { title: "Refused network" } });
+    const ctx = await admin.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${admin.ws}&page=${chatPage.id}`);
+    const proxyPane = page.locator('.settingsPane .setHead[data-setting="Network proxy"]');
+    try {
+      // The login check: the strip names the network, and Fix… opens Network proxy.
+      const strip = page.locator(".chatHealthStrip", { hasText: "OpenAI refused this server's network" });
+      await strip.waitFor();
+      await strip.getByRole("button", { name: "Fix…" }).click();
+      await proxyPane.waitFor();
+      await page.keyboard.press("Escape");
+      await proxyPane.waitFor({ state: "detached" });
+      // A chat: the card says the key is kept, and its fix is the proxy.
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.fill("hi");
+      await input.press("Enter");
+      const card = page.locator(".chatErrorCard", { hasText: "OpenAI refused this server's network" });
+      await card.waitFor();
+      assert((await card.innerText()).includes("not the key or sign-in, which are kept"), "the card keeps the key");
+      assertEq(await card.getByRole("button", { name: "Update key" }).count(), 0, "no key to update");
+      await card.getByRole("button", { name: "Network proxy", exact: true }).click();
+      await proxyPane.waitFor();
+      assertNoProblems(page, ["POST /api/ai/chat -> 502"]);
+    } finally {
+      await ctx.close();
+      provider.close();
+    }
   });
 
   await step("chat navigation: the agent's steps sum up in one pill that names the running step; its changes link to what changed", async () => {
@@ -1601,184 +1648,6 @@ export async function chatNavigationScenarios(env) {
     } finally {
       await ctx.close();
       await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
-    }
-  });
-
-  await step("chat navigation: a plan is proposed read-only, approved, tracked, continued and revised", async () => {
-    const { title: homeTitle } = await alice.api("/api/chats/home");
-    await alice.api("/api/chats/home", { method: "PUT", body: { title: "", messages: [] } });
-    const { value: profile } = await alice.api("/api/prefs/profile");
-    // The defaults: reading is allowed, changes ask.
-    const { agentPerms: _perms, ...rest } = profile || {};
-    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: rest } });
-    const ctx = await alice.context(browser);
-    await fakeAiModels(ctx);
-    await ctx.addInitScript(() => {
-      localStorage.setItem("gamma-ai-login-check", "off");
-      window.chatBodies = [];
-      const fetch = window.fetch.bind(window);
-      window.fetch = (input, init) => {
-        if (String(input).endsWith("/api/ai/chat")) {
-          window.chatBodies.push(JSON.parse(init.body));
-          return Promise.resolve(new Response(new ReadableStream({
-            start(controller) {
-              window.chatStream = {
-                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
-                finish: () => controller.close(),
-              };
-            },
-          }), { headers: { "Content-Type": "application/x-ndjson" } }));
-        }
-        return fetch(input, init);
-      };
-    });
-    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
-    const chat = page.locator(".chatPanel");
-    const input = page.getByRole("combobox", { name: "Message AI" });
-    const toggle = page.locator(".chatComposer").getByRole("button", { name: "Plan", exact: true });
-    const pressed = async () => (await toggle.getAttribute("aria-pressed")) === "true";
-    const sent = (n) => until(() => page.evaluate((count) => window.chatBodies.length === count && !!window.chatStream, n),
-      { what: `message ${n} is sent` }).then(() => page.evaluate(() => window.chatBodies.at(-1)));
-    const push = (...events) => page.evaluate((list) => { for (const e of list) window.chatStream.push(e); }, events);
-    const finish = async () => {
-      await page.evaluate(() => { window.chatStream.finish(); window.chatStream = null; });
-      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()),
-        { what: "the reply ends" });
-    };
-    const steps = (...statuses) => statuses.map((status, i) => ({
-      step: ["Rename “cavity paper” to Ada2019", "File it in Physics"][i], status }));
-    const planned = (plan, summary) => ({ action: { kind: "plan", tool: "update_plan", summary, args: { plan: "[…]" },
-      result: "1. …", plan } });
-    const cards = chat.locator(".chatPlan");
-    const approve = chat.getByRole("button", { name: "Approve plan", exact: true });
-    const revise = chat.getByRole("button", { name: "Revise", exact: true });
-    try {
-      await input.waitFor();
-      await page.waitForLoadState("networkidle");
-
-      // 1. Plan on: the message is a planning turn; a change the model tried
-      // is kept for the plan, and the plan waits for the user.
-      await toggle.waitFor();
-      assertEq(await pressed(), false, "Plan starts off");
-      await toggle.click();
-      assertEq(await pressed(), true, "the switch says it is on");
-      assert((await input.getAttribute("placeholder")).startsWith("Ask for a plan…"), "the box asks for a plan");
-      await input.fill("Tidy this folder");
-      await input.press("Enter");
-      const first = await sent(1);
-      assertEq(first.planning, true, "the request is a planning turn");
-      assertEq(first.permissions.rename, "ask", "the permissions are sent as they are");
-      await push({ step: { id: "c1", tool: "rename_page", args: {} } },
-        { action: { kind: "error", tool: "rename_page", summary: "Held for the plan: rename_page", error: true,
-          held: true, count: 2, args: { renames: "[…]" }, result: "error: this is a planning turn, so nothing was changed" } },
-        planned({ steps: steps("pending", "pending"), proposed: true }, "Planned 2 steps"),
-        { delta: "Here is the plan." });
-      await finish();
-      const proposed = cards.first();
-      await proposed.getByText("Awaiting your approval").waitFor();
-      assertEq(await proposed.locator(".chatPlanSteps li").count(), 2);
-      assert((await proposed.innerText()).includes("Rename “cavity paper” to Ada2019"), "the card lists the steps");
-      await approve.waitFor();
-      await revise.waitFor();
-      const pill = chat.locator(".chatSteps").first();
-      await pill.getByText("1 kept for the plan").waitFor();
-      assertEq(await chat.locator(".chatStepsFailed").count(), 0, "a change kept for the plan is not a failure");
-      await pill.click();
-      await chat.getByText("Kept for the plan: Rename 2 pages").waitFor();
-      await pill.click();
-      const saved = await until(async () => {
-        const stored = await alice.api("/api/chats/home");
-        return stored.messages?.length === 2 && !stored.messages[1].partial && stored;
-      }, { what: "the planning turn is saved" });
-      assertEq(saved.messages[0].planning, true, "the message is saved as a planning turn");
-      if (flags.keep) await proposed.screenshot({ path: `${server.dir}/plan-card.png`, animations: "disabled" });
-      // The buttons wait for an empty composer, as Continue does.
-      await input.fill("x");
-      await until(async () => (await approve.count()) === 0, { what: "a draft hides Approve plan" });
-      assertEq(await revise.count(), 0);
-      await input.fill("");
-      await approve.waitFor();
-
-      // 2. Approve turns Plan off and carries the plan out as a normal turn;
-      // the run's own card tracks it.
-      await approve.click();
-      const second = await sent(2);
-      assertEq(second.prompt, "Carry out the approved plan.");
-      assertEq(second.planning, undefined, "the approved run is no planning turn");
-      assertEq(await pressed(), false, "Approve turns Plan off");
-      await proposed.getByText("Approved").waitFor();
-      assertEq(await approve.count(), 0, "an approved plan offers nothing");
-      await push(planned({ steps: steps("completed", "in_progress") }, "Plan: 1 of 2 done"));
-      const run = cards.nth(1);
-      await run.getByText("1 of 2 done").waitFor();
-      await push(planned({ steps: steps("completed", "completed") }, "Plan: 2 of 2 done"),
-        { delta: "Renamed and filed it.\n\n*(stopped: tool-round limit reached)*" },
-        { limit: { kind: "rounds", rounds: 32, changes: 2 } });
-      await run.getByText("2 of 2 done").waitFor();
-      await finish();
-      assertEq(await run.locator(".chatPlanMark.done").count(), 2, "every step is marked done");
-      if (flags.keep) await chat.screenshot({ path: `${server.dir}/plan-run.png`, animations: "disabled" });
-      const approved = await until(async () => {
-        const stored = await alice.api("/api/chats/home");
-        return stored.messages?.length === 4 && !stored.messages[3].partial && stored;
-      }, { what: "the run is saved" });
-      assertEq(approved.messages[2].approvesPlan, true, "Approve's message says so");
-      assertEq(approved.messages[2].planning, undefined);
-
-      // 3. Continue on the run keeps its mode, whatever the switch says.
-      await toggle.click();
-      assertEq(await pressed(), true);
-      await chat.locator(".chatLimitActions").getByRole("button", { name: "Continue", exact: true }).click();
-      const third = await sent(3);
-      assertEq(third.prompt, "Please continue where you stopped.");
-      assertEq(third.planning, undefined, "a Continue of the approved run is no planning turn");
-      await push({ delta: "All done." });
-      await finish();
-
-      // 4. A new plan; Revise turns Plan on and goes to the message box.
-      await input.fill("Label them too");
-      await input.press("Enter");
-      assertEq((await sent(4)).planning, true, "with Plan on the next message plans");
-      await push(planned({ steps: steps("pending"), proposed: true }, "Planned 1 step"), { delta: "One step." });
-      await finish();
-      await cards.nth(2).getByText("Awaiting your approval").waitFor();
-      await toggle.click();
-      assertEq(await pressed(), false);
-      await revise.click();
-      assertEq(await pressed(), true, "Revise turns Plan on");
-      assert(await input.evaluate((el) => el === document.activeElement), "Revise goes to the message box");
-      const composer = page.locator(".chatComposer");
-      if (flags.keep) await composer.screenshot({ path: `${server.dir}/plan-composer.png`, animations: "disabled" });
-      // A narrow chat: the switch's word gives way and the send button stays inside the composer.
-      await composer.evaluate((el) => { el.style.width = "200px"; });
-      const narrow = await page.evaluate(() => {
-        const box = document.querySelector(".chatComposer").getBoundingClientRect();
-        const sendBtn = document.querySelector('.chatComposer button[aria-label="Send"]').getBoundingClientRect();
-        return sendBtn.right <= box.right;
-      });
-      if (flags.keep) await composer.screenshot({ path: `${server.dir}/plan-composer-narrow.png`, animations: "disabled" });
-      await composer.evaluate((el) => { el.style.width = ""; });
-      assert(narrow, "the send button stays inside a narrow composer");
-
-      // 5. A reload restores Plan from the last message; New chat turns it off.
-      await toggle.click();
-      assertEq(await pressed(), false);
-      await until(async () => {
-        const stored = await alice.api("/api/chats/home");
-        return stored.messages?.length === 8 && !stored.messages[7].partial;
-      }, { what: "the conversation is saved" });
-      await page.reload();
-      await input.waitFor();
-      await until(pressed, { what: "the reload shows Plan on: the last message planned" });
-      await cards.nth(2).getByText("Awaiting your approval").waitFor();
-      await cards.first().getByText("Approved").waitFor();
-      await page.getByRole("button", { name: "New chat", exact: true }).click();
-      await until(async () => !(await pressed()), { what: "New chat turns Plan off" });
-      assertNoProblems(page);
-    } finally {
-      await ctx.close();
-      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
-      await alice.api("/api/chats/home", { method: "PUT", body: { title: homeTitle || "", messages: [] } });
     }
   });
 

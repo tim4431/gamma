@@ -74,8 +74,8 @@
    cannot run yet, whose comments are context. */
 .feedbackAgent { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
 .feedbackAgent:empty { margin-top: 0; } /* kept mounted (a live region), so it takes no room while it says nothing */
-.feedbackAgentNote { margin: 0; font-size: var(--fs-xs); line-height: var(--lh-ui); color: var(--text-muted); }
-.feedbackAgentNote[data-tone="warn"] { color: var(--danger); }
+.feedbackAgentNote { margin: 0; font-size: var(--fs-xs); line-height: var(--lh-ui); }
+.feedbackAgentNote:not(.agentProblem) { color: var(--text-muted); }
 .feedbackRequests { margin-top: var(--space-4); }
 .feedbackRequests ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
 .feedbackRequest {
@@ -98,6 +98,6 @@
   overflow: hidden;
 }
 .feedbackRequest[data-state="failed"] .feedbackRequestDetail { color: var(--danger); }
-.feedbackRequestState { flex-shrink: 0; font-size: var(--fs-xs); color: var(--text-muted); }
-.feedbackRequest[data-state="failed"] .feedbackRequestState { color: var(--danger); }
-.feedbackRequest[data-state="done"] .feedbackRequestState { color: var(--ok); }
+.feedbackRequestHint { font-size: var(--fs-xs); color: var(--text-dim); }
+/* Its state is the entries' tag (StateTag), in the tag's own colours. */
+.feedbackRequestState { flex-shrink: 0; }

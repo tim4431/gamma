@@ -40,7 +40,9 @@ export function AuthShell({ headline, scene, className = "", children }) {
   );
 }
 
-function LoginError({ children }) {
+// A sign-in page's failure (this page's form, an assistant's consent): the
+// --danger box, mid-form above the one primary button.
+export function LoginError({ children }) {
   return (
     <div className="loginError" role="alert">
       <AlertCircleIcon size={16} aria-hidden="true" />
@@ -49,11 +51,12 @@ function LoginError({ children }) {
   );
 }
 
-// A sign-in's outcome that is no failure: a request to join sent, or waiting.
-function LoginNotice({ children }) {
+// A sign-in's outcome that is no failure: a request to join sent, or
+// waiting (the mail icon), an assistant connected (`icon` CheckIcon).
+export function LoginNotice({ icon: Icon = MailIcon, children }) {
   return (
     <div className="loginNotice" role="status">
-      <MailIcon size={16} aria-hidden="true" />
+      <Icon size={16} aria-hidden="true" />
       <span>{children}</span>
     </div>
   );
@@ -65,7 +68,7 @@ export function WorkspaceUnavailablePage() {
       <p className="loginConflictText">
         {t("It may have been deleted, or your account may no longer have access. Ask a workspace owner to invite you if you need access.")}
       </p>
-      <button type="button" className="loginBtn" onClick={() => window.location.assign("/")}>
+      <button type="button" className="uiBtn primary loginBtn" onClick={() => window.location.assign("/")}>
         {t("Open my workspaces")}
       </button>
     </AuthShell>
@@ -83,7 +86,7 @@ export function SessionConflictPage({ tabUser, activeUser, onReload }) {
         {t("This tab was open as {tabUser}, but this browser is now signed in as {activeUser} (from another tab). This tab has been paused so the two accounts' data can't mix.", {
           tabUser: <b>{tabUser}</b>, activeUser: <b>{activeUser}</b> })}
       </p>
-      <button type="button" className="loginBtn" onClick={onReload}>
+      <button type="button" className="uiBtn primary loginBtn" onClick={onReload}>
         {t("Continue as {name}", { name: activeUser })}
       </button>
       <p className="loginConflictHint">
@@ -207,7 +210,7 @@ export function LoginPage({
     <LoginError>{t("This server is read-only: you can sign in to read and export your data, but nothing can be changed.")}</LoginError>
   ) : null;
   const cloudButton = cloudLogin?.enabled ? (
-    <a className={`loginCloudBtn${leadsWithCloud ? " lead" : ""}`} href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
+    <a className={`uiBtn loginCloudBtn${leadsWithCloud ? " primary" : ""}`} href={`/api/auth/cloud/start?next=${encodeURIComponent(next)}`}
       title={t("Sign in through {issuer}", { issuer: cloudLogin.issuer })}>
       <BrandMark size={18} />
       {t("Sign in with Gamma Cloud")}
@@ -237,11 +240,11 @@ export function LoginPage({
         autoComplete="current-password"
       />
       {errorText ? <LoginError>{errorText}</LoginError> : null}
-      <button type="submit" className="loginBtn" disabled={!username.trim() || !password.trim()}>
+      <button type="submit" className="uiBtn primary loginBtn" disabled={!username.trim() || !password.trim()}>
         {t("Log in")}
       </button>
       {onGuestLogin && !leadsWithDemo ? (
-        <button type="button" className="loginGuestBtn" onClick={onGuestLogin}>
+        <button type="button" className="uiBtn loginGuestBtn" onClick={onGuestLogin}>
           {t("Continue as guest")}
           {hours ? (
             <span className="loginGuestNote">
@@ -321,7 +324,7 @@ export function LoginPage({
         <li><CheckIcon size={16} aria-hidden="true" />{t("No sign-up, no install")}</li>
         <li><CheckIcon size={16} aria-hidden="true" />{t("Self-host it for your lab when you like it")}</li>
       </ul>
-      <button type="button" className="loginBtn" onClick={onGuestLogin}>
+      <button type="button" className="uiBtn primary loginBtn" onClick={onGuestLogin}>
         {t("Try the demo")}
       </button>
       <p className="loginDemoNote">
@@ -352,13 +355,13 @@ export function ShareBlockedPage({ reason, viewer, onSwitchAccount, onSignIn, of
           : t("This page is shared with specific people only{them}. Ask the owner to add your username.", { them: viewer ? t(", and {viewer} isn't one of them", { viewer }) : "" })}
       </p>
       {missing && offerHome ? (
-        <button type="button" className="loginBtn" onClick={() => window.location.assign("/")}>{t("Go to Gamma")}</button>
+        <button type="button" className="uiBtn primary loginBtn" onClick={() => window.location.assign("/")}>{t("Go to Gamma")}</button>
       ) : null}
       {missing && onSignIn && !viewer ? (
-        <button type="button" className="loginGuestBtn" onClick={onSignIn}>{t("Sign in to your library")}</button>
+        <button type="button" className="uiBtn loginGuestBtn" onClick={onSignIn}>{t("Sign in to your library")}</button>
       ) : null}
       {!missing && onSwitchAccount ? (
-        <button type="button" className="loginBtn" onClick={onSwitchAccount}>{t("Sign in as someone else")}</button>
+        <button type="button" className="uiBtn primary loginBtn" onClick={onSwitchAccount}>{t("Sign in as someone else")}</button>
       ) : null}
     </AuthShell>
   );

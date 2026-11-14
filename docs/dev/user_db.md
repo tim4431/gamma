@@ -129,10 +129,11 @@ All state is SQLite + files on disk under a data directory (env
   - `settings` — admin-tunable server settings (KV), including the
     admin-confirmed `public_url`, the shared AI provider entries
     (`ai_providers`, keys encrypted, [ai.md](ai.md)), the `cloud_*`
-    keys of the cloud sign-in (below) and the off-site copies (`offsite`:
-    `{enabled, bucket, endpoint, region, access_key, secret_key, prefix,
-    interval_s, keep}` as JSON, the secret key encrypted like the AI keys;
-    [debugging.md](debugging.md#off-site-copies-in-a-bucket)) and the
+    keys of the cloud sign-in (below) and the bucket (`offsite`:
+    `{bucket, endpoint, region, access_key, secret_key, prefix}` as JSON,
+    the secret key encrypted like the AI keys; an older value's `enabled`,
+    `interval_s` and `keep` are read as nothing;
+    [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)) and the
     network proxy (`proxy`: `{mode, server, username, password, bypass,
     proxy_dns}` as JSON, the password encrypted the same way;
     [network_proxy.md](network_proxy.md));
@@ -200,6 +201,22 @@ All state is SQLite + files on disk under a data directory (env
     account: the address, the `computer` token (sealed like a vault's) and
     its id, the account there and the channel's status; additive
     ([computers.md](computers.md#the-host));
+  - `server_addresses` — on the desktop app's own server, the other
+    servers' addresses this computer's links moved from or to
+    (`gamma/remote_servers.py`): the `origin` (`scheme://host[:port]`,
+    lowercase), the origin this computer's id for that server is computed
+    from (`id_origin`: the first address it was shown at, kept across
+    moves, or a generation of its own for a new channel at an address a
+    server left) and `moved_to` (`''` for a current address, else the
+    address its links went to). A server never moved has no row; additive
+    ([computers.md](computers.md#where-the-credential-is-kept));
+  - `tls_pins` — on the desktop app's own server, never a hosted one, the
+    certificates the shell trusts by their fingerprint, a row per https
+    origin: the SHA-256 of the leaf's DER (64 lowercase hex), its subject,
+    issuer and validity as shown when it was trusted, and when. The shell
+    keeps the list and replaces it whole (`PUT /api/remote-servers/pins`,
+    `tls_trust.replace_pins`); kept across restarts, so a round before the
+    shell's push has the last list; additive ([https.md](https.md));
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced
@@ -574,7 +591,7 @@ All state is SQLite + files on disk under a data directory (env
   database again and lists every workspace's files in the bucket.
   `backups/.offsite/` holds a round's database copies on their way up. The
   copies live in the bucket, under `<prefix>offsite/` and
-  `<prefix>uploads/` ([debugging.md](debugging.md#off-site-copies-in-a-bucket)).
+  `<prefix>uploads/` ([debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)).
 
 **The notes index.** `block_fts` in pages.db is an FTS5 table with
 external content: its content is the view `block_fts_src(rowid, block_id,
@@ -752,7 +769,7 @@ track of the ones nothing uses.
   store directly; only what works on the directory whole (a server backup,
   the off-site copy, a migration) goes past it. A bucket only ever holds
   the files' off-site copies
-  ([debugging.md](debugging.md#off-site-copies-in-a-bucket)).
+  ([debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)).
 - **Linked files.** On the desktop app's own server a name may instead be
   a PDF read where it is on this computer: a page's document at `path`
   ([documents.md](documents.md)), whose stored name a `vaults.db`
@@ -1039,7 +1056,7 @@ each workspace's own to the server), `backups` (list, naming automatic and damag
 ones; `--create [--uploads]`, `--delete`, `--restore`, `--prune` — the
 automatic pre-upgrade snapshots only), `offsite` (`--list [ws|users]`,
 `--restore <ws|users|all> [--at <stamp>] [--uploads]`: the off-site copies
-in the bucket, [debugging.md](debugging.md) "Off-site copies in a bucket")
+in the bucket, [debugging.md](debugging.md) "Snapshots and copies in a bucket")
 and `litestream-config [--out <path>]`. Every command but `migrate`,
 `backups`, `offsite` and `litestream-config` refuses an outdated data
 directory.
@@ -1162,10 +1179,11 @@ pane still hears of a newer release and of logged errors: both are notices
 (`gamma/notices.py`, `GET /api/notices`), the red dot on the account
 button that leads to this pane — [settings.md](settings.md) "Notices".
 
-The off-site copies are set and followed in Settings → Backups, not here
-(`/api/admin/offsite`, [debugging.md](debugging.md#off-site-copies-in-a-bucket)).
-Their status (`offsite.status`) reads no database: the last round is kept
-in memory and in the state file, so a restart still shows it.
+The bucket is set up, and the environment's off-site rounds followed, in
+Settings → Backups, not here (`/api/admin/offsite`,
+[debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)). The rounds'
+status (`offsite.status`) reads no database: the last round is kept in
+memory and in the state file, so a restart still shows it.
 
 **Databases** (`POST /api/jobs/db-check`, `gamma/integrity.py`):
 "Check now" runs SQLite's `PRAGMA quick_check` on `users.db` and on every

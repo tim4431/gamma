@@ -19,8 +19,8 @@ export const startJob = (route, body) => apiJson(`${API}/jobs/${route}`, json(bo
 export const uploadJob = (route, file, fields, options) =>
   uploadFile(file, { url: `${API}/jobs/${route}`, parts: `${API}/jobs/${route}/parts`, fields }, options);
 export const cancelJob = (id) => apiJson(`${job(id)}/cancel`, { method: "POST" });
-// A job whose kind stops by a route of its own (taskKinds' stopPath).
-export const stopAt = (path) => apiJson(`${API}${path}`, json({}));
+// A job whose kind stops by a route of its own (taskKinds' stopPath and stopBody).
+export const stopAt = (path, body = {}) => apiJson(`${API}${path}`, json(body));
 export const dismissJob = (id) => apiJson(job(id), { method: "DELETE" });
 export const clearJobs = () => apiJson(`${API}/jobs/clear`, { method: "POST" });
 

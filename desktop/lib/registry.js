@@ -30,6 +30,16 @@
 // sandbox the user picked, as security-scoped bookmarks
 // (lib/folderAccess.js).
 //
+// What the shell knows of the remote servers' addresses and certificates
+// (docs/dev/https.md): `pins`, the certificates the person trusted by their
+// fingerprint, by origin (lib/certs.js: `{ sha256, subject, issuer,
+// validFrom, validTo, pinnedAt }`), which main.js hands to the local
+// servers; `moved`, the addresses a server's links moved from, each with
+// where they went (`{ to, at, kind }`, setRemoteUrl), so a load of an old
+// address goes to the current one (currentOrigin); a remote's `httpsSeen`,
+// set once it loaded over https; and `settings.plainAccepted`, the origins
+// the person agreed to reach over plain http (main.js beforeMint).
+//
 // Local server data dirs live under ONE root, `<root>/<server id>`:
 // `settings.dataRoot` when set, else `<userData>/workspaces` (the folder
 // name predates the rename and stays so existing installs need no move).
@@ -40,6 +50,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const hostScope = require('./hostScope');
 
 const FILE = 'servers.json';
 const LEGACY_FILE = 'workspaces.json'; // the registry's name before servers had that name
@@ -64,10 +75,14 @@ const DEFAULTS = {
     // The local server that keeps the synced vaults of remote servers on
     // this disk (main.js addFolderVault): started at launch like the clones' hosts.
     folderHost: '',
+    // The origins a token may go to over plain http:// without asking again.
+    plainAccepted: [],
   },
   servers: [],
   mirrors: [],
   access: [],
+  pins: {},
+  moved: {},
   lastOpened: null,
   windowBounds: null,
 };
@@ -92,6 +107,8 @@ function filePath() {
   return path.join(userDataDir, FILE);
 }
 
+const isMap = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+
 function load() {
   try {
     const raw = JSON.parse(fs.readFileSync(filePath(), 'utf8'));
@@ -100,6 +117,8 @@ function load() {
       servers: Array.isArray(raw.servers) ? raw.servers : [],
       mirrors: Array.isArray(raw.mirrors) ? raw.mirrors : [],
       access: Array.isArray(raw.access) ? raw.access : [],
+      pins: isMap(raw.pins) ? raw.pins : {},
+      moved: isMap(raw.moved) ? raw.moved : {},
       lastOpened: raw.lastOpened || null,
       windowBounds: raw.windowBounds || null,
     };
@@ -251,18 +270,20 @@ function addLocal(name) {
   return srv;
 }
 
-// A typed address without a scheme: http:// when it names the local network
-// — localhost, a private range, a .local/.lan/.home/.internal name, or an
-// explicit port, the self-hosted Gamma's shape — and https:// for a name out
-// on the internet.
+// A typed address without a scheme, by the shared host table
+// (lib/hostScope.js): https:// for the ports TLS answers on (443, 5001,
+// Synology's, 8443) and for a public name or address, whatever the port;
+// http:// for this computer and the local network, the self-hosted Gamma's
+// plain port.
+const HTTPS_PORTS = ['443', '5001', '8443'];
 function withScheme(text) {
   const t = String(text || '').trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return t;
-  const authority = t.split('/')[0];
-  const host = authority.replace(/:\d+$/, '').toLowerCase();
-  const local = host === 'localhost' || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
-    || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /\.(local|lan|home|internal)$/.test(host) || /:\d+$/.test(authority);
-  return (local ? 'http://' : 'https://') + t;
+  const authority = t.split(/[/?#]/)[0];
+  const [, host, port] = /^(\[[^\]]*\]|[^:]*)(?::(\d+))?$/.exec(authority) || [null, authority, ''];
+  const scope = hostScope.literal(host);
+  const secure = HTTPS_PORTS.includes(port || '') || scope === hostScope.NAME || scope === hostScope.FAR;
+  return (secure ? 'https://' : 'http://') + t;
 }
 
 function parseServerUrl(url) {
@@ -278,8 +299,29 @@ function parseServerUrl(url) {
   return parsed;
 }
 
-// A remote server's address, changed: the mirrors of its workspaces follow
-// (they are keyed by the remote's origin).
+// What an address change is: the same host name from http:// to https://
+// (any port: Synology's 5000 → 5001), https:// to http://, or another.
+function moveKind(before, after) {
+  try {
+    const a = new URL(before);
+    const b = new URL(after);
+    if (a.hostname === b.hostname && a.protocol === 'http:' && b.protocol === 'https:') return 'upgrade';
+    if (a.protocol === 'https:' && b.protocol === 'http:') return 'downgrade';
+  } catch {}
+  return 'other';
+}
+
+const hostOfUrl = (url) => {
+  try { return new URL(url).hostname; } catch { return ''; }
+};
+
+// A remote server's address, changed once its links moved there (main.js
+// moveServer): the mirrors of its workspaces follow (they are keyed by the
+// remote's origin), the old address is recorded as moved (`moved`, which
+// currentOrigin follows), a host name it no longer has was not seen over
+// https, and the old address's pin goes with it: to the new address on the
+// same host name (where the window already took it for any port), dropped
+// for another one. → `{ srv, before, pins }`, `pins` whether they changed.
 function setRemoteUrl(id, url) {
   const state = load();
   const srv = state.servers.find((s) => s.id === id && s.type === 'remote');
@@ -291,8 +333,50 @@ function setRemoteUrl(id, url) {
   const before = srv.url;
   srv.url = parsed.origin;
   for (const m of state.mirrors) if (m.remoteUrl === before) m.remoteUrl = parsed.origin;
+  let pins = false;
+  if (before !== parsed.origin) {
+    state.moved[before] = { to: parsed.origin, at: new Date().toISOString(), kind: moveKind(before, parsed.origin) };
+    delete state.moved[parsed.origin]; // an address in use again is no longer a moved one
+    const sameHost = hostOfUrl(before) === parsed.hostname;
+    if (!sameHost) delete srv.httpsSeen;
+    if (state.pins[before]) {
+      if (sameHost && /^https:/.test(parsed.origin) && !state.pins[parsed.origin]) state.pins[parsed.origin] = state.pins[before];
+      delete state.pins[before];
+      pins = true;
+    }
+  }
   save(state);
-  return srv;
+  return { srv, before, pins };
+}
+
+// Where an address the links moved from is now: `moved` followed, at most 8
+// steps and never round a cycle; any other address as it is.
+function currentOrigin(origin, state = load()) {
+  let at = origin;
+  const seen = new Set([at]);
+  for (let i = 0; i < 8 && state.moved[at]; i++) {
+    const next = state.moved[at].to;
+    if (!next || seen.has(next)) break;
+    seen.add(next);
+    at = next;
+  }
+  return at;
+}
+
+// Whether `origin` is one the links moved away from.
+function movedAway(origin, state = load()) {
+  return currentOrigin(origin, state) !== origin;
+}
+
+// A remote loaded over https in the window: from then on an answer without
+// TLS there reads as interference, never as a server without it
+// (lib/startup.js).
+function markHttpsSeen(id) {
+  const state = load();
+  const srv = state.servers.find((s) => s.id === id && s.type === 'remote');
+  if (!srv || srv.httpsSeen || !/^https:/.test(srv.url || '')) return;
+  srv.httpsSeen = true;
+  save(state);
 }
 
 function addRemote(name, url) {
@@ -309,6 +393,7 @@ function addRemote(name, url) {
     createdAt: new Date().toISOString(),
   };
   state.servers.push(srv);
+  delete state.moved[parsed.origin]; // an address listed again is in use, no longer a moved one
   save(state);
   return srv;
 }
@@ -334,6 +419,8 @@ function remove(id, { deleteData = false } = {}) {
   if (!srv) return;
   state.servers = state.servers.filter((s) => s.id !== id);
   state.mirrors = state.mirrors.filter((m) => m.server !== id);
+  // its certificate's pin goes with it, unless another entry has that address
+  if (srv.type === 'remote' && !state.servers.some((s) => s.type === 'remote' && s.url === srv.url)) delete state.pins[srv.url];
   if (state.lastOpened === id) state.lastOpened = null;
   save(state);
   if (deleteData && srv.type === 'local' && srv.dataDir) {
@@ -425,6 +512,46 @@ function setAccess(list) {
   save(state);
 }
 
+// --- certificates and plain http ------------------------------------------
+
+// The pins by origin (lib/certs.js).
+function getPins() {
+  return load().pins;
+}
+
+// `cert`: what lib/certs.js describe() read of the certificate trusted.
+function setPin(origin, cert) {
+  const state = load();
+  state.pins[origin] = {
+    sha256: cert.sha256, subject: cert.subject || '', issuer: cert.issuer || '', validFrom: cert.validFrom || '',
+    validTo: cert.validTo || '', pinnedAt: new Date().toISOString(),
+  };
+  save(state);
+  return state.pins[origin];
+}
+
+function dropPin(origin) {
+  const state = load();
+  if (!state.pins[origin]) return false;
+  delete state.pins[origin];
+  save(state);
+  return true;
+}
+
+// Whether a token goes to `origin` over plain http:// without a question;
+// `on` records (true) or forgets (false) the person's yes.
+function plainAccepted(origin) {
+  return (load().settings.plainAccepted || []).includes(origin);
+}
+
+function setPlainAccepted(origin, on) {
+  const state = load();
+  const list = (state.settings.plainAccepted || []).filter((o) => o !== origin);
+  if (on) list.push(origin);
+  state.settings.plainAccepted = list;
+  save(state);
+}
+
 // --- offline copies -------------------------------------------------------
 
 function originOf(url) {
@@ -490,9 +617,11 @@ function dirSize(dir) {
 }
 
 module.exports = {
-  init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, setPort, setZoteroHost, launchHosts,
+  init, load, get, addLocal, addRemote, setRemoteUrl, moveKind, currentOrigin, movedAway, markHttpsSeen, withScheme,
+  parseServerUrl, rename, remove, setPort, setZoteroHost, launchHosts,
   markOpened, getLastOpened,
   getSettings, setSettings, getWindowBounds, setWindowBounds, getAccess, setAccess, dirSize,
   defaultDataRoot, dataRoot, localsUnderRoot, setDataRoot,
+  getPins, setPin, dropPin, plainAccepted, setPlainAccepted,
   originOf, findMirror, mirrorOf, addMirror, setServerMirrors,
 };

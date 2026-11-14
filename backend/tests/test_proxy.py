@@ -6,6 +6,7 @@ Test, the local agents' environment, boto3's proxies and the log's scrub."""
 import base64
 import functools
 import http.client
+import io
 import ipaddress
 import json
 import os
@@ -782,6 +783,24 @@ def test_the_test_tries_a_draft_and_saves_nothing(admin, dns):
             assert line["error"].startswith("Couldn't reach the proxy at 127.0.0.1:1 ("), line
     assert results["arXiv"]["route"] == "proxy" and "hunter2" not in r.text
     assert admin.get("/api/admin/proxy").json()["mode"] == "system"  # nothing saved
+
+
+def test_an_answer_refusing_this_network_fails_its_line(admin, dns, monkeypatch):
+    """OpenAI's region block (or a Cloudflare challenge) is an answer, but
+    not a way that works: the line fails and says why."""
+    dns.update({"api.openai.com": PUBLIC})
+    monkeypatch.setattr(proxy_settings, "TEST_TARGETS", (("OpenAI", "https://api.openai.com/v1/models", False),))
+    region = b'{"error": {"code": "unsupported_country_region_territory", "message": "Country, region, or territory"}}'
+
+    class Refusing:
+        def open(self, url, timeout=None):
+            raise urllib.error.HTTPError(url, 403, "Forbidden", {}, io.BytesIO(region))
+
+    monkeypatch.setattr(net_proxy, "build_opener", lambda **kw: Refusing())
+    r = admin.post("/api/admin/proxy/test", json={"mode": "none"})
+    (line,) = [line for line in r.json()["results"] if line["name"] == "OpenAI"]
+    assert (line["ok"], line["status"], line["route"]) == (False, 403, "direct")
+    assert line["error"] == "403: it doesn't serve the country or region this server connects from"
     for body in ({"url": "ftp://example.org/"}, {"mode": "manual"}, {"url": "https://u:p@example.org/"}):
         assert admin.post("/api/admin/proxy/test", json=body).status_code == 400, body
 

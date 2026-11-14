@@ -1,0 +1,4 @@
+LIBRARY GammaOpenWith
+EXPORTS
+  DllGetClassObject PRIVATE
+  DllCanUnloadNow PRIVATE

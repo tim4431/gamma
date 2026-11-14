@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 // most of a warm reopen.
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { BookIcon, CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, LocateIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
+import { BookIcon, CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { inkPenDown } from "../ink/InkLayer";
@@ -29,7 +29,7 @@ import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { useCopied } from "../shared/ui/Widgets";
 import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
-import { menuPress } from "../shared/ui/press.js";
+import { keepSelection, menuPress, tipPress } from "../shared/ui/press.js";
 import { MenuButton } from "../shared/ui/Menus";
 import { lastPointer } from "../shared/lib/pointer.js";
 import { composing, heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
@@ -45,14 +45,14 @@ import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarg
 import NoteBadge from "../comments/NoteBadge.jsx";
 import { beginRegionDrag } from "../shared/ui/regionDrag.js";
 import { useRecentIn } from "../guide/recent.js";
-import { darkPageColor, darkPageLine, lineColor, pickerColors } from "../shared/model/palette.js";
+import { darkPageColor, darkPageLine, lineColor } from "../shared/model/palette.js";
 import { isLineStyle } from "../shared/model/markStyle.js";
 import { TipMarks } from "./MarkTools.jsx";
 import { closestPlace, placedToCheck } from "../shared/model/blockModel.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
 import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js";
-import { usePalette } from "../shared/ui/paletteContext.js";
 import { TipFrame } from "../shared/ui/TipFrame.jsx";
+import { TipComment, TipCopy, TipDivider, TipMoveHere, TipTool } from "../shared/ui/SelectionTip.jsx";
 import { t } from "../shared/i18n/i18n.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { SCALE_VAR, installViewerZoom, scaledPx } from "../shared/lib/viewerZoom.js";
@@ -3169,16 +3169,14 @@ const SEL_TRANSLATE_MAX = 5000;
 // `onRemove()` deletes. `area`: a dragged rectangle, which has no style.
 // `onDismiss()` puts the popup and its selection away. The swatches, the
 // highlighters and the fold are TipMarks' (MarkTools.jsx); a pick reaches
-// onConfirm("", swatch, {style}). `copy`:
+// onConfirm("", swatch, {style}). The tools are the shared ones
+// (shared/ui/SelectionTip.jsx), as the code view's and a picture's. `copy`:
 // the selection's text, for a Copy button (where the host's own menu,
 // which has one, is off). `menu`: the opener of the paragraph menu of a
 // page that shows its translation, for the ⋯ that is a finger's and a
 // pen's way to it (MenuButton): their hold selects.
 function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null, menu = null, recolor = false, onRestyle = null, area = false, onDismiss = null,
   own = null, onSave = null, onRemove = null }) {
-  const palette = usePalette();
-  const colors = pickerColors(palette, "highlight");
-  const [copied, flashCopied] = useCopied(1200);
   const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
   const ctlRef = useRef(null);
   const source = useMemo(() => (translate ? selectionParagraphs(translate.text) : ""), [translate?.text]);
@@ -3203,89 +3201,38 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove, copy = null
     if (translate?.auto) start();
     return () => ctlRef.current?.abort();
   }, []);
-  const keep = (e) => { e.preventDefault(); e.stopPropagation(); }; // keep the PDF selection
-  // A button acts on the mouse's press, which keeps the PDF selection, and on
-  // a click no press led to (`detail` 0: Enter or Space on it, an assistive
-  // technology's activation), as triggerPress does (shared/ui/press.js).
-  const act = (run) => ({
-    onMouseDown: (e) => { keep(e); run(); },
-    onClick: (e) => { if (!e.detail) run(); },
-  });
   const fold = () => setTrans((prev) => ({ ...prev, open: !prev.open }));
-  if (onMove) {
-    // A highlight waiting to be moved (App's move mode): this selection is
-    // its new place, nothing else is offered.
-    return (
-      <div className="plainTip">
-        <div className="colorRow">
-          <button className="colorBtn linkTipBtn tipMoveBtn" type="button" {...act(onMove)}
-            title={t("Move the highlight here")} aria-label={t("Move the highlight here")}>
-            <LocateIcon size={14} />
-          </button>
-        </div>
-      </div>
-    );
-  }
+  if (onMove) return <div className="plainTip"><TipMoveHere onMove={onMove} /></div>;
+  // Every button acts on the mouse's press, which keeps the PDF selection
+  // (shared/ui/press.js tipPress).
   return (
     <div className="plainTip">
-      <TipMarks area={area} made={recolor} own={own} act={act} guide="pdf.highlightColor" onStyle={onRestyle} onLeave={onDismiss}
+      <TipMarks area={area} made={recolor} own={own} act={tipPress} guide="pdf.highlightColor" onStyle={onRestyle} onLeave={onDismiss}
         onSave={onSave} onRemove={onRemove}
         onMark={({ color, style }) => onConfirm("", color, { style })} tools={<>
         {/* the colours, then the tools */}
-        {copy || onComment || onLink || translate || menu ? <span className="tipDivider" aria-hidden="true" /> : null}
-        {copy ? (
-          <button
-            className="colorBtn linkTipBtn"
-            onMouseDown={keep}
-            onClick={async () => { if (await copyText(copy)) flashCopied(); }}
-            type="button"
-            title={t("Copy")}
-            aria-label={t("Copy")}
-          >
-            <IconSwap swap={copied} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
-          </button>
-        ) : null}
-        {onComment ? (
-          <button
-            className="colorBtn linkTipBtn"
-            {...act(() => onComment(colors[0]))}
-            type="button"
-            title={t("Comment on this passage")}
-            aria-label={t("Comment on this passage")}
-          >
-            <MessageSquareIcon size={14} />
-          </button>
-        ) : null}
+        {copy || onComment || onLink || translate || menu ? <TipDivider /> : null}
+        {copy ? <TipCopy text={copy} /> : null}
+        {onComment ? <TipComment onComment={onComment} /> : null}
         {onLink ? (
-          <button
-            className="colorBtn linkTipBtn"
-            {...act(onLink)}
-            type="button"
-            title={t("Link this reference to a paper (DOI / arXiv / existing PDF)")}
-            aria-label={t("Link this reference to a paper (DOI / arXiv / existing PDF)")}
-          >
+          <TipTool label={t("Link this reference to a paper (DOI / arXiv / existing PDF)")} onPress={onLink}>
             <LinkIcon size={14} />
-          </button>
+          </TipTool>
         ) : null}
         {translate ? (
-          <button
-            className={`colorBtn linkTipBtn ${trans ? "selected" : ""}`}
-            {...act(() => {
+          <TipTool label={t("Translate selection")} title={t("Translate the selected text into {lang}", { lang: translate.langLabel })}
+            selected={!!trans} aria-expanded={!!trans?.open}
+            onPress={() => {
               if (!trans || trans.status === "error") start();
               else fold();
-            })}
-            type="button"
-            aria-label={t("Translate selection")}
-            aria-expanded={!!trans?.open}
-            title={t("Translate the selected text into {lang}", { lang: translate.langLabel })}
-          >
+            }}>
             <LanguagesIcon size={14} />
-          </button>
+          </TipTool>
         ) : null}
-        {menu ? <MenuButton open={menu} label={t("Paragraph actions")} className="colorBtn linkTipBtn" onMouseDown={keep} /> : null}
+        {menu ? <MenuButton open={menu} label={t("Paragraph actions")} className="colorBtn linkTipBtn" onMouseDown={keepSelection} /> : null}
       </>} />
       {translate && trans ? <SelTranslation trans={trans} lang={translate.lang} langLabel={translate.langLabel} tooLong={tooLong}
-        onToggle={fold} keep={keep} source={source} addTerm={translate.addTerm} /> : null}
+        onToggle={fold} keep={keepSelection} source={source} addTerm={translate.addTerm} /> : null}
     </div>
   );
 }

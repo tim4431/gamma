@@ -1,51 +1,62 @@
 // The card of what the agent on this computer asks in the chat (docs/dev/
 // local_agents.md "Asking in the chat"): to run a command beyond what its
-// confinement lets it, or to change files outside its sandbox. It has the
-// Gamma AI approval card's look (chat/ApprovalCard.jsx) but none of its
+// confinement lets it, or to change files outside its sandbox. It is the
+// approval card's shell (chat/ApprovalShell.jsx) with none of Gamma AI's
 // permissions: it shows the command with where it runs, or the files with
 // the change as diff rows, and the agent's reason, and offers Allow once,
 // Allow in this chat (a command only: Gamma then answers that exact command
-// itself for the rest of the conversation) and Decline…, which opens a line
-// for a note the agent gets with the decline. There is never an Always
-// allow. The buttons never take the focus by themselves, so a keystroke
-// meant for the message box can't answer.
-import { useState } from "react";
-import { ActivityIcon, PencilIcon, ShieldIcon, TerminalIcon } from "../../shared/ui/Icons";
-import { t } from "../../shared/i18n/i18n.js";
-import { NOTE_MAX, askPlace, askRisk, askTitle, diffRows } from "./computerChat.js";
+// itself for the rest of the conversation) and Don't allow, which opens a
+// line for a note the agent gets with the decline. There is never an Always
+// allow. The command is drawn as the server shows it: what would not show
+// marked ⟨U+202E⟩, its lines counted, the command a shell wrapper runs
+// first with the wrapper under it, and the network address it reaches;
+// Allow waits until the command and the diff were scrolled to their end
+// (one rule with the desktop app's card of an ask on this computer).
+import { useLayoutEffect, useRef, useState } from "react";
+import { ActivityIcon, PencilIcon, TerminalIcon } from "../../shared/ui/Icons";
+import { t, tn } from "../../shared/i18n/i18n.js";
+import ApprovalShell from "../ApprovalShell";
+import { askCommand, askPlace, askRisk, askTitle, diffRows, markParts, scrolledToEnd } from "./computerChat.js";
 
 const ASK_ICONS = { command: TerminalIcon, files: PencilIcon };
 
 // `onAnswer(decision, note)` posts the answer; a refusal it throws is said
-// on the card.
+// on the card. An answer taken stays said on it until the side's next read
+// drops the ask (chat/computer/useComputerChat.js `answer`).
 export default function ComputerAsk({ ask, label, onAnswer }) {
-  const [sent, setSent] = useState(""); // the decision on its way, then taken
-  const [error, setError] = useState("");
-  const [declining, setDeclining] = useState(false); // the note's line is open
-  const [note, setNote] = useState("");
-  const Icon = ASK_ICONS[ask.kind] || ActivityIcon;
-  const risk = askRisk(ask);
   const rows = diffRows(ask.diff);
-  const decide = async (decision, said = "") => {
-    if (sent) return;
-    setSent(decision);
-    setError("");
-    try {
-      await onAnswer(decision, said);
-    } catch (err) {
-      setSent("");
-      setError(err?.message || String(err));
-    }
-  };
-  const why = t("Tell {agent} why, or what to do instead (optional)", { agent: label });
+  const command = askCommand(ask);
+  // Whether the command's box and the diff's were each read to their end
+  // (a box not drawn, or with nothing to scroll, from the first paint).
+  const commandBox = useRef(null);
+  const diffBox = useRef(null);
+  const [seen, setSeen] = useState({ command: false, diff: false });
+  useLayoutEffect(() => {
+    setSeen((s) => ({ command: s.command || scrolledToEnd(commandBox.current), diff: s.diff || scrolledToEnd(diffBox.current) }));
+  }, []);
+  const saw = (box) => (e) => { if (scrolledToEnd(e.currentTarget)) setSeen((s) => (s[box] ? s : { ...s, [box]: true })); };
+  const read = seen.command && seen.diff;
+  const unread = t("Scroll to the end first: Allow waits until you have seen all of it");
+  const answers = [{ decision: "once", label: t("Allow once"), primary: true, disabled: !read, title: read ? undefined : unread }];
+  if (ask.kind === "command") {
+    answers.push({ decision: "chat", label: t("Allow in this chat"), disabled: !read,
+      title: read ? t("Run this exact command without asking for the rest of this conversation") : unread });
+  }
   return (
-    <div className={`chatApproval computerAsk${sent ? " sent" : ""}`} role="group" aria-label={t("Approval needed")}>
-      <div className="chatApprovalCaption"><ShieldIcon size={14} />{t("Approval needed")}</div>
-      <div className="chatApprovalHead"><Icon size={16} /><span>{askTitle(ask, label)}</span></div>
-      {ask.command ? (
+    <ApprovalShell className="computerAsk" icon={ASK_ICONS[ask.kind] || ActivityIcon} title={askTitle(ask, label)}
+      answers={answers} onDecide={onAnswer} agent={label} footnote={askRisk(ask)}>
+      {command.main ? (
         <>
-          <div className="chatApprovalDiff computerAskCommand"><code>{ask.command}</code></div>
+          {command.lines ? <div className="chatApprovalNote">{tn("{n} line", "{n} lines", command.lines)}</div> : null}
+          <div ref={commandBox} className="chatApprovalDiff computerAskCommand" onScroll={saw("command")}>
+            <code>{markParts(command.main, ask.marked).map((part, i) => (part.mark ? <span key={i} className="computerAskMark">{part.text}</span> : part.text))}</code>
+          </div>
+          {command.through ? <div className="chatApprovalNote">{command.through}</div> : null}
+          {ask.marked ? (
+            <div className="chatApprovalNote">{t("This holds {n} characters that do not show: Gamma marks them ⟨U+…⟩.", { n: ask.marked })}</div>
+          ) : null}
           <div className="chatApprovalNote">{askPlace(ask.cwd)}</div>
+          {ask.host ? <div className="chatApprovalNote">{t("It reaches {host} on the network", { host: ask.host })}</div> : null}
         </>
       ) : null}
       {ask.reason ? <div className="chatApprovalNote">{ask.reason}</div> : null}
@@ -55,41 +66,12 @@ export default function ComputerAsk({ ask, label, onAnswer }) {
         </div>
       ) : null}
       {rows.length ? (
-        <div className="chatApprovalDiff computerAskDiff">
+        <div ref={diffBox} className="chatApprovalDiff computerAskDiff" onScroll={saw("diff")}>
           {rows.map((row, i) => (row.kind === "del" ? <del key={i}>{row.text}</del>
             : row.kind === "ins" ? <ins key={i}>{row.text}</ins>
             : <span key={i} className={row.kind === "head" ? "computerAskDiffHead" : undefined}>{row.text}</span>))}
         </div>
       ) : null}
-      {error ? <div className="chatApprovalError" role="alert">{error}</div> : null}
-      {sent ? (
-        <div className="chatApprovalStatus" role="status">
-          {sent === "deny" ? t("Declined. {agent} goes on without it…", { agent: label }) : t("Allowed. {agent} goes on…", { agent: label })}
-        </div>
-      ) : declining ? (
-        <form className="chatApprovalDecline" onSubmit={(e) => { e.preventDefault(); decide("deny", note.trim()); }}>
-          <input className="aiKeyInput" value={note} maxLength={NOTE_MAX} autoFocus
-            placeholder={why} aria-label={why} onChange={(e) => setNote(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setDeclining(false); } }} />
-          <div className="chatApprovalActions">
-            <button type="submit" className="uiBtn sm">{t("Decline")}</button>
-            <button type="button" className="uiBtn sm ghost" onClick={() => setDeclining(false)}>{t("Back")}</button>
-          </div>
-        </form>
-      ) : (
-        <div className="chatApprovalActions">
-          <button type="button" className="uiBtn sm primary" onClick={() => decide("once")}>{t("Allow once")}</button>
-          {ask.kind === "command" ? (
-            <button type="button" className="uiBtn sm" onClick={() => decide("chat")}
-              title={t("Run this exact command without asking for the rest of this conversation")}>
-              {t("Allow in this chat")}
-            </button>
-          ) : null}
-          <span className="chatApprovalSpacer" />
-          <button type="button" className="uiBtn sm ghost" onClick={() => setDeclining(true)}>{t("Decline…")}</button>
-        </div>
-      )}
-      {risk && !sent ? <div className="chatApprovalNote">{risk}</div> : null}
-    </div>
+    </ApprovalShell>
   );
 }

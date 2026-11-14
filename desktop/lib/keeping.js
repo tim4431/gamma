@@ -51,9 +51,101 @@ function nameOf(url, servers) {
   return known ? known.name : new URL(origin).host;
 }
 
+// --- how a server of another address failed -------------------------------
+// A vault, a clone or a computer link of another server whose last round
+// failed on the way there says why by its status's `error_kind`
+// (docs/dev/https.md "Failures worded"; backend/gamma/gamma_sync.py
+// status_fields): a redirect (`move_to`, where it pointed), something in
+// front of the server that refused (`blocked`), a certificate not trusted
+// or changed (`cert`, what it said of itself), or an https:// address that
+// answered without TLS. The row's text and its title's tail come from the
+// kind; `last_error` stays the title's start, so the server's words are
+// always there in full. `net` is what main.js knows beside the status:
+// `accepted`, the digest of the certificate the window accepted, by bare
+// host name; `pinned` and `httpsSeen`, origins with a pinned certificate
+// and those that loaded over https; `moveFailed`, the origins whose
+// automatic move to https failed this session (main.js autoUpgrade).
+
+// The https:// origin a redirect of `remoteUrl` to `moveTo` moves to by
+// itself, or '': the same host name (a URL's hostname: lowercase, IDN in
+// punycode), http:// to https://, no user in it, and no path beyond the
+// row's own (R2: the one move nobody is asked about, which the backend's
+// probe then requires a verified certificate for).
+function upgradeOf(remoteUrl, moveTo) {
+  let a;
+  let b;
+  try {
+    a = new URL(remoteUrl);
+    b = new URL(moveTo);
+  } catch {
+    return '';
+  }
+  if (a.protocol !== 'http:' || b.protocol !== 'https:' || a.hostname !== b.hostname) return '';
+  if (b.username || b.password || b.search || b.hash) return '';
+  const own = a.pathname.replace(/\/+$/, '');
+  return b.pathname.replace(/\/+$/, '') === own ? b.origin : '';
+}
+
+const hostOfUrl = (url) => {
+  try { return new URL(url).hostname; } catch { return String(url || ''); }
+};
+
+// What a failure of kind `s.error_kind` reads as, for a row of another
+// server at `remoteUrl`: `{ text, more, fix }`, `fix` the action the row
+// offers (`{ action, button }`: trust-sync, open-server, use-https), or
+// null for a failure of no such kind.
+function failureOf(s, remoteUrl, servers, net = {}) {
+  const kind = s.error_kind;
+  if (!kind || !remoteUrl) return null;
+  const origin = originOf(remoteUrl);
+  const host = hostOfUrl(remoteUrl);
+  const known = (servers || []).find((x) => x.type === 'remote' && x.url === origin);
+  const open = known ? { action: 'open-server', button: `Open ${known.name}` } : null;
+  const server = known ? known.name : host;
+  if (kind === 'redirected') {
+    const to = upgradeOf(remoteUrl, s.move_to || '');
+    if (to) {
+      return { text: 'Moved to https', more: ' It is the same server over https.',
+        fix: (net.moveFailed || []).includes(origin) ? { action: 'use-https', button: `Use ${to}` } : null };
+    }
+    return { text: 'Redirected', more: ' If the server moved, change its address in the launcher.', fix: null };
+  }
+  if (kind === 'blocked') {
+    return s.blocked === 'signin'
+      ? { text: 'Sign-in in the way', fix: null,
+        more: ` A sign-in page in front of ${host} answered instead of Gamma: let this computer's requests to /api/ through it (a bypass rule for /api/, or a service token).` }
+      : { text: 'Blocked by a proxy', fix: null,
+        more: ' If it asks you to sign in (Cloudflare Access and the like), let this computer\'s requests to /api/ through it.' };
+  }
+  if (kind === 'certificate') {
+    const digest = s.cert && s.cert.sha256;
+    if (digest && (net.accepted || {})[host.replace(/^\[(.*)\]$/, '$1')] === digest) {
+      return { text: 'Certificate not trusted for syncing', more: ' This window trusts it; Gamma\'s server on this computer does not.',
+        fix: { action: 'trust-sync', button: 'Trust it for syncing too' } };
+    }
+    return { text: 'Certificate not trusted', more: ` Open ${server} in Gamma to check it.`, fix: open };
+  }
+  if (kind === 'certificate_changed') {
+    return { text: 'Certificate changed', more: ` Open ${server} in Gamma to check the new one.`, fix: open };
+  }
+  if (kind === 'not_https') {
+    const before = (net.pinned || []).includes(origin) || (net.httpsSeen || []).includes(origin);
+    return { text: 'Not HTTPS', fix: null, more: before ? ` ${host} answered without TLS where it used HTTPS before: someone may be in between.`
+      : ' If it has no TLS proxy, change its address to http:// in the launcher.' };
+  }
+  return null;
+}
+
+// A row whose last round failed by one of failureOf's kinds, as it reads.
+function failedState(item, s, failure, extra = '') {
+  const when = clock(s.last_attempt || s.last_sync);
+  return { ...item, state: 'error', text: `${failure.text}${when ? ` · ${when}` : ''}`, title: `${s.last_error}${failure.more}${extra}`,
+    ...(failure.fix ? { fix: failure.fix } : {}) };
+}
+
 // A clone of local server `server`: one row of its `GET /api/mirrors`.
 // `paused`: detached, which the panel's pause and resume do.
-function clone(server, info, servers) {
+function clone(server, info, servers, net = {}) {
   const s = info.status || {};
   const p = s.progress || {};
   const item = {
@@ -71,6 +163,8 @@ function clone(server, info, servers) {
   if (info.conflicts_open) {
     return { ...item, state: 'conflicts', text: plural(info.conflicts_open, 'conflict'), title: 'Blocks both sides changed wait for a decision: open the clone to settle them.' };
   }
+  const failure = s.last_error ? failureOf(s, info.remote_url, servers, net) : null;
+  if (failure) return failedState(item, s, failure, ' Your edits stay here and are pushed once it syncs again.');
   if (s.last_error) {
     const unreachable = /cannot reach|timed out|refused|unreachable/i.test(s.last_error);
     const when = clock(s.last_attempt || s.last_sync);
@@ -278,7 +372,8 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // (`agentRunning`: the detail of its run while one works, else "";
 // `agentChat` when that run is a turn of a page's chat, not a Send), and
 // what it may run beyond its confinement (`agentRuns`: "ask", it may ask in
-// the chat, or "never"), as the link's `agent` says them. `agents` is what
+// the chat; "computer", an agent of a work folder of another server may ask
+// in this computer's window; or "never"), as the link's `agent` says them. `agents` is what
 // the server finds on this computer (`GET /api/local-agents`' `agents`;
 // null: a server that runs no agents, which then offers none).
 //
@@ -286,7 +381,14 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // (`computer`, computerLine): `computers` is `{ links, name }`, the server's
 // computer links (`GET /api/computer-links`) and this computer's name; null:
 // not read, and nothing is said.
-function vault(server, link, servers, roles = null, agents = null, computers = null) {
+//
+// A vault of another server reached over plain http:// says so (`plain`,
+// the list's DNS-free word: "lan" or "name", "" for https or loopback), its
+// title saying the token travels in clear for a dotted name, and `secure`
+// is false (the host's word, never decided here); and one whose
+// last round failed on the way there reads by its kind (failureOf, with
+// `net`).
+function vault(server, link, servers, roles = null, agents = null, computers = null, net = {}) {
   const s = link.status || {};
   const scope = link.kind === 'file' ? 'file' : 'folder';
   const names = s.folder_path || [];
@@ -310,9 +412,13 @@ function vault(server, link, servers, roles = null, agents = null, computers = n
     work: scope === 'folder' && link.folder_id !== 'root'
       && (typeof link.work === 'boolean' ? link.work : !link.remote_url && pushWord(link.push) === 'everything'),
     library: Boolean(link.library), choosing: Boolean(link.choosing), mine: Boolean(link.mine),
+    plain: link.remote_url && (link.plain === 'lan' || link.plain === 'name') ? link.plain : '',
+    // reached securely, as the list says it ("" for https or loopback): what
+    // Ask on this computer needs; a list that says nothing reads not secure
+    secure: !link.remote_url || link.plain === '',
   };
   item.computer = link.remote_url && !item.seen && computers && Array.isArray(computers.links)
-    ? computerLine(item, link, computers) : null;
+    ? computerLine(item, link, computers, servers, net) : null;
   item.agentHere = item.work && (!link.remote_url || Boolean(item.computer && item.computer.state !== 'none'));
   const agent = link.agent || null;
   const run = agent && agent.running;
@@ -320,14 +426,20 @@ function vault(server, link, servers, roles = null, agents = null, computers = n
     agent: (agent && agent.name) || '', agentLabel: agent ? agent.label || AGENT_LABELS[agent.name] || agent.name : '',
     agentReady: agent ? (agent.ready === undefined ? null : agent.ready) : null, agentProblem: (agent && agent.problem) || '',
     agentRunning: run ? String(run.detail || 'Working') : '', agentChat: Boolean(run && run.kind === 'chat'),
-    agentRuns: agent && agent.runs === 'ask' ? 'ask' : 'never',
+    agentRuns: agent && (agent.runs === 'ask' || agent.runs === 'computer') ? agent.runs : 'never',
     agents: item.agentHere && Array.isArray(agents) ? agentChoices(agents) : null,
   });
-  const stated = scope === 'file' ? fileState(item, s) : folderState(item, s, left);
-  return item.seen ? { ...stated, title: `${stated.title} ${SEEN}` } : stated;
+  const failure = s.last_error && !s.running ? failureOf(s, link.remote_url, servers, net) : null;
+  const stated = scope === 'file' ? fileState(item, s, failure) : folderState(item, s, left, failure);
+  const clear = item.plain === 'name' ? ` ${plainLine(item.remoteUrl)}` : '';
+  return item.seen ? { ...stated, title: `${stated.title}${clear} ${SEEN}` } : clear ? { ...stated, title: `${stated.title}${clear}` } : stated;
 }
 
 const SEEN = 'Another account made this vault: it, or an editor of the workspace, acts on it.';
+
+// What a row of another server reached over plain http:// at a dotted name
+// adds to its tooltip.
+const plainLine = (url) => `${hostOfUrl(url)} is reached over http://: its token travels in clear. Change its address to https:// in the launcher.`;
 
 const originOf = (url) => {
   try { return new URL(url).origin; } catch { return url || ''; }
@@ -354,7 +466,10 @@ const COMPUTER_STATES = {
 // its tooltip, and the view's action, `hide-computer` (Stop showing) with a
 // link, `show-computer` (Show this computer there) with none; `state` is the
 // link's, or `none`; `who` the account there it is shown to ("" for none).
-function computerLine(item, link, computers) {
+// A link that is not reachable by one of failureOf's kinds (a redirect, a
+// proxy, a certificate, no TLS) says that kind's words in place of "not
+// reachable", the tail in its tooltip.
+function computerLine(item, link, computers, servers = [], net = {}) {
   const name = computers.name || 'this computer';
   const shown = computers.links.find((c) => c && originOf(c.remote_url) === originOf(link.remote_url) && c.workspace_id === link.workspace_id);
   if (!shown) {
@@ -365,8 +480,10 @@ function computerLine(item, link, computers) {
   const state = Object.prototype.hasOwnProperty.call(COMPUTER_STATES, s.state) ? s.state : 'connecting';
   const [words, why] = COMPUTER_STATES[state];
   const who = shown.username || 'your account';
-  return { state, text: `Shown on ${item.remote} as ${name} · ${words}`, action: 'hide-computer', button: 'Stop showing', who: shown.username || '',
-    title: `${why(item.remote, name, who)}${s.error && state !== 'connected' ? ` ${said(String(s.error))}` : ''}` };
+  const failure = state === 'unreachable' ? failureOf(s, shown.remote_url, servers, net) : null;
+  return { state, text: `Shown on ${item.remote} as ${name} · ${failure ? failure.text.toLowerCase() : words}`, action: 'hide-computer', button: 'Stop showing',
+    who: shown.username || '',
+    title: `${why(item.remote, name, who)}${s.error && state !== 'connected' ? ` ${said(String(s.error))}` : ''}${failure ? failure.more : ''}` };
 }
 
 // What showing this computer on server `remote` came to when it failed, for
@@ -450,7 +567,7 @@ const said = (text) => `${capital(text)}${/[.!?]$/.test(text) ? '' : '.'}`;
 // why its push was turned off when it was taken onto synced vaults
 // (`push_off`), the pages filed in it that an older vault beside it keeps
 // (`shared`), and when a folder kept before became a vault (`upgraded_at`).
-function folderState(item, s, left) {
+function folderState(item, s, left, failure = null) {
   const counts = s.counts || {};
   if (item.choosing) {
     return { ...item, state: 'pending', text: 'Choosing files',
@@ -474,6 +591,7 @@ function folderState(item, s, left) {
     return { ...item, state: 'waiting', text: 'Directory not there',
       title: `${s.last_error || `${item.dest} is not there.`} The vault syncs again once it is back; Locate… if it moved.${meanwhile}` };
   }
+  if (failure) return failedState(item, s, failure, meanwhile);
   if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: `${s.last_error}${meanwhile}` };
   if (item.agentRunning) {
     return { ...item, state: 'busy', agentBusy: true, text: `${item.agentLabel} is working · ${item.agentRunning}`,
@@ -501,12 +619,13 @@ function folderState(item, s, left) {
 // A file's vault: a page whose PDF each new version of the file becomes.
 // Worst first: pushing, paused, a problem, the file still being written
 // (pending, never an error), never pushed, then pushed or up to date.
-function fileState(item, s) {
+function fileState(item, s, failure = null) {
   if (s.running) return { ...item, state: 'busy', text: 'Pushing…', title: 'A round is running.' };
   if (item.paused) {
     return { ...item, state: 'paused', text: `Paused · ${clock(s.paused_at)}`, title: 'Nothing is pushed until you resume it; Push now pushes the file.' };
   }
   if (item.away) return awayState(item);
+  if (failure) return failedState(item, s, failure);
   if (s.last_error) return { ...item, state: 'error', text: 'Problem', title: s.last_error };
   if (s.waiting) return { ...item, state: 'pending', text: 'Waiting for the file to finish', title: s.waiting };
   if (!s.last_sync) return { ...item, state: 'new', text: 'Not pushed yet', title: 'The first round runs in a moment.' };
@@ -520,10 +639,12 @@ function fileState(item, s) {
 // (`zotero`, its Zotero links: none from a server that has no such list),
 // `roles`, the workspaces its account may open, `agents`, the agents it
 // finds on this computer, and `computers`, its computer links with this
-// computer's name (vault).
-function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null, agents = null, computers = null } = {}, servers = []) {
-  return [...mirrors.map((m) => clone(server, m, servers)), ...(zoteroLinks || []).map((z) => zotero(server, z)),
-    ...links.map((l) => vault(server, l, servers, roles, agents, computers))];
+// computer's name (vault). `net`: what main.js knows of the remote servers'
+// certificates and moves (failureOf).
+function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], roles = null, agents = null, computers = null } = {}, servers = [],
+  net = {}) {
+  return [...mirrors.map((m) => clone(server, m, servers, net)), ...(zoteroLinks || []).map((z) => zotero(server, z)),
+    ...links.map((l) => vault(server, l, servers, roles, agents, computers, net))];
 }
 
 // The sync button's reading of all of it: the worst state, a word or two,
@@ -720,28 +841,56 @@ const AGENT_DOES = {
   claude: 'it edits files in this directory and runs no commands',
 };
 
-// Whether a server is reached over plain http:// from outside this computer
-// (loopback is this computer's own).
-const plainFar = (url) => {
-  try {
-    const u = new URL(url);
-    return u.protocol === 'http:' && !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
-  } catch {
-    return false;
-  }
-};
-
 // What turning an agent on in a work folder of another server lets that
 // server do (item.remote; the account there the computer is shown to,
 // `item.computer.who`): whoever signs in there as that account, and whoever
 // runs it, sends work to the agent here, which reads the files, its answers
-// stored there; over plain http from outside this computer, also that the
-// network sees it.
+// stored there; over plain http from outside this computer (the link's
+// `plain`, as the server lists it), also that the network sees it.
 function farAgentWords(item, label) {
   const remote = item.remote;
   const who = (item.computer && item.computer.who) || 'your account';
   return ` Whoever can sign in to ${remote} as ${who}, and whoever runs ${remote}, can send work to ${label} here. ${label} reads your files and its answers are stored on ${remote}.` +
-    (plainFar(item.remoteUrl) ? ` ${remote} is reached without encryption: someone on your network could read what is sent and pose as ${remote}.` : '');
+    (item.plain ? ` ${remote} is reached without encryption: someone on your network could read what is sent and pose as ${remote}.` : '');
+}
+
+// --- plain http and an address that moves ------------------------------------
+
+// The question before a token is minted for `host` over plain http://
+// (main.js beforeMint), with the host's `warning` (POST
+// /api/remote-servers/check) and, when its name did not resolve in time
+// (`unsure`), a line saying so: `{ message, detail, buttons }`, button 0
+// connecting.
+function plainAsk(host, warning, unsure = false) {
+  return { message: `Connect to ${host} without encryption?`,
+    detail: `${warning}${unsure ? ` Gamma could not tell whether ${host} is on your network: its name did not resolve in time.` : ''}`,
+    buttons: ['Connect anyway', 'Cancel'] };
+}
+
+// The links a move takes along (the move's `moved`: `{vaults, computers,
+// mirrors}`), as a sentence lists them; '' for none.
+function movedWords(moved = {}) {
+  const parts = [moved.vaults && plural(moved.vaults, 'synced vault'), moved.computers && 'this computer',
+    moved.mirrors && (moved.mirrors === 1 ? '1 offline copy' : `${moved.mirrors} offline copies`)];
+  return listed(parts.filter(Boolean));
+}
+
+// The question before the links of `from` move to `to` (main.js moveServer,
+// the move's dry run `plan`: `{kind, plain, moved}`): `{ message, detail,
+// buttons }`, button 0 moving. A move to plain http:// says the tokens
+// travel without encryption.
+function moveAsk(from, to, plan = {}) {
+  return { message: `Move the links of ${from} to ${to}?`,
+    detail: `Gamma will send the tokens of ${movedWords(plan.moved)} to ${to}, and use ${to} from now on. Only continue if ${to} is the same server.` +
+      (plan.plain ? ` ${to} is http://: the tokens will travel without encryption, and someone on your network could read them.` : ''),
+    buttons: ['Move the links', 'Cancel'] };
+}
+
+// What a move came to, for the bar.
+function moveSaid(from, to, moved = {}) {
+  const which = movedWords(moved);
+  const many = which.includes(' and ') || moved.vaults > 1 || moved.mirrors > 1;
+  return which ? `${from} is now ${to}: ${which} ${many ? 'follow' : 'follows'} it.` : `${from} is now ${to}.`;
 }
 
 // The question before agent `name` works in a work folder's directory, the
@@ -759,8 +908,16 @@ function agentAsk(item, name, waiting = null) {
 }
 
 // Why a work folder of another server lets its agent ask nothing in the
-// chat (the chat there stays on this computer's server, for now).
-const FAR_RUNS_RULE = 'Asking in the chat is for a work folder of this computer\'s server.';
+// chat (a chat there is that server's page, which never draws the card),
+// and why one of this computer's server is not asked on this computer (its
+// chat is this computer's own).
+const FAR_RUNS_RULE = 'Asking in the chat is for a work folder of this computer\'s server: for one of another server, choose Ask on this computer.';
+const NEAR_COMPUTER_RULE = 'Ask on this computer is for a work folder of another server: here the agent asks in the chat.';
+
+// Why Ask on this computer is refused for a work folder of a server reached
+// over plain http (`item.secure` false, the host's word): whoever is on the
+// way would write what the card asks.
+const plainRule = (item) => `Ask on this computer needs https: ${item.remote} is reached over plain http.`;
 
 // What turning a work folder's agent on (`name`, with the `queued` Sends
 // handed to it) or off ("": `item.agentLabel` was on) came to, for the bar.
@@ -788,12 +945,34 @@ function runsAsk(item) {
     buttons: ['Ask me in the chat', 'Cancel'] };
 }
 
+// The question before the agent of a work folder of another server may ask
+// on this computer, in the bar of Gamma's window, in a turn started there
+// (main.js setAgentRuns): that the question shows only here, that whoever
+// signs in there as the account it is shown to (`item.computer.who`), and
+// whoever runs that server, writes what the agent is asked to do. `{
+// message, detail, buttons, defaultId, cancelId }`, Cancel the default.
+function runsComputerAsk(item) {
+  const label = item.agentLabel || AGENT_LABELS[item.agent] || 'The agent';
+  const remote = item.remote;
+  const who = (item.computer && item.computer.who) || 'your account';
+  return { message: `Let ${label} ask on this computer to run more in ${item.dest}?`,
+    detail: `In a chat on ${remote}, ${label} can then ask you ${AGENT_ASKS[item.agent] || 'to run a command'}. The question shows here only, in Gamma's window, and nothing of it runs until you allow it there, one command at a time.` +
+      ` Whoever can sign in to ${remote} as ${who}, and whoever runs ${remote}, writes what ${label} is asked to do: read each command before you allow it. A command you allow runs as you, with your files and the network.`,
+    buttons: ['Ask on this computer', 'Cancel'], defaultId: 1, cancelId: 1 };
+}
+
 // What setting a work folder's "What it may run" to `runs` came to, for the bar.
 function runsSaid(item, runs) {
   const label = item.agentLabel || AGENT_LABELS[item.agent] || 'The agent';
+  if (runs === 'computer') return `${label} may now ask on this computer to run more on ${item.name}.`;
   return runs === 'ask' ? `${label} may now ask you in the chat to run more on ${item.name}.`
     : `${label} no longer asks to run more on ${item.name}: it keeps to its confinement.`;
 }
+
+// What the bar adds when the server of a work folder set to Ask on this
+// computer runs a Gamma that does not say a turn waits (its whoami without
+// `computer_asks`: the PATCH's `older`).
+const olderServer = (item) => `${item.remote} runs an older Gamma: its page will not say that ${item.agentLabel || AGENT_LABELS[item.agent] || 'the agent'} waits here. The question still shows in this window.`;
 
 // What a round asked for came to, for the bar: its status as the round
 // left it (main.js followRound).
@@ -814,5 +993,6 @@ function roundSaid(item, status) {
 }
 
 module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, REMOTE_WORK_RULE, remoteWorkRefused, WHOLE_RULE, firstRound, removalAsk, farRemovalAsk, forceAsk,
-  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, FAR_RUNS_RULE, runsAsk, runsSaid, computerLine, computerFailed, computerSaid,
-  computerStranded, computerOtherAccount };
+  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, FAR_RUNS_RULE, NEAR_COMPUTER_RULE, plainRule, runsAsk, runsComputerAsk, runsSaid,
+  olderServer, computerLine, computerFailed, computerSaid,
+  computerStranded, computerOtherAccount, upgradeOf, failureOf, plainAsk, moveAsk, moveSaid };

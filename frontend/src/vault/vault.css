@@ -14,7 +14,7 @@
 .vaultPath { font-family: var(--font-mono); overflow-wrap: anywhere; }
 /* A work folder's agent on this computer: its name, why it cannot run, what it is at. */
 .vaultAgent { display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
-.vaultAgentProblem { color: var(--warn); }
+.vaultAgent .stateTag { margin-left: 0; }
 .vaultActions { display: flex; flex-direction: column; margin-top: var(--space-1); }
 
 /* On another server, the computer that keeps the page: a dot on the chip's

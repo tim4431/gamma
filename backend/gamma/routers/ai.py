@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import (ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
-                search_services, translate_engines)
+                net_proxy, search_services, translate_engines)
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -37,8 +37,6 @@ from ..ai_tools import (
     AGENT_PROMPT,
     CITATION_PROMPT,
     PICTURE_TOOLS,
-    PLAN_TOOL,
-    PLANNING_TURN,
     READ_CHARS_MAX,
     agent_system,
     agent_tools,
@@ -229,10 +227,6 @@ class AIChatRequest(BaseModel):
     # the same connection, and the chat carries its answer instead of the
     # document (Settings → AI → Tool usage → "Read long papers with a helper").
     delegate_reads: bool = True
-    # A planning turn (the chat's Plan switch): the agent reads but changes
-    # nothing, and the server refuses every changing call
-    # (ai_tools.held_for_plan); the model proposes the change with update_plan.
-    planning: bool = False
     context_char_limit: int = Field(default=60000, ge=100, le=1_000_000)
     multi_context_char_limit: int = Field(default=120000, ge=100, le=1_000_000)
 
@@ -680,6 +674,15 @@ _RENEWAL_UNREACHABLE = {"ok": False, "auth": False, "kind": "unreachable",
                         "error": "couldn't reach the sign-in service to renew the token — try again"}
 
 
+def _listing_detail(error: urllib.error.HTTPError) -> str:
+    """A settings form's line for a provider's error answer to a listing or
+    an inquiry: its status and words, and when it refuses this server's
+    network (net_proxy.refused_network), why and the proxy setting."""
+    refused = net_proxy.refused_network(error)
+    detail = _upstream_detail(error, 200)
+    return f"{detail} — {refused}. {net_proxy.REFUSED_HINT}" if refused else detail
+
+
 def _renewing(user_id: str, provider_id: str, conf: dict, call):
     """``call(conf)``, and once more when the provider answers a sign-in's
     token with a 401 and renewing it (ai_settings.renew_rejected) gives a
@@ -750,8 +753,8 @@ def _probe_entry(user_id: str, entry: dict, fallback_model: str = "", retry: boo
     except chatgpt_oauth.RefreshUnavailable:
         return {**_RENEWAL_UNREACHABLE, "model": model}
     except Exception as e:
-        auth = isinstance(e, UpstreamError) and e.status in (401, 403)
-        return {"ok": False, "model": model, "error": str(e), "auth": auth, "kind": failure_kind(e)}
+        kind = failure_kind(e)
+        return {"ok": False, "model": model, "error": str(e), "auth": kind == "auth", "kind": kind}
     result = {"ok": True, "model": model, "latency_ms": int((time.time() - started) * 1000)}
     if verdict is not None:
         _tool_check_retry.pop(_tool_check_key(user_id, row["id"]), None)
@@ -975,11 +978,14 @@ def ai_provider_usage(provider_id: str, request: Request):
         return {"available": False, "auth": False,
                 "reason": "Couldn't reach OpenAI to renew the sign-in — try again."}
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
+        kind = failure_kind(e)
+        if kind == "auth":
             # Expired/revoked sign-in: an expected state, not a server error —
             # report it in-body so the UI can say "reconnect".
             return {"available": False, "auth": True,
                     "reason": "The sign-in expired — sign in again in this entry's edit form."}
+        if kind == "blocked":  # the server's network, not the sign-in
+            return {"available": False, "auth": False, "reason": f"Usage inquiry refused: {_listing_detail(e)}"}
         raise HTTPException(status_code=502,
                             detail=f"usage inquiry failed: {_upstream_detail(e, 200)}")
     except Exception as e:
@@ -1043,7 +1049,7 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
     try:
         models = ai_catalog.list_models(conf)
     except urllib.error.HTTPError as e:
-        raise HTTPException(status_code=status, detail=f"model list failed: {_upstream_detail(e, 200)}")
+        raise HTTPException(status_code=status, detail=f"model list failed: {_listing_detail(e)}")
     except Exception as e:
         raise HTTPException(status_code=status, detail=f"model list failed: {e}")
     return {"models": [m["id"] for m in models]}
@@ -1121,7 +1127,7 @@ def ai_health(payload: AIHealthRequest, request: Request):
     except chatgpt_oauth.RefreshUnavailable:
         return {**result, **_RENEWAL_UNREACHABLE}
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
+        if failure_kind(e) == "auth":
             return {**result, "ok": False, "auth": True, "kind": "auth", "error": _upstream_detail(e, 200)}
         if e.code in (404, 405):
             # An OpenAI-compatible gateway without /v1/models — can't verify
@@ -1572,8 +1578,6 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # Whether read_paper is offered: a long document read by a
             # helper whose own conversation carries the windows.
             "delegates": bool(payload.delegate_reads),
-            # A planning turn refuses every changing call (ai_tools.held_for_plan).
-            "planning": bool(payload.planning),
             "paper_save": {key: payload.paper_save.get(key, True) is not False
                            for key in ("allow_oa", "save_copy", "fetch_metadata")},
             # This turn's reads, {block_id: full text}: what an edit_block
@@ -1660,13 +1664,9 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     # model keeps what it already listed/read/changed across turns.
     # The pages' PDFs ride with the document context on the oldest kept turn,
     # the uploaded ones with this message (the wires' pdf_b64s).
-    # A planning turn says so at the end of its own message, never in the
-    # system prompt, which stays the same for the whole conversation.
-    planning = scope.get("planning") and any(t["name"] == PLAN_TOOL for t in tools or ())
     messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
                                message_context=message_context, drop_turns=drop, picture_lines=lines,
-                               files=document_pdfs, quote_budget=quote_budget,
-                               turn_note=PLANNING_TURN if planning else "")
+                               files=document_pdfs, quote_budget=quote_budget)
     # A custom prompt always applies; the built-in one only when there's a document
     documents = context or pdf_b64s or document_pdfs
     system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if documents else "")

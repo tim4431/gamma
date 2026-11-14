@@ -185,12 +185,9 @@ sent ([ai.md](ai.md#exporting-the-context)).
   per message. `## You` lists the message's pictures, its attached PDFs,
   the pages put in context and the text as typed. `## AI · model · effort`
   shows the selection pictures the model got, then **Steps** (each tool
-  chip's summary, with the picture a view or ink chip expands to, and
-  *(failed)* after a failed call but not after one a planning turn held), then
-  **Plan** when the reply has one (its last update_plan, `reply_plan`, as
-  a `- [x]` checklist with the step under way marked *(in progress)*),
-  then the reply's Markdown. A failed reply is one line with its error, and
-  a reply that broke off says so. Reasoning, tool output, approvals and usage are
+  chip's summary, with the picture a view or ink chip expands to), then the
+  reply's Markdown. A failed reply is one line with its error, and a reply
+  that broke off says so. Reasoning, tool output, approvals and usage are
   left out: they aren't part of the conversation as read.
 - **The pictures.** Every picture is read or drawn now in the request's
   workspace, the way the chat shows it (`ai_pictures.picture_at`). That

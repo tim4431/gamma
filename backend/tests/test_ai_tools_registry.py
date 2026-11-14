@@ -18,13 +18,13 @@ def test_registry_scopes_and_permissions():
         "view_pdf_page", "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
         "fetch_paper", "save_paper", "rename_page", "move_page", "list_deleted", "restore_page", "delete_page",
         "rename_folder", "create_label", "rename_label", "label_page", "delete_folder", "delete_label", "edit_block",
-        "create_block", "move_block", "delete_block", "clip_region", "update_plan"]
+        "create_block", "move_block", "delete_block", "clip_region"]
     # Paper chats never list, rename, move or restore pages; the note-block
     # tools and save_paper exist there.
     assert [t["name"] for t in agent_tools("page")] == [
         "read_page", "read_block", "read_chats", "list_feedback", "read_feedback", "view_pdf_page", "view_ink",
         "view_image", "cite", "search_library", "search_papers", "related_papers", "fetch_paper", "save_paper",
-        "edit_block", "create_block", "move_block", "delete_block", "clip_region", "update_plan"]
+        "edit_block", "create_block", "move_block", "delete_block", "clip_region"]
     assert agent_tools("") == []  # plain chat
     assert [t["name"] for t in agent_tools(
         "folder", {"rename": "off", "move": "off", "block_edit": "off", "save": "off", "restore": "off",
@@ -49,7 +49,7 @@ def test_registry_scopes_and_permissions():
     names = [t["name"] for t in agent_tools("page", {"block_edit": "off"})]
     assert names == ["read_page", "read_block", "read_chats", "list_feedback", "read_feedback", "view_pdf_page",
                      "view_ink", "view_image", "cite", "search_library", "search_papers", "related_papers",
-                     "fetch_paper", "save_paper", "update_plan"]
+                     "fetch_paper", "save_paper"]
     # The two web tools have their own permissions.
     names = [t["name"] for t in agent_tools("page", {"web_search": "off", "web_read": "off"})]
     assert "search_papers" not in names and "fetch_paper" not in names and "read_page" in names
@@ -80,7 +80,7 @@ def test_the_settings_catalog_names_every_permission():
         pytest.skip("no frontend checkout beside the backend")
     text = source.read_text(encoding="utf-8")
     assert {key for key in re.findall(r'\["(\w+)", "(?:library|web|edit)"', text)} == (
-        {t["perm"] for t in TOOLS if t["perm"]} | {"publisher_cookies"})
+        {t["perm"] for t in TOOLS} | {"publisher_cookies"})
     states_of = re.search(r"const STATES_OF = \{(.*?)\};", text, re.S)
     assert states_of, "STATES_OF is no longer in chatSettings.js"
     ask_only = {key for key, states in re.findall(r'(\w+): \[([^\]]*)\]', states_of.group(1))
@@ -201,26 +201,3 @@ def test_the_prompts_name_text_files_beside_pdfs():
     assert "read_page(page_id, from_line=N)" in search["description"]
     listing = next(t["spec"] for t in TOOLS if t["spec"]["name"] == "list_pages")
     assert "`path=`" in listing["description"] and "read_page(path=…)" in listing["description"]
-
-
-def test_update_plan_is_armed_only_beside_a_change():
-    """update_plan has no permission of its own: it is armed last wherever a
-    changing tool is, and nowhere a chat cannot change anything (every change
-    off, a viewer, read_paper's helper), and the prompt's line on plans
-    comes with it."""
-    off = {k: "off" for k in ("save", "rename", "move", "restore", "organize", "organize_delete", "block_edit", "delete")}
-    assert agent_tools("folder")[-1]["name"] == "update_plan"
-    assert agent_tools("page", {"save": "off"})[-1]["name"] == "update_plan"
-    assert agent_tools("folder", {"rename": "ask", **{k: v for k, v in off.items() if k != "rename"}})[-1][
-        "name"] == "update_plan"
-    for specs in (agent_tools("folder", off), agent_tools("page", off), agent_tools("folder", can_write=False),
-                  agent_tools("page", allowed_tools={"fetch_paper"}, can_write=False),
-                  agent_tools("folder", allowed_tools={"read_page", "update_plan"})):
-        assert "update_plan" not in {t["name"] for t in specs}
-    spec = next(t["spec"] for t in TOOLS if t["spec"]["name"] == "update_plan")
-    assert spec["parameters"]["required"] == ["plan"]
-    assert spec["parameters"]["properties"]["plan"]["items"]["properties"]["status"]["enum"] == [
-        "pending", "in_progress", "completed"]
-    assert "Plans: when the user approves a plan" in agent_system(folder(""))
-    assert "Plans:" not in agent_system(folder(""), off)
-    assert "Plans:" not in agent_system({**folder(""), "can_write": False})

@@ -9,7 +9,11 @@ come back? Status: **step 1 is built** ([dev/local_agents.md](../dev/local_agent
 "As built (step 1)" below); steps 2 to 4 are plans. Part 1 is what exists
 (in Gamma, in the two CLIs, in the neutral protocols, in other products),
 part 2 what was run on the development machine, part 3 the design and its
-steps, with what is still undecided at the end.
+steps, with what is still undecided at the end. The owner's corrections of
+2026-11-14 reverse parts of the design (the agent per work folder, the
+chat's second side, the feedback request as the unit of work, an agent
+with no Gamma credential):
+[agents-as-participants.md](agents-as-participants.md), a plan.
 
 Between the first survey and the revision, steps 0 to 3 of
 [file-explorer.md](file-explorer.md) were built: a synced vault that
@@ -86,7 +90,7 @@ through the Gamma plugin: [What works without the host](#what-works-without-the-
 | Highlights after a replacement ([highlight_relocation.md](../dev/highlight_relocation.md)) | after a fix, a highlight moves with its text; one whose text was rewritten is drawn dashed or hollow | a fixed typo reads as a rough match or a lost highlight, which here means "done" |
 | The desktop app's local server | a Python process on the PC that keeps the work folder, beside the directory | it started no agent |
 | The MCP endpoint ([mcp.md](../dev/mcp.md)) | a connected Codex or Claude Code reads the library, and `list_feedback` / `read_feedback`; on a `feedback` connection `reply_feedback` / `resolve_feedback` | the agent is started by the person, at a terminal |
-| The chat window ([ai.md](../dev/ai.md)): the steps pill and its chips, `ApprovalCard`, `PlanCard`, the changes card, Stop, a conversation per page and per folder | everything a turn of an agent needs drawn | a reply stops with its tab, and the stream is Gamma's own tool loop |
+| The chat window ([ai.md](../dev/ai.md)): the steps pill and its chips, `ApprovalCard`, the changes card, Stop, a conversation per page and per folder | everything a turn of an agent needs drawn | a reply stops with its tab, and the stream is Gamma's own tool loop |
 | A selected PDF passage in the composer (`pdfSelections`: text, page, box) | the anchor of "fix this", with the position SyncTeX needs | |
 | The paper-fetch card ([ai_tools.md](../dev/ai_tools.md)) | the precedent: a reply that waits on something on the user's computer (the Connector) and says what it is doing there | |
 | Background tasks | the row for work that outlives a tab | server jobs and one tab's work only |
@@ -406,7 +410,7 @@ conversation and its own History:
   in the wrong place is seen and not quoted. The model chip becomes the
   assistant's: *Codex* or *Claude Code* as found on that computer, with
   that assistant's models and effort as the chip's sections. The PDF
-  and Plan switches are not drawn on this side.
+  switch is not drawn on this side.
 - **The transcript** is the chat's own. The steps pill and its chips
   take four new kinds: a file read, a file edited (its diff in the rows
   the approval card draws, `ctx` / `del` / `ins`), a command with its
@@ -426,7 +430,6 @@ to the window. What the agent says is translated once, on the server:
 | a message chunk | text | the reply |
 | a tool call: read, edit, execute | a step and its action | the steps pill, `chipText.js` |
 | an edit's diff | the action's `diff` | the approval card's diff rows |
-| a plan | the plan | `PlanCard` |
 | a permission request | `{approval}` | `ApprovalCard`; the answer goes to `POST /api/ai/approvals/{id}` as now |
 | the turn's end, the files changed, the build | `done` with a summary | a card after the reply, as `AgentChanges` is |
 
@@ -658,7 +661,8 @@ agent), and a token cannot move them.
 | 4a. The channel and presence | the computer announced to the servers its vaults name over a channel of its own (a `computer` token, an announce and a held poll), presence kept by the server and shown to the vault's maker in any window, the sync panel's line | built: [dev/computers.md](../dev/computers.md), "As built (step 4a)" below |
 | 4b. Work folders of another server | a vault of another server that pushes everything into an empty folder it marks there, the tracking dialog on the host, that server's rules for the mark and its owner's *Let go* | built: [dev/work_folders.md](../dev/work_folders.md) "Work folders of another server", "As built (step 4b)" below |
 | 4c. Their Sends and mentions | run on the computer over the channel: the server's claim, the entries, the answers written by the server | built: [dev/local_agents.md](../dev/local_agents.md) "A work folder of another server", [dev/computers.md](../dev/computers.md) "The Sends", "As built (step 4c)" below |
-| 4d. The chat relayed | the chat's computer side on another server's page, in any window of the maker there | built: [dev/local_agents.md](../dev/local_agents.md) "The chat on another server's page", "As built (step 4d)" below; later: *Ask on this computer* (asks answered on the computer itself), *Show in folder* and *Continue in a terminal* from the desktop window there |
+| 4d. The chat relayed | the chat's computer side on another server's page, in any window of the maker there | built: [dev/local_agents.md](../dev/local_agents.md) "The chat on another server's page", "As built (step 4d)" below; later: *Show in folder* and *Continue in a terminal* from the desktop window there |
+| 5b. Ask on this computer | a remote turn's asks drawn and answered in the desktop app's bar on the computer itself, the NAS told only that one waits; the permission table for server pages in the window | built: [dev/local_agents.md](../dev/local_agents.md) "Asking on this computer", [desktop/docs/architecture.md](../../desktop/docs/architecture.md) "An agent's ask on this computer", "As built (step 5b)" below |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
 
 ### As built (step 1)
@@ -936,6 +940,50 @@ otherwise than "The chat window gets a second side":
 - **The composer stays open while the computer is off**: a message waits
   and runs when it connects, as a Send does.
 
+### As built (step 5b)
+
+[dev/local_agents.md](../dev/local_agents.md) "Asking on this computer"
+and [desktop/docs/architecture.md](../../desktop/docs/architecture.md)
+"An agent's ask on this computer" are the reference. A turn started on
+another server's page (4d) may now ask to go further, as a local turn may
+since 3b; where it went otherwise than "Whose words run, and what a server
+can do" and 4d's "No asking there yet":
+
+- **A third `runs` value, `computer`**, for a work folder of another
+  server only and off by default, set from the sync panel with the
+  shell's word. It is refused without a shell secret and for a server not
+  reached securely (https, or loopback), and both are checked again at
+  every ask. A local work folder keeps *Ask me in the chat*.
+- **The card is the shell's bar's alone**: over the whole window, the
+  server's page hidden while it is up, answered on two routes of the
+  computer's own server that take the shell's word and never a session
+  alone; the chat's answer route refuses every remote turn, on the NAS and
+  on the computer. Its buttons arm after a quiet second with the window
+  focused, counted from the bar's word that it drew the card, and only
+  *Allow once*, *Decline* and *Stop asking* are offered: no grant for a
+  remote turn, no note with a decline.
+- **The NAS learns that a turn waits, never what it asks.** The agent's
+  message carries `waiting`; the steps keep their statuses, and a step id
+  never holds the ask's. The NAS's page says *Waiting for your answer on
+  TIM-PC*, or that the computer is offline meanwhile, and draws no card;
+  Background tasks says the same.
+- **What a card shows is Gamma's reading, marked**, on both cards: a
+  character that would not show written ⟨U+202E⟩, the line count, the
+  command one shell wrapper runs only when re-quoting it gives the whole
+  string back, every line in its own direction (`unicode-bidi: plaintext`),
+  and *Allow* only once the command and the diff were scrolled to their
+  end. A remote ask too long to show whole, or reaching a host that does
+  not read as one, is declined unseen; every turn stops asking after 20
+  asks or three declines in a row.
+- **The permission table for server pages** (critic G1) moved into this
+  step: a page whose origin is no local server's gets fullscreen,
+  sanitized clipboard writes and notifications, is asked once per origin
+  for the microphone, the camera and clipboard reads, and is refused the
+  rest (geolocation, devices, external protocols); a frame may not
+  navigate to another scheme or, under such a page, to a local server.
+- **The shell's secret leaves the server's environment** once read, so no
+  process the server starts finds it.
+
 ### Declined
 
 - **A webhook from the server to the PC.** A computer behind a router
@@ -972,7 +1020,21 @@ otherwise than "The chat window gets a second side":
   did not start, and a phone driving the computer within its confinement
   only. Whether an agent may be on at all for a server reached over plain
   http outside this computer (the token travels in clear on the LAN)
-  is for 4c.
+  is for 4c. Since step 5a ([https.md](../dev/https.md#plain-http)) a new
+  link to a public host over plain http is refused, and one of the local
+  network is asked about once per origin before its first token. Step 5b
+  refuses *Ask on this computer* over plain http, the local network
+  included (critic D3).
+- Left by step 5b: *Allow in this chat* for a remote turn; a slot of the
+  computer kept for its own server's turns while remote ones wait
+  (`MAX_RUNS = 2`, a waiting turn holding one 10 minutes past its
+  deadline at most); the presence a NAS reads from how soon `waiting`
+  turns false; and write-then-run, a build the person allows running what
+  the folder's files say, which the NAS syncs (the card says so). Still to
+  check on real programs: the commands of Codex's approvals on each
+  platform, whether its sandbox reaches loopback and the server's
+  environment, Claude Code's foreground run of a background ask, and
+  Electron's input events, hidden view and notifications.
 - Whether "these" on a page also means highlights that carry a note and
   no thread. A note has no resolved state to say it is done; a work
   folder's feedback counts threads only (file-explorer.md, "Still to

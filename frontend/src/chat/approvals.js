@@ -7,8 +7,6 @@
 // asking in Settings (this kind of chat), "deny" leaves it unmade.
 import { t, tn } from "../shared/i18n/i18n.js";
 
-export const ALLOWING = new Set(["once", "chat", "always"]);
-
 // Up to the names a preview carries, then how many more there are.
 const listOf = (items = [], total = 0) => items.join(", ")
   + (total > items.length ? t(", and {n} more", { n: total - items.length }) : "");
@@ -20,6 +18,21 @@ export const isBatchPreview = (tool, preview) => BATCH_TOOLS.has(tool) && typeof
 
 // A call that deletes something: its card's Allow once is the red button.
 export const isDeletion = (tool) => /^delete_/.test(tool || "");
+
+// The answers that allow a tool call (chat/ApprovalShell.jsx adds Don't
+// allow), on its card and on the bar of the note its edit is drawn in
+// (editor/NoteReviewBar.jsx): Allow once, red for a deletion, then Allow in
+// this chat and Always allow, titled with the permission's label and the
+// kind of chat.
+export function toolAnswers({ tool = "", permission = "", kind = "" } = {}) {
+  return [
+    { decision: "once", label: t("Allow once"), primary: true, danger: isDeletion(tool) },
+    { decision: "chat", label: t("Allow in this chat"),
+      title: t("Don't ask again for “{permission}” in this conversation", { permission }) },
+    { decision: "always", label: t("Always allow"),
+      title: t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind }) },
+  ];
+}
 
 function batchTitle(tool, preview) {
   const n = preview.count;
@@ -174,16 +187,6 @@ export function declinedSummary(action, titleOf = () => "") {
     preview: { title: action?.title, mode: action?.mode, to: action?.args?.folder, count: action?.count } },
   { titleOf, permission: action?.tool });
   return `${why}: ${change}`;
-}
-
-// What the chip of a change a planning turn kept for the plan says
-// (`held`, chat/plan.js): the change it was, from the fields the server
-// copies onto the chip as it does for a declined one.
-export function heldSummary(action, titleOf = () => "") {
-  const change = approvalTitle({ tool: action?.tool, args: action?.args,
-    preview: { title: action?.title, mode: action?.mode, to: action?.args?.folder, count: action?.count } },
-  { titleOf, permission: action?.tool });
-  return t("Kept for the plan: {change}", { change });
 }
 
 // What a conversation decided for itself, kept in this browser per account

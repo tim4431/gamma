@@ -14,7 +14,8 @@ const named = (value) => value || t("Untitled");
 
 // `icon`: a key of TasksTray.jsx's icon table. `open`: what a click on the
 // row opens — "export" / "import" (the dialog, on this job), "settings:<pane>",
-// "computer" (the page's chat on the computer side).
+// "computer" (the page's chat on the computer side). `phase`: the words of
+// a phase of its own, before the shared ones (PHASES).
 // `quiet`: a failure that does not dot the tray button (a paper without
 // findable metadata is routine).
 export const TASK_KINDS = {
@@ -52,11 +53,23 @@ export const TASK_KINDS = {
       if (params.source === "snapshot") {
         return params.mode === "merge" ? t("Merge a snapshot into “{name}”", args) : t("Restore “{name}” from a snapshot", args);
       }
+      if (params.source === "bucket") {
+        return params.into === "new" ? t("Restore “{name}” from the bucket as a new workspace", args)
+          : params.mode === "merge" ? t("Merge a copy from the bucket into “{name}”", args) : t("Restore “{name}” from the bucket", args);
+      }
       return params.mode === "merge" ? t("Merge {file} into “{name}”", args) : t("Restore “{name}” from {file}", args);
     },
-    // An uploaded zip is gone once its job ended; a stored snapshot is still there.
+    // An uploaded zip is gone once its job ended; a stored snapshot, and a copy in the bucket, are still there.
     retry: ({ params }) => (params.source === "snapshot"
-      ? ["restore-snapshot", { ws: params.ws, name: params.snapshot, mode: params.mode }] : null),
+      ? ["restore-snapshot", { ws: params.ws, name: params.snapshot, mode: params.mode }]
+      : params.source === "bucket" ? ["bucket-restore", { ws: params.ws, name: params.snapshot, mode: params.mode, into: params.into || "" }]
+        : null),
+  },
+  // A backup task's copy in the bucket, downloaded (Settings → Backups, admins).
+  "bucket-download": {
+    icon: "download", open: "settings:backups",
+    title: ({ params }) => t("Download of “{name}” from the bucket", { name: named(params.name) }),
+    retry: ({ params }) => ["bucket-download", { ws: params.ws, name: params.snapshot }],
   },
   import: {
     icon: "import", open: "import",
@@ -136,7 +149,8 @@ export const TASK_KINDS = {
   // computer side"), read-only: a click opens the page's chat on that side,
   // and Stop is the turn's own. The server's title is "<agent> · <page
   // title>". A turn of a work folder another computer keeps (step 4d) names
-  // that computer (`params.computer`).
+  // that computer (`params.computer`), and while it asks there (phase
+  // `asking`) says the answer is given on that computer.
   "computer-turn": {
     icon: "terminal", open: "computer",
     title: ({ title, params }) => {
@@ -147,8 +161,22 @@ export const TASK_KINDS = {
       return computer ? t("{agent} on {computer}: {title}", { agent, computer, title: named(page) })
         : t("{agent} on this computer: {title}", { agent, title: named(page) });
     },
+    phase: ({ progress, params }) => (progress?.phase === "asking" && typeof params?.computer === "string" && params.computer
+      ? t("Waiting for your answer on {computer}", { computer: params.computer }) : ""),
     stop: ({ workspace, params }) => `/local-agents/chat/turns/${encodeURIComponent(params?.turn || "")}/stop${
       workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
+  },
+  // A Send the work folder's agent answers on this computer (routers/jobs.py
+  // _feedback_runs), read-only: a click opens the Feedback dialog on its
+  // file or folder, and Stop is its requester's withdraw. The agent's own
+  // words come as `progress.item`.
+  "feedback-run": {
+    icon: "terminal", open: "feedback",
+    title: ({ params }) => tn("{agent} on this computer: {title} · {n} comment", "{agent} on this computer: {title} · {n} comments",
+      params?.comments || 0, { agent: params?.label || "", title: named(params?.name || "") }),
+    stop: ({ workspace, params }) => `/feedback/requests/${encodeURIComponent(params?.request || "")}/state${
+      workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
+    stopBody: () => ({ state: "failed", detail: "withdrawn" }),
   },
   // This tab's own work (App.jsx adds and updates these rows).
   download: { icon: "download" },
@@ -212,7 +240,7 @@ export function progressCounts({ done, total, unit } = {}) {
 export function progressText(task) {
   if (task.stopping) return t("Stopping…");
   const p = task.progress || {};
-  return [PHASES[p.phase] || "", progressCounts(p), p.item || ""].filter(Boolean).join(" · ") || t("Working…");
+  return [kindOf(task).phase?.(task) || PHASES[p.phase] || "", progressCounts(p), p.item || ""].filter(Boolean).join(" · ") || t("Working…");
 }
 
 const sameDay = (a, b) => a.toDateString() === b.toDateString();
@@ -314,6 +342,8 @@ export const canOpen = (task) => !task.local && Boolean(kindOf(task).open);
 // its own (a computer turn's, in the workspace it runs in), else "": the
 // job's cancel.
 export const stopPath = (task) => (!task.local && kindOf(task).stop?.(task)) || "";
+// What that Stop posts: {} but for a kind that says (a Send's withdraw).
+export const stopBody = (task) => kindOf(task).stopBody?.(task) || {};
 
 // The row's buttons, in order: "stop" while it can be stopped, then for a
 // finished one "download" (its file), "retry" and "dismiss".

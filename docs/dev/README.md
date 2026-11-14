@@ -106,6 +106,7 @@ These describe the implementation unless explicitly marked as plans.
 | MCP, integration tokens, OAuth, and assistant plugins | [MCP](mcp.md) |
 | Preferences, Settings panes, notices, and backup tasks | [Settings](settings.md) |
 | The server's network proxy: the three modes, routing by destination and the bypass list, HTTP and SOCKS5 tunnels, guarded fetches pinned through the proxy, the Zotero stream, S3 and the local agents, the hosted lock, the admin API and its Test | [Network proxy](network_proxy.md) |
+| A NAS over HTTPS: the system trust store in the server, no redirects between Gamma servers, failures worded, a self-signed certificate trusted by its fingerprint, moving a server's address with its links, HSTS on public names only, where plain http is still allowed | [HTTPS for a NAS](https.md) |
 | Themes, controls, menus, dialogs, and editor interactions | [UI design](ui-design.md) |
 | Command catalogs, dispatch, and keybindings | [Hotkeys](hotkeys.md) |
 | The note editor's @ menu: dates, people and page links as chips, reminders and their delivery | [Mentions and reminders](mentions.md) |

@@ -5,11 +5,38 @@
 // click asks the server which page the path names, relative to the note's
 // directory and then from the work folder's top, and opens it; a path that
 // names none says so, and one that names several opens the first the
-// server lists and says how many. Elsewhere it is the plain link it always
-// was. A Ctrl/⌘ click is left to the browser.
-import React, { useContext } from "react";
+// server lists and says how many. It looks as a [[page]] mention does
+// (InternalLinkChip), its file's glyph first, muted while the server is
+// asked. Elsewhere it is the plain link it always was. A Ctrl/⌘ click is
+// left to the browser.
+import React, { useContext, useState } from "react";
+import { FileGlyph } from "../shared/ui/Icons";
+import { formatOf } from "../documents/formats.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { PathLinkContext } from "./pathLinkContext.js";
+
+// A link into this library as a note draws it (`.blockRefChip`): a [[page]]
+// mention (BlockTree.jsx) and a path link. `icon` leads the label; a plain
+// click is `onOpen`'s, a Ctrl/⌘ click the browser's; `busy` while a click
+// is being answered (aria-busy: the chip muted).
+export function InternalLinkChip({ href, className = "", title, icon = null, busy = false, onOpen, children }) {
+  return (
+    <a
+      href={href}
+      className={`blockRefChip${className ? ` ${className}` : ""}`}
+      title={title}
+      aria-busy={busy || undefined}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onOpen?.();
+      }}
+    >
+      {icon}{children}
+    </a>
+  );
+}
 
 // The path as the person typed it: a link target is percent-encoded
 // (`my%20fig.pdf`), which reads badly in a sentence.
@@ -31,26 +58,34 @@ export function PathLinkScope({ pageId, children }) {
 
 export function PathLink({ href, children }) {
   const ctx = useContext(PathLinkContext);
+  const [busy, setBusy] = useState(false);
   if (!ctx) return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
-  const follow = async (e) => {
-    if (e.metaKey || e.ctrlKey) return;
-    e.preventDefault();
-    e.stopPropagation();
+  const path = shown(href);
+  const follow = async () => {
+    if (busy) return;
+    setBusy(true);
     let rows = [];
     try {
       rows = await ctx.resolve(href);
     } catch {
       rows = [];
+    } finally {
+      setBusy(false);
     }
     if (!rows[0]?.id) {
-      ctx.say(t("No tracked file at “{path}”.", { path: shown(href) }));
+      ctx.say(t("No tracked file at “{path}”.", { path }));
       return;
     }
     ctx.open(rows[0].id);
     if (rows.length > 1) {
       ctx.say(tn("{n} file is at “{path}”; this is the first.", "{n} files are at “{path}”; this is the first.", rows.length,
-        { path: shown(href) }));
+        { path }));
     }
   };
-  return <a className="pathLink" href={href} onClick={follow}>{children}</a>;
+  return (
+    <InternalLinkChip href={href} className="pathLink" title={t("Open “{path}” in this work folder", { path })} busy={busy}
+      icon={<FileGlyph format={formatOf(path).format} size={14} />} onOpen={follow}>
+      {children}
+    </InternalLinkChip>
+  );
 }

@@ -58,7 +58,7 @@ import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/mdScan";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines } from "../transfers/FileChip";
-import { ASK_PAST_FILES, attachFile, dropFilter, promoteChip, routeFile, uploadOneFile } from "../transfers/documentUploads.js";
+import { ASK_PAST_FILES, attachFile, dropFilter, promoteChip, routeFile, uploadName, uploadOneFile } from "../transfers/documentUploads.js";
 import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
@@ -246,6 +246,7 @@ import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
 import { addsToLibrary, baseName, carriesToServer, computerAgent, isOpenedFile, keeperAgent, keeperComputer, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
+import { sideMark } from "../chat/computer/computerChat.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -511,14 +512,6 @@ function homeUrlFor(folder, label) {
 // picked/dropped root included: "papers/readout/x.pdf" → ["papers", "readout"].
 function folderFromRelPath(relPath) {
   return (relPath || "").split("/").slice(0, -1).map((name) => name.trim()).filter(Boolean);
-}
-
-// Directory uploads occasionally expose a relative path as File.name (and
-// some browsers also transmit it as the multipart filename). Folder placement
-// is tracked separately; titles and original_filename must always be one leaf.
-function uploadLeafName(file, fallback = "") {
-  const raw = String(file?.name || file?.webkitRelativePath || "").replace(/\\/g, "/");
-  return raw.slice(raw.lastIndexOf("/") + 1).trim() || fallback;
 }
 
 // --- Recently-viewed snapshots -------------------------------------------
@@ -4917,6 +4910,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the computer that keeps the work folder).
   const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null) || keeperComputer(pageComputers),
     [vaultState, pageComputers]);
+  // Whether that agent works or waits for the person, for the chat's side switch (sideMark).
+  const chatComputerMark = useMemo(() => sideMark(chatComputer, tasks.jobs, focusedBlockId),
+    [chatComputer, tasks.jobs, focusedBlockId]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept
@@ -5933,7 +5929,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // source has gone). Returns the attachment properties plus the viewer URL.
   async function resolvePdfSource({ file, url }, taskId) {
     if (file) {
-      const filename = uploadLeafName(file, "upload.pdf");
+      const filename = uploadName(file, "upload.pdf");
       // One request, or in parts past PART_BYTES (shared/lib/uploadParts.js);
       // XHRs either way, so the task row gets byte progress and a stop button.
       const data = await uploadPdf(file, filename, {
@@ -5991,7 +5987,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // `folder`: the id of the folder the page is filed in ("" = none).
   async function uploadOnePdf(file, folder = "") {
-    const transferId = addTask({ name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
+    const transferId = addTask({ name: uploadName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
     let src;
     try {
       src = await resolvePdfSource({ file }, transferId);
@@ -6021,7 +6017,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   async function importOneMarkdown(file, folder = "") {
-    const filename = uploadLeafName(file, "note.md");
+    const filename = uploadName(file, "note.md");
     const transferId = addTask({ name: filename, kind: "file", info: fmtBytes(file.size) });
     const form = new FormData();
     form.append("file", file, filename);
@@ -6040,7 +6036,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // (transfers/documentUploads.js uploadOneFile: the upload, then by-file,
   // which answers the page that already owns the file when one does).
   async function uploadOneDocument(file, folder = "") {
-    const name = uploadLeafName(file);
+    const name = uploadName(file);
     const transferId = addTask({ name, kind: "upload", info: fmtBytes(file.size) });
     try {
       const { page } = await uploadOneFile(file, {
@@ -6092,7 +6088,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const items = Array.from(fileList || [])
       .map((it) => (it instanceof File ? { file: it, folder: folderFromRelPath(it.webkitRelativePath) } : it))
       .filter((it) => it?.file && routeFile(it.file))
-      .map(({ file, folder }) => ({ file, filename: uploadLeafName(file), path: folder, route: routeFile(file) }));
+      .map(({ file, folder }) => ({ file, filename: uploadName(file), path: folder, route: routeFile(file) }));
     if (!items.length) {
       setStatus(t("Nothing to upload: files of these kinds cannot be stored."));
       return;
@@ -6489,7 +6485,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setAttachUrl("");
     setLoading(true);
     const taskId = addTask(file
-      ? { name: uploadLeafName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) }
+      ? { name: uploadName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) }
       : { name: url.slice(0, 60), kind: "download", info: t("resolving…") });
     try {
       let bound, src = null, viewerUrl = "", note = "";
@@ -6502,7 +6498,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         });
       } else {
         bound = await attachFile(pageId, file, {
-          replace, name: uploadLeafName(file),
+          replace, name: uploadName(file),
           onProgress: (loaded, total) => updateTask(taskId, {
             info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
           }),
@@ -6632,8 +6628,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const dropPill = () => { if (pill.shown) { pill.shown = 0; postPill("upload", null); } };
     setUploadReporter({
       start: (file, abort) => ({
-        tid: addTask({ name: uploadLeafName(file, "file"), kind: "upload", info: fmtBytes(file.size), cancel: abort }),
-        name: uploadLeafName(file, "file"), size: file.size, at: Date.now(), lastPct: -1,
+        tid: addTask({ name: uploadName(file, "file"), kind: "upload", info: fmtBytes(file.size), cancel: abort }),
+        name: uploadName(file, "file"), size: file.size, at: Date.now(), lastPct: -1,
       }),
       progress: (u, loaded, total) => {
         if (!u) return;
@@ -9709,9 +9705,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     open: (id) => fileChipActionsRef.current.openBlock(id, { pushNav: true, link: true }),
     say: setStatus,
   } : null), [focusedFile, focusedBlockId, shareMode, sharedFolder, pageFolders, setStatus]);
-  // A file's directory is its crumbs' (PageCrumbs): its folder chips are the
-  // library's folders and its labels only.
-  const chipFolders = (ids) => (focusedFile ? ids.filter((id) => !workOf(workTree, id)) : ids);
   // Who a note can mention (editor/MentionMenu.jsx MentionContext,
   // docs/dev/mentions.md): the workspace's members, read once per
   // workspace, and the signed-in account. A share view mentions no one.
@@ -10850,7 +10843,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {labelEditing ? (() => {
                     const filed = openPageFiling();
                     // a page inside another is filed by labels only
-                    const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : { ...filed, folders: chipFolders(filed.folders) });
+                    // a file's directory is its crumbs', no chip (filingChips)
+                    const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : { ...filed, work_folder: focusedFile });
                     const q = labelInput.trim();
                     const ql = q.toLowerCase();
                     // A path ending in "/" is a folder opened, not a name
@@ -10953,7 +10947,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     );
                   })() : (() => {
-                    const chips = filingChips(libTree, { folders: openSubPage ? [] : chipFolders(pageFolders), labels: pageLabels });
+                    const chips = filingChips(libTree, { folders: openSubPage ? [] : pageFolders, labels: pageLabels, work_folder: focusedFile });
                     return (
                     <span
                       className={`categoryFrontmatterValue ${chips.folders.length || chips.labels.length ? "" : "empty"}`}
@@ -12578,6 +12572,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
           computer={chatComputer}
+          computerMark={chatComputerMark}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
@@ -14686,9 +14681,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           palette,
           setPalette,
           highlightPresets,
-          setHighlightPresets: textHighlighter.setPresets,
-          highlighterColor,
-          firstSwatch: textHighlighter.firstSwatch,
+          textHighlighter, // the editor's commands: the strip's, with their pills
           suggestTours,
           setSuggestTours,
           recentThumbs,
@@ -14826,7 +14819,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         } : null}
         backups={authUser?.user && !authUser.is_guest ? {
           workspace,
-          isAdmin: !!authUser?.is_admin, // Off-site copies
+          isAdmin: !!authUser?.is_admin, // the Bucket
           tasks,
           setStatus,
           confirm: setConfirmBox,

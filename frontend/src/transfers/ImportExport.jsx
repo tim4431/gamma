@@ -1,6 +1,6 @@
 import React from "react";
 import { FileIcon, HighlightIcon, IndentIcon, LayoutIcon, MessageSquareIcon, PaperclipIcon, PenIcon, PinIcon } from "../shared/ui/Icons";
-import { CopyField, PictureChoices, Row, Segmented, Step, SubDialog, Toggle } from "../settings/SettingsKit";
+import { CopyField, FormNotice, PictureChoices, Row, Segmented, Step, SubDialog, Toggle } from "../settings/SettingsKit";
 import { ExportPreview, FormatIllustration } from "../shared/illustrations";
 import { CopyBox, useCopied } from "../shared/ui/Widgets";
 import { MorphText } from "../shared/ui/MotionWidgets";
@@ -120,7 +120,7 @@ function BibtexReview({ bib, folder, summary, copied, onCopy, controls, payload,
   const [picked, setPicked] = React.useState("");
   const shown = entries.find((entry) => entry.page_id === picked) || entries[0];
   if (bib.loading) return <p className="reportModalHint">{t("Reading the citation records…")}</p>;
-  if (bib.error) return <p role="alert" className="importWarning">{t(bib.error)}</p>;
+  if (bib.error) return <FormNotice>{t(bib.error)}</FormNotice>;
   return <>
     <p className="reportModalHint">{entries.length
       ? tn("{n} paper can be cited.", "{n} papers can be cited.", entries.length)
@@ -394,7 +394,7 @@ function ExportJobStep({ job, folder, folderName, pageId, subPages, shareView, f
         {format?.id === "zotero" ? <ZoteroSteps folder={folder} bundle={params.pdf} highlights={params.highlights} open />
           : NEXT_STEP[format?.id] ? <p className="reportModalHint">{t(NEXT_STEP[format.id])}</p> : null}
       </> : null}
-      {job.state === "failed" ? <p role="alert" className="importWarning">{t(job.error)}</p> : null}
+      {job.state === "failed" ? <FormNotice>{t(job.error)}</FormNotice> : null}
       {job.state === "cancelled" ? <p className="reportModalHint">{t("Nothing was saved. Start it again to export.")}</p> : null}
     </div>
     <div className="reportModalBtns transferFooter">

@@ -50,6 +50,13 @@
   .fail .fDetail, .fail details pre { font-family: var(--font-mono); line-height: 1.5; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); -webkit-user-select: text; user-select: text; }
   .fail .fDetail { font-size: var(--fs-xs); color: var(--text-secondary); padding: 6px 8px; margin-top: 8px; white-space: pre-wrap; }
   .fail .fActs { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  /* A certificate the card offers to trust: what it says of itself, the fingerprint to compare. */
+  .fail .fCert { margin-top: 8px; font-size: var(--fs-xs); color: var(--text-secondary); display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; }
+  .fail .fCert .k { color: var(--text-muted); }
+  .fail .fCert .v { overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+  .fail .fCert .v.mono { font-family: var(--font-mono); }
+  .fail .fNote { color: var(--danger); font-size: var(--fs-xs); margin-top: 6px; }
+  dialog .formActs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .fail details { margin: 10px 0 0; }
   .fail details pre { margin: 6px 0 0; max-height: 220px; overflow: auto; font-size: var(--fs-2xs); color: var(--text-muted); padding: 8px 10px; }
   .empty { color: var(--text-muted); text-align: center; padding: 30px 16px; border: 1px dashed var(--border-light); border-radius: var(--radius-lg); }
@@ -135,6 +142,8 @@
     </div>
     <div class="fHint" id="failHint"></div>
     <div class="fDetail" id="failDetail" hidden></div>
+    <div class="fCert" id="failCert" hidden></div>
+    <div class="fNote" id="failNote" hidden></div>
     <div class="fActs" id="failActs"></div>
     <details id="failLogBox" hidden>
       <summary>Server output</summary>
@@ -249,6 +258,11 @@
   <h3 id="dlgRenameTitle">Rename server</h3>
   <input class="uiInput" id="renameName" aria-label="Name" />
   <input class="uiInput mono" id="renameUrl" aria-label="Address" placeholder="http://192.168.1.10:9001" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="url" hidden />
+  <!-- A remote's trust: the certificate trusted by its fingerprint, and the yes to plain http:// (main.js forgetCert, beforeMint). -->
+  <div class="formActs" id="renameTrust" hidden>
+    <button class="uiBtn sm" id="btnForgetCert" hidden>Forget the trusted certificate</button>
+    <button class="uiBtn sm" id="btnForgetPlain" hidden>Ask again before connecting over http://</button>
+  </div>
   <div class="row">
     <button class="uiBtn" onclick="dlgRename.close()">Cancel</button>
     <button class="uiBtn primary" id="btnRename">Save</button>
@@ -381,14 +395,40 @@
         $('dlgRenameTitle').textContent = ws.type === 'remote' ? 'Edit server' : 'Rename server';
         $('renameUrl').hidden = ws.type !== 'remote';
         $('renameUrl').value = ws.url || '';
+        $('btnRename').textContent = 'Save';
+        $('btnForgetCert').hidden = !ws.pinned;
+        $('btnForgetPlain').hidden = !ws.plainAccepted;
+        $('renameTrust').hidden = !ws.pinned && !ws.plainAccepted;
+        $('btnForgetCert').onclick = async () => {
+          await gammaShell.forgetCert(ws.id);
+          $('btnForgetCert').hidden = true;
+          setStatus(`Gamma no longer trusts the certificate it was told to trust for ${ws.name}.`);
+        };
+        $('btnForgetPlain').onclick = async () => {
+          await gammaShell.forgetPlain(ws.id);
+          $('btnForgetPlain').hidden = true;
+          setStatus(`Gamma asks again before it connects to ${ws.name} over http://.`);
+        };
+        // A new address moves the server's links with it (main.js moveServer), asked
+        // first; a refusal keeps the dialog open on the server's words, to try again.
         $('btnRename').onclick = async () => {
           try {
             await gammaShell.rename(ws.id, $('renameName').value);
             const url = $('renameUrl').value.trim();
-            if (ws.type === 'remote' && url && url !== ws.url) await gammaShell.setUrl(ws.id, url);
+            if (ws.type === 'remote' && url && url !== ws.url) {
+              setStatus(`Moving the links to ${url}…`);
+              if (!(await gammaShell.setUrl(ws.id, url))) {
+                setStatus('');
+                return;
+              }
+              setStatus('');
+            }
             $('dlgRename').close();
             refresh();
-          } catch (e) { setStatus(cleanErr(e), true); }
+          } catch (e) {
+            setStatus(cleanErr(e), true);
+            $('btnRename').textContent = 'Try again';
+          }
         };
         $('dlgRename').showModal();
         $('renameName').select();
@@ -623,6 +663,25 @@
     $('failLog').textContent = f.log || '';
     $('failLogBox').hidden = !f.log;
     $('failLogBox').open = false;
+    // A certificate to trust by its fingerprint (main.js certCard): its words are
+    // the server's, so they go in as text only.
+    const box = $('failCert');
+    box.textContent = '';
+    box.hidden = !f.cert;
+    if (f.cert) {
+      const line = (k, v, mono) => {
+        const a = document.createElement('div'); a.className = 'k'; a.textContent = k;
+        const b = document.createElement('div'); b.className = 'v' + (mono ? ' mono' : ''); b.textContent = v || '—';
+        box.append(a, b);
+      };
+      line('SHA-256 fingerprint', f.cert.grouped, true);
+      line('Issued to', f.cert.subject);
+      line('Issued by', f.cert.issuer);
+      line('Valid', `from ${(f.cert.validFrom || '').slice(0, 10)} to ${(f.cert.validTo || '').slice(0, 10)}`);
+    }
+    const notes = [f.expired, f.stale].filter(Boolean).join(' ');
+    $('failNote').textContent = notes;
+    $('failNote').hidden = !notes;
 
     const acts = $('failActs');
     acts.innerHTML = '';
@@ -647,18 +706,39 @@
         } catch (e) { setStatus(cleanErr(e), true); }
       }, true);
     }
-    if (f.action === 'http' && f.server && /^https:/i.test((server() || {}).url || '')) {
-      // A plain-HTTP server behind an https:// address: switch the address and open again.
-      act('Use http:// instead', async (b) => {
-        const ws = server();
-        if (!ws) return;
+    if ((f.action === 'trust' || f.action === 'retrust') && f.server && f.cert) {
+      // Pins only the certificate this card shows: main checks the nonce and the fingerprint.
+      act(f.action === 'retrust' ? 'Trust the new certificate' : 'Trust this certificate', async () => {
         try {
-          await gammaShell.setUrl(ws.id, ws.url.replace(/^https:/i, 'http:'));
-          hideFailure();
-          const again = (await gammaShell.list()).servers.find((s) => s.id === ws.id);
-          if (again) openWs(again, b);
+          await gammaShell.trustCert(f.server, f.nonce, f.cert.sha256);
         } catch (e) { setStatus(cleanErr(e), true); }
-      }, true);
+      }, f.action === 'trust');
+    }
+    // A plain-HTTP server behind an https:// address (`http`), or an http:// one
+    // that sent this window to https:// (`https`): the address changes, the links with it
+    // (main.js moveServer asks first), and the server opens again.
+    const moveTo = async (b, url) => {
+      const ws = server();
+      if (!ws) return;
+      try {
+        setStatus(`Moving the links to ${url}…`);
+        if (!(await gammaShell.setUrl(ws.id, url))) {
+          setStatus('');
+          return;
+        }
+        setStatus('');
+        hideFailure();
+        const again = (await gammaShell.list()).servers.find((s) => s.id === ws.id);
+        if (again) openWs(again, b);
+      } catch (e) { setStatus(cleanErr(e), true); }
+    };
+    if (f.action === 'http' && f.server && /^https:/i.test((server() || {}).url || '')) {
+      act('Use http:// instead', (b) => moveTo(b, server().url.replace(/^https:/i, 'http:')), true);
+    }
+    if (f.action === 'https' && f.server && /^http:/i.test((server() || {}).url || '')) {
+      // `to`: the shell's address for it (the redirect's, the same host name), else the name's own https://
+      const secure = /^https:\/\//i.test(f.to || '') ? f.to : `https://${new URL(server().url).hostname}`;
+      act(`Use ${secure}`, (b) => moveTo(b, secure), true);
     }
     if (f.server) act('Try again', (b) => { const ws = server(); if (ws) { hideFailure(); openWs(ws, b); } }, f.action === 'retry');
     if (f.server && f.log) act('Show log file', () => gammaShell.revealLog(f.server));

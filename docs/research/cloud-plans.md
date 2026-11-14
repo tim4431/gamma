@@ -161,7 +161,7 @@ environment's defaults. Where each field lands on the Gamma side:
   zip keep working, so a lapsed customer can always leave with their data.
   The same switch serves a reported phishing host.
 - `offsite` sets the copy interval and generations
-  ([dev/debugging.md](../dev/debugging.md) "Off-site copies in a bucket"),
+  ([dev/debugging.md](../dev/debugging.md) "Snapshots and copies in a bucket"),
   since the bucket settings themselves come from the environment.
 - The status and plan show in the hosted admin's Server pane and as a
   notice ("Payment failed; your server becomes read-only on …"), through

@@ -74,27 +74,26 @@ test("a Send's line: when and how many, then what became of it", () => {
   const sent = { id: "r1", at: "2026-11-10T14:05:00.000000Z", state: "sent", state_by: "", detail: "",
     threads: [{ id: "a", answered: false }, { id: "b", answered: false }, { id: "c", answered: true }] };
   const line = "Sent 5m ago · 3 comments";
-  assert.deepEqual(requestLine(sent, now), { line, state: "Waiting for the agent", detail: "", kind: "sent" });
+  assert.deepEqual(requestLine(sent, now),
+    { line, kind: "sent", label: "Waiting for the agent", detail: "", title: "Waiting for the agent", tone: "pending", live: false });
   assert.equal(requestLine({ ...sent, threads: [{ id: "a" }] }, now).line, "Sent 5m ago · 1 comment");
-  assert.deepEqual(requestLine({ ...sent, state: "running", state_by: "Claude Code" }, now).state, "Claude Code is working", "named by state_by");
+  assert.equal(requestLine({ ...sent, state: "running", state_by: "Claude Code" }, now).label, "Claude Code is working…", "named by state_by");
   // the agent's own words go on a line of their own: the state stays short
   assert.deepEqual(requestLine({ ...sent, state: "running", state_by: "Codex", detail: "Editing main.tex" }, now),
-    { line, state: "Codex is working", detail: "Editing main.tex", kind: "running" });
-  assert.deepEqual(requestLine({ ...sent, state: "running", detail: "rebuilding" }, now),
-    { line, state: "The agent is working", detail: "rebuilding", kind: "running" });
-  assert.deepEqual(requestLine({ ...sent, state: "done", state_by: "Claude Code" }, now),
-    { line, state: "Done by Claude Code", detail: "", kind: "done" });
+    { line, kind: "running", label: "Codex is working…", detail: "Editing main.tex", title: "Editing main.tex", tone: "pending", live: true });
+  assert.equal(requestLine({ ...sent, state: "running", detail: "rebuilding" }, now).label, "The agent is working…");
   assert.deepEqual(requestLine({ ...sent, state: "done", state_by: "Codex", detail: "Fixed both. Changed main.tex." }, now),
-    { line, state: "Done by Codex", detail: "Fixed both. Changed main.tex.", kind: "done" }, "with its summary");
-  assert.equal(requestLine({ ...sent, state: "done" }, now).state, "Done");
+    { line, kind: "done", label: "Done by Codex", detail: "Fixed both. Changed main.tex.", title: "Fixed both. Changed main.tex.", tone: "ok", live: false },
+    "with its summary");
+  assert.equal(requestLine({ ...sent, state: "done" }, now).label, "Done");
   assert.deepEqual(requestLine({ ...sent, state: "failed", detail: "latexmk failed", state_by: "Claude Code" }, now),
-    { line, state: "Failed", detail: "latexmk failed", kind: "failed" });
+    { line, kind: "failed", label: "Failed", detail: "latexmk failed", title: "Failed: latexmk failed", tone: "failed", live: false });
   assert.equal(requestLine({ ...sent, state: "failed" }, now).detail, "");
-  assert.deepEqual(requestLine({ ...sent, state: "failed", detail: "withdrawn", state_by: "tim" }, now),
-    { line, state: "Withdrawn", detail: "", kind: "withdrawn" });
-  // the computer that keeps the folder runs the reader's Sends
-  assert.deepEqual(requestLine(sent, now, "TIM-PC"), { line, state: "Waiting for TIM-PC", detail: "", kind: "sent" });
-  assert.equal(requestLine({ ...sent, state: "running", state_by: "Codex" }, now, "TIM-PC").state, "Codex is working");
+  assert.equal(requestLine({ ...sent, state: "failed", detail: "withdrawn", state_by: "tim" }, now).label, "Withdrawn");
+  // the agent that runs the reader's Sends, or the computer that keeps the folder
+  assert.equal(requestLine(sent, now, { label: "Codex", computer: "" }).label, "Waiting for Codex");
+  assert.equal(requestLine(sent, now, { label: "Codex", computer: "TIM-PC", online: true }).label, "Waiting for TIM-PC");
+  assert.equal(requestLine({ ...sent, state: "running", state_by: "Codex" }, now, { label: "Codex", computer: "TIM-PC" }).label, "Codex is working…");
 });
 
 test("Withdraw's title says it stops the agent only where an agent on this computer holds the request", () => {

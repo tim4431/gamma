@@ -2,9 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  NOTE_MAX, SOURCES_MAX, answerBody, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, changesLine, chatPath, currentStep,
-  diffRows, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, modelChoice, modelDisplay, offersMenu, sourceNote, sourcesBody, stepNow,
-  stepText, stripLine, turnBody, turnLabel,
+  CHANGES_SHOWN, NOTE_MAX, SOURCES_MAX, answerBody, askCommand, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, chatPath,
+  currentStep, diffRows, drawsAsks, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, markParts, modelChoice, modelDisplay, offersMenu,
+  retryOf, scrolledToEnd, sideMark, sourceNote, sourcesBody, stepNow, stepText, stripLine, turnBody, turnChanges, turnLabel, waitsThere,
 } from "../src/chat/computer/computerChat.js";
 import { keeperComputer } from "../src/vault/vaultState.js";
 
@@ -68,14 +68,26 @@ test("a turn's pill: the agent at work, then how many steps it took", () => {
   assert.equal(turnLabel(agent({ steps: steps.slice(0, 1) }), "Codex"), "1 step");
 });
 
-test("what a turn changed, on one line", () => {
-  assert.equal(changesLine(agent()), "");
-  assert.equal(changesLine(agent({ changes: ["sections/intro.tex"], changed: 1 })), "Changed sections/intro.tex");
-  assert.equal(changesLine(agent({ changes: ["sections/intro.tex", "refs.bib"], changed: 2, built: true })),
-    "Changed sections/intro.tex and 1 more · The PDF was rebuilt");
-  assert.equal(changesLine(agent({ changes: ["a.tex"], changed: 5 })), "Changed a.tex and 4 more", "the count names what is not listed");
-  assert.equal(changesLine(agent({ changed: 3 })), "Changed 3 files");
-  assert.equal(changesLine(agent({ built: true })), "The PDF was rebuilt");
+test("what a turn changed, as its card lists it", () => {
+  assert.equal(turnChanges(agent()), null);
+  assert.deepEqual(turnChanges(agent({ changes: ["sections/intro.tex"], changed: 1 })),
+    { shown: ["sections/intro.tex"], rest: [], more: 0, n: 1, built: false });
+  const five = ["a.tex", "b.tex", "c.tex", "d.tex", "e.tex"];
+  assert.deepEqual(turnChanges(agent({ changes: five, changed: 5, built: true })),
+    { shown: five.slice(0, CHANGES_SHOWN), rest: five.slice(CHANGES_SHOWN), more: 2, n: 5, built: true });
+  assert.deepEqual(turnChanges(agent({ changes: ["a.tex"], changed: 5 })),
+    { shown: ["a.tex"], rest: [], more: 4, n: 5, built: false }, "the count names what is not listed");
+  assert.deepEqual(turnChanges(agent({ changed: 3 })), { shown: [], rest: [], more: 3, n: 3, built: false });
+  assert.deepEqual(turnChanges(agent({ built: true })), { shown: [], rest: [], more: 0, n: 0, built: true });
+});
+
+test("Retry sends the newest failed turn's message again", () => {
+  const failed = agent({ state: "failed", error: "Codex stopped." });
+  const asked = { ...person, selections: [{ text: "a passage", page: 2 }] };
+  assert.deepEqual(retryOf({ messages: [asked, failed] }, failed), { text: "fix this", selections: [{ text: "a passage", page: 2 }] });
+  assert.equal(retryOf({ messages: [asked, failed, person, agent()] }, failed), null, "only the newest");
+  const done = agent();
+  assert.equal(retryOf({ messages: [person, done] }, done), null, "only a failed one");
 });
 
 test("how a turn ended when it did not answer, and a session not resumed", () => {
@@ -128,6 +140,29 @@ test("what the agent asks: the card's title, where a command runs, what allowing
   ]);
   assert.deepEqual(diffRows(""), []);
   assert.deepEqual(diffRows(undefined), []);
+});
+
+test("an asked command as its card draws it: the wrapper's command first, its lines, what would not show marked", () => {
+  const plain = { kind: "command", command: "latexmk -pdf main.tex" };
+  assert.deepEqual(askCommand(plain), { main: "latexmk -pdf main.tex", through: "", lines: 0 });
+  const wrapped = { kind: "command", command: "pwsh.exe -Command 'latexmk -pdf main.tex'", inner: "latexmk -pdf main.tex", shell: "PowerShell" };
+  assert.deepEqual(askCommand(wrapped), { main: "latexmk -pdf main.tex", through: "Through PowerShell: pwsh.exe -Command 'latexmk -pdf main.tex'", lines: 0 });
+  assert.equal(askCommand({ ...wrapped, shell: "" }).main, wrapped.command, "no shell named: the whole command");
+  assert.equal(askCommand({ command: "a\nb\nc", lines: 3 }).lines, 3);
+  assert.equal(askCommand({ command: "a", lines: 1 }).lines, 0, "one line is not counted");
+  const marked = { kind: "command", command: "echo \u202egnp.exe", command_shown: "echo ⟨U+202E⟩gnp.exe", marked: 1 };
+  assert.equal(askCommand(marked).main, "echo ⟨U+202E⟩gnp.exe", "the server's shown form");
+  assert.deepEqual(markParts(askCommand(marked).main, marked.marked),
+    [{ text: "echo ", mark: false }, { text: "⟨U+202E⟩", mark: true }, { text: "gnp.exe", mark: false }]);
+  assert.deepEqual(markParts("say ⟨U+202E⟩", 0), [{ text: "say ⟨U+202E⟩", mark: false }], "an ask that holds none: the agent's own letters");
+  assert.deepEqual(askCommand(null), { main: "", through: "", lines: 0 });
+});
+
+test("Allow waits until a box was scrolled to its end, or had nothing to scroll", () => {
+  assert.equal(scrolledToEnd(null), true, "no box");
+  assert.equal(scrolledToEnd({ scrollTop: 0, clientHeight: 100, scrollHeight: 100 }), true, "nothing to scroll");
+  assert.equal(scrolledToEnd({ scrollTop: 0, clientHeight: 100, scrollHeight: 400 }), false);
+  assert.equal(scrolledToEnd({ scrollTop: 299, clientHeight: 100, scrollHeight: 400 }), true, "within 2 px of its end");
 });
 
 test("an answer posts the decision, and a decline's note when one was written", () => {
@@ -268,6 +303,33 @@ test("another computer's agent: a message goes while it is away, and its turn wa
   assert.equal(turnLabel(agent({ state: "queued" }), "Codex", ""), "Codex is working…");
 });
 
+test("another computer's turn that asks: the page says it waits for the answer on that computer, and draws no card", () => {
+  const now = new Date(2026, 10, 13, 18, 0);
+  const since = new Date(2026, 10, 13, 14, 2).toISOString();
+  const waiting = agent({ state: "running", waiting: true, steps: [{ kind: "run", program: "curl", status: "asked" }] });
+  const running = { ...remote, turn: { turn_id: "t1", state: "running", ahead: false } };
+  assert.equal(waitsThere(running, waiting), true);
+  assert.equal(waitsThere(ready, { ...waiting }), false, "this computer's agent asks in the chat");
+  assert.equal(waitsThere(running, agent({ state: "running", waiting: false })), false);
+  assert.deepEqual(stripLine(running, waiting, now), { text: "Waiting for your answer on TIM-PC", kind: "asking" });
+  assert.equal(turnLabel(waiting, "Codex", "", "TIM-PC"), "Codex is waiting for your answer on TIM-PC");
+  // the computer away while it waits: away wins
+  const gone = { ...offline(since), turn: running.turn };
+  assert.match(stripLine(gone, waiting, now).text, /^Waiting for your answer on TIM-PC, offline since 2:02/);
+  assert.equal(stripLine(gone, waiting, now).kind, "away");
+  assert.deepEqual(stripLine({ ...offline(null), turn: running.turn }, waiting, now),
+    { text: "Waiting for your answer on TIM-PC, which is offline", kind: "away" });
+  assert.equal(turnLabel(waiting, "Codex", "TIM-PC", "TIM-PC"), "Waiting for your answer on TIM-PC, which is offline");
+  assert.equal(stripLine({ ...running, paused: true }, waiting, now).kind, "paused");
+  // an ended turn's flag waits for nothing
+  const ended = agent({ waiting: true, steps: [{ kind: "run", program: "curl", status: "declined" }] });
+  assert.equal(stripLine(remote, ended, now).text, "Codex on TIM-PC · paper");
+  assert.equal(turnLabel(ended, "Codex", "", "TIM-PC"), "1 step");
+  assert.equal(stepText(waiting.steps[0]), "Asked to run curl");
+  assert.equal(drawsAsks(ready), true);
+  assert.equal(drawsAsks(remote), false, "another computer's asks are answered there");
+});
+
 test("another computer's agent: no menu on the strip, no terminal", () => {
   assert.equal(isRemote(remote), true);
   assert.equal(isRemote(ready), false);
@@ -294,4 +356,16 @@ test("the side drawn from the page's computers where this computer has no agent 
   assert.equal(keeperComputer([pc({ vault: { ...vault, paused: true } })]).paused, true);
   assert.equal(keeperComputer([pc({ vault: { ...vault, agent: null } })]), null, "no agent on");
   assert.equal(keeperComputer([]), null, "another account's: the server names no computer");
+});
+
+test("the side switch's mark: waiting while a turn of the page asks, working while one runs or the agent works in the folder", () => {
+  const computer = { label: "Codex", running: null };
+  const turn = (fields = {}) => ({ kind: "computer-turn", state: "running", params: { page: "p1" }, progress: {}, ...fields });
+  assert.deepEqual(sideMark(computer, [], "p1"), { kind: "", text: "" });
+  assert.deepEqual(sideMark(computer, [turn({ progress: { phase: "asking" } })], "p1"), { kind: "waiting", text: "Codex is waiting for you" });
+  assert.deepEqual(sideMark(computer, [turn()], "p1"), { kind: "working", text: "Codex is working…" });
+  assert.equal(sideMark(computer, [turn({ params: { page: "p2" } })], "p1").kind, "", "another page's turn");
+  assert.equal(sideMark(computer, [turn({ state: "queued" })], "p1").kind, "");
+  assert.equal(sideMark({ ...computer, running: { kind: "send", request_id: "r1" } }, [], "p1").kind, "working", "a Send in the folder");
+  assert.equal(sideMark(null, [turn()], "p1").kind, "");
 });

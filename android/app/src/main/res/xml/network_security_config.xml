@@ -2,7 +2,20 @@
 <!-- This device's server answers on http://127.0.0.1:<port>, and servers on
      a home network are often plain http too: cleartext is allowed, as the
      iPad allows local networking (NSAllowsLocalNetworking). The WebView,
-     the health probes and the shell's own requests all follow this. -->
+     the health probes and the shell's own requests all follow this.
+
+     The certificates the person installed in Android's settings are
+     trusted beside the system's: a NAS signed by an authority of its own
+     (docs/dev/https.md) loads, which an app targeting API 24 or later
+     otherwise refuses. A <domain-config> cannot name the person's servers
+     when the app is built, so the trust is the whole app's, the Gamma Cloud
+     sign-in in the WebView included (docs/dev/android.md). The embedded
+     Python keeps certifi's bundle. -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true" />
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
 </network-security-config>

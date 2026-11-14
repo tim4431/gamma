@@ -63,9 +63,11 @@ export const GROUPS = [
   { id: "feedback", files: ["feedback.mjs"], s: 60 },
   { id: "local-agents", files: ["localAgents.mjs"], s: 40 },
   { id: "computers", files: ["computers.mjs"], s: 45 },
+  { id: "https", files: ["https.mjs"], s: 60 },
   { id: "remote-work", files: ["remoteWork.mjs"], s: 30 },
   { id: "remote-sends", files: ["remoteSends.mjs"], s: 75 },
   { id: "remote-chat", files: ["remoteChat.mjs"], s: 90 },
+  { id: "remote-asks", files: ["remoteAsks.mjs"], s: 90 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "text-search", files: ["textSearch.mjs"], s: 26 },
   { id: "text-anchors", files: ["textAnchors.mjs"], s: 45 },
@@ -196,8 +198,9 @@ export const RULES = [
   // (text-search: a note's line link is a pill; text-anchors: a text range's row, its dot and its title)
   ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"]],
   // the chat's computer side: the switch, the strip, a turn of the agent on this computer, Stop, New chat and History
-  // (remote-chat: the same on another server's page, run on the computer that keeps the work folder)
-  ["frontend/src/chat/computer/**", ["local-agents", "remote-chat"]],
+  // (remote-chat: the same on another server's page, run on the computer that keeps the work folder;
+  // remote-asks: what it asks there, said to wait on that computer, no card)
+  ["frontend/src/chat/computer/**", ["local-agents", "remote-chat", "remote-asks"]],
   // the switch to that side; text-anchors: a selection of lines as the chat's chip
   ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "text-anchors", "local-agents", "remote-chat"]],
   // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link;
@@ -268,7 +271,7 @@ export const RULES = [
   ["frontend/src/transfers/importReview.js", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/ImportTree.jsx", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/**", EXPORTS],
-  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer
+  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat", "remote-asks"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer; remote-asks: one that waits there for an answer
   ["frontend/src/support/**", ["settings"]],
   ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish", "ipad"]], // ipad: the sign-in page's Server link
   ["frontend/public/**", ["ipad"]],
@@ -285,7 +288,7 @@ export const RULES = [
   // the 20,000 files the explorer group's quick open searches
   ["backend/tests/seed_work_folder.py", ["explorer"]],
   // the stand-ins for Codex and Claude Code the local agents scenario's server starts
-  ["backend/tests/fake_agents/**", ["local-agents", "remote-sends", "remote-chat"]],
+  ["backend/tests/fake_agents/**", ["local-agents", "remote-sends", "remote-chat", "remote-asks"]],
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
@@ -311,11 +314,14 @@ export const RULES = [
   // computers: a vault of another server is what the computer's channel announces there
   // remote-work: a work folder of another server made, chosen and pushed there
   // remote-sends: an agent turned on for a work folder of another server
-  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents", "computers", "remote-work", "remote-sends"]],
-  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents", "computers", "remote-work", "remote-sends"]],
+  // https: a vault of a NAS over https refused, with what was in its way
+  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents", "computers", "remote-work", "remote-sends", "https"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents", "computers", "remote-work", "remote-sends", "remote-asks", "https"]],
   ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
   // (text-anchors: a text file's ranges placed again inside the round that replaced it)
   // (remote-work: the rounds over HTTP into a work folder of another server, vault/http_remote.py)
+  // (https: a vault of a NAS over https, what is in its way named in its status)
+  ["backend/gamma/vault/http_remote.py", ["vaults", "work-folders", "feedback", "viewers", "explorer", "text-anchors", "remote-work", "https"]],
   ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer", "text-anchors", "remote-work"]],
   // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
   // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
@@ -332,18 +338,20 @@ export const RULES = [
   // drivers, the runner, what this computer keeps, and GET /api/local-agents
   // (remote-sends: the runner's home of another server's work folder, home.py, and a mention made there)
   // (remote-chat: the chat's computer side there: the seat, the turn run on the computer, its chat home)
-  ["backend/gamma/local_agents/home.py", ["local-agents", "remote-sends", "remote-chat"]],
+  ["backend/gamma/local_agents/home.py", ["local-agents", "remote-sends", "remote-chat", "remote-asks"]],
   ["backend/gamma/local_agents/mention.py", ["local-agents", "remote-sends"]],
-  ["backend/gamma/local_agents/runner.py", ["local-agents", "remote-sends", "remote-chat"]],
-  ["backend/gamma/local_agents/**", ["local-agents", "remote-chat"]],
-  ["backend/gamma/routers/local_agents.py", ["local-agents", "remote-chat"]],
+  ["backend/gamma/local_agents/runner.py", ["local-agents", "remote-sends", "remote-chat", "remote-asks"]],
+  ["backend/gamma/local_agents/**", ["local-agents", "remote-chat", "remote-asks"]],
+  ["backend/gamma/routers/local_agents.py", ["local-agents", "remote-chat", "remote-asks"]],
   // a computer's channel and presence (docs/dev/computers.md): the server's registry and routes, the
   // computer's links and their threads
   // (remote-sends: the binding of a work folder to its computer's agent, the channel's Sends;
   // remote-chat: the channel's chat turns, the models announced)
-  ["backend/gamma/computers/**", ["computers", "remote-sends", "remote-chat"]],
-  ["backend/gamma/routers/computers.py", ["computers", "remote-sends", "remote-chat"]],
-  ["backend/gamma/routers/computer_links.py", ["computers"]],
+  // (https: the channel to a NAS over https, a redirect or a certificate in its way, the id kept across a move)
+  ["backend/gamma/computers/channel.py", ["computers", "remote-sends", "remote-chat", "remote-asks", "https"]],
+  ["backend/gamma/computers/**", ["computers", "remote-sends", "remote-chat", "remote-asks"]],
+  ["backend/gamma/routers/computers.py", ["computers", "remote-sends", "remote-chat", "remote-asks"]],
+  ["backend/gamma/routers/computer_links.py", ["computers", "https"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
   // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…),
   // quick open's file rows and a path link's file
@@ -354,13 +362,14 @@ export const RULES = [
   // (elsewhere.py), its tracking dialog over HTTP (selection.py) and the owner's Let go (takeover.py))
   ["backend/gamma/work_folders/**", ["work-folders", "vaults", "explorer", "remote-work"]],
   ["backend/gamma/folder_sync.py", []],
-  ["backend/gamma/gamma_sync.py", []],
+  // (https: the client every vault and channel of another server speaks through: redirects refused, TLS failures named)
+  ["backend/gamma/gamma_sync.py", ["https"]],
   // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
   ["backend/gamma/sync_*.py", ["mirror", "publish", "zotero-link"]],
   // the same-block merge: a mirror's sync, two tabs typing in one block, the soak's crowd
   ["backend/gamma/textmerge.py", ["mirror", "collab", "collab-soak"]],
   // (remote-work: whoami's work_folders, which the computer asks before it marks a folder there)
-  ["backend/gamma/routers/sync.py", ["mirror", "publish", "remote-work"]],
+  ["backend/gamma/routers/sync.py", ["mirror", "publish", "remote-work", "remote-asks"]], // remote-asks: whoami's computer_asks
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
   ["backend/gamma/cloud_*.py", ["cloud-sign-in", "publish"]],
   ["backend/gamma/routers/cloud_auth.py", ["cloud-sign-in", "publish"]],
@@ -432,7 +441,7 @@ export const RULES = [
   ["backend/gamma/routers/export.py", [...EXPORTS, "sub-pages"]], // a page's export with the pages inside it
   ["backend/gamma/routers/imports.py", EXPORTS],
   ["backend/gamma/jobs.py", [...EXPORTS, "settings", "notes-pdf-share"]], // exports, backups, the search indexer
-  ["backend/gamma/routers/jobs.py", [...EXPORTS, "settings", "remote-chat"]], // remote-chat: a chat turn on another computer
+  ["backend/gamma/routers/jobs.py", [...EXPORTS, "settings", "remote-chat", "remote-asks"]], // remote-chat: a chat turn on another computer; remote-asks: one that waits there
   ["backend/gamma/backup_schedule.py", ["settings"]],
   ["backend/gamma/backups.py", ["settings"]],
   ["backend/gamma/ws_backup.py", ["settings"]],
@@ -480,6 +489,12 @@ export const RULES = [
   // Redraw as shapes and Convert to text (docs/dev/handwriting_ai.md): their routes and their pure module
   ["backend/gamma/ink_ai.py", ["ink-ai"]],
   ["backend/gamma/routers/ink_ai.py", ["ink-ai"]],
+  // HTTPS with a NAS (docs/dev/https.md): the pins, the plain-http scope, the address move and its routes
+  // (computers, remote-work, mirror: a new channel, vault or copy over http:// to the internet refused)
+  ["backend/gamma/tls_trust.py", ["https"]],
+  ["backend/gamma/host_scope.py", ["https"]],
+  ["backend/gamma/remote_servers.py", ["https", "computers", "remote-work", "remote-asks", "mirror"]],
+  ["backend/gamma/routers/remote_servers.py", ["https"]],
   ["backend/gamma/**", ALL],
   ["backend/app.py", ALL],
   ["backend/manage.py", ALL],

@@ -201,7 +201,7 @@ jobs:
       - name: Install backend deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
+          pip install -r backend/requirements.txt -r backend/requirements-s3.txt
 
       - name: Freeze backend
         run: python desktop/build_backend.py
@@ -344,11 +344,17 @@ jobs:
       # Trusted Signing certificate: the manifest publisher must stay the
       # Partner Center GUID), in its own output dir so it does not touch the
       # installer or win-unpacked. The store job submits it after the release.
+      # Its "Open with Gamma" on folders is a DLL the package carries
+      # (desktop/native/open-with/): built with the runner's MSVC and driven
+      # as Explorer drives it first, then built again and put in by the
+      # afterPack hook (docs/release.md "Microsoft Store").
       - name: Build Store package (MSIX)
         if: runner.os == 'Windows'
         working-directory: desktop
         shell: pwsh
         run: |
+          node --test test/openWithDll.test.js
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npx electron-builder --win appx --publish never --config.directories.output=dist-store
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Get-ChildItem dist-store

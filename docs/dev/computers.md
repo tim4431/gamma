@@ -143,7 +143,7 @@ alone:
 |---|---|---|
 | GET | `/api/computers/chats` | `{turns: [{id, conversation_id, page_id, folder_id, at}], stops: [{id, run}]}`: the turns queued for its own agent of each folder (oldest first, at most 20, the folder not paused) and the runs of its turns asked to stop. |
 | POST | `/api/computers/chats/{turn}/claim` | `{run, agent}` → `{turn: {id, conversation_id, page_id, text, selections, model, effort}, history, page: {path, title}, seen}`: queued → running in one locked write keyed by the run (the same run again: the same answer; another: 409; 404 not this computer's; 409 a paused folder, or a turn for another agent, left queued). |
-| POST | `/api/computers/chats/{turn}/write` | `{run, seq, fields}` → `{ok}` or `{ok, stale: true}` when `seq` is not above the last written: the agent message's `text` (through `prompt.inert`), `steps` (a path not relative stored as `outside`), `changes` (a path not relative left out), `changed`, `built`, `error`, `fresh`, `state`, `model`, `effort`, its `ended_at` this server's clock; 409 another run, a turn no longer running, or a gone conversation. |
+| POST | `/api/computers/chats/{turn}/write` | `{run, seq, fields}` → `{ok}` or `{ok, stale: true}` when `seq` is not above the last written: the agent message's `text` (through `prompt.inert`), `steps` (a path not relative stored as `outside`), `changes` (a path not relative left out), `changed`, `built`, `error`, `fresh`, `waiting` (a flag: an ask of the turn waits for an answer on the computer, which alone shows and answers it; never the ask itself, [local_agents.md](local_agents.md#asking-on-this-computer)), `state`, `model`, `effort`, its `ended_at` this server's clock (an end writes `waiting` false); 409 another run, a turn no longer running, or a gone conversation. |
 
 The announce's assistants carry their `models` for the chat's model
 chip (at most 32, 8 efforts each); an announce is at most 128 KiB.
@@ -158,24 +158,53 @@ trailing slash), `workspace_id`, `created_by` (the local account), `token`
 (sealed with `publisher_sessions.seal`, as a vault's), `token_id` (its id
 there, for whoever revokes it), `account` and `username` (the account
 there, as the announce named it), `created_at` and `status` `{state,
-error, at}`:
+error, at}`, with what was in the way when that server was not reached as
+itself (`error_kind` and its fields, below):
 
 | State | |
 |---|---|
-| `connecting` | made, not yet announced |
+| `connecting` | made, not yet announced; moved to another address, not yet announced there |
 | `connected` | the announce succeeded, and the polls since |
-| `refused` | 401 or 403: the token was revoked or expired there; tried again after 10 minutes |
-| `older` | 404 or 405 on the channel's routes: a Gamma from before them; asked again after an hour |
-| `unreachable` | anything else; tried again after 5 s, doubling to 5 minutes |
+| `refused` | Gamma's own 401 or 403: the token was revoked or expired there; tried again after 10 minutes |
+| `older` | Gamma's own 404 or 405 on the channel's routes: a Gamma from before them; asked again after an hour |
+| `unreachable` | anything else; tried again after 5 s, doubling to 5 minutes; a redirect, a certificate not trusted or no HTTPS after 5 minutes, since none goes away by itself (a certificate's rest ends when the shell replaces the pins: `folder_links.certificates_changed`); a handshake cut short is not "no HTTPS" |
 
-The status is written only when it changes.
+*Gamma's own* is an answer whose body is a JSON object with a `detail`
+key (`gamma_sync.is_gamma_refusal`, FastAPI's refusal shape). Anything else
+in the way is never the token's refusal and never an older server
+(`gamma_sync.blocked`, shared with the vaults and `net_proxy`): a sign-in
+or proxy page's 401/403/407, Cloudflare's challenge, a gateway's 502/503/504
+are `unreachable` with `error_kind: "blocked"`, and an HTML 404 is plain
+`unreachable`. The status's `error_kind` (`gamma_sync.status_fields`):
+
+| `error_kind` | Fields | When |
+|---|---|---|
+| `redirected` | `move_to` (the address the redirect points at: scheme, host and port, at most 300 characters), `upgrade` (the same host name, http:// to https://) | a 3xx that keeps the request's path; never followed |
+| `blocked` | `blocked`: `signin`, `proxy`, `cloudflare`, `gateway` | a 3xx to another path (a sign-in host's `/login?rd=…`), or a refusal that is not Gamma's |
+| `certificate`, `certificate_changed` | `cert`: `{sha256, subject, issuer, not_before, not_after}` of the certificate served, or null | its certificate not trusted here; a pinned one replaced ([https.md](https.md)) |
+| `not_https` | | an https:// address answered without TLS |
+
+The status is written only when its state, its error or its `error_kind`
+changes.
+
+**This computer's id** for a server is the HMAC of the install's id and
+the origin the server was first shown at: users.db `server_addresses`
+(`gamma/remote_servers.py`) keeps, per origin this computer's links moved
+from or to, that first origin (`id_origin`) and, for an address the links
+left, where they went (`moved_to`). A server never moved has no row and the
+origin of its address. A move (below) keeps the id, so the server sees the
+same computer, presence row and token at its new address, and a move back
+gives it again. An address the links left is never given that id again: a
+new channel there (`channel.make`, not one re-tokened) gets a generation of
+its own (`remote_servers.fresh_id_origin`: `<origin>#<8 hex>`), so another
+server now at that address cannot match this computer to the one that left.
 
 ### The routes (`config.folder_links_enabled()` only, else 404, as `/api/folder-links`)
 
 | Method | Path | |
 |---|---|---|
-| GET | `/api/computer-links` | The account's channels (a session): `{links: [{id, remote_url, workspace_id, account, username, status, created_at}]}`, never the token. |
-| POST | `/api/computer-links` | The shell's word and a session (`_from_shell`, as the folder-links **P** routes): `{remote_url, workspace, token, token_id}`, checked with one announce. 201 `{link, replaced: {token_id} \| null}`: one already kept for that server, workspace and account takes the new token, and `replaced` names the old one, the shell's to revoke there. 400 "That server refused this computer's token." or a token of another workspace, 409 "That server is older than this app: it cannot show this computer.", 502 unreachable. The channel starts at once. |
+| GET | `/api/computer-links` | The account's channels (a session): `{links: [{id, remote_url, plain, workspace_id, account, username, status, created_at}]}`, never the token. `plain` says whether the address is plain http, without DNS (`remote_servers.plain`: `""` for https:// and loopback, `"lan"`, `"name"`). |
+| POST | `/api/computer-links` | The shell's word and a session (`_from_shell`, as the folder-links **P** routes): `{remote_url, workspace, token, token_id}`, checked with one announce. 201 `{link, replaced: {token_id} \| null}`: one already kept for that server, workspace and account takes the new token, and `replaced` names the old one, the shell's to revoke there. 400 "That server refused this computer's token.", a token of another workspace, or a new channel over http:// to a host on the internet (refused before any request; one kept there takes its new token: `remote_servers.refuse_plain_far`), 409 "That server is older than this app: it cannot show this computer." or a redirect (the same host over https: "*old* now redirects to *to*: open *to* in Gamma and show this computer from there."; any other address: "That server redirects to another address (*to*). If you moved it, change its address in the launcher.", never "open"), 502 unreachable, a certificate not trusted here, no HTTPS, or a sign-in or proxy in the way (their words). The channel starts at once. |
 | DELETE | `/api/computer-links/{id}` | The shell's word, the link's maker (404 otherwise): the channel stops and is forgotten, `{ok: true, token_id}` for the shell to revoke there. |
 
 ### The channel
@@ -184,13 +213,14 @@ One daemon thread per row (`channel._Channel`), started when the row is
 made, checked by `folder_links.tick` every 30 s (the missing ones start,
 the ones whose row went stop; the lifespan has no room for another
 timer) and stopped at shutdown. Its HTTP client is `gamma_sync.Server`
-(bearer, urllib; `default_open` is the tests' seam), timeout the hold
-plus 15 s. Each turn:
+(bearer, urllib; `default_open` is the tests' seam, `default_open_url`
+the one that sees the address), which follows no redirect and names a TLS
+failure ([https.md](https.md)), timeout the hold plus 15 s. Each turn:
 
 1. **Builds the state** (`state_of`): the computer's id for that server
    (the HMAC-SHA256 of the install's id, `cloud_auth.device()`, and the
-   server's origin, 22 characters: two servers cannot match one computer
-   by it), its name (the host name), the app's version, every vault of
+   origin the server was first shown at, above, 22 characters: two servers
+   cannot match one computer by it), its name (the host name), the app's version, every vault of
    that server, workspace and local account (`folder_links.all_links()`:
    its kind, its folder or page id, whether it is paused), and the
    assistants as the catalog last found them (`catalog.known`: one probe
@@ -207,6 +237,17 @@ plus 15 s. Each turn:
 A vault added, paused, resumed or removed nudges the threads
 (`channel.nudge`, from `folder_links`): they see it when the poll they
 hold ends, at most 25 s later.
+
+**An address move** (`POST /api/remote-servers/move`, the shell's word,
+`gamma/remote_servers.py`; [https.md](https.md)) re-points the account's
+vaults, channels and offline copies of one server to its new address in
+one transaction, once the new address answered `/api/health` with no
+credential and each row's token one at a time (a channel's first: an
+announce that names no vault, with the id the computer keeps), stopping at
+the first that fails. A moved channel's status is `connecting` again and
+its thread restarts at the new address; one this computer had there
+already gives the moved row its place, its token in the answer's `revoke`
+for the shell to revoke there.
 
 ## The desktop shell
 
@@ -264,6 +305,12 @@ hold ends, at most 25 s later.
 
 ## Trust
 
+- **Plain http.** A new channel over http:// to a host on the internet
+  (`host_scope.resolved`: its DNS answers, or a dotted name that does not
+  resolve) is refused before any request; one on the local network is
+  made, and the shell asks the person once per origin before it mints the
+  token (`POST /api/remote-servers/check`, with the channel's
+  `workspace`). A channel kept there from before keeps its upkeep. [https.md](https.md) has the table.
 - **Only the maker.** The page route, the nudge and the chip are the
   token's account's alone; a co-author, a share, a token and the guest
   learn nothing of the computer.
@@ -294,8 +341,15 @@ the account alone, a revoked token 401 and its row gone), the page route
 403, the guest refused, a share 404, offline since surviving a reset),
 the host (the routes with and without the shell's word; the channel
 against a second server through `gamma_sync.default_open`, announcing the
-vaults with their assistants; refused, older and unreachable; stopping
-when the link goes). `desktop/test/keeping.test.js` (the panel line per
+vaults with their assistants; refused, older and unreachable; a proxy's
+HTML 403 blocked and its 404 unreachable, never refused or older; a
+redirect kept with `move_to` and `upgrade`, and making a channel there
+naming the new address only for the same host over https; stopping when
+the link goes). `backend/tests/test_remote_servers.py`: the address move
+(the id kept and given again on a move back, a new channel at a left
+address a new id, the probe with no credential, the channel checked first
+and the first failure stopping the rest, a channel already at the new
+address merged) and plain http refused before any request. `desktop/test/keeping.test.js` (the panel line per
 state, its button) and `main.test.js` (mint and hand-over when a vault of
 another server is made, a failure revoking, *Show this computer there*,
 *Stop showing*, the last vault removed). `frontend/tests/vaultState.test.mjs`
@@ -304,4 +358,7 @@ and `collabPoll.test.mjs` (the nudge for another page, on hello, rejoin
 and poll). The browser group `computers` (`scenarios/computers.mjs`): two
 servers, a NAS and a computer with the stand-in Codex; the computer's
 vault of a NAS folder and its channel; the chip on the NAS for the maker,
-none for another member; the computer stopped, the chip offline.
+none for another member; the computer stopped, the chip offline. The
+group `https` (`scenarios/https.mjs`): the same over https with a
+self-signed certificate, pinned by the shell, moved to another address
+with the same computer id, and the channel saying the certificate changed.

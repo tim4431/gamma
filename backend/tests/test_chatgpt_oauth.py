@@ -17,7 +17,7 @@ import pytest
 import gamma.chatgpt_oauth as co
 from ai_fixtures import FakeResp
 from conftest import account_of
-from gamma import ai_catalog, ai_client
+from gamma import ai_catalog, ai_client, net_proxy
 from gamma.ai_client import sse_deltas as _sse_deltas
 from gamma.ai_protocols import WIRES, chatgpt as chatgpt_proto
 
@@ -1066,3 +1066,73 @@ def test_a_refresh_answer_without_a_refresh_token_is_logged(monkeypatch, caplog)
         refreshed = co.refresh({"access_token": "at-1", "refresh_token": "rt-1"})
     assert refreshed["refresh_token"] == "rt-1"  # the old one kept, as Codex CLI does
     assert any("no refresh token" in r.getMessage() for r in caplog.records)
+
+
+# --- A network OpenAI refuses ---------------------------------------------------
+
+REGION = (b'{"error": {"code": "unsupported_country_region_territory", "message": '
+          b'"Country, region, or territory not supported", "param": null, "type": "request_forbidden"}}')
+REFUSALS = {
+    "region": lambda: _http_error(403, REGION),
+    "challenge": lambda: urllib.error.HTTPError("https://chatgpt.test", 403, "Forbidden", {"cf-mitigated": "challenge"},
+                                                io.BytesIO(b"<!DOCTYPE html><title>Just a moment...</title>")),
+}
+
+
+@pytest.mark.parametrize("refusal", REFUSALS.values(), ids=REFUSALS.keys())
+def test_a_refused_network_never_reads_as_an_expired_sign_in(renewer, monkeypatch, refusal):
+    """chatgpt.com refusing the server's network (OpenAI's region code,
+    Cloudflare's challenge) while the browser gets through a proxy: the
+    login check, Test and usage say the network was refused, not "sign in
+    again", and the sign-in stays as it was."""
+    openai = _OpenAI(monkeypatch)
+    _sign_in(expires_in=3600)
+
+    def refuse(*a, **kw):
+        raise refusal()
+
+    monkeypatch.setattr(ai_catalog, "fetch_json", refuse)
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    health = _check(renewer)
+    assert (health["ok"], health["auth"], health["kind"]) == (False, False, "blocked"), health
+    test = renewer.post("/api/ai/providers/gpt/test").json()
+    assert (test["ok"], test["auth"], test["kind"]) == (False, False, "blocked"), test
+    usage = renewer.post("/api/ai/providers/gpt/usage").json()
+    assert usage["available"] is False and usage["auth"] is False
+    assert usage["reason"].endswith(net_proxy.REFUSED_HINT), usage
+    assert _stored()["access_token"] == "at-1" and openai.calls == []
+
+
+def test_a_sign_in_openai_refuses_says_why_and_where_to_set_a_proxy(monkeypatch):
+    """The token exchange refused for the server's region: the caught
+    redirect and the pasted address both say so, and name the proxy
+    setting, instead of "HTTP Error 403: Forbidden"."""
+    def refuse(form):
+        raise _http_error(403, REGION)
+
+    monkeypatch.setattr(co, "_token_request", refuse)
+    said = ("token exchange failed: OpenAI answered 403 unsupported_country_region_territory: it doesn't serve "
+            "the country or region this server connects from. " + net_proxy.REFUSED_HINT)
+    state = co.begin("someone")["state"]
+    assert co._capture({"state": state, "code": "x"}) == (False, said)
+    assert co.status("someone", state)["error"] == said
+    with pytest.raises(ValueError) as refused:
+        co.redeem("someone", state, f"http://localhost:1455/auth/callback?code=x&state={state}")
+    assert str(refused.value) == said
+
+
+def test_a_device_code_poll_on_a_refused_network_ends_the_wait(monkeypatch):
+    """A device code poll answered by Cloudflare's challenge is no "not
+    entered yet" (OpenAI's own 403): the sign-in fails and says why."""
+    def device(path, body):
+        if path == "usercode":
+            return {"device_auth_id": "dev-1", "user_code": "ABCD-1234", "interval": 5}
+        raise REFUSALS["challenge"]()
+
+    monkeypatch.setattr(co, "_device_request", device)
+    state = co.begin("someone", device=True)["state"]
+    _due(state)
+    result = co.status("someone", state)
+    assert result["ready"] is False
+    assert result["error"] == ("device code sign-in failed: OpenAI answered 403: Cloudflare in front of it refused "
+                               "this server's connection. " + net_proxy.REFUSED_HINT)

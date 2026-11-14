@@ -215,8 +215,7 @@ export function AppearanceSettings({ value, diagnostics }) {
         bar={VIEWER_TOOLS} value={value.viewerTools} onChange={value.setViewerTools} icons={VIEWER_TOOL_ICONS}
         resetTitle={t("Every tool back on the viewer's strip, in the default order")} />
 
-      <TextHighlighters presets={value.highlightPresets} seedColor={value.highlighterColor} firstSwatch={value.firstSwatch}
-        onChange={value.setHighlightPresets} palette={palette} />
+      <TextHighlighters hl={value.textHighlighter} presets={value.highlightPresets} palette={palette} />
 
       <Section title={t("Tours")} scope="account" prefs={SECTION_PREFS.appearance["Tours"]}>
         <Toggle icon={HelpCircleIcon} label={t("Suggest tours")} hint={t("A short tour the first time a feature comes up.")}

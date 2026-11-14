@@ -35,6 +35,11 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     addRemote: (name, url) => ipcRenderer.invoke('shell:add-remote', name, url),
     rename: (id, name) => ipcRenderer.invoke('shell:rename', id, name),
     setUrl: (id, url) => ipcRenderer.invoke('shell:set-url', id, url),
+    // The launcher's certificate card: the record it showed (`nonce`) and the
+    // fingerprint it showed; main pins only its own record when both match.
+    trustCert: (id, nonce, sha256) => ipcRenderer.invoke('shell:trust-cert', id, nonce, sha256),
+    forgetCert: (id) => ipcRenderer.invoke('shell:forget-cert', id),
+    forgetPlain: (id) => ipcRenderer.invoke('shell:forget-plain', id),
     remove: (id, opts) => ipcRenderer.invoke('shell:remove', id, opts),
     open: (id) => ipcRenderer.invoke('shell:open', id),
     openWorkspace: (id) => ipcRenderer.invoke('shell:open-workspace', id),
@@ -59,6 +64,10 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     grantFolder: (id) => ipcRenderer.invoke('shell:grant-folder', id),
     setDataRoot: (dir, opts) => ipcRenderer.invoke('shell:set-data-root', dir, opts),
     barExpand: (on) => ipcRenderer.invoke('shell:bar-expand', on),
+    // An agent's question on this computer, the bar's alone (main.js barOnly):
+    // the card `key` drawn, and its answer (`once`, `deny` or `stop`).
+    agentAskDrawn: (key) => ipcRenderer.invoke('shell:agent-ask-drawn', key),
+    answerAgentAsk: (key, decision) => ipcRenderer.invoke('shell:answer-agent-ask', key, decision),
     updateCheck: () => ipcRenderer.invoke('shell:update-check'),
     updateInstall: () => ipcRenderer.invoke('shell:update-install'),
     onState: (cb) => {

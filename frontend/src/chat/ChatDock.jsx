@@ -10,19 +10,21 @@ import { pictureSrc } from "./pictureSrc.js";
 import { postFile } from "../transfers/FileChip";
 import { stepList } from "../shared/ui/listKeys.js";
 import { DockWindow, ChatMarkdown, AutoGrowTextarea, useCopied, useTextScale } from "../shared/ui/Widgets";
-import { Chevron, Collapse, IconSwap, MorphText } from "../shared/ui/MotionWidgets";
+import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
 import PaperMentionInput from "./PaperMentionInput";
 import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
+import StepsPill from "./StepsPill";
 import ApprovalCard from "./ApprovalCard";
-import PlanCard from "./PlanCard";
+import ChatErrorCard from "./ChatErrorCard";
+import ChatHistoryPop, { deleteQuestion, matchRows } from "./ChatHistoryPop";
+import GrantChip from "./GrantChip";
 import AgentChanges, { ACTION_ICONS, refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
 import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
 import { changeSteps, noteReview } from "./noteReview.js";
-import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, heldSummary, readGrants, waitsForPapers, withGrant,
+import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
-import { approvePlanPrompt, canActOnPlan, continuesPlanning, planStatus, replyPlan, sentPlanning } from "./plan.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
 import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
@@ -35,8 +37,8 @@ import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
 import { filedIn, topPageOf } from "../library/libraryUtils";
 import { fileHash, isPdf, pageDocument, pdfFileHash } from "../documents/pageDocument.js";
-import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../shared/ui/Menus";
-import { backdropPress, menuPress } from "../shared/ui/press.js";
+import { ActionMenu, MenuItem, MenuSelect } from "../shared/ui/Menus";
+import { backdropPress } from "../shared/ui/press.js";
 import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
@@ -53,14 +55,14 @@ import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
-import { FlagIcon, ListOrderedIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+import { FlagIcon } from "../shared/ui/Icons";
 import { openReport } from "../support/reportContent.js";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
 import { UsageRing } from "../shared/ui/UsageRing";
-import ComputerChat, { ChatSides, ComputerHeader } from "./computer/ComputerChat.jsx";
+import ComputerChat, { ChatSides, computerActions } from "./computer/ComputerChat.jsx";
 import { useChatSide } from "./computer/chatSide.js";
 import { useComputerChat } from "./computer/useComputerChat.js";
 
@@ -90,19 +92,6 @@ function filedRow(id, { title, messages }) {
     id, title: title || deriveTitle(messages), preview: (first?.text || "").replace(/\s+/g, " ").trim().slice(0, 120),
     count: messages.length, updated_at: new Date().toISOString(),
   };
-}
-
-// Compact age for a history row: "now", "5m", "3h", "2d", "4mo", "1y".
-function relAge(iso) {
-  const ms = Date.now() - Date.parse(iso || "");
-  if (!Number.isFinite(ms) || ms < 60000) return t("now");
-  const m = Math.floor(ms / 60000);
-  if (m < 60) return t("{n}m", { n: m });
-  const h = Math.floor(m / 60);
-  if (h < 24) return t("{n}h", { n: h });
-  const d = Math.floor(h / 24);
-  if (d < 30) return t("{n}d", { n: d });
-  return d < 365 ? t("{n}mo", { n: Math.floor(d / 30) }) : t("{n}y", { n: Math.floor(d / 365) });
 }
 
 // What the model was given for a reply, per document — streamed by
@@ -173,46 +162,36 @@ function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated,
   );
 }
 
-// A failed request as a card (message.errorKind, chat/chatErrors.js): a
-// headline saying what went wrong, one plain sentence, the buttons that fix
-// it, and the provider's own words folded under "Details". A reply that
-// broke off partway keeps its text and gets the compact card (no sentence)
-// under it.
-function ChatErrorCard({ message, compact, actions }) {
+// A failed request as the error card (ChatErrorCard), worded per its kind
+// (message.errorKind, chat/chatErrors.js), the provider's own words folded
+// under "Details". A reply that broke off partway keeps its text and gets
+// the compact card (no sentence) under it.
+function ReplyErrorCard({ message, compact, actions }) {
   const copy = failureCopy(message.errorKind, { provider: message.errorProvider, auth: message.errorAuth });
   const fromProvider = !["network", "not_configured"].includes(message.errorKind);
   return (
-    <div className={`chatErrorCard${compact ? " compact" : ""}`}>
-      <div className="chatErrorHead"><AlertCircleIcon size={16} /><span>{copy.headline}</span></div>
-      {!compact ? <div className="chatErrorText">{copy.text}</div> : null}
-      {actions.length ? <div className="chatErrorActions">{actions}</div> : null}
-      {message.errorDetail ? (
-        <details className="chatErrorDetails">
-          <summary>{fromProvider ? t("Details from the provider") : t("Details")}</summary>
-          <pre>{message.errorDetail}</pre>
-        </details>
-      ) : null}
-    </div>
+    <ChatErrorCard headline={copy.headline} text={copy.text} actions={actions} compact={compact}
+      detail={message.errorDetail || ""} detailLabel={fromProvider ? t("Details from the provider") : t("Details")} />
   );
 }
 
 // The agent's work in a reply (chat/agentSteps.js): one pill summing up its
-// steps, which expands to every call's chip (arguments and output), and
-// under it the changes — renamed or filed pages, edited or added notes —
-// each old → new with a link to what changed. While the reply streams
-// (`live`) the same pill says what is under way from the start: "Thinking"
-// (or "Responding" once text arrives, the token count ticking beside it),
-// the step running now, or what that step waits for, each new label
-// morphing in over the last. `waiting`: what the running call waits for —
-// the user's answer on an approval card, or a blocked paper from their
-// browser — so nothing spins. `helpers`: the helpers the running call
+// steps (StepsPill), which expands to every call's chip (arguments and
+// output), and under it the changes — renamed or filed pages, edited or
+// added notes — each old → new with a link to what changed. While the reply
+// streams (`live`) the same pill says what is under way from the start:
+// "Thinking" (or "Responding" once text arrives, the token count ticking
+// beside it), the step running now, or what that step waits for, each new
+// label morphing in over the last. `waiting`: what the running call waits
+// for — the user's answer on an approval card, or a blocked paper from
+// their browser — so nothing spins. `helpers`: the helpers the running call
 // handed documents to, a row each under the pill, laid out as a chip: the
 // document and what its helper is doing now. A reply that ends without a
-// step folds its pill away (ChatDock); meanwhile it keeps its last words.
+// step folds its pill away; meanwhile it keeps its last words.
 // `still`: a reply loaded or read again, not this tab's own: its label
 // changes at once and is not read out.
 function AgentSteps({ actions, live, still, running, waiting, helpers = [], usage, text, open, onToggle, titleOf, children }) {
-  const { failed, declined, held } = splitActions(actions);
+  const { failed, declined } = splitActions(actions);
   const done = !live && actions.length > 0;
   const label = waiting === "paper" ? t("Waiting for the paper from your browser")
     : waiting ? t("Waiting for your approval")
@@ -220,28 +199,10 @@ function AgentSteps({ actions, live, still, running, waiting, helpers = [], usag
         : done ? stepsSummary(actions)
           : text ? t("Responding") : t("Thinking");
   return (
-    <div className="chatStepsWrap">
-      {/* One element from the turn's start to its end, so its label morphs
-          through every step: until a step lands it opens nothing, so it
-          takes no focus (disabled) and a reply that ends without one can
-          fold it away from under nobody. Only the label is a live region,
-          and only on this tab's own replies: the token count ticking
-          beside it while the reply streams is not read out, nor is a
-          label a load changes. */}
-      <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} disabled={!actions.length}
-        onClick={actions.length ? onToggle : undefined} aria-expanded={actions.length ? open : undefined}
-        title={!actions.length ? undefined : open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
-        {waiting ? <ShieldIcon size={14} /> : done ? <CheckIcon size={14} /> : <span className="transferSpin inline" aria-hidden="true" />}
-        <span className={`chatPillText${live && !waiting ? " shimmerText" : ""}`} aria-live={still ? "off" : "polite"} aria-atomic="true">
-          <MorphText still={still}>{label}</MorphText>
-        </span>
-        {live ? <span aria-hidden="true"><UsageLine usage={usage} className="chatMsgUsage live" /></span> : null}
-        {failed && done ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
-        {declined && done ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
-        {held && done ? <span className="chatStepsDeclined">{t("{n} kept for the plan", { n: held })}</span> : null}
-        {actions.length ? <Chevron open={open} dir="down" size={14} /> : null}
-      </button>
-      {live && helpers.length ? (
+    <StepsPill label={label} live={live} waiting={!!waiting} still={still} steps={actions.length} counts={{ failed, declined }}
+      title={t("Show every step with its arguments and output")} open={open} onToggle={onToggle}
+      meter={<UsageLine usage={usage} className="chatMsgUsage live" />}
+      under={live && helpers.length ? (
         <div className="chatHelpers" role="status">
           {helpers.map((h) => (
             <div key={h.id} className={`chatToolActionHead plain${h.state === "failed" ? " err" : ""}`} title={h.label}>
@@ -252,9 +213,9 @@ function AgentSteps({ actions, live, still, running, waiting, helpers = [], usag
             </div>
           ))}
         </div>
-      ) : null}
-      <Collapse open={open}>{children}</Collapse>
-    </div>
+      ) : null}>
+      {children}
+    </StepsPill>
   );
 }
 
@@ -533,6 +494,9 @@ export default function ChatDock({
   // the page's work folder (keeperComputer, `remote`), else null: the
   // header's switch and the side chat/computer/ draws.
   computer = null,
+  // What the switch's agent side shows from either side (computerChat.js
+  // sideMark: it works, or it waits for the person).
+  computerMark = null,
   onGrip, onFold, collapsed, onClose,
 }) {
   const [loadedMessages, setChatMessages] = useState(NO_MESSAGES);
@@ -671,13 +635,6 @@ export default function ChatDock({
                         fetch_metadata: paperSave.fetchMetadata !== false } }
       : {};
   };
-  // Plan mode (chat/plan.js): with the switch on, a message is a planning
-  // turn — the assistant reads and proposes a plan, and changes nothing
-  // until the user approves it. Offered to an editor where this kind of
-  // chat can change something; kept per conversation, as the PDF switch is.
-  const [planMode, setPlanMode] = useState(false);
-  const canPlan = canSave && !readOnly && !aiOff && toolsEnabled && !!agentPayload([]).agent_scope
-    && toolsForKind(chatKind).some((key) => WRITE_TOOLS.includes(key) && perm(key));
   // "Skip, and don't wait in this chat": later blocked papers of this
   // conversation leave their card under the reply instead of holding it.
   const neverWaitHere = () =>
@@ -921,7 +878,6 @@ export default function ChatDock({
       : !!lastUser.pdfs?.length);
     attachPdfManualRef.current = false;
     setAttachPdf(carried && nativePdf);
-    setPlanMode(continuesPlanning(msgs)); // on while the last message asked for a plan
   }
 
   // The bucket whose stored conversation has been read (or failed to): an
@@ -991,7 +947,6 @@ export default function ChatDock({
         session.remember(key, data.messages || [], data.title || "");
         setChatMessages(data.messages || []);
         setChatTitle(data.title || "");
-        setPlanMode(continuesPlanning(data.messages || []));
         setHistoryRead("");
       }).catch(() => {});
     };
@@ -1021,18 +976,16 @@ export default function ChatDock({
   const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
   const [picked, setPicked] = useState(() => new Set()); // history entries ticked for deleting
   const renameCancelRef = useRef(false);
-  const [rowMenu, setRowMenu] = useState(null); // {x, y, row}: a history row's menu
   const historyOpen = openPopover === "chathistory";
   useEffect(() => { setHistoryRead(""); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
   // The selection belongs to the open popover: closing it drops the ticks.
-  useEffect(() => { if (!historyOpen) { setPicked(new Set()); setRowMenu(null); } }, [historyOpen]);
+  useEffect(() => { if (!historyOpen) setPicked(new Set()); }, [historyOpen]);
   const togglePicked = (id) => setPicked((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
   const pickOrOpen = (id) => (picked.size ? togglePicked(id) : openHistory(id));
-  const openRowMenu = (row) => (e) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, row }); };
   useEffect(() => {
     if (readOnly || !historyOpen || historyRead === chatKey) return;
     let cancelled = false;
@@ -1102,7 +1055,6 @@ export default function ChatDock({
     setChatTitle("");
     attachPdfManualRef.current = false;
     setAttachPdf(nativePdf); // new chat: the full PDF goes again (where the provider takes it)
-    setPlanMode(false);
     session.remember(chatKey, [], "");
     setHistoryRead("");
   }
@@ -1167,11 +1119,7 @@ export default function ChatDock({
         setHistoryRead("");
       }
     };
-    askConfirm({
-      title: T("Delete conversation"),
-      message: t("Delete “{title}” from this chat's history? This can't be undone.", { title: entry.title || t("Untitled") }),
-      confirmLabel: t("Delete"), danger: true, onConfirm: run,
-    });
+    askConfirm(deleteQuestion(entry, run));
   }
 
   // The ticked entries in one call (POST /chat-history/delete). The active
@@ -1201,10 +1149,8 @@ export default function ChatDock({
   // Rows of the history popover: the active conversation first, then the
   // archived ones newest-first, filtered by the search box.
   const historyRows = useMemo(() => {
-    const q = historyQuery.trim().toLowerCase();
     const active = { id: "", title: activeTitle, preview: deriveTitle(chatMessages), updated_at: "", active: true };
-    const rows = [active, ...(history || [])];
-    return q ? rows.filter((s) => `${s.title} ${s.preview || ""}`.toLowerCase().includes(q)) : rows;
+    return matchRows([active, ...(history || [])], historyQuery);
   }, [history, historyQuery, activeTitle, chatMessages]);
   // The rows a selection can hold: the listed archived ones ("Select all"
   // takes the search's results, not the whole history). A tick survives
@@ -1323,7 +1269,7 @@ export default function ChatDock({
 
   // The /api/ai/chat request for `text` after `prevMessages`, from what the
   // composer holds now — the send and the context export build the same one.
-  function chatRequest(text, prevMessages, { selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey, planning = false } = {}) {
+  function chatRequest(text, prevMessages, { selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey } = {}) {
     const { notes, cursorSel } = pendingNotes();
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     return {
@@ -1368,16 +1314,12 @@ export default function ChatDock({
       context_char_limit: chatContextChars,
       multi_context_char_limit: multiContextChars,
       ...agentPayload(prevMessages),
-      // A planning turn: the server refuses every change in it (chat/plan.js).
-      ...(planning ? { planning: true } : {}),
     };
   }
 
   // The header's download menu: the conversation as a file to keep, or the
   // context the model is sent.
   const [exporting, setExporting] = useState(false);
-  const [exportMenu, setExportMenu] = useState(null); // {x, y}: the menu under the button
-  const exportBtnRef = useRef(null);
   const fileBase = activeTitle.replace(/[\\/:*?"<>|\s]+/g, " ").trim().slice(0, 80) || "chat";
   async function exportWith(run, failed) {
     setExporting(true);
@@ -1394,8 +1336,7 @@ export default function ChatDock({
   // turn with the pages' context, the draft as the last message — as Markdown.
   const exportContext = () => exportWith(() => downloadFetched(`${API}/ai/chat/context`, {
     method: "POST", headers: JSON_HEADERS,
-    body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages,
-      { planning: sentPlanning({ toggle: planMode, canPlan }) }), title: activeTitle }),
+    body: JSON.stringify({ ...chatRequest(chatInput.trim(), chatMessages), title: activeTitle }),
   }, `${fileBase} - context.md`), (message) => t("Couldn't export the chat context: {message}", { message }));
 
   // A conversation as a file to keep: the transcript as Markdown with every
@@ -1417,16 +1358,11 @@ export default function ChatDock({
 
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
-  // ChatGPT-style). `planning` says whether it is a planning turn (else the
-  // resent message's mode or the Plan switch decides, chat/plan.js
-  // sentPlanning); `approvesPlan` marks Approve plan's message.
-  async function sendChat(rawText, { baseMessages, referenceMessage, model, planning: asked, approvesPlan } = {}) {
+  // ChatGPT-style).
+  async function sendChat(rawText, { baseMessages, referenceMessage, model } = {}) {
     if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
     if (!text || busyHere) return;
-    const planning = sentPlanning({ planning: asked, referenceMessage, toggle: planMode, canPlan });
-    // A retry of Approve plan's message approves the plan still.
-    const approves = !planning && (!!approvesPlan || (!!referenceMessage?.approvesPlan && text === referenceMessage.text));
     // pdf: the whole file goes with this message (the PDF switch's hint).
     guideEvents.emit("chat.sent", { pdf: !!(pdfInContext && attachPdf && nativePdf) });
     const selectedDocs = referenceMessage ? (referenceMessage.contextPages || []).map((p) => p.id) : chatDocs;
@@ -1472,9 +1408,6 @@ export default function ChatDock({
       // can tell whether this document was already sent in the conversation
       // (uploaded files aren't library docs — they contribute names only).
       ...(pdfNames.length ? { pdfs: pdfNames, pdfDocs: sendingPdf ? pdfPages.map((p) => p.id) : [] } : {}),
-      // How it was asked: a planning turn, or the approval of a plan.
-      ...(planning ? { planning: true } : {}),
-      ...(approves ? { approvesPlan: true } : {}),
     };
     const sendKey = chatKey; // reply belongs to THIS conversation, even if the user navigates away
     const showReply = (aiMsg, final) => {
@@ -1538,7 +1471,7 @@ export default function ChatDock({
         // chatRequest reads this render's composer state — the clears above
         // only change it for the next render.
         body: JSON.stringify({
-          ...chatRequest(text, prevMessages, { selectedDocs, includeNotes, attach: sendingPdf, model, key: sendKey, planning }),
+          ...chatRequest(text, prevMessages, { selectedDocs, includeNotes, attach: sendingPdf, model, key: sendKey }),
           stream: true,
         }),
       });
@@ -1563,7 +1496,7 @@ export default function ChatDock({
             // A note edit's card: the note draws the edit too, and its bar
             // answers the card with the card's four answers.
             const asked = ev.approval;
-            noteReview.ask(asked, (decision) => decideRef.current(asked, decision),
+            noteReview.ask(asked, (decision, note) => decideRef.current(asked, decision, note),
               { permission: permissionLabel(asked.perm), kind: chatKindLabel });
           } else if (ev.handoff) {
             // A fetch met a wall: the reply waits on this card until the
@@ -1675,7 +1608,7 @@ export default function ChatDock({
     if (aiOff || readOnly) return;
     setSide("ai"); // an ask from App is Gamma AI's
     if (busyHere) setChatInput(askSignal.text);
-    else sendChatRef.current?.(askSignal.text, { planning: false }); // a command to carry out, never a plan
+    else sendChatRef.current?.(askSignal.text);
   }, [askSignal, aiInfo, aiOff, readOnly, busyHere, loadedFor, chatKey]);
 
   function sendChatMessage() {
@@ -1865,7 +1798,8 @@ export default function ChatDock({
     const openEntry = () => openAiKeysEditor({ entry: m.errorProviderId });
     const fix = {
       connect: openAiKeysEditor, own_key: openAiKeysEditor, key: openEntry, signin: openEntry,
-      connection: openEntry, new_chat: latest ? newChat : null,
+      connection: openEntry, proxy: isAdmin && openSettings ? () => openSettings("proxy") : null,
+      new_chat: latest ? newChat : null,
     }[copy.fix];
     if (fix && !readOnly) {
       out.push(<button key="fix" type="button" className="uiBtn sm primary" {...(fix === newChat ? {} : settingsIntent)}
@@ -1889,19 +1823,19 @@ export default function ChatDock({
     if (await copyText(text || "")) flashCopiedMsg(idx);
   }
 
-  // Header: one icon strip (the PDF zoom column's buttons, laid flat) —
-  // Export (the conversation or its context), the context ring (opens the settings popover, whose Tokens section
-  // spells it out), ⚙ chat settings (context size, tools and tokens — the
-  // same prefs Settings / AI edits, in a popover; the model and effort are
-  // the composer's model chip), Tools, Find, History, New chat.
+  // Header: one icon strip (the PDF zoom column's buttons, laid flat), the
+  // window's actions (DockWindow), which fold into its "⋯" when it is too
+  // narrow for them — Export (the conversation or its context), the context
+  // ring (opens the settings popover, whose Tokens section spells it out),
+  // ⚙ chat settings (context size, tools and tokens — the same prefs
+  // Settings / AI edits, in a popover; the model and effort are the
+  // composer's model chip), Tools, Find, History, New chat. Find, History
+  // and New chat fold last, New chat the very last (`keep`).
   const settingsOpen = openPopover === "chatsettings";
-  const findBtn = (
-    <button type="button" className={`ctlBtn ${chatFindOpen ? "modeActive" : ""}`}
-      onClick={() => { setChatFindOpen((v) => !v); setChatFind(""); }}
-      title={t("Find in this conversation")} aria-label={t("Find in this conversation")}>
-      <SearchIcon size={16} />
-    </button>
-  );
+  const findAction = {
+    id: "find", icon: SearchIcon, label: t("Find in this conversation"), on: chatFindOpen, keep: 1,
+    onClick: () => { setChatFindOpen((v) => !v); setChatFind(""); },
+  };
   // No AI connected: the setup card, alone in the empty transcript or after
   // an earlier conversation, once the tiles it offers are known.
   const setupCard = aiOff && setupInfo ? (
@@ -1915,228 +1849,161 @@ export default function ChatDock({
   // The switch between the two sides leads the header, whether Gamma AI is
   // set up or not: an account with an agent here and no AI still has a chat.
   const sides = computer && !readOnly
-    ? <ChatSides side={side} onSide={setSide} label={computer.label} where={computer.remote ? computer.computer : ""} /> : null;
+    ? <ChatSides side={side} onSide={setSide} label={computer.label} where={computer.remote ? computer.computer : ""} mark={computerMark} /> : null;
   if (onComputer) {
     return (
       <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}
-        collapsed={collapsed} onClose={onClose} headerContent={<>
-          {sides}
-          <ComputerHeader chat={computerChat} label={computer.label}
-            openPopover={openPopover} setOpenPopover={setOpenPopover} askConfirm={askConfirm} />
-        </>}>
+        collapsed={collapsed} onClose={onClose} headerContent={sides}
+        actions={computerActions({ chat: computerChat, label: computer.label, openPopover, setOpenPopover, askConfirm })}>
         <ComputerChat key={focusedBlockId} chat={computerChat} computer={computer} pageId={focusedBlockId}
           pdfSelections={pdfSelections} setPdfSelections={setPdfSelections} />
       </DockWindow>
     );
   }
-  const headerContent = aiOff || !aiKnown ? sides : (
-    <>
-      {sides}
-      <div className="ctlBtnRow chatPanelHeaderBtns">
-        {/* First in the strip: a button right of ⚙ would push its popover
-            (right-aligned under it) past a narrow panel's edge. */}
-        <button type="button" ref={exportBtnRef} className={`ctlBtn${exportMenu ? " modeActive" : ""}`} disabled={exporting}
-          title={t("Export this conversation or the context the model is sent")} aria-label={t("Export chat")}
-          aria-haspopup="menu" aria-expanded={!!exportMenu}
-          onClick={(e) => {
-            if (exportMenu) { setExportMenu(null); return; }
-            const r = e.currentTarget.getBoundingClientRect();
-            setExportMenu({ x: r.left, y: r.bottom + 4 });
-          }}>
-          <DownloadIcon size={16} />
-        </button>
-        {exportMenu ? (
-          <ContextMenu x={exportMenu.x} y={exportMenu.y} onClose={() => setExportMenu(null)} ignoreRef={exportBtnRef} aria-label={t("Export chat")}>
-            <MenuItem icon={MessageSquareIcon} disabled={!chatMessages.length}
-              title={t("Download this conversation as Markdown, with its pictures")}
-              onClick={() => { setExportMenu(null); exportConversation(); }}>{t("Export conversation")}</MenuItem>
-            <MenuItem icon={BotIcon}
-              title={t("Export context — download what the model is sent (system prompt, pages, every message and your draft) as Markdown")}
-              onClick={() => { setExportMenu(null); exportContext(); }}>{t("Export context")}</MenuItem>
-          </ContextMenu>
-        ) : null}
-        {headerModels.length > 0 ? (() => {
-          const totalUsage = conversationUsage(chatMessages);
-          const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
-          const ctxText = !ctxUsed ? ""
-            : ctxWindow ? t("Context: {used} of {size} tokens ({percent}%)", { used: fmtTokens(ctxUsed), size: fmtTokens(ctxWindow), percent: Math.round((ctxUsed / ctxWindow) * 100) })
-            : t("Context: {used} tokens", { used: fmtTokens(ctxUsed) });
-          const toggleSettings = () => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"));
-          return (
-            <span data-popover="chatsettings" className="popoverAnchor">
-              {ctxUsed && ctxWindow ? (
-                <button type="button" className="ctlBtn" onClick={toggleSettings}
-                  title={t("{ctxText} — the last reply's prompt and answer in {model}'s context window", { ctxText, model: headerModel.model })}
-                  aria-label={ctxText}>
-                  <UsageRing fraction={ctxUsed / ctxWindow} />
-                </button>
-              ) : null}
-              <button type="button" data-guide="chat.settings" className={`ctlBtn ${settingsOpen ? "modeActive" : ""}`}
-                onClick={toggleSettings}
-                title={t("Chat settings — context {chatContextChars} chars, tools, tokens{usageTitle}", { chatContextChars: chatContextChars.toLocaleString(), usageTitle })}
-                aria-label={t("Chat settings")} aria-expanded={settingsOpen}>
-                <SettingsIcon size={16} />
-              </button>
-              {settingsOpen ? (
-                <Popover className="chatSettingsPop">
-                  <div className="popoverHint">{t("These preferences also appear in Settings and follow your account. Choose the model and reasoning effort on the message box.")}</div>
-                  <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
-                  <CharSlider value={chatContextChars} onChange={setChatContextChars} />
-                  <div className="popoverHint">
-                    {t("Extracted PDF text sent with each message. The multi-paper total is in Settings / AI / Chat, the agent's read window in Settings / AI / Tool usage.")}
-                  </div>
-                  <div className="popoverSection">{t("Tools")}</div>
-                  <label className="chatToolPermRow" title={t("Allow assistant tools in all chats")}>
-                    <input type="checkbox" checked={toolsEnabled} onChange={toggleTools} />
-                    <SlidersIcon size={14} />
-                    <span>{t("Allow tools in all chats")}</span>
-                  </label>
-                  <div className="chatToolPicker">
-                    <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
-                  </div>
-                  <div className="popoverHint">
-                    {t("Applies to all {kind} conversations on your account.", { kind: chatKindLabel.toLowerCase() })}
-                  </div>
-                  <div className="popoverSection">{t("Tokens · this conversation")}</div>
-                  {totalUsage ? (
-                    <div className="chatUsageTotal" title={usageDetail(totalUsage)}>
-                      <UsageLine usage={totalUsage} className="chatMsgUsage inline" />
-                      {ctxUsed ? <span className="chatMsgUsage inline">{ctxWindow ? <UsageRing fraction={ctxUsed / ctxWindow} /> : null}{ctxText}</span> : null}
-                      <span className="popoverHint">{t("{n} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Token usage.", { n: chatMessages.filter((m) => m.role === "ai" && m.usage).length })}</span>
-                    </div>
-                  ) : (
-                    <div className="popoverHint">{t("No token counts yet — they appear under each reply once the provider reports them.")}</div>
-                  )}
-                </Popover>
-              ) : null}
-            </span>
-          );
-        })() : null}
-        <button
-          type="button"
-          className={`ctlBtn ${toolsEnabled ? "modeActive" : ""}`}
-          data-guide="chat.tools"
-          aria-pressed={toolsEnabled}
-          aria-label={toolsEnabled ? t("Tools on") : t("Tools off")}
-          onClick={() => { setOpenPopover(null); toggleTools(); }}
-          title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })}
-        >
-          <SlidersIcon size={16} />
-        </button>
-        {findBtn}
-        {canSave ? <span data-popover="chathistory" className="popoverAnchor">
-          <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`} data-guide="chat.history"
-            onClick={() => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory"))}
-            title={t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") })}
-            aria-label={t("Chat history")} aria-expanded={historyOpen}>
-            <HistoryIcon size={16} />
-          </button>
-          {historyOpen ? (
-            <Popover className="chatHistoryPop">
+  const totalUsage = conversationUsage(chatMessages);
+  const usageTitle = totalUsage ? t("; this conversation: {input} tokens in, {output} out", { input: fmtTokens(totalUsage.input), output: fmtTokens(totalUsage.output) }) : "";
+  const ctxText = !ctxUsed ? ""
+    : ctxWindow ? t("Context: {used} of {size} tokens ({percent}%)", { used: fmtTokens(ctxUsed), size: fmtTokens(ctxWindow), percent: Math.round((ctxUsed / ctxWindow) * 100) })
+    : t("Context: {used} tokens", { used: fmtTokens(ctxUsed) });
+  const toggleSettings = () => setOpenPopover((p) => (p === "chatsettings" ? null : "chatsettings"));
+  const actions = readOnly ? [findAction] : aiOff || !aiKnown ? [] : [
+    { id: "export", icon: DownloadIcon, label: t("Export chat"), title: t("Export this conversation or the context the model is sent"),
+      disabled: exporting, items: [
+        { icon: MessageSquareIcon, label: t("Export conversation"), title: t("Download this conversation as Markdown, with its pictures"),
+          disabled: !chatMessages.length, onClick: () => exportConversation() },
+        { icon: BotIcon, label: t("Export context"), onClick: exportContext,
+          title: t("Export context — download what the model is sent (system prompt, pages, every message and your draft) as Markdown") },
+      ] },
+    headerModels.length > 0 && ctxUsed && ctxWindow && {
+      id: "context", glyph: <UsageRing fraction={ctxUsed / ctxWindow} />, label: ctxText, onClick: toggleSettings, popover: { name: "chatsettings" },
+      title: t("{ctxText} — the last reply's prompt and answer in {model}'s context window", { ctxText, model: headerModel.model }),
+    },
+    headerModels.length > 0 && {
+      id: "settings", icon: SettingsIcon, label: t("Chat settings"), guide: "chat.settings", open: settingsOpen, onClick: toggleSettings,
+      title: t("Chat settings — context {chatContextChars} chars, tools, tokens{usageTitle}", { chatContextChars: chatContextChars.toLocaleString(), usageTitle }),
+      popover: { name: "chatsettings", content: settingsOpen ? (
+        <Popover className="chatSettingsPop">
+          <div className="popoverHint">{t("These preferences also appear in Settings and follow your account. Choose the model and reasoning effort on the message box.")}</div>
+          <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
+          <CharSlider value={chatContextChars} onChange={setChatContextChars} />
+          <div className="popoverHint">
+            {t("Extracted PDF text sent with each message. The multi-paper total is in Settings / AI / Chat, the agent's read window in Settings / AI / Tool usage.")}
+          </div>
+          <div className="popoverSection">{t("Tools")}</div>
+          <label className="chatToolPermRow" title={t("Allow assistant tools in all chats")}>
+            <input type="checkbox" checked={toolsEnabled} onChange={toggleTools} />
+            <SlidersIcon size={14} />
+            <span>{t("Allow tools in all chats")}</span>
+          </label>
+          <div className="chatToolPicker">
+            <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
+          </div>
+          <div className="popoverHint">
+            {t("Applies to all {kind} conversations on your account.", { kind: chatKindLabel.toLowerCase() })}
+          </div>
+          <div className="popoverSection">{t("Tokens · this conversation")}</div>
+          {totalUsage ? (
+            <div className="chatUsageTotal" title={usageDetail(totalUsage)}>
+              <UsageLine usage={totalUsage} className="chatMsgUsage inline" />
+              {ctxUsed ? <span className="chatMsgUsage inline">{ctxWindow ? <UsageRing fraction={ctxUsed / ctxWindow} /> : null}{ctxText}</span> : null}
+              <span className="popoverHint">{t("{n} replies counted, as the provider reported them. Totals per day and model: Settings / AI / Token usage.", { n: chatMessages.filter((m) => m.role === "ai" && m.usage).length })}</span>
+            </div>
+          ) : (
+            <div className="popoverHint">{t("No token counts yet — they appear under each reply once the provider reports them.")}</div>
+          )}
+        </Popover>
+      ) : null },
+    },
+    {
+      id: "tools", icon: SlidersIcon, label: toolsEnabled ? t("Tools on") : t("Tools off"), on: toolsEnabled, guide: "chat.tools",
+      title: t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") }),
+      onClick: () => { setOpenPopover(null); toggleTools(); },
+    },
+    findAction,
+    canSave && {
+      id: "history", icon: HistoryIcon, label: t("Chat history"), guide: "chat.history", keep: 2, open: historyOpen,
+      title: t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") }),
+      onClick: () => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory")),
+      popover: { name: "chathistory", content: historyOpen ? (
+        // A row opens its conversation; while rows are ticked it ticks
+        // instead. Its menu renames, exports, selects and deletes.
+        <ChatHistoryPop query={historyQuery} onQuery={setHistoryQuery} onClose={() => setOpenPopover(null)}
+          rows={historyRows} loading={history == null} picking={picked.size > 0}
+          onOpen={(s) => pickOrOpen(s.id)}
+          tip={(s) => `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
+          lead={(s) => (s.active ? null : (
+            <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
+              aria-label={t("Select this conversation")} title={t("Select for deleting")}
+              onClick={(e) => e.stopPropagation()}
+              onChange={() => togglePicked(s.id)} />
+          ))}
+          menuItems={(row, close) => <>
+            <MenuItem icon={PenIcon} onClick={() => {
+              close();
+              renameCancelRef.current = false;
+              setRenaming({ id: row.id, text: row.active ? chatTitle : row.title || "" });
+            }}>{t("Rename")}</MenuItem>
+            <MenuItem icon={DownloadIcon} title={t("Download this conversation as Markdown, with its pictures")}
+              onClick={() => { close(); exportConversation(row.active ? null : row); }}>{t("Export")}</MenuItem>
+            {row.active ? null : <>
+              {picked.has(row.id) ? null : (
+                <MenuItem icon={SquareCheckIcon} onClick={() => { close(); togglePicked(row.id); }}>{t("Select")}</MenuItem>
+              )}
+              <MenuItem icon={TrashIcon} danger onClick={() => { close(); deleteHistory(row); }}>{t("Delete")}</MenuItem>
+            </>}
+          </>}
+          editing={(s) => (renaming?.id === s.id ? (
+            <div key={s.id} className="chatHistRow renaming">
               <input
-                autoFocus={!touchTyping()}
-                className="searchInput"
-                value={historyQuery}
-                onChange={(e) => setHistoryQuery(e.target.value)}
-                placeholder={t("Search conversations…")}
-                onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setOpenPopover(null); } }}
+                autoFocus
+                className="aiKeyInput"
+                value={renaming.text}
+                placeholder={t("Conversation name")}
+                enterKeyHint="done"
+                onChange={(e) => setRenaming({ id: s.id, text: e.target.value })}
+                onKeyDown={(e) => {
+                  if (composing(e)) return;
+                  if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                  else if (e.key === "Escape") { e.preventDefault(); renameCancelRef.current = true; e.currentTarget.blur(); }
+                }}
+                onBlur={commitRename}
               />
-              <div className={`chatHistList${picked.size ? " picking" : ""}`}>
-                {historyRows.map((s) => renaming?.id === s.id ? (
-                  <div key={s.id} className="chatHistRow renaming">
-                    <input
-                      autoFocus
-                      className="aiKeyInput"
-                      value={renaming.text}
-                      placeholder={t("Conversation name")}
-                      enterKeyHint="done"
-                      onChange={(e) => setRenaming({ id: s.id, text: e.target.value })}
-                      onKeyDown={(e) => {
-                        if (composing(e)) return;
-                        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
-                        else if (e.key === "Escape") { e.preventDefault(); renameCancelRef.current = true; e.currentTarget.blur(); }
-                      }}
-                      onBlur={commitRename}
-                    />
-                  </div>
-                ) : (
-                  // A row opens its conversation; while rows are ticked it
-                  // ticks instead. Its menu (⋯, a right-click or a held
-                  // finger) renames, selects and deletes.
-                  <div key={s.id} className={`chatHistRow rowMenuHost${s.active ? " active" : ""}`}
-                    role="button" tabIndex={0}
-                    title={s.active ? t("The conversation shown now") : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
-                    onClick={() => { if (!s.active) pickOrOpen(s.id); }}
-                    onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget && !s.active) pickOrOpen(s.id); }}
-                    {...menuPress(openRowMenu(s))}>
-                    {s.active ? null : (
-                      <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
-                        aria-label={t("Select this conversation")} title={t("Select for deleting")}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={() => togglePicked(s.id)} />
-                    )}
-                    <span className="chatHistTitle">{s.title || t("Untitled")}</span>
-                    <span className="chatHistAge">{s.active ? t("now") : relAge(s.updated_at)}</span>
-                    <MenuButton open={openRowMenu(s)} />
-                  </div>
-                ))}
-                {rowMenu ? (
-                  <ContextMenu x={rowMenu.x} y={rowMenu.y} onClose={() => setRowMenu(null)}>
-                    <MenuItem icon={PenIcon} onClick={() => {
-                      setRowMenu(null);
-                      renameCancelRef.current = false;
-                      setRenaming({ id: rowMenu.row.id, text: rowMenu.row.active ? chatTitle : rowMenu.row.title || "" });
-                    }}>{t("Rename")}</MenuItem>
-                    <MenuItem icon={DownloadIcon} title={t("Download this conversation as Markdown, with its pictures")}
-                      onClick={() => { setRowMenu(null); exportConversation(rowMenu.row.active ? null : rowMenu.row); }}>{t("Export")}</MenuItem>
-                    {rowMenu.row.active ? null : <>
-                      {picked.has(rowMenu.row.id) ? null : (
-                        <MenuItem icon={SquareCheckIcon} onClick={() => { setRowMenu(null); togglePicked(rowMenu.row.id); }}>{t("Select")}</MenuItem>
-                      )}
-                      <MenuItem icon={TrashIcon} danger onClick={() => { setRowMenu(null); deleteHistory(rowMenu.row); }}>{t("Delete")}</MenuItem>
-                    </>}
-                  </ContextMenu>
-                ) : null}
-                {history == null ? <div className="popoverHint loadingHint">{t("Loading…")}</div>
-                  : historyRows.length <= 1 && !historyQuery.trim() ? <div className="popoverHint">{t("No earlier conversations — New chat keeps the current one here.")}</div>
-                  : !historyRows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
-                  : null}
-              </div>
-              {picked.size ? (
-                <div className="chatHistBulk">
-                  <span>{tn("{n} selected", "{n} selected", picked.size)}</span>
-                  {picked.size < archivedRows.length ? (
-                    <button type="button" className="uiBtn sm ghost"
-                      onClick={() => setPicked(new Set(archivedRows.map((s) => s.id)))}>{t("Select all")}</button>
-                  ) : null}
-                  <button type="button" className="uiBtn sm ghost" onClick={() => setPicked(new Set())}>{t("Clear")}</button>
-                  <button type="button" className="uiBtn sm danger" onClick={deletePicked}>{t("Delete")}</button>
-                </div>
+            </div>
+          ) : null)}>
+          {picked.size ? (
+            <div className="chatHistBulk">
+              <span>{tn("{n} selected", "{n} selected", picked.size)}</span>
+              {picked.size < archivedRows.length ? (
+                <button type="button" className="uiBtn sm ghost"
+                  onClick={() => setPicked(new Set(archivedRows.map((s) => s.id)))}>{t("Select all")}</button>
               ) : null}
-            </Popover>
+              <button type="button" className="uiBtn sm ghost" onClick={() => setPicked(new Set())}>{t("Clear")}</button>
+              <button type="button" className="uiBtn sm danger" onClick={deletePicked}>{t("Delete")}</button>
+            </div>
           ) : null}
-        </span> : (
-          <span className="uiTag" title={t("You can view this workspace: this conversation stays in this tab and isn't saved")}>
-            {t("Not saved")}
-          </span>
-        )}
-        <button type="button" {...newChatAltProps} className={`ctlBtn${discardArmed ? " danger" : ""}`} data-guide="chat.new"
-          onClick={(e) => newChat(e.altKey)} disabled={busyHere}
-          title={discardArmed ? t("Discard chat — it isn't kept in history")
-            : canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat")}
-          aria-label={discardArmed ? t("Discard chat") : t("New chat")}>
-          <IconSwap swap={discardArmed} from={<PlusIcon size={16} />} to={<TrashIcon size={16} />} />
-        </button>
-      </div>
-    </>
-  );
+        </ChatHistoryPop>
+      ) : null },
+    },
+    {
+      id: "new", icon: discardArmed ? TrashIcon : PlusIcon, label: discardArmed ? t("Discard chat") : t("New chat"), guide: "chat.new", keep: 3,
+      glyph: <IconSwap swap={discardArmed} from={<PlusIcon size={16} />} to={<TrashIcon size={16} />} />,
+      danger: discardArmed, disabled: busyHere, props: newChatAltProps, onClick: (e) => newChat(e.altKey),
+      title: discardArmed ? t("Discard chat — it isn't kept in history")
+        : canSave ? t("New chat — keeps this conversation in history and starts a fresh one (Alt+click: discard it)") : t("New chat"),
+    },
+  ].filter(Boolean);
+  const headerContent = readOnly ? <span className="uiTag">{t("Read only")}</span> : <>
+    {sides}
+    {actions.length > 0 && !canSave ? (
+      <span className="uiTag" title={t("You can view this workspace: this conversation stays in this tab and isn't saved")}>
+        {t("Not saved")}
+      </span>
+    ) : null}
+  </>;
 
   return (
     <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}
-      collapsed={collapsed} onClose={onClose} headerContent={readOnly ? <>
-        <span className="uiTag">{t("Read only")}</span>
-        {findBtn}
-      </> : headerContent}>
+      collapsed={collapsed} onClose={onClose} headerContent={headerContent} actions={actions}>
     <div className="chatPanel chatWindow">
       {!readOnly && aiHealth && !aiHealth.ok ? (
         // The login connection check found the active provider broken — say so
@@ -2146,7 +2013,8 @@ export default function ChatDock({
           <span className="chatHealthText">
             {failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline}
           </span>
-          <button className="uiBtn sm" {...settingsIntent} onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
+          <button className="uiBtn sm" {...settingsIntent} onClick={() => (aiHealth.kind === "blocked" && isAdmin && openSettings
+            ? openSettings("proxy") : openAiKeysEditor({ entry: aiHealth.provider_id }))}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
         </div>
       ) : null}
@@ -2223,8 +2091,6 @@ export default function ChatDock({
             const isUser = m.role === "user";
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;
             const isFindHit = chatFindOpen && chatFind.trim() && chatFindMatches[chatFindIdx] === i;
-            const plan = isUser ? null : replyPlan(m.actions); // a plan proposed or worked through (PlanCard)
-            const planNow = plan ? planStatus(chatMessages, i) : "";
             if (editingMsg?.idx === i) {
               const resend = () => { const text = editingMsg.text; setEditingMsg(null); resendFrom(i, text); };
               return (
@@ -2283,7 +2149,6 @@ export default function ChatDock({
                     {/* The reply's one status pill, from the start of the turn; a
                         reply that ends without a step folds it away. */}
                     {!isUser ? (
-                      <Collapse open={isResponding || !!m.actions?.length} className="chatStepsFold" still={fromLoad}>
                       <AgentSteps actions={m.actions || []} live={isResponding} still={fromLoad} running={isResponding ? m.step : null}
                         helpers={m.helpers} usage={isResponding ? liveUsage(m.usage, m.live) : null} text={m.text}
                         waiting={!isResponding ? ""
@@ -2306,7 +2171,7 @@ export default function ChatDock({
                                   onClick={() => toggleAction(key)}
                                   title={open ? t("Hide tool output") : t("Show tool output")}>
                                   <Icon size={14} />
-                                  <span>{a.declined ? declinedSummary(a, pageTitleOf) : a.held ? heldSummary(a, pageTitleOf) : a.summary}</span>
+                                  <span>{a.declined ? declinedSummary(a, pageTitleOf) : a.summary}</span>
                                   {chipNote(a) ? <span className="chatToolActionNote">{chipNote(a)}</span> : null}
                                   <Chevron open={open} dir="down" size={10} />
                                 </button>
@@ -2322,7 +2187,6 @@ export default function ChatDock({
                         })}
                       </div>
                       </AgentSteps>
-                      </Collapse>
                     ) : null}
                     {!isUser && m.actions?.length ? (
                       <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={busyHere}
@@ -2336,13 +2200,6 @@ export default function ChatDock({
                     {isUser
                       ? <div className="chatUserText">{m.text}</div>
                       : m.text && !(m.error && m.errorKind) ? <ChatMarkdown text={m.text} copyBlocks /> : null}
-                    {plan ? (
-                      <PlanCard plan={plan} status={planNow} live={isResponding} still={fromLoad}
-                        canAct={canActOnPlan({ status: planNow, isLast: i === chatMessages.length - 1,
-                          idle: !busyHere && !composerHasDraft, readOnly: readOnly || aiOff, canPlan })}
-                        onApprove={() => { setPlanMode(false); sendChat(approvePlanPrompt(), { planning: false, approvesPlan: true }); }}
-                        onRevise={() => { setPlanMode(true); composerRef.current?.querySelector("textarea")?.focus(); }} />
-                    ) : null}
                     {isResponding && m.approval ? (
                       <ApprovalCard key={m.approval.id} approval={m.approval} kindLabel={chatKindLabel}
                         titleOf={pageTitleOf} onDecide={decideApproval} answered={answeredApprovals.get(m.approval.id) || ""} />
@@ -2354,7 +2211,7 @@ export default function ChatDock({
                     {!isUser && !isResponding && m.actions?.some((a) => a.handoff) ? (
                       <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
                         busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
-                        autoOpen={fetchInBackground} onContinue={(text) => sendChat(text, { planning: continuesPlanning(chatMessages) })} />
+                        autoOpen={fetchInBackground} onContinue={(text) => sendChat(text)} />
                     ) : null}
                     {!isUser && !isResponding && canContinueAfterLimit({ limit: m.limit, truncated: m.truncated,
                       isLast: i === chatMessages.length - 1, idle: !busyHere && !composerHasDraft,
@@ -2362,7 +2219,7 @@ export default function ChatDock({
                       <div className="chatLimitActions">
                         <button type="button" className="uiBtn sm primary"
                           title={t("Carry on where the reply stopped, in a new message with a fresh budget")}
-                          onClick={() => sendChat(continueAfterLimitPrompt(), { planning: continuesPlanning(chatMessages) })}>{t("Continue")}</button>
+                          onClick={() => sendChat(continueAfterLimitPrompt())}>{t("Continue")}</button>
                       </div>
                     ) : null}
                     {!isUser && !isResponding && !readOnly && canSave && !m.error ? (
@@ -2371,7 +2228,7 @@ export default function ChatDock({
                         onOpenPage={onOpenPage} onLibraryChange={onLibraryChange} />
                     ) : null}
                     {!isUser && m.errorKind && !isResponding ? (
-                      <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
+                      <ReplyErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
                     ) : null}
                   </div>
                   {!isResponding ? <div className="chatMsgFoot">
@@ -2414,8 +2271,7 @@ export default function ChatDock({
       {!readOnly ? (
       // One box: the context chips on top, the message at full
       // width, then a toolbar — [+], the PDF switch while a PDF is in
-      // context, the Plan switch where the chat can change something, the
-      // model chip (with reasoning effort), the mic when a
+      // context, the model chip (with reasoning effort), the mic when a
       // connection can transcribe, send / stop. While recording the text
       // and the toolbar give way to the waveform row. Its buttons never
       // take the focus, so a press keeps an on-screen keyboard up.
@@ -2543,7 +2399,7 @@ export default function ChatDock({
             : chatNotes?.length ? (chatNotes[0].kind === "block" ? t("Ask about the attached block…")
               : chatNotes[0].kind === "ink" ? t("Ask about the selected handwriting…") : t("Ask about the selected note…"))
             : cursorChip?.sel ? t("Ask about the selection…") : cursorChip ? t("Ask about this block…") : chatDocs.length ? tn("Ask about {n} attached page…", "Ask about {n} attached pages…", chatDocs.length)
-            : planMode && canPlan ? t("Ask for a plan…") : (!noTools && agentAsk) || t("Ask…")
+            : (!noTools && agentAsk) || t("Ask…")
           ) + t(" (@ paper)")}
         />
         <div className="chatComposerBar">
@@ -2615,24 +2471,12 @@ export default function ChatDock({
               <AlertCircleIcon size={14} />
             </button>
           ) : null}
-          {canPlan ? (
-            <button type="button" className={`chatAttachToggle chatPdfToggle chatPlanToggle ${planMode ? "on" : ""}`}
-              aria-pressed={planMode} onClick={() => setPlanMode((on) => !on)}
-              title={planMode
-                ? t("Plan mode is on: the assistant reads and proposes a plan, and changes nothing until you approve it. Click to turn it off.")
-                : t("Plan first: the assistant reads and proposes a plan, and changes nothing until you approve it")}>
-              <ListOrderedIcon size={14} /><span className="chatPlanLabel">{t("Plan")}</span>
-            </button>
-          ) : null}
           <span className="chatComposerSpacer" />
           {grantedHere.length && !aiOff ? (
-            <button type="button" className="chatAttachToggle chatGrantChip"
-              onClick={() => updateGrants((store) => withoutGrants(store, activeUser(), conversationId(chatMessages)))}
+            <GrantChip list={grantedHere.map(permissionLabel).join(", ")}
+              onRevoke={() => updateGrants((store) => withoutGrants(store, activeUser(), conversationId(chatMessages)))}
               title={t("The assistant doesn't ask before these in this chat: {list}. Click to make it ask again.",
-                { list: grantedHere.map(permissionLabel).join(", ") })}
-              aria-label={t("Allowed in this chat: {list}. Ask again", { list: grantedHere.map(permissionLabel).join(", ") })}>
-              <ShieldIcon size={14} /><span className="chatGrantLabel">{t("Allowed in this chat")}</span><XIcon size={12} />
-            </button>
+                { list: grantedHere.map(permissionLabel).join(", ") })} />
           ) : null}
           {noTools && !aiOff && toolsEnabled && agentPayload(chatMessages).agent_scope ? (
             <button type="button" className="chatAttachToggle chatGrantChip" disabled={checkingTools}

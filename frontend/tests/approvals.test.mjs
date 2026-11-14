@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approvalTitle, batchNotes, conversationId, declinedSummary, deletionNotes, grantsIn, heldSummary, readGrants,
+  approvalTitle, batchNotes, conversationId, declinedSummary, deletionNotes, grantsIn, readGrants, toolAnswers,
   waitsForPapers, withGrant, withoutGrants, withoutPaperWait, writeGrants,
 } from "../src/chat/approvals.js";
 
@@ -34,6 +34,18 @@ test("the card's headline says what the call would do", () => {
     "Not allowed by you: Add to a note in “N”");
   assert.equal(declinedSummary({ approval: "expired", tool: "move_page", title: "A", args: { folder: "ML" } }),
     "Not answered in time: Move “A” to ML");
+});
+
+test("a tool call's card and its note's bar allow it with the same answers", () => {
+  const answers = toolAnswers({ tool: "edit_block", permission: "Edit note blocks", kind: "page chats" });
+  assert.deepEqual(answers.map((a) => a.decision), ["once", "chat", "always"]);
+  assert.deepEqual(answers.map((a) => a.label), ["Allow once", "Allow in this chat", "Always allow"]);
+  assert.equal(answers[0].primary, true);
+  assert.equal(answers[0].danger, false);
+  assert.equal(answers[1].title, "Don't ask again for “Edit note blocks” in this conversation");
+  assert.match(answers[2].title, /^Set “Edit note blocks” to Allow for all chats of this kind \(page chats\)\./);
+  // A deletion's Allow once is the red one.
+  assert.equal(toolAnswers({ tool: "delete_page" })[0].danger, true);
 });
 
 test("folder and label cards say what goes", () => {
@@ -143,13 +155,4 @@ test("a conversation can stop waiting for blocked papers, without losing its gra
   // A chat with no first message yet waits, and records nothing.
   assert.equal(waitsForPapers(store, "ada", ""), true);
   assert.deepEqual(withoutPaperWait(store, "ada", "", 3), store);
-});
-
-test("a change kept for the plan names the change it was", () => {
-  assert.equal(heldSummary({ tool: "rename_page", held: true, count: 37, args: { renames: "[…]" } }),
-    "Kept for the plan: Rename 37 pages");
-  assert.equal(heldSummary({ tool: "edit_block", held: true, title: "Notes", mode: "append", args: { block_id: "b1" } }),
-    "Kept for the plan: Add to a note in “Notes”");
-  assert.equal(heldSummary({ tool: "move_page", held: true, args: { page_id: "p1", folder: "ML" } }, () => "Kimble 2008"),
-    "Kept for the plan: Move “Kimble 2008” to ML");
 });

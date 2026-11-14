@@ -20,15 +20,15 @@ import { API, apiJson } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { BookIcon, BotIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FolderIcon, GlobeIcon, HistoryIcon, ImageIcon,
-  LabelIcon, ListIcon, ListOrderedIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon,
-  TrashIcon, UndoIcon, XIcon } from "../shared/ui/Icons";
+  LabelIcon, ListIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TrashIcon,
+  UndoIcon, XIcon } from "../shared/ui/Icons";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
 import { canRedo, canRevert, revertKind, revertRefusal } from "./aiRevert.js";
 import { WordDiff } from "./ApprovalCard";
 
 // The icon of each action kind, in this list and on the tool chips under the
 // pill (ChatDock), each chip expanding to the raw call the server ran.
-export const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, plan: ListOrderedIcon, error: XIcon };
+export const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, error: XIcon };
 
 // Take one change back, or with `redo` put a reverted one back, as its row
 // and the dialog do: POST /api/ai/revert → `{page_id, noop, kept?}`. A
@@ -132,6 +132,19 @@ function batchText(a) {
 export function changeText(a, { page, block }) {
   if (changePlace(a) === "notes") return a.title ? noteChangeText(a, block(a, `“${a.title}”`)) : block(a, a.summary);
   return a.items?.length ? batchText(a) : libraryText(a, page);
+}
+
+// The card a reply's changes are listed in (`.chatChanges`, behind the
+// accent rule): its head, `tail` at the head's end, then a `.chatChange`
+// row each. The computer side lists a turn's changed files in it too
+// (chat/computer/ComputerChat.jsx).
+export function ChangesCard({ head, tail = null, guide, className = "", children }) {
+  return (
+    <div className={`chatChanges${className ? ` ${className}` : ""}`} data-guide={guide}>
+      <div className="chatChangesHead"><span>{head}</span>{tail}</div>
+      {children}
+    </div>
+  );
 }
 
 // `onReverted(indexes, answer, reverted)`: the actions at those indexes were
@@ -240,20 +253,18 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
     );
   };
   const group = (list, place, first) => list.length ? (
-    <div className="chatChanges" key={place} data-guide="chat.changes">
-      <div className="chatChangesHead">
-        <span>{place === "library"
-          ? t("Changed in your library · {n}", { n: list.reduce((n, { a }) => n + changeCount(a), 0) })
-          : t("Changed in your notes · {n}", { n: list.length })}</span>
-        {first && many ? (
-          <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={working || busy} onClick={onRevertMany}
-            title={t("Choose changes of this conversation to revert together")}>
-            <UndoIcon size={12} />{t("Revert…")}
-          </button>
-        ) : null}
-      </div>
+    <ChangesCard key={place} guide="chat.changes"
+      head={place === "library"
+        ? t("Changed in your library · {n}", { n: list.reduce((n, { a }) => n + changeCount(a), 0) })
+        : t("Changed in your notes · {n}", { n: list.length })}
+      tail={first && many ? (
+        <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={working || busy} onClick={onRevertMany}
+          title={t("Choose changes of this conversation to revert together")}>
+          <UndoIcon size={12} />{t("Revert…")}
+        </button>
+      ) : null}>
       {list.map(changeRow)}
-    </div>
+    </ChangesCard>
   ) : null;
   return <>{group(library, "library", true)}{group(notes, "notes", !library.length)}</>;
 }

@@ -1,11 +1,13 @@
 import React from "react";
 import { guideEvents } from "../guide/events.js";
 import { API, apiJson } from "../shared/lib/utils";
-import { CopyField, PaneHead, Section, Row, Segmented, Step, Toggle } from "./SettingsKit";
+import { CopyField, Empty, FormNotice, PaneHead, Section, Row, Segmented, Step, Toggle } from "./SettingsKit";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { LinkIcon, KeyIcon, MonitorIcon, RefreshIcon, UnlinkIcon, ShieldIcon, FoldersIcon } from "../shared/ui/Icons";
 import { codexSetupCommand, claudeConnectCommand, claudePluginInstallCommands, dshSetupCommand,
   claudeRemoveCommands, codexRemoveCommands, dshRemoveCommand } from "./assistantSetup";
 import { WorkspacePicker, accessBody, accessOf, edits as editsIn } from "./WorkspacePicker";
+import { useSettingsRead } from "./settingsReads.js";
 import { t } from "../shared/i18n/i18n.js";
 
 const dateOf = (value) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -57,8 +59,12 @@ function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   </Row>;
 }
 
-export function IntegrationSettings({ workspaceId }) {
-  const [data, setData] = React.useState(null);
+export function IntegrationSettings({ workspaceId, setStatus }) {
+  // The connections, through the dialog's reads (settingsReads.js
+  // PANE_READS): a second visit shows the last answer at once and reads it
+  // again in place.
+  const tokens = useSettingsRead("/integrations/tokens");
+  const data = tokens.data;
   const [assistant, setAssistant] = React.useState("claude");
   const [platform, setPlatform] = React.useState(() => /Windows/i.test(navigator.userAgent) ? "windows" : "unix");
   // What a new token may read; the open workspace to start.
@@ -67,66 +73,62 @@ export function IntegrationSettings({ workspaceId }) {
   const [name, setName] = React.useState(t("Script"));
   const [scope, setScope] = React.useState("read");
   const [secret, setSecret] = React.useState(null);
-  const [busy, setBusy] = React.useState(false);
-  const [message, setMessage] = React.useState("");
-  const [loadError, setLoadError] = React.useState("");
+  const [doing, setDoing] = React.useState("");  // the action running: "edit", "create" or "list"
+  const busy = !!doing;
+  // {where, text}: the last action's failure, shown in the section it ran in;
+  // a success is the status pill's.
+  const [failed, setFailed] = React.useState(null);
+  const loadError = tokens.error;
   const endpoint = `${API}/integrations/tokens`;
-  const loadVersion = React.useRef(0);
   // The connections the last read listed: one more since, after the user
   // ran an assistant's setup and allowed it, is the setup guide's step.
   const known = React.useRef(null);
-  const refresh = React.useCallback(async (notice = "") => {
-    const version = ++loadVersion.current;
-    setMessage(notice);
-    try {
-      const value = await apiJson(endpoint);
-      // A focus refresh started before a revocation must not restore its row.
-      if (version !== loadVersion.current) return;
-      const ids = new Set((value.tokens || []).map((item) => item.id));
-      if (known.current && [...ids].some((id) => !known.current.has(id))) guideEvents.emit("mcp.connected");
-      known.current = ids;
-      setData(value); setLoadError("");
-    } catch (err) {
-      if (version === loadVersion.current) setLoadError(err.message);
-    }
-  }, [endpoint]);
   React.useEffect(() => {
-    setData(null); setSecret(null); setEditing(null); setMessage(""); setLoadError("");
+    if (!data) return;
+    const ids = new Set((data.tokens || []).map((item) => item.id));
+    if (known.current && [...ids].some((id) => !known.current.has(id))) guideEvents.emit("mcp.connected");
+    known.current = ids;
+  }, [data]);
+  // Read again in place; a read sent before a revocation's set() never
+  // lands, so it cannot restore the row. A failure is the entry's error.
+  const { reload } = tokens;
+  const refresh = React.useCallback(() => reload().catch(() => {}), [reload]);
+  React.useEffect(() => {
     const load = () => refresh();
-    load();
     window.addEventListener("focus", load);
     const visible = () => { if (document.visibilityState === "visible") load(); };
     document.addEventListener("visibilitychange", visible);
     return () => {
-      ++loadVersion.current;
       window.removeEventListener("focus", load);
       document.removeEventListener("visibilitychange", visible);
     };
   }, [refresh]);
-  const run = async (work) => {
-    setBusy(true); setMessage("");
-    try { await work(); } catch (err) { setMessage(err.message); } finally { setBusy(false); }
+  const run = async (where, work) => {
+    setDoing(where); setFailed(null);
+    try { await work(); } catch (err) { setFailed({ where, text: err.message }); } finally { setDoing(""); }
   };
+  const failure = (where) => failed?.where === where ? <FormNotice>{failed.text}</FormNotice> : null;
   const post = (url, body) => apiJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   // A read or feedback token reads the workspaces ticked; a write token is
   // the open workspace's alone.
-  const create = () => run(async () => {
+  const create = () => run("create", async () => {
     setSecret(await post(endpoint, { name: name.trim(), scope, ...(scope !== "write" ? accessBody(access) : {}) }));
     await refresh();
   });
-  const saveAccess = () => run(async () => {
+  const saveAccess = () => run("edit", async () => {
     await apiJson(`${endpoint}/${editing.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...accessBody(editing.access), asks: editing.asks }) });
     setEditing(null);
     await refresh();
   });
-  const revoke = ({ id, name: connectionName }) => run(async () => {
+  const revoke = ({ id, name: connectionName }) => run("list", async () => {
     await apiJson(`${endpoint}/${id}`, { method: "DELETE" });
     if (secret?.id === id) setSecret(null);
     if (editing?.id === id) setEditing(null);
     // DELETE succeeded even if reloading the remaining connections fails.
-    setData((value) => value ? { ...value, tokens: value.tokens.filter((item) => item.id !== id) } : value);
-    await refresh(t("Access revoked for the selected “{connectionName}” connection.", { connectionName }));
+    tokens.set((value) => value ? { ...value, tokens: value.tokens.filter((item) => item.id !== id) } : value);
+    setStatus?.(t("Access revoked for the selected “{connectionName}” connection.", { connectionName }));
+    await refresh();
   });
   const spaces = data?.workspaces || [];
   const names = new Map(spaces.map((w) => [w.id, w.name]));
@@ -221,17 +223,16 @@ export function IntegrationSettings({ workspaceId }) {
   </>;
   return <>
     <PaneHead icon={LinkIcon} title={t("Integrations")}>{t("Let Claude Code, Codex, DeepSeek Harness or another MCP assistant read your library. One connection can read several workspaces, and edit the notes of those you mark Edit.")}</PaneHead>
-    {loadError ? <div className="integrationDetails" role="alert">
-      <p>{t("Could not load your connections. {loadError}", { loadError: loadError })}</p>
-      <button className="uiBtn" onClick={() => refresh()}>{t("Try again")}</button>
-    </div> : null}
+    {loadError ? <FormNotice>{t("Could not load your connections. {loadError}", { loadError: loadError })}{" "}
+      <button type="button" className="uiBtn sm" onClick={() => refresh()}>{t("Try again")}</button>
+    </FormNotice> : null}
     <Section title={t("Connect an assistant")} guide="settings.assistantSetup">
       {data ? <div className="integrationDetails">
         <div role="group" aria-label={t("Assistant")}>
           <Segmented value={assistant} onChange={setAssistant} options={ASSISTANTS} />
         </div>
         {steps}
-      </div> : !loadError ? <p role="status">{t("Loading connection settings…")}</p> : null}
+      </div> : !loadError ? <p className="setNotice loadingHint">{t("Loading…")}</p> : null}
     </Section>
     <Section title={t("Connected assistants")} guide="settings.assistantAccess" action={
       <button type="button" className="uiBtn sm iconSq" aria-label={t("Refresh connections")} title={t("Refresh connections")} onClick={() => refresh()}>
@@ -246,15 +247,18 @@ export function IntegrationSettings({ workspaceId }) {
           {editsIn(editing.access) ? <Toggle icon={ShieldIcon} label={t("Ask me before each change it makes")} checked={editing.asks}
             disabled={busy} onChange={(asks) => setEditing({ ...editing, asks })}
             hint={t("The assistant shows Gamma's question in its own window. One that cannot show it changes nothing while this is on.")} /> : null}
+          {failure("edit")}
           <div className="integrationActions">
-            <button className="uiBtn primary" disabled={busy || !(editing.access.all || editing.access.ids.length)} onClick={saveAccess}>{t("Save")}</button>
+            <button className="uiBtn primary" disabled={busy || !(editing.access.all || editing.access.ids.length)} onClick={saveAccess}>
+              <MorphText>{doing === "edit" ? t("Saving…") : t("Save")}</MorphText>
+            </button>
             <button className="uiBtn" disabled={busy} onClick={() => setEditing(null)}>{t("Cancel")}</button>
           </div>
         </div> : null}
       </React.Fragment>)
-        : <div className="integrationDetails"><p>{t("No assistant is connected yet.")}</p></div> : null}
+        : <Empty icon={LinkIcon}>{t("No assistant is connected yet.")}</Empty> : null}
+      {failure("list")}
     </Section>
-    {message ? <p role="status">{message}</p> : null}
     <details className="integrationAdvanced">
       <summary>{t("Tokens (advanced)")}</summary>
       <div className="integrationDetails"><p>{t("For an assistant without browser sign-in, or a script: it sends the token as an Authorization: Bearer header. Gamma shows a token once.")}</p></div>
@@ -263,9 +267,12 @@ export function IntegrationSettings({ workspaceId }) {
           <div className="integrationCreateControls">
             <input className="aiKeyInput" aria-label={t("Connection name")} value={name} maxLength={80}
               onChange={(event) => setName(event.target.value)} />
-            <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret || (scope !== "write" && !chosen)} onClick={create}>{t("Create token")}</button>
+            <button className="uiBtn" disabled={busy || !data || !name.trim() || !!secret || (scope !== "write" && !chosen)} onClick={create}>
+              <MorphText>{doing === "create" ? t("Creating…") : t("Create token")}</MorphText>
+            </button>
           </div>
         </Row>
+        {failure("create")}
         <Row icon={ShieldIcon} label={t("Scope")} hint={scope === "write"
           ? t("Read and write: what an offline copy of this workspace on another Gamma (Settings → Workspaces → Clones and Zotero links there) signs in with. Assistants only need read.")
           : scope === "feedback"

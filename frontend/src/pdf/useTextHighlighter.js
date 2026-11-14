@@ -14,8 +14,8 @@
 // `setStatus(msg, action)`.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  MAX_SHOWN_PRESETS, addPreset, duplicatePreset, effectivePresets, hiddenPresets, movePreset, normalizePresets, presetKey, presetKeys,
-  presetName, removePreset, restorePreset, selectionTint, setPresetHidden, shownPresets, swapIntoStrip,
+  MAX_SHOWN_PRESETS, addPreset, duplicatePreset, effectivePresets, hiddenPresets, movePreset, normalizePresets, placePreset, presetKey,
+  presetKeys, presetName, removePreset, restorePreset, selectionTint, setPresetHidden, shownPresets, swapIntoStrip,
 } from "../shared/model/markStyle.js";
 import { pickerColors } from "../shared/model/palette.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
@@ -28,7 +28,7 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
   const list = useMemo(() => effectivePresets(stored, seedColor, firstSwatch), [stored, seedColor, firstSwatch]);
   // The commands read the latest of these, so they keep one identity.
   const live = useRef(null);
-  live.current = { list, state, onArm, openSettings, setStatus, setStored, palette, setPalette };
+  live.current = { stored, list, state, onArm, openSettings, setStatus, setStored, palette, setPalette };
 
   // The only writer: an updater over the list in effect (the seed until the
   // first edit stores it), through the normalizer.
@@ -54,6 +54,16 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
       if (next) write(next);
       else say(t("Up to {n} on the strip", { n: MAX_SHOWN_PRESETS }));
     };
+    // `next`, `id` moved within its group, written; the pill names its new
+    // key → the list, or null when nothing moved.
+    const reorder = (id, next) => {
+      const ids = (l) => l.map((p) => p.id).join();
+      if (ids(next) === ids(L().list)) return null;
+      write(next);
+      const k = presetKey(next, id);
+      if (k) say(t("{name} is now key {n}.", { name: name(id, next), n: k }));
+      return next;
+    };
     const c = {
       arm,
       off: () => setState(disarmed),
@@ -73,13 +83,13 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
       },
       openMenu: (id, at) => setState((s) => menuOpened(s, id, at)),
       closeMenu: () => setState(menuClosed),
-      setPresets: (fn) => write(typeof fn === "function" ? fn(L().list) : fn),
       edit: (id, patch) => write(L().list.map((p) => (p.id === id ? { ...p, ...patch } : p))),
-      duplicate: (id) => {
+      // armed as it comes (the strip's menu), unless `{arm: false}` (Settings)
+      duplicate: (id, { arm: armCopy = true } = {}) => {
         const r = duplicatePreset(L().list, id);
         if (!r) { say(t("Up to {n} highlighters", { n: 12 })); return null; }
         write(r.list);
-        arm(r.id);
+        if (armCopy) arm(r.id);
         // the menu follows the copy, open for its edits
         setState((s) => (s.menu ? { ...s, menu: { ...s.menu, id: r.id } } : s));
         if (r.hidden) say(t("{name} added under Hidden highlighters.", { name: name(r.id, r.list) }), { label: t("Put it on the strip"), run: () => c.swapIn(r.id) });
@@ -105,22 +115,28 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
         setState((s) => (s.armed === id ? disarmed(menuClosed(s)) : menuClosed(s)));
         say(t("{name} removed.", { name: presetName(r.item) }), { label: t("Undo"), run: () => write(restorePreset(L().list, r.item, r.index)) });
       },
-      move: (id, by) => {
-        const next = movePreset(L().list, id, by);
-        if (next === L().list) return;
-        write(next);
-        const k = presetKey(next, id);
-        if (k) say(t("{name} is now key {n}.", { name: name(id, next), n: k }));
+      // a place up or down (the strip's menu), or to slot `to` of its group (a drag in Settings)
+      move: (id, by) => reorder(id, movePreset(L().list, id, by)),
+      place: (id, to) => reorder(id, placePreset(L().list, id, to)),
+      // back to the seed (none stored); the pill's Undo stores the list as it was
+      reset: () => {
+        const before = L().stored;
+        if (!before?.length) return;
+        write([]);
+        setState(menuClosed);
+        say(t("Text highlighters reset."), { label: t("Undo"), run: () => write(before) });
       },
-      // a highlight's look kept as a highlighter (a highlight's menu, the made bar)
+      // a look kept as a highlighter (a highlight's menu, the made bar,
+      // Settings' Add highlighter) → its id, or null when the list is full
       saveLook: (look) => {
         const r = addPreset(L().list, look);
-        if (!r) { say(t("Up to {n} highlighters", { n: 12 })); return; }
-        if (r.existed) { say(t("{name} is already one of your highlighters.", { name: name(r.id) })); return; }
+        if (!r) { say(t("Up to {n} highlighters", { n: 12 })); return null; }
+        if (r.existed) { say(t("{name} is already one of your highlighters.", { name: name(r.id) })); return r.id; }
         write(r.list);
         const n = name(r.id, r.list);
         if (r.hidden) say(t("{name} added under Hidden highlighters.", { name: n }), { label: t("Put it on the strip"), run: () => c.swapIn(r.id) });
         else say(t("{name} added to the strip.", { name: n }));
+        return r.id;
       },
       setGroup: (id) => {
         const p = L().palette;
@@ -171,6 +187,6 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
 
   return {
     ...cmds, list, shown, hidden, keyIds, state, menu: state.menu, armedId, armedPreset,
-    on: !!armedPreset, tint: selectionTint(armedPreset), markTools, firstSwatch,
+    on: !!armedPreset, tint: selectionTint(armedPreset), markTools,
   };
 }

@@ -196,19 +196,51 @@ test('turning on a work folder\'s agent is asked with what it may do and the Sen
 });
 
 test('turning on the agent of a work folder of another server says what that server can then do, and the plain http of one outside this computer', () => {
-  const far = (remoteUrl, who = 'tim') => ({ name: 'Paper', dest: 'C:\\Paper', remote: 'NAS', remoteUrl, computer: { state: 'connected', who } });
+  const far = (remoteUrl, who = 'tim', plain = '') => ({ name: 'Paper', dest: 'C:\\Paper', remote: 'NAS', remoteUrl, plain, computer: { state: 'connected', who } });
   const said = 'Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network.' +
     ' Whoever can sign in to NAS as tim, and whoever runs NAS, can send work to Codex here. Codex reads your files and its answers are stored on NAS.';
   const plain = ' NAS is reached without encryption: someone on your network could read what is sent and pose as NAS.';
   const https = keeping.agentAsk(far('https://nas.example.org'), 'codex');
   assert.deepEqual([https.message, https.detail, https.buttons], ['Let Codex work in C:\\Paper?', said, ['Turn on Codex', 'Cancel']]);
-  assert.equal(keeping.agentAsk(far('http://nas.lan:9001'), 'codex').detail, said + plain);
+  // the link's `plain`, as the server lists it: "" for https and this computer's own
+  assert.equal(keeping.agentAsk(far('http://nas.lan:9001', 'tim', 'lan'), 'codex').detail, said + plain);
+  assert.equal(keeping.agentAsk(far('http://nas.example.org', 'tim', 'name'), 'codex').detail, said + plain);
   for (const url of ['http://127.0.0.1:9100', 'http://localhost:9100', 'http://[::1]:9100']) {
     assert.equal(keeping.agentAsk(far(url), 'codex').detail, said, `${url} is this computer's own`);
   }
+  // as the vault's item makes it, from the listed link
+  const link = { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Paper', remote_url: 'http://nas.lan:9001', pull: true, push: 'off', status: {} };
+  assert.equal(keeping.vault(local, { ...link, plain: 'lan' }, servers).plain, 'lan');
+  assert.equal(keeping.vault(local, { ...link, plain: 'anything' }, servers).plain, '');
   assert.match(keeping.agentAsk(far('https://nas.example.org', ''), 'claude').detail,
     /runs no commands\. Whoever can sign in to NAS as your account, and whoever runs NAS, can send work to Claude Code here\. Claude Code reads your files/);
-  assert.equal(keeping.FAR_RUNS_RULE, 'Asking in the chat is for a work folder of this computer\'s server.');
+  assert.equal(keeping.FAR_RUNS_RULE, 'Asking in the chat is for a work folder of this computer\'s server: for one of another server, choose Ask on this computer.');
+});
+
+test('Ask on this computer: read from the link, secure only where the list says so, asked with who writes what the agent is asked, Cancel the default', () => {
+  const link = { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Paper', remote_url: 'https://nas.lab:5001', pull: true, push: 'everything', work: true,
+    mine: true, status: {}, agent: { name: 'codex', label: 'Codex', ready: true, runs: 'computer' } };
+  const far = keeping.vault(local, { ...link, plain: '' }, servers);
+  assert.deepEqual([far.agentRuns, far.secure], ['computer', true]);
+  assert.equal(keeping.vault(local, { ...link, plain: 'lan', remote_url: 'http://nas.lan:9001' }, servers).secure, false);
+  assert.equal(keeping.vault(local, { ...link, plain: undefined }, servers).secure, false, 'a list that says nothing is not secure');
+  assert.equal(keeping.vault(local, { ...link, remote_url: '', plain: '' }, servers).secure, true, 'a local folder');
+  assert.equal(keeping.vault(local, { ...link, agent: { ...link.agent, runs: 'always' } }, servers).agentRuns, 'never');
+
+  const item = { name: 'Paper', dest: 'C:\\Paper', remote: 'NAS', agent: 'codex', agentLabel: 'Codex', computer: { state: 'connected', who: 'alice' } };
+  const q = keeping.runsComputerAsk(item);
+  assert.equal(q.message, 'Let Codex ask on this computer to run more in C:\\Paper?');
+  assert.equal(q.detail, 'In a chat on NAS, Codex can then ask you to run a command with the network or to change files outside this folder.' +
+    ' The question shows here only, in Gamma\'s window, and nothing of it runs until you allow it there, one command at a time.' +
+    ' Whoever can sign in to NAS as alice, and whoever runs NAS, writes what Codex is asked to do: read each command before you allow it.' +
+    ' A command you allow runs as you, with your files and the network.');
+  assert.deepEqual([q.buttons, q.defaultId, q.cancelId], [['Ask on this computer', 'Cancel'], 1, 1]);
+  assert.match(keeping.runsComputerAsk({ ...item, agent: 'claude', agentLabel: 'Claude Code', computer: null }).detail,
+    /^In a chat on NAS, Claude Code can then ask you to run a command, such as your build\. .* sign in to NAS as your account,/);
+  assert.equal(keeping.runsSaid(item, 'computer'), 'Codex may now ask on this computer to run more on Paper.');
+  assert.equal(keeping.plainRule(item), 'Ask on this computer needs https: NAS is reached over plain http.');
+  assert.equal(keeping.olderServer(item), 'NAS runs an older Gamma: its page will not say that Codex waits here. The question still shows in this window.');
+  assert.equal(keeping.NEAR_COMPUTER_RULE, 'Ask on this computer is for a work folder of another server: here the agent asks in the chat.');
 });
 
 test('letting a work folder\'s agent ask in the chat is asked with what it may ask for and the risk; the outcome is said', () => {
@@ -266,6 +298,95 @@ test('a vault of another server says whether this computer is shown there, in it
   assert.equal(keeping.computerFailed('NAS', { status: 409, body: { detail: 'That server is older than this app: it cannot show this computer.' } }), older);
   assert.equal(keeping.computerFailed('NAS', { status: 400, minting: true, body: { detail: 'At most 20 tokens per account.' } }), 'NAS cannot show this computer: At most 20 tokens per account.');
   assert.equal(keeping.computerFailed('NAS', new Error('fetch failed')), 'NAS cannot show this computer: fetch failed');
+});
+
+test('a redirect moves by itself only to the same host name over https, with no user and no path beyond the row\'s own', () => {
+  assert.equal(keeping.upgradeOf('http://nas.lan:5000', 'https://nas.lan:5001'), 'https://nas.lan:5001', 'Synology\'s 5000 to 5001');
+  assert.equal(keeping.upgradeOf('http://NAS.lan', 'https://nas.lan/'), 'https://nas.lan');
+  assert.equal(keeping.upgradeOf('http://xn--bcher-kva.example', 'https://xn--bcher-kva.example'), 'https://xn--bcher-kva.example', 'an IDN host in punycode');
+  assert.equal(keeping.upgradeOf('http://bücher.example', 'https://xn--bcher-kva.example'), 'https://xn--bcher-kva.example', 'the same name, spelt either way');
+  assert.equal(keeping.upgradeOf('http://nas.lan/gamma', 'https://nas.lan/gamma'), 'https://nas.lan', 'the row\'s own path');
+  assert.equal(keeping.upgradeOf('http://nas.lan', 'https://nas.example.com'), '', 'another name');
+  assert.equal(keeping.upgradeOf('https://nas.lan', 'https://nas.lan:5001'), '', 'not from http://');
+  assert.equal(keeping.upgradeOf('http://nas.lan:5000', 'http://nas.lan:5001'), '', 'not to https://');
+  assert.equal(keeping.upgradeOf('http://nas.lan', 'https://user:pw@nas.lan'), '', 'a user in it');
+  assert.equal(keeping.upgradeOf('http://nas.lan', 'https://nas.lan/login'), '', 'a path beyond the row\'s');
+  assert.equal(keeping.upgradeOf('http://nas.lan', 'not an address'), '');
+});
+
+test('a row of another server that failed on the way there reads by its kind, the server\'s words first, and offers its fix', () => {
+  const nas = { id: 'r1', name: 'NAS', type: 'remote', url: 'https://nas.lan:5001' };
+  const all = [local, nas];
+  const cert = { sha256: 'a'.repeat(64), subject: 'CN=nas.lan', issuer: 'CN=nas.lan', not_before: '', not_after: '' };
+  const row = (status, url = 'https://nas.lan:5001', net = {}) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Lab',
+    remote_url: url, pull: true, push: 'off', status: { last_sync: now, folder_path: ['Lab'], ...status } }, all, null, null, null, net);
+  const said = (r) => [r.state, r.text.replace(/ · .*$/, ''), r.title, r.fix ? r.fix.action : null, r.fix ? r.fix.button : null];
+
+  assert.deepEqual(said(row({ last_error: 'http://nas.lan:5000 now redirects to https://nas.lan:5001', error_kind: 'redirected', move_to: 'https://nas.lan:5001' }, 'http://nas.lan:5000')),
+    ['error', 'Moved to https', 'http://nas.lan:5000 now redirects to https://nas.lan:5001 It is the same server over https.', null, null], 'its move runs by itself');
+  assert.deepEqual(said(row({ last_error: 'x', error_kind: 'redirected', move_to: 'https://nas.lan:5001' }, 'http://nas.lan:5000', { moveFailed: ['http://nas.lan:5000'] })).slice(3),
+    ['use-https', 'Use https://nas.lan:5001'], 'once that failed, the bar offers it');
+  assert.deepEqual(said(row({ last_error: 'x', error_kind: 'redirected', move_to: 'https://elsewhere.example' }, 'http://nas.lan:5000')),
+    ['error', 'Redirected', 'x If the server moved, change its address in the launcher.', null, null]);
+  assert.deepEqual(said(row({ last_error: 'x', error_kind: 'blocked', blocked: 'signin' })).slice(1, 3),
+    ['Sign-in in the way', 'x A sign-in page in front of nas.lan answered instead of Gamma: let this computer\'s requests to /api/ through it (a bypass rule for /api/, or a service token).']);
+  assert.deepEqual(said(row({ last_error: 'x', error_kind: 'blocked', blocked: 'cloudflare' })).slice(1, 3),
+    ['Blocked by a proxy', 'x If it asks you to sign in (Cloudflare Access and the like), let this computer\'s requests to /api/ through it.']);
+  assert.deepEqual(said(row({ last_error: 'x', error_kind: 'certificate', cert }, undefined, { accepted: { 'nas.lan': cert.sha256 } })).slice(1),
+    ['Certificate not trusted for syncing', 'x This window trusts it; Gamma\'s server on this computer does not.', 'trust-sync', 'Trust it for syncing too'],
+    'the one the window accepted');
+  assert.deepEqual(said(row({ last_error: 'x', error_kind: 'certificate', cert }, undefined, { accepted: { 'nas.lan': 'b'.repeat(64) } })).slice(1),
+    ['Certificate not trusted', 'x Open NAS in Gamma to check it.', 'open-server', 'Open NAS']);
+  assert.deepEqual(said(row({ last_error: 'x', error_kind: 'certificate_changed', cert })).slice(1),
+    ['Certificate changed', 'x Open NAS in Gamma to check the new one.', 'open-server', 'Open NAS']);
+  assert.equal(row({ last_error: 'x', error_kind: 'certificate', cert }, 'https://unknown.lan').fix, undefined, 'no server to open');
+  assert.deepEqual(said(row({ last_error: 'x', error_kind: 'not_https' })).slice(1, 3),
+    ['Not HTTPS', 'x If it has no TLS proxy, change its address to http:// in the launcher.']);
+  for (const net of [{ pinned: ['https://nas.lan:5001'] }, { httpsSeen: ['https://nas.lan:5001'] }]) {
+    assert.equal(row({ last_error: 'x', error_kind: 'not_https' }, undefined, net).title, 'x nas.lan answered without TLS where it used HTTPS before: someone may be in between.');
+  }
+  assert.equal(row({ last_error: 'x' }).text, 'Sync problem', 'a failure of no such kind');
+  assert.equal(row({ last_error: 'x', error_kind: 'certificate', running: true }).state, 'busy');
+
+  // a clone, and a computer link's line, read the same kinds
+  const c = keeping.clone(local, { workspace_id: 'w1', name: 'Lab', remote_url: 'https://nas.lan:5001', status: { last_error: 'x', error_kind: 'certificate_changed' } }, all);
+  assert.deepEqual([c.state, c.text, c.fix.action], ['error', 'Certificate changed', 'open-server']);
+  assert.match(c.title, /^x Open NAS in Gamma to check the new one\. Your edits stay here/);
+  const line = row({}, 'https://nas.lan:5001').computer;
+  assert.equal(line, null, 'no computer links read');
+  const v = keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Lab', remote_url: 'https://nas.lan:5001', status: { last_sync: now } },
+    all, null, null, { name: 'TIM-PC', links: [{ remote_url: 'https://nas.lan:5001', workspace_id: 'lab', username: 'tim',
+      status: { state: 'unreachable', error: 'The certificate of nas.lan changed', error_kind: 'certificate_changed' } }] });
+  assert.equal(v.computer.text, 'Shown on NAS as TIM-PC · certificate changed');
+  assert.match(v.computer.title, /The certificate of nas\.lan changed\. Open NAS in Gamma to check the new one\.$/);
+});
+
+test('plain http: a dotted name\'s link says its token travels in clear, and the question before a mint', () => {
+  const plain = keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Lab', remote_url: 'http://nas.example.com:9001', plain: 'name',
+    status: { last_sync: now } }, servers);
+  assert.match(plain.title, / nas\.example\.com is reached over http:\/\/: its token travels in clear\. Change its address to https:\/\/ in the launcher\.$/);
+  const lan = keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Lab', remote_url: 'http://nas.lan:9001', plain: 'lan', status: { last_sync: now } }, servers);
+  assert.doesNotMatch(lan.title, /travels in clear/);
+  const warning = 'nas.lan is reached over http://: someone on your network could read what is sent, the token Gamma makes for it included, and pose as nas.lan. Use https:// to avoid this.';
+  const q = keeping.plainAsk('nas.lan', warning);
+  assert.deepEqual([q.message, q.detail, q.buttons], ['Connect to nas.lan without encryption?', warning, ['Connect anyway', 'Cancel']]);
+  assert.equal(keeping.plainAsk('nas.lan', warning, true).detail,
+    `${warning} Gamma could not tell whether nas.lan is on your network: its name did not resolve in time.`);
+});
+
+test('moving a server\'s links: the question names the tokens and the new address, and the bar says what followed', () => {
+  const q = keeping.moveAsk('http://nas.lan:9001', 'https://nas.lan', { kind: 'upgrade', plain: false, moved: { vaults: 2, computers: 1, mirrors: 1 } });
+  assert.equal(q.message, 'Move the links of http://nas.lan:9001 to https://nas.lan?');
+  assert.equal(q.detail, 'Gamma will send the tokens of 2 synced vaults, this computer and 1 offline copy to https://nas.lan, and use https://nas.lan from now on. Only continue if https://nas.lan is the same server.');
+  assert.deepEqual(q.buttons, ['Move the links', 'Cancel']);
+  const down = keeping.moveAsk('https://nas.lan', 'http://nas.lan:9001', { plain: true, moved: { vaults: 1, computers: 0, mirrors: 0 } });
+  assert.equal(down.detail, 'Gamma will send the tokens of 1 synced vault to http://nas.lan:9001, and use http://nas.lan:9001 from now on. Only continue if http://nas.lan:9001 is the same server.' +
+    ' http://nas.lan:9001 is http://: the tokens will travel without encryption, and someone on your network could read them.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 2, computers: 1, mirrors: 1 }), 'http://a is now https://a: 2 synced vaults, this computer and 1 offline copy follow it.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 1 }), 'http://a is now https://a: 1 synced vault follows it.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', { computers: 2 }), 'http://a is now https://a: this computer follows it.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', { mirrors: 3 }), 'http://a is now https://a: 3 offline copies follow it.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', {}), 'http://a is now https://a.');
 });
 
 test('an up-to-date vault says what it pushed, its conflicts, the files changed here and those not synced', () => {

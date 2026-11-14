@@ -440,6 +440,29 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await ctx.close();
   });
 
+  await step("files: a slash in a dropped file's name is part of it: a PDF, a note and a .tex are titled whole, filed in no folder, and the PDF again opens its page", async () => {
+    ctx = await account.context(browser);
+    page = await openPage(ctx, `${server.base}/?ws=${account.ws}`);
+    const foldersBefore = JSON.stringify((await account.api("/api/blocks/folders/subtree")).block);
+    const cases = [
+      { file: { name: "AC/DC live.pdf", type: "application/pdf", bytes: makePdf([["A slash in the file's name"]]) }, title: "AC/DC live.pdf" },
+      { file: { name: "I/O notes.md", type: "text/markdown", bytes: Buffer.from("Inputs and outputs.\n") }, title: "I/O notes" },
+      { file: { name: "A/B test.tex", type: "", bytes: Buffer.from("\\section{A/B}\n") }, title: "A/B test.tex" },
+    ];
+    for (const { file, title } of cases) {
+      const id = await dropOnLibrary(page, file);
+      await until(async () => (await page.textContent(".titleText")) === title, { what: `${file.name}: the title shown` });
+      const made = await account.api(`/api/blocks/${id}`);
+      assertEq(made.content, title, `${file.name}: the page's title`);
+      assertEq(JSON.stringify(made.properties.folders ?? []), "[]", `${file.name}: filed in no folder`);
+      assertEq(made.properties.doc?.name ?? made.properties.original_filename, file.name, `${file.name}: the name kept whole`);
+      if (file.type === "application/pdf") assertEq(await dropOnLibrary(page, file), id, "the same PDF again opens its page");
+    }
+    assertEq(JSON.stringify((await account.api("/api/blocks/folders/subtree")).block), foldersBefore, "no folder made of a name's part");
+    assertNoProblems(page);
+    await ctx.close();
+  });
+
   await step("files: 'Upload a file…' makes a file the open note page's document; the paperclip then offers to replace or detach the file", async () => {
     const note = await account.api("/api/pages", { method: "POST", body: { title: "Settings notes" } });
     ctx = await account.context(browser);

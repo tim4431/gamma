@@ -10,8 +10,10 @@ A conversation is the page's active one for that account (``archived_at``
 NULL) or an archived one (History). Its messages are the person's
 (``{id, role: "user", text, selections: [{text, page, box}], at}``) and the
 agent's (``{id, role: "agent", agent, label, turn_id, state, text, steps, asks,
-changes, changed, built, error, fresh, model, effort, at, ended_at}``,
-``asks`` what its agent asks the person and waits for, ``model`` and
+changes, changed, built, error, fresh, model, effort, at, ended_at,
+waiting?}``, ``asks`` what its agent asks the person and waits for, a turn
+run on another computer's ``waiting`` instead (what it asks is answered
+there, never written here; false at its end), ``model`` and
 ``effort`` what the turn asked for, null for the agent's default; its
 ``text`` grows as the agent writes it), the agent's written by the runner as
 its turn goes (gamma/local_agents/runner.py ``_ChatTurn``), relative paths
@@ -417,7 +419,8 @@ def _end_run(conn, row: dict, state: str, fields: dict | None = None) -> None:
     at = _message_at(conversation, row["turn_id"])
     if at is not None and conversation["messages"][at].get("state") in BUSY:
         messages = conversation["messages"]
-        ended = {**messages[at], **(fields or {}), "state": state, "asks": [], "ended_at": page_now()}
+        ended = {**messages[at], **(fields or {}), "state": state, "asks": [], "waiting": False,
+                 "ended_at": page_now()}
         _save(conn, conversation, [*messages[:at], ended, *messages[at + 1:]])
 
 
@@ -542,8 +545,8 @@ def write_run(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, seq
             conn.commit()
             raise ChatError(409, "The conversation is gone." if at is None else "The turn is stopped now.")
         state = fields.get("state")
-        if state in ENDED:
-            fields = {**fields, "ended_at": page_now(), "asks": []}
+        if state in ENDED:   # nothing waits past the end
+            fields = {**fields, "ended_at": page_now(), "asks": [], "waiting": False}
         messages = conversation["messages"]
         _save(conn, conversation, [*messages[:at], {**messages[at], **fields}, *messages[at + 1:]])
         conn.execute("UPDATE computer_chat_runs SET seq = ?, state = ? WHERE turn_id = ?",
@@ -618,17 +621,21 @@ def fail_queued(ws: str, user_id: str, kept: dict[str, set], words) -> list[str]
 def remote_turns(ws: str, user_id: str) -> list[dict]:
     """The turns of ``user_id``'s in ``ws`` queued or running on another
     computer, oldest first: ``{ws, turn_id, conversation_id, page_id,
-    agent, title, computer, state, stopping, queued_at, started_at}``
-    (Background tasks' rows, routers/jobs.py), ``agent`` the turn's own,
-    ``title`` the page's, ``computer`` the name of the computer that holds
-    it, or, while it waits, of the one that keeps its work folder for the
-    account, else of the one last known to (the row's ``computer``)."""
+    agent, title, computer, state, asking, stopping, queued_at,
+    started_at}`` (Background tasks' rows, routers/jobs.py), ``agent`` the
+    turn's own, ``title`` the page's, ``computer`` the name of the computer
+    that holds it, or, while it waits, of the one that keeps its work folder
+    for the account, else of the one last known to (the row's
+    ``computer``), ``asking`` whether its agent message says an ask waits
+    for an answer on that computer (``waiting``)."""
     from ..computers import registry  # local: the registry reaches the workspaces
 
     with connect_pages_db(ws) as conn:
         rows = conn.execute(
             "SELECT r.turn_id, r.conversation_id, r.page_id, COALESCE(NULLIF(r.agent, ''), c.agent), b.content, "
-            "r.state, r.stop, r.queued_at, r.started_at, r.holder, b.work_folder, r.computer "
+            "r.state, r.stop, r.queued_at, r.started_at, r.holder, b.work_folder, r.computer, "
+            "(SELECT json_extract(m.value, '$.waiting') FROM json_each(c.messages) m "
+            " WHERE json_extract(m.value, '$.role') = 'agent' AND json_extract(m.value, '$.turn_id') = r.turn_id) "
             "FROM computer_chat_runs r JOIN computer_chats c ON c.id = r.conversation_id "
             "LEFT JOIN unified_blocks b ON b.id = r.page_id WHERE r.user_id = ? AND r.state IN ('queued', 'running') "
             "ORDER BY r.queued_at, r.turn_id", (user_id,)).fetchall()
@@ -641,6 +648,7 @@ def remote_turns(ws: str, user_id: str) -> list[dict]:
 
     return [{"ws": ws, "turn_id": turn_id, "conversation_id": conversation_id, "page_id": page_id, "agent": agent,
              "title": title or "", "computer": computer(holder or "", folder or "", known or ""), "state": state,
-             "stopping": bool(stop), "queued_at": queued_at, "started_at": started_at}
+             "asking": state == "running" and bool(waiting), "stopping": bool(stop), "queued_at": queued_at,
+             "started_at": started_at}
             for turn_id, conversation_id, page_id, agent, title, state, stop, queued_at, started_at, holder, folder,
-            known in rows]
+            known, waiting in rows]

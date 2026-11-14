@@ -17,6 +17,7 @@ import { AlertCircleIcon, BotIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOp
   SyncIcon, TrashIcon, UploadIcon } from "../shared/ui/Icons";
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
+import { StateDetail, StateTag } from "../shared/ui/StateTag";
 import { addsToLibrary, agentLine, computerChip, directionText, editsFile, notesLocked, openedNote, opensAsPdf, vaultChip } from "./vaultState.js";
 import "./vault.css";
 
@@ -52,7 +53,8 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
       <button type="button" className={`pageActionBtn vaultChip${chip.kind === "alert" ? " warn" : ""}`}
         title={`${chip.label}\n${chip.title}`} aria-label={chip.label}
         aria-haspopup="menu" aria-expanded={open} onClick={() => onOpenChange(!open)}>
-        <Icon size={16} />
+        {/* the folder's agent at work spins here, as the shell's sync button does; a problem's icon stays */}
+        {agent?.working && chip.kind !== "alert" ? <span className="transferSpin inline" aria-hidden="true" /> : <Icon size={16} />}
       </button>
       {open ? (
         <Popover as={MenuScope} className="addPopover vaultPopover" aria-label={chip.label}>
@@ -80,8 +82,9 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
           {agent ? (
             <div className="popoverHint vaultAgent" data-agent={vault.agent.name || ""}>
               <div>{agent.line}</div>
-              {agent.problem ? <div className="vaultAgentProblem">{agent.problem}</div> : null}
-              {agent.working ? <div>{agent.working}</div> : null}
+              {agent.problem ? <div className="agentProblem">{agent.problem}</div> : null}
+              {agent.working ? <div><StateTag state={agent.working} /></div> : null}
+              <StateDetail state={agent.working} />
             </div>
           ) : null}
           {reader?.missing ? <div className="popoverHint">{t("The file is not there any more.")}</div> : null}
