@@ -8,12 +8,12 @@
   display: flex;
   border-radius: var(--radius-lg);
   width: min(calc(1000px * var(--ui-scale, 1)), calc(100vw - 32px));
-  height: min(760px, calc(100dvh - 48px));
+  height: min(800px, calc(100dvh - 48px));
   overflow: hidden;
   box-shadow: var(--shadow-3);
 }
 .settingsSidebar {
-  flex: 0 0 calc(210px * var(--ui-scale, 1));
+  flex: 0 0 calc(224px * var(--ui-scale, 1)); /* "Language & translation" on one line */
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -41,7 +41,7 @@
   text-align: left;
   font-size: var(--fs-md);
   color: var(--text-secondary);
-  padding: 6px 12px;
+  padding: 5px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
@@ -666,7 +666,8 @@ button.aiModelTag:disabled { cursor: default; }
 .settingsMobileBack { display: none; }
 .settingsSidebar { padding: 16px 10px; }
 .settingsNavBtn { flex-shrink: 0; line-height: var(--lh-tight); } /* one row height for Latin and CJK faces alike */
-.settingsNavGroup { display: flex; align-items: center; margin-top: 10px; padding: 4px 12px; line-height: var(--lh-tight); }
+/* An admin's rail (eighteen panes) fits the dialog's full height without scrolling. */
+.settingsNavGroup { display: flex; align-items: center; margin-top: 8px; padding: 4px 12px; line-height: var(--lh-tight); }
 .settingsNavGroup .uiTag { margin-left: 7px; }
 /* Help & diagnostics, pinned under the groups at the rail's bottom. */
 .settingsNavBottom { margin-top: auto; padding-top: 8px; display: flex; flex-direction: column; }
@@ -733,8 +734,8 @@ button.aiModelTag:disabled { cursor: default; }
 .settingsPane [data-setting]:focus { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-sm); }
 
 /* Appearance: comparable palette sketches, then the page and interface controls. */
-.appearanceSettings { min-width: 0; }
-.settingsPane:has(> .appearanceSettings) { padding-bottom: 18px; }
+:is(.appearanceSettings, .toolbarSettings) { min-width: 0; }
+.settingsPane:has(> :is(.appearanceSettings, .toolbarSettings)) { padding-bottom: 18px; }
 .settingsDialogHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-shrink: 0; }
 .settingsDialogHeader .reportModalTitle { min-width: 0; margin: 0; }
 .setPictureChoices { display: grid; grid-template-columns: repeat(var(--picture-columns, 3), minmax(0, 1fr)); gap: 8px; }
@@ -857,7 +858,7 @@ button.aiModelTag:disabled { cursor: default; }
 .appearanceInterface .stepper { flex-wrap: wrap; row-gap: 6px; }
 /* These rows contain controls; the row itself is not an interactive surface.
    Suppress the shared settingRow hover fill; buttons keep their shared states. */
-.appearanceSettings .setRow:hover { background: transparent; }
+:is(.appearanceSettings, .toolbarSettings) .setRow:hover { background: transparent; }
 
 /* A bar's layout (BarLayoutSection): its rows in the bar's order, each led
    by a ⋮⋮ grip that drags it up or down (the shared .dropBar marks where it

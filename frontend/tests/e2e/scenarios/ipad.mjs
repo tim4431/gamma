@@ -1057,7 +1057,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
         await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
         const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
         await dialog.waitFor();
-        await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Reading & editing", exact: true }).click();
+        await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Handwriting", exact: true }).click();
         await row("Apple Pencil").waitFor();
         return dialog;
       };

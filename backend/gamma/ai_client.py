@@ -70,7 +70,7 @@ class TooManyCalls(CallRefused):
     def __init__(self, limit: int):
         super().__init__(status_code=429, headers={"Retry-After": str(CALL_RETRY_AFTER)}, detail=(
             f"Too many AI requests are running for your account at once (at most {limit}). Wait for "
-            "one to finish and try again, or lower the parallel requests in Settings → Language and Translation."))
+            "one to finish and try again, or lower the parallel requests in Settings → Language & translation."))
 
 
 # Provider calls one account may have open at once (chat, translation,

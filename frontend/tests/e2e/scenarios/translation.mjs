@@ -189,12 +189,12 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
   const lookups = [];
   let everyText = "";
 
-  // Settings → Language and Translation.
+  // Settings → Language & translation.
   const openTranslation = async () => {
     await page.locator('[data-guide="header.account"]').click();
     await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     await page.getByRole("navigation", { name: "Settings categories" })
-      .getByRole("button", { name: "Language and Translation", exact: true }).click();
+      .getByRole("button", { name: "Language & translation", exact: true }).click();
   };
 
   await step("translation: setup, a paper whose first page's paragraph runs over the column break", async () => {
@@ -1850,7 +1850,7 @@ async function glossaryScenarios({ server, browser, makePdf, step, until, assert
     await page.locator('[data-guide="header.account"]').click();
     await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     await page.getByRole("navigation", { name: "Settings categories" })
-      .getByRole("button", { name: "Language and Translation", exact: true }).click();
+      .getByRole("button", { name: "Language & translation", exact: true }).click();
     await page.locator('.settingsPane [data-setting="Glossary"]').first().waitFor();
   };
   const closeSettings = () => page.getByRole("button", { name: "Close settings", exact: true }).click();

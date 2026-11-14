@@ -219,7 +219,7 @@ share view), a chat reply's actions. The web app posts it to its own
 Gamma server (`POST /api/reports`, [api.md](api.md) "Reports"), which reads
 what is reported where the reporter reads it (a comment's text and
 author, a page's title and the share's maker; an AI reply's text and
-model are the browser's), keeps it for its own admins (Settings → Server
+model are the browser's), keeps it for its own admins (Settings → Users
 → Reports, with a notice) and, when it signs people in with Gamma Cloud,
 forwards it here:
 

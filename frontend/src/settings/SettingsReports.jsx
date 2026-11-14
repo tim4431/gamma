@@ -1,4 +1,4 @@
-// Settings → Server → Reports (admins; backend gamma/reports.py,
+// Settings → Users → Reports (admins; backend gamma/reports.py,
 // /api/admin/reports): the comments, shared pages and AI replies people
 // reported here (support/ReportContentDialog.jsx), the open ones first. A row
 // says why and what, quoting the text, who wrote it, the page, who reported

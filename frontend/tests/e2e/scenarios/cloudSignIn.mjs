@@ -1,6 +1,6 @@
 // Sign in with Gamma Cloud (docs/dev/cloud_accounts.md): while it is off the
 // account pane says what it gives (with Set up for an admin), the admin turns
-// it on under Settings → Server → Sign-in, the login page grows the button,
+// it on under Settings → Users → Sign-in, the login page grows the button,
 // and an account sees its link row. The round trip through a real account server
 // is covered by backend/tests/test_cloud_auth.py; here the browser is never
 // sent there (the button's target is asserted, not followed), except on the
@@ -60,7 +60,7 @@ export async function cloudSignInScenarios(env) {
     const ctx = await admin.context(browser);
     try {
       const page = await openPage(ctx, server.base);
-      await openSettings(page, "Server");
+      await openSettings(page, "Users");
       const issuer = page.getByRole("textbox", { name: "Account server", exact: true });
       await issuer.waitFor();
       assertEq((await admin.api("/api/admin/settings")).cloud.enabled, false, "off until an admin sets it");
@@ -221,6 +221,8 @@ export async function cloudSignInScenarios(env) {
       await planRow.locator(".uiTag").filter({ hasText: /^active$/ }).waitFor();
       await planRow.getByText(/^pro · last synced/).waitFor();
       await page.locator('.setRow[data-setting="Plan limits"]').getByText(/\d+ of 10 accounts/).waitFor();
+      // what the plan sets for accounts shows under them, in Users
+      await settingsPane(page, "Users");
       await page.locator('.setRow[data-setting="Default quota"]').getByText("The plan's cap of 1000 MB", { exact: false }).waitFor();
       await page.locator('.setRow[data-setting="Unknown cloud accounts"]').getByText("Set by this server's plan", { exact: true }).waitFor();
       // a hosted container takes no guests, whatever GAMMA_GUEST_MAX says: no Guests section, no guest login
@@ -228,6 +230,7 @@ export async function cloudSignInScenarios(env) {
         { what: "the Guests section left out on a hosted container" });
       assertEq((await (await fetch(`${hosted.base}/api/server-config`)).json()).guest, false, "guest logins are off");
       await assertNoProblems(page);
+      await settingsPane(page, "Server");
       // the plan lapses: Sync now brings it, and the pane says what still works
       cloud.hosted.answer = { ...active, status: "read_only", read_only: true };
       await planRow.getByRole("button", { name: "Sync now", exact: true }).click();
@@ -400,7 +403,7 @@ export async function cloudSignInScenarios(env) {
       await cyd.getByRole("status").filter({ hasText: "Asked to join." }).waitFor();
       await page.keyboard.press("Escape");
       await pop.waitFor({ state: "detached" });
-      await openSettings(page, "Server");
+      await openSettings(page, "Users");
       const cydRow = page.locator('.aiProvRow[data-join-request="cyd-cloud"]');
       await cydRow.getByText("from the login page", { exact: false }).waitFor();
       await cydRow.getByRole("button", { name: "Approve", exact: true }).click();

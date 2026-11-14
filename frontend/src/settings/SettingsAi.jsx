@@ -19,7 +19,7 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useAccounts } from "./SettingsWorkspace";
 import { useSettingsRead } from "./settingsReads.js";
 import { accessSummary, aiServiceTiles, modelList, onThisMachine, serviceGroups, signInAddress, useProviderEditor } from "./providerEditor.js";
-import { ActivityIcon, BanIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
+import { ActivityIcon, BanIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, PlusIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, fmtDate, getLocale, t, tn } from "../shared/i18n/i18n.js";
 
@@ -257,7 +257,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
   const providers = info?.providers || [];
   return <>
     <Section title={t("Shared AI provider")} action={info ? (
-      <button className="uiBtn sm" onClick={() => editor.startAdd("openai")}>{t("+ Add provider")}</button>
+      <button className="uiBtn sm" onClick={() => editor.startAdd("openai")}><PlusIcon size={14} />{t("Add provider")}</button>
     ) : null}>
       {!info && !loadError ? <p className="setNotice loadingHint">{t("Loading…")}</p> : null}
       {info && !providers.length ? <Empty icon={KeyIcon}>{t("No shared connection. Each account uses its own keys.")}</Empty> : null}
@@ -777,7 +777,12 @@ export function AiSettings({ value, confirm, setStatus }) {
   const providers = value.aiKeysInfo?.providers || [];
   return (
     <>
-      <Section title={t("Connections")} />
+      {/* Add provider sits on the section's rule once there is a list, as a
+          section's action does everywhere in Settings; before, the empty
+          state offers it. */}
+      <Section title={t("Connections")} action={canEdit && providers.length ? (
+        <button className="uiBtn sm" onClick={() => value.startAdd()}><PlusIcon size={14} />{t("Add provider")}</button>
+      ) : null} />
 
       {!value.aiKeysInfo && !value.aiKeysError ? <Empty icon={KeyIcon}>{t("Loading…")}</Empty> : null}
       {value.aiKeysInfo ? (
@@ -786,7 +791,7 @@ export function AiSettings({ value, confirm, setStatus }) {
             <Empty icon={KeyIcon}>
               {canEdit ? <>
                 <span>{t("No AI connection yet.")}</span>
-                <button className="uiBtn primary" onClick={() => value.startAdd()}>{t("+ Add provider")}</button>
+                <button className="uiBtn primary" onClick={() => value.startAdd()}><PlusIcon size={14} />{t("Add provider")}</button>
               </> : t("Guest accounts cannot store API keys. Ask the admin for an account.")}
             </Empty>
           ) : null}
@@ -833,11 +838,6 @@ export function AiSettings({ value, confirm, setStatus }) {
               </ProviderRow>
             );
           })}
-          {canEdit && providers.length ? (
-            <div className="reportModalBtns settingsAlignStart">
-              <button className="uiBtn primary" onClick={() => value.startAdd()}>{t("+ Add provider")}</button>
-            </div>
-          ) : null}
           {canEdit && providers.length ? (
             <Section title={t("Connection check")} scope="account" prefs={SECTION_PREFS.connections["Connection check"]}>
               <Row icon={RefreshIcon} label={t("Check at login")}

@@ -30,12 +30,15 @@ export const LOG_START = "/admin/logs?after=0";
 export const PANE_READS = {
   account: ({ admin, signedIn }) => [admin && "/admin/users", admin && "/admin/settings",
     signedIn && "/auth/cloud/status", signedIn && LINK_BASES.mirror, signedIn && { path: "/zotero/account", later: true }],
-  users: () => ["/admin/users", "/admin/settings", "/admin/workspaces", { path: "/admin/invitations", later: true }],
+  // Users: the accounts, then under them the storage defaults, sign-in,
+  // guests (/admin/settings) and the reports.
+  users: () => ["/admin/users", "/admin/settings", "/admin/workspaces", "/auth/cloud/status", "/admin/join-requests",
+    "/admin/reports", { path: "/admin/invitations", later: true }],
   workspaces: ({ signedIn }) => ["/workspaces/mine", signedIn && LINK_BASES.mirror, signedIn && LINK_BASES.zotero, { path: "/accounts", later: true },
     { path: "/server-config", later: true }],
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
     "/backup-tasks", admin && "/admin/offsite"],
-  server: () => ["/admin/server-info", "/admin/settings", "/admin/join-requests", "/admin/reports", "/admin/ai-providers",
+  server: () => ["/admin/server-info", "/admin/settings", "/admin/ai-providers",
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
   integrations: () => ["/integrations/tokens"],

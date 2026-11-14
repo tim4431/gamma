@@ -3157,7 +3157,7 @@ function unionRect(rects) {
 const SEL_TRANSLATE_MAX = 5000;
 
 // Selection popup: highlight colors, the reference link and, when enabled
-// (Settings → Language and Translation), the selection translator. `translate`:
+// (Settings → Language & translation), the selection translator. `translate`:
 // {text, auto, langLabel, lang, run(texts, signal, onPartial) → the server's reply
 // ({translations, failed}) | null, addTerm (SelTranslation) | null} — run is the page translator's request, so
 // the same model/engine, language and server cache apply. Auto starts it on

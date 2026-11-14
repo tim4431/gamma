@@ -1749,8 +1749,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   open on what they had; a theme change draws every colour in one frame;
   and under reduced motion each of them moves nothing and leaves no copy.
   `npm run e2e -- --only motion`.
-- `i18n.mjs`: Settings → Appearance → Language switches the interface to
-  Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
+- `i18n.mjs`: Settings → Language & translation → Interface language
+  switches the interface to Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share, a folder share
   copied into another library by the listing's Add to my library and, on a
@@ -1799,7 +1799,7 @@ The scenarios live in `tests/e2e/scenarios/`:
   nothing) until the mail's link lands her on the page with the
   invitation's role; a request to join approved in the Share popover; a
   namesake of the owner who asks to join and lands as `lab-owner-2`; and
-  a request from the login page approved under Server → Sign-in
+  a request from the login page approved under Users → Sign-in
   (`--only "cloud sign-in: a page shared"`). The other invites by e-mail
   from Settings → Users (one sent, one withdrawn), from a shared
   workspace's Manage page (its role changed, mailed again, withdrawn) and

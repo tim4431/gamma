@@ -217,7 +217,7 @@ def _guests() -> dict:
 
 def _cloud() -> dict:
     """The cloud sign-in settings, with whether this server still has to be
-    connected (Settings → Server → Sign-in's Connect button)."""
+    connected (Settings → Users → Sign-in's Connect button)."""
     return {**cloud_auth.settings(), "needs_connect": cloud_auth.needs_connect()}
 
 

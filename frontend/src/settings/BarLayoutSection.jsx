@@ -3,7 +3,7 @@
 // bar's order, each a grip, the item's icon, label and hint, and a
 // Segmented of the modes it offers, then one of the places it offers while
 // pages are side by side (the top bar's: on top or in each pane), muted
-// while the item is hidden. Appearance › Top bar and › Viewer tools are two
+// while the item is hidden. Toolbars › Top bar and › Viewer tools are two
 // of these; a new bar is a registry and one more.
 //
 // The grip drags its row up or down the list (shared/ui/useDragOrder.js,

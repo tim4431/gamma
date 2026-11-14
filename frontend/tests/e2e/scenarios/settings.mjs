@@ -107,7 +107,7 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Language and Translation").click();
+      await nav(page, "Language & translation").click();
       // Microsoft's free service needs no setup: only a Test button.
       const microsoft = row(page, "Microsoft (free)");
       assert((await microsoft.innerText()).includes("No key needed"));
@@ -407,7 +407,7 @@ export async function settingsScenarios(env) {
       });
       await openSettings(page);
       await nav(page, "Connections").click();
-      await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
+      await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
       await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "OpenAI API", exact: true }).click();
       const key = dialog.locator('input[autocomplete="new-password"]');
@@ -466,7 +466,7 @@ export async function settingsScenarios(env) {
       });
       await openSettings(page);
       await nav(page, "Connections").click();
-      await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
+      await page.getByRole("button", { name: "Add provider", exact: true }).click();
       // The connection is tested once saved; the test is answered here, offline.
       await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "deepseek-flash", latency_ms: 300 } }));
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
@@ -507,7 +507,7 @@ export async function settingsScenarios(env) {
       await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "kimi-for-coding", latency_ms: 300 } }));
       await openSettings(page);
       await nav(page, "Connections").click();
-      await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
+      await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
       await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Other", exact: true }).click();
       const pick = async (menu, option) => {
@@ -655,7 +655,7 @@ export async function settingsScenarios(env) {
       });
       await openSettings(page);
       await nav(page, "Connections").click();
-      await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
+      await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
       await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();
@@ -935,10 +935,12 @@ export async function settingsScenarios(env) {
       assertEq((await user.api("/api/prefs/profile")).value?.enterNewBlock, false);
       await nav(page, "Appearance").click();
       assertEq(await sync("Theme"), "saved");
-      // the top bar's buttons are an account preference shown under Appearance
+      // the top bar's buttons are an account preference shown under Toolbars
+      await nav(page, "Toolbars").click();
+      await until(() => sync("Viewer tools").then((v) => v === "saved"));
       await row(page, "Sync pill").getByRole("button", { name: "Every page", exact: true }).click();
       await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.modes?.sync === "always");
-      assertEq(await sync("Theme"), "saved", "the change spins only Top bar");
+      assertEq(await sync("Viewer tools"), "saved", "the change spins only Top bar");
       await row(page, "Sync pill").getByRole("button", { name: "Synced pages", exact: true }).click();
       await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.modes?.sync === "auto");
       await nav(page, "Keyboard").click();
@@ -1070,7 +1072,7 @@ export async function settingsScenarios(env) {
       const openMenu = () => page.locator('[data-guide="header.account"]').click();
       for (const id of ["header.add", "header.tasks", "header.search", "header.inbox", "header.view"]) assertEq(await onBar(id), 1, `${id} starts on the bar`);
       await openSettings(page);
-      await nav(page, "Appearance").click();
+      await nav(page, "Toolbars").click();
       for (const label of ["Background tasks", "Search", "View menu"]) {
         await row(page, label).getByRole("button", { name: "Hidden", exact: true }).click();
       }
@@ -1099,7 +1101,7 @@ export async function settingsScenarios(env) {
       await menu.getByRole("menuitem", { name: "Import…", exact: true }).waitFor();
       // Reset: every button back
       await menu.getByRole("menuitem", { name: "Settings…", exact: true }).click();
-      await nav(page, "Appearance").click();
+      await nav(page, "Toolbars").click();
       await page.locator('.settingsPane .setSection[data-setting="Top bar"]').getByRole("button", { name: "Reset", exact: true }).click();
       await until(async () => (await topbar())?.tasks === "always");
       assertEq(JSON.stringify(await topbar()), JSON.stringify(TOPBAR.DEFAULT.modes));
@@ -1109,7 +1111,7 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  // A bar's rows in Appearance: the list after its section's header, a row's
+  // A bar's rows in Toolbars: the list after its section's header, a row's
   // grip, and the ids in the order the rows show.
   const barList = (page, title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] + .barLayoutList`);
   const grip = (list, id) => list.locator(`.barLayoutRow[data-order-id="${id}"] .barLayoutGrip`);
@@ -1124,7 +1126,7 @@ export async function settingsScenarios(env) {
         .filter((id) => ["add", "tasks", "search", "view", "account"].includes(id)).join());
       assertEq(await header(), "add,tasks,search,view,account");
       await openSettings(page);
-      await nav(page, "Appearance").click();
+      await nav(page, "Toolbars").click();
       const list = barList(page, "Top bar");
       // a real drag: Search's grip pressed and moved over the top half of Add's row
       await grip(list, "search").scrollIntoViewIfNeeded();
@@ -1148,7 +1150,7 @@ export async function settingsScenarios(env) {
       await until(async () => (await header()) === "search,add,tasks,view,account", { what: "the order kept through a reload" });
       // the keyboard: ArrowDown on Add's grip moves it one place, says where, and keeps the focus
       await openSettings(page);
-      await nav(page, "Appearance").click();
+      await nav(page, "Toolbars").click();
       await grip(list, "add").focus();
       await page.keyboard.press("ArrowDown");
       await until(async () => (await listed(list)).slice(0, 3).join() === "search,tasks,add", { what: "Add one row down" });
@@ -1207,7 +1209,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await until(() => page.evaluate(() => document.activeElement?.dataset.setting === "Top bar"), { what: "the Top bar section focused" });
-      assertEq(await nav(page, "Appearance").getAttribute("aria-current"), "page");
+      assertEq(await nav(page, "Toolbars").getAttribute("aria-current"), "page");
       // a right-click on a button that is not one of the bar's items is that button's, not the bar's
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.locator('[data-guide="header.home"]').click({ button: "right" });
@@ -1239,7 +1241,7 @@ export async function settingsScenarios(env) {
       await page.waitForSelector('[data-page="1"] .textLayer span', { timeout: 30000 });
       assertEq(await strip(page), "viewer.zoom,pdf.inkButton,viewer.record,viewer.highlighter,viewer.translate", "the default strip, no ⋯");
       await openSettings(page);
-      await nav(page, "Appearance").click();
+      await nav(page, "Toolbars").click();
       const list = barList(page, "Viewer tools");
       await list.locator('.barLayoutRow[data-order-id="record"]').getByRole("button", { name: "Hidden", exact: true }).click();
       // Home on Translate's grip: first
@@ -1264,7 +1266,7 @@ export async function settingsScenarios(env) {
       await menu.getByRole("menuitem", { name: "Customize…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await until(() => page.evaluate(() => document.activeElement?.dataset.setting === "Viewer tools"), { what: "the Viewer tools section focused" });
-      assertEq(await nav(page, "Appearance").getAttribute("aria-current"), "page");
+      assertEq(await nav(page, "Toolbars").getAttribute("aria-current"), "page");
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       // the notebook viewer: the same order, less what only a PDF has
       await page.goto(`${server.base}/?page=${notebook.id}&ws=${user.ws}`);
@@ -2180,7 +2182,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: /Chat system prompt/ }).click();
       assertEq(await page.locator(".promptTextarea").first().inputValue(), "Saved test prompt");
       await nav(page, "Connections").click();
-      await page.getByRole("button", { name: "+ Add provider", exact: true }).click();
+      await page.getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
       const services = dialog.getByRole("group", { name: "AI service" });
       await services.getByRole("button", { name: "Other", exact: true }).click();
@@ -2553,6 +2555,12 @@ export async function settingsScenarios(env) {
       assert(!(await page.locator(".settingsPane").evaluate((el) => el.scrollWidth > el.clientWidth + 1)), "appearance fits a small phone at maximum interface size");
       await row(page, "Interface size").getByRole("button", { name: "Reset", exact: true }).click();
       await page.setViewportSize({ width: 390, height: 844 });
+      // the bars' rows, each with its modes and places, fit the phone too
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await nav(page, "Toolbars").click();
+      await row(page, "Sync pill").waitFor();
+      assert(!(await page.locator(".settingsPane").evaluate((el) => el.scrollWidth > el.clientWidth + 1)), "toolbars fit the phone without horizontal scrolling");
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-toolbars-mobile.png`, animations: "disabled" });
       await page.getByRole("button", { name: "Back", exact: true }).click();
       await nav(page, "Keyboard").click();
       await row(page, "Enter makes").waitFor();
@@ -2672,7 +2680,8 @@ export async function settingsScenarios(env) {
       await nav(page, "Account & sync").click();
       await page.locator(".settingsPane .aiProvRow").waitFor();
       assertEq(await page.locator(".settingsPane .aiProvRow").count(), 1);
-      await nav(page, "Server").click();
+      // the storage defaults sit under the accounts, in Users
+      await nav(page, "Users").click();
       const quota = row(page, "Default quota").locator("input");
       await quota.waitFor();
       assertEq(await page.locator('.settingsPane [data-setting="Default max upload"]').count(), 0); // no per-file cap
@@ -2687,7 +2696,6 @@ export async function settingsScenarios(env) {
       await quota.fill("1200");
       await quota.press("Enter");
       await until(() => user.api("/api/admin/settings").then((v) => v.quota_mb === 1200));
-      await nav(page, "Users").click();
       await until(() => page.locator(".settingsPane .aiProvRow").count().then((n) => n > 1));
       // Each account row nests its personal workspaces; Manage opens the
       // workspace dialog in admin mode. The Server pane lists shared ones only.
@@ -2741,13 +2749,13 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("settings: Server → Guests turns guest sign-in off, and saves the lifetime and demo mode", async () => {
+  await step("settings: Users → Guests turns guest sign-in off, and saves the lifetime and demo mode", async () => {
     await server.manage("set-admin", "settings-user", "on");
     const before = await user.api("/api/admin/settings");
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      await nav(page, "Server").click();
+      await nav(page, "Users").click();
       const ttl = row(page, "Guest workspaces last").locator("input");
       await ttl.waitFor();
       assertEq(await ttl.inputValue(), String(before.guest_ttl_hours));
@@ -2762,8 +2770,8 @@ export async function settingsScenarios(env) {
       await until(() => user.api("/api/admin/settings").then((v) => v.demo_mode === true), { what: "demo mode saved" });
       assertEq((await (await fetch(`${server.base}/api/server-config`)).json()).demo, true, "the login page learns of it");
       // Another pane and back: the pane reads the stored values again.
-      await nav(page, "Users").click();
       await nav(page, "Server").click();
+      await nav(page, "Users").click();
       await until(async () => (await row(page, "Guest workspaces last").locator("input").inputValue()) === "36");
       assert(await row(page, "Demo mode").locator("input").isChecked(), "demo mode reads back on");
       await page.getByRole("checkbox", { name: "Demo mode", exact: true }).uncheck();
@@ -2808,8 +2816,8 @@ export async function settingsScenarios(env) {
         tick();
       }), [name, text]);
       // The Server pane (where Settings opens while a notice points there, else
-      // a click away): its five sections over the server's settings make one
-      // read, and no path is read twice. Settings opens on Keyboard, which
+      // a click away): its sections over the server's settings make one read,
+      // and no path is read twice. Settings opens on Keyboard, which
       // reads nothing (Account & sync, where Settings… opens, reads Users'
       // accounts and Server's settings ahead).
       await page.keyboard.press("ControlOrMeta+Shift+p");
@@ -2822,7 +2830,7 @@ export async function settingsScenarios(env) {
       await until(async () => (await title()) === "Server", { what: "the Server pane" });
       await page.getByRole("textbox", { name: "Public server URL" }).waitFor();
       await page.waitForTimeout(500);
-      assertEq(count("/api/admin/settings"), 1, `five sections over the server's settings, one read: ${asked}`);
+      assertEq(count("/api/admin/settings"), 1, `the sections over the server's settings, one read: ${asked}`);
       // (the pane's own reads; the storage line and the sync state are the menu's and the dialog's)
       const panes = asked.filter((u) => /^\/api\/(admin\/|accounts$)/.test(u));
       assertEq(panes.length, new Set(panes).size, `no path read twice: ${asked}`);
@@ -2871,7 +2879,7 @@ export async function settingsScenarios(env) {
       await page.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["lab-model", "lab-big"] } }));
       await openSettings(page);
       await nav(page, "Server").click();
-      await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
+      await row(page, "Shared AI provider").getByRole("button", { name: "Add provider", exact: true }).click();
       // The connection is tested once saved; the test is answered here, offline.
       await page.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "lab-model", latency_ms: 300 } }));
       const dialog = page.getByRole("dialog", { name: "Connect a shared AI service", exact: true });
@@ -3005,7 +3013,7 @@ export async function settingsScenarios(env) {
       await page.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["gpt-lab", "gpt-lab-mini"] } }));
       await openSettings(page);
       await nav(page, "Server").click();
-      await row(page, "Shared AI provider").getByRole("button", { name: "+ Add provider", exact: true }).click();
+      await row(page, "Shared AI provider").getByRole("button", { name: "Add provider", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "Connect a shared AI service", exact: true });
       await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "ChatGPT", exact: true }).click();
       await dialog.getByRole("button", { name: "Open ChatGPT sign-in", exact: true }).click();

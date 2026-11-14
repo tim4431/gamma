@@ -672,7 +672,7 @@ export function MirrorPopover({ wsId, kind = "mirror", mirrorOf: listedAs, publi
   // A clone syncs the whole workspace, so its pill is on every page; a
   // publication syncs the pages it publishes, the pages inside them
   // included, so its pill is on those pages only (and nowhere until they
-  // are known) — unless Settings → Appearance › Top bar › Sync pill says
+  // are known) — unless Settings → Toolbars › Top bar › Sync pill says
   // every page (`everyPage`).
   const covers = !publication || everyPage || Boolean(pageId && info && publishedPages(info).includes(pageId));
   // With the pill off the bar (`button` false: the same setting hides it)

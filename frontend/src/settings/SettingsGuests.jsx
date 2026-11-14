@@ -1,4 +1,4 @@
-// Settings → Server → Guests (admins): whether this server takes guest
+// Settings → Users → Guests (admins): whether this server takes guest
 // logins at all, how long a guest's throwaway account and workspace last,
 // and demo mode (the login page leads with Try the demo, the guide offers
 // the first-run tour on arrival). All three live in the server `settings`

@@ -1210,13 +1210,13 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     if (!(await page.locator(".pdfInkBar").count())) await page.click("button[aria-label='Handwriting tools']");
     await page.waitForSelector(".pdfInkBar");
   };
-  // Settings → Reading & editing, its rows, and back.
-  const openReadingSettings = async () => {
+  // Settings → Handwriting, its rows, and back.
+  const openHandwritingSettings = async () => {
     await page.locator('[data-guide="header.account"]').click();
     await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
     await dialog.waitFor();
-    await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Reading & editing", exact: true }).click();
+    await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Handwriting", exact: true }).click();
     return dialog;
   };
   const settingRow = (name) => page.locator(`.settingsPane [data-setting="${name}"]`).first();
@@ -1247,18 +1247,18 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     return Math.max(...ys) - Math.min(...ys);
   };
 
-  await step("ink: Settings → Reading & editing has the account's Handwriting rows and this device's, and Undo with fingers is set to Double tap", async () => {
-    const dialog = await openReadingSettings();
+  await step("ink: Settings → Handwriting has the account's pen and eraser rows and this device's, and Undo with fingers is set to Double tap", async () => {
+    const dialog = await openHandwritingSettings();
     const row = settingRow;
-    for (const name of ["Handwriting", "Reset presets", "Eraser returns to the last tool", "Erases", "Draw and hold", "Scribble to erase",
+    for (const name of ["Pens & eraser", "Reset presets", "Eraser returns to the last tool", "Erases", "Draw and hold", "Scribble to erase",
       "This device", "Draws with", "Stylus draws on PDFs right away", "Pressure-sensitive strokes", "Undo with fingers", "Hover preview"]) {
-      assert(await row(name).count(), `the row "${name}" is in Reading & editing`);
+      assert(await row(name).count(), `the row "${name}" is in Handwriting`);
     }
     // the Apple Pencil's gestures and haptics are the iPad app's alone (ipad.mjs shows them under its host)
     assertEq(await row("Apple Pencil").count(), 0, "no Apple Pencil section in a browser");
     assertEq(await row("Hover preview").locator("input[type=checkbox]").isChecked(), true, "the hover preview is on by default");
     const scope = (title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] .setScope`).getAttribute("data-scope");
-    assertEq(await scope("Handwriting"), "account", "Handwriting follows the account");
+    assertEq(await scope("Pens & eraser"), "account", "Pens & eraser follows the account");
     assertEq(await scope("This device"), "browser", "This device stays with the browser");
     assertEq(await row("Draw and hold").locator("input[type=checkbox]").isChecked(), true, "draw and hold is on by default");
     assertEq(await row("Scribble to erase").locator("input[type=checkbox]").isChecked(), false, "scribble to erase is off by default");
@@ -1501,7 +1501,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
   });
 
   await step("ink: with Scribble to erase on, a fast back-and-forth with the pen erases the stroke under it as one undo step, and nothing is drawn", async () => {
-    let dialog = await openReadingSettings();
+    let dialog = await openHandwritingSettings();
     await settingRow("Scribble to erase").locator("input[type=checkbox]").check();
     await until(async () => (await pillText()).includes("Scribble to erase is on"), { what: "turning it on explains the gesture" });
     await closeSettings(dialog);
@@ -1528,7 +1528,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.locator(".statusPill").getByRole("button", { name: "Undo", exact: true }).click();
     await until(async () => (await pathCount()) === before + 1, { what: "the stroke back from the pill's Undo" });
     await until(async () => (await savedStrokes()).has(victim.id), { what: "and back in the file" });
-    dialog = await openReadingSettings();
+    dialog = await openHandwritingSettings();
     await settingRow("Scribble to erase").locator("input[type=checkbox]").uncheck();
     await closeSettings(dialog);
     await until(async () => (await account.api("/api/prefs/profile")).value?.inkScribbleErase === false, { what: "off again" });
@@ -1797,13 +1797,13 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       await lineRow().getByRole("button", { name: "Dotted", exact: true }).click();
       await page.locator(".pdfInkBar .inkToolBtn.modeActive").click();   // closes the row
       assertEq(JSON.stringify(await hover()), JSON.stringify({ brush: "brush", dash: "dotted", border: "dotted" }), "a dotted brush pen's teardrop");
-      const dialog = await openReadingSettings();
+      const dialog = await openHandwritingSettings();
       await settingRow("Hover preview").locator("input[type=checkbox]").uncheck();
       assertEq(await page.evaluate(() => localStorage.getItem("gamma-ink-hover-preview")), "0", "a browser preference");
       await closeSettings(dialog);
       assertEq(JSON.stringify(await hover()), JSON.stringify({ brush: null, dash: null, border: "solid" }), "the plain ring");
     } finally {
-      const dialog = await openReadingSettings().catch(() => null);
+      const dialog = await openHandwritingSettings().catch(() => null);
       if (dialog) {
         await settingRow("Hover preview").locator("input[type=checkbox]").check().catch(() => {});
         await closeSettings(dialog).catch(() => {});
