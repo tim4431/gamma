@@ -1,6 +1,6 @@
 """The workspace's glossary for the PDF translated view: ``source → target``
 terms per target language that the workspace's members set (Settings →
-Language and Translation › Glossary, the selection translator's Add to
+Language & translation › Glossary, the selection translator's Add to
 glossary), kept in its pages.db as ``translation_terms`` (db.PAGES_SCHEMA):
 what people write lives there, and it goes with the workspace's backups.
 

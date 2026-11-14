@@ -46,7 +46,7 @@ they differ; what is Android's alone is in [android.md](android.md).
    follows the edge, and on an Apple Pencil Pro rolling the Pencil turns
    a calligraphy pen's nib. Its double tap and squeeze
    do what the system's Pencil settings ask for, unless Settings →
-   Reading & editing → Apple Pencil, in the web app, says otherwise.
+   Handwriting → Apple Pencil, in the web app, says otherwise.
 4. The bar above every page is the desktop app's
    ([The chrome](#the-chrome)): the mark, which brings the launcher back,
    the "server · workspace" switcher, whose dropdown lists the open
@@ -167,7 +167,7 @@ file is the browser's download). `pencilGestures`
 lists the gestures the host forwards as `pencil`, of `tap` and `squeeze`;
 a host that declares `pencil` without it forwards both, as the iPad app
 does. Settings shows a gesture's row only when its gesture is listed
-([settings.md](settings.md) "Reading & editing"). In the Android app
+([settings.md](settings.md) "Handwriting"). In the Android app
 `tap` is a click of the stylus's first button and `squeeze` a click of
 its second, each with the pen out of contact
 ([handwriting.md](handwriting.md) "What the user sees"). `save` says the host takes
@@ -714,8 +714,8 @@ squeeze in a phase the page does not know (a later shell's `changed`, a
 `squeeze` without a phase) does nothing. `ink/usePencil.js`
 applies `ink/pencilActions.js` with this browser's
 choice for each gesture, *Double tap* and *Squeeze* (`inkPencilTap`,
-`inkPencilSqueeze`, in Settings → Reading & editing → Apple Pencil, which
-shows only in the app; [settings.md](settings.md) "Reading & editing"):
+`inkPencilSqueeze`, in Settings → Handwriting → Apple Pencil, which
+shows only in the app; [settings.md](settings.md) "Handwriting"):
 
 - *System setting*, the default, follows the preferred action:
   `switchEraser` toggles the eraser, `switchPrevious` picks the previous
@@ -1531,7 +1531,7 @@ Only an iPad can show these, and none has been run yet:
 21. The three haptics on an Apple Pencil Pro: a held shape's
     `pathCompleted`, a pen lasso's `selectionChanged` and a gesture's
     light impact should each feel distinct, at its place, and *Haptics*
-    off (Settings → Reading & editing → Apple Pencil) should
+    off (Settings → Handwriting → Apple Pencil) should
     silence all three. `HapticFeel` chooses which feedback each kind
     plays. The impact's style, and a feedback it does not list yet (such
     as `alignmentOccurred(at:)`), are set in `PencilHaptics.play`. The
@@ -1760,7 +1760,7 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   (home: the topbar has no Home button here, so it stays on a page's bar
   and carries the `header.home` anchor), the page's PDF and Notes, Chat —
   and the topbar's actions on the right: Add, Search, a page's Share (and
-  a clone's Sync pill), More. Settings → Appearance › Top bar orders them
+  a clone's Sync pill), More. Settings → Toolbars › Top bar orders them
   and can hide any of the first four; a hidden one is a row of More, like Background tasks
   and the Inbox ([settings.md](settings.md#bars-order-and-modes)). Every item is a 22px icon over its word
   (`.barLabel`, `--fs-2xs`, hidden on the desktop topbar), about 50px tall.

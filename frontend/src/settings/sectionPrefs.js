@@ -27,25 +27,28 @@ export const SECTION_PREFS = Object.freeze({
     "PDF pages": ["pdfDarkPage"],
     Colors: ["palette"],
     Library: ["recentThumbs", "fileLabels"],
+  }),
+  toolbars: sections({
     "Top bar": ["topbar"],
     // The released builds' highlighter colour has no row: it only seeds the
     // first text highlighter.
     "Viewer tools": ["viewerTools", "highlighterColor"],
     "Text highlighters": ["highlightPresets"],
-    Tours: ["suggestTours", "tourProgress"],
   }),
   reading: sections({
     PDFs: ["embAnnots", "smoothWheel", "oaFallback", "metaAutoFetch", "pdfSaveLocal", "openAddsToLibrary"],
     "Replacing a PDF": ["relocateMinMatch", "relocateExactChars"],
     Notes: ["backlinksVisible"],
-    Handwriting: ["inkTools", "inkEraserReturn", "inkEraserFilter", "inkDrawHold", "inkScribbleErase", "inkShapeKind", "inkShapeFill"],
     Recordings: ["replayLeadIn", "recordingTranscribe"],
     "Search opens as": ["searchDetailsHome", "searchDetailsPaper"],
+  }),
+  handwriting: sections({
+    "Pens & eraser": ["inkTools", "inkEraserReturn", "inkEraserFilter", "inkDrawHold", "inkScribbleErase", "inkShapeKind", "inkShapeFill"],
   }),
   translation: sections({
     Language: ["language"],
     // Its Translation button is the strip's translate mode, a second view
-    // of Appearance › Viewer tools.
+    // of Toolbars › Viewer tools.
     "Viewer & selection": ["viewerTools", "translateLang", "selTranslate", "selTranslateAuto"],
     // "Translate with" there stays with the browser (its row's own tag).
     Service: ["translateKeep"],
@@ -67,5 +70,8 @@ export const SECTION_PREFS = Object.freeze({
   tools: sections({
     Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads"],
     "Tool limits": ["toolRounds", "toolRoundsUnlimited", "agentReadChars"],
+  }),
+  diagnostics: sections({
+    Tours: ["suggestTours", "tourProgress"],
   }),
 });

@@ -304,7 +304,7 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
   });
 
   await step("recording: with Record hidden from the strip, ⋯ starts a recording, and its button stays on the strip until it stops", async () => {
-    // Settings → Appearance › Viewer tools, Record "Hidden" (docs/dev/settings.md "Bars: order and modes")
+    // Settings → Toolbars › Viewer tools, Record "Hidden" (docs/dev/settings.md "Bars: order and modes")
     await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { viewerTools: VIEWER_TOOLS.setMode(VIEWER_TOOLS.DEFAULT, "record", "hidden") } } });
     const up = await account.upload("/api/uploads", makePdf([["Recorded from the menu"]]), "menu.pdf", "application/pdf");
     const created = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Menu recording", source_url: up.source_url } });

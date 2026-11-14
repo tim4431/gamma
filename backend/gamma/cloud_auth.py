@@ -140,7 +140,7 @@ INVITED_ONLY = "This server admits invited people only. Ask its admin for an inv
 # back to (``?cloud_error=`` and the others): never carried into the next one.
 OUTCOME_PARAMS = ("cloud_error", "cloud_join", "cloud_connect", "cloud_connect_error")
 NOT_CONNECTED = ("This server is not connected to Gamma Cloud yet. An admin connects it in "
-                 "Settings → Server → Sign-in.")
+                 "Settings → Users → Sign-in.")
 PENDING_TTL = 600
 # The desktop app's loopback return (``app_return``) and how long the result
 # the browser carries there stays redeemable.
@@ -289,7 +289,7 @@ def validate_issuer(value: str) -> str:
 
 
 def save_settings(*, issuer=None, client_id=None, client_secret=None, policy=None, share_host=None) -> None:
-    """Admin edits (Settings → Server → Sign-in). ``None`` leaves a value;
+    """Admin edits (Settings → Users → Sign-in). ``None`` leaves a value;
     an empty issuer turns cloud sign-in off; an empty secret clears it."""
     if config.cloud_env()["issuer"]:
         raise ValueError("Cloud sign-in is managed by GAMMA_CLOUD_* on this server.")

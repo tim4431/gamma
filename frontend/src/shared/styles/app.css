@@ -265,7 +265,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   background: var(--bg-page);
   position: relative;
 }
-/* An item off the bar (Settings → Appearance › Top bar; on a phone, a row
+/* An item off the bar (Settings → Toolbars › Top bar; on a phone, a row
    of More): only its popover lives here, opened from its row, its shortcut
    or App, in the place its button would be. No slot: zero wide, the gap
    before it given back, and as tall as a button so the popover hangs from

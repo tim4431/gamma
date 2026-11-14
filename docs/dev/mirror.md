@@ -1019,7 +1019,7 @@ mirror's own answer apart.
   mirror's `published_pages` (`sync_engine.published_pages`, the filter's
   pages and the pages inside them, less those left out), which
   `GET /api/mirrors` and the publish answers' `mirror` carry.
-  Settings → Appearance › Top bar › Sync pill (*Synced pages* / *Every
+  Settings → Toolbars › Top bar › Sync pill (*Synced pages* / *Every
   page* / *Hidden*) can put it on every page instead, or take it off the
   bar: the account menu's Sync status row then opens the same popover, on
   any page ([settings.md](settings.md#bars-order-and-modes)). Its tooltip and name line say

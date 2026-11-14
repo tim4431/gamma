@@ -56,7 +56,7 @@ the page fills the work area as it always did.
   button's panel there once its page is open: one press, as a press on a
   note edits it. Where each button stands while split is the user's: a
   right-click (or a held finger) on it offers *Show on the top bar* and
-  *Show in each pane*, and Settings → Appearance › Top bar has the same
+  *Show in each pane*, and Settings → Toolbars › Top bar has the same
   choice per row ([settings.md](settings.md#bars-order-and-modes)). A
   right-click on a pane's strip offers *Join tab groups*.
 - **The Notes window.** It shows the notes of the page on screen when that

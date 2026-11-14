@@ -2,7 +2,7 @@ import { T } from "../../shared/i18n/i18n.js";
 // A card on the whole tool column, then the viewer's left edge top to
 // bottom: the PDF's table of contents, then the tool column, its tools in
 // the order the user gave them (Settings →
-// Appearance › Viewer tools; a tour shows every one, hidden or not, so no
+// Toolbars › Viewer tools; a tour shows every one, hidden or not, so no
 // step speaks of where a tool stands among the others). The PDF and the
 // notebook viewer share the zoom and the pen, so their tours are siblings:
 // those steps are `shared`, the same objects in both, and a user who has

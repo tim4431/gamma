@@ -726,7 +726,7 @@ author (Delete for the workspace's owner too), Copy link, and Report… on
 anyone else's (`canReportComment`; a link visitor's too): the report dialog
 (`support/ReportContentDialog.jsx`) asks why and posts it to `POST
 /api/reports`, where the server reads the comment's text and author
-itself, keeps it for its admins (Settings → Server → Reports) and, with
+itself, keeps it for its admins (Settings → Users → Reports) and, with
 Gamma Cloud sign-in on, sends it on ([api.md](api.md) "Reports"). "New comment"
 starts another thread. A link visitor without an account reads, with "Sign
 in to comment" (the share's sign-in gate) in place of the fields.

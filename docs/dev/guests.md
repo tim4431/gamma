@@ -38,11 +38,11 @@ Two predicates, because a server that *cannot* take guests is not the same
 as one whose admin turned them off:
 
 - `guests.logins_possible()` — the cap is above 0 and this is no share
-  host. False means no switch could bring guests back, so Settings → Server
+  host. False means no switch could bring guests back, so Settings → Users
   leaves its Guests section out (`guest_logins_available: false` in
   `GET /api/admin/settings`, [hosted.md](hosted.md));
 - `guests.logins_open()` — that, and the **Guest sign-in** switch admins
-  set in Settings → Server → Guests (`settings` KV `guest_logins`, on until
+  set in Settings → Users → Guests (`settings` KV `guest_logins`, on until
   it is saved as off; `server_settings.guest_logins_enabled`). It is what
   `GET /api/server-config`'s `guest` reports, so the login page shows no
   guest button while guests are off, and what `/api/admin/settings` returns
@@ -156,7 +156,7 @@ rolling 24 hours:
 
 ## Demo mode
 
-`demo_mode` is a server setting (`settings` KV, Settings → Server → Guests)
+`demo_mode` is a server setting (`settings` KV, Settings → Users → Guests)
 that `GAMMA_DEMO=1` overrides, reported with its source like the public
 URL. It changes presentation, not rules: guests, their expiry and the
 allowance work the same on every server.

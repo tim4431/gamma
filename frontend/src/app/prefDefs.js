@@ -172,14 +172,14 @@ export const PREFS = {
   // box's menu offer. A changed swatch affects what is made from now on;
   // stored highlights and strokes keep their own colour.
   palette: pref("gamma-palette", ACCOUNT, DEFAULT_PALETTE, json(normalizePalette)),
-  // The topbar's buttons (Settings → Appearance › Top bar;
+  // The topbar's buttons (Settings → Toolbars › Top bar;
   // app/topbarItems.js): { order, modes }, the order they stand in and a
   // mode per item — always on the bar, on it while it has something to say,
   // or a row of the account menu instead. The sync pill's auto is "on the
   // pages that sync", its always "on every page of a workspace that syncs
   // some"; a clone's pill is on every page either way (it syncs them all).
   topbar: pref("gamma-topbar", ACCOUNT, TOPBAR.DEFAULT, json(TOPBAR.normalize)),
-  // The viewer's side strip (Settings → Appearance › Viewer tools;
+  // The viewer's side strip (Settings → Toolbars › Viewer tools;
   // app/viewerToolItems.js): { order, modes }, its tools' order and each
   // one on the strip or a row of its ⋯ menu. Translate hidden is the
   // translate button turned off.
@@ -189,7 +189,7 @@ export const PREFS = {
   // This build only reads it, to seed the first text highlighter while the
   // account has none of its own (markStyle.js seedPresets); no Settings row.
   highlighterColor: pref("gamma-highlighter-color", ACCOUNT, "", { parse: (raw) => (raw === "" ? "" : normalizeColor(raw) || undefined) }),
-  // The text highlighters (Settings → Appearance › Text highlighters;
+  // The text highlighters (Settings → Toolbars › Text highlighters;
   // markStyle.js normalizePresets, docs/dev/settings.md "Text
   // highlighters"): [{id, name, style, color: {hex, alpha}, hidden?}], the
   // first four buttons on the viewer's strip and in the selection popup;
@@ -267,7 +267,7 @@ export const PREFS = {
   // (shared/lib/smoothWheel.js). Touchpads are smooth either way.
   smoothWheel: flag("gamma-smooth-wheel", ACCOUNT, false),
 
-  // --- Translation (Settings → Language and Translation) ---
+  // --- Translation (Settings → Language & translation) ---
   // Selection translation: a translate button in the text-selection popup
   // (next to the highlight colors), and whether it translates as soon as
   // text is selected instead of on click.
@@ -406,7 +406,7 @@ export const PREFS = {
   metaPrompt: pref("gamma-meta-prompt", ACCOUNT, ""),
   citePrompt: pref("gamma-cite-prompt", ACCOUNT, ""),
 
-  // --- Handwriting (Settings → Reading; docs/dev/handwriting.md) ---
+  // --- Handwriting (Settings → Handwriting; docs/dev/handwriting.md) ---
   // Input rules and tools belong to the device's pen and screen. inkPenOnly:
   // fingers never draw (they scroll and pinch). inkPenWritesPdf: a stylus
   // draws on a PDF page with no tool armed, where it otherwise does what a
@@ -424,7 +424,7 @@ export const PREFS = {
   // The hover footprint shows the armed preset's look (its brush, its dash,
   // a pencil's lean), else a plain ring at its width.
   inkHoverPreview: flag("gamma-ink-hover-preview", BROWSER, true),
-  // In a native app (Settings → Reading & editing › Apple Pencil in the
+  // In a native app (Settings → Handwriting › Apple Pencil in the
   // iPad app, Stylus in the Android app, shown under its host): what the
   // pen's two gestures do, the Pencil's double tap and squeeze or a
   // stylus's two buttons (ink/pencilActions.js) — the action the shell sends
@@ -434,8 +434,8 @@ export const PREFS = {
   inkPencilTap: pref("gamma-ink-pencil-tap", BROWSER, "system", oneOf(PENCIL_CHOICES)),
   inkPencilSqueeze: pref("gamma-ink-pencil-squeeze", BROWSER, "system", oneOf([...PENCIL_CHOICES, ...SQUEEZE_HOLDS])),
   inkHaptics: flag("gamma-ink-haptics", BROWSER, true),
-  // The handwriting habits that follow the account (Settings → Reading &
-  // editing › Handwriting): a stroke held still at its end snaps to a line
+  // The handwriting habits that follow the account (Settings → Handwriting
+  // › Pens & eraser): a stroke held still at its end snaps to a line
   // or a shape (ink/shapes.js); a fast back-and-forth with the pen erases
   // the ink under it (ink/gestures.js; off until turned on); lifting the
   // eraser tool returns to the tool armed before it; and what any erasure

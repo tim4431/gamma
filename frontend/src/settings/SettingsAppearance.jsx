@@ -1,20 +1,14 @@
 import React from "react";
 import { NameInput, PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
-import { TextHighlighters } from "./TextHighlighters";
 import { MenuSelect } from "../shared/ui/Menus";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
-import { BarLayoutSection } from "./BarLayoutSection";
 import {
-  BellIcon, ContrastIcon, CopyIcon, FileTextIcon, HelpCircleIcon, HighlightIcon, LanguagesIcon, LayoutIcon,
-  MaximizeIcon, MicIcon, MoonIcon, PaletteIcon, PenIcon, PlusIcon, SheetIcon, TextCursorIcon, TrashIcon, TypeIcon, XIcon,
-  ZoomInIcon,
+  BellIcon, ContrastIcon, CopyIcon, HighlightIcon, LayoutIcon, MaximizeIcon, MoonIcon, PaletteIcon, PenIcon, PlusIcon,
+  TrashIcon, TypeIcon, XIcon,
 } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
 import { UI_SCALE, themeScheme } from "../app/prefs";
-import { TOPBAR } from "../app/topbarItems.js";
-import { TOPBAR_ICONS } from "../app/topbarIcons.js";
-import { VIEWER_TOOLS } from "../app/viewerToolItems.js";
 import {
   DEFAULT_PALETTE, MAX_GROUPS, MAX_GROUP_COLORS, MAX_GROUP_NAME, WASH_ALPHA, WASH_COLORS,
   colorName, isDefaultPalette, newGroupId, normalizePalette, swatchCss,
@@ -111,16 +105,6 @@ function InboxNotifications({ value }) {
   );
 }
 
-// The two bars (BarLayoutSection): a glyph per item of app/topbarItems.js
-// and app/viewerToolItems.js, the ones the bars draw; a new item there is a
-// new row here, given its glyph below. The Inbox's row is only for an
-// account that has one.
-
-const VIEWER_TOOL_ICONS = {
-  zoom: ZoomInIcon, ink: PenIcon, record: MicIcon, highlighter: HighlightIcon, translate: LanguagesIcon, paper: SheetIcon, notesView: FileTextIcon,
-  selectMode: TextCursorIcon,
-};
-
 export function AppearanceSettings({ value, diagnostics }) {
   const palette = normalizePalette(value.palette) || DEFAULT_PALETTE;
   const setPalette = (next) => value.setPalette(normalizePalette(next) || DEFAULT_PALETTE);
@@ -204,23 +188,6 @@ export function AppearanceSettings({ value, diagnostics }) {
             checked={diagnostics.statusBarVisible} onChange={diagnostics.setStatusBarVisible} />
           {value.hasInbox ? <InboxNotifications value={value} /> : null}
         </div>
-      </Section>
-
-      <BarLayoutSection title={t("Top bar")} scope="account" prefs={SECTION_PREFS.appearance["Top bar"]}
-        bar={TOPBAR} value={value.topbar} onChange={value.setTopbar} icons={TOPBAR_ICONS}
-        filter={(item) => item.id !== "inbox" || value.hasInbox}
-        resetTitle={t("Every button back on the bar in the default order, the sync pill on synced pages, and the page's own buttons in each pane while pages are side by side")} />
-
-      <BarLayoutSection title={t("Viewer tools")} scope="account" prefs={SECTION_PREFS.appearance["Viewer tools"]}
-        bar={VIEWER_TOOLS} value={value.viewerTools} onChange={value.setViewerTools} icons={VIEWER_TOOL_ICONS}
-        resetTitle={t("Every tool back on the viewer's strip, in the default order")} />
-
-      <TextHighlighters hl={value.textHighlighter} presets={value.highlightPresets} palette={palette} />
-
-      <Section title={t("Tours")} scope="account" prefs={SECTION_PREFS.appearance["Tours"]}>
-        <Toggle icon={HelpCircleIcon} label={t("Suggest tours")} hint={t("A short tour the first time a feature comes up.")}
-          title={t("Off, nothing is offered by itself; every tour stays under Account › Tours.")}
-          checked={value.suggestTours} onChange={value.setSuggestTours} />
       </Section>
     </div>
   );

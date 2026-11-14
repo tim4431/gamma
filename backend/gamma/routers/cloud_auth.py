@@ -37,7 +37,7 @@
 - ``GET /api/auth/cloud/connect/start?next=`` (admins) → the account
   server's page that connects this server; ``…/connect/callback`` saves the
   client it hands back and returns to ``next`` with ``?cloud_connect=ok``
-  or ``?cloud_connect_error=`` (Settings → Server → Sign-in shows it);
+  or ``?cloud_connect_error=`` (Settings → Users → Sign-in shows it);
 - ``GET /api/auth/cloud/status`` / ``POST /api/auth/cloud/unlink`` for the
   signed-in account's own identity (Settings → Account & sync); an unlink takes
   this server off the person's server list and revokes the grant.
@@ -48,7 +48,7 @@
   dialog; ``merge`` is API-only).
 - ``GET /api/admin/join-requests``, ``PUT …/{subject}`` ``{status:
   approved|declined}``, ``DELETE …/{subject}`` (admins): the requests to
-  join, Settings → Server → Sign-in (gamma/join_requests.py).
+  join, Settings → Users → Sign-in (gamma/join_requests.py).
 """
 
 from typing import Literal

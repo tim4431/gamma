@@ -5,7 +5,7 @@ menu, an AI reply from its actions in the chat.
 ``file`` reads what is reported where the reporter can read it (a
 comment's text and author, a page's title and the share's maker) rather
 than taking the browser's word for it, and keeps the report in users.db
-``content_reports`` for this server's admins: Settings → Server → Reports
+``content_reports`` for this server's admins: Settings → Users → Reports
 lists them (``listing``), resolves and deletes them, and a notice tells an
 admin a new one came (gamma/notices.py). An AI reply's text is the
 browser's: the chat keeps no copy the report could name.

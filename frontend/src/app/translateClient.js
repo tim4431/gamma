@@ -34,7 +34,7 @@ async function post(path, body, signal) {
 // The translation settings every request sends. The settings a request is
 // made with are {lang, model, effort, speed, keep}: `keep` lets the server
 // keep its translations and the paper's brief in the workspace (Settings →
-// Language and Translation › Keep translations).
+// Language & translation › Keep translations).
 const modelFields = ({ lang, model, effort, speed }) => ({ lang, model: model || "", effort: effort || "", speed: speed || "" });
 
 // The request for one chunk of paragraphs under the translation settings,

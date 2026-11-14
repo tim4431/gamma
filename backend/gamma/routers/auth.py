@@ -138,7 +138,7 @@ def login_guest(request: Request):
     if not guests.logins_open():
         # no guests at all (GAMMA_GUEST_MAX=0, a hosted container, a public
         # share host holding strangers' published pages), or an admin turned
-        # them off (Settings → Server → Guests): what /api/server-config's
+        # them off (Settings → Users → Guests): what /api/server-config's
         # `guest` says. The places are counted in new_guest, which answers
         # 503 once they are gone.
         raise HTTPException(status_code=403, detail="This server has no guest access.")

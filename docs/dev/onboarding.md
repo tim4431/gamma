@@ -319,7 +319,7 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
 - **Once per version.** Showing an offer records it (`offered`); Not now,
   Esc or ×, Show me and Got it each settle it. Bump `version` only when a
   finished user should be offered it again.
-- **Suggest tours.** Settings → Appearance → Tours → **Suggest tours**
+- **Suggest tours.** Settings → Help & diagnostics → Tours → **Suggest tours**
   (`suggestTours`, an account preference, default on). Off, nothing is
   offered by itself; the Tours menu still works. Nothing is offered before
   the account's synced profile has loaded, so a browser whose cached value
@@ -817,7 +817,7 @@ selects by class name, text or DOM position.** It selects by anchor id.
   `npm test`; the scan also reads a conditional
   `data-guide={cond ? "id" : undefined}`.
 - The topbar's buttons and the viewer strip's tools a person can hide
-  (Settings → Appearance › Top bar and › Viewer tools,
+  (Settings → Toolbars › Top bar and › Viewer tools,
   [settings.md](settings.md#bars-order-and-modes)) are all on their bars
   while a tour runs or a hint is offered, so a step's `header.*` or
   `viewer.*` anchor is there. A step names no position on a bar: the

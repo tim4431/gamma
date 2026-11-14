@@ -18,7 +18,7 @@ Who decides:
   waiting invitation of the share (gamma/shares.py ``invite_cloud`` by
   subject), which admits the person at their next sign-in and opens the
   page for them; Decline marks it declined;
-- an admin, for any request (Settings → Server → Sign-in, behind the
+- an admin, for any request (Settings → Users → Sign-in, behind the
   ``join-requests`` notice). Approve admits the person (``approved``: their
   next sign-in gets them an account, and whatever is shared with every
   signed-in account), Decline marks it declined, Remove deletes the row.

@@ -14,8 +14,10 @@ const source = (file) => fs.readFileSync(path.join(SETTINGS, file), "utf8");
 
 // The sources each pane renders: its own file and the sections it pulls in.
 const PANE_FILES = {
-  appearance: ["SettingsAppearance.jsx", "SettingsLibraryDisplay.jsx", "TextHighlighters.jsx", "BarLayoutSection.jsx", "../app/topbarItems.js", "../app/viewerToolItems.js"],
+  appearance: ["SettingsAppearance.jsx", "SettingsLibraryDisplay.jsx"],
+  toolbars: ["SettingsToolbars.jsx", "TextHighlighters.jsx", "BarLayoutSection.jsx", "../app/topbarItems.js", "../app/viewerToolItems.js"],
   reading: ["SettingsDialog.jsx"],
+  handwriting: ["SettingsDialog.jsx"],
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
   ai: ["SettingsDialog.jsx", "SettingsAi.jsx", "SettingsAgents.jsx"],
@@ -26,8 +28,8 @@ const PANE_FILES = {
   workspaces: ["SettingsWorkspace.jsx", "SettingsMirrors.jsx"],
   backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupBucket.jsx"],
   maintenance: ["SettingsDialog.jsx"],
-  users: ["SettingsUsers.jsx"],
-  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsGuests.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx"],
+  users: ["SettingsUsers.jsx", "SettingsServer.jsx", "SettingsCloudSignIn.jsx", "SettingsGuests.jsx", "SettingsReports.jsx"],
+  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx"],
   proxy: ["SettingsProxy.jsx"],
   diagnostics: ["SettingsDialog.jsx"],
 };
