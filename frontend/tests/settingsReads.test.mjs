@@ -88,6 +88,9 @@ test("a pane's reads go out together with what they lead to; a prefetch reads on
   assert.ok(!PANE_READS.backups(who).includes("/admin/offsite"), "an account that is not an admin reads no bucket");
   assert.ok(PANE_READS.backups({ admin: true }).includes("/admin/offsite"));
   assert.equal(PANE_READS.server().filter((path) => path === "/admin/settings").length, 1, "the Server pane reads its settings once");
+  const people = (w) => PANE_READS.ai(w).find((read) => read?.path === "/local-agents/people");
+  assert.equal(people({ signedIn: true }), undefined, "a browser asks no other server whom an agent may serve");
+  assert.equal(people({ signedIn: true, desktop: true }).later, true, "the desktop app asks, without waiting for it");
 });
 
 test("every path a section reads through the store is one of a pane's reads", async () => {
@@ -95,7 +98,7 @@ test("every path a section reads through the store is one of a pane's reads", as
   const path = await import("node:path");
   const { fileURLToPath } = await import("node:url");
   const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/settings");
-  const who = { admin: true, signedIn: true };
+  const who = { admin: true, signedIn: true, desktop: true };
   const listed = new Set(Object.values(PANE_READS).flatMap((reads) => reads(who)).filter(Boolean)
     .map((read) => (typeof read === "string" ? read : read.path)));
   for (const file of fs.readdirSync(dir).filter((name) => name.endsWith(".jsx"))) {
