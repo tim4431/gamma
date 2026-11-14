@@ -400,9 +400,10 @@ class Turn:
             if now - quiet_since >= TURN_IDLE_S:
                 raise _Idle
 
-    def _send(self, message: dict) -> None:
-        """One JSON line to the agent; EOFError when it is gone."""
-        if not self.child.send(json.dumps(message, ensure_ascii=False) + "\n"):
+    def _send(self, *messages: dict) -> None:
+        """A JSON line to the agent per message, in one write; EOFError when
+        it is gone."""
+        if not self.child.send("".join(json.dumps(m, ensure_ascii=False) + "\n" for m in messages)):
             raise EOFError
 
     def _ended(self) -> dict:

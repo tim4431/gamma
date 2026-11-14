@@ -291,12 +291,8 @@ class CodexTurn(events.Turn):
         """Send a request; with ``wait``, its result, every other message
         dispatched meanwhile. TurnFailed for a JSON-RPC error or no answer
         within ``timeout`` seconds."""
-        with self._ids:
-            self._next_id += 1
-            request_id = self._next_id
-        message = {"id": request_id, "method": method}
-        if params is not None:
-            message["params"] = params
+        message = self._message(method, params)
+        request_id = message["id"]
         self._send(message)
         if not wait:
             return {}
@@ -314,6 +310,16 @@ class CodexTurn(events.Turn):
                     raise RequestError(str(error.get("message") or f"Codex refused {method}."))
                 return message.get("result") or {}
             self._dispatch(message)
+
+    def _message(self, method: str, params) -> dict:
+        """A request of the next id, not sent."""
+        with self._ids:
+            self._next_id += 1
+            request_id = self._next_id
+        message = {"id": request_id, "method": method}
+        if params is not None:
+            message["params"] = params
+        return message
 
     def _dispatch(self, message: dict) -> None:
         method = message.get("method")
@@ -460,12 +466,17 @@ class CodexTurn(events.Turn):
                           diff=_diff(changes, self.cwd), reason=reason)
 
     def _reply(self, held, decision: str, note: str) -> None:
-        self._send({"id": held, "result": {"decision": _DECISIONS[decision]}})
+        answer = {"id": held, "result": {"decision": _DECISIONS[decision]}}
         if decision == "deny" and note and self._turn_id:
-            # Codex's decline carries no words: they follow as input to the turn.
-            self._request("turn/steer", {"threadId": self._thread, "expectedTurnId": self._turn_id,
-                                         "input": [{"type": "text", "text": f"The owner declined that: {note}"}]},
-                          0, wait=False)
+            # Codex's decline carries no words: they follow as input to the
+            # turn, in the same write, so a turn that ends on hearing the
+            # decline has them read all the same, and the decline is never
+            # taken for unwritten because the words came too late.
+            self._send(answer, self._message("turn/steer", {
+                "threadId": self._thread, "expectedTurnId": self._turn_id,
+                "input": [{"type": "text", "text": f"The owner declined that: {note}"}]}))
+        else:
+            self._send(answer)
 
     def _flush(self):
         pending, self._pending = self._pending, []

@@ -963,7 +963,11 @@ sandbox check) or 120 s (`thread/start`, `thread/resume`, `turn/start`).
    protected part of the folder is declined, never asked. The
    answer echoes the request's id exactly (an integer as an integer):
    once `accept`, chat `acceptForSession`, deny `decline` and, with a note,
-   a `turn/steer` "The owner declined that: <note>". A Stop answers what
+   a `turn/steer` "The owner declined that: <note>" in the same write, so
+   a turn that ends on reading the decline still has the note and the
+   answer counts as given. The step reads allowed or declined before the
+   agent hears the answer, and what the agent says of a declined step
+   after that leaves it declined. A Stop answers what
    waits `cancel`, then interrupts. `serverRequest/resolved` for an id Gamma
    did not answer withdraws the ask. The other requests stay refused.
 

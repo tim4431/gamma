@@ -392,6 +392,56 @@ def test_an_ask_nobody_answers_is_declined(lab, disk, monkeypatch):
     assert _steers(disk.log) == ["The owner declined that: No answer within 10 minutes."]
 
 
+def test_a_declined_step_reads_declined_though_the_agent_says_so_first(lab, disk, monkeypatch):
+    """Codex's own word on a command it was refused (item/completed, declined: a failed step)
+    heard before the answer's call returns: the step still reads declined."""
+    f = _asking(lab, disk)
+    script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
+    said = threading.Event()
+    heard, answer = runner._ChatTurn._heard, events.Turn.answer
+
+    def hearing(self, event):
+        out = heard(self, event)
+        if event.get("type") == "tool" and event.get("id") == "ap0" and event.get("status") != "started":
+            said.set()
+        return out
+
+    def answering(self, *args, **kwargs):
+        written = answer(self, *args, **kwargs)
+        assert said.wait(30)
+        return written
+
+    monkeypatch.setattr(runner._ChatTurn, "_heard", hearing)
+    monkeypatch.setattr(events.Turn, "answer", answering)
+    made = _say(lab.owner, f.page, "Rebuild.")
+    [card] = _waiting(lab, f.page)["asks"]
+    _answer(lab.owner, made["turn"]["id"], card["id"], decision="deny", note="No.")
+    assert runner.wait_idle(60)
+    assert _reply(lab, f.page)["steps"] == [{"id": "ap0", "kind": "run", "status": "declined", "program": "latexmk"}]
+
+
+def test_a_decline_and_its_words_reach_codex_though_the_turn_ends_on_it(lab, disk, monkeypatch):
+    """Codex ending its turn as soon as it reads a decline, before anything more could be
+    written: the words went with the decline, which was answered, not 'no longer waits'."""
+    f = _asking(lab, disk)
+    script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
+    send = procs.Child.send
+
+    def sending(self, text):
+        written = send(self, text)
+        if '"decision": "decline"' in text:
+            _until(lambda: self.proc.poll() is not None)  # the turn ended and its process went
+        return written
+
+    monkeypatch.setattr(procs.Child, "send", sending)
+    made = _say(lab.owner, f.page, "Rebuild.")
+    [card] = _waiting(lab, f.page)["asks"]
+    assert _answer(lab.owner, made["turn"]["id"], card["id"], decision="deny", note="No.") == {"answered": True}
+    assert runner.wait_idle(60)
+    assert _reply(lab, f.page)["steps"] == [{"id": "ap0", "kind": "run", "status": "declined", "program": "latexmk"}]
+    assert _steers(disk.log) == ["The owner declined that: No."]
+
+
 def test_a_stop_while_it_asks_and_who_may_answer(lab, disk, monkeypatch):
     f = _asking(lab, disk)
     script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])

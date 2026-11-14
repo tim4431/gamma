@@ -1830,11 +1830,16 @@ class _ChatTurn(_Turning):
         the answer. Allow in this chat is kept (``store.grant``: the
         command, its directory, its host) only while the vault's agent may
         still ask and is still this turn's."""
+        answered = "declined" if decision == "deny" else "allowed"
         with self._asking:
             held = self.asks.pop(ask_id, None)
             self.answered.add(ask_id)
-        if held is None:
-            return False
+            if held is None:
+                return False
+            # The step reads the answer before the agent hears it: what the
+            # agent then says of a declined step changes nothing (the tool
+            # event's guard), whichever thread comes first.
+            self._mark(held, "asked", answered)
         written = self.turn is not None and self.turn.answer(held["key"], decision, note)
         if written and decision == "chat" and held["kind"] == "command" and held["command"]:
             try:
@@ -1844,7 +1849,10 @@ class _ChatTurn(_Turning):
                                 host=held["host"])
             except Exception as e:  # noqa: BLE001 — this call is allowed; the next one asks again
                 log.warning(f"[agents] keeping a grant of chat turn {self.turn_id}: {e}")
-        self._settle(held, ("declined" if decision == "deny" else "allowed") if written else "failed")
+        if not written:
+            with self._asking:
+                self._mark(held, answered, "failed")
+        self._show(force=True)
         return written
 
     def decline_all(self, note: str) -> None:
@@ -1860,10 +1868,15 @@ class _ChatTurn(_Turning):
         """An ask that waits no more: its step ``status``, the message
         written."""
         with self._asking:
-            at = self._step_at.get(held["step"])
-            if at is not None and self.steps[at]["status"] == "asked":
-                self.steps[at]["status"] = status
+            self._mark(held, "asked", status)
         self._show(force=True)
+
+    def _mark(self, held: dict, was: str, status: str) -> None:
+        """The ask's step ``status`` while it reads ``was`` (``_asking``
+        held)."""
+        at = self._step_at.get(held["step"])
+        if at is not None and self.steps[at]["status"] == was:
+            self.steps[at]["status"] = status
 
     def _waiting(self) -> bool:
         return bool(self.asks)
