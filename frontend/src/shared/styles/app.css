@@ -3831,6 +3831,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .chatHistRow:hover, .chatHistRow:focus-visible { background: var(--bg-hover); outline: none; }
 .chatHistRow.active { background: var(--accent-bg); font-weight: 600; cursor: default; }
+/* A row that cannot open now (the computer side while a turn runs): faint,
+   no hover, its title saying why. */
+.chatHistRow[aria-disabled="true"] { color: var(--text-dim); cursor: default; }
+.chatHistRow[aria-disabled="true"]:hover { background: none; }
 .chatHistTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatHistAge { flex: none; font-size: var(--fs-2xs); color: var(--text-dim); padding-right: 4px; }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
@@ -4457,6 +4461,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 /* A tag whose state changes in place (StateTag): its spinner beside the words while work is under way. */
 .uiTag.stateTag { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .uiTag.stateTag .transferSpin.inline { flex: none; }
+/* The words behind a state, on their own line (StateDetail): muted, red for a failure. */
+.stateDetail { font-size: var(--fs-xs); line-height: var(--lh-ui); color: var(--text-muted); overflow-wrap: anywhere; }
+.stateDetail.failed { color: var(--danger); }
+/* An agent that cannot run (not signed in, not found): amber, as a warning, wherever it is said. */
+.agentProblem { color: var(--warn); }
 /* Text for screen readers only: the sentence behind an icon, a table header without a visible word. */
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* The share view's "as <name>" tag (an editing visitor without an account) and
@@ -5546,6 +5555,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   animation: chatRecPulse 1.3s ease-in-out infinite;
 }
 @keyframes chatRecPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* --- a document pane while it waits (documents/DocumentPane.jsx: its
+   chunk, before viewers.css is in; the code view's text, the picture's
+   pixels): "Loading…", which .loadingHint fades in after a moment --- */
+.docViewSkeleton { width: 100%; height: 100%; background: var(--bg-surface); }
+.docViewHint { padding: var(--space-4); text-align: center; font-size: var(--fs-sm); color: var(--text-muted); }
 
 /* --- downloads & uploads (Chrome-style transfer list) --- */
 .topbar .transferBtn { position: relative; }

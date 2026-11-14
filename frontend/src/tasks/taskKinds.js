@@ -150,6 +150,18 @@ export const TASK_KINDS = {
     stop: ({ workspace, params }) => `/local-agents/chat/turns/${encodeURIComponent(params?.turn || "")}/stop${
       workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
   },
+  // A Send the work folder's agent answers on this computer (routers/jobs.py
+  // _feedback_runs), read-only: a click opens the Feedback dialog on its
+  // file or folder, and Stop is its requester's withdraw. The agent's own
+  // words come as `progress.item`.
+  "feedback-run": {
+    icon: "terminal", open: "feedback",
+    title: ({ params }) => tn("{agent} on this computer: {title} · {n} comment", "{agent} on this computer: {title} · {n} comments",
+      params?.comments || 0, { agent: params?.label || "", title: named(params?.name || "") }),
+    stop: ({ workspace, params }) => `/feedback/requests/${encodeURIComponent(params?.request || "")}/state${
+      workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
+    stopBody: () => ({ state: "failed", detail: "withdrawn" }),
+  },
   // This tab's own work (App.jsx adds and updates these rows).
   download: { icon: "download" },
   upload: { icon: "upload" },
@@ -314,6 +326,8 @@ export const canOpen = (task) => !task.local && Boolean(kindOf(task).open);
 // its own (a computer turn's, in the workspace it runs in), else "": the
 // job's cancel.
 export const stopPath = (task) => (!task.local && kindOf(task).stop?.(task)) || "";
+// What that Stop posts: {} but for a kind that says (a Send's withdraw).
+export const stopBody = (task) => kindOf(task).stopBody?.(task) || {};
 
 // The row's buttons, in order: "stop" while it can be stopped, then for a
 // finished one "download" (its file), "retry" and "dismiss".

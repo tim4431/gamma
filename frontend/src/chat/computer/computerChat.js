@@ -30,7 +30,7 @@
 // the window to be that computer (the strip's menu, the passages' source
 // lines) is left out.
 import { t, tn } from "../../shared/i18n/i18n.js";
-import { sinceText } from "../../vault/vaultState.js";
+import { agentWorking, sinceText } from "../../vault/vaultState.js";
 
 // How long a message may be (the server's cap).
 export const TEXT_MAX = 20000;
@@ -223,28 +223,36 @@ export function turnLabel(message, label, away = "") {
   const agent = message?.label || label;
   if (isLive(message) && message.asks?.length) return t("{agent} is waiting for you", { agent });
   if (away && message?.role === "agent" && message.state === "queued") return t("Waiting for {computer}", { computer: away });
-  if (isLive(message)) {
-    const now = stepNow(currentStep(message));
-    return now ? t("{agent} is working: {detail}", { agent, detail: now }) : t("{agent} is working…", { agent });
-  }
+  if (isLive(message)) return agentWorking(agent, stepNow(currentStep(message)));
   const n = message?.steps?.length || 0;
   return tn("{n} step", "{n} steps", n);
 }
 
-// What a turn changed, on a line under its reply: "Changed
-// sections/intro.tex and 1 more · The PDF was rebuilt"; "" for nothing.
-export function changesLine(message) {
+// How many changed files a turn's card lists before "and N more".
+export const CHANGES_SHOWN = 3;
+
+// What a turn changed, as the card under its reply lists it: {shown, rest,
+// more, n, built}, `shown` the first paths it named, `rest` the others it
+// named (folded under "and N more"), `more` how many files that line
+// counts (named or not), `n` how many changed in all, `built` whether the
+// PDF was rebuilt; null for nothing.
+export function turnChanges(message) {
   const named = message?.changes || [];
   const n = Math.max(message?.changed || 0, named.length);
-  const parts = [];
-  if (named.length) {
-    const more = n - 1;
-    parts.push(t("Changed {files}", { files: more > 0 ? `${named[0]} ${t("and {n} more", { n: more })}` : named[0] }));
-  } else if (n) {
-    parts.push(tn("Changed {n} file", "Changed {n} files", n));
-  }
-  if (message?.built) parts.push(t("The PDF was rebuilt"));
-  return parts.join(" · ");
+  if (!n && !message?.built) return null;
+  const shown = named.slice(0, CHANGES_SHOWN);
+  return { shown, rest: named.slice(CHANGES_SHOWN), more: n - shown.length, n, built: !!message?.built };
+}
+
+// The person's message a failed turn answered, what Retry sends again
+// ({text, selections}); null when there is none or the turn is not the
+// conversation's newest.
+export function retryOf(conversation, message) {
+  const messages = conversation?.messages || [];
+  const at = messages.indexOf(message);
+  const asked = at > 0 ? messages[at - 1] : null;
+  if (message?.state !== "failed" || at !== messages.length - 1 || asked?.role !== "user" || !asked.text) return null;
+  return { text: asked.text, selections: asked.selections || [] };
 }
 
 // How a turn ended, when it did not answer: the reason it failed (the
@@ -295,6 +303,20 @@ export function diffRows(diff) {
   });
 }
 
+// What the side switch's agent side shows from either side (ChatSides):
+// {kind, text}, `kind` "waiting" while a turn of the page asks the person
+// (its Background tasks row, `jobs`, in phase "asking"), "working" while one
+// runs or the agent works in the folder (`computer`, vaultState
+// computerAgent's `running`: a Send or another page's turn), else "".
+export function sideMark(computer, jobs = [], pageId = "") {
+  if (!computer) return { kind: "", text: "" };
+  const agent = computer.label || "";
+  const turns = (jobs || []).filter((job) => job.kind === "computer-turn" && job.state === "running" && job.params?.page === pageId);
+  if (turns.some((job) => job.progress?.phase === "asking")) return { kind: "waiting", text: t("{agent} is waiting for you", { agent }) };
+  if (turns.length || computer.running) return { kind: "working", text: agentWorking(agent) };
+  return { kind: "", text: "" };
+}
+
 // The strip under the header: {text, kind}, `kind` its look ("ready",
 // "working", "waiting", "asking", "problem", "paused", "away"). `info` is
 // the server's `computer` ({label, ready, problem, folder, paused, turn:
@@ -332,8 +354,7 @@ export function stripLine(info, live = null, now = new Date()) {
       : { text: t("Starting {agent}…", { agent }), kind: "working" };
   }
   if (turn?.state === "running") {
-    const doing = stepNow(currentStep(live));
-    return { text: doing ? t("{agent} is working: {detail}", { agent, detail: doing }) : t("{agent} is working…", { agent }), kind: "working" };
+    return { text: agentWorking(agent, stepNow(currentStep(live))), kind: "working" };
   }
   if (away) {
     return {

@@ -246,6 +246,7 @@ import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
 import { addsToLibrary, baseName, carriesToServer, computerAgent, isOpenedFile, keeperAgent, keeperComputer, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
+import { sideMark } from "../chat/computer/computerChat.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -4909,6 +4910,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the computer that keeps the work folder).
   const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null) || keeperComputer(pageComputers),
     [vaultState, pageComputers]);
+  // Whether that agent works or waits for the person, for the chat's side switch (sideMark).
+  const chatComputerMark = useMemo(() => sideMark(chatComputer, tasks.jobs, focusedBlockId),
+    [chatComputer, tasks.jobs, focusedBlockId]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept
@@ -12568,6 +12572,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
           computer={chatComputer}
+          computerMark={chatComputerMark}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {

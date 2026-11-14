@@ -40,7 +40,9 @@ export function AuthShell({ headline, scene, className = "", children }) {
   );
 }
 
-function LoginError({ children }) {
+// A sign-in page's failure (this page's form, an assistant's consent): the
+// --danger box, mid-form above the one primary button.
+export function LoginError({ children }) {
   return (
     <div className="loginError" role="alert">
       <AlertCircleIcon size={16} aria-hidden="true" />
@@ -49,11 +51,12 @@ function LoginError({ children }) {
   );
 }
 
-// A sign-in's outcome that is no failure: a request to join sent, or waiting.
-function LoginNotice({ children }) {
+// A sign-in's outcome that is no failure: a request to join sent, or
+// waiting (the mail icon), an assistant connected (`icon` CheckIcon).
+export function LoginNotice({ icon: Icon = MailIcon, children }) {
   return (
     <div className="loginNotice" role="status">
-      <MailIcon size={16} aria-hidden="true" />
+      <Icon size={16} aria-hidden="true" />
       <span>{children}</span>
     </div>
   );

@@ -11,6 +11,7 @@ import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
 import { guideEvents } from "../guide/events.js";
 import { showComputerSide } from "../chat/computer/chatSide.js";
+import { openFeedback } from "../feedback/useFeedback.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
@@ -136,7 +137,7 @@ export function useAppJobs({
   // A row of Background tasks clicked: the export or import dialog on that
   // job again, the Settings pane where the work is managed, or a computer
   // turn's page with its chat on the computer side (a turn of another
-  // workspace opens its page there).
+  // workspace opens its page there), or a Send's Feedback dialog.
   function openTask(task) {
     const open = kindOf(task).open;
     setOpenPopover(null);
@@ -159,6 +160,11 @@ export function useAppJobs({
       if (task.workspace && workspaceId && task.workspace !== workspaceId) {
         window.location.href = `${window.location.pathname}?page=${encodeURIComponent(page)}&ws=${encodeURIComponent(task.workspace)}`;
       } else openPageChat?.(page);
+    } else if (open === "feedback") {
+      // a Send's run: the Feedback dialog on its file or folder, in this workspace
+      if (task.workspace && workspaceId && task.workspace !== workspaceId) {
+        window.location.href = `${window.location.pathname}?ws=${encodeURIComponent(task.workspace)}`;
+      } else openFeedback(task.params?.scope);
     } else if (open?.startsWith("settings:")) {
       setSettingsOpen(open.slice("settings:".length));
     }

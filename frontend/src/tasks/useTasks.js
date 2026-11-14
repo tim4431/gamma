@@ -26,7 +26,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { cancelJob, clearJobs, dismissJob, downloadJob, getJob, listJobs, startJob, stopAt, uploadJob } from "./tasksApi";
 import { addLocalRow, afterFollow, followed, isActive, isFinished, localRow, mergeTasks, newlyFinished, trayBadge }
   from "./taskModel.js";
-import { quietKinds, stopPath } from "./taskKinds.js";
+import { quietKinds, stopBody, stopPath } from "./taskKinds.js";
 import { guideEvents } from "../guide/events.js";
 
 const FAST_MS = 1500;
@@ -228,7 +228,7 @@ export function useTasks({ enabled, onFinished, follow = false }) {
     if (task.local) { stopLocal(task.id); return; }
     const path = stopPath(task);
     if (path) {
-      await stopAt(path);
+      await stopAt(path, stopBody(task));
       know({ ...task, stopping: true });
       return;
     }

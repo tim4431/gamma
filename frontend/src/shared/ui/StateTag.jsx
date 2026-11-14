@@ -16,3 +16,12 @@ export function StateTag({ state, className = "", ...rest }) {
     </span>
   );
 }
+
+// The words behind a state, on a line of their own under what the tag is
+// on: its `detail` (an agent's progress, its summary, why it failed), so
+// they are read without a hover, in the tag's `tone` (red for failed).
+// Nothing for none.
+export function StateDetail({ state, className = "" }) {
+  if (!state?.detail) return null;
+  return <div className={["stateDetail", state.tone, className].filter(Boolean).join(" ")}>{state.detail}</div>;
+}

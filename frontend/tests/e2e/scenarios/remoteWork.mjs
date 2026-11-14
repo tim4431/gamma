@@ -141,7 +141,7 @@ export async function remoteWorkScenarios(env) {
         const last = previews.at(-1);
         assertEq(last?.uploads?.files, 5, "the preview counts the five files uploaded");
         assertEq(JSON.stringify(last?.secrets), JSON.stringify([".env"]), "and the secrets file among them");
-        const warning = summary.locator(".importWarning", { hasText: "may hold secrets" });
+        const warning = summary.locator(".shareWarn", { hasText: "may hold secrets" });
         assertEq((await warning.innerText()).trim(),
           `1 ticked file may hold secrets, and every member of the workspace on ${server} can read it:`, "the secrets warning");
         assertEq((await summary.locator("ul li strong").allInnerTexts()).map((s) => s.trim()).join("|"), ".env", "naming the file");

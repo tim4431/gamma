@@ -21,6 +21,7 @@
 .taskStatus.done { color: var(--ok); }
 .taskStatus.failed { color: var(--danger); }
 .taskStatus.cancelled, .taskStatus.queued { color: var(--text-dim); }
+.taskStatus.waiting { color: var(--warn); }
 
 /* Title over the bar over the line of detail; a button when the task has a
    window to open again. */

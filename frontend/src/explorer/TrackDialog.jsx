@@ -32,7 +32,7 @@ import { t, tn } from "../shared/i18n/i18n.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { fmtBytes } from "../shared/lib/format.js";
-import { SubDialog, Toggle } from "../settings/SettingsKit";
+import { FormNotice, SubDialog, Toggle } from "../settings/SettingsKit";
 import ImportTree from "../transfers/ImportTree.jsx";
 import { firstRow } from "../transfers/importReview";
 import { formatLabel } from "../library/libraryUtils";
@@ -290,9 +290,9 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
         <p>{fresh ? t("Pick what this work folder tracks: each file ticked becomes a page, and the rest stay on disk only.")
           : t("Pick what this work folder tracks. A file unticked leaves Gamma for Recently deleted; it stays on disk.")}</p>
       </div>
-      {tickLine ? <p className={tickLine.warn ? "importWarning" : "reportModalHint"}>{tickLine.text}</p> : null}
-      {read?.error ? <p role="alert" className="importWarning">{read.error}</p> : null}
-      {!read ? <p className="reportModalHint">{t("Reading…")}</p> : null}
+      {tickLine ? tickLine.warn ? <FormNotice tone="warn">{tickLine.text}</FormNotice> : <p className="reportModalHint">{tickLine.text}</p> : null}
+      {read?.error ? <FormNotice>{read.error}</FormNotice> : null}
+      {!read ? <p className="reportModalHint loadingHint">{t("Reading…")}</p> : null}
       {read?.entries ? <>
         <div className="importSelectionToolbar">
           <div className="trackFilters" role="group" aria-label={t("Tick by format")}>
@@ -332,7 +332,7 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
                   leaving.length, { k: leaving.length, j: kept.length })}</summary>
                 <ul>{leaving.map((p) => (
                   <li key={p.page}><strong>{p.title || p.path}</strong>{" "}
-                    <span>{[p.path, p.notes ? tn("{n} note", "{n} notes", p.notes) : "",
+                    <span>{[p.title && p.title !== p.path ? p.path : "", p.notes ? tn("{n} note", "{n} notes", p.notes) : "",
                       p.open_comments ? tn("{n} open comment", "{n} open comments", p.open_comments) : ""].filter(Boolean).join(" · ")}</span></li>
                 ))}</ul>
               </details>
@@ -341,12 +341,12 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
               "{n} chosen files are over {size} and are listed without their bytes",
               current.large, { size: fmtBytes(current.keep_bytes || 0) })}</p> : null}
             {secrets ? <>
-              <p className="importWarning">{secrets.text}</p>
+              <FormNotice tone="warn">{secrets.text}</FormNotice>
               <ul>{secrets.files.map((path) => <li key={path}><strong>{path}</strong></li>)}</ul>
             </> : null}
-            {current.over_cap ? <p className="importWarning">{t("A work folder tracks at most {cap} files: untick some to save.", { cap: current.cap })}</p> : null}
+            {current.over_cap ? <FormNotice tone="warn">{t("A work folder tracks at most {cap} files: untick some to save.", { cap: current.cap })}</FormNotice> : null}
             {read.rules.exists && !current.rules_ours ? <p>{t("Your .gammaignore will be rewritten.")}</p> : null}
-          </> : preview?.error && preview.key === selectionKey ? <p className="importWarning">{preview.error}</p> : <p>{t("Counting…")}</p>}
+          </> : preview?.error && preview.key === selectionKey ? <FormNotice>{preview.error}</FormNotice> : <p>{t("Counting…")}</p>}
         </div>
         <div className="trackLibrary">
           <Toggle label={t("Add its PDFs and notes to the library")}
@@ -356,9 +356,9 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
         <p className="reportModalHint">{t("The AI chat sends a tracked file's text to the model provider when the file is in its context, as it sends a PDF's.")}</p>
       </> : null}
       {problem ? (
-        <p role="alert" className="importWarning">{problem.text}{" "}
+        <FormNotice>{problem.text}{" "}
           {problem.again ? <button type="button" className="uiBtn sm" onClick={readAll}>{t("Read it again")}</button> : null}
-        </p>
+        </FormNotice>
       ) : null}
       <div className="reportModalBtns importReviewFooter">
         <button type="button" className="uiBtn" onClick={close}>{t("Cancel")}</button>

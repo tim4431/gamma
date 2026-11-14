@@ -239,6 +239,22 @@ def granted(conversation_id: str, command: str, *, link_id: str, cwd: str = ".",
                              link_id)).fetchone() is not None
 
 
+def grants_of(conversation_id: str, *, link_id: str) -> list[dict]:
+    """What the person allowed in the conversation, in the vault
+    ``link_id``: ``[{command, cwd, host}]``, oldest first (the composer's
+    Allowed in this chat chip)."""
+    with connect_vaults_db() as conn:
+        rows = conn.execute("SELECT command, cwd, host FROM agent_grants WHERE conversation_id = ? AND link_id = ? "
+                            "ORDER BY at, command", (conversation_id, link_id)).fetchall()
+    return [{"command": r[0], "cwd": r[1], "host": r[2]} for r in rows]
+
+
+def forget_grants(conversation_id: str) -> None:
+    """The conversation's grants taken back: each command asks again."""
+    with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM agent_grants WHERE conversation_id = ?", (conversation_id,))
+
+
 # --- the runs ------------------------------------------------------------------------------
 
 def start_run(*, ws: str, link_id: str, request_id: str, agent: str, run_id: str = "") -> str:

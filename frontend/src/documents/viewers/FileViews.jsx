@@ -65,10 +65,12 @@ const fitting = (value) => value == null || value === "page-width" || !Number(va
 // them; `flashId` the region a jump landed on; `hidden` the pane is closed,
 // still mounted (display: none, which loses the scroll and the box). A
 // picture that will not load hands over to the file pane, and the next
-// version of the file (a new `fileUrl`) mounts a viewer of its own again.
+// version of the file (a new `fileUrl`) mounts a viewer of its own again;
+// the pane's Try again mounts one for the same file.
 export function ImageViewer(props) {
   const [failedAt, setFailedAt] = useState(null); // the fileUrl that would not load
-  if (!props.fileUrl || failedAt === props.fileUrl) return <FilePane doc={props.doc} fileUrl={props.fileUrl} onReveal={props.onReveal} />;
+  if (!props.fileUrl) return <FilePane doc={props.doc} fileUrl={props.fileUrl} onReveal={props.onReveal} />;
+  if (failedAt === props.fileUrl) return <FilePane doc={props.doc} fileUrl={props.fileUrl} onReveal={props.onReveal} onRetry={() => setFailedAt(null)} />;
   return <Picture {...props} onFailed={() => setFailedAt(props.fileUrl)} />;
 }
 
@@ -332,6 +334,7 @@ function Picture({ doc, fileUrl, readOnly = false, hidden = false, scale = null,
             <img ref={imgRef} src={fileUrl} alt={doc.name} draggable={false} decoding="async"
               onLoad={(e) => setNatural({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
               onError={onFailed} />
+            {frame ? null : <div className="docViewHint loadingHint">{t("Loading…")}</div>}
             {frame ? regions.map((h) => {
               const f = regionFractions(h.position);
               if (!f) return null;
@@ -438,9 +441,11 @@ export function MediaViewer({ doc, fileUrl, hidden = false, onReveal = null }) {
 // an address (no `fileUrl`: nothing here to read), a file whose bytes are
 // on another computer (the GET answers 404: a work folder's file of
 // another machine), or the caller's (`sentence`: a file that would not
-// play, a text that was binary after all). Download for a file with bytes
+// play, a text that was binary after all). `onRetry`: the viewer's read
+// failed (not a 404), so the pane says it could not read the file and
+// offers Try again, which reads it again. Download for a file with bytes
 // here, Show in folder where the host gives `onReveal` (the desktop shell).
-export function FilePane({ doc, fileUrl, onReveal = null, sentence = null }) {
+export function FilePane({ doc, fileUrl, onReveal = null, sentence = null, onRetry = null }) {
   const listed = isListed(doc);
   const [probe, setProbe] = useState(null); // {status, size} of a HEAD
   useEffect(() => {
@@ -455,9 +460,11 @@ export function FilePane({ doc, fileUrl, onReveal = null, sentence = null }) {
   }, [fileUrl, listed]);
   const size = doc.size ?? probe?.size ?? null;
   const gone = probe?.status === 404;
+  const failed = !!onRetry && !!fileUrl && !listed && !gone;
   const words = sentence || (listed ? t("This file is too large to keep in Gamma. It stays in its folder on this computer.")
     : !fileUrl ? t("Gamma has only this file's address, so there is nothing here to show.")
     : gone ? t("This file's bytes are on another computer.")
+    : failed ? t("Could not read this file.")
       : t("Gamma cannot show this file. Download it to open it in another app."));
   return (
     <div className="filePane">
@@ -465,10 +472,11 @@ export function FilePane({ doc, fileUrl, onReveal = null, sentence = null }) {
         <FileGlyph format={doc.format} />
         <div className="filePaneName">{doc.name}</div>
         <div className="filePaneMeta">{[formatLabel(doc), size != null ? fmtBytes(size) : ""].filter(Boolean).join(" · ")}</div>
-        <p className="filePaneHint">{words}</p>
+        <p className="filePaneHint" role={failed ? "alert" : undefined}>{words}</p>
         <div className="filePaneActions">
+          {failed ? <button type="button" className="uiBtn primary" onClick={onRetry}>{t("Try again")}</button> : null}
           {!listed && !gone && fileUrl ? (
-            <a className="uiBtn primary" href={fileUrl} download={doc.name} onClick={saveLinkClick(fileUrl, doc.name)}>
+            <a className={`uiBtn${failed ? "" : " primary"}`} href={fileUrl} download={doc.name} onClick={saveLinkClick(fileUrl, doc.name)}>
               <DownloadIcon size={16} /> {t("Download")}
             </a>
           ) : null}

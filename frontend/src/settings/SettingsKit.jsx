@@ -3,7 +3,7 @@
 // Step/Field/DialogButtons for the editor dialogs they open, NavAccountCard
 // on the rail, plus the small shared controls (Segmented,
 // PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
-// PasswordInput, TestResult, CopyField, AccountPicker, PersonRow, LogBox, Stat/StatText, Empty,
+// PasswordInput, TestResult, CopyField, AccountPicker, PersonRow, LogBox, Stat/StatText, Empty, FormNotice,
 // WorkspaceFolder, QuotaMeter/PercentMeter, RingMeter/StorageRing,
 // KeyCaps/KeyBinding).
 // New settings UI should reuse these; bespoke classes are for layout only.
@@ -200,10 +200,12 @@ export function Toggle({ checked, onChange, disabled, label, ...row }) {
 
 // Joined pill buttons for a single mutually-exclusive choice; the chosen
 // one's frame slides to the next one chosen (useSlidingPill).
-// `options` are [value, label, Icon, tooltip]. An option with an icon has
-// a compact form, the icon alone with its word kept as the button's name
-// (and tooltip, without one of its own): a narrow dock window's header
-// turns it on (app.css .dockWindowHeader).
+// `options` are [value, label, Icon, tooltip, trailing]. An option with an
+// icon has a compact form, the icon alone with its word kept as the
+// button's name (and tooltip, without one of its own): a narrow dock
+// window's header turns it on (app.css .dockWindowHeader). `trailing`, a
+// small mark after the word that stays in the compact form too (the chat
+// side switch's agent at work or waiting, ChatSides).
 export function Segmented({ value, onChange, options, disabled }) {
   // In a menu (the table column menu's alignment) its choices are the
   // menu's radio items; anywhere else, pressed buttons.
@@ -213,7 +215,7 @@ export function Segmented({ value, onChange, options, disabled }) {
   return (
     <span className="segGroup" ref={ref}>
       <span className="slidePill" aria-hidden="true" />
-      {options.map(([val, label, Icon, tip]) => (
+      {options.map(([val, label, Icon, tip, trailing = null]) => (
         <button
           key={val} type="button" title={t(tip || label)} disabled={disabled}
           aria-label={Icon ? t(label) : undefined}
@@ -224,6 +226,7 @@ export function Segmented({ value, onChange, options, disabled }) {
           onClick={() => onChange(val)}
         >
           {Icon ? <><Icon size={14} /><span className="segLabel">{t(label)}</span></> : t(label)}
+          {trailing}
         </button>
       ))}
     </span>
@@ -647,6 +650,20 @@ export function LogBox({ icon, label, description, entries, emptyText, loading =
 // after a moment (.loadingHint, motion.css), so a quick answer never shows it.
 export function Empty({ icon: Icon, loading = false, children }) {
   return <div className={`setEmpty${loading ? " loadingHint" : ""}`}><Icon size={20} />{children}</div>;
+}
+
+// The one line a pane, a form or a dialog says what went wrong or wants
+// care: an error (--danger, role="alert", so a screen reader says it at
+// once), a warning (--warn) or a note (muted). It goes in the section the
+// thing happened in, just above the actions it came from; a success is the
+// status pill's (setStatus), never a line. A button may follow the words
+// (Try again).
+const NOTICE_TONES = { error: "aiKeysError", warn: "shareWarn", info: "" };
+export function FormNotice({ tone = "error", className = "", children }) {
+  return (
+    <p className={["settingsPaneHint", NOTICE_TONES[tone], className].filter(Boolean).join(" ")}
+      role={tone === "error" ? "alert" : undefined}>{children}</p>
+  );
 }
 
 // A workspace's folder in the server's data directory (workspaces/<id>/),

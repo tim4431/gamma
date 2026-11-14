@@ -269,8 +269,8 @@
 .commentTooLong { font-size: var(--fs-xs); color: var(--danger); }
 /* What sending a comment that names the agent on this computer does, or
    why it cannot run (CommentComposer's hint). */
-.commentAgentHint { font-size: var(--fs-xs); color: var(--text-muted); }
-.commentAgentHint.problem { color: var(--warn); }
+.commentAgentHint { font-size: var(--fs-xs); }
+.commentAgentHint:not(.agentProblem) { color: var(--text-muted); }
 .commentComposerBar .commentSend.uiBtn.sm { min-width: var(--ctl-btn-sm); }
 
 /* --- The Comments window (CommentsPanel.jsx) ------------------------------- */

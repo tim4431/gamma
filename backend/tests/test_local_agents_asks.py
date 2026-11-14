@@ -358,6 +358,14 @@ def test_allowed_in_this_chat_answers_the_same_command_alone(lab, disk, monkeypa
         "Did not run it.", [{"id": "ap0", "kind": "run", "status": "declined", "program": "latexmk"}])
     assert _steers(disk.log) == ["The owner declined that: Not with shell escape."]
 
+    # the composer's chip reads the grant from the strip and takes it back: the command asks again
+    assert _chat(lab.owner, f.page)["computer"]["grants"] == [{"command": BUILD, "cwd": ".", "host": ""}]
+    assert lab.editor.delete(f"/api/local-agents/chat/grants/{conversation}").status_code == 404
+    r = lab.owner.delete(f"/api/local-agents/chat/grants/{conversation}")
+    assert r.status_code == 200 and r.json() == {"forgotten": True}
+    assert _chat(lab.owner, f.page)["computer"]["grants"] == []
+    assert not store.granted(conversation, BUILD, link_id=f.id)
+
 
 def test_a_file_change_asked_with_its_diff(lab, disk, monkeypatch):
     f = _asking(lab, disk)
