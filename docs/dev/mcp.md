@@ -262,8 +262,7 @@ A new reading tool is offered without touching the adapter; `test_mcp.py`
 pins the names. The chat's other tools stay off: the web tools (`search_papers`,
 `fetch_paper`, …), because the assistant has its own web access;
 `list_deleted`, because Recently deleted is out of the reading tools' reach
-and restoring is a change; `update_plan`, which has no permission and only
-goes with the changes; and every write tool of the chat but the four note
+and restoring is a change; and every write tool of the chat but the four note
 tools a connection gets where the user let it edit ("Editing notes"; a
 feedback connection's answers are its own two tools, below). The chat's tool
 permissions (Settings → AI → Tool usage) do not govern this connection: the

@@ -744,9 +744,7 @@ prefix, so a change in either costs the head and the history too. The system
 prompt therefore holds only what stays the same for a whole conversation
 (`agent_system`'s docstring is the rule). What a message points at in the
 notes (the cursor block, attached chips, note selections) goes with that
-message ("Pointing the chat at notes" below), and so does a planning turn's
-instruction ("Planning first" below): Plan on or off, the specs and the
-system prompt are the same. The tools that ask are not
+message ("Pointing the chat at notes" below). The tools that ask are not
 named, so a permission the conversation allows on an approval card changes
 nothing ("Asking before a call" below). The system prompt changes only when the model, the custom
 prompts, the tool permissions, the pages in context or their coverage
@@ -980,17 +978,16 @@ On a work folder's file whose vault the account made, with an agent on
 **Gamma AI | Codex**, drawn even when Gamma AI is off or unset. The
 Codex side is not Gamma AI's: it talks to the agent on this computer, has
 its own conversations, strip, transcript and composer, and goes through
-none of this document's machinery (no provider, model, tools, Plan mode,
-approvals or chat buckets). It is [local_agents.md](local_agents.md)
+none of this document's machinery (no provider, model, tools, approvals or
+chat buckets). It is [local_agents.md](local_agents.md)
 "The chat's computer side"; this side's PDF passages are the same App
 state on both.
 
 ### The composer
 
 The composer is one rounded box: the context chips on top, the message at
-full width, then a toolbar of [+], the PDF switch, the Plan switch
-("Planning first" below), the model chip, the mic, and Send (or Stop while
-this bucket's reply streams). The box's
+full width, then a toolbar of [+], the PDF switch, the model chip, the
+mic, and Send (or Stop while this bucket's reply streams). The box's
 buttons never take the focus (the form cancels a button's `mousedown`), so
 a press keeps an on-screen keyboard up.
 
@@ -1666,98 +1663,6 @@ This guards the user's intent, not the workspace. The changing tools exist
 only where `auth.can_write` allows them, and the permission map and
 `granted` come from the user's own client.
 
-### Planning first (Plan mode)
-
-The composer's **Plan** switch makes the next message a planning turn. The
-agent reads, searches and looks things up as it likes, changes nothing, and
-ends with a plan of the change for the user to approve. Approving it runs
-the change as a normal turn, under the chat's own Allow, Ask and Off.
-
-The request carries `planning: true` (`AIChatRequest.planning`), and
-`_chat_scope` puts it on the tool scope. `run_agent_tool` refuses every
-changing call of such a turn (`ai_tools.held_for_plan`) with `PLAN_HELD`:
-nothing was changed, and the change goes into the plan. The refusal comes
-after the unknown-tool, `can_write` and permission checks, so a tool the
-user turned off is still refused as off. A call that could not change
-anything (a wrong id, a page out of scope, nothing to do) is not held: it
-gets the answer `approval_preview` gives it under Ask, so no step that
-cannot be made goes into the plan. `ApprovalGate.run` sends a held
-call straight to the dispatcher, so it shows no card and opens no approval.
-`AgentLoop._preview` streams no `progress` for it, so a held note edit is
-never typed into the notes. Reading tools set to Ask still ask. A held
-call's chip is an error chip with `held: true`. It names the change by the
-`title`, `mode` and `count` its card would have shown
-(`approval_preview`, worked out and never shown), as a declined chip does.
-
-The tool specs and the system prompt stay the same as on every other turn.
-A planning turn that offered only the reading tools would re-write the
-cached prefix twice per plan, once for the planning turn and once for the
-Approve turn after it ("Prompt caching" above). In a folder chat with no web
-engine or helper, 30 specs (27,639 characters, update_plan's 837 among
-them) and a 10,482-character agent prompt sit in front of the document
-head; leaving out the 15 changing tools would leave 15 specs (15,889
-characters). What the turn is told goes with
-the message instead: `ai_tools.PLANNING_TURN` ends the current user turn
-(`build_messages(turn_note=)`, after the picture lines), and only when
-update_plan is armed. It says to read freely, change nothing, call
-update_plan once with one step per change, and end with a short summary.
-A question that needs no change is answered without a plan.
-
-The plan is the `update_plan` tool, with Codex's schema (`{explanation?,
-plan: [{step, status}]}`,
-[ai_tools.md](ai_tools.md#update_plan-both-scopes)). It has no permission
-of its own and is armed whenever a changing tool is. In a planning turn
-every step is pending and the action carries `plan: {steps, proposed:
-true}`. The result heads the numbered checklist
-"Proposed to the user; nothing is changed until they approve it:", which
-stays true in the turns that replay it.
-
-In the client (`chat/plan.js` has the rules, `chat/PlanCard.jsx` the card):
-
-- **The switch** sits after the PDF switch (`chatAttachToggle chatPdfToggle
-  chatPlanToggle`, `aria-pressed`). It shows to an editor (`canSave`, not a
-  share view) with an AI connected, tools on and an agent scope, where this
-  kind of chat has a changing permission that is not Off. Plan's word gives
-  way in a narrow dock, as the grant chip's does. While it is on, the
-  message box's last placeholder reads "Ask for a plan…".
-- **The card.** A reply whose last update_plan ran shows its plan after
-  its text, in the approval card's look (`chatApproval chatPlan`, without
-  the `chat.approval` anchor and without `approval.shown`): numbered
-  steps, and a badge that reads "Awaiting your approval", "Approved" or
-  "2 of 4 done" (`planStatus`). A pending plan under the conversation's
-  last reply offers **Approve plan** (primary) and **Revise** while nothing
-  streams here and the composer is empty (`canActOnPlan`, Continue's rule
-  plus the editor's). A plan another message replaced goes quiet, and so
-  does a proposal whose reply failed: neither history sends a failed
-  reply, so the model would not see what Approve carries out, and the
-  reply offers Retry instead.
-- **Approve plan** turns Plan off and sends "Carry out the approved plan."
-  in the user's name, as a normal turn, so changes ask where the settings
-  say Ask and land in the reply's list with their revert. The planning
-  card then reads Approved. The turn replays the planning reply's
-  update_plan call and its result, the whole checklist
-  ([ai_tools.md](ai_tools.md#update_plan-both-scopes)), and so does every
-  later turn, a Continue after the run included: the replay keeps the
-  newest plan whole ("Replay across turns" below). When the model
-  marks steps with update_plan as it works, the run's reply draws its own
-  card with each step's state.
-- **Revise** turns Plan on and goes to the message box: the next message
-  plans again.
-- **The steps pill** counts held calls as "2 kept for the plan", apart
-  from failures, and a held chip reads "Kept for the plan: Rename 37
-  pages" (`heldSummary`).
-
-Which messages plan is one rule, `sentPlanning`: an explicit answer wins,
-then a resent message that planned plans again, then the switch, and
-nothing plans where the switch is not offered. Continue (after a limit)
-and the handoff card's Continue pass the mode of the conversation's last
-user message (`continuesPlanning`), so an approved run never resumes
-read-only and a planning turn never starts changing things. Approve and
-App's Transcribe asks send `planning: false`. A message sent as a planning
-turn is saved with `planning: true`, and Approve's with `approvesPlan:
-true`. The history sends neither to the server. A conversation loaded
-whose last user message planned shows Plan on, and New chat turns it off.
-
 ### The tool loop
 
 ```mermaid
@@ -1831,11 +1736,9 @@ reply, or one cut off at the output cap (`truncated`), is the
 conversation's last, nothing runs and the composer is empty,
 **Continue** sends "Please continue where you stopped." in the user's
 name (`canContinueAfterLimit`, as the handoff card's Continue). It is a
-new message, so budgets start fresh, and it keeps the mode of the message
-it continues: a planning turn's Continue plans, an approved run's does not
-("Planning first" above). The stopped reply's calls are replayed compactly
-(arguments cut at `_ARG_CAP`, results under `TOOL_REPLAY_BUDGET`, and only
-the newest `REPLAY_CALLS`, below). So
+new message, so budgets start fresh, and the stopped reply's calls are
+replayed compactly (arguments cut at `_ARG_CAP`, results under
+`TOOL_REPLAY_BUDGET`, and only the newest `REPLAY_CALLS`, below). So
 after the window stopped a reply, the task and the newest work still
 fit. Stop and errors offer no Continue.
 
@@ -1885,10 +1788,9 @@ naming a single page lifts that page's `page_id` / `title` into `args`;
 the label reads "Renaming 37 pages…".
 Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
-list/read/view/search/rename/move/edit/create, `plan` for update_plan, plus
-`error` with `error: true` for failed/blocked calls, and `held: true` too for
-a change a planning turn refused) that the chat saves in the message. A
-change also says what changed: `rename_page` / `move_page` carry `title` (the page's title
+list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
+failed/blocked calls) that the chat saves in the message. A change also says
+what changed: `rename_page` / `move_page` carry `title` (the page's title
 before the call) and `from` / `to` (old and new title, old and new folder
 path, `""` = the library root), and the note tools their page's `title`.
 The folder and label tools carry `title` (the folder's path, the label's
@@ -2051,9 +1953,7 @@ pages changed since), undone except on that many pages
 (`_REVERTED_KEPT_NOTE`). A redo that left pages as they were keeps
 `kept` without the mark, and the note says it was redone except on those
 (`_REDONE_KEPT_NOTE`) ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
-(older ones elided). The newest update_plan result is kept whole, its size
-taken from the budget first: a run that carries out a plan reads more than
-the budget holds, and its Continue must still see every step. A reply replays at most its newest `REPLAY_CALLS`
+(older ones elided). A reply replays at most its newest `REPLAY_CALLS`
 (200) calls. The older ones become one line in front of them, how many
 by tool (`_OMITTED_CALLS`): an Unlimited reply that filled the window
 made thousands, and replaying them all would fill the next message's

@@ -1,9 +1,8 @@
 """AI tool permissions (gamma/ai_permissions.py): the three states and their
 defaults, what each state arms, the approval card's preview of a change, the
-waiting approvals and their answers, the tool loop asking before a change:
+waiting approvals and their answers, and the tool loop asking before a change:
 allowed once or for the chat, declined, unanswered, answered over HTTP, and a
-stream that closes while its card waits, and a planning turn, which changes
-nothing and proposes a plan instead."""
+stream that closes while its card waits."""
 
 import json
 import threading
@@ -13,8 +12,8 @@ import pytest
 
 from gamma import ai_permissions
 from gamma.ai_permissions import permission_state
-from gamma.ai_tools import (MUTATING_TOOLS, PLAN_HELD, PLANNING_TURN, TOOLS, agent_system, agent_tools,
-                            approval_preview, run_agent_tool, text_diff, tool_states)
+from gamma.ai_tools import (MUTATING_TOOLS, TOOLS, agent_system, agent_tools, approval_preview,
+                            text_diff, tool_states)
 from gamma.db import connect_pages_db
 from gamma.ops import apply_ops
 from gamma.routers.ai import WatchedStream, keepalive_lines
@@ -580,179 +579,3 @@ def test_the_card_is_answered_over_http_while_the_reply_waits(org, monkeypatch):
     thread.join(5)
     assert answered == {"status": 200}
     assert actions[0]["approval"] == "once" and props(c, ids["b"])["content"] == "Answered over HTTP"
-
-
-# --- planning first ---------------------------------------------------------------
-
-def _plan_steps(*texts, status="pending"):
-    return [{"step": text, "status": status} for text in texts]
-
-
-def test_a_planning_turn_refuses_a_change_without_asking(org, monkeypatch):
-    """With Plan on a change set to Ask shows no card: the server refuses it
-    before any preview, the model hears why, and the reads of the same round
-    run."""
-    c, ids = org
-    before = props(c, ids["a"])["content"]
-    opened = _agent(monkeypatch, ("t1", "rename_page", {"page_id": ids["a"], "title": "Planned title"}),
-                    ("t2", "read_page", {"page_id": ids["b"], "pdf_chars": 0}))
-    asked = _answers(monkeypatch, ids["user"])
-    lines, actions = _chat(c, permissions={**ALLOW_ALL, "rename": "ask"}, planning=True)
-    assert asked == [] and "approval" not in _kinds(lines)
-    assert not [a for a in ai_permissions._pending.values() if a["user"] == account_of(ids["user"])]
-    assert props(c, ids["a"])["content"] == before
-    held = actions[0]
-    assert (held["tool"], held["error"], held["held"]) == ("rename_page", True, True)
-    assert held["result"] == PLAN_HELD and held["summary"] == "Held for the plan: rename_page"
-    assert held["title"] == before, "the chip names the page the change was for"
-    assert actions[1]["kind"] == "read" and not actions[1].get("error")
-    results = [m for m in opened[1]["messages"] if m["role"] == "tool"]
-    assert results[0]["content"].startswith(PLAN_HELD) and not results[1]["content"].startswith("error")
-
-
-def test_a_planning_turn_answers_a_change_that_could_not_be_made(org):
-    """A held call is checked as its card would be: a wrong page id, or a
-    title the page already has, gets that answer and no hold, so no step
-    that cannot be made goes into the plan."""
-    c, ids = org
-    scope = {**folder(""), "planning": True}
-    result, action = run_agent_tool(ids["ws"], scope, "rename_page", {"page_id": "f" * 24, "title": "New"})
-    assert result.startswith("error") and not action.get("held")
-    title = props(c, ids["a"])["content"]
-    result, action = run_agent_tool(ids["ws"], scope, "rename_page", {"page_id": ids["a"], "title": title})
-    assert result != PLAN_HELD and not action.get("held")
-    result, action = run_agent_tool(ids["ws"], scope, "rename_page", {"page_id": ids["a"], "title": "Kept"})
-    assert result == PLAN_HELD and action["held"] and props(c, ids["a"])["content"] == title
-
-
-def test_a_planning_turn_still_refuses_a_tool_that_is_off_as_off(org, monkeypatch):
-    c, ids = org
-    _agent(monkeypatch, ("t1", "move_page", {"page_ids": [ids["a"]], "folder": "cooling"}))
-    _, actions = _chat(c, permissions={**ALLOW_ALL, "move": "off"}, planning=True)
-    assert actions[0]["result"].startswith("error: tool not enabled") and not actions[0].get("held")
-
-
-def test_a_planning_turn_types_nothing_into_the_notes(notes, monkeypatch):
-    c, ids = notes
-    before = props(c, ids["other"])["content"]
-    _agent(monkeypatch, ("t1", "edit_block", {"block_id": ids["other"], "mode": "append", "content": "planned"}))
-    lines, actions = _chat(c, agent_scope="page", page_id=ids["page"],
-                           permissions={**ALLOW_ALL, "block_edit": "allow"}, planning=True)
-    assert not [line for line in lines if "progress" in line]
-    assert actions[0]["held"] and props(c, ids["other"])["content"] == before
-
-
-def test_a_planning_turn_keeps_the_cached_prefix_and_says_so_with_its_message(org, monkeypatch):
-    """Plan on or off, the provider gets the same tools and the same system
-    prompt: only the message itself ends with the planning note, never a
-    history turn, and not at all where nothing can change."""
-    import gamma.routers.ai as ai_mod
-
-    c, _ = org
-    opened = []
-
-    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
-        opened.append({"messages": [dict(m) for m in messages], "system": system, "tools": kw.get("tools")})
-        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "done"}}])
-
-    monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
-    history = [{"role": "user", "text": "what is in here?"}, {"role": "ai", "text": "two papers"}]
-    for planning in (True, False):
-        _chat(c, permissions={**ALLOW_ALL, "rename": "ask"}, history=history, planning=planning)
-    plan, normal = opened
-    assert plan["tools"] == normal["tools"] and "update_plan" in {t["name"] for t in plan["tools"]}
-    assert plan["system"] == normal["system"] and PLANNING_TURN not in plan["system"]
-    assert plan["messages"][-1]["content"].endswith(PLANNING_TURN)
-    assert plan["messages"][-1]["content"].startswith(normal["messages"][-1]["content"])
-    assert not any(PLANNING_TURN in m.get("content", "") for m in plan["messages"][:-1] + normal["messages"])
-    off = {k: "off" for k in ("save", "rename", "move", "restore", "organize", "organize_delete", "block_edit", "delete")}
-    _chat(c, permissions={**ALLOW_ALL, **off}, planning=True)
-    assert PLANNING_TURN not in opened[-1]["messages"][-1]["content"]
-    assert "update_plan" not in {t["name"] for t in opened[-1]["tools"]}
-
-
-def test_a_planning_turn_proposes_its_plan_with_every_step_pending(org, monkeypatch):
-    c, ids = org
-    opened = _agent(monkeypatch, ("p1", "update_plan", {"explanation": "AuthorYear titles", "plan": [
-        {"step": "Rename  “cavity paper”\n to Ada2019", "status": "in_progress"},
-        {"step": "Rename “qec paper” to Qec2021", "status": "completed"}]}))
-    _, actions = _chat(c, permissions={**ALLOW_ALL, "rename": "ask"}, planning=True)
-    plan = actions[0]
-    assert (plan["kind"], plan["tool"], plan["summary"]) == ("plan", "update_plan", "Planned 2 steps")
-    assert plan["plan"] == {"proposed": True, "steps": _plan_steps("Rename “cavity paper” to Ada2019",
-                                                                    "Rename “qec paper” to Qec2021")}
-    assert plan["result"] == ("Proposed to the user; nothing is changed until they approve it:\n"
-                              "1. [pending] Rename “cavity paper” to Ada2019\n2. [pending] Rename “qec paper” to Qec2021")
-    assert opened[1]["messages"][-1]["content"] == plan["result"]
-
-
-def test_update_plan_reads_its_steps_leniently_and_keeps_fifteen(org):
-    _, ids = org
-    scope = {**folder(""), "planning": True}
-    for bad in ({}, {"plan": []}, {"plan": "rename everything"}, {"plan": [{"step": "  "}, 3]}):
-        result, action = run_agent_tool(ids["ws"], scope, "update_plan", bad)
-        assert result.startswith("error: `plan` must be") and action["error"], bad
-    result, action = run_agent_tool(ids["ws"], scope, "update_plan",
-                                    {"plan": [f"step {n}" for n in range(1, 21)]})
-    assert len(action["plan"]["steps"]) == 15 and action["plan"]["steps"][-1] == {"step": "step 15",
-                                                                                   "status": "pending"}
-    assert result.endswith("(5 more steps were left out: a plan holds at most 15)")
-
-
-def test_the_longest_plan_is_kept_whole_for_the_replay(org):
-    """15 steps of 200 characters, with the longest status words, fit the
-    chip's result, so the turn after the plan replays every step."""
-    _, ids = org
-    steps = [{"step": f"{n:02d} " + "x" * 300, "status": "completed"} for n in range(20)]
-    steps[0]["status"] = "in_progress"
-    for scope in (folder(""), {**folder(""), "planning": True}):
-        result, action = run_agent_tool(ids["ws"], scope, "update_plan", {"plan": steps})
-        assert action["result"] == result and "not kept" not in result
-        assert len(action["plan"]["steps"]) == 15 and all(len(s["step"]) == 200 for s in action["plan"]["steps"])
-
-
-def test_update_plan_in_a_normal_turn_keeps_the_progress(org):
-    _, ids = org
-    result, action = run_agent_tool(ids["ws"], folder(""), "update_plan", {"plan": [
-        {"step": "Rename the papers", "status": "completed"}, {"step": "File them", "status": "in_progress"},
-        {"step": "Label them", "status": "in_progress"}, {"step": "Tidy up", "status": "later"}]})
-    assert action["summary"] == "Plan: 1 of 4 done" and "proposed" not in action["plan"]
-    assert [s["status"] for s in action["plan"]["steps"]] == ["completed", "in_progress", "pending", "pending"]
-    assert result.splitlines()[:3] == ["Plan updated, 1 of 4 done:", "1. [completed] Rename the papers",
-                                       "2. [in_progress] File them"]
-
-
-def test_an_approved_plan_runs_under_ask_and_replays_the_plan(org, monkeypatch):
-    c, ids = org
-    _, planned = run_agent_tool(ids["ws"], {**folder(""), "planning": True}, "update_plan",
-                                {"plan": _plan_steps("Rename “cavity paper” to Approved2019")})
-    history = [{"role": "user", "text": "rename the cavity paper"},
-               {"role": "ai", "text": "Here is the plan.", "actions": [planned]}]
-    opened = _agent(monkeypatch, ("t1", "rename_page", {"page_id": ids["a"], "title": "Approved2019"}))
-    asked = _answers(monkeypatch, ids["user"], "once")
-    lines, actions = _chat(c, prompt="Carry out the approved plan.", history=history,
-                           permissions={**ALLOW_ALL, "rename": "ask"})
-    assert len(asked) == 1 and _kinds(lines) == ["step", "approval", "action"]
-    assert actions[0]["approval"] == "once" and props(c, ids["a"])["content"] == "Approved2019"
-    replayed = opened[0]["messages"]
-    call = next(m for m in replayed if m.get("tool_calls"))
-    assert call["tool_calls"][0]["name"] == "update_plan"
-    result = next(m for m in replayed if m["role"] == "tool")["content"]
-    assert "Proposed to the user" in result and "1. [pending] Rename “cavity paper” to Approved2019" in result
-    assert PLANNING_TURN not in replayed[-1]["content"]
-
-
-def test_the_dispatcher_refuses_every_change_in_a_planning_turn(org):
-    """Every changing tool is held, but a call that could not change
-    anything (here, one without its arguments) answers as under Ask."""
-    _, ids = org
-    scope = {**folder(""), "planning": True}
-    for name in sorted(MUTATING_TOOLS):
-        result, action = run_agent_tool(ids["ws"], scope, name, {})
-        answer = approval_preview(ids["ws"], scope, name, {})[1]
-        if answer is None:
-            assert result == PLAN_HELD and action["held"] and action["error"], name
-        else:
-            assert result == answer and not action.get("held"), name
-    result, action = run_agent_tool(ids["ws"], scope, "list_folders", {})
-    assert not result.startswith("error") and not action.get("held")

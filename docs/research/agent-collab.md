@@ -86,7 +86,7 @@ through the Gamma plugin: [What works without the host](#what-works-without-the-
 | Highlights after a replacement ([highlight_relocation.md](../dev/highlight_relocation.md)) | after a fix, a highlight moves with its text; one whose text was rewritten is drawn dashed or hollow | a fixed typo reads as a rough match or a lost highlight, which here means "done" |
 | The desktop app's local server | a Python process on the PC that keeps the work folder, beside the directory | it started no agent |
 | The MCP endpoint ([mcp.md](../dev/mcp.md)) | a connected Codex or Claude Code reads the library, and `list_feedback` / `read_feedback`; on a `feedback` connection `reply_feedback` / `resolve_feedback` | the agent is started by the person, at a terminal |
-| The chat window ([ai.md](../dev/ai.md)): the steps pill and its chips, `ApprovalCard`, `PlanCard`, the changes card, Stop, a conversation per page and per folder | everything a turn of an agent needs drawn | a reply stops with its tab, and the stream is Gamma's own tool loop |
+| The chat window ([ai.md](../dev/ai.md)): the steps pill and its chips, `ApprovalCard`, the changes card, Stop, a conversation per page and per folder | everything a turn of an agent needs drawn | a reply stops with its tab, and the stream is Gamma's own tool loop |
 | A selected PDF passage in the composer (`pdfSelections`: text, page, box) | the anchor of "fix this", with the position SyncTeX needs | |
 | The paper-fetch card ([ai_tools.md](../dev/ai_tools.md)) | the precedent: a reply that waits on something on the user's computer (the Connector) and says what it is doing there | |
 | Background tasks | the row for work that outlives a tab | server jobs and one tab's work only |
@@ -406,7 +406,7 @@ conversation and its own History:
   in the wrong place is seen and not quoted. The model chip becomes the
   assistant's: *Codex* or *Claude Code* as found on that computer, with
   that assistant's models and effort as the chip's sections. The PDF
-  and Plan switches are not drawn on this side.
+  switch is not drawn on this side.
 - **The transcript** is the chat's own. The steps pill and its chips
   take four new kinds: a file read, a file edited (its diff in the rows
   the approval card draws, `ctx` / `del` / `ins`), a command with its
@@ -426,7 +426,6 @@ to the window. What the agent says is translated once, on the server:
 | a message chunk | text | the reply |
 | a tool call: read, edit, execute | a step and its action | the steps pill, `chipText.js` |
 | an edit's diff | the action's `diff` | the approval card's diff rows |
-| a plan | the plan | `PlanCard` |
 | a permission request | `{approval}` | `ApprovalCard`; the answer goes to `POST /api/ai/approvals/{id}` as now |
 | the turn's end, the files changed, the build | `done` with a summary | a card after the reply, as `AgentChanges` is |
 
