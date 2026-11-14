@@ -100,33 +100,20 @@ def _computer_agent(ws: str, w: str, user_id: str) -> dict | None:
     account's never answers for it): ``{name, label, computer, online,
     ready, problem, takes, why}``, ``computer`` its name, ``ready`` as the
     computer last said, ``problem`` while it is offline (a Send then waits
-    for it) or, online, while the agent there is not ready (``_problem``),
-    ``takes`` false with ``why`` while the folder is paused there; None for
-    none."""
+    for it) or, online, while the agent there is not ready
+    (``chats.far_problem``), ``takes`` false with ``why`` while the folder
+    is paused there; None for none."""
     from ..computers import registry
+    from ..local_agents.chats import far_problem
 
     found = registry.agent_of(ws, w, user_id)
     if found is None:
         return None
     label, computer = found["label"], found["computer"]
     why = f"The synced folder is paused on {computer}: {label} starts once it syncs again." if found["paused"] else ""
-    problem = _problem(found) if found["online"] else f"{computer} is offline: this runs when it connects."
+    problem = far_problem(found) if found["online"] else f"{computer} is offline: this runs when it connects."
     return {"name": found["agent"], "label": label, "computer": computer, "online": found["online"],
             "ready": found["ready"], "problem": problem, "takes": not why, "why": why}
-
-
-def _problem(found: dict) -> str:
-    """Why the online computer's agent (``registry.agent_of``) cannot take
-    a Send now, in the words the @ menu says it; "" while it is ready or
-    not known to be otherwise."""
-    if found["ready"] is not False:
-        return ""
-    label, computer = found["label"], found["computer"]
-    if found["code"] == "signed_out":
-        return f"{label} is not signed in on {computer}."
-    if found["code"] == "missing":
-        return f"{label} is not on {computer}."
-    return f"{label} is not ready on {computer}."
 
 
 @router.post("/requests", status_code=201)

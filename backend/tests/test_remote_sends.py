@@ -22,7 +22,8 @@ fetched); a Send made while the computer is away taken when it comes back;
 a token's Send refused there and another account's never run; a withdraw
 stopping the run, never overwritten; a claim retried (the same run told it
 holds it, another refused) and answers retried writing nothing twice; an
-``@codex`` mention made there run here; recovery failing an open run there,
+``@codex`` mention made there run here as a turn of its thread (no Send:
+test_remote_chat.py has the thread's turn); recovery failing an open run there,
 and the channel's next announce one left open while that server was away (a
 claim never answered too); a paused vault pushing nothing; Stop showing
 leaving the computer's agents be; the routes' refusals.
@@ -143,7 +144,7 @@ def nas(lab, tmp_path, monkeypatch):
         if folder_links.inside(link["path"], str(tmp_path)):
             folder_links._forget(link)
     with connect_vaults_db() as conn:
-        for table in ("agent_runs", "computer_agents", "agent_threads", "agent_dir_grants"):
+        for table in ("agent_runs", "computer_agents", "agent_threads", "agent_dir_grants", "agent_people"):
             conn.execute(f"DELETE FROM {table}")
     with connect_users_db() as conn:
         for user in (account_of(OWNER), account_of(EDITOR)):
@@ -532,16 +533,17 @@ def test_a_run_whose_answers_were_lost_tries_again_and_writes_nothing_twice(lab,
     assert store.run_of(lab.ws, sent["id"])["state"] == "done"
 
 
-def test_a_mention_made_there_runs_here(lab, nas):
+def test_a_mention_made_there_runs_here_as_a_turn_of_its_thread(lab, nas):
     f = _made(lab, nas, "RS mention")
     f.turn.once()
     r = lab.owner.post(f"/api/pages/{f.page}/comments", json={"block_id": f.page, "body": "@codex tighten the title"})
     assert r.status_code == 201, r.text
+    assert r.json()["turn"]["agent"] == "Codex" and "send" not in r.json()
     thread_id = r.json()["thread"]["id"]
     f.turn.once()
     assert runner.wait_idle(60)
     reply = _threads(lab, f)[thread_id]["comments"][-1]
-    assert (reply["agent"], reply.get("agent_kind")) == ("Codex", "computer")
+    assert (reply["agent"], reply.get("agent_kind"), reply["body"]) == ("Codex", "computer", "Done: tighten the title")
 
 
 def test_recovery_fails_an_open_run_there(lab, nas):

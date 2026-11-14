@@ -2136,6 +2136,48 @@ def _v60_comment_agent_ids(ws: str, pages: sqlite3.Connection, data) -> None:
                           (f"{agents.COMPUTER}{computer}:{name}", comment_id))
 
 
+def _v62_computer_chat_threads(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A comment sent to a computer's agent is a turn of a conversation of
+    its thread (docs/dev/local_agents.md "A comment sent to an agent"):
+    ``computer_chats`` gains ``thread_id``, "" on every conversation so far
+    (each is a chat's). The schema statements make its index after the step.
+    Added where ``_columns()`` has the table and lacks the column, so a
+    rerun changes nothing and a copy without the table gets it from the
+    schema statements. The table never leaves a workspace's own copy
+    (``LOCAL_STEPS``)."""
+    columns = _columns(pages, "computer_chats")
+    if columns and "thread_id" not in columns:
+        pages.execute("ALTER TABLE computer_chats ADD COLUMN thread_id TEXT NOT NULL DEFAULT ''")
+
+
+def _v63_computer_chat_owners(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A co-author may use another account's agent (docs/dev/local_agents.md
+    "A co-author's turn"): ``computer_chats`` gains ``owner``, the account
+    whose agent a conversation talks to, its own ``user_id`` on every
+    conversation so far (each was its owner's). Added where ``_columns()``
+    has the table and lacks the column, so a rerun changes nothing and a
+    copy without the table gets it from the schema statements. The table
+    never leaves a workspace's own copy (``LOCAL_STEPS``)."""
+    columns = _columns(pages, "computer_chats")
+    if columns and "owner" not in columns:
+        pages.execute("ALTER TABLE computer_chats ADD COLUMN owner TEXT NOT NULL DEFAULT ''")
+        pages.execute("UPDATE computer_chats SET owner = user_id")
+
+
+def _v64_comment_agent_owners(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A comment a computer's agent wrote for a co-author keeps whose agent
+    it was (docs/dev/comments.md "Who wrote a comment"): ``comments`` gains
+    ``agent_owner``, the username of the agent's owner then, ``''`` on every
+    comment so far (none was written for a co-author before the column).
+    Added where ``_columns()`` has the table and lacks the column, so a
+    rerun changes nothing and a copy without the table gets it from the
+    schema statements. Comments never leave a workspace's own copy
+    (``LOCAL_STEPS``)."""
+    columns = _columns(pages, "comments")
+    if columns and "agent_owner" not in columns:
+        pages.execute("ALTER TABLE comments ADD COLUMN agent_owner TEXT NOT NULL DEFAULT ''")
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -2187,6 +2229,9 @@ WORKSPACE_STEPS = [
     (58, "request_via", _v58_request_via),
     (59, "computer_chat_buckets", _v59_computer_chat_buckets),
     (60, "comment_agent_ids", _v60_comment_agent_ids),
+    (62, "computer_chat_threads", _v62_computer_chat_threads),
+    (63, "computer_chat_owners", _v63_computer_chat_owners),
+    (64, "comment_agent_owners", _v64_comment_agent_owners),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
@@ -2198,4 +2243,4 @@ DERIVED_STEPS = {47, 48, 53}
 # in step with another (comments, the Inbox's rows, the Sends, a computer
 # agent's conversations): a mirror never sends them, so two copies on either
 # side of one still agree.
-LOCAL_STEPS = {54, 58, 59, 60}
+LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64}

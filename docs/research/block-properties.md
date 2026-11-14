@@ -92,7 +92,7 @@ pictures), since a generated column has to be rebuilt to change.
 | `imported_annot`, `annot_stripped` | a highlight, text box or picture that came from the PDF's own annotations | where it came from; that the PDF it came from was replaced ([dev/import_export.md](../dev/import_export.md)) |
 | `t0` | a block the web client makes, except an empty page's seed block and an ink group (its strokes carry their own) | wall-clock ms it was made, the replay's clock; `transcript: true` with `t0` on a recording's transcript paragraphs ([dev/recording.md](../dev/recording.md)) |
 | `collapsed` | any block | the fold a page opens with: a document property, while a reader's own folding is the `view` beside the tree (`blockModel.js`) |
-| `agent` | a block an agent made (Gamma AI's `create_block`, a connection's through MCP, a computer agent's highlight) | `{id, name, on?, for}`: who made it and the account it acted for, whose block it is ([dev/block_centric.md](../dev/block_centric.md) "Made by an agent") |
+| `agent` | a block an agent made (Gamma AI's `create_block`, a connection's through MCP, a computer agent's highlight) | `{id, name, on?, for, owner?}`: who made it, the account it acted for, whose block it is, and the agent's owner for a co-author's turn ([dev/block_centric.md](../dev/block_centric.md) "Made by an agent") |
 | `zotero_readonly`, `zotero_author` | a block a Zotero link will not write back | `lossy` or `locked`, and whose it is ([dev/zotero_sync.md](../dev/zotero_sync.md)) |
 
 **The page row.** A page is a block whose properties are the record of the

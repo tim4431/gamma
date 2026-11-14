@@ -60,7 +60,8 @@ thread comes along) and leaves out the orphaned ones. A thread is `{id,
 block_id, page_id, resolved_at, resolved_by, resolved_agent, made_on, sent,
 created_at, last_at, comments}`, oldest first, and each comment is `{id,
 thread_id, author, agent, body, created_at, updated_at, deleted}`, with
-`agent_kind` and `agent_on` for an agent's. People
+`agent_kind` for an agent's, and its `agent_id`, `agent_on` and, where
+it wrote for a co-author, `agent_owner` for a computer's agent's. People
 are named by username: `author` falls back to `author_name`, and
 `resolved_by` to `""`, once the account is gone; `agent` is the agent's
 name, `""` for a person, and `resolved_agent` the resolving agent's label
@@ -69,8 +70,11 @@ the file the thread was opened on (its anchor's `doc_id`, `""` for none),
 and `sent` the Send waiting on it (`comments._sent`: the newest
 `feedback_request_threads` row of the thread not answered whose request is
 `sent`, `running` or `failed`, as `{request_id, state, at, detail}`), else
-null ([annotations.md](annotations.md) "Requests"). A tombstone reads `deleted:
-true` with an empty body. `last_at` is the newest of the thread's writes
+null ([annotations.md](annotations.md) "Requests"; the Feedback dialog's
+until step 3.7 of the agents-as-participants plan). The comment routes add
+`agent_chat` to each thread they answer: the session account's
+conversation of it with a computer's agent ("Sent to an agent" below). A
+tombstone reads `deleted: true` with an empty body. `last_at` is the newest of the thread's writes
 and its resolution. `state` is `open`, `resolved` or `all`. The caller
 decides which pages may be read; a page in Recently deleted is no page of
 the library. The annotations reader names a scope's live pages (a work
@@ -110,7 +114,7 @@ its name in `agent` (`gamma/agents.py`, which keeps no table):
 | Kind | `agent_id` | `agent` | Written by |
 |---|---|---|---|
 | `gamma` | `gamma` | Gamma AI | the chat's writing tools (`comment`, `resolve`, `highlight`: the chat's stamp, `agents.of_stamp`) |
-| `computer` | `computer:<computer>:<name>` | the catalog's label (Codex, Claude Code) | a Send's run here (`agents.here`) or on a computer of the channel (`agents.of_channel`), and a turn's token through MCP's writing tools (`integrations.mint_turn` names it with this id) |
+| `computer` | `computer:<computer>:<name>` | the catalog's label (Codex, Claude Code) | a turn's token through MCP's writing tools (`integrations.mint_turn` names it with this id), the end of a thread's turn of this computer's (`agents.here`) or of a computer of the channel (`agents.of_channel`), and a Send's run, here or there |
 | `connection` | the integration token's id | its display name (`integrations.display_name`) | the HTTP API and MCP's writing tools with a token (`agents.of_request`, `of_connection`) |
 
 The writing tools write through `gamma/annotations/hand.py` (a `Writer`: the
@@ -122,13 +126,23 @@ channel its own id for this server (`registry`'s `computers.computer`), this
 computer `agents.here_id()` (an HMAC of the install's id, as its id for every
 server it announces itself to is), and `""` for a computer no longer known.
 The reader (`comments.threads_for`, through `agents.read_all`) adds
-`agent_kind` and, for a computer's agent, `agent_on`: the computer as it is
+`agent_kind` and, for a computer's agent, its `agent_id` (what a comment
+sent to it names, and which agent the *Send to* tick takes in its thread)
+and `agent_on`: the computer as it is
 called now (this computer's name where agents run here, else the name it
 last announced for the comment's author; left out when it is not known), so
 a renamed computer reads renamed. A computer's id is what its channel says,
 so only the author's own `computers` rows name it (`registry.names_of` by
-account and computer): another account announcing the same id renames
-nothing. A server's own words name an agent by its label, "Codex on
+account and computer), or, for a co-author, a row of the comment's
+workspace of the account its `agent_owner` names, while that computer's
+agent serves the author and both edit the workspace
+([local_agents.md](local_agents.md) "A co-author's turn"): another account
+announcing the same id renames nothing. A comment an agent wrote for a
+co-author also carries `agent_owner`, the username of the agent's owner
+(`Agent.owner`), stored with the comment as it was when it was written
+(pages.db step 64; `''` on every comment from before it), so an agent that
+changes hands later relabels nothing; the avatar's title names it:
+"Written by alice's Codex on TIM-PC, for bob". A server's own words name an agent by its label, "Codex on
 TIM-PC" (`Agent.label`): the Inbox's items, `resolved_agent`, the
 annotations' Markdown ("**Codex on TIM-PC**, for tim"). Comments of a
 computer's agent from before step 60 were signed `local:<name>`; the step
@@ -138,7 +152,8 @@ The agents of an account (`agents.of_account`) are Gamma AI, the agents it
 turned on on this computer, those its computers shown to the workspace
 announce on for it, and its live connections that may comment there (a
 `write` token of the workspace, a `read` one at the Comment level or the
-edit level there: `integrations.comments_in`).
+edit level there: `integrations.comments_in`). Of these, a comment is sent
+to a computer's agent the person may use on its page ("Sent to an agent").
 
 ## Who may comment
 
@@ -196,8 +211,8 @@ refused with a 400.
 | Method | Path | Body | Answer |
 |---|---|---|---|
 | GET | `/api/pages/{page_id}/comments?state=open\|resolved\|all` | | `{threads}`; 404 for a page in Recently deleted or gone, 400 for another `state` |
-| POST | `/api/pages/{page_id}/comments` | `{id?, block_id, body, thread_id?, client?}` | 201 `{comment, thread, send?}` |
-| PATCH | `/api/comments/{id}` | `{body, client?}` | `{comment, thread?, send?}` |
+| POST | `/api/pages/{page_id}/comments` | `{id?, block_id, body, thread_id?, client?, to?}` | 201 `{comment, thread, turn?}` |
+| PATCH | `/api/comments/{id}` | `{body, client?, to?}` | `{comment, thread?, turn?}` |
 | DELETE | `/api/comments/{id}?client=` | | `{deleted: true}` |
 | POST | `/api/comments/{id}/resolve` | `{resolved, client?}` | `{thread}` |
 | GET | `/api/pages/{page_id}/notify` | | `{level}`: `all` or `replies`, the page's Notify me for the session's account ("Following a page" below) |
@@ -220,14 +235,21 @@ refused with a 400.
 - **Edit.** The author through the writer that wrote it (403 "only its
   author can edit a comment" otherwise). An edit that leaves the text as it
   was keeps `updated_at`.
-- **A mention of the work folder's agent.** On the desktop app's own
-  server, the vault's maker's comment on a work folder's file that newly
-  names the folder's agent on this computer (`@codex`) is a Send to it as
-  well ([local_agents.md](local_agents.md) "A mention in a comment"): the
-  answer carries `send` (`{agent, request_id, scope, threads}`, or
-  `{agent, refused, why}` with the comment stored anyway) and the thread
-  read again with its Sent chip; an edit's answer carries the thread only
-  then. No `send` for a comment that names no agent.
+- **Sent to an agent.** `to` is the id of the computer agent a person's
+  comment is sent to (the field's tick), `""` for none (the tick shown and
+  unticked: a comment among people, whatever its text names); a client
+  that sent no `to` (an edit, a field with no tick) has the agent its text
+  newly names with `@codex` read as `to` (`local_agents/mention.py`). The comment is stored, and is the
+  instruction of a turn of the person's conversation of its thread with
+  that agent ([local_agents.md](local_agents.md) "A comment sent to an
+  agent"): the answer carries `turn` (`{agent, conversation_id, turn_id,
+  state}`, or `{agent, refused, why}` with the comment stored anyway; the
+  codes are `local_agents.threads.REFUSALS`) and the thread read again with
+  that turn. A new comment's thread always carries its reader's
+  `agent_chat`, so a reply sent to no agent keeps the chip of a turn still
+  working; an edit's answer carries the thread only when it is sent. No
+  `turn` for a comment sent to no agent. A token's `to` is refused, and a
+  share visitor's comment is never sent.
 - **Delete.** The author, by a session or by the token that wrote it, or
   the workspace's owner (signed in, not through a token or a share link). A
   root that still has
@@ -722,7 +744,8 @@ popover.
   block. A picked row writes `[[id]]` and caches its label with
   `onCacheRef`; "]]" after a page's exact title links it.
 - "@" opens the note's @ menu at the caret (`editor/useMentionMenu.js`):
-  people, dates and page links. It has no "Remind" rows, since the
+  people, dates and page links, and under People the agents a comment can
+  be sent to (`links.agents`, below). It has no "Remind" rows, since the
   reminder scan reads notes only, and no "Invite…".
 - Inside `$…$` and `$$…$$` come the live preview, the `\command` and
   `\begin{}` completion, the Tab hop and the `$` and bracket pairing of
@@ -771,6 +794,53 @@ too. Escape cancels an edit, and it closes once the server has it. The
 field takes the focus a frame after mounting, since the popover stands
 hidden until it is placed and a hidden field takes no focus; a field
 focused meanwhile keeps its caret.
+
+**Sent to an agent.** A new comment's and a reply's field has *Send to
+{agent}* under its box, a checkbox, while a comment on the page can be
+sent to an agent ("The interaction" of
+[the plan](../research/agents-as-participants-plan.md); the turn is
+[local_agents.md](local_agents.md) "A comment sent to an agent"). The
+agents are App's `links.agents` (`chat/agents.js` `commentAgents`: the
+chat's computer agents for the page, this computer's that the account
+turned on or the one of the computer that keeps its work folder, each by
+its id); the tick's rules are `comments/sendTo.js`:
+
+- **Its default** (`startsTicked`): ticked in a thread whose newest comment
+  is a computer agent's (it asked, or answered), else as the person left
+  it last, the account preference `commentSendTo` (`links.sendTo`, set
+  whenever the person ticks or unticks it).
+- **Which agent** (`tickAgent`): the one chosen in its menu, else the one
+  that wrote in the thread last (by `agent_id`), else the one picked in
+  the page's chat (`chat/computer/chatSide.js` `chatPick`), else the first;
+  with several the label is a `MenuSelect` of them ("Codex on TIM-PC" for
+  another computer's).
+- **`@codex` typed** ticks it for that agent (`namedAgent`: outside code,
+  newly), so a mention and the tick are one request.
+- Ticked, the field's placeholder is *Ask Codex to edit*, and the bar says
+  why the agent cannot answer now (its problem, or its computer offline,
+  which the server refuses: `sendNote`). The comment posts `to`, the
+  agent's id, or `""` unticked (`useComments.add`; a field with no tick
+  sends none); a refusal is said in the status line
+  (`comments.turnRefusal`), the comment stored. An edit has no tick: an
+  `@name` it adds is read by the server, and the bar says what saving does
+  or why it will not be sent (`editHint`: a resolved thread, an older
+  comment than the thread's newest).
+
+While the reader's turn of a thread is to end (its `agent_chat.turn`), the
+thread carries a row at its foot (`Thread.jsx`, `comments.turnChip`):
+*Waiting for Codex* (or for the other computer that runs it), *Codex is
+working…*, *Codex is waiting for you* with *Answer in the chat* (its ask's
+card is the chat's), or *Codex is waiting for your answer on TIM-PC*, each
+with Stop (`useComments.stopTurn`); the threads are read every two seconds
+meanwhile (`useComments`), and the Comments window's row carries the same
+chip. An agent's reply in a thread the reader sent it has *Open in chat*
+on its author line: the page's chat on the thread's conversation (App's
+`openThreadChat`, `chatSide.js` `showThreadChat`: its steps, its asks and
+what it changed, drawn as a chat's), whose composer gives way to a line
+saying the conversation goes on in its thread, *Show the thread* and *Back
+to the chat*. The chat's answer card lists the threads its agent opened in
+its turn (`chat/AgentChanges.jsx` `ThreadsOpened`, each opening the thread:
+the navigation's `openThread`).
 
 **Drafts.** Unsent text is kept per field for as long as the tab lives, in
 a module-level map of `CommentComposer.jsx` keyed `new:<block>`,
@@ -987,9 +1057,9 @@ motion. Refused, the field gets its text back.
 and text as comments are drawn, clamped to three lines) and "n replies",
 with neither Resolve nor the "⋯". A comment an agent wrote shows the
 agent's avatar and name as its author, the whole of who wrote it in the
-title (`authorTitle`), and the first comment's line carries the Sent chip while
-a request waits on the thread (`sentChip`, [annotations.md](annotations.md)
-"Requests and their states") and what became of its place after its file
+title (`authorTitle`), the thread's foot carries the reader's turn of it
+with an agent while it is to end (`turnChip`, "Sent to an agent" above),
+and the first comment says what became of its place after its file
 changed (a rebuild, a source file rewritten; `threadPlace`, through `threadPlaceContext.js`'s `ThreadPlaceContext`, a
 module of its own so App's provider imports no surface). It is `Thread.jsx`'s `Thread` with
 `summary`: the popover's own thread view, whose active rule it shares. A
@@ -1208,7 +1278,10 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   the room's `{t: "comments"}` too. An agent's comment: the account its
   author, the agent's name, kind and computer as called now, the event's
   label, a resolve's label, and an agent editing and deleting its own alone.
-  The suite's drift checks run after each test.
+  A comment's `to` that starts no turn (no agent's id, a token's) said with
+  the comment stored, and `agent_chat` none for a thread nobody sent
+  (`test_local_agents_threads.py` has the turns). The suite's drift checks
+  run after each test.
 - `backend/tests/test_agents.py`: the ids by kind, this computer's agent
   and a channel's, the computers named as now, who a token, a turn's token,
   a connection and a session write as, the block's stamp, and an account's
@@ -1235,7 +1308,9 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   `test_restore_consistency.py`: `_fresh_ids`' remap.
 - Frontend node tests: `comments.test.mjs` (folding, ordering, the changes
   shown before the server answers, who may edit, the snippets and the
-  link, the highlight rules, which comments draw later),
+  link, the highlight rules, which comments draw later, a thread's turn's
+  chip and a refusal's words), `commentSendTo.test.mjs` (the Send to tick:
+  its default, its agent, `@name`, the field's lines),
   `marginLayout.test.mjs` (a page's left edge and the stacking),
   `inboxText.test.mjs` (sentences, days, jumps, listings, marks, rings),
   `selectionTip.test.mjs`, `refLists.test.mjs`, `enterKey.test.mjs`

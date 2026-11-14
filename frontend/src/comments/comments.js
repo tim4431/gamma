@@ -4,20 +4,21 @@
 // before the server answers. Pure, so node tests it (tests/comments.test.mjs).
 //
 // A thread is the server's `{id, block_id, page_id, resolved_at,
-// resolved_by, resolved_agent, made_on, sent, created_at, last_at,
-// comments}`, its comments oldest first, each `{id, thread_id, author,
-// agent, body, created_at, updated_at, deleted, agent_kind?, agent_on?}`. A
-// thread's root has `thread_id === id`; `author` is a username, and `agent`
-// the name of the agent that wrote it for the author ("" for the person's
-// own), with its `agent_kind` (chat/agents.js agentKind's kinds) and, for a
-// computer's agent, the computer it runs on, `agent_on`; `made_on` the file
-// the thread was opened on, `sent`
-// the Send waiting on it (docs/dev/annotations.md).
+// resolved_by, resolved_agent, made_on, sent, agent_chat, created_at,
+// last_at, comments}`, its comments oldest first, each `{id, thread_id,
+// author, agent, body, created_at, updated_at, deleted, agent_kind?,
+// agent_id?, agent_on?, agent_owner?}`. A thread's root has `thread_id ===
+// id`; `author` is a username, and `agent` the name of the agent that wrote
+// it for the author ("" for the person's own), with its `agent_kind`
+// (chat/agents.js agentKind's kinds) and, for a computer's agent, its
+// `agent_id`, the computer it runs on, `agent_on`, and its owner where it
+// wrote for a co-author, `agent_owner`; `made_on` the file the thread was opened
+// on, `sent` the Send waiting on it (docs/dev/annotations.md; the Feedback
+// dialog's), `agent_chat` the reader's conversation of it with a
+// computer's agent (`turnChip`), null for none.
 import { t } from "../shared/i18n/i18n.js";
 import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlock, pdfAnchorOf, textSpan } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
-import { agentAway, peopleIn } from "../editor/mentions.js";
-import { AGENT_MAX } from "../feedback/feedbackView.js";
 import { agentWorking } from "../vault/vaultState.js";
 import { GAMMA, madeBy } from "../chat/agents.js";
 
@@ -236,8 +237,9 @@ export const isEdited = (comment) => !comment.deleted && !!comment.updated_at &&
 // comment it is either way. `agentFor` is what the byline adds after an
 // agent's name: the computer it runs on and the person it wrote for ("on
 // TIM-PC, for tim"). `authorTitle` is the avatar's title, the whole of it
-// (chat/agents.js madeBy), a connection's said as written with the
-// person's connection.
+// (chat/agents.js madeBy), the agent's owner named where it wrote for a
+// co-author (`agent_owner`: "alice's Codex on TIM-PC, for bob"), a
+// connection's said as written with the person's connection.
 const agentId = (comment) => (comment.agent_kind === "gamma" ? GAMMA : "");
 export const authorLabel = (comment) => (comment.agent ? madeBy({ id: agentId(comment), name: comment.agent }) : comment.author);
 export function agentFor(comment) {
@@ -250,97 +252,59 @@ export function authorTitle(comment) {
   if (!comment.agent) return comment.author;
   const person = comment.author || t("Someone");
   if (comment.agent_kind === "connection") return t("Written by {agent} with {who}'s connection", { agent: comment.agent, who: person });
-  return t("Written by {agent}", { agent: madeBy({ id: agentId(comment), name: comment.agent, on: comment.agent_on, person }) });
+  return t("Written by {agent}", {
+    agent: madeBy({ id: agentId(comment), name: comment.agent, on: comment.agent_on, person, owner: comment.agent_owner || "" }),
+  });
 }
 
-// A Send its requester withdrew: the server's `failed` with "withdrawn".
-export const isWithdrawn = (request) => request?.state === "failed" && request.detail === "withdrawn";
-
-// What became of a Send, in the one wording every place that shows it
-// uses (a thread's chip, the Comments window's row, the feedback view's
-// entries and request rows, all drawn by shared/ui/StateTag.jsx), from a
-// request or a thread's `sent` ({state, detail, state_by}): {kind, label,
-// detail, title, tone, live}. `kind` the state's name ("sent", "running",
-// "done", "failed", "withdrawn"); `label` short: waiting for the agent
-// (for the computer that keeps the folder while another one does, else
-// for the agent by its name), the agent working (named by `state_by` when
-// it says), done by it, failed, or withdrawn by its requester; `detail`
-// the agent's own words (its progress, its summary, the reason it
-// failed), "" for none; `title` the tag's: the words behind the label,
-// and while the computer it waits for is offline, that it runs when that
-// one connects; `tone` the uiTag's; `live` while the agent works.
-// `answers`, the agent that answers the reader's Sends (chat/agents.js
-// mentionAgent, feedbackView.js sendAgent's plan; null
-// for none), names what a Send waits for.
-export function sendState(send, answers = null) {
-  const { state, state_by: agent } = send;
-  const detail = send.detail || "";
-  if (isWithdrawn(send)) return { kind: "withdrawn", label: t("Withdrawn"), detail: "", title: t("Withdrawn"), tone: "", live: false };
-  if (state === "failed") {
-    return { kind: state, label: t("Failed"), detail, title: detail ? t("Failed: {reason}", { reason: detail }) : t("Failed"), tone: "failed", live: false };
+// What a thread's chip says of the reader's turn of it with an agent
+// (`thread.agent_chat`, {conversation_id, agent, label, turn: {turn_id,
+// state, asking, waiting, computer} | null}, routers/comments.py): {kind,
+// label, tone, live, stop, open} while a turn is to end, null otherwise.
+// `kind` "queued", "working", "asking" (it waits for the person's answer,
+// on its card in the chat: `open`) or "waiting" (for an answer on the other
+// computer that runs it); `stop` whether the chip offers Stop.
+export function turnChip(thread) {
+  const chat = thread?.agent_chat;
+  const turn = chat?.turn;
+  if (!turn) return null;
+  const agent = chat.label || chat.agent || "";
+  if (turn.asking) return { kind: "asking", label: t("{agent} is waiting for you", { agent }), tone: "pending", live: false, stop: true, open: true };
+  if (turn.waiting) {
+    return { kind: "waiting", label: t("{agent} is waiting for your answer on {computer}", { agent, computer: turn.computer }),
+      tone: "pending", live: false, stop: true, open: false };
   }
-  if (state === "running") {
-    const label = agentWorking(agent);
-    return { kind: state, label, detail, title: detail || label, tone: "pending", live: true };
+  if (turn.state === "queued") {
+    return { kind: "queued", label: turn.computer ? t("Waiting for {computer}", { computer: turn.computer }) : t("Waiting for {agent}", { agent }),
+      tone: "pending", live: false, stop: true, open: false };
   }
-  if (state === "done") {
-    const label = agent ? t("Done by {agent}", { agent }) : t("Done");
-    return { kind: state, label, detail, title: detail || label, tone: "ok", live: false };
-  }
-  const label = answers?.computer ? t("Waiting for {computer}", { computer: answers.computer })
-    : answers?.label ? t("Waiting for {agent}", { agent: answers.label }) : t("Waiting for the agent");
-  return { kind: "sent", label, detail: "", title: agentAway(answers) || label, tone: "pending", live: false };
+  return { kind: "working", label: agentWorking(agent), tone: "pending", live: true, stop: true, open: false };
 }
 
-// The chip of a thread a Send waits on (`thread.sent`, {request_id, state,
-// at, detail, state_by}): its sendState, null for none, and for a Send
-// withdrawn: the thread is open, the person's to send again.
-export function sentChip(thread, answers = null) {
-  const sent = thread?.sent;
-  return sent && !isWithdrawn(sent) ? sendState(sent, answers) : null;
-}
-
-// What a comment field says under the text while it names the work
-// folder's agent (`agent`, chat/agents.js mentionAgent: on this computer, or
-// on the computer that keeps a work folder of this server, `computer`) as
-// the server reads it: a mention outside code that `initial`
-// (an edit's text before) did not have. Sending it is a Send of the thread,
-// or of the file's open comments from the page's own thread (`file`),
-// waiting while the agent's computer is offline; an edit the server will
-// not send (`refused`: "closed" in a resolved thread, "not_newest" for an
-// older comment, as local_agents/mention.py) says why, and while the agent
-// cannot run, its problem. → {text, warn}, or null for nothing to say.
-export function mentionHint({ agent, text, initial = "", file = false, refused = "" }) {
-  if (!agent || !peopleIn(text).has(agent.name) || peopleIn(initial).has(agent.name)) return null;
-  if (refused) return { text: sendRefusal({ agent: agent.label, refused }), warn: true };
-  if (agent.ready === false && agent.problem) return { text: agent.problem, warn: true };
-  if (agent.computer) {
-    const words = { agent: agent.label, computer: agent.computer };
-    const sends = file ? t("Sends this file's open comments to {agent} on {computer}.", words)
-      : t("Sends this thread to {agent} on {computer}.", words);
-    return { text: [sends, agentAway(agent)].filter(Boolean).join(" "), warn: false };
-  }
-  return {
-    text: file ? t("Sends this file's open comments to {agent} on this computer.", { agent: agent.label })
-      : t("Sends this thread to {agent} on this computer.", { agent: agent.label }),
-    warn: false,
-  };
-}
-
-// Why a comment that named the agent was not sent to it, for the status
-// line (the comment itself is posted): the answer's `send` ({agent,
-// refused, why}, routers/comments.py), worded here by its code, else the
-// server's sentence. "" for a Send that was made, or none.
+// Why a comment sent to an agent started no turn, for the status line (the
+// comment itself is posted): the answer's `turn` ({agent, refused, why,
+// computer?}, local_agents/threads.py), worded here by its code, else (the
+// agent's own problem, or another) the server's sentence. "" for a turn
+// that began, or none.
 const REFUSALS = {
-  closed: (agent) => t("Reopen this thread to send it to {agent} again.", { agent }),
-  not_newest: (agent) => t("Mention {agent} in a new reply to send this thread again.", { agent }),
+  closed: (agent) => t("Reopen this thread to ask {agent} again.", { agent }),
+  not_newest: (agent) => t("Reply to ask {agent} again: only the newest comment is sent.", { agent }),
   viewer: (agent) => t("Only the workspace's owners and editors can send comments to {agent}.", { agent }),
-  too_many: (agent) => t("{agent} takes at most {max} comments at a time: mention it in the threads you want answered.", { agent, max: AGENT_MAX }),
+  writes: (agent) => t("Gamma takes no changes here now: nothing was sent to {agent}.", { agent }),
+  off: (agent) => t("Turn on {agent} in Settings → AI first.", { agent }),
+  offline: (agent, computer) => computer ? t("{computer} is offline: send this again once it connects.", { computer }) : "",
+  paused: (agent, computer) => computer
+    ? t("The synced folder is paused on {computer}: {agent} starts once it syncs again.", { agent, computer })
+    : t("The synced folder is paused on this computer: {agent} starts once it syncs again.", { agent }),
+  elsewhere: (agent) => t("{agent} on that computer does not work on this page.", { agent }),
+  folder: (agent) => t("{agent} works for you only on the files of a synced folder.", { agent }),
+  busy: (agent) => t("{agent} is still working in this thread: wait for it, or stop it.", { agent }),
 };
-export function sendRefusal(send) {
-  if (!send?.refused) return "";
-  const agent = send.agent || "";
-  return REFUSALS[send.refused]?.(agent) || t("Not sent to {agent}: {reason}", { agent, reason: send.why || send.refused });
+export function turnRefusal(turn) {
+  if (!turn?.refused) return "";
+  const agent = turn.agent || "";
+  return REFUSALS[turn.refused]?.(agent, turn.computer || "")
+    || t("Not sent to {agent}: {reason}", { agent, reason: turn.why || turn.refused });
 }
 
 // What a thread is on, in the Comments window's words: the highlight's

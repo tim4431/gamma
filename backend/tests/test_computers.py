@@ -19,7 +19,7 @@ import time
 import pytest
 
 from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, workspace_of
-from gamma import collab, folder_links, gamma_sync, workspaces
+from gamma import agents, collab, folder_links, gamma_sync, workspaces
 from gamma.computers import channel, registry
 from gamma.db import connect_users_db, connect_vaults_db
 from gamma.folder_sync import ROOT
@@ -169,9 +169,9 @@ def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(own
                              {"kind": "file", "page_id": page["id"], "paused": False}]
     assert row["assistants"] == [   # what an agent off may run is never
         {"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "9" * 64, "code": "",
-         "models": [], "enabled": True, "runs": "ask"},
+         "models": [], "enabled": True, "runs": "ask", "people": []},
         {"name": "claude", "label": "Claude Code", "found": True, "ready": False, "version": "", "code": "not_ready",
-         "models": [], "enabled": False, "runs": "never"}]
+         "models": [], "enabled": False, "runs": "never", "people": []}]
     assert told == [(me, {"t": "computer"})]                      # online now: the maker's windows alone
     _announce(computer, {**_body(), "computer": {"id": "cm_PC-1", "name": "TIM-PC"},
                          "vaults": [{"kind": "folder", "folder_id": folder, "paused": True},
@@ -311,7 +311,7 @@ def test_the_page_shows_its_makers_computers_and_nobody_elses(owner, stranger, a
                       "vault": {"kind": "file", "name": "CM loose paper", "paused": False, "agent": None},
                       "assistants": [{"name": "codex", "label": "Codex", "found": True, "ready": True,
                                       "version": "0.167.0", "code": "", "models": [], "enabled": False,
-                                      "runs": "never"}]}]
+                                      "runs": "never", "people": []}]}]
     assert _shown(owner, elsewhere["id"]) == [] and _shown(owner, "no-such-page") == []
 
     # a restart forgets who is online, never when each was last seen
@@ -670,3 +670,169 @@ def test_the_channels_thread_runs_until_its_link_goes(owner, host, monkeypatch):
 
 
 REAL_CHECK = channel.check
+
+
+# --- the people an agent serves (a co-author's use, step 3.6) -------------------------------------
+
+def _co_authors(name: str):
+    """A shared workspace of cptr_owner's that cptr_stranger edits, and a
+    session of each of the two in it."""
+    me, them = account_of("cptr_owner"), account_of("cptr_stranger")
+    ws = workspaces.create(name, me, kind="shared")["id"]
+    workspaces.set_member(ws, them, "editor", me)
+    mine, theirs = login("cptr_owner", PASSWORD), login("cptr_stranger", PASSWORD)
+    for c in (mine, theirs):
+        c.headers["X-Gamma-Workspace"] = ws
+    return ws, mine, theirs
+
+
+def test_the_people_an_agent_serves_take_its_owner_and_the_shells_word(owner, stranger, host, monkeypatch):
+    monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "1")
+    me, them = account_of("cptr_owner"), account_of("cptr_stranger")
+    ws, mine, theirs = _co_authors("CM co-authors")
+    person = {"workspace_id": ws, "account": them}
+    try:
+        store.set_agent("codex", True, by=me)
+        # whom the owner may name: those who edit a workspace of this server with it, itself left out
+        places = mine.get("/api/local-agents/people").json()["places"]
+        assert {"server": "", "workspace_id": ws, "name": "CM co-authors", "origin": "", "error": "",
+                "people": [{"id": them, "username": "cptr_stranger", "role": "editor"}]} in places
+        assert all(p["id"] != me for place in places for p in place["people"])
+        # naming one takes the shell's word and the agent's owner, and a co-author of a workspace the owner edits
+        assert mine.post("/api/local-agents/codex/people", json=person).status_code == 403
+        assert theirs.post("/api/local-agents/codex/people", json=person, headers=SHELL).status_code == 403
+        r = mine.post("/api/local-agents/codex/people", json={**person, "workspace_id": workspace_of("cptr_owner")},
+                      headers=SHELL)
+        assert r.status_code == 400 and r.json()["detail"].startswith("Only an editor or an owner"), r.text
+        assert mine.post("/api/local-agents/claude/people", json=person, headers=SHELL).status_code == 403   # off
+        r = mine.post("/api/local-agents/codex/people", json=person, headers=SHELL)
+        assert r.status_code == 200, r.text
+        assert [(p["agent"], p["server"], p["workspace_id"], p["account"], p["username"]) for p in r.json()["people"]] == [
+            ("codex", "", ws, them, "cptr_stranger")]
+        # the owner's listing says whom it serves; the person's says whose it is, in that workspace alone
+        codex = next(a for a in mine.get("/api/local-agents").json()["agents"] if a["name"] == "codex")
+        assert (codex["mine"], codex["lent"], [p["account"] for p in codex["people"]]) == (True, None, [them])
+        lent = next(a for a in theirs.get("/api/local-agents").json()["agents"] if a["name"] == "codex")
+        assert (lent["mine"], lent["lent"], lent["people"]) == (False, {"by": "cptr_owner"}, [])
+        alone = next(a for a in stranger.get("/api/local-agents").json()["agents"] if a["name"] == "codex")
+        assert alone["lent"] is None                                             # its own workspace: none
+        assert store.usable(them, ws, "codex") and not store.usable(them, workspace_of("cptr_stranger"), "codex")
+        assert [a for a in agents.of_account(them, ws) if a.kind == "computer"] == [agents.here("codex", them)]
+        assert agents.here("codex", them).owner == "cptr_owner" and agents.here("codex", me).owner == ""
+        # taken off by its owner, with the session alone; another account needs the shell's word, never unchecked
+        query = {"workspace_id": ws, "account": them}
+        assert theirs.delete("/api/local-agents/codex/people", params=query).status_code == 403
+        r = mine.delete("/api/local-agents/codex/people", params=query)
+        assert r.status_code == 200 and r.json() == {"people": []}
+        assert not store.usable(them, ws, "codex")
+        # turned off, the agent serves nobody it served: turned on again, by anyone, it starts with none
+        store.name_person("codex", "", ws, them, "cptr_stranger")
+        store.set_agent("codex", False, by=me)
+        assert store.people("codex") == []
+    finally:
+        with connect_vaults_db() as conn:
+            conn.execute("DELETE FROM computer_agents")
+            conn.execute("DELETE FROM agent_people")
+
+
+def test_the_announce_names_the_people_of_that_server_and_workspace(owner, stranger, host, monkeypatch):
+    monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "1")
+    me, them = account_of("cptr_owner"), account_of("cptr_stranger")
+    ws, mine, _theirs = _co_authors("CM announced people")
+    item = _mint(owner, **{"X-Gamma-Workspace": ws})
+    link = _link(owner, host, item, ws).json()["link"]
+    try:
+        store.set_agent("codex", True, by=me)
+        # that server's editors, asked over the channel (GET /api/computers/people): the channel's account left out
+        there = next(p for p in mine.get("/api/local-agents/people").json()["places"] if p["server"] == host["url"])
+        assert (there["workspace_id"], there["origin"], there["error"], there["people"]) == (
+            ws, "http://testserver", "", [{"id": them, "username": "cptr_stranger", "role": "editor"}])
+        assert owner.get("/api/computers/people").status_code == 403               # the channel's token alone
+        r = mine.post("/api/local-agents/codex/people", headers=SHELL,
+                      json={"server": host["url"], "workspace_id": ws, "account": them})
+        assert r.status_code == 200, r.text
+        store.name_person("codex", "", ws, them, "cptr_stranger")                 # of this server: not that one's
+        store.name_person("codex", "http://elsewhere.example", ws, them, "x")
+        said = {a["name"]: a for a in channel.state_of(channel.get(link["id"]))["assistants"]}
+        assert (said["codex"]["people"], said["claude"]["people"]) == ([them], [])
+        turn = channel._Channel(link["id"])
+        turn.once()
+        assert next(a for a in _row(item["id"])["assistants"] if a["name"] == "codex")["people"] == [them]
+        # the channel's own account, and a server no channel names, are refused
+        r = mine.post("/api/local-agents/codex/people", headers=SHELL,
+                      json={"server": host["url"], "workspace_id": ws, "account": me})
+        assert r.status_code == 400, r.text
+        r = mine.post("/api/local-agents/codex/people", headers=SHELL,
+                      json={"server": "http://nowhere.example", "workspace_id": ws, "account": them})
+        assert r.status_code == 404, r.text
+    finally:
+        with connect_vaults_db() as conn:
+            conn.execute("DELETE FROM computer_agents")
+            conn.execute("DELETE FROM agent_people")
+
+
+def test_the_server_offers_the_agent_to_the_people_it_names_alone_and_no_longer_once_removed(owner, stranger, told,
+                                                                                               monkeypatch):
+    from conftest import mark_work_folder, work_props
+    from gamma.auth import DISK_CLIENT
+    from gamma.blocks_store import create_page
+    from gamma.db import connect_pages_db
+    from gamma.local_agents import chats
+
+    monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")      # a NAS: the computer runs the agent
+    me, them = account_of("cptr_owner"), account_of("cptr_stranger")
+    ws, mine, theirs = _co_authors("CM lent agent")
+    make_user("cptr_third", PASSWORD)
+    third = login("cptr_third", PASSWORD)
+    workspaces.set_member(ws, account_of("cptr_third"), "editor", me)
+    third.headers["X-Gamma-Workspace"] = ws
+    w = make_folder(mine, "CM lent paper")
+    mark_work_folder(mine, w)
+    with connect_pages_db(ws) as conn:
+        page = create_page(conn, "main", work_props(w, "main.pdf"), actor=me, client=DISK_CLIENT)["id"]
+    item = _mint(owner, **{"X-Gamma-Workspace": ws})
+    computer = _as(item["token"])
+    codex = {"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": "",
+             "enabled": True, "runs": "ask"}
+    _announce(computer, _body({"kind": "folder", "folder_id": w}, assistants=[{**codex, "people": [them]}]))
+    assert (them, {"t": "computer"}) in told                                     # the person's windows look again
+
+    # the person named: the computer, its agent alone (never asking, naming nobody), for the page and Settings
+    listed = theirs.get("/api/computers").json()["computers"]
+    assert [(c["name"], c["lent_by"], [(a["name"], a["enabled"], a["runs"], a["people"]) for a in c["assistants"]])
+            for c in listed] == [("TIM-PC", "cptr_owner", [("codex", True, "never", [])])]
+    [shown] = _shown(theirs, page)
+    assert (shown["lent_by"], shown["vault"]["agent"]) == ("cptr_owner", {"name": "codex", "label": "Codex"})
+    far = chats.remote_of(ws, page, them)
+    assert (far["user_id"], far["lent_by"], far["agent"]) == (me, "cptr_owner", "codex")
+    assert registry.agent_of(ws, w, them) is None                                 # never for the Sends
+    lent = (them, "cm-computer-1", "cptr_owner")
+    assert registry.names_of({lent}, ws) == {lent: "TIM-PC"}
+    # named only by the owner kept with the comment, in its workspace
+    assert registry.names_of({(them, "cm-computer-1", "cptr_third")}, ws) == {}
+    assert registry.names_of({lent}, "another workspace") == {}
+    assert [a for a in agents.of_account(them, ws) if a.kind == "computer"] == [
+        agents.computer_agent("cm-computer-1", "codex", "TIM-PC", "cptr_owner")]
+    # its owner sees its own; anyone else sees nothing
+    assert [c.get("lent_by") for c in mine.get("/api/computers").json()["computers"]] == [None]
+    assert third.get("/api/computers").json()["computers"] == [] and _shown(third, page) == []
+    assert chats.remote_of(ws, page, account_of("cptr_third")) is None
+
+    # the person's turn waits for that computer, the owner's agent's: listed to it
+    r = theirs.post("/api/local-agents/chat/turns", json={"bucket": page, "text": "Tighten the title."})
+    assert r.status_code == 202, r.text
+    turn_id, conversation_id = r.json()["turn"]["id"], r.json()["conversation"]["id"]
+    with connect_pages_db(ws) as conn:
+        kept = chats.get(conn, conversation_id)
+    assert (kept["user_id"], kept["owner"]) == (them, me)
+    assert [t["id"] for t in computer.get("/api/computers/chats").json()["turns"]] == [turn_id]
+    # removed from the announce: the person sees the computer no more, and the turn that waited fails with why
+    _announce(computer, _body({"kind": "folder", "folder_id": w}, assistants=[{**codex, "people": []}]))
+    assert theirs.get("/api/computers").json()["computers"] == [] and _shown(theirs, page) == []
+    assert chats.remote_of(ws, page, them) is None
+    with connect_pages_db(ws) as conn:
+        reply = chats.get(conn, conversation_id)["messages"][-1]
+        assert chats.run_of(conn, turn_id)["state"] == "failed"
+    assert (reply["state"], reply["error"]) == (
+        "failed", "The owner of Codex on the computer that keeps this folder no longer lets you use it.")
+    assert computer.get("/api/computers/chats").json()["turns"] == []

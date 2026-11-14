@@ -91,8 +91,9 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide, a
 // none of Gamma AI's permissions. It shows the command with where it runs,
 // or the files with the change as diff rows, and the agent's reason, and
 // offers Allow once, Allow in this chat (a command only: Gamma then
-// answers that exact command itself for the rest of the conversation) and
-// Don't allow with its note; never an Always allow. The command is drawn
+// answers that exact command itself for the rest of the conversation; never
+// in a co-author's turn, whose asks the server marks `once`) and Don't
+// allow with its note; never an Always allow. The command is drawn
 // as the server shows it: what would not show marked ⟨U+202E⟩, its lines
 // counted, the command a shell wrapper runs first with the wrapper under
 // it, and the network address it reaches. Allow waits until the command
@@ -118,7 +119,7 @@ export function AskCard({ ask, label, onAnswer }) {
   const read = seen.command && seen.diff;
   const unread = t("Scroll to the end first: Allow waits until you have seen all of it");
   const answers = [{ decision: "once", label: t("Allow once"), primary: true, disabled: !read, title: read ? undefined : unread }];
-  if (ask.kind === "command") {
+  if (ask.kind === "command" && !ask.once) {
     answers.push({ decision: "chat", label: t("Allow in this chat"), disabled: !read,
       title: read ? t("Run this exact command without asking for the rest of this conversation") : unread });
   }

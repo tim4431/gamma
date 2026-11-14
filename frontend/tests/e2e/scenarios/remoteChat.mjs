@@ -18,14 +18,27 @@ import { waitForPdf } from "./pdf.mjs";
 // PDF passage runs on the computer and its reply and steps come back into the
 // conversation the NAS keeps; a tab closed mid-turn finds the turn again and
 // the follow-up resumes Codex's session there; Stop of a running turn ends
-// it; New chat and History work as locally. Bob has no Codex side. The
-// computer stopped, the strip says it is offline, a message waits for it
-// ("Waiting for <host>") and runs once it is back.
+// it; New chat and History work as locally. Bob has no Codex side, until
+// the computer's owner lets him use Codex there (a co-author, step 3.6 of
+// docs/research/agents-as-participants-plan.md): his @codex in a comment on
+// the paper then runs on the computer, and the answer in his thread reads
+// "Codex on <host>, for rc-bob", alice's (the channel's account) named as
+// its owner. The computer stopped, the strip says it is offline, a message
+// waits for it ("Waiting for <host>") and runs once it is back.
 const FAKES = path.join(ROOT, "backend", "tests", "fake_agents");
 const PAPER = path.join(ROOT, "backend", "tests", "samples", "synctex", "paper");
+const PLACES = JSON.parse(fs.readFileSync(path.join(PAPER, "places.json"), "utf8"));
+const PAGE = { width: 612, height: 792 };
 const GRACE_S = 3;
 const CHAT_REPLY = "Tightened the sentence in sections/method.tex:3.";
 const BUILD = "latexmk -pdf main.tex";
+
+// An area on page 1 of the paper from places.json's fraction rect, in the
+// page's points as the viewer stores it.
+function areaOf([x1, y1, x2, y2]) {
+  const r = { x1: x1 * PAGE.width, y1: y1 * PAGE.height, x2: x2 * PAGE.width, y2: y2 * PAGE.height };
+  return { pageNumber: 1, ...PAGE, boundingRect: r, rects: [r], area: true };
+}
 
 export async function remoteChatScenarios(env) {
   const { browser, step, openPage, assert, assertEq, assertNoProblems, until, sleep } = env;
@@ -325,6 +338,77 @@ export async function remoteChatScenarios(env) {
       assertEq(asToken.status, 403, `a token is refused: ${await asToken.text()}`);
       await alice.api(`/api/integrations/tokens/${token.id}`, { method: "DELETE" });
       assertEq((await conversation()).messages.filter((m) => m.role === "user" && m.text === "hello").length, 0, "nothing written");
+    });
+
+    await step("remote-chat: the computer's owner lets bob use Codex there; bob's @codex in a comment on the paper is a turn on the computer, answered in his thread as Codex on the computer, for rc-bob", async () => {
+      // whom the owner may name: the editors of the NAS's workspace, asked over the channel, the channel's own account left out
+      const { places } = await owner.api("/api/local-agents/people");
+      const there = places.find((p) => p.server === nas.base && p.workspace_id === wsId);
+      const person = there?.people.find((p) => p.username === "rc-bob");
+      assert(person && !there.people.some((p) => p.username === "rc-alice"), `bob is offered, alice is not: ${JSON.stringify(places)}`);
+      const named = await owner.api("/api/local-agents/codex/people", { method: "POST",
+        body: { server: nas.base, workspace_id: wsId, account: person.id } });
+      assertEq(JSON.stringify(named.people.map((p) => p.username)), JSON.stringify(["rc-bob"]), "bob may use Codex");
+      // announced: the NAS now shows bob the computer that keeps the page, that agent alone, lent by alice
+      const [lent] = await until(async () => {
+        const list = await computersOf(bob);
+        return list.length && list[0].vault?.agent?.name === "codex" ? list : null;
+      }, { timeout: 45000, every: 500, what: "the page's computer for bob" });
+      assertEq(JSON.stringify([lent.name, lent.lent_by, lent.assistants.map((a) => [a.name, a.enabled, a.runs])]),
+        JSON.stringify([name, "rc-alice", [["codex", true, "never"]]]), "the computer bob may use, lent by alice, never asking");
+      const area = await bob.api("/api/blocks", { method: "POST", body: { parent_id: pdf, content: "",
+        properties: { pdf_position: areaOf(PLACES.v1.figure.rect), color: "rgba(255, 226, 143, 0.65)" } } });
+      const root = (await bob.api(`/api/pages/${pdf}/comments`, { method: "POST",
+        body: { block_id: area.id, body: "the legend hides the curve" } })).thread;
+      const before = heard().length;
+      const ctx = await bob.context(browser);
+      const page = await openPage(ctx, at());
+      try {
+        await waitForPdf(page, 1);
+        if (!(await page.locator(".commentsPanel").count())) {
+          await page.getByRole("button", { name: "View", exact: true }).click();
+          await page.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+          await page.keyboard.press("Escape");
+        }
+        const row = page.locator(`.commentsPanelRow[data-thread-id="${root.id}"]`);
+        await row.waitFor({ timeout: 10000 });
+        await row.click();
+        const thread = page.locator(".commentThread").first();
+        await thread.locator(".commentBody").first().click();
+        const field = thread.locator(".commentField .cm-content").last();
+        await field.waitFor();
+        await field.click();
+        const tick = thread.locator(".commentSendTo input[type=checkbox]");
+        assertEq(await tick.isChecked(), false, "a thread among people: the tick off");
+        await page.keyboard.type("@cod");
+        const menu = page.locator(".mentionMenu");
+        await until(async () => (await menu.locator(".refPopupItem.selected .refPopupText").innerText().catch(() => "")).startsWith("Codex"),
+          { what: "the @ menu offers bob the agent lent to him" });
+        await page.keyboard.press("Enter");
+        await menu.waitFor({ state: "detached" });
+        await until(() => tick.isChecked(), { what: "@codex ticks the box" });
+        await page.keyboard.type("move it inside the plot");
+        await page.keyboard.press("Shift+Enter");
+        const answer = thread.locator(".commentItem.reply", { hasText: CHAT_REPLY });
+        await answer.waitFor({ timeout: 60000 });
+        assertEq((await answer.locator(".commentAuthor").textContent()).trim(), "Codex", "the reply is Codex's");
+        assertEq(await answer.locator(".commentFor").textContent(), `on ${name}, for rc-bob`, "on its computer, for bob");
+        assertEq(await answer.locator(".commentAuthor").getAttribute("title"), `Written by rc-alice's Codex on ${name}, for rc-bob`,
+          "the byline's title names its owner too");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const turns = heard().slice(before).filter((e) => e.in?.method === "turn/start");
+      assertEq(turns.length, 1, "one turn, on the computer");
+      const told = turns[0].in.params.input.map((p) => p.text || "").join("\n");
+      assert(told.includes('"message": "move it inside the plot"') && told.includes("rc-bob"), `bob's words, as his: ${told.slice(0, 600)}`);
+      const stored = (await bob.api(`/api/pages/${pdf}/comments`)).threads.find((th) => th.id === root.id);
+      const theirs = stored.comments.at(-1);
+      assertEq(JSON.stringify([theirs.agent, theirs.author, theirs.agent_on, theirs.agent_owner]),
+        JSON.stringify(["Codex", "rc-bob", name, "rc-alice"]), "Codex answered for bob, alice its owner");
+      // the conversation is bob's, read by alice too, and by no one else
+      const his = (await bob.api(`/api/local-agents/chat?bucket=${pdf}&thread=${root.id}`)).conversation;
+      const hers = (await alice.api(`/api/local-agents/chat?bucket=${pdf}&thread=${root.id}`)).conversation;
+      assertEq(JSON.stringify([his?.id, his?.thread_id]), JSON.stringify([hers?.id, root.id]), "bob's conversation of his thread, which alice reads");
     });
 
     await step("remote-chat: the computer stopped, the strip says it is offline and a message waits for it, and runs once the computer is back", async () => {

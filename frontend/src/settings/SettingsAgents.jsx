@@ -3,26 +3,30 @@
 // Gamma AI, with the connection it uses; then this computer, on the
 // desktop app's own server (GET /api/local-agents, chat/useLocalAgents.js):
 // each agent it found, its version, whether it is signed in, whether it is
-// on, what it may run, and the directories it offers them. In the desktop
-// app the controls ask the shell (vault/useVault.js askShell: `set-agent`,
-// `set-agent-runs`, `agent-dirs`), which asks its own question and acts
-// with its word; the page then reads the listing again until it changed.
-// In any other window the same rows are read-only and say to change them
-// in Gamma on that computer, but the owner may turn an agent off with the
-// account's session. In the desktop app any agent on may be turned off,
-// another account's too (the shell's word lets it). On another server, the account's
-// computers shown to it and their agents as each last announced them (GET
-// /api/computers), read-only.
+// on, what it may run, the people its owner lets use it (co-authors:
+// decision 13 of docs/research/agents-as-participants-plan.md), and the
+// directories it offers them. In the desktop app the controls ask the shell
+// (vault/useVault.js askShell: `set-agent`, `set-agent-runs`, `agent-dirs`,
+// `agent-person`), which asks its own question and acts with its word; the
+// page then reads the listing again until it changed. In any other window
+// the same rows are read-only and say to change them in Gamma on that
+// computer, but the owner may turn an agent off, or take a person off it,
+// with the account's session. In the desktop app any agent on may be
+// turned off, another account's too (the shell's word lets it). On another
+// server, the account's computers shown to it and their agents as each last
+// announced them (GET /api/computers), read-only, and those of another
+// account's computers that serve it, with who lends them.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { askShell } from "../vault/useVault.js";
 import { sinceText } from "../vault/vaultState.js";
-import { computerAgents, localAgent } from "../chat/agents.js";
+import { agentPeople, computerAgents, localAgent } from "../chat/agents.js";
 import { readLocalAgents, useLocalAgents } from "../chat/useLocalAgents.js";
 import { useSettingsRead } from "./settingsReads.js";
 import { Empty, NameInput, Row, Section, Segmented, Toggle } from "./SettingsKit";
-import { BotIcon, FolderIcon, FolderPlusIcon, MonitorIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
+import { ActionMenu } from "../shared/ui/Menus";
+import { BotIcon, FolderIcon, FolderPlusIcon, MonitorIcon, SparklesIcon, Trash2Icon, UserIcon, UserPlusIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -93,11 +97,45 @@ export function SettingsAgents({ connection, signedIn, setStatus }) {
   );
 }
 
+// The people an agent of the account's serves beside it (`agent.people`),
+// each with its workspace and, for its owner, a way to take them off (the
+// session's DELETE, in any window); in the desktop app a menu of whom else
+// it may let use it (GET /api/local-agents/people, `places`), each asking
+// the shell (`agent-person`), whose question carries the consent.
+function AgentPeople({ agent, places, desktop, ask, change }) {
+  const { named, offered } = agentPeople(agent.people, places);
+  const remove = (p) => change(`/local-agents/${agent.name}/people?${new URLSearchParams({
+    server: p.server, workspace_id: p.workspace_id, account: p.account })}`, { method: "DELETE" },
+  (message) => t("Couldn't take {person} off {agent}: {message}", { person: p.username, agent: agent.label, message }));
+  if (!named.length && !desktop) return null;
+  return (
+    <>
+      {named.map((p) => (
+        <Row key={p.key} icon={UserIcon} label={p.username} hint={t("May use {agent} in {workspace}", { agent: agent.label, workspace: p.where })}>
+          <button type="button" className="uiBtn sm iconSq danger" title={t("Stop letting {person} use {agent}", { person: p.username, agent: agent.label })}
+            aria-label={t("Stop letting {person} use {agent}", { person: p.username, agent: agent.label })} onClick={() => remove(p)}>
+            <Trash2Icon size={16} />
+          </button>
+        </Row>
+      ))}
+      {desktop ? (
+        <Row icon={UserPlusIcon} label={t("Who else may use {agent}", { agent: agent.label })}
+          hint={t("They ask it with @ or Send to on your synced folders' files, in a conversation you can read; what it asks to run is allowed once at most.")}>
+          <ActionMenu label={t("Add a person…")} disabled={!offered.length}
+            items={offered.map((o) => ({ label: o.label, onClick: () => ask("agent-person", { agent: agent.name, place: o.place.workspace_id, person: o.person.id }) }))} />
+        </Row>
+      ) : null}
+    </>
+  );
+}
+
 // This computer's agents and the directories it offers them, `desktop`
 // whether this window is the desktop app's (its controls ask the shell).
 function ThisComputer({ listing, desktop, ask, change }) {
   const name = listing.computer || t("this computer");
   const agents = (listing.agents || []).map(localAgent);
+  const owned = agents.some((a) => a.enabled && a.owner && !a.lentBy);
+  const places = useSettingsRead(desktop && owned ? "/local-agents/people" : null).data?.places || [];
   const dirs = listing.dirs || [];
   const putDirs = (next) => change("/local-agents/dirs", {
     method: "PUT", body: JSON.stringify(next.map((d) => ({ id: d.id, path: d.path, name: d.name || "" }))),
@@ -106,17 +144,19 @@ function ThisComputer({ listing, desktop, ask, change }) {
     <Section title={listing.computer ? t("This computer: {computer}", { computer: listing.computer }) : t("This computer")}>
       {desktop ? null : <p className="setNotice">{t("Change these in Gamma on {computer}.", { computer: name })}</p>}
       {agents.map((agent) => {
-        const others = agent.enabled && !agent.owner;
-        const offRow = agent.enabled && agent.owner && !desktop;
+        const mine = agent.enabled && agent.owner && !agent.lentBy;
+        const others = agent.enabled && !mine;
+        const offRow = mine && !desktop;
         return (
           <React.Fragment key={agent.name}>
             <Toggle icon={BotIcon} label={agent.label}
-              hint={others ? t("Turned on by another account on this computer") : agentHint(agent)}
+              hint={agent.lentBy ? t("{owner} lets you use it in this workspace", { owner: agent.lentBy })
+                : others ? t("Turned on by another account on this computer") : agentHint(agent)}
               checked={agent.enabled} disabled={desktop ? !agent.enabled && agent.ready === false : !offRow}
               onChange={(on) => (desktop ? ask("set-agent", { agent: agent.name, enabled: on })
                 : change(`/local-agents/${agent.name}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) },
                   (message) => t("Couldn't turn {agent} off: {message}", { agent: agent.label, message })))} />
-            {agent.enabled && agent.owner ? (
+            {mine ? (
               <Row icon={null} label={t("What {agent} may run", { agent: agent.label })}
                 hint={agent.runs === "ask" ? t("It asks you before it runs a command or changes a file outside its directory.")
                   : t("It works in its directory and runs nothing outside its sandbox.")}>
@@ -124,6 +164,7 @@ function ThisComputer({ listing, desktop, ask, change }) {
                   onChange={(runs) => ask("set-agent-runs", { agent: agent.name, ask: runs === "ask" })} />
               </Row>
             ) : null}
+            {mine ? <AgentPeople agent={agent} places={places} desktop={desktop} ask={ask} change={change} /> : null}
           </React.Fragment>
         );
       })}
@@ -151,18 +192,21 @@ function ThisComputer({ listing, desktop, ask, change }) {
 }
 
 // Another computer of the account's, as it last announced itself to this
-// server: its agents, read-only.
+// server: its agents, read-only; or another account's whose agent serves
+// this one (`lent_by`), that agent alone.
 function FarComputer({ computer }) {
   const agents = computerAgents(computer);
   const online = computer.online === true;
   const when = online ? "" : sinceText(computer.since);
+  const lent = computer.lent_by || "";
   return (
-    <Section title={computer.name}>
+    <Section title={lent ? t("{computer}, {owner}'s", { computer: computer.name, owner: lent }) : computer.name}>
       <Row icon={MonitorIcon} label={online ? t("Connected") : when ? t("Offline since {when}", { when }) : t("Offline")}
-        hint={t("Change this in Gamma on {computer}.", { computer: computer.name })} />
+        hint={lent ? t("{owner} lets you use its agent on the files of the synced folders it keeps.", { owner: lent })
+          : t("Change this in Gamma on {computer}.", { computer: computer.name })} />
       {agents.length ? agents.map((agent) => (
         <Row key={agent.name} icon={BotIcon} label={agent.label} hint={agentHint(agent)}>
-          <span className="uiTag">{agent.enabled ? (agent.runs === "ask" ? t("On, asks before more") : t("On")) : t("Off")}</span>
+          <span className="uiTag">{lent ? t("Lent to you") : agent.enabled ? (agent.runs === "ask" ? t("On, asks before more") : t("On")) : t("Off")}</span>
         </Row>
       )) : <p className="setNotice">{t("No agent found on {computer}.", { computer: computer.name })}</p>}
     </Section>

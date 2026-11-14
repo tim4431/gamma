@@ -1,6 +1,6 @@
 # Agents as participants: the build plan
 
-Status: **a plan, partly built**: steps 1, 2 and 3.1-3.4 are built, each
+Status: **a plan, partly built**: steps 1, 2 and 3.1-3.6 are built, each
 step's "As built" saying where the build differs. Written 2026-11-14
 against `dev` @ b4870d47, after a survey of the code behind work folders, local agents,
 computers and feedback. The file and line references were read then, so
@@ -1045,6 +1045,66 @@ passage) and the Properties popover (*Made by*) say who made it
   [dev/mentions.md](../dev/mentions.md),
   [dev/local_agents.md](../dev/local_agents.md) "A mention in a comment".
 
+**As built** (3.5). The table keeps its name, `computer_chats`, and gains
+`thread_id` (pages.db workspace step 62, `computer_chat_threads`, in
+`LOCAL_STEPS`, with a partial index); a thread's conversation
+(`chats.of_thread`) is never its bucket's active chat nor in History, and
+`chats.begin` takes `thread_id` in place of the bucket's active one. The
+turn is `local_agents/threads.py` (`start`, `settle`, `entry_of`,
+`opened`, `chats_of`, `agent_named`); `mention.py` is `to_of` alone, and
+reads a far computer's agent first where no vault here keeps the page,
+the chat's own rule. `to` is checked against what the chat's picker offers,
+not `agents.of_account`: this computer's agent the writer turned on, else
+`chats.remote_of`'s for the page's work folder, by the computer's id; a
+token's `to` and a share visitor's comment start nothing. The refusals are
+`threads.REFUSALS`, `closed`, `not_newest`, `viewer`, `writes`, `off`,
+`elsewhere`, `offline`, `paused`, `not_ready`, `busy`, `other` (the Send's
+`too_many` and `nothing` went with the page's own thread sending the file:
+a comment there is a turn about the page). The answer's key is `turn` in
+place of `send`, and every thread the comment routes answer carries
+`agent_chat` for its reader (the conversation and its turn's state), which
+the chip reads; the client polls the threads every two seconds while one
+has a turn to end. The end-of-turn rule runs where the conversation is
+kept, from every write that ends a thread's turn (`chats._answered`: the
+local `write_reply`, the far `write_run`, `stop_run` and the far fails),
+under an id derived from the turn (`home.reply_id`), so a far turn, which
+has no token, is answered by the server that keeps it; the agent's message
+names the agent that answers (`agent_id`: `agents.here`, or the channel's
+`agents.of_channel`). The far claim carries the thread's entry with its
+PDF place and the computer computes its source line on its own disk
+(`home._on_disk`, which a Send's entries share); its pictures are a local
+vault's only. The prompt is `prompt.build_thread`, its JSON block
+`{message, about, thread}`, the thread's comments standing for the earlier
+messages; both prompts take the asking line (`prompt._asking`). The answer
+card's threads are the agent message's `threads` (`threads.opened`,
+written at a local turn's end), drawn by `chat/AgentChanges.jsx`
+`ThreadsOpened`, opened by the navigation's new `openThread`. *Open in
+chat* reads `GET /api/local-agents/chat?thread=` and shows the
+conversation in place of the page's (`chatSide.js` `showThreadChat`,
+`useChatThread`), its composer giving way to a line with *Show the thread*
+and *Back to the chat*. The comment's agents are `chat/agents.js`
+`commentAgents` (agents gain `agentId`: `GET /api/local-agents` names each
+agent's `id`, a page's computers theirs), `mentionAgent` is gone, and a
+computer agent's comment now carries its `agent_id`; the tick's rules are
+`comments/sendTo.js`, its preference the account's `commentSendTo`, and an
+edit has no tick (its `editHint` says what saving an `@name` it adds does).
+`comments.js` lost `sentChip`, `sendState`, `isWithdrawn`, `mentionHint`
+and `sendRefusal`: the Send's three went to `feedback/` for the Feedback
+dialog until 3.7, and `turnChip` and `turnRefusal` are a turn's. The chats'
+`far_problem` moved from the feedback router to `chats`. Rule 1's untick
+is the client's word: a field that shows the tick always sends `to`, `""`
+unticked, and only a client that sent no `to` (an edit, a field with no
+tick) has its `@name` read. Rule 5 holds for a thread the agent opened too:
+its first ticked reply begins the thread's own conversation with the
+session of the conversation whose turn opened it (`threads.opener_of`,
+`chats.begin`'s `resume` copying its `agent_conversations` row), so one
+conversation still has one thread. A new comment's answer carries its
+thread's `agent_chat` whether it is sent or not, so a reply among people
+keeps the chip of a turn at work; the far `offline` and `paused` refusals
+name the `computer`, so the client words every code but `not_ready` and
+`other`. Not built: the Inbox item and `resolved_agent` still carry the
+agent's English label, not its id (no step for it here).
+
 ### 3.6 A co-author's use
 
 - vaults.db: `agent_people(server, workspace_id, account, agent, at)`,
@@ -1060,6 +1120,70 @@ passage) and the Properties popover (*Made by*) say who made it
   person driving the owner's signed-in CLI. The note's survey did not
   cover it.
 - Tests: `test_computers.py`, `test_remote_chat.py`.
+
+**As built** (3.6). The vendors' terms were read first (the note's "A
+co-author's use and the vendors' terms"): OpenAI's Terms of Use and
+Anthropic's Consumer Terms both forbid making a personal plan's account
+available to anyone else, Anthropic's Commercial Terms let an API key serve
+the key owner's own users. That is close to a clear prohibition for the
+personal plans, so the feature is built behind the owner's consent: the
+desktop app's question before a person is named ends with one sentence
+naming the vendor's terms and saying the owner answers for them
+(`keeping.personAsk`). `agent_people` has a sixth column, `username` (how
+Settings names a person while their server is not reached), and `server`
+is "" for this server or the channel's `remote_url`; turning the agent off
+deletes its people, so an agent turned on again, by anyone, serves none.
+The routes are `GET /api/local-agents/people` (whom the owner may name: the
+editors of the workspaces of this server it edits with others, and of each
+channel's workspace, asked there over the channel's new `GET
+/api/computers/people`), `POST /api/local-agents/{agent}/people` (the shell's
+word and the owner) and `DELETE` (the owner's session, else the shell's
+word, `shell_strict`), which stops the person's running turns
+(`runner.stop_person`, `STOPPED["unnamed"]`). The shell's page ask is
+`agent-person {agent, place, person}` (page asks carry further ids,
+`preload.js`), main.js `agentPerson` reading the people itself, so the
+native question names the person as the server says them. The listing
+gives the owner each agent's `people` and a person it serves `lent: {by}`;
+the announce names `people` per assistant (account ids), kept in
+`computers.assistants`, so no users.db step. The server's `_lent_rows`
+answers a named person the agent of another account's computer
+(`of_account`, `of_page` with `lent_by`, that agent alone, never asking and
+naming nobody; `agent_of(…, lent=True)`, never for the Sends), and
+`names_of` names the computer in their comments. Whose agent a
+conversation talks to is a column: pages.db workspace step 63
+(`computer_chat_owners`, in `LOCAL_STEPS`) gives `computer_chats` an
+`owner`, which binds a far turn to the owner's computer (`waiting_turns`,
+`claim`, `write_run`, `fail_queued` key by it; the claim's turn names
+`for`, and the channel's route checks `registry.serves`), and
+`chats.readable` lets the owner read, stop, answer and export a
+co-author's conversation (and see a thread's chip, `agent_chat.for`, and
+open it, `of_thread(owner=True)`), never open or delete it. A local
+co-author's turn mints its token for the person, names the person in the
+prompt, checks `store.named` and the vault place again when taken
+(`home.person`, `lent`, `serves`), marks each ask `once` (the card offers
+Allow once and Decline alone; `chat` is 400 `ONCE_ONLY`; no grant is looked
+up or kept), and its asks are cards of `computer_asks` for the owner too
+(`card.for`, the bar's "From bob's chat of main.pdf on this computer"; the
+bar follows the asks while an agent that may ask serves a person of this
+server); a far co-author's turn asks nothing (`self.ask` false). The
+byline: a comment's reader adds `agent_owner` and a block's stamp `owner`
+(`agents.Agent.owner`, `here(name, person)`, `read_all`); the byline keeps
+"on TIM-PC, for bob", its title reads "Written by alice's Codex on TIM-PC,
+for bob", and a co-author's strip "alice's Codex on this computer". The
+refusal code `folder` says a lent agent works on a synced folder's files
+alone. A comment keeps whose agent wrote it: pages.db workspace step 64
+(`comment_agent_owners`, in `LOCAL_STEPS`) gives `comments` an
+`agent_owner`, the owner's username at write time, so an agent that later
+changes hands relabels nothing, and `registry.names_of` names a lent
+computer only by a row of the comment's workspace of that owner while it
+serves the author and both edit there (`_lent_rows`' checks), so no other
+account's announce renames it. An owner who no longer edits the workspace
+lends nothing there (`store.lent_to`, `usable`, and the runner's check when
+a turn is taken). The page's computers list the person's own before the lent
+ones, as `agent_of` takes them, so the strip and the tick name the computer
+the turns go to. Not built: the owner's History does not list a co-author's chat
+conversations (the owner reaches a thread's from its chip); the Inbox's
+item still names the agent by its English label.
 
 ### 3.7 The request layer goes
 
@@ -1144,9 +1268,9 @@ answered on the phone.
 
 | Where | Change | How |
 |---|---|---|
-| vaults.db | `computer_agents`, `agent_dirs`, `agent_dir_grants` new and `agent_folders`, `agent_policies`, `agent_grants` unread (built, 2.1, 2.2); `agent_people` new, `agent_runs`, `agent_threads` unread (later) | additive, with one carry-over at start (2.1) |
+| vaults.db | `computer_agents`, `agent_dirs`, `agent_dir_grants` new and `agent_folders`, `agent_policies`, `agent_grants` unread (built, 2.1, 2.2); `agent_people` new (built, 3.6); `agent_runs`, `agent_threads` unread (later) | additive, with one carry-over at start (2.1) |
 | users.db | `integration_tokens.comments`; `feedback` tokens become commenting `read` tokens (built, 3.3: global step 61, `integration_comments`); `computer_links.asks`; `computers.assistants` reshaped | one global step, the next free number after 58 |
-| pages.db | `computer_chats` keeps its name, `page_id` becoming `bucket`, with `dir`, and `computer_chat_runs` gains `bucket` (built, 2.5: workspace step 59, `computer_chat_buckets`); `thread_id` later; the three `feedback_request*` tables dropped; `comments.agent_id` `local:<name>` rewritten to the new id (built, 3.4: workspace step 60, `comment_agent_ids`) | one workspace step, in `LOCAL_STEPS` as 54 and 58 are: no copy of a workspace syncs these tables |
+| pages.db | `computer_chats` keeps its name, `page_id` becoming `bucket`, with `dir`, and `computer_chat_runs` gains `bucket` (built, 2.5: workspace step 59, `computer_chat_buckets`); `thread_id` (built, 3.5: workspace step 62, `computer_chat_threads`); `owner` (built, 3.6: workspace step 63, `computer_chat_owners`); `comments.agent_owner` (built, 3.6: workspace step 64, `comment_agent_owners`); the three `feedback_request*` tables dropped; `comments.agent_id` `local:<name>` rewritten to the new id (built, 3.4: workspace step 60, `comment_agent_ids`) | one workspace step, in `LOCAL_STEPS` as 54 and 58 are: no copy of a workspace syncs these tables |
 | data.db | `feedback_pictures` renamed | rebuilt on demand, no step |
 | The directory | `.gamma/feedback/` removed, `.gamma/annotations/` written | at the vault's first round |
 

@@ -10,11 +10,14 @@ the agent in the vault's directory with the comments as the prompt, shows
 what the agent is doing as the request's `running` detail, writes the
 agent's answer to each comment as a reply signed `Codex` or `Claude Code`,
 resolves the comments it fixed, and sets the request `done` (with a summary
-and the source files changed) or `failed`. A withdraw stops the agent. The
-owner can also send by naming the agent in a comment (`@codex fix this
-only`: "A mention in a comment"), and a follow-up in a thread the agent
-answered resumes the agent's session. And the chat window has a second side
-where the owner talks to the agent directly ("The chat's computer side").
+and the source files changed) or `failed`. A withdraw stops the agent. A
+comment sent to the agent (its *Send to Codex* tick, or `@codex fix this
+only`: "A comment sent to an agent") is a turn of a conversation of its
+thread, answered in the thread, and the next one sent there resumes the
+agent's session. And the chat window has a second side where the owner
+talks to the agent directly ("The chat's computer side"). The owner may
+name co-authors who use the agent too, on the files of a synced folder
+("A co-author's turn").
 
 The design, the survey of both CLIs and the later steps (`@codex` in a
 comment, the chat window's agent side, a remote server seeing the
@@ -36,9 +39,10 @@ made the agents the computer's, where they were each vault's.
 | `tools.py` | Gamma's tools for a turn: this server's `/mcp` as the agent reaches it, the turn's token ("Gamma's tools") |
 | `prompt.py` | what the agent is told and the shape of its answer ("The prompt and the answer") |
 | `runner.py` | hearing the requests, claiming them and running them ("Claiming and the run") |
-| `mention.py` | a comment that names the agent as a Send ("A mention in a comment") |
-| `chats.py` | the chat's computer side: a page's conversations with the agent ("The chat's computer side") |
-| `store.py` | what this computer keeps, in vaults.db ("What this computer keeps") |
+| `threads.py` | a comment sent to an agent: its thread's turn, the thread's prompt's entry, its end written in the thread ("A comment sent to an agent") |
+| `mention.py` | a comment's `@name` read as the agent it is sent to ("A comment sent to an agent") |
+| `chats.py` | the chat's computer side: a bucket's conversations with the agent, and a thread's ("The chat's computer side") |
+| `store.py` | what this computer keeps, in vaults.db, the people an agent serves among it ("What this computer keeps", "A co-author's turn") |
 | `info.py` | what a vault says of its agent, for the links and a page's chip ("The routes") |
 
 `__init__.py` imports only `config` and `version`: `folder_links`, the
@@ -53,13 +57,14 @@ middleware imports, imports `integrations` inside `mint`.
 token or runs on this computer for Gamma ([i18n.md](i18n.md) glossary).
 **An agent's name** is `codex` or `claude`, its **label** `Codex` or
 `Claude Code`. **The computer's agents** are those turned on here, each
-**owned** by the account that turned it on (`set_by`): its turns, mentions
-and Sends use it, nobody else's. **The agent picked** is the one the chat's
+**owned** by the account that turned it on (`set_by`): its turns, the
+comments sent to it and its Sends use it, and those of the people it lets
+use it (**co-authors**, "A co-author's turn"), nobody else's. **The agent picked** is the one the chat's
 picker shows for a bucket (`chat/agents.js`, "The client"): a chat turn
 names it (`agent`) and a conversation keeps the one it began with. **An
 account's agent** is the first of its agents in the catalog's order, Codex
 then Claude Code (`store.agent_for`): the one a turn that names none runs
-with, the one a mention names and its Sends run with, and on a vault the
+with, the one its Sends run with, and on a vault the
 one the links and a page's chip show (the vault maker's). **A run** is one request claimed by this server and worked by
 one turn of one agent. **The maker** is the account that made the vault
 (`folder_links.created_by`). The interface says "Codex on this computer"
@@ -120,9 +125,10 @@ Where an agent works: in the vault of the work folder the page or the
 Send is in, kept here (`folder_links.agent_folder`: a work folder of this
 server, or one of another server this computer is shown on), else, for a
 chat, in an offered directory or one of its own ("The chat's computer
-side"). Until the Feedback dialog goes (step 3.7) a Send, the dialog's or
-a mention's, is taken by its requester's agent, the first of its agents
-in the catalog's order (`store.agent_for`); a mention names that agent.
+side"). Until the Feedback dialog goes (step 3.7) its Send is taken by
+its requester's agent, the first of its agents in the catalog's order
+(`store.agent_for`); a comment sent to an agent names the agent it is sent
+to ("A comment sent to an agent").
 
 An agent turned on hands it the Sends that wait in every work folder kept
 here (`runner.queue_waiting`). Turned off, every run and chat turn of it
@@ -241,7 +247,7 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
    (`hosted.read_only`) or a workspace that refuses writes
    (`workspaces.refuse_writes`) fails it with that reason.
 3. **What there is to answer**: the run notes when it reads (`seen_at`)
-   and, once read, which comments ("A mention while a run works" below):
+   and, once read, which comments ("A word while a Send's run works" below):
    `requests.entries_of` with the paths from
    the vault's rows (`entries.paths_of(vault.store.files(link_id))`, as the
    files' writer names them), then `prompt.pending`. None pending → `done`
@@ -263,7 +269,7 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
    session=<the one to resume, or "">)`, its pid recorded. The session is
    the one this agent answered every pending thread in last, in the
    vault's directory as it is now, when they share one (`_session`, from
-   `agent_threads`: "Resuming the session" below); a resumed turn that
+   `agent_threads`: "Resuming a Send's session" below); a resumed turn that
    ends badly before any step, not stopped and not past its deadline, is
    started once more afresh (Claude Code has no fallback of its own; Codex
    falls back to a new thread itself), unless Gamma's tools did not start
@@ -388,8 +394,8 @@ newest comment is not an agent's (nothing new from a person since an
 agent answered; a request's `answered` flags are not asked), unless that
 comment is a reply of this computer's agent written while a person spoke
 in the thread unread (`seen`: `{thread id: that reply's id}`, which the
-runner finds through `agent_threads` and `_spoken_after`: "A mention while
-a run works" below). The same full prompt goes to a resumed session: the
+runner finds through `agent_threads` and `_spoken_after`: "A word while
+a Send's run works" below). The same full prompt goes to a resumed session: the
 agent reads the whole thread again either way.
 `prompt.ANSWER_SCHEMA` is the strict JSON schema of the answer (`answers`
 of `{thread_id, outcome, reply}` with `additionalProperties: false`, and
@@ -399,63 +405,9 @@ summary)`: the first item per thread among `thread_ids` with a known
 outcome and a non-empty reply (cut to `comments.MAX_BODY`), the summary on
 one line cut to 300 characters; anything malformed is `([], "")`.
 
-## A mention in a comment
+### A word while a Send's run works
 
-An agent's owner can also send by writing the agent's name in a comment:
-`@codex fix this only` in a thread on a passage, an area, a region, ink
-or a note is a Send of that thread, the comment's other words its
-instruction; written in the page's own thread (`block_id` the page's), it
-is a Send of every open thread of the file. The request, its states, its
-chip and its answers are the ones above. `gamma/local_agents/mention.py`
-holds the rule; the names are not reserved, so everywhere else `@codex`
-is what it was, plain text or a member named codex.
-
-- **The rule** (`agent_named(ws, event, via=)` → `codex`, `claude` or
-  `""`), asked once per write by the comment routes, before
-  `comments.written`, cheapest test first: `enabled()`; a create, reply
-  or edit; a person's own write (the event has neither `agent` nor
-  `agent_id`, so a token's comment and the agent's own replies never
-  count) not made through a share (`via`); the names it newly mentions
-  (`mentions.people_in`, for an edit less those of its text before, the
-  Inbox's rule) among the catalog's, exact lowercase (`@Codex` is not
-  the agent), and none read from the database before one is; then the
-  page a live file of a work folder a vault here keeps, the name the
-  writer's agent (`runner.folder_agent(ws, w, user_id)`: the first of its
-  agents on, `store.agent_for`, the one a mention can name until a
-  comment sent to an agent is a turn of its own, step 3.5 of the plan;
-  the field's @ menu lists that one alone), and the writer its owner. The route puts the name on the event
-  (`agent_named`), so the Inbox reads the same answer: a member named
-  codex is told nothing of it, nor of the agent's later replies in a
-  thread where its owner named it (`inbox._agent_of`, by the agents as
-  they are now).
-- **The Send** (`send(ws, event, name, by_name=)`, after `written`; never
-  raises): refused, with a code the client words and an English `why`,
-  when the thread is resolved (`closed`: it is reopened first), when an
-  edit is not of the thread's newest comment (`not_newest`, since the
-  agent would find nothing new in it), when the writer is no owner or
-  editor of the workspace now (`viewer`), when the server or the
-  workspace takes no writes (`writes`), and for a file-wide mention with
-  more than `MAX_THREADS` open threads (`too_many`) or none (`nothing`);
-  a AnnotationError of the create is `other`. Else `requests.create` with
-  the file's scope (`entries.resolve_scope`), `threads=[the thread]` or
-  none for the file's, `note` the body with the agent's mentions taken
-  out of its prose (`mentions.without`) and cut to `requests.MAX_NOTE`,
-  `via` `session`, and the comment's id as the request's (a retried POST
-  writes no comment and so no second Send; an edit's Send gets a new
-  id). The runner takes it as any Send of the agent's owner (`_ours`). With
-  the vault paused or the agent not ready, it waits or fails as a Send
-  does.
-- **The answer.** `POST /api/pages/{id}/comments` answers `{comment,
-  thread, send?}` and `PATCH /api/comments/{id}` `{comment, thread?,
-  send?}`: `send` is `{agent, request_id, scope: "thread" | "file",
-  threads}` or `{agent, refused, why}`, absent when no agent was named;
-  with it, `thread` is read again after the Send, so its `sent` is the new
-  request (the thread the writer built under its lock has none, and the
-  client replaces a thread whole). The comment is stored either way.
-
-### A mention while a run works
-
-One run at a time a folder, so a mention made in a thread a run is
+One run at a time a folder, so a word said in a thread a Send's run is
 working on waits behind it. These rules keep it from being lost:
 
 - The run notes when it reads its entries (`seen_at`) and the ids of the
@@ -478,11 +430,7 @@ working on waits behind it. These rules keep it from being lost:
   reply sets them ("Answered" in annotations.md), and it answers nothing the
   agent was asked. What is new is the newest comment's rule above.
 
-A mention made while an earlier Send of the same thread still waits is
-read by that Send's run, which then answers both: the mention's own
-request ends "Nothing new since the last answers."
-
-### Resuming the session
+### Resuming a Send's session
 
 Each thread a run answers gets a row in vaults.db's `agent_threads`: the
 agent, its turn's session (Codex's thread, Claude Code's session), the
@@ -490,12 +438,202 @@ directory it ran in, `seen_at` and the comments it read, the reply's id
 and the request. A later
 run whose pending threads all have a row of the same agent, run in the
 vault's directory as it is now, sharing one session, resumes it (Codex
-`thread/resume`, Claude Code `--resume`), so a follow-up in a thread
-(`@codex no, keep the British spelling`) is answered by an agent that
-remembers what it did; any other run starts a new session. A session the
+`thread/resume`, Claude Code `--resume`), so a follow-up Send of a thread
+is answered by an agent that remembers what it did; any other run starts a new session. A session the
 agent no longer has is started afresh once (step 4 of the run). The rows
 of a vault go when it is removed (`vault.store.forget_link`), relinked
 (`store.forget_threads`) or found gone (`store.forget_links`).
+
+## A comment sent to an agent
+
+A person sends a comment to an agent by ticking *Send to Codex* under the
+comment's field, or by typing `@codex` there, which ticks it ("The
+interaction" of [the plan](../research/agents-as-participants-plan.md),
+step 3.5; the field is [comments.md](comments.md) "Sent to an agent"). The
+comment is stored as any comment, and is also the instruction of a turn of
+that agent: a turn of the account's **conversation of the thread**, run as
+a chat's turn is ("The chat's computer side"), answered in the thread under
+the agent's name. A new comment on any passage, ticked, is a turn about
+that passage; nothing is gathered first. `gamma/local_agents/threads.py`
+holds the turn and its end, `mention.py` the `@name`.
+
+- **The request.** `POST /api/pages/{id}/comments` and `PATCH
+  /api/comments/{id}` take `to`, an agent's id ([comments.md](comments.md)
+  "Who wrote a comment": `computer:<computer>:<name>`), which the field
+  names from the agents the person may use on the page (`chat/agents.js`
+  `commentAgents`: this computer's agents the account turned on, else the
+  agent of the computer of the account's that keeps the page's work
+  folder, as the chat's picker has them; `GET /api/local-agents` names
+  each agent's `id`, `agents.here`). A field that shows the tick always
+  sends `to`, `""` while it is unticked (a comment among people, whatever
+  its text names); a client that sent no `to` (an edit, a field with no
+  tick, an older client) has its `@name` read as `to` (`mention.to_of`: the
+  names the comment newly
+  mentions outside code, for an edit less those of its text before, among
+  the catalog's; the agent of that name of the computer that keeps the
+  page's work folder where no vault here keeps it, else this computer's
+  that the writer turned on), so the server decides once. Only a person's
+  own comment in Gamma is sent: a token's `to` is refused, one made
+  through a share is never read, and the agents' own comments name none.
+  The route (`routers/comments.py` `_written`) puts the agent's name on
+  the event when the comment's text names it (`agent_named`), so the Inbox
+  tells no member of that name, then `threads.start` makes the turn.
+- **The refusals** (`threads.REFUSALS`, each with an English `why`, the
+  comment stored all the same): `closed` (a resolved thread: reopen it
+  first), `not_newest` (an edit of a comment that is not the thread's
+  newest), `viewer` (no owner or editor of the workspace), `writes` (the
+  server or the workspace takes no writes), `off` (this computer's agent
+  not turned on by the writer), `elsewhere` (an agent that does not work
+  on this page: another computer's, or one this server cannot reach),
+  `offline` (the computer that runs it is away: the turn would wait
+  unseen), `paused` (its synced folder is paused), `not_ready` (its
+  problem), `busy` (a turn of the thread's conversation is still to end),
+  `folder` (a co-author's on a page of no synced folder) and `other`. A
+  far computer's `offline` and `paused` name it (`computer`), so the client
+  words every code but `not_ready` and `other` itself (`comments.js`
+  `turnRefusal`), the server's `why` only for those two.
+- **The turn** (`threads.start`): the thread's conversation of the
+  account (`chats.of_thread`, `computer_chats.thread_id`, step 62 of
+  [migrations.md](migrations.md)), its bucket the thread's page, where it
+  works chosen as a chat's (`chats.place_of`, for the thread's
+  conversation's `dir`, else the page's chat's with that agent: the
+  synced folder's directory, an offered directory, or one of its own); a
+  conversation of another agent or another directory is archived and a
+  new one begun, as in the chat. The person's message is the comment's
+  text with the agent's `@name` taken out of its prose (`mentions.without`)
+  and names the comment (`comment_id`), a new comment's id its id, so a
+  retried POST makes no second turn; the agent's message names the
+  agent that answers in the thread (`agent_id`: `agents.here`, or the far
+  computer's `agents.of_channel`). It is queued for this computer's runner
+  (`runner.queue_chat`), or, for the computer that keeps the page's work
+  folder, written to wait for it (`chats.begin(remote=True)`) and that
+  computer woken: it claims it over its channel as a chat's turn, the
+  claim carrying the thread (`chats.claim`'s `thread`, its entry with its
+  PDF place, whose source line it computes from its own disk). The answer
+  is `{agent, conversation_id, turn_id, state}`.
+- **The prompt** (`prompt.build_thread`): the comment as the request; what
+  the page is (`about`), and the thread as data, its entry as
+  `list_annotations` and `read_annotation` give it (`threads.entry_of`:
+  its file, place, quote, `source` line, `pictures` where a vault's files
+  hold them, the comments with their authors, `is_owner` on the person's)
+  inside the JSON block with `message`; where it works, as a chat's; with
+  Gamma's tools, to answer in the thread with `comment` and its
+  `thread_id` (else its final message is written there), to resolve the
+  thread only once nothing is left to decide, and to ask a decision with
+  `comment` on the passage it concerns and end its turn. The thread holds
+  what was said, so no earlier messages are pasted. A chat turn's prompt
+  says the same of asking (`prompt._asking`).
+- **The next ticked reply** in the thread is a turn of the same
+  conversation, resuming its agent's session as a chat's follow-up does
+  (`store.conversation_of`). The first ticked reply in a thread an agent
+  opened in a turn of this computer (to ask a decision) begins the
+  thread's own conversation with the session of the conversation that
+  opened it (`threads.opener_of`, by the agent messages' `threads`;
+  `chats.begin`'s `resume` copies its `agent_conversations` row while it
+  waits on no turn and has the same directory, agent and owner), so the
+  answer reaches the session that asked.
+- **The end** (`threads.settle`, from every write that ends a thread's
+  turn: `chats.write_reply` of a turn of this computer's, `write_run`,
+  `stop_run` and the far turns' other ends on the server that keeps the
+  conversation): when the agent wrote no reply in the thread since the
+  turn began (a comment of its id, for the account, through the
+  `comment` tool and its turn's token), Gamma writes the turn's last
+  message there as the agent's reply (`annotations.hand.reply`, signed as
+  the agent for the account), under an id of the turn's (`home.reply_id`),
+  so it is written once however often the end is; a failed turn writes its
+  error, a stopped one "Stopped before Codex answered." A far turn has no
+  token yet (step 4.2 of the plan): its answer is always this one. A
+  thread sent is a thread answered.
+- **The threads it opened**: a turn of this computer's records on its end
+  the threads its agent opened for the account since it began running
+  (`threads.opened`, the agent message's `threads: [{id, page_id,
+  block_id, text}]`, a chat's turn's too), which its answer card lists.
+- **What a reader sees**: each thread the comment routes answer carries
+  `agent_chat` (a reply sent to no agent too, so its thread's chip stays
+  while a turn works), the session account's conversation of it (`{conversation_id,
+  agent, label, turn: {turn_id, state, asking, waiting, computer} | null}`,
+  `threads.chats_of`), for nobody else; `GET /api/local-agents/chat?bucket=
+  &thread=` reads that conversation (the thread's *Open in chat*), and its
+  turns are stopped and answered by the chat's routes. A thread's
+  conversation is never its page's active chat nor in History.
+- **The Inbox**: the agent's reply reaches the person who sent the thread
+  as a reply does (an agent's write is someone else's to its own account),
+  and a member named codex is told nothing of a comment sent to the agent,
+  nor of the later comments of its sender in that thread
+  (`inbox._agents_of`, through `threads.agent_named`).
+
+Until step 3.7 removes it, the Feedback dialog's Send (below) keeps its own
+request, its run and the agent's answers; a comment's `@codex` no longer
+makes one.
+
+## A co-author's turn
+
+Step 3.6 of
+[agents-as-participants-plan.md](../research/agents-as-participants-plan.md)
+(decision 13): the owner of an agent here names, on the computer, the
+people who may use it, and a person named talks to it as the owner does,
+with the chat's picker, the comment field's *Send to* tick or `@codex`, on
+the files of a synced folder alone. Their use is the owner's subscription:
+the desktop app's question before a person is named says what that person
+can do and ends with the one sentence of consent the vendors' terms ask for
+(both forbid making a personal plan's account available to anyone else:
+[the research note](../research/agents-as-participants.md) "A co-author's
+use and the vendors' terms").
+
+- **Naming them.** vaults.db `agent_people` ("What this computer keeps"):
+  per agent, a person of a workspace by the account's id there, on this
+  server (`server` "") or on a server one of the owner's channels is
+  shown on (`server` that channel's `remote_url`). `GET
+  /api/local-agents/people` lists whom the owner may name: the editors and
+  owners of each workspace of this server it edits with others, and of
+  each channel's workspace there, which that server answers over the
+  channel (`GET /api/computers/people`, [computers.md](computers.md));
+  `POST /api/local-agents/{agent}/people` names one with the shell's word
+  and the agent's owner (the desktop app's `agent-person` ask, which reads
+  the person from that listing itself); `DELETE` takes one off with the
+  owner's session (else the shell's word), and their turns of it that run
+  here stop (`runner.stop_person`, "Stopped: the agent's owner no longer
+  lets you use it."). Turning the agent off deletes its people: turned on
+  again, by anyone, it serves none of them. Each change tells the open
+  pages and the channels (`folder_links.agents_changed`).
+- **Where they see it.** On this server, the listing's agent carries `lent:
+  {by}` for a person it serves in the session's workspace while its
+  owner edits that workspace (`store.lent_to`, `usable`), and the chat's seat (`chats.place_of`)
+  gives a co-author the `vault` place alone: a page of no synced folder,
+  an offered directory and a directory of its own are never theirs (404,
+  and `folder` for a comment's turn). On another server the announce names
+  each assistant's `people`, and that server shows a person it names the
+  agent of the computer that keeps the work folder ([computers.md](computers.md)
+  "A co-author's agent"), so the picker, the tick and the `@` menu offer
+  it there.
+- **Their turn.** Their own conversation (`computer_chats.user_id`), whose
+  `owner` is the agent's owner (pages.db step 63): a conversation never
+  changes whose agent it is (`chats.begin` archives one of another
+  owner's), a far turn is given only to the owner's computer, and the
+  owner reads it too (`chats.readable`: read, stop, answer, export and the
+  thread's chip with `for`, never open or delete it). The turn is the
+  person's: the token is minted for them, the prompt names them as the one
+  whose words are the instruction, the editor check is theirs, and the
+  computer checks again when the turn is taken that the owner still names
+  them, that the owner still edits the workspace and that it works in the
+  vault (`home.person`, `lent`, `serves`, `editor`; a far turn's claim
+  names the person, `for`). What it asks is allowed once
+  at most ("Trust"): each ask is marked `once`, so the card offers *Allow
+  once* and *Decline* alone, `chat` is 400 "A co-author's turn is allowed
+  once at most.", no grant is looked up or kept, and the ask is answered by
+  the person in their chat or by the owner, in the chat's card or on this
+  computer (a card of `computer_asks` with `for`). A far co-author's turn
+  asks nothing (step 4.3 of the plan relays asks).
+- **What it writes** is the person's, signed as the agent: a comment's
+  `author` is the person and the reader names the agent's owner
+  (`agent_owner`, gamma/agents.py `Agent.owner`, kept with the comment as
+  it was when it was written, pages.db step 64), a block's stamp keeps
+  `owner` beside `for`. The byline reads *Codex on TIM-PC, for bob*, its
+  title *Written by alice's Codex on TIM-PC, for bob*; the strip reads
+  *alice's Codex on this computer*.
+
+Gamma AI and connections are not lent this way: a connection is its
+account's alone.
 
 ## A work folder of another server
 
@@ -503,10 +641,11 @@ A work folder of another Gamma server (a NAS: [work_folders.md](work_folders.md)
 "Work folders of another server") kept here has the computer's agent too,
 once this computer is shown on that server ([computers.md](computers.md)):
 the first agent on of the account the channel belongs to (the vault's
-maker, `channel.agent_folders`); from then on that account's Sends and
-`@codex` mentions **made on the NAS, in any window**, run here, and the
-answers go back there. This is step 4c of the research note; the chat's
-computer side stays local (4d).
+maker, `channel.agent_folders`); from then on that account's Sends **made
+on the NAS, in any window**, run here, and the answers go back there, and
+so do its comments sent to the agent, which are turns of their threads
+taken as the chat's are ("The chat on another server's page", "A comment
+sent to an agent"). This is step 4c of the research note.
 
 - **Turning it on** is the computer's (`PATCH /api/local-agents/{agent}`,
   "Who turns it on"); nothing is set per folder. The shell's question
@@ -532,8 +671,7 @@ computer side stays local (4d).
   Gamma (`via: session`) by the computer token's account, in a work
   folder that computer announced with an agent, reaches it; a token of
   that account's Send there is refused (403 "Codex on TIM-PC takes Sends
-  made in Gamma, not with a token."), and anyone else's mention is plain
-  text. The NAS
+  made in Gamma, not with a token."). The NAS
   wakes the computer's held poll (`{wake: ["sends"]}`) when such a Send
   lands or is withdrawn; a wake while no poll is held answers the next
   poll at once.
@@ -714,7 +852,8 @@ steps").
   (every member and a share read them, they travel in backups and exports,
   `read_chats` reads them); the computer's are their account's alone, in their
   own table of the bucket's server's pages.db, `computer_chats`
-  (`db.COMPUTER_CHATS_SCHEMA`; step 59 gave it `bucket` and `dir`, [migrations.md](migrations.md)),
+  (`db.COMPUTER_CHATS_SCHEMA`; step 59 gave it `bucket` and `dir`, step 62
+  `thread_id`, [migrations.md](migrations.md)),
   read and written by `gamma/local_agents/chats.py` only. One row a
   conversation: `id`, `bucket` (a page's id, a folder's or `home`, as
   `chats.bucket`), `dir` (where its agent works: the work folder's id, an
@@ -723,7 +862,10 @@ steps").
   began with), `title` (its first message's first line, 80 characters),
   `messages` (JSON), `version`, `created_at`, `updated_at`, `archived_at`
   (null for the bucket's active conversation of that account; set:
-  History). It is in `ws_backup.PRIVATE_TABLES` (a backup carries none, a
+  History), `thread_id` (the comment thread a conversation answers, its
+  bucket the thread's page, "" for a chat's: "A comment sent to an agent";
+  such a conversation is never its bucket's active one nor in History, and
+  `archived_at` null is the thread's own of that account). It is in `ws_backup.PRIVATE_TABLES` (a backup carries none, a
   restore keeps the live rows), goes with its page deleted for good
   (`ops._purge`), is filed into the library's History with its folder
   deleted (`chats.file_into_home`, in the tree delete's transaction, as
@@ -737,8 +879,10 @@ steps").
   starts). The agent's: `{id, role: "agent", agent, label, turn_id, state:
   queued | running | done | failed | stopped, text, steps: [{id, kind:
   read | edit | run | search | other, status, path? | program?}], asks,
-  changes, changed, built, error, fresh, model, effort, at, ended_at}`:
-  `asks` what waits for the person ("Asking in the chat"), `model` and
+  changes, changed, built, error, fresh, model, effort, threads?, at,
+  ended_at}`: `asks` what waits for the person ("Asking in the chat"),
+  `threads` the comment threads its agent opened in the turn (a turn of
+  this server's: `threads.opened`), `model` and
   `effort` what the turn asked for (null for the agent's default),
   `path` relative to the
   directory or `"outside"`, `program` a command's program alone (as `_said`),
@@ -1510,10 +1654,11 @@ short connection):
 | `computer_agents` | `agent` (the key: `codex`, `claude`), `enabled`, `runs` (`never` or `ask`; `never` while it is off), `set_by` (the account that turned it on, which owns it), `set_at`; a row stays when it is turned off. Turned on again while on, it keeps its owner and `set_at` |
 | `agent_dirs` | `id` (the key), `path` (a directory as `folder_links.clean_path` gives it), `name` (the directory's own when none is given), `added_at`: the directories offered to the agents beyond the vaults, in the order last given |
 | `agent_runs` | `id`, `ws`, `link_id`, `request_id`, `agent`, `session` (the agent's session or thread), `state` (`running`, then `done`, `failed` or `stopped`), `started_at`, `ended_at` (null while it runs), `detail` (the request's detail the run ended with: a done or failed run's words, "" for a stopped one), `error` (this computer's record of a failure: the agent's whole error and its stderr tail, never shown to members), `changes` (JSON, the source files changed, at most 200), `built`, `steps` (JSON, at most 200), `pid`; indexed by `(ws, request_id)` and on the open runs |
-| `agent_threads` | `link_id` and `thread_id` (the key), `agent`, `session`, `cwd` (the vault's directory the turn ran in), `seen_at` (when the run read the thread), `read_ids` (JSON, the comments it read), `comment_id` (its reply), `request_id`, `at`: the thread an agent of the vault answered last ("Resuming the session") |
+| `agent_threads` | `link_id` and `thread_id` (the key), `agent`, `session`, `cwd` (the vault's directory the turn ran in), `seen_at` (when the run read the thread), `read_ids` (JSON, the comments it read), `comment_id` (its reply), `request_id`, `at`: the thread an agent of the vault answered last ("Resuming a Send's session") |
 | `agent_conversations` | `conversation_id` (the key), `link_id` (its vault's, "" outside one), `agent`, `session`, `cwd`, `at`: the session a chat conversation's turns resume ("The chat's computer side") |
 | `agent_turns` | `id` (the turn), `ws`, `link_id` ("" outside a vault), `conversation_id`, `page_id` (the conversation's bucket), `agent`, `state` (queued, running, then done, failed or stopped), `started_at`, `ended_at`, `error` (this computer's record), `pid`: a chat turn's run |
 | `agent_dir_grants` | `conversation_id`, `dir` (the directory the turn works in), `command`, `cwd` (the folder below it the command runs in, `.` the directory) and `host` (a network host, "" for none), the key; `agent` (the conversation's), `at`: a command the person allowed in that chat, answered by Gamma when the same command is asked again in the same directory and folder for the same host |
+| `agent_people` | `server` ("" this server, else a channel's `remote_url`), `workspace_id`, `account` (the person's account there) and `agent`, the key; `username` (how Settings names them while that server is not reached), `at`: a person the agent's owner lets use it ("A co-author's turn"), at most 50 an agent, deleted with the agent turned off |
 | `agent_folders`, `agent_policies`, `agent_grants` | what each vault's agent was, what it could run and the chat grants keyed by the vault, before agents were the computer's: left unread. `store.carry_over`, at the start (`runner.recover`), once (nothing while `computer_agents` has a row), turns on for the computer every agent on for any vault, owned by the account that turned it on first, and lets it ask where a vault of it was let ask on this computer (`computer`, which covered the chat here and another server's turns, as `ask` now does; a vault's `ask`, its own chat's alone, carries `never`, so the person lets it ask through the desktop's warning); the grants are not carried |
 
 `carry_over`, `agents()` (every row, in the catalog's order),
@@ -1522,7 +1667,10 @@ short connection):
 and `set_runs(agent, runs, by=)` (each → whether it changed: turned on by
 anyone while off, off and narrowed by its owner alone), `dirs()` and
 `set_dirs(entries)` (the whole list, an offered id kept), `grant`,
-`granted` and `grants_of` (by the directory), `start_run`, `update_run` (`session`
+`granted` and `grants_of` (by the directory), `people`, `named`,
+`name_person`, `unname_person`, `lent_to(ws, account)` and `usable(user_id,
+ws, agent)` (the agents another account lends the account, and whether it
+may use one), `start_run`, `update_run` (`session`
 and `pid` while it runs), `end_run` (a run that ended stays as it ended),
 `open_runs` and `run_of` (the newest run of a request), `answered_thread`
 (a thread's row, in place of the one it had), `threads_of(link_id,
@@ -1546,22 +1694,25 @@ and nothing of the run's row.
 
 | Method | Path | What |
 |---|---|---|
-| GET | `/api/local-agents?fresh=0\|1` | `{here, computer, agents: [{name, label, found, version, ready, problem, code, models, at, enabled, runs, mine}], dirs: [{id, path, name, added_at}]}` (`here` whether this server runs agents, `computer` this computer's name as its channels announce it; `code` how the agent stands as a code, `catalog.code`: `checking`, `missing`, `signed_out`, `not_ready` or `""`, which the client words; `models`: "Its model, its typing…"; `enabled` whether it is on for this computer, `runs` what it may run, `never` or `ask`, `mine` whether the session's account turned it on: the one who may turn it off or narrow it; `dirs` the directories offered beyond the vaults), Codex then Claude Code, from `catalog.cached`; `fresh=1` probes both anew, at most once every 10 s on this server (sooner, the kept answers). A signed-in account's session (`require_personal_user_id`; no token, no guest); when not `enabled()`, `{here: false, computer: "", agents: [], dirs: []}`, so every window asks it without an error (`gamma/routers/local_agents.py`, registered beside the feedback router) |
+| GET | `/api/local-agents?fresh=0\|1` | `{here, computer, agents: [{id, name, label, found, version, ready, problem, code, models, at, enabled, runs, mine, lent, people}], dirs: [{id, path, name, added_at}]}` (`here` whether this server runs agents, an agent's `id` its id as every agent has one, `agents.here`, which a comment sent to it names, `computer` this computer's name as its channels announce it; `code` how the agent stands as a code, `catalog.code`: `checking`, `missing`, `signed_out`, `not_ready` or `""`, which the client words; `models`: "Its model, its typing…"; `enabled` whether it is on for this computer, `runs` what it may run, `never` or `ask`, `mine` whether the session's account turned it on: the one who may turn it off or narrow it; `lent` `{by}` where another account's agent serves the session's account in its workspace, else null; `people` the people it serves, for its owner alone, `store.people`'s rows; `dirs` the directories offered beyond the vaults), Codex then Claude Code, from `catalog.cached`; `fresh=1` probes both anew, at most once every 10 s on this server (sooner, the kept answers). A signed-in account's session (`require_personal_user_id`; no token, no guest); when not `enabled()`, `{here: false, computer: "", agents: [], dirs: []}`, so every window asks it without an error (`gamma/routers/local_agents.py`, registered beside the feedback router) |
+| GET | `/api/local-agents/people` | `{places: [{server, workspace_id, name, origin, people: [{id, username, role}], error}]}`: whom the session's account may let use an agent it turned on ("A co-author's turn"): the workspaces of this server it edits with others (`server` ""), then each of its channels' workspaces, asked there (`channel.members`, `GET /api/computers/people`; `origin` that server's, `error` why it did not answer); the editors and owners of each, the account left out. 404 where agents do not run |
+| POST | `/api/local-agents/{agent}/people` | `{server, workspace_id, account}` → `{people}`: the person may use the agent from now on (`store.name_person`). The shell's word (403 "Only the desktop app may let another person use an agent on this computer."), the agent's owner (403, 404 for an agent Gamma does not know), a person who edits that workspace beside the owner (400; on another server, as that server lists them: 404 for a server no channel of the account names, 502 for one that does not answer), at most 50 (400) |
+| DELETE | `/api/local-agents/{agent}/people?server=&workspace_id=&account=` | → `{people}`: the person may no longer use it; their turns of it running here stop (`runner.stop_person`). The agent's owner, else the shell's word never unchecked (`shell_strict`, 403); 404 for an agent that is off |
 | PATCH | `/api/local-agents/{agent}` | `{enabled?, runs?}` → the agent as the listing says it, with `queued`, how many waiting Sends of this server's work folders it took when turned on (`runner.queue_waiting`; another server's Sends are its own to hand over, which the channels ask for). The gate, in order: `enabled()` (404 "Agents run on the desktop app's own server."), a session, an agent Gamma knows (404 "Gamma knows no agent named …"), a known `runs` (400 "What an agent may run is never or ask."); turning it on: the shell's word (`shell.from_shell`, 403 "Only the desktop app may turn on an agent on this computer.") and `catalog.probe(name, fresh=True)` ready (400 with its problem), or, while it is on, its owner (409 "Codex was turned on by another account on this computer."); turning it off: its owner, or the shell's word never unchecked (`shell.shell_strict`, 403 "Only the account that turned on Codex, or the desktop app, may turn it off."), which turns it off whoever owns it; `runs`: the agent on after this PATCH's `enabled` (400 "Turn Codex on first."), its owner (403), and for `ask` the shell's word (403 "Only the desktop app may let an agent ask to run commands on this computer."). Turned on, its account owns it (`store.set_agent`); turned off, its runs and chat turns stop (`runner.stop_agent`); either tells the work folders' open pages and the channels (`folder_links.agents_changed`); set back to `never`, its turns' asks are declined (`runner.runs_never`) |
 | PUT | `/api/local-agents/dirs` | `[{id?, path, name}]` → `{dirs}`: the directories offered to the agents beyond the vaults, replaced whole (`store.set_dirs`: an `id` offered keeps its row and `added_at`, one left out goes, a name left empty is the directory's own). An entry that names a path not offered under its id takes the shell's word (403 "Only the desktop app itself may name a path on this computer."), and must be a directory here (400) that a vault could have (`folder_links.clean_path`, 400 with its refusal); any change takes an account with an agent on here, else the shell's word (403 "Only an account with an agent on this computer, or the desktop app, may change the directories it offers."). 400 for a new path inside or around a vault here (a directory vault, or a file vault's own file: "… is inside or around the synced folder …") or another entry of the list ("… is inside or around …, also offered."), for more than 50, or a path or an id given twice; 404 where agents do not run |
 | GET | `/api/folder-links` | each link's `agent`: `{name, label, ready, problem, running: {kind: "send" \| "chat", request_id (null for a chat turn), detail} \| null}` for a work folder, of the agent that works there (`local_agents.info.listing`: the one at work there now, else the vault maker's first agent on), else null (one store query for the whole listing, readiness from `catalog.cached`, nothing run). `PATCH /api/folder-links/{id}` sets no agent, the agents being the computer's; `{paused: false}` and a saved selection (`PUT …/selection`) hand the Sends that wait to the agents on (`_hand_waiting`); a pause, a relink and a delete stop the vault's run. A member who cannot act on the vault (`_acts`) reads `running.detail` as "" (it may name files) |
 | GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only, and `mine` (whether this account made the vault) on every server. Turning an agent on or off tells each open page of every work folder here `{t: "vault"}` (`folder_links.agents_changed`, `_tell_open_pages`, from `collab.open_pages()`), so its chip and the comments' @ menu read it again |
-| POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment that names the writer's agent on a file of a work folder kept here is a Send too, answered as `send` ("A mention in a comment") |
-| GET | `/api/local-agents/chat?bucket=&version=&agent=` | the chat's computer side ("The chat's computer side") of a bucket (a page's id, a folder's or `home`), an account with an agent on here, or the vault's maker on its work folder: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session, folder_id, dir, grants}`, `agent` the one picked (`agent`, while the account turned it on) or else the account's first (`store.agent_for`), null for none, `session` whether a terminal can continue the conversation, `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null, `folder`, `folder_id` and `paused` the work folder's ("", null and false outside one), `dir` where the agent works (`{kind: "vault", name, path}`, the path for the vault's maker alone; `{kind: "offered", id, name}`; null for a directory of its own), `grants` the commands allowed in the conversation in that directory, `[{command, cwd, host}]`) and `conversation` the bucket's active one (`{id, title, agent, messages, version}`, null for none, and for one of another agent than `agent`); with `version` the stored one, `{computer, same: true}` |
+| POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment sent to an agent (`to`, or its `@name`) is a turn of its thread too, answered as `turn` ("A comment sent to an agent") |
+| GET | `/api/local-agents/chat?bucket=&version=&agent=&thread=` | the chat's computer side ("The chat's computer side") of a bucket (a page's id, a folder's or `home`), an account with an agent on here, a co-author an agent here serves (a synced folder's file or folder alone), or the vault's maker on its work folder: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session, folder_id, dir, grants, lent}`, `agent` the one picked (`agent`, while the account turned it on or its owner lends it) or else the account's first (`store.agent_for`, else the first lent), null for none, `session` whether a terminal can continue the conversation (never a co-author's), `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null, `folder`, `folder_id` and `paused` the work folder's ("", null and false outside one), `dir` where the agent works (`{kind: "vault", name, path}`, the path for the vault's maker alone; `{kind: "offered", id, name}`; null for a directory of its own), `grants` the commands allowed in the conversation in that directory, `[{command, cwd, host}]` (none for a co-author's), `lent` `{by}` for an agent another account lends, else null) and `conversation` the bucket's active one (`{id, title, agent, thread_id, messages, version}`, null for none, and for one of another agent than `agent`), or with `thread` the account's conversation of that comment thread on the bucket, else a co-author's there with the account's agent ("A comment sent to an agent", "A co-author's turn"); with `version` the stored one, `{computer, same: true}` |
 | POST | `/api/local-agents/chat/turns` | `{bucket, text, selections?, id?, agent?, model?, effort?, dir?}` → 202 `{conversation, turn: {id, state}}`, `agent` the one picked (left out, the account's first, `store.agent_for`; another computer's turn runs that computer's), `dir` where the conversation works outside a work folder kept here (an offered directory's id, or `""` for one of its own; left out, the active conversation's): another `agent` or a `dir` other than the active conversation's starts a new one (`chats.begin`); 400 for no text, past 20,000 characters, a malformed `id`, a `dir` no offered directory has, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running ("Codex is still working on the last message…", named by that turn's agent), while the account has no agent on here ("Turn on Codex or Claude Code in Settings → AI first.") or not the one picked ("Turn on Claude Code in Settings → AI first."), for a folder paused or choosing its files, and for an agent known not to be ready (its problem); 403 when the account is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
-| POST | `/api/local-agents/chat/turns/{id}/stop` | `{stopped}` (`runner.stop_chat`) |
+| POST | `/api/local-agents/chat/turns/{id}/stop` | `{stopped}` (`runner.stop_chat`); the conversation's account's, or its agent's owner's (`chats.readable`) |
 | POST | `/api/local-agents/chat/new` | `{bucket}` → `{conversation: null}`, the active conversation archived whichever its agent; 409 while a turn runs |
-| GET | `/api/local-agents/chat/history?bucket=` | `{conversations: [{id, title, agent, updated_at, turns}], active}`: the archived ones newest first, and the active one as they are listed (`chats.listed`, null for none), whichever its agent, which the chat's History lists while another agent is picked; the account's own on every server, whatever became of its agents (no seat asked) |
-| GET | `/api/local-agents/chat/history/{id}/export` | a conversation of the account's, active or archived, as a file to keep (`chat_export.export_file` with the agent's label: the person's messages with their passages, the agent's steps in words, its reply, what it changed and how its turn ended); 404 for another account's, as the other history routes; like the list and delete, it asks no seat, so a conversation whose agent was turned off is still the account's to keep |
+| GET | `/api/local-agents/chat/history?bucket=` | `{conversations: [{id, title, agent, updated_at, turns}], active}`: the archived ones newest first (never a thread's), and the active one as they are listed (`chats.listed`, null for none), whichever its agent, which the chat's History lists while another agent is picked; the account's own on every server, whatever became of its agents (no seat asked) |
+| GET | `/api/local-agents/chat/history/{id}/export` | a conversation of the account's, active or archived, or a co-author's with the account's agent (`chats.readable`), as a file to keep (`chat_export.export_file` with the agent's label: the person's messages with their passages, the agent's steps in words, its reply, what it changed and how its turn ended); 404 for another account's, as the other history routes; like the list and delete, it asks no seat, so a conversation whose agent was turned off is still the account's to keep |
 | DELETE | `/api/local-agents/chat/grants/{id}` | the conversation's Allowed in this chat taken back (`store.forget_grants`) → `{forgotten: true}`; 404 for a conversation not the account's |
 | POST, DELETE | `/api/local-agents/chat/history/{id}/open`, `/api/local-agents/chat/history/{id}` | open (→ `{conversation}`, 409 while a turn runs, 404 for one not archived) or delete (→ `{deleted: true}`, 409 for the active one, whatever became of its agent) an archived conversation; open takes the bucket's seat, as a turn does |
-| POST | `/api/local-agents/chat/turns/{turn}/asks/{ask}` | `{decision: "once" \| "chat" \| "deny", note?}` (a note at most 2,000 characters) → `{answered: true}`: the person's answer to a waiting ask ("Asking in the chat"); 400 for another decision, a longer note or `chat` on anything but a command; 404 for no such turn of the account or ask; 409 when it was answered, withdrawn or declined already, or the turn ended, and for a turn that runs on another computer, on every server ("This is answered on the computer that runs the agent.") |
-| GET | `/api/local-agents/asks?after=&wait=` | the desktop app's alone ("Asking on this computer"): `{version, asks}`, the asks waiting on remote turns of the account's vaults, oldest first, held up to `wait` s (at most 20) while `version` is `after`; 404 where agents do not run, 403 "Only the desktop app reads what waits for an answer on this computer." without the shell's word or with no secret |
+| POST | `/api/local-agents/chat/turns/{turn}/asks/{ask}` | `{decision: "once" \| "chat" \| "deny", note?}` (a note at most 2,000 characters) → `{answered: true}`: the person's answer to a waiting ask ("Asking in the chat"), or in a co-author's turn that person's or the agent's owner's; 400 for another decision, a longer note or `chat` on anything but a command or in a co-author's turn ("A co-author's turn is allowed once at most."); 404 for no such turn the account reads or ask; 409 when it was answered, withdrawn or declined already, or the turn ended, and for a turn that runs on another computer, on every server ("This is answered on the computer that runs the agent.") |
+| GET | `/api/local-agents/asks?after=&wait=` | the desktop app's alone ("Asking on this computer"): `{version, asks}`, the asks waiting on remote turns of the account's vaults and on co-authors' turns of its agents (each card's `for` the person), oldest first, held up to `wait` s (at most 20) while `version` is `after`; 404 where agents do not run, 403 "Only the desktop app reads what waits for an answer on this computer." without the shell's word or with no secret |
 | POST | `/api/local-agents/asks/{ask}` | the desktop app's alone: `{decision: "once" \| "deny"}` → `{answered: true, version}`, given to the agent before it returns; 403 "Only the desktop app answers on this computer."; 404 "No question on this computer has that id." (another account's too); 400 "On this computer an ask is allowed once or declined."; 409 "{agent} no longer waits for that." or "This turn has ended." |
 | GET | `/api/local-agents/chat/terminal?bucket=` | the desktop shell's alone in practice (Continue in a terminal): `{cwd, argv, agent, label}`, the conversation's session resumed in the directory it works in, with the conversation's agent ("Its model, its typing, a terminal…"); 404 "This conversation has no session to continue.", 409 while a turn runs, when the account no longer has that agent on here or it is not on this computer |
 | POST | `/api/local-agents/chat/sources` | `{bucket, selections: [{text, page, box}]}` → `{sources: [{file, line, end?} \| null]}`, in order, nulls outside a work folder kept here; 400 past 20 selections |
@@ -1611,8 +1762,9 @@ either agent.
   as its description, so a change a poll brings is heard, and so is why
   the button is off.
 - **Requests.** `requestLine` gives a short state in the Sent chip's words
-  (`comments.sendState`, drawn by the same `StateTag`), naming the agent by
-  the request's `state_by`, whoever set it, a token's agent included
+  (`feedback/feedbackText.js` `sendState`, the Feedback dialog's alone,
+  drawn by a `StateTag`), naming the agent by the request's `state_by`,
+  whoever set it, a token's agent included
   (*Waiting for Codex*, *Codex is working…*, *Done by Codex*, *Failed*),
   and apart from it the agent's own
   words (its progress, its summary, the reason it failed), which the row
@@ -1626,9 +1778,11 @@ either agent.
   *on TIM-PC, for tim* after it (`agentFor`) beside its bot avatar
   (`AgentAvatar`), and its `authorTitle` "Written by Codex on TIM-PC, for
   tim";
-  `sentChip` of a running Send with `state_by` reads *Codex is working…*
-  with a spinner, and one waiting, *Waiting for Codex* (the agent that
-  answers the reader's Sends) or *Waiting for TIM-PC*.
+  `turnChip` of a thread's turn reads *Codex is working…* with a spinner,
+  *Waiting for Codex* (or *Waiting for TIM-PC*) while it is queued, and
+  *Codex is waiting for you* while it asks (comments.md "Sent to an
+  agent"); the Feedback dialog's `sentChip` (`feedback/feedbackText.js`)
+  words a Send alike.
 - **The agents' list** (`frontend/src/chat/agents.js`, pure,
   `tests/chatAgents.test.mjs`): one list for the chat's picker, the
   comment fields and Settings, `[{id, kind: "gamma" | "computer", name,
@@ -1645,28 +1799,25 @@ either agent.
   `mine`). Each agent's state is worded from its code (`checking`,
   `missing`, `signed_out`, `not_ready`); this computer's own problem
   sentence is shown as it came, since it names the command that mends it.
-- **The mention.** App derives the agent the open page's comments can
-  name from that list, `agents.mentionAgent(list, vault.state)`: `{name,
-  label, ready, problem}` of the account's first agent here on a file of a
-  work folder a vault here keeps (the one its mentions and Sends run with,
-  `store.agent_for`: until step 3.5 a mention names that one alone, so the
-  @ menu lists it alone), or with `computer` and `online` the agent of the
-  computer that keeps the page's work folder, else null. It reaches every comment field as
-  `links.agent` (the popover's and the margin's), never `MentionContext`,
-  which reaches the notes. There the @ menu lists it under People
-  (`mentions.mentionRows`' `agents`: a bot icon, the label, "on this
-  computer" or its problem; a member of the same name is not listed
-  there), the field and the maker's own posted comments draw `@codex` as
-  the agent's chip (`mentionChip`'s `agents`), and while the text newly
-  names it the bar under the field says what sending does
-  (`comments.mentionHint`: "Sends this thread to Codex on this
-  computer.", in the page's own thread "Sends this file's open comments
-  to Codex on this computer.", the agent's problem, or for an edit the
-  server will not send, why: in a resolved thread, and of a comment that is
-  not the thread's newest, `Thread.jsx`'s `editRefused`). `useComments`
-  takes the answer's `thread` (with its Sent chip) and says a refusal in
-  the status line (`comments.sendRefusal`, by its code, else "Not sent to
-  Codex: <why>").
+- **A comment sent to an agent.** App derives the agents the open page's
+  comments can be sent to from that list, `agents.commentAgents(list)`:
+  `{id, name, label, ready, problem}` of each computer agent the chat
+  lists for the page (`id` its `agentId`, `computer:<computer>:<name>`:
+  this computer's from the listing's `id`, another computer's from the
+  page's computers' `id`), with `computer` and `online` for the computer
+  that keeps the page's work folder. They reach every comment field as
+  `links.agents` (the popover's and the margin's) with `links.sendTo` (the
+  tick as the person left it last, the account preference
+  `commentSendTo`), never `MentionContext`, which reaches the notes. There
+  the @ menu lists them under People (`mentions.mentionRows`' `agents`: a
+  bot icon, the label, "on this computer" or its problem; a member of the
+  same name is not listed there), the field and the person's own posted
+  comments draw `@codex` as the agent's chip (`mentionChip`'s `agents`),
+  and a new comment's and a reply's field has the *Send to {agent}* tick
+  (comments.md "Sent to an agent", `comments/sendTo.js`). `useComments`
+  posts the tick's agent as `to`, takes the answer's `thread` (with its
+  `agent_chat`) and says a refusal in the status line
+  (`comments.turnRefusal`, by its code, else "Not sent to Codex: <why>").
 - **The picker.** App passes the list to ChatDock (`agents`, with this
   computer's listing as `localAgents`: the offered directories, and the
   agents found that the setup card offers). The composer's chip (`chat/AgentChip.jsx`,
@@ -1743,8 +1894,9 @@ either agent.
   its box in monospace, where it runs and its reason, or "Codex wants to
   change files outside its sandbox" with the paths and the diff; **Allow
   once**, **Allow in this chat** (a command only: "Run this exact command
-  without asking for the rest of this conversation") and **Don't allow**
-  (a note, then Don't allow). The box shows `askCommand`: the inner
+  without asking for the rest of this conversation"; never on an ask the
+  server marks `once`, a co-author's turn's) and **Don't allow** (a note,
+  then Don't allow). The box shows `askCommand`: the inner
   command of a shell wrapper with "Through PowerShell: …" under it, else
   `command_shown` with its `⟨U+…⟩` marks in the warning colour ("This
   holds 2 characters that do not show: …"), "3 lines" over it, "It reaches
@@ -1862,12 +2014,15 @@ are drawn in the bar over the whole window and answered with `POST
 ## Trust
 
 - **Who starts a run.** Only an agent's owner, the account that turned it
-  on for this computer, by a Send made in Gamma (from the dialog, or a
-  mention in their own comment, never through a share) on a work folder a
-  vault here keeps, while still at least an editor of the workspace; the
-  agent works in that vault's directory whoever made the vault. A mention
-  in anyone else's comment, a token's or the agent's own reply starts
-  nothing. The Send of a member with no agent on here is left for an agent
+  on for this computer, by a Send made in Gamma from the dialog on a work
+  folder a vault here keeps, or a comment of their own sent to the agent
+  (never through a share, never a token's), while still at least an editor
+  of the workspace; the agent works in that vault's directory whoever made
+  the vault. A co-author the owner named on the computer (the shell's word
+  and a question carrying the consent of the account's terms: "A
+  co-author's turn") starts a chat turn or a comment's turn too, on the
+  files of a synced folder alone, never a Send. A comment of anyone else's, a token's or the agent's own
+  reply starts nothing. The Send of a member with no agent on here is left for an agent
   they run; a token's Send to such a folder is refused, and a token's Send
   made before an agent was on is never taken (`via`), so a mirror or a
   script holding the owner's write token cannot start one, and a token
@@ -1919,6 +2074,14 @@ are drawn in the bar over the whole window and answered with `POST
   included; a grant of `latexmk` in this chat lets the next turn do so
   unasked. The card shows the command exactly as given for that reason,
   and a chat grant holds for one command in one directory only.
+- **A co-author's turn** ("A co-author's turn"). It runs in the directory
+  of the synced folder its page is a file of and nowhere else, with the
+  co-author's token (what they can read, in that workspace), their words
+  the instruction, the owner's sign-in of the CLI. What it asks is allowed
+  once at most, by that person or the owner, and no grant outlives the ask;
+  on another server it asks nothing. Its conversation is the person's and
+  the owner reads it. Taking the person off stops their running turn and
+  fails the next when it is taken, here and on the other server.
 - **Asking on this computer** ("Asking on this computer"). The person at
   the computer alone answers, in the desktop app's bar, with the shell's
   word on routes that never take a session alone; the other server starts
@@ -1963,6 +2126,13 @@ are drawn in the bar over the whole window and answered with `POST
 
 ## Known gaps
 
+- A co-author's chat conversations are listed in no History of the
+  owner's: the owner reads a thread's from its chip (*Open in chat*) and
+  any by its id (export), never in the chat's own History. On the desktop
+  app's own server, the owner answers a co-author's ask in the bar or in
+  the conversation opened from its thread, not from a chat conversation of
+  theirs.
+
 - Asking is the chat's alone: a Send never asks, so there Claude Code edits
   and does not build, and Codex's requests for approval are refused.
   The inner command of a shell wrapper (`unwrap_shell`) is checked against
@@ -1997,18 +2167,17 @@ are drawn in the bar over the whole window and answered with `POST
   detail is the agent's words, which the interface shows as it is.
 - Claude Code answers with the account's default model: `--restricted`
   reads none of the user's settings files, a chosen model among them.
-- The Inbox says "Codex, with tim's connection" for a local agent's reply:
-  its items carry no agent kind. Each reply is an Inbox item of its own, none
-  for the finished request.
-- The @ menu's agent row and the field's hint are the desktop app's: in a
-  browser on the same server they are not drawn, though the server still
-  sends the maker's typed `@codex`. The
-  agent's chip in the maker's comments follows the switch as it is now, not
-  which comments did start a Send.
-- Deleting a mention's comment does not withdraw its Send (the Feedback
-  dialog's Withdraw does).
-- A thread the agent fixed is resolved, so a follow-up needs Reopen first;
-  `@codex` in a resolved thread's reply (through the API) is refused.
+- The Inbox says "Codex on TIM-PC, for tim" for an agent's reply in the
+  server's English: its items carry the agent's label, not its id (an id
+  and its kind, worded in the reader's language, wait for a step of their
+  own). Each reply is an Inbox item of its own, none for the finished
+  request.
+- The agent's chip in a person's own comments follows the agents the page
+  offers now, not which comments were sent to one.
+- Deleting a comment sent to an agent does not stop its turn (the chip's
+  Stop does).
+- A thread the agent resolved needs Reopen before it is sent to the agent
+  again (`closed`).
 - A run resumes a session only when every thread it answers was answered
   last in that one session; a Send of a file or a folder whose threads
   came from several starts a new one.
@@ -2088,17 +2257,29 @@ are drawn in the bar over the whole window and answered with `POST
   walk cut short), the store (the computer's agents, their owners, what
   they may run, the grants by directory, the offered directories), the
   carry-over once, and the prompt on their own.
-- `tests/test_local_agents_mention.py`: a mention in a thread and in the
-  page's own thread, where it is plain text (each gate of the rule), an
-  edit's new mention of the newest comment, each refusal with the comment
-  posted anyway, a retried POST sending once, the instruction without the
-  mention, a member named codex told nothing (and told, of the maker's
-  comment through a token), a mention made while a run works answered by
-  the next run (the thread not resolved over it), another member's reply
-  not cancelling a waiting mention, a word unread by its id whatever its
-  time, a follow-up resuming the session, two threads of two sessions
-  resuming neither, a refused resume started afresh, the vault's `mine`
-  and its open pages hearing an agent turned on or off.
+- `tests/test_local_agents_threads.py`: a ticked comment a turn of its
+  thread (the conversation the thread's, about its page, in the synced
+  folder; a retried POST once; nobody else reads it), its prompt (the
+  comment as the message, the thread as data), its answer under the
+  agent's name, the next ticked reply resuming the session, an agent that
+  answers itself answered once and the threads it opened listed, the first
+  ticked reply in one of those resuming the session that asked, a failed
+  and a stopped turn's notes (a reply among people meanwhile keeping the
+  turn's chip), a library page's thread in a directory of its own, `@codex`
+  sent for a client that sent none (and where it is plain text) and not for
+  an untick, an edit's new `@name`, a co-author's comment on a synced
+  folder's file signed with its `agent_owner` (kept when the agent changes
+  hands), refused on a library page and once its owner no longer edits,
+  each refusal with the comment stored,
+  a member named codex told nothing and the sender told of the reply, the
+  thread's prompt and the chat's asking line; `tests/test_remote_chat.py`
+  a comment sent to the computer's agent there run here and answered in
+  its thread there, an offline computer refused, and a co-author's turn
+  there (named with the shell's word, run here for them asking nothing,
+  their name in the prompt, answered in their thread with its owner named,
+  read by the owner, failed once they are taken off);
+  `tests/test_computer_sends.py` and `tests/test_remote_sends.py` a
+  mention there a turn of its thread.
 - `tests/test_local_agents_extras.py`: the probe listing the models, a
   choice one the agent listed, a turn running the model and effort asked
   for (Codex's thread and turn, Claude Code's flags), both drivers
@@ -2128,7 +2309,17 @@ are drawn in the bar over the whole window and answered with `POST
   trip only, `_program` naming its inner command, a card's `marked`,
   `lines`, `inner`), Claude Code's allowed input cut to command,
   description and timeout, Gamma's declines worded as Gamma's, a
-  `grantRoot` declined unseen, the 20 asks and three declines of a turn.
+  `grantRoot` declined unseen, the 20 asks and three declines of a turn;
+  a co-author's ask (`once`, never `chat`, answered by them or the owner,
+  a card on this computer for the owner, no grant, the person taken off
+  mid-turn stopped, no seat on a page of no synced folder).
+- `tests/test_computers.py` (its co-author part): the people an agent
+  serves named with the shell's word and its owner, of a workspace the
+  owner edits with them, taken off with the owner's session, gone with the
+  agent turned off; the announce naming those of that server and workspace
+  alone, asked over the channel; the server offering a person it names the
+  computer's agent alone and nobody else, no longer once the announce drops
+  them, failing their waiting turn.
 - `tests/test_remote_asks.py`: asking on this computer, against
   test_remote_chat.py's NAS with a follower of the shell's own: who may
   ask (the agent's `ask`, https, the secret, another agent's turn), an ask
@@ -2182,15 +2373,18 @@ are drawn in the bar over the whole window and answered with `POST
   page's standing carrying `agent` without running a process, `GET
   /api/local-agents` (`enabled`, `runs`, `mine`, `dirs`), `doc.agent`, a
   request's `local`, a pause, a relink and a removal stopping the run.
-- `tests/test_migrations.py` (`test_v58_*`): `via`.
+- `tests/test_migrations.py` (`test_v58_*`): `via`; (`test_v62_*`): a
+  conversation's `thread_id`.
 - `tests/test_annotations_requests.py` (`claim`, `only_from`,
   `change_listeners`), `tests/test_comments.py` (`agent_kind`, `agent_on`,
   `state_by`), `tests/test_annotations_entries.py` (a computer agent's
   comment's Markdown), `tests/test_agents.py` (who an agent is).
-- Frontend: `tests/feedbackView.test.mjs`, `tests/feedbackText.test.mjs`,
-  `tests/comments.test.mjs` (the hint, the refusal's words),
+- Frontend: `tests/feedbackView.test.mjs`, `tests/feedbackText.test.mjs`
+  (a Send's chip and state), `tests/comments.test.mjs` (a thread's turn's
+  chip, the refusal's words), `tests/commentSendTo.test.mjs` (the tick's
+  default, its agent, `@name` ticking it, the field's lines),
   `tests/chatAgents.test.mjs` (the agents' list, the picker's rules, the
-  agent a comment names), `tests/vaultState.test.mjs` (`vaultAgent`),
+  agents a comment can be sent to), `tests/vaultState.test.mjs` (`vaultAgent`),
   `tests/mentions.test.mjs` (the agent's row, a member of its name, its
   text and chip), `tests/computerChat.test.mjs` (the side's requests, the
   words of its steps, pill, changes, endings and strip, when a message may
@@ -2207,11 +2401,13 @@ are drawn in the bar over the whole window and answered with `POST
   offer, turning Codex on, a Send from the dialog read as *Codex is
   working* then *Done by Codex* with the summary and the source file it
   changed, the replies' signature, the threads resolved; `@codex` picked
-  from the @ menu in a reply on the PDF (the row, the hint, the Send of
-  that thread with the comment's words, the agent's chip), a follow-up
-  after Reopen resuming the session that answered, an edit of an older
-  comment refused with its reason in the status line, a mention in the
-  page's own thread sending the file's open comments; Codex in the chat
+  from the @ menu in a reply on the PDF ticking *Send to Codex* (the row,
+  the tick, the turn's chip *Codex is working* with Stop, the reply under
+  Codex's name, the agent's chip, *Open in chat* showing the thread's
+  conversation, no Send made), the next reply ticked by default in the
+  thread Codex answered last (*Ask Codex to edit*) resuming its session,
+  an edit of an older comment refused with its reason in the status line,
+  a resolved thread refused; Codex in the chat
   (picked in the chip, the strip, a message with a PDF passage worked and
   answered in the chat's transcript, the prompt carrying both), a tab closed mid-turn finding the
   turn again in a new one and the follow-up resuming Codex's session, Stop,

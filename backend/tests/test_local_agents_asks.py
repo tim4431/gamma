@@ -813,3 +813,66 @@ def test_a_turn_holds_at_most_twenty_asks_and_three_declines_in_a_row(lab, disk,
     assert runner.wait_idle(60)
     assert _steers(disk.log)[-1] == f"Gamma declined that: {runner.DECLINED_OFTEN}"
     assert len(seen) == 5                                              # the fourth never reached the person
+
+
+# --- a co-author's turn (step 3.6 of docs/research/agents-as-participants-plan.md) ------------------
+
+def _theirs(lab, page) -> dict:
+    """The editor's agent message of the page's chat, read as kept."""
+    with connect_pages_db(lab.ws) as conn:
+        conversation = chats.active(conn, page, account_of(EDITOR))
+    return [m for m in conversation["messages"] if m["role"] == "agent"][-1]
+
+
+def test_a_co_authors_ask_is_allowed_once_at_most_by_them_or_the_owner_and_leaves_no_grant(lab, disk, monkeypatch):
+    from conftest import make_page
+
+    f = _asking(lab, disk)
+    editor = account_of(EDITOR)
+    assert _say(lab.editor, f.page, status=404)                               # not named: the agent is not theirs
+    store.name_person("codex", "", lab.ws, editor, EDITOR)
+    script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
+    made = _say(lab.editor, f.page, "Rebuild the PDF.")
+    turn_id, conversation_id = made["turn"]["id"], made["conversation"]["id"]
+    [card] = _until(lambda: _theirs(lab, f.page).get("asks"))
+    assert (card["command"], card["once"]) == (BUILD, True)                    # Allow once and Decline alone
+    strip = _chat(lab.editor, f.page)["computer"]
+    assert (strip["lent"], strip["grants"], strip["session"]) == ({"by": OWNER}, [], False)
+    told = next(m["params"] for m in requests_in(disk.log) if m.get("method") == "turn/start")["input"][0]["text"]
+    assert f"message {EDITOR} wrote" in told                                  # the person's words are the instruction
+    # the owner reads it on this computer too, for whom it is
+    [held] = runner.computer_asks(lab.user)
+    assert (held["id"], held["command"], held["for"]) == (card["id"], BUILD, EDITOR)
+    assert runner.computer_asks(editor) == []
+    # never Allow in this chat; answered by the owner, once
+    assert _answer(lab.editor, turn_id, card["id"], 400, decision="chat")["detail"] == runner.ONCE_ONLY
+    assert _answer(lab.owner, turn_id, card["id"], 400, decision="chat")["detail"] == runner.ONCE_ONLY
+    assert _answer(lab.owner, turn_id, card["id"], decision="once") == {"answered": True}
+    assert runner.wait_idle(60)
+    assert (_theirs(lab, f.page)["state"], _theirs(lab, f.page)["asks"]) == ("done", [])
+    assert not store.granted(conversation_id, BUILD, dir=str(f.root)) and store.grants_of(conversation_id,
+                                                                                          dir=str(f.root)) == []
+
+    # the same command again asks again (no grant outlives the ask), answered by the person
+    script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
+    made = _say(lab.editor, f.page, "Rebuild it again.")
+    [card] = _until(lambda: _theirs(lab, f.page).get("asks"))
+    assert _answer(lab.editor, made["turn"]["id"], card["id"], decision="once") == {"answered": True}
+    assert runner.wait_idle(60)
+    assert [a["result"] for a in _answers(disk.log)] == [{"decision": "accept"}, {"decision": "accept"}]
+
+    # the person taken off while a turn of theirs waits: it stops, with why, and they have no seat any more
+    script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
+    made = _say(lab.editor, f.page, "Rebuild once more.")
+    _until(lambda: _theirs(lab, f.page).get("asks"))
+    r = lab.owner.delete("/api/local-agents/codex/people", params={"workspace_id": lab.ws, "account": editor})
+    assert r.status_code == 200 and r.json() == {"people": []}
+    assert runner.wait_idle(60)
+    assert (_theirs(lab, f.page)["state"], _theirs(lab, f.page)["error"]) == ("failed", runner.STOPPED["unnamed"])
+    assert _chat(lab.editor, f.page, 404)
+
+    # a co-author works in a synced folder's files alone: a library page is no seat of theirs
+    store.name_person("codex", "", lab.ws, editor, EDITOR)
+    plain = make_page(lab.editor, "A page of no synced folder")["id"]
+    assert _say(lab.editor, plain, status=404)
+    assert _chat(lab.owner, plain)["computer"]["lent"] is None                 # its owner's own: anywhere

@@ -2425,9 +2425,41 @@ async function agentDirs(serverId, dirId) {
   return after.dirs;
 }
 
+// A person who may use agent `name` of this computer from now on (a
+// co-author: decision 13 of docs/research/agents-as-participants-plan.md),
+// the account `account` of the workspace `placeId` (of this server, or of
+// one this computer is shown on). The shell reads whom the owner may name
+// itself (`GET /api/local-agents/people`), so the question names the person
+// and the workspace as the server says them, never as the page does; it
+// asks, Cancel the default (`confirmed` answers in tests), with the one
+// sentence of consent (keeping.personAsk: the owner answers for the
+// account's terms), and the POST carries the shell's word. Taking a person
+// off asks nothing: the page does it with its session. → false when they
+// were named already, null when cancelled.
+async function agentPerson(serverId, name, placeId, account, confirmed) {
+  const { origin, api, found } = await agentOn(serverId, name);
+  if (!found || !found.enabled || !found.mine) throw new Error(`Turn ${keeping.AGENT_LABELS[name]} on first.`);
+  const listed = await api(origin, '/api/local-agents/people');
+  const place = (listed.places || []).find((p) => p.workspace_id === placeId && (p.people || []).some((x) => x.id === account));
+  if (!place) throw new Error('That person does not edit a workspace you share with them.');
+  const person = place.people.find((x) => x.id === account);
+  if ((found.people || []).some((p) => p.server === place.server && p.workspace_id === placeId && p.account === account)) return false;
+  if (!confirmed) {
+    const q = keeping.personAsk(name, person.username, keeping.placeName(place));
+    if (await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 1, cancelId: 1 }, 1) !== 0) return null;
+  }
+  await api(origin, `/api/local-agents/${name}/people`, {
+    method: 'POST', headers: { ...JSON_TYPE, ...shellWord(origin) },
+    body: JSON.stringify({ server: place.server, workspace_id: placeId, account }),
+  });
+  showNotice(keeping.personSaid(name, person.username));
+  return true;
+}
+
 // Settings → AI's asks about the agents of this computer (preload.js
-// PAGE_ASKS `set-agent`, `set-agent-runs`, `agent-dirs`): only on a page of
-// a server on this computer, the shell then asking its own question.
+// PAGE_ASKS `set-agent`, `set-agent-runs`, `agent-dirs`, `agent-person`):
+// only on a page of a server on this computer, the shell then asking its
+// own question.
 function pageAgents() {
   if (current.type !== 'local') throw new Error('The agents of this computer are set from a server on this computer.');
   return current.id;
@@ -2435,6 +2467,7 @@ function pageAgents() {
 const setAgentFromPage = async (wsId, name, on) => setAgent(pageAgents(), name, on);
 const agentRunsFromPage = async (wsId, name, asks) => setAgentRuns(pageAgents(), name, asks ? 'ask' : 'never');
 const agentDirsFromPage = async (wsId, dirId) => agentDirs(pageAgents(), dirId);
+const agentPersonFromPage = async (wsId, name, _flag, placeId, account) => agentPerson(pageAgents(), name, placeId, account);
 
 // Choose files…: the server's window on the work folder, its tracking dialog
 // open (makeWorkFolder's navigation); for a work folder of another server,
@@ -2960,7 +2993,9 @@ function refreshKeeping() {
         // did not come leaves that as it was.
         if (z) zoteroHosts.set(srv.id, kept.some((i) => i.kind === 'zotero' && !i.paused));
         if (host && srv.id === host.id && agents) {
-          asksHere = agents.some((a) => a.enabled && a.runs === 'ask') && kept.some((i) => i.kind === 'vault' && i.remoteUrl && i.work);
+          // a work folder of another server, or a co-author of this one (its asks are this computer's too)
+          asksHere = agents.some((a) => a.enabled && a.runs === 'ask') && (kept.some((i) => i.kind === 'vault' && i.remoteUrl && i.work)
+            || agents.some((a) => a.enabled && a.runs === 'ask' && (a.people || []).some((p) => !p.server)));
         }
         detached.push(...kept.filter((i) => i.kind === 'vault' && i.letGo && i.mine));
         items.push(...kept);
@@ -3078,9 +3113,11 @@ function showNotice(text) {
 // host's and is drawn here alone, in the bar, over the whole window with
 // the content view hidden: the page that started the turn is neither seen
 // nor clicked, and nothing that server sends draws, words or answers it.
-// One follower holds `GET /api/local-agents/asks` on the host, with the
-// shell's word, while the host keeps such a folder and an agent may ask
-// (refreshKeeping); the
+// A co-author's turn on the host's own server asks here too, beside its
+// own chat (docs/dev/local_agents.md "A co-author's turn"). One follower
+// holds `GET /api/local-agents/asks` on the host, with the shell's word,
+// while the host keeps such a folder, or its agent serves a co-author of
+// it, and an agent may ask (refreshKeeping); the
 // queue (lib/agentAsks.js take) keeps the card shown until it is answered
 // or goes, the asks that come meanwhile behind it. A new card disarms the
 // buttons, which arm after a quiet, focused second (startArming), and an
@@ -4932,11 +4969,12 @@ function registerIpc() {
     'shell:set-agent-from-page': ['Could not change the agent.', setAgentFromPage],
     'shell:agent-runs-from-page': ['Could not change what the agent may run.', agentRunsFromPage],
     'shell:agent-dirs-from-page': ['Could not offer the directory.', agentDirsFromPage],
+    'shell:agent-person-from-page': ['Could not let that person use the agent.', agentPersonFromPage],
   };
   for (const [channel, [message, run]] of Object.entries(PAGE_ASKS)) {
-    ipcMain.on(channel, (event, wsId, id, flag) => {
-      if (!fromPage(event, wsId, id)) return;
-      withDialog(message, oneAsk(() => run(wsId, id, flag === true)))().catch(() => {});
+    ipcMain.on(channel, (event, wsId, id, flag, ...more) => {
+      if (!fromPage(event, wsId, id, ...more)) return;
+      withDialog(message, oneAsk(() => run(wsId, id, flag === true, ...more)))().catch(() => {});
     });
   }
   // Reveal a directory a link of the open server's workspace writes — only such a one.
@@ -5201,6 +5239,8 @@ if (process.env.GAMMA_SHELL_TEST) {
     setAgentFromPage,
     agentRunsFromPage,
     agentDirsFromPage,
+    agentPerson,
+    agentPersonFromPage,
     forceVault,
     goOnVault,
     locateVault,

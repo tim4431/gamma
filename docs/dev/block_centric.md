@@ -136,10 +136,12 @@ with the labels: it lists a folder's top pages, not a page tree. A Logseq-style 
 block's subtree is another thing and is still open (below).
 
 **Made by an agent.** A block an agent makes carries who made it:
-`properties.agent = {id, name, on?, for}` (`gamma/agents.py` `stamp`; the
-ids are [comments.md](comments.md) "Who wrote a comment"'s), `on` a
-computer agent's computer as it was called then, `for` the username of the
-account it acted for. The block stays that account's: its op's actor is
+`properties.agent = {id, name, on?, for, owner?}` (`gamma/agents.py`
+`stamp`; the ids are [comments.md](comments.md) "Who wrote a comment"'s),
+`on` a computer agent's computer as it was called then, `for` the username
+of the account it acted for, `owner` the agent's owner's where that is
+another account (a co-author's turn, [local_agents.md](local_agents.md) "A
+co-author's turn"). The block stays that account's: its op's actor is
 the account, so no role check, op log or follow reads the agent. The
 writers: `create_block` and the writing tools' highlights (`highlight`, and
 the passage a `comment` on a quote highlights: `annotations/hand.py`), by

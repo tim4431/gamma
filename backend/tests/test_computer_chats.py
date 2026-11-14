@@ -185,7 +185,7 @@ def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, 
     assert _chat(lab) == {"computer": {
         "agent": "codex", "label": "Codex", "ready": True, "problem": "", "models": MODELS, "folder": "ccx-paper",
         "paused": False, "turn": None, "session": False, "folder_id": lab.W,
-        "dir": {"kind": "vault", "name": "ccx-paper"}, "grants": [], "computer": "TIM-PC",
+        "dir": {"kind": "vault", "name": "ccx-paper"}, "grants": [], "lent": None, "computer": "TIM-PC",
         "online": True, "since": None, "remote": True}, "conversation": None}
     for status, who in ((404, lab.editor), (403, lab.stranger), (401, anon)):   # no member: the workspace's 403
         assert who.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == status
@@ -258,7 +258,8 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
     claimed = _claim(pc, turn)
     assert claimed["turn"] == {"id": turn, "conversation_id": made["conversation"]["id"], "page_id": lab.main,
                                "title": "Tighten this paragraph.", "text": "Tighten this paragraph.",
-                               "selections": [selection], "model": "gpt-5", "effort": "high"}
+                               "selections": [selection], "model": "gpt-5", "effort": "high",
+                               "for": {"id": account_of(MAKER), "username": MAKER}}
     assert claimed["history"] == [] and claimed["page"] == {"path": "main.pdf", "title": "main"} and claimed["seen"]
     assert _reply(lab)["state"] == "running" and _chats(pc)["turns"] == []
     assert _chat(lab)["computer"]["turn"]["state"] == "running"

@@ -912,6 +912,41 @@ function runsSaid(name, runs) {
   return runs === 'ask' ? `${label} may now ask you to run more.` : `${label} no longer asks to run more: it keeps to its confinement.`;
 }
 
+// What each vendor's terms say of a second person using the owner's
+// signed-in CLI (docs/research/agents-as-participants.md "A co-author's
+// use and the vendors' terms"): both forbid making a personal plan's
+// account available to anyone else; an API key's use is billed to its owner.
+const AGENT_TERMS = {
+  codex: "OpenAI's terms for ChatGPT plans say you may not make your account available to anyone else",
+  claude: "Anthropic's terms for Claude plans say you may not make your account available to anyone else",
+};
+
+// The question before `person` (a username) of the workspace `where` (its
+// name, with its server's address for another server's) may use agent
+// `name` of this computer (main.js agentPerson): what they can then do, and
+// the one sentence of consent, the owner answering for the account's
+// terms: `{ message, detail, buttons }`, button 0 naming them.
+function personAsk(name, person, where) {
+  const label = AGENT_LABELS[name] || name;
+  return { message: `Let ${person} use ${label} on this computer?`,
+    detail: `${person} can then ask ${label} with @ or Send to on the files of your synced folders in ${where}, in a chat or a comment of their own that you read too. It works only in that synced folder's directory, and whatever it asks to run, ${person} or you allow once at most. ` +
+      `${person}'s turns run on your ${label} sign-in on this computer: ${AGENT_TERMS[name] || 'its vendor\'s terms may not let you make your account available to anyone else'}, and you are responsible for keeping to your account's terms.`,
+    buttons: [`Let ${person} use it`, 'Cancel'] };
+}
+
+// What naming `person` for agent `name` came to, for the bar.
+function personSaid(name, person) {
+  return `${person} may now use ${AGENT_LABELS[name] || name} on this computer.`;
+}
+
+// A workspace a person is named in, as the question says it: its name, and
+// on another server that server's address too (a place of `GET
+// /api/local-agents/people`: {name, origin}).
+function placeName(place) {
+  const name = place.name ? `“${place.name}”` : 'that workspace';
+  return place.origin ? `${name} on ${place.origin}` : name;
+}
+
 // What offering the directory `dir` to the agents came to (`moved`: it took
 // the place of one offered before), for the bar.
 function dirSaid(dir, moved = false) {
@@ -938,5 +973,6 @@ function roundSaid(item, status) {
 }
 
 module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, REMOTE_WORK_RULE, remoteWorkRefused, WHOLE_RULE, firstRound, removalAsk, farRemovalAsk, forceAsk,
-  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid, dirSaid, computerLine, computerFailed, computerSaid,
+  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid, personAsk, personSaid, placeName, dirSaid,
+  computerLine, computerFailed, computerSaid,
   computerStranded, computerOtherAccount, upgradeOf, failureOf, plainAsk, moveAsk, moveSaid };

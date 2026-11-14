@@ -51,7 +51,7 @@ function ThreadCard({ thread, active, margin, onActivate, onEscape }) {
         onBlockRefClick={onBlockRefClick} onEdit={onEdit} onDelete={onDelete} onCopyLink={onCopyLink} onEscape={onEscape}
         // resolved, the card leaves the margin and none is active
         onResolve={(id, open) => { onResolve(id, open); if (open) onEscape(); }}
-        onReply={(threadId, body) => onAdd(thread.block_id, body, threadId)} />
+        onReply={(threadId, body, to) => onAdd(thread.block_id, body, threadId, to)} />
       {active && !canComment ? <SignInToComment onSignIn={onSignIn} /> : null}
     </>
   );
@@ -74,7 +74,7 @@ function NewCard({ blockId, pending, margin, onEscape }) {
       <div className="commentThread active commentNew">
         <CommentComposer blockId={blockId} links={links} labelsFor={labelsFor} autoFocus people={people} me={me}
           draftKey={`new:${blockId}`} placeholder={t("Write a comment…")} submitLabel={t("Comment")}
-          onSubmit={async (body) => { const id = await onAdd(blockId, body, ""); if (id) onActivate(blockId, id); return id; }}
+          onSubmit={async (body, to) => { const id = await onAdd(blockId, body, "", to); if (id) onActivate(blockId, id); return id; }}
           onEscape={onEscape} />
       </div>
     </div>

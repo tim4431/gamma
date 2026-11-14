@@ -77,19 +77,19 @@ def test_reading_agents_names_their_computers_as_now(tim):
     by the name it wrote with; none for a person."""
     _computer(tim, "agTok2", "NAS-PC", "OLD NAME")
     here = agents.here("claude").id
-    stored = {(tim.id, i): name for i, name in (("gamma", ""), (here, "Claude Code"), ("computer:NAS-PC:codex", "Codex"),
-                                                 ("computer:GONE:codex", "Codex"), ("tokX", "Script"))}
-    got = agents.read_all(stored)
+    stored = {(tim.id, i, ""): name for i, name in (("gamma", ""), (here, "Claude Code"), ("computer:NAS-PC:codex", "Codex"),
+                                                     ("computer:GONE:codex", "Codex"), ("tokX", "Script"))}
+    got = agents.read_all(stored, "")
     assert [got[k].label for k in stored] == ["Gamma AI", "Claude Code on TIM-PC", "Codex on OLD NAME", "Codex",
                                               "Script"]
     assert [got[k].kind for k in stored] == ["gamma", "computer", "computer", "computer", "connection"]
-    nas = (tim.id, "computer:NAS-PC:codex")
+    nas = (tim.id, "computer:NAS-PC:codex", "")
     with connect_users_db() as conn:
         conn.execute("UPDATE computers SET name = 'NEW NAME' WHERE token_id = 'agTok2'")
-    assert agents.read_all({nas: ""})[nas].on == "NEW NAME"
-    other = ("someone else", nas[1])
-    assert agents.read_all({other: ""})[other].on == "", "only the account's own computers name its agent's"
-    assert agents.read_all({}) == {}
+    assert agents.read_all({nas: ""}, "")[nas].on == "NEW NAME"
+    other = ("someone else", nas[1], "")
+    assert agents.read_all({other: ""}, "")[other].on == "", "only the account's own computers name its agent's"
+    assert agents.read_all({}, "") == {}
 
 
 def test_who_a_token_writes_as(tim, monkeypatch):
@@ -106,13 +106,18 @@ def test_who_a_token_writes_as(tim, monkeypatch):
     assert agents.of_token(token_id, name, scope) == agents.here("codex")
     integrations.drop(token_id)
     assert agents.of_request(SimpleNamespace(state=SimpleNamespace(auth="session"))) is None
-    token = SimpleNamespace(state=SimpleNamespace(auth="token", token_id="tok8", token_name="Script", token_scope="write"))
+    token = SimpleNamespace(state=SimpleNamespace(auth="token", token_id="tok8", token_name="Script", token_scope="write",
+                                                user_id=tim.id))
     assert agents.of_request(token) == agents.Agent("tok8", "connection", "Script")
 
 
 def test_the_stamp_of_a_block():
     assert agents.stamp(agents.computer_agent("PC", "codex", "TIM-PC"), "tim") == {
         "id": "computer:PC:codex", "name": "Codex", "on": "TIM-PC", "for": "tim"}
+    lent = agents.computer_agent("PC", "codex", "TIM-PC", "alice")     # a co-author's turn keeps its owner
+    assert agents.stamp(lent, "bob") == {"id": "computer:PC:codex", "name": "Codex", "on": "TIM-PC", "for": "bob",
+                                         "owner": "alice"}
+    assert agents.of_stamp(agents.stamp(lent, "bob")) == lent
     assert agents.stamp(agents.gamma(), "tim") == {"id": "gamma", "name": "Gamma AI", "for": "tim"}
 
 

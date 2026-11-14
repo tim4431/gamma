@@ -393,7 +393,9 @@ const CHAT_COPY_COMPONENTS = {
 // Navigation for Gamma's own links, provided once by App: the chat, the
 // rendered notes and anything else that renders a library link opens a page
 // in place instead of reloading the app. { openPage(id, target),
-// openBlock(id), citeSource(pageId) → {title, short} | null }; `target` is
+// openBlock(id), openThread(threadId, blockId, pageId) (a comment thread
+// open on its page: a computer agent's answer card's threads, the chat's
+// thread note), citeSource(pageId) → {title, short} | null }; `target` is
 // where to land ({kind: "citation", pageId, page, quote} or {kind: "line",
 // pageId, line, to, quote}, null for the page's top); citeSource names the
 // paper or file a citation pill points at.

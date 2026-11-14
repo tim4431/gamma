@@ -797,6 +797,51 @@ test('a directory offered to the agents is picked with the native dialog and put
   }
 });
 
+test('a person who may use an agent of this computer is named with the shell\'s word, after a question naming them as the server does, with the consent of the account\'s terms', async () => {
+  fresh();
+  const s = agentsHost('People', [{ ...FOUND[0], enabled: true, mine: true, people: [] }, FOUND[1]]);
+  const places = [{ server: '', workspace_id: 'ws_lab', name: 'Lab', origin: '', people: [{ id: 'u_bob', username: 'bob', role: 'editor' }], error: '' },
+    { server: 'https://nas.example', workspace_id: 'ws_nas', name: 'Group', origin: 'https://nas.example', people: [{ id: 'u_carol', username: 'carol', role: 'owner' }], error: '' }];
+  const routes = s.fake.routes;
+  s.fake.routes = (p, init) => {
+    if (p === '/api/local-agents/people') return { places };
+    if (p === '/api/local-agents/codex/people' && init.method === 'POST') {
+      const body = JSON.parse(init.body);
+      s.fake.agents = s.fake.agents.map((a) => (a.name === 'codex' ? { ...a, people: [...a.people, { ...body, agent: 'codex' }] } : a));
+      return { people: s.fake.agents[0].people };
+    }
+    return routes(p, init);
+  };
+  shell.pretendShown(s.srv, windowOn(s.fake));
+  const posts = () => s.fake.calls.filter((c) => c.path === '/api/local-agents/codex/people' && c.method === 'POST');
+  try {
+    // asked first, Cancel the default under the harness: nothing named
+    assert.equal(await shell.agentPersonFromPage('mine', 'codex', false, 'ws_nas', 'u_carol'), null);
+    assert.deepEqual(posts(), []);
+    const q = keeping.personAsk('codex', 'carol', '“Group” on https://nas.example');
+    assert.equal(shell.asked.at(-1), `${q.message} ${q.detail}`);
+    assert.match(q.detail, /OpenAI's terms for ChatGPT plans say you may not make your account available to anyone else, and you are responsible for keeping to your account's terms\.$/);
+    assert.match(keeping.personAsk('claude', 'bob', '“Lab”').detail, /Anthropic's terms for Claude plans say you may not make your account available to anyone else/);
+
+    shell.answers.push(0);
+    assert.equal(await shell.agentPersonFromPage('mine', 'codex', false, 'ws_nas', 'u_carol'), true);
+    const [named] = posts();
+    assert.deepEqual(named.body, { server: 'https://nas.example', workspace_id: 'ws_nas', account: 'u_carol' }, 'the server the shell read, never the page\'s');
+    assert.equal(named.headers['X-Gamma-Shell'], shell.shellSecret);
+    assert.equal(shell.notice(), 'carol may now use Codex on this computer.');
+
+    // named already: nothing asked; a person of no shared workspace, or an agent not the account's, refused
+    const asks = shell.asked.length;
+    assert.equal(await shell.agentPerson(s.srv.id, 'codex', 'ws_nas', 'u_carol'), false);
+    assert.equal(shell.asked.length, asks);
+    await assert.rejects(shell.agentPerson(s.srv.id, 'codex', 'ws_lab', 'u_carol'), /does not edit a workspace you share/);
+    await assert.rejects(shell.agentPerson(s.srv.id, 'claude', 'ws_lab', 'u_bob'), /^Error: Turn Claude Code on first\.$/);
+    assert.equal(posts().length, 1);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
 // What `POST /api/folder-links/preview` finds in the directory `picked`:
 // `pages` in the folder, `notes` in the directory, `refusal` why it may not be.
 const previewOf = (picked, { notes = 2, pages = 0, refusal = '', marker = null } = {}) => ({

@@ -798,7 +798,7 @@ detail, threads: [{id, answered}]}`, `by` the username.
   or whose event carries an `agent` (a token's write answers whoever it
   belongs to); then the work folder's files are due. An event that says
   when its writer read the thread (`seen`: an agent on this computer's run,
-  [local_agents.md](local_agents.md) "A mention while a run works")
+  [local_agents.md](local_agents.md) "A word while a Send's run works")
   answers only the requests made by then. A reopen answers
   nothing. So a thread shows as sent (`sent` on its entry and on the comment
   API's thread) until an agent or another member answers it, and a later
@@ -1163,16 +1163,16 @@ panel, and from then on a Send of that folder made in Gamma by the maker is
 claimed by this server (`requests.claim`, `sent` to `running` in one
 step), worked by the agent in the vault's directory, answered with replies
 signed by its label and set `done` or `failed`
-([local_agents.md](local_agents.md)); the maker's comment that names the
-agent (`@codex`) is such a Send too, of its thread or of the file's open
-comments. While a folder has such an agent, a
+([local_agents.md](local_agents.md)); a comment sent to the agent (its
+tick, or `@codex`) is no Send but a turn of its thread (local_agents.md "A
+comment sent to an agent"). While a folder has such an agent, a
 token's Send to it is refused (403), and so is a token's change of a
 request a run holds (409); the requests it has taken read `state_by`
 `Codex` or `Claude Code`, and an outside agent leaves them alone.
 
 A work folder of another server (a NAS) whose keeping computer
 announces an agent for it works the same way from that server: the
-maker's Sends and mentions made there, in any window, are taken by that
+maker's Sends made there, in any window, are taken by that
 computer over its channel and answered there, a token of the maker's Send is refused
 (403 "Codex on TIM-PC takes Sends made in Gamma, not with a token."),
 and a token's change of a request the computer's run holds too (409
@@ -1243,12 +1243,14 @@ app", [ui-design.md](ui-design.md)): an ink group takes a thread (Comment
 in the lasso's menu, a card in the PDF margin level with the stroke; a group
 with a thread takes no new strokes, is never deleted by the saver and
 refuses a merge, [handwriting.md](handwriting.md)); a thread's card shows
-its agent's comments under the token's name, a Sent chip while a request
-waits on it, and whether its passage moved or was not found in the new
-version; the Feedback dialog (`frontend/src/feedback/`: `FeedbackDialog.jsx`
-over the pure `feedbackView.js`, `tests/feedbackView.test.mjs`; its state
-a module store, `useFeedback.js`, that each opener calls and
-`FeedbackHost.jsx` renders; the words in `feedbackText.js`), opened from
+its agent's comments under the token's name, the chip of the reader's
+turn of an agent while one is to end on it ([comments.md](comments.md)
+"Sent to an agent"), and whether its passage moved or was not found in the
+new version; the Feedback dialog (`frontend/src/feedback/`:
+`FeedbackDialog.jsx` over the pure `feedbackView.js`,
+`tests/feedbackView.test.mjs`; its state a module store, `useFeedback.js`,
+that each opener calls and `FeedbackHost.jsx` renders; the words in
+`feedbackText.js`, its Sent chip `sendState` among them), opened from
 the work folder's list view, the Comments window's header on a file and
 the vault chip's card, lists a scope's entries with their thumbnails and
 sends them with a line of instruction, the requests below with their

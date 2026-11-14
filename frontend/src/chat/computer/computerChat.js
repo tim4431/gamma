@@ -12,7 +12,9 @@
 // page}], at}; the agent's {id, role: "agent", agent, label, turn_id,
 // state: "queued" | "running" | "done" | "failed" | "stopped", text, steps,
 // changes: [path], changed: n, built, error, fresh, model, effort, at,
-// ended_at}, `model` and `effort` what the turn ran with, `changes`
+// ended_at}, `model` and `effort` what the turn ran with, `threads` the
+// comment threads its agent opened in its turn [{id, page_id, block_id,
+// text}], `changes`
 // the folder's relative paths it named (at most 200), `changed` how many
 // files changed in all, `error` the server's English sentence, `fresh`
 // when a follow-up could not resume the agent's session. While the folder
@@ -24,8 +26,9 @@
 // reaches; a command's `command_shown` is it with every character that
 // would not show written ⟨U+202E⟩ (`marked` how many), `lines` its line
 // count when over one, and `inner` with `shell` the command one shell
-// wrapper runs, when the server could read it back whole. A step asked
-// about reads "asked", then "allowed" or "declined".
+// wrapper runs, when the server could read it back whole; `once` on each
+// ask of a co-author's turn (allowed once at most: no Allow in this chat).
+// A step asked about reads "asked", then "allowed" or "declined".
 //
 // On a page of another server's work folder (docs/dev/local_agents.md "A
 // work folder of another server") the agent runs on the computer that
@@ -80,12 +83,15 @@ export const waitsThere = (info, message) => isRemote(info) && message?.waiting 
 
 // The path of /api/local-agents/chat for the bucket (a page's id, a
 // folder's, or "home"), with the version of the conversation the side
-// holds (the server then answers `same` while it is still that one) and
-// the agent picked (the server shows no conversation of another agent).
-export function chatPath(bucket, version = null, agent = "") {
+// holds (the server then answers `same` while it is still that one), the
+// agent picked (the server shows no conversation of another agent) and the
+// comment thread whose conversation it shows in place of the bucket's own
+// ("" for none: chatSide.js useChatThread).
+export function chatPath(bucket, version = null, agent = "", thread = "") {
   const query = new URLSearchParams({ bucket });
   if (version != null) query.set("version", String(version));
   if (agent) query.set("agent", agent);
+  if (thread) query.set("thread", thread);
   return `/local-agents/chat?${query}`;
 }
 
@@ -431,6 +437,8 @@ export function emptyLine(info, label, where = "", place = null, page = true) {
 // offline since 2:02 PM: a message waits and runs when it connects"); a
 // turn of it that waits for the person's answer there says where to answer
 // ("Waiting for your answer on TIM-PC"), and that it is away when it is.
+// A co-author's agent (`lent`: {by}) names its owner ("alice's Codex on
+// TIM-PC").
 export function stripLine(info, live = null, now = new Date()) {
   const agent = info?.label || "";
   const remote = isRemote(info);
@@ -477,7 +485,8 @@ export function stripLine(info, live = null, now = new Date()) {
   }
   if (info?.ready === false) return { text: String(info.problem || ""), kind: "problem" };
   if (info?.ready == null) return { text: t("Checking {agent}…", { agent }), kind: "ready" };
-  const here = remote ? t("{agent} on {computer}", { agent, computer }) : t("{agent} on this computer", { agent });
+  const named = info.lent?.by ? t("{owner}'s {agent}", { owner: info.lent.by, agent }) : agent;
+  const here = remote ? t("{agent} on {computer}", { agent: named, computer }) : t("{agent} on this computer", { agent: named });
   return { text: info.folder ? `${here} · ${info.folder}` : here, kind: "ready" };
 }
 
@@ -520,16 +529,18 @@ export function stepChip(step) {
 // `computer`, else the picked agent's: chat/agents.js stripFacts). A
 // person's message is {id, role: "user", text, passages: [{text, page}]};
 // the agent's {id, role: "ai", turnId, label, text, partial, pill, actions,
-// asks, files, notice, model, effort}: `partial` while its turn is queued
-// or running (the reply as it is typed), `pill` the steps pill's {label,
+// asks, files, notice, threads, model, effort}: `partial` while its turn
+// is queued or running (the reply as it is typed), `pill` the steps pill's {label,
 // waiting} (turnLabel), `actions` its steps as chips (stepChip), `asks`
 // what it waits on the person for, while it does and the page draws them
 // (drawsAsks), `files` what it changed (turnChanges, with `vault` while it
 // works in a work folder's directory, whose paths a link opens), `notice`
-// the line of a session not resumed, `model` the model's name as the agent
-// lists it. A stopped turn ends its text "(stopped)", as a Gamma AI reply
-// stopped does; a failed one carries the error card's fields (chat/
-// chatErrors.js, kind "agent": the computer's own sentence its headline),
+// the line of a session not resumed, `threads` the comment threads it
+// opened (its card lists them, chat/AgentChanges.jsx ThreadsOpened), `model`
+// the model's name as the agent lists it. A stopped turn ends its text
+// "(stopped)", as a Gamma AI reply stopped does; a failed one carries the
+// error card's fields (chat/chatErrors.js, kind "agent": the computer's own
+// sentence its headline),
 // `error` only when it wrote nothing (with text, the card is compact).
 export function shownMessages(conversation, info) {
   const label = info?.label || "";
@@ -555,7 +566,7 @@ export function shownMessages(conversation, info) {
       actions: (m.steps || []).map(stepChip),
       asks: live && asks ? m.asks || [] : [],
       files: files ? { ...files, vault } : null,
-      notice: m.fresh ? freshLine(by) : "",
+      notice: m.fresh ? freshLine(by) : "", threads: m.threads || [],
       model: models.find((x) => x.id === m.model)?.label || m.model || "", effort: m.effort || "",
       ...(m.state === "failed" ? { ...(text ? {} : { error: true }), errorKind: "agent", errorProvider: by, errorSaid: endText(m) } : {}),
     };

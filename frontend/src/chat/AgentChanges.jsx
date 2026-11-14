@@ -181,6 +181,28 @@ export function FileChanges({ files }) {
   );
 }
 
+// The comment threads a computer agent opened in its turn
+// (chat/computer/computerChat.js shownMessages' `threads`: [{id, page_id,
+// block_id, text}]), under its reply: a row a thread, its first comment's
+// words the link that opens it there (GammaNavContext's openThread), as an
+// agent asks its question on the passage it is about.
+export function ThreadsOpened({ threads }) {
+  const nav = useContext(GammaNavContext);
+  return (
+    <ChangesCard className="chatThreadsOpened" head={t("Comment threads it opened · {n}", { n: threads.length })}>
+      {threads.map((th) => (
+        <div key={th.id} className="chatChange">
+          <MessageSquareIcon size={14} />
+          <span className="chatChangeText">
+            <button type="button" className="chatChangeLink" data-thread-link={th.id}
+              onClick={() => nav?.openThread?.(th.id, th.block_id, th.page_id)}>{th.text || t("A comment thread")}</button>
+          </span>
+        </div>
+      ))}
+    </ChangesCard>
+  );
+}
+
 // `onReverted(indexes, answer, reverted)`: the actions at those indexes were
 // reverted (`reverted` false: redone) — the dock marks them in the saved
 // conversation. Without it (a viewer, the share view) nothing can be

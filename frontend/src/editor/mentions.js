@@ -91,8 +91,7 @@ export const personToken = (user) => `@${user}`;
 
 // The usernames a text mentions outside code (a ``` fence or a `span`), as
 // the server reads them (mentions.py people_in): who a comment notifies,
-// and whether it names the agent on this computer (comments.js
-// mentionHint).
+// and which agent it names (comments/sendTo.js namedAgent).
 const CODE_RE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 export const peopleIn = (text) => new Set(scanMentions(String(text || "").replace(CODE_RE, " "))
   .filter((m) => m.kind === "person").map((m) => m.user));
@@ -119,10 +118,10 @@ export function dateLabel({ date, time }, now = new Date()) {
 // Who a note can mention (App's MentionContext): {me: the signed-in
 // username ("" in a share view), people: the workspace's [{username,
 // role}], known: the Set of usernames a person chip is drawn for}. A
-// comment field and the account's own comments add `agents`, the agent a
-// comment there names: the account's on this computer, or on the computer
-// that keeps the work folder ([{name, label, computer?}], chat/agents.js
-// mentionAgent), never a note.
+// comment field and the account's own comments add `agents`, the agents a
+// comment there can be sent to: the account's on this computer, or the one
+// of the computer that keeps the work folder ([{id, name, label,
+// computer?}], chat/agents.js commentAgents), never a note.
 export const NO_MENTIONS = Object.freeze({ me: "", people: [], known: new Set() });
 
 // Where an agent a comment names works, in the words that name it: "on
@@ -131,9 +130,16 @@ export const NO_MENTIONS = Object.freeze({ me: "", people: [], known: new Set() 
 export const agentWhere = (agent) => (agent?.computer ? t("on {computer}", { computer: agent.computer }) : t("on this computer"));
 
 // What waits for an agent whose computer is offline (`online` false): what
-// is sent to it runs once it connects. "" for one online or on this computer.
+// is sent to it runs once it connects (a Send, feedback/). "" for one
+// online or on this computer.
 export const agentAway = (agent) => (agent?.computer && agent.online === false
   ? t("{computer} is offline: this runs when it connects.", { computer: agent.computer }) : "");
+
+// The same for a comment sent to the agent, which an offline computer does
+// not take: it is sent once the computer connects. "" for one online or on
+// this computer.
+export const agentOffline = (agent) => (agent?.computer && agent.online === false
+  ? t("{computer} is offline: send this once it connects.", { computer: agent.computer }) : "");
 
 // An agent chip's title: "Agent: Codex on this computer", "Agent: Codex on
 // TIM-PC".
@@ -336,8 +342,9 @@ function remindTargets(rest, people, me) {
 //   people  {kind: "person", user, you} — `people` ([{username}], the
 //           workspace's; `me` first, "(You)"), then {kind: "agent", name,
 //           label, ready, problem, computer, online} for each of `agents`
-//           (a comment field's: the work folder's agent on this computer,
-//           or on the computer named that keeps it) by its name or label,
+//           (a comment field's: the agents it can be sent to, this
+//           computer's or the one of the computer named that keeps the
+//           work folder, chat/agents.js commentAgents) by its name or label,
 //           a member of its name left out, then {kind: "invite"} when
 //           `canInvite`
 //   pages   {kind: "page", id, title, format, file, path} — `pages` (App's

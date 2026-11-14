@@ -40,7 +40,14 @@ writes the agent's message with ``/chats/{turn}/write``, each write
 numbered (``seq``), so this server takes only the newest one of the run
 that holds the turn running (gamma/local_agents/chats.py). What a turn asks
 never comes here: the message says ``waiting`` while an ask waits for an
-answer on the computer (step 5b)."""
+answer on the computer (step 5b).
+
+A co-author's turns (decision 13 of
+docs/research/agents-as-participants-plan.md): the people of the token's
+workspace its agent serves (the announce's ``people``) have their turns run
+on that computer too, the claim naming whom each is for (``for``).
+``GET /people`` lists who the computer's owner may name: the workspace's
+editors and owners but its own account."""
 
 import asyncio
 import json
@@ -129,6 +136,23 @@ async def poll(request: Request, v: str = "", wait: float = registry.POLL_S):
         await asyncio.to_thread(registry.forget, token_id)
         raise HTTPException(status_code=401, detail="invalid or expired token")
     return registry.answer(waiter[2])
+
+
+@router.get("/computers/people")
+def channel_people(request: Request):
+    """``{people: [{id, username, role}]}``: the members of the token's
+    workspace who may edit it (editors and owners), its own account left
+    out, by name: whom the computer's owner may let use an agent there
+    (Settings → AI → Agents on that computer)."""
+    from ..db import connect_users_db
+
+    user_id, _username, ws, _token_id = _computer(request)
+    with connect_users_db() as conn:
+        rows = conn.execute("SELECT u.id, u.username, m.role FROM workspace_members m JOIN users u ON u.id = m.user_id "
+                            "WHERE m.workspace_id = ? AND m.user_id != ? ORDER BY u.username",
+                            (ws, user_id)).fetchall()
+    return {"people": [{"id": r[0], "username": r[1], "role": r[2]} for r in rows
+                       if workspaces.at_least(r[2], "editor")]}
 
 
 @router.get("/pages/{page_id}/computer")
@@ -441,7 +465,8 @@ def _chat_refusals():
 @router.get("/computers/chats")
 def waiting_chats(request: Request):
     """``{turns: [{id, conversation_id, page_id, folder_id, at}], stops:
-    [{id, run}]}``: the turns of the token's account's chat that wait in
+    [{id, run}]}``: the turns of the token's account's chat, and of the
+    people its agent serves there (``registry.people_of``), that wait in
     pages of the work folders this computer keeps with an agent (not paused
     there; each a turn of that agent's; oldest first, at most
     ``chats.MAX_WAITING``; none while the account may not edit,
@@ -452,8 +477,9 @@ def waiting_chats(request: Request):
     user_id, _username, ws, token_id = _computer(request)
     folders = registry.agent_folders(token_id, ws)
     taking = {w: folder["agent"] for w, folder in folders.items() if not folder["paused"]}
+    people = {p for p in registry.people_of(token_id) if workspaces.at_least(workspaces.role_of(ws, p), "editor")}
     with connect_pages_db(ws) as conn:
-        turns = chats.waiting_turns(conn, user_id, taking) if taking else []
+        turns = chats.waiting_turns(conn, user_id, taking, people) if taking else []
         stops = chats.stops_of(conn, token_id)
     return {"turns": turns, "stops": stops}
 
@@ -461,15 +487,16 @@ def waiting_chats(request: Request):
 @router.post("/computers/chats/{turn_id}/claim")
 def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
     """``{run, agent}`` → ``{turn: {id, conversation_id, page_id, text,
-    selections, model, effort}, history, page: {path, title}, seen}``
+    selections, model, effort, for}, history, page: {path, title}, seen}``
     (``chats.claim``): the turn taken for the run ``run`` (it and its
     message ``running``) in one write, or held by that run already (a
     retry: answered again). 400 for a run's id of another shape; 403 while
-    the account may not edit; 404 for no turn of the token's account's in a
-    page of a work folder this computer keeps with an agent; 409 when
-    another run holds it, it is no longer queued, the folder's agent there
-    is another, the turn is another agent's (left queued) or the folder is
-    paused there; 423 while a delete holds the workspace."""
+    the account may not edit; 404 for no turn for an agent of the token's
+    account's in a page of a work folder this computer keeps with an agent;
+    409 when another run holds it, it is no longer queued, the folder's
+    agent there is another, the turn is another agent's (left queued), it
+    is a co-author's the agent no longer serves (``registry.serves``) or
+    the folder is paused there; 423 while a delete holds the workspace."""
     from ..local_agents import chats
 
     user_id, _username, ws, token_id = _computer(request)
@@ -481,7 +508,7 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
             row = chats.run_of(conn, turn_id)
             page = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                                 (row["bucket"],)).fetchone() if row else None
-        if row is None or row["user_id"] != user_id:
+        if row is None or row["owner"] != user_id:
             raise chats.ChatError(404, chats.NO_TURN)
         if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):   # agent_folders then has none
             raise chats.ChatError(403, f"Only an owner or an editor of this workspace can talk to "
@@ -492,6 +519,8 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
         label = _label(folder["agent"])
         if payload.agent != folder["agent"]:
             raise chats.ChatError(409, f"This synced folder's agent is {label}.")
+        if not registry.serves(token_id, ws, row["user_id"]):
+            raise chats.ChatError(409, f"The owner of {label} no longer lets this person use it.")
         if folder["paused"]:
             raise chats.ChatError(409, f"The synced folder is paused: {label} starts once it syncs again.")
         return chats.claim(ws, turn_id, user_id=user_id, holder=token_id, run=run, agent=folder["agent"],

@@ -27,6 +27,14 @@ what such a turn asks is answered on that computer, never here (409), and
 the terminal and the selections' source lines are the computer's own (404,
 nulls).
 
+A co-author (decision 13 of docs/research/agents-as-participants-plan.md):
+the owner of an agent here names, with the shell's word, the people of a
+workspace (of this server, or of one this computer is shown on) who may use
+it (``/{agent}/people``; ``/people`` lists whom); a person named gets the
+same routes for the files of a synced folder alone, in a conversation of
+its own that the owner reads too (``chats.readable``), its asks allowed once
+at most (runner.py ``_ChatTurn``).
+
 The asks on this computer (``/asks``, step 5b of
 docs/research/agent-collab.md): what the turns of other servers' work
 folders that run here wait for, read and answered by the desktop app
@@ -55,6 +63,7 @@ NOT_HERE = "no such page or folder of yours with an agent on this computer"
 FAR_ASKS = "This is answered on the computer that runs the agent."   # runner.FAR_ASKS
 NO_AGENTS = "Agents run on the desktop app's own server."
 NONE_ON = "Turn on Codex or Claude Code in Settings → AI first."
+LENT_FOLDER = "{agent} works for you only on the files of a synced folder."   # threads.start's ``folder``
 
 FRESH_EVERY_S = 10   # a re-probe asked for runs at most this often on this server; else the kept answers
 
@@ -80,33 +89,54 @@ def _agents_account(request: Request) -> str:
     return require_personal_user_id(request, SEE_AGENTS)
 
 
-def _entry(found: dict, row: dict | None, user_id: str) -> dict:
+def _entry(found: dict, row: dict | None, user_id: str, ws: str | None) -> dict:
     """An agent as the listing says it: what the catalog found
     (``found``) with how it stands as a code (``catalog.code``), whether it
     is on, what it may run and whether the account ``user_id`` turned it on
     (``mine``: the one who may turn it off or narrow it), ``row`` its
-    ``store.agents`` row."""
-    from ..local_agents import catalog
+    ``store.agents`` row; ``id`` the agent's (gamma/agents.py ``here``:
+    what a comment sent to it names); for its owner the people it serves
+    (``people``, ``store.people``), and for a person it serves in the
+    workspace ``ws`` its owner's name (``lent``: ``{by}``, else null)."""
+    from .. import agents
+    from ..db import account_names, connect_users_db
+    from ..local_agents import catalog, store
 
     on = bool(row and row["enabled"])
-    return {**found, "code": catalog.code(found["name"], found), "enabled": on, "runs": row["runs"] if on else "never",
-            "mine": on and row["set_by"] == user_id}
+    mine = on and row["set_by"] == user_id
+    lent = None
+    if on and not mine and ws and store.named(found["name"], "", ws, user_id):
+        with connect_users_db() as conn:
+            lent = {"by": account_names(conn, {row["set_by"]}).get(row["set_by"], "")}
+    return {**found, "id": agents.here(found["name"]).id, "code": catalog.code(found["name"], found), "enabled": on,
+            "runs": row["runs"] if on else "never", "mine": mine, "lent": lent,
+            "people": store.people(found["name"]) if mine else []}
 
 
-def _agent_of(user_id: str, name: str) -> dict | None:
+def _agent_of(user_id: str, name: str, ws: str) -> dict | None:
     """The ``store.agents`` row of the agent a chat request names
-    (``name``), while the account turned it on; with no name, the
-    account's first agent on (``store.agent_for``). None for neither."""
+    (``name``), while the account turned it on or its owner lets the
+    account use it in ``ws`` (``store.usable``); with no name, the
+    account's first agent on (``store.agent_for``), else the first another
+    account lends it (``store.lent_to``). None for neither."""
     from ..local_agents import store
 
     if not name:
-        return store.agent_for(user_id)
-    return store.enabled_agents()[name] if store.owns(user_id, name) else None
+        return store.agent_for(user_id) or next(iter(store.lent_to(ws, user_id).values()), None)
+    return store.usable(user_id, ws, name)
+
+
+def _ws_of(request: Request) -> str | None:
+    """The session's workspace, None where it has none."""
+    try:
+        return require_ws(request)
+    except HTTPException:
+        return None
 
 
 @router.get("")
 def list_agents(request: Request, fresh: int = 0):
-    """``{here, computer, agents: [{name, label, found, version, ready,
+    """``{here, computer, agents: [{id, name, label, found, version, ready,
     problem, code, models, at, enabled, runs, mine}], dirs: [{id, path,
     name, added_at}]}``: ``here`` whether this server runs agents (false
     everywhere but the desktop app's own server, which then lists none),
@@ -114,7 +144,10 @@ def list_agents(request: Request, fresh: int = 0):
     (``cloud_auth.device``); ``models`` what each agent offers, ``[{id,
     label, efforts, effort, default}]``; ``enabled`` whether it is on,
     ``runs`` what it may run, ``never`` or ``ask``, ``mine`` whether the
-    session's account turned it on; ``dirs`` the directories offered beyond
+    session's account turned it on, ``people`` the people it serves for its
+    owner (``[{agent, server, workspace_id, account, username, at}]``),
+    ``lent`` ``{by}`` where another account's agent serves the session's
+    account in its workspace; ``dirs`` the directories offered beyond
     the vaults; Codex then Claude Code, as last asked (``catalog.cached``:
     nothing runs, and an answer missing or stale is asked in the
     background, ``found`` and ``ready`` null meanwhile). ``fresh=1`` asks
@@ -140,8 +173,9 @@ def list_agents(request: Request, fresh: int = 0):
     rows = store.agents()
     found = found or [catalog.cached(name) for name in catalog.AGENTS]
     name = device()[1].strip()[:64]
+    ws = _ws_of(request)
     return {"here": True, "computer": name if name.isprintable() else "",
-            "agents": [_entry(agent, rows.get(agent["name"]), user_id) for agent in found], "dirs": store.dirs()}
+            "agents": [_entry(agent, rows.get(agent["name"]), user_id, ws) for agent in found], "dirs": store.dirs()}
 
 
 @router.patch("/{agent}")
@@ -200,7 +234,157 @@ def set_agent(agent: str, body: AgentPatch, request: Request):
         folder_links.agents_changed()
     if body.runs is not None and store.set_runs(agent, body.runs, by=user_id) and body.runs == "never":
         runner.runs_never(agent)
-    return {**_entry(catalog.cached(agent), store.agents().get(agent), user_id), "queued": queued}
+    return {**_entry(catalog.cached(agent), store.agents().get(agent), user_id, _ws_of(request)), "queued": queued}
+
+
+# --- the people an agent serves (a co-author's use) -------------------------------------------------
+
+class PersonBody(BaseModel):
+    server: str = Field(default="", max_length=400)            # "" this server, else a channel's remote_url
+    workspace_id: str = Field(min_length=1, max_length=64)     # the workspace there
+    account: str = Field(min_length=1, max_length=128)         # the person's account there
+
+
+def _co_authors_here(user_id: str) -> list[dict]:
+    """The workspaces of this server the account edits with others in them
+    who edit too: ``[{server: "", workspace_id, name, people: [{id,
+    username, role}]}]``, the account itself left out."""
+    from .. import workspaces
+    from ..db import connect_users_db
+
+    with connect_users_db() as conn:
+        rows = conn.execute(
+            "SELECT w.id, w.name, u.id, u.username, m.role FROM workspace_members me "
+            "JOIN workspaces w ON w.id = me.workspace_id JOIN workspace_members m ON m.workspace_id = w.id "
+            "JOIN users u ON u.id = m.user_id WHERE me.user_id = ? AND me.role IN ('owner', 'editor') "
+            "AND m.user_id != ? ORDER BY w.name, u.username", (user_id, user_id)).fetchall()
+    places: dict[str, dict] = {}
+    for ws, name, person, username, role in rows:
+        if workspaces.at_least(role, "editor"):
+            places.setdefault(ws, {"server": "", "workspace_id": ws, "name": name or "", "origin": "", "people": [],
+                                   "error": ""})["people"].append({"id": person, "username": username, "role": role})
+    return list(places.values())
+
+
+def _co_authors_there(link: dict) -> dict:
+    """The workspace of the account's channel ``link`` on another server,
+    with the people who edit it there (``channel.members``): ``{server,
+    workspace_id, name, origin, people, error}``, ``error`` why that server
+    did not answer ("" when it did)."""
+    from .. import gamma_sync, remote_servers
+    from ..computers import channel
+
+    place = {"server": link["remote_url"], "workspace_id": link["workspace_id"], "name": "",
+             "origin": remote_servers.origin_of(link["remote_url"]), "people": [], "error": ""}
+    try:
+        place["people"] = channel.members(link)
+    except channel.Older:
+        place["error"] = "That server is older than this app: it cannot name its people."
+    except gamma_sync.SyncError as e:
+        place["error"] = f"That server could not be reached: {e}"
+    return place
+
+
+@router.get("/people")
+def people_offered(request: Request):
+    """``{places: [{server, workspace_id, name, origin, people: [{id,
+    username, role}], error}]}``: whom the session's account may let use an
+    agent it turned on here, by workspace: those of this server it edits
+    with others (``server`` ""), then the workspace of each of its channels
+    to another server, asked there (``origin`` that server's, ``error`` why
+    it did not answer); the editors and owners of each but the account. 404
+    on a server that runs no agents."""
+    from ..computers import channel
+
+    user_id = _agents_account(request)
+    return {"places": _co_authors_here(user_id) + [_co_authors_there(link) for link in channel.links(user_id)]}
+
+
+def _owned(user_id: str, agent: str) -> str:
+    """``agent``'s label while the account owns it here; 404 for an agent
+    Gamma does not know, 403 for one it does not own."""
+    from ..local_agents import catalog, store
+
+    if agent not in catalog.AGENTS:
+        raise HTTPException(status_code=404, detail=f"Gamma knows no agent named {agent}.")
+    label = catalog.label(agent)
+    if not store.owns(user_id, agent):
+        raise HTTPException(status_code=403, detail=f"Only the account that turned on {label} may say who uses it.")
+    return label
+
+
+@router.post("/{agent}/people")
+def name_person(agent: str, body: PersonBody, request: Request):
+    """``{server, workspace_id, account}``: a person of that workspace (of
+    this server, ``server`` "", or of a server one of the account's channels
+    names) may use ``agent`` from now on → ``{people}``
+    (``store.people``). Takes the desktop shell's word (403), whose question
+    names the person and what the owner answers for (desktop/lib/keeping.js
+    ``personAsk``), and the agent's owner (403); 404 on a server that runs
+    no agents. 400 for a person who is not an editor or owner of that
+    workspace beside the account, or past ``store.MAX_PEOPLE``; 404 for a
+    server no channel of the account names; 502 for one that does not
+    answer. The channels announce it, and the open pages hear the agent
+    changed."""
+    from .. import folder_links, workspaces
+    from ..computers import channel
+    from ..db import account_names, connect_users_db
+    from ..local_agents import store
+
+    _agents_account(request)
+    user_id = from_shell(request, "Only the desktop app may let another person use an agent on this computer.")
+    label = _owned(user_id, agent)
+    if body.account == user_id and not body.server:
+        raise HTTPException(status_code=400, detail=f"{label} is yours already.")
+    if not body.server:
+        if not (workspaces.at_least(workspaces.role_of(body.workspace_id, user_id), "editor")
+                and workspaces.at_least(workspaces.role_of(body.workspace_id, body.account), "editor")):
+            raise HTTPException(status_code=400, detail="Only an editor or an owner of a workspace you edit can use "
+                                                        f"{label}.")
+        with connect_users_db() as conn:
+            username = account_names(conn, {body.account}).get(body.account, "")
+    else:
+        link = next((link for link in channel.links(user_id) if (link["remote_url"], link["workspace_id"])
+                     == (body.server, body.workspace_id)), None)
+        if link is None:
+            raise HTTPException(status_code=404, detail="This computer is not shown to that workspace.")
+        place = _co_authors_there(link)
+        if place["error"]:
+            raise HTTPException(status_code=502, detail=place["error"])
+        person = next((p for p in place["people"] if p["id"] == body.account), None)
+        if person is None:
+            raise HTTPException(status_code=400, detail=f"Only an editor or an owner of that workspace can use {label}.")
+        username = person["username"]
+    try:
+        if store.name_person(agent, body.server, body.workspace_id, body.account, username):
+            folder_links.agents_changed()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"people": store.people(agent)}
+
+
+@router.delete("/{agent}/people")
+def unname_person(agent: str, request: Request, workspace_id: str, account: str, server: str = ""):
+    """A person may no longer use ``agent`` → ``{people}``: their turns of
+    it running here stop and those waiting fail when taken
+    (``runner.stop_person``), and the channels announce it, so another
+    server fails the ones it holds for it. Takes the agent's owner, or the
+    desktop shell's word (``shell_strict``: the person at the computer
+    narrows an agent whose owner is signed out); 404 for an agent Gamma
+    does not know or that is off."""
+    from .. import folder_links
+    from ..local_agents import catalog, runner, store
+
+    user_id = _agents_account(request)
+    if agent not in catalog.AGENTS or agent not in store.enabled_agents():
+        raise HTTPException(status_code=404, detail=f"No agent named {agent} is on here.")
+    if not store.owns(user_id, agent):
+        shell_strict(request, f"Only the account that turned on {catalog.label(agent)}, or the desktop app, may say "
+                              "who uses it.")
+    if store.unname_person(agent, server, workspace_id, account):
+        runner.stop_person(agent, server, workspace_id, account)
+        folder_links.agents_changed()
+    return {"people": store.people(agent)}
 
 
 @router.put("/dirs")
@@ -292,16 +476,19 @@ class AnswerBody(BaseModel):
 MAX_NOTE = 2000   # characters of what a decline tells the agent
 
 
-def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = "") -> tuple[str, str, dict | None,
-                                                                                          dict | None, dict | None]:
+def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = "",
+          thread: str = "") -> tuple[str, str, dict | None, dict | None, dict | None]:
     """``(ws, the account, the place, the far seat, the active conversation)``
     of the bucket for the session's account, one of the place and the far
     seat None: where the account's agent here works (``chats.place_of``, on
     a server that runs agents, for the active conversation's ``dir``, or
     the ``dir`` a turn names), else, for a file of a work folder no vault
     here keeps, the computer of the account's that keeps it with an agent
-    (``chats.remote_of``). With ``agent`` (the one picked in the chat), an
-    active conversation of another agent counts as none: a conversation
+    (``chats.remote_of``). With ``thread`` the conversation is the
+    account's of that comment thread on the bucket, else a co-author's
+    there with the account's agent (``chats.of_thread`` ``owner``), in
+    place of the active one. With ``agent`` (the one picked in the
+    chat), a conversation of another agent counts as none: a conversation
     keeps the agent it began with, and the next turn starts another
     (``chats.begin``). 404 for any other bucket or account; 403 for a token
     or the guest."""
@@ -311,7 +498,11 @@ def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = ""
     user_id = require_personal_user_id(request, SESSION_ONLY)
     ws = require_ws(request)
     with connect_pages_db(ws) as conn:
-        conversation = chats.active(conn, bucket, user_id) if bucket else None
+        if thread:
+            conversation = chats.of_thread(conn, thread, user_id, owner=True)
+            conversation = conversation if conversation is not None and conversation["bucket"] == bucket else None
+        else:
+            conversation = chats.active(conn, bucket, user_id) if bucket else None
     if agent and conversation is not None and conversation["agent"] != agent:
         conversation = None
     chosen = dir if dir is not None else (conversation or {}).get("dir", "")
@@ -334,11 +525,13 @@ def _cwd(ws: str, place: dict, conversation: dict | None) -> str:
     return place["path"] if place["kind"] != "own" else str(chats.own_dir(ws, conversation["id"]))
 
 
-def _conversation_of(request: Request, conversation_id: str, *, seated: bool = True) -> tuple[str, dict, dict | None]:
-    """``(ws, the conversation, the far seat)`` for its account, with
-    ``seated`` while its bucket is one ``_seat`` answers it (to talk in
-    it again); without, whatever became of its agents (to keep or delete
-    it), the far seat None. 404 otherwise."""
+def _conversation_of(request: Request, conversation_id: str, *, seated: bool = True,
+                     owner: bool = False) -> tuple[str, dict, dict | None]:
+    """``(ws, the conversation, the far seat)`` for its account, or with
+    ``owner`` for its agent's owner too (``chats.readable``: to read, stop
+    and answer a co-author's), with ``seated`` while its bucket is one
+    ``_seat`` answers it (to talk in it again); without, whatever became of
+    its agents (to keep or delete it), the far seat None. 404 otherwise."""
     from ..db import connect_pages_db
     from ..local_agents import chats
 
@@ -346,7 +539,8 @@ def _conversation_of(request: Request, conversation_id: str, *, seated: bool = T
     ws = require_ws(request)
     with connect_pages_db(ws) as conn:
         conversation = chats.get(conn, conversation_id)
-    if conversation is None or conversation["user_id"] != user_id:
+    if conversation is None or not (conversation["user_id"] == user_id
+                                    or owner and chats.readable(conversation, user_id)):
         raise HTTPException(status_code=404, detail="No conversation has that id.")
     if not seated:
         return ws, conversation, None
@@ -357,9 +551,9 @@ def _conversation_of(request: Request, conversation_id: str, *, seated: bool = T
 def _far_turn(request: Request, turn_id: str) -> tuple[str, dict, dict]:
     """``(ws, the conversation, the turn's row)`` of a turn that runs on
     another computer (``chats.run_of``), for the account whose turn and
-    conversation it is, whatever became of the page's seat since (the
-    agent turned off, the computer gone, the page deleted): such a turn
-    stays stoppable. 404 otherwise."""
+    conversation it is, or its agent's owner (``chats.readable``), whatever
+    became of the page's seat since (the agent turned off, the computer
+    gone, the page deleted): such a turn stays stoppable. 404 otherwise."""
     from ..db import connect_pages_db
     from ..local_agents import chats
 
@@ -368,7 +562,8 @@ def _far_turn(request: Request, turn_id: str) -> tuple[str, dict, dict]:
     with connect_pages_db(ws) as conn:
         row = chats.run_of(conn, turn_id)
         conversation = chats.get(conn, row["conversation_id"]) if row is not None else None
-    if row is None or row["user_id"] != user_id or conversation is None or conversation["user_id"] != user_id:
+    if row is None or conversation is None or row["user_id"] != conversation["user_id"] or not chats.readable(
+            conversation, user_id):
         raise HTTPException(status_code=404, detail=chats.NO_TURN)
     return ws, conversation, row
 
@@ -402,9 +597,11 @@ def _refused(e) -> HTTPException:
 
 def _computer(ws: str, user_id: str, place: dict, conversation: dict | None, agent: str = "") -> dict:
     """What the strip says: ``{agent, label, ready, problem, models, folder,
-    paused, turn, session, folder_id, dir, grants}``, ``agent`` the one
+    paused, turn, session, folder_id, dir, grants, lent}``, ``agent`` the one
     picked (``agent``) or the account's first here (``_agent_of``; null for
-    none),
+    none), ``lent`` ``{by}`` where it is another account's that serves this
+    one (a co-author's: no terminal, no grants, each ask allowed once at
+    most), else null,
     ``ready``, ``problem`` and ``models`` (what it offers, ``[{id, label,
     efforts, effort, default}]``) as last asked (``catalog.cached``: nothing
     runs; ``ready`` null while it is asked), ``folder`` the work folder's
@@ -421,14 +618,19 @@ def _computer(ws: str, user_id: str, place: dict, conversation: dict | None, age
     conversation in that directory (``store.grants_of``: ``[{command, cwd,
     host}]``)."""
     from .. import folder_links
+    from ..db import account_names, connect_users_db
     from ..local_agents import catalog, chats, runner, store
 
-    row = _agent_of(user_id, agent)
+    row = _agent_of(user_id, agent, ws)
     name = row["agent"] if row else None
     found = catalog.cached(name) if name else {"ready": False, "problem": "", "models": []}
     link = place["link"]
     reply = chats.busy(conversation)
     cwd = _cwd(ws, place, conversation)
+    lent = None
+    if row is not None and row["set_by"] != user_id:
+        with connect_users_db() as conn:
+            lent = {"by": account_names(conn, {row["set_by"]}).get(row["set_by"], "")}
     if link is not None:
         shown = {"kind": "vault", "name": place["name"],
                  **({"path": place["path"]} if link["created_by"] == user_id else {})}
@@ -439,10 +641,10 @@ def _computer(ws: str, user_id: str, place: dict, conversation: dict | None, age
             "folder": place["name"] if link is not None else "",
             "paused": link is not None and (bool(link["status"].get(folder_links.PAUSED)) or folder_links.choosing(link)),
             "turn": runner.chat_state(ws, reply["turn_id"]) if reply else None,
-            "session": (link is None or link["created_by"] == user_id) and bool(
+            "session": lent is None and (link is None or link["created_by"] == user_id) and bool(
                 _session_of(place, cwd, name, conversation)),
             "folder_id": place["dir"] if link is not None else None, "dir": shown,
-            "grants": store.grants_of(conversation["id"], dir=cwd) if cwd else []}
+            "grants": store.grants_of(conversation["id"], dir=cwd) if cwd and lent is None else [], "lent": lent}
 
 
 def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
@@ -453,13 +655,13 @@ def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
     says it), ``turn`` where the conversation's turn stands here
     (``{turn_id, state, ahead: false}``, ``computer_chat_runs``), no
     ``session``, no ``grants`` (it never asks), ``folder_id`` the work
-    folder's, ``dir`` that work folder by its name, and ``computer`` its
+    folder's, ``dir`` that work folder by its name, ``lent`` ``{by}`` for a
+    co-author's (the agent's owner by name), else null, and ``computer`` its
     name, ``online``, ``since`` when it went offline (null while online),
     ``remote: true``."""
     from ..computers import registry
     from ..db import connect_pages_db
     from ..local_agents import chats
-    from .feedback import _problem  # local: the feedback routes reach the agents' package
 
     assistants, seen_at = registry.said_of(far["token_id"])
     said = next((a for a in assistants if isinstance(a, dict) and a.get("name") == far["agent"]), {})
@@ -469,26 +671,29 @@ def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
         row = chats.run_of(conn, reply["turn_id"]) if reply else None
     folder = (named[0] if named else "") or ""
     return {"agent": far["agent"], "label": far["label"], "ready": far["ready"],
-            "problem": _problem(far) if far["online"] else "", "models": said.get("models") or [],
+            "problem": chats.far_problem(far) if far["online"] else "", "models": said.get("models") or [],
             "folder": folder, "paused": far["paused"],
             "turn": {"turn_id": row["turn_id"], "state": row["state"], "ahead": False}
             if row and row["state"] in chats.BUSY else None,
             "session": False, "folder_id": far["folder_id"], "dir": {"kind": "vault", "name": folder}, "grants": [],
+            "lent": {"by": far["lent_by"]} if far.get("lent_by") else None,
             "computer": far["computer"], "online": far["online"],
             "since": None if far["online"] else (seen_at or None), "remote": True}
 
 
 @router.get("/chat")
-def read_chat(request: Request, bucket: str = "", version: str = "", agent: str = ""):
+def read_chat(request: Request, bucket: str = "", version: str = "", agent: str = "", thread: str = ""):
     """``{computer, conversation}``: the strip (``_computer``, or
     ``_far_computer`` for an agent on another computer) and the bucket's
-    active conversation of the account (``{id, title, agent, messages,
-    version}``, null for none, and for one of another agent than the one
-    picked, ``agent``: ``_seat``); with ``version`` the one stored,
-    ``{computer, same: true}``, so a poll reads little."""
+    active conversation of the account (``{id, title, agent, thread_id,
+    messages, version}``, null for none, and for one of another agent than
+    the one picked, ``agent``: ``_seat``), or with ``thread`` the account's
+    conversation of that comment thread on the bucket (the chat's *Open in
+    chat*), its turns answered and stopped as a chat's; with ``version``
+    the one stored, ``{computer, same: true}``, so a poll reads little."""
     from ..local_agents import chats
 
-    ws, user_id, place, far, conversation = _seat(request, bucket, agent=agent)
+    ws, user_id, place, far, conversation = _seat(request, bucket, agent=agent, thread=thread)
     computer = (_computer(ws, user_id, place, conversation, agent) if place is not None
                 else _far_computer(ws, far, conversation))
     if version and conversation is not None and str(conversation["version"]) == version:
@@ -514,8 +719,9 @@ def start_turn(body: TurnBody, request: Request):
     and a model or an effort the agent did not list
     (``catalog.refused_choice``); 409 while a turn of the conversation is
     queued or running, while the account has no agent on here, or not the
-    one picked, the folder is paused or chooses its files, or the agent is
-    not ready (its problem); 403 when the account is no editor or the
+    one picked (one another account lends it counts: ``_agent_of``), one
+    lent on a page of no synced folder, the folder is paused or chooses its
+    files, or the agent is not ready (its problem); 403 when the account is no editor or the
     server or the workspace takes no writes. For an agent on another
     computer (``_far_turn_started``) the turn waits here for it, ``agent``
     unread: that computer's agent is the page's."""
@@ -534,11 +740,13 @@ def start_turn(body: TurnBody, request: Request):
         return _far_turn_started(ws, user_id, far, body, text)
     if body.dir and place["kind"] == "own":
         raise HTTPException(status_code=400, detail="No directory offered on this computer has that id.")
-    row = _agent_of(user_id, body.agent)
+    row = _agent_of(user_id, body.agent, ws)
     if row is None:
         raise HTTPException(status_code=409, detail=f"Turn on {catalog.label(body.agent)} in Settings → AI first."
                             if body.agent in catalog.AGENTS else NONE_ON)
     name, label = row["agent"], catalog.label(row["agent"])
+    if row["set_by"] != user_id and place["kind"] != "vault":
+        raise HTTPException(status_code=409, detail=LENT_FOLDER.format(agent=label))
     link = place["link"]
     if link is not None and (link["status"].get(folder_links.PAUSED) or folder_links.choosing(link)):
         raise HTTPException(status_code=409,
@@ -555,7 +763,7 @@ def start_turn(body: TurnBody, request: Request):
         conversation, reply, new = chats.begin(ws, bucket=body.bucket, dir=place["dir"], user_id=user_id,
                                                link_id=link["id"] if link is not None else "", agent=name,
                                                label=label, text=text, selections=chats.selections_of(body.selections),
-                                               message_id=body.id, model=model, effort=effort)
+                                               message_id=body.id, model=model, effort=effort, owner=row["set_by"])
     except chats.ChatError as e:
         raise _refused(e) from None
     if new:
@@ -591,14 +799,13 @@ def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: st
     when it connects."""
     from ..computers import registry
     from ..local_agents import catalog, chats
-    from .feedback import _problem  # local: the feedback routes reach the agents' package
 
     name, label, computer = far["agent"], far["label"], far["computer"]
     if far["paused"]:
         raise HTTPException(status_code=409,
                             detail=f"The synced folder is paused on {computer}: {label} starts once it syncs again.")
     if far["online"] and far["ready"] is False:
-        raise HTTPException(status_code=409, detail=_problem(far))
+        raise HTTPException(status_code=409, detail=chats.far_problem(far))
     assistants, _seen = registry.said_of(far["token_id"])
     said = next((a for a in assistants if isinstance(a, dict) and a.get("name") == name), {})
     model, effort = body.model.strip(), body.effort.strip()
@@ -610,7 +817,8 @@ def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: st
         conversation, reply, new = chats.begin(ws, bucket=body.bucket, dir=far["folder_id"], user_id=user_id,
                                                link_id="", agent=name, label=label, text=text,
                                                selections=chats.selections_of(body.selections), message_id=body.id,
-                                               model=model, effort=effort, remote=True, computer=far["computer"])
+                                               model=model, effort=effort, remote=True, computer=far["computer"],
+                                               owner=far["user_id"])
     except chats.ChatError as e:
         raise _refused(e) from None
     if new:
@@ -626,7 +834,8 @@ def stop_turn(turn_id: str, request: Request):
     one, a running one while that computer is away, or one Stopped again,
     reads stopped now; a running one's stop is set and the computer woken
     to hear it. It is the account's to stop though its page's seat is gone
-    (``_far_turn``). 404 for a turn of no conversation of the account's."""
+    (``_far_turn``), and its agent's owner's (a co-author's turn). 404 for
+    a turn of no conversation the account reads."""
     from ..computers import registry
     from ..local_agents import chats, runner
 
@@ -637,7 +846,7 @@ def stop_turn(turn_id: str, request: Request):
         if stopped and row["holder"]:
             registry.wake(row["holder"], "chat")
         return {"stopped": stopped}
-    ws, conversation, _ = _conversation_of(request, turn["conversation_id"])
+    ws, conversation, _ = _conversation_of(request, turn["conversation_id"], owner=True)
     if turn["ws"] != ws:
         raise HTTPException(status_code=404, detail="No turn has that id.")
     return {"stopped": runner.stop_chat(ws, turn_id, conversation["id"])}
@@ -649,12 +858,14 @@ def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
     what the turn's agent asks (an agent message's ``asks``) → ``{answered:
     true}``; ``chat`` allows that command again in this conversation,
     ``note`` (at most ``MAX_NOTE`` characters) is what a decline tells the
-    agent (``runner.answer_chat``). 404 for a turn of no conversation of
-    the account's or no such ask; 409 for one answered already or no longer
-    waited for, and a turn that ended, and for a turn that runs on another
-    computer (``FAR_ASKS``: what it asks is answered there, in its desktop
-    app's window); 400 for another decision, too long a note, or ``chat``
-    on what is not a command."""
+    agent (``runner.answer_chat``); a co-author's turn is answered by that
+    person or the agent's owner, ``once`` or ``deny`` alone. 404 for a turn
+    of no conversation the account reads or no such ask; 409 for one
+    answered already or no longer waited for, and a turn that ended, and
+    for a turn that runs on another computer (``FAR_ASKS``: what it asks is
+    answered there, in its desktop app's window); 400 for another decision,
+    too long a note, or ``chat`` on what is not a command or in a
+    co-author's turn."""
     from ..local_agents import chats, events, runner
 
     turn = _local_turn(turn_id)
@@ -662,7 +873,7 @@ def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
         if not _claimed_here(request, turn_id):
             _far_turn(request, turn_id)
         raise HTTPException(status_code=409, detail=FAR_ASKS)
-    ws, _, _ = _conversation_of(request, turn["conversation_id"])
+    ws, _, _ = _conversation_of(request, turn["conversation_id"], owner=True)
     if turn["ws"] != ws:
         raise HTTPException(status_code=404, detail="No turn has that id.")
     if body.decision not in events.DECISIONS:
@@ -869,9 +1080,10 @@ def open_conversation(conversation_id: str, request: Request):
 
 @router.get("/chat/history/{conversation_id}/export")
 def export_conversation(conversation_id: str, request: Request):
-    """A conversation of the account's, active or archived, as a file to
-    keep (gamma/chat_export.py, as ``GET /api/chat-history/{id}/export``
-    exports Gamma AI's), whatever became of its agent."""
+    """A conversation of the account's, active or archived, or of a
+    co-author's with its agent (``chats.readable``), as a file to keep
+    (gamma/chat_export.py, as ``GET /api/chat-history/{id}/export`` exports
+    Gamma AI's), whatever became of its agent."""
     from fastapi.responses import Response
 
     from ..chat_export import export_file
@@ -879,7 +1091,7 @@ def export_conversation(conversation_id: str, request: Request):
     from ..local_agents import catalog
     from ..storage import attachment_disposition
 
-    ws, conversation, _ = _conversation_of(request, conversation_id, seated=False)
+    ws, conversation, _ = _conversation_of(request, conversation_id, seated=False, owner=True)
     label = catalog.label(conversation["agent"])
     with connect_pages_db(ws) as conn:
         data, name, media_type = export_file(ws, conn, conversation["messages"],
