@@ -68,8 +68,11 @@ steps (relative paths, a command's program), what changed, its end. Its
 agent streams (``delta``): the message's last paragraph grows as the agent
 writes it, and the whole message, when it comes, takes its place. It runs
 the model and effort its turn asked for (``queue_chat``). Both kinds run
-their turn through ``_Turning``. ``chat_turns`` lists an account's turns
-that are queued or running, for Background tasks.
+their turn through ``_Turning``, which gives a turn of this server Gamma's
+tools (``_tools``: a token of the owner's for the workspace,
+gamma/local_agents/tools.py), deleted as the turn ends, however it ends.
+``chat_turns`` lists an account's turns that are queued or running, for
+Background tasks.
 
 A turn of a page of another server's work folder kept here (step 4d) runs
 the same way, its conversation's reads and writes through its home
@@ -136,13 +139,13 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from .. import config, remote_servers
+from .. import config, integrations, remote_servers
 from ..blocks_store import new_block_id
 from ..db import connect_pages_db, format_stamp, page_now
 from ..feedback import requests
 from ..feedback.entries import FeedbackError
 from ..logbuf import log
-from . import catalog, chats, enabled, events, home, procs, prompt, store
+from . import catalog, chats, enabled, events, home, procs, prompt, store, tools
 
 RUN_TIMEOUT_S = 1800              # env GAMMA_AGENT_RUN_TIMEOUT: a turn running this long is stopped
 MAX_RUNS = 2                      # runs at once on this server, at most one per folder
@@ -160,6 +163,7 @@ BUILD_OUTPUTS = (".pdf", ".aux", ".log", ".synctex.gz", ".synctex", ".fls", ".fd
 MAX_ERROR = 16_000                # characters of a run's error record
 CHAT_EVERY_S = 0.5                # a chat turn's message is written at most this often
 ASK_TIMEOUT_S = 600               # an ask nobody answers this long is declined
+TOKEN_SLACK_S = 60                # a turn's token, renewed while its deadline moves, lives this much past it
 ASK_EXPIRED = "No answer within 10 minutes."
 RUNS_NEVER = "The owner no longer lets you ask to run commands in this folder."
 MAX_ASKS = 20                     # asks one chat turn may hold for the person; the rest are declined
@@ -895,7 +899,9 @@ RECOVER_POLL_S = 5
 
 def recover() -> None:
     """At startup: the agents the vaults had before agents were the
-    computer's become its own, once (``store.carry_over``); the runs a
+    computer's become its own, once (``store.carry_over``); the tokens of
+    the turns a server that stopped left are deleted
+    (``integrations.drop_turns``: no turn runs yet); the runs a
     server that stopped left open fail, each its request too ("Send
     again"); what this computer kept of vaults gone meanwhile is
     forgotten; then, in the background, the chat turns it left open fail,
@@ -912,6 +918,9 @@ def recover() -> None:
     from .. import folder_links, migrations  # local: folder_links imports this package's modules inside functions
 
     store.carry_over()
+    dropped = integrations.drop_turns()
+    if dropped:
+        log.info(f"[agents] deleted {dropped} token(s) of turns a stopped server left")
     links = {link["id"]: link for link in folder_links.all_links()}
     remote, turns = [], []
     for run in store.open_runs():
@@ -1190,8 +1199,8 @@ def _program(command: str) -> str:
 def _said(event: dict, tracked: set[str] | None = None) -> str:
     """What a step shows a member: ``Reading main.tex``, ``Editing
     sections/intro.tex``, ``Running latexmk``, ``Searching the sources``,
-    ``Working``; a file the vault does not track is named as no file
-    (``_named``)."""
+    ``Reading Gamma: read_page``, ``Working``; a file the vault does not
+    track is named as no file (``_named``)."""
     kind = event.get("kind")
     if kind in ("read", "edit"):
         what = _named(event.get("path") or "", tracked)
@@ -1201,6 +1210,8 @@ def _said(event: dict, tracked: set[str] | None = None) -> str:
         return f"Running {program}" if program else "Running a command"
     if kind == "search":
         return "Searching the sources"
+    if kind == "gamma":
+        return f"Reading Gamma: {event['tool']}" if event.get("tool") else "Reading Gamma"
     return "Working"
 
 
@@ -1304,18 +1315,69 @@ class _Turning:
         self.timed_out = False
         self.steps: list[dict] = []
         self._step_at: dict[str, int] = {}
+        self.gamma: events.Gamma | None = None   # Gamma's tools for the turn (``_tools``)
+        self._token = ""                          # their token's id, deleted at the end (``_drop_tools``)
+        self._token_until = 0.0                   # when it expires, or a failed renewal is tried again (monotonic)
+
+    def _tools(self) -> None:
+        """Gamma's tools for a turn of this server (``tools.mint``), once:
+        the owner's token of the workspace, named with the agent's label,
+        living the run's timeout and ``TOKEN_SLACK_S``. A chat turn mints
+        them before its prompt, which says whether it has them. A turn of
+        another server's work folder gets none here (step 4.2 of
+        docs/research/agents-as-participants-plan.md has that server mint
+        one)."""
+        if self._token or self.home.remote:
+            return
+        minted = tools.mint(self.owner, self.ws, self.label, _run_timeout() + TOKEN_SLACK_S)
+        if minted:
+            self.gamma, self._token = minted
+            self._token_until = time.monotonic() + _run_timeout() + TOKEN_SLACK_S
+            log.info(f"[agents] Gamma's tools for {self.label} on {self.name}")
+
+    def _keep_tools(self, deadline: float) -> None:
+        """The turn's deadline is ``deadline`` (monotonic): its token lives
+        that long, renewed at most once a minute (``TOKEN_SLACK_S`` past the
+        deadline); a renewal that failed is tried again a minute later."""
+        if self._token and deadline > self._token_until:
+            self._token_until = deadline + TOKEN_SLACK_S
+            try:
+                integrations.renew_turn(self._token, self._token_until - time.monotonic())
+            except Exception as e:  # noqa: BLE001 — the watch goes on
+                log.warning(f"[agents] renewing the token of {self.name}: {e}")
+
+    def _drop_tools(self) -> None:
+        """The turn ended, however it ended: its token is deleted, so a call
+        of the agent's after it is refused. Never raises: an expired token
+        reads nothing either, and the next start deletes what is left."""
+        if not self._token:
+            return
+        try:
+            integrations.drop(self._token)
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[agents] deleting the token of {self.name}: {e}")
+        else:
+            log.info(f"[agents] the token of {self.name} deleted")
+        self._token, self.gamma = "", None
 
     def _turn(self, argv: list[str], root: Path, text: str, session: str, *, schema: dict | None = None,
-              images=(), ask: bool = False, stream: bool = False, model: str = "", effort: str = "") -> dict:
+              images=(), ask: bool = False, stream: bool = False, model: str = "", effort: str = "",
+              title: str = "") -> dict:
         """One turn of the agent on ``text`` (``session`` one to resume;
         ``ask``, it may ask; ``stream``, its text as it is written; its
-        ``model`` and ``effort``), watched, its events followed → its done.
-        A turn before it is closed first."""
+        ``model`` and ``effort``; ``title`` a new session's name) with
+        Gamma's tools (``_tools``), watched, its events followed → its done.
+        A turn before it is closed first. The tools live as long as this
+        turn's deadline, counted from now (``_keep_tools``: what came
+        between the mint and the start, a snapshot of a large folder, or a
+        turn before it)."""
         if self.turn is not None:
             self.turn.close()
+        self._tools()
+        self._keep_tools(time.monotonic() + _run_timeout())
         self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, schema=schema,
                                  images=list(images), session=session, ask=ask, stream=stream, model=model,
-                                 effort=effort)
+                                 effort=effort, gamma=self.gamma, title=title)
         if self.turn.pid:
             self._started(self.turn.pid)
         ended = threading.Event()
@@ -1325,6 +1387,15 @@ class _Turning:
             return self._follow()
         finally:
             ended.set()
+
+    def _resume_refused(self, done: dict, session: str) -> bool:
+        """Whether a turn that resumed ``session`` failed as one whose
+        session this computer no longer has: before any step, neither
+        stopped nor out of time, and not because Gamma's tools did not start
+        (``gamma_down``: a session afresh would fail alike, and the
+        conversation's would be lost)."""
+        return bool(session and not done["ok"] and not done.get("gamma_down") and not self.steps
+                    and not self.stop.is_set() and not self.timed_out)
 
     def _started(self, pid: int) -> None:
         """The turn's process is ``pid``: what the record keeps."""
@@ -1349,6 +1420,7 @@ class _Turning:
             if self._waiting():
                 deadline += now - last
                 self._waited(now - last)
+                self._keep_tools(deadline)
             last = now
             if self.stop.is_set():
                 turn.stop()
@@ -1513,6 +1585,7 @@ class _Run(_Turning):
         finally:
             if self.turn is not None:
                 self.turn.close()  # a turn whose events were never read still ends its process
+            self._drop_tools()
             if self.run_id and self.unwritten:
                 # The request could not be told how the run ended (its
                 # database refused): the run stays open, so the next start
@@ -1596,7 +1669,7 @@ class _Run(_Turning):
         session = self._session(todo, last)
         schema, images = prompt.ANSWER_SCHEMA, prompt.picture_paths(todo, root)
         done = self._turn(argv, root, text, session, schema=schema, images=images)
-        if session and not done["ok"] and not self.steps and not self.stop.is_set() and not self.timed_out:
+        if self._resume_refused(done, session):
             # A session this computer no longer has (Claude Code has no
             # fallback of its own): the same prompt once more, afresh.
             log.info(f"[agents] {self.label} could not resume its session on request {self.request_id}: "
@@ -1803,6 +1876,7 @@ class _ChatTurn(_Turning):
         finally:
             if self.turn is not None:
                 self.turn.close()  # a turn whose events were never read still ends its process
+            self._drop_tools()
             self._stopping()
             self._close()
             if self.home.remote and (self.changes or self.built):
@@ -1914,18 +1988,21 @@ class _ChatTurn(_Turning):
         earlier = context["earlier"]
         session = self._session(place)
         self.fresh = bool(earlier) and not session
+        self._tools()   # the prompt says whether the turn has them
 
         def told(with_earlier: bool) -> str:
             return prompt.build_chat(agent=self.agent, owner=owner, about=about, place=place,
                                      message=context["text"], selections=selections,
-                                     earlier=earlier if with_earlier else None, ask=self.ask)
+                                     earlier=earlier if with_earlier else None, ask=self.ask,
+                                     tools=self.gamma is not None)
 
         # 4. the turn
         before = _snapshot(self.root)
         self._check_stop()
-        chosen = {"ask": self.ask, "stream": True, "model": self.model, "effort": self.effort}
+        chosen = {"ask": self.ask, "stream": True, "model": self.model, "effort": self.effort,
+                  "title": context.get("title") or ""}
         done = self._turn(argv, self.root, told(not session), session, **chosen)
-        if session and not done["ok"] and not self.steps and not self.stop.is_set() and not self.timed_out:
+        if self._resume_refused(done, session):
             # A session this computer no longer has (Claude Code has no
             # fallback of its own): afresh, with the earlier messages.
             log.info(f"[agents] {self.label} could not resume the session of chat turn {self.turn_id}: "
@@ -2396,8 +2473,9 @@ class _ChatTurn(_Turning):
 def _step(event: dict) -> dict:
     """A tool event as the chat's message keeps it: ``{id, kind, status}``
     with ``path`` for a read or an edit (relative to the folder, "outside"
-    for a file outside it) and ``program`` for a command (its name alone,
-    ``_program``); worded by the client."""
+    for a file outside it), ``program`` for a command (its name alone,
+    ``_program``) and ``tool`` for a call of Gamma's tools; worded by the
+    client."""
     kind = event.get("kind") if event.get("kind") in events.KINDS else "other"
     step = {"id": str(event.get("id") or ""), "kind": kind, "status": event.get("status") or ""}
     if kind in ("read", "edit"):
@@ -2405,4 +2483,6 @@ def _step(event: dict) -> dict:
         step["path"] = events.one_line(path, 200) if _inside(path) else "outside"
     elif kind == "run":
         step["program"] = _program(event.get("command") or "")
+    elif kind == "gamma":
+        step["tool"] = event.get("tool") if events.GAMMA_TOOL.match(str(event.get("tool") or "")) else ""
     return step

@@ -21,7 +21,7 @@ from .. import ratelimit
 from ..auth import SESSION_COOKIE, require_personal_user_id, require_ws, ws_role
 from ..computers import registry
 from ..db import connect_users_db
-from ..integrations import (ALL, create_token, edit_grant, editing, grant, granted, set_asks, set_workspaces,
+from ..integrations import (ALL, TURN, create_token, edit_grant, editing, grant, granted, set_asks, set_workspaces,
                             token_digest)
 from ..mcp_oauth import load, public_base, store
 from ..workspaces import list_for_user
@@ -89,8 +89,10 @@ def list_tokens(request: Request, response: Response):
         base = str(request.base_url).rstrip("/")
         oauth_error = str(exc.detail)
     with connect_users_db() as conn:
+        # a turn's token is no connection: never listed (integrations.mint_turn)
         rows = conn.execute("SELECT id, name, created_at, expires_at, scope, workspace_id, workspaces, edits, asks "
-                            "FROM integration_tokens WHERE user_id = ? ORDER BY created_at DESC", (user_id,)).fetchall()
+                            "FROM integration_tokens WHERE user_id = ? AND scope != ? ORDER BY created_at DESC",
+                            (user_id, TURN)).fetchall()
     tokens = [{**dict(zip(("id", "name", "created_at", "expires_at", "scope", "workspace_id"), r[:6])),
                **_access(r[5], r[6], r[7]), "asks": bool(r[8])} for r in rows]
     spaces = [{"id": w["id"], "name": w["name"], "personal": w["personal"], "default": w["default"], "role": w["role"]}
@@ -135,8 +137,8 @@ def change_access(token_id: str, payload: AccessChange, request: Request):
 def revoke_token(token_id: str, request: Request):
     user_id, _ws = _owner(request)
     with connect_users_db() as conn:
-        gone = conn.execute("DELETE FROM integration_tokens WHERE id = ? AND user_id = ?",
-                            (token_id, user_id)).rowcount
+        gone = conn.execute("DELETE FROM integration_tokens WHERE id = ? AND user_id = ? AND scope != ?",
+                            (token_id, user_id, TURN)).rowcount
     if gone:
         registry.forget(token_id)  # a computer's token: its presence goes with it
     # ``revoked``: whether the account had such a token (the desktop app says when one was left)

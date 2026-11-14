@@ -591,8 +591,9 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, agent: 
     ``user_id``'s named ``computer``, whose work folder agent is
     ``agent``) takes the queued
     turn: the row and its message ``running``, in one step under the write
-    lock → ``{turn: {id, conversation_id, page_id, text, selections, model,
-    effort}, history, page: {path, title}, seen}``: the person's message,
+    lock → ``{turn: {id, conversation_id, page_id, title, text, selections,
+    model, effort}, history, page: {path, title}, seen}``: the
+    conversation's title, the person's message,
     the conversation's earlier messages as the turn's prompt takes them
     (``[{role: owner | agent, text}]``, the last ``EARLIER``), the page's
     path in the work folder and its title, and this server's clock. The
@@ -649,7 +650,7 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, agent: 
                    for m in messages[:at] if m is not person and (m.get("text") or "").strip()][-EARLIER:]
         title = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (row["bucket"],)).fetchone()
     return {"turn": {"id": turn_id, "conversation_id": row["conversation_id"], "page_id": row["bucket"],
-                     "text": person.get("text") or "", "selections": person.get("selections") or [],
+                     "title": conversation["title"], "text": person.get("text") or "", "selections": person.get("selections") or [],
                      "model": reply.get("model") or "", "effort": reply.get("effort") or ""},
             "history": earlier, "page": {"path": scope.name, "title": (title[0] if title else "") or ""},
             "seen": page_now()}

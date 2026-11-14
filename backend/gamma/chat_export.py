@@ -221,8 +221,9 @@ def _place(step: dict) -> str:
 
 def step_text(step: dict) -> str:
     """A step in words, as the chat words it (chat/computer/computerChat.js
-    ``stepText``): "Read sections/intro.tex", "Ran latexmk"; one asked
-    about "Asked to run latexmk", then "Allowed …" or "Not allowed …"."""
+    ``stepText``): "Read sections/intro.tex", "Ran latexmk", "Read Gamma:
+    read_page"; one asked about "Asked to run latexmk", then "Allowed …" or
+    "Not allowed …"."""
     kind, path, program = step.get("kind"), _place(step), str(step.get("program") or "")
     status = step.get("status")
     if status in ("asked", "allowed", "declined"):
@@ -238,6 +239,8 @@ def step_text(step: dict) -> str:
         return f"Edited {path}" if path else "Edited a file"
     if kind == "run":
         return f"Ran {program}" if program else "Ran a command"
+    if kind == "gamma":
+        return f"Read Gamma: {step['tool']}" if step.get("tool") else "Read Gamma"
     return "Searched the sources" if kind == "search" else "Worked"
 
 

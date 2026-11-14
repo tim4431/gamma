@@ -55,9 +55,12 @@ test("a step in words, done and while it runs", () => {
   assert.equal(stepText({ kind: "run" }), "Ran a command");
   assert.equal(stepText({ kind: "search" }), "Searched the sources");
   assert.equal(stepText({ kind: "other" }), "Worked");
+  assert.equal(stepText({ kind: "gamma", tool: "read_page" }), "Read Gamma: read_page", "a call of Gamma's tools, by its name");
+  assert.equal(stepText({ kind: "gamma", tool: "" }), "Read Gamma");
   assert.equal(stepNow({ kind: "edit", path: "main.tex" }), "Editing main.tex");
   assert.equal(stepNow({ kind: "run", program: "latexmk" }), "Running latexmk");
   assert.equal(stepNow({ kind: "search" }), "Searching the sources");
+  assert.equal(stepNow({ kind: "gamma", tool: "search_library" }), "Reading Gamma: search_library");
   assert.equal(stepNow({ kind: "other" }), "", "nothing worth naming");
   assert.equal(stepNow(null), "");
 });
@@ -419,6 +422,13 @@ test("the transcript's shape: a turn done, with its steps as plain chips, its mo
   assert.equal(shownMessages({ messages: [agent({ model: "gone-model" })] }, info)[0].model, "gone-model", "a model no longer listed by its id");
   assert.equal(shownMessages({ messages: [agent()] }, ready)[0].files, null);
   assert.deepEqual(stepChip({ kind: "search" }), { kind: "search", summary: "Searched the sources" });
+  // A call of Gamma's tools is the kind Gamma AI's call of that tool is: the pill counts it as a read.
+  const reads = [{ kind: "gamma", tool: "read_page", status: "completed" }, { kind: "gamma", tool: "list_pages", status: "completed" },
+    { kind: "gamma", tool: "view_pdf_page", status: "failed" }, { kind: "gamma", tool: "read_feedback" }].map(stepChip);
+  assert.deepEqual(reads.map((c) => c.kind), ["read", "list", "view", "read"]);
+  assert.deepEqual(reads[2], { kind: "view", summary: "Read Gamma: view_pdf_page", error: true });
+  assert.equal(splitActions(reads).failed, 1);
+  assert.equal(reads.filter(isChange).length, 0, "a read changes nothing");
 });
 
 test("the transcript's shape: a turn under way is partial, its pill the agent at work, its asks drawn here only", () => {

@@ -503,7 +503,8 @@ def _step(raw) -> dict:
     """A step of the agent's message as a run writes it, kept as the
     chat's messages keep one (runner._step): ``{id, kind, status}``, with
     ``path`` (its path in the folder, else "outside") for a read or an
-    edit, ``program`` for a command. 400 for another shape."""
+    edit, ``program`` for a command, ``tool`` for a call of Gamma's tools.
+    400 for another shape."""
     from ..local_agents import events
 
     if not isinstance(raw, dict):
@@ -519,6 +520,8 @@ def _step(raw) -> dict:
             step["path"] = "outside"
     elif kind == "run":
         step["program"] = events.one_line(str(raw.get("program") or ""), MAX_STEP_TEXT)
+    elif kind == "gamma":
+        step["tool"] = raw["tool"] if events.GAMMA_TOOL.match(str(raw.get("tool") or "")) else ""
     return step
 
 
