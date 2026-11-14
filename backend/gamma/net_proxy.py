@@ -591,3 +591,49 @@ def botocore_proxies(endpoint_url: str | None, policy: Policy | None = None) -> 
         url = way.server.url(credentials=not said)
         return {"http": url, "https": url}
     return {}
+
+
+# --- answers that refuse this network ----------------------------------------------
+# Some 403s are about the network a request came from, not the request or
+# its credential: OpenAI refuses a country or region it doesn't serve, and
+# Cloudflare in front of a service challenges or blocks an address or a
+# client it distrusts. A browser behind a proxy or VPN then works while
+# this server, connecting another way, is refused, and such an answer must
+# not read as a rejected key or an expired sign-in: the remedy is the proxy.
+
+ERROR_BODY_MAX = 8192
+REFUSED_HINT = ("If your browser reaches it through a proxy or VPN, give this server the same one "
+                "in Settings → Network proxy.")
+
+
+def error_body(error: urllib.error.HTTPError) -> bytes:
+    """The first ERROR_BODY_MAX bytes of an HTTP error answer's body, read
+    once and kept on the error, so each reader (its message, its OAuth
+    code, refused_network) sees them."""
+    body = getattr(error, "_gamma_body", None)
+    if body is None:
+        try:
+            body = error.read(ERROR_BODY_MAX) or b""
+        except Exception:
+            body = b""
+        error._gamma_body = body
+    return body
+
+
+def refused_network(error) -> str:
+    """Why an answer refuses this server's network rather than the request,
+    "" when it doesn't: a 403 naming OpenAI's region code
+    (``unsupported_country_region_territory``), or a 403 of Cloudflare's
+    own (``cf-mitigated``, or a page where the service behind it answers
+    JSON). Anything but an HTTPError is "": an unreachable service is not
+    refused."""
+    if not isinstance(error, urllib.error.HTTPError) or error.code != 403:
+        return ""
+    headers = {k.lower(): v for k, v in (error.headers or {}).items()}
+    body = error_body(error).decode("utf-8", "replace").lstrip()
+    if "unsupported_country" in body:
+        return "it doesn't serve the country or region this server connects from"
+    cloudflare = "cf-ray" in headers or "cloudflare" in headers.get("server", "").lower()
+    if headers.get("cf-mitigated") or (cloudflare and not body.startswith(("{", "["))):
+        return "Cloudflare in front of it refused this server's connection"
+    return ""

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { FAKE_AI_MODELS, fakeAiModels, live, wanted } from "../harness.mjs";
+import http from "node:http";
+import { Account, FAKE_AI_MODELS, fakeAiModels, live, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -586,6 +587,52 @@ export async function chatNavigationScenarios(env) {
       await page.locator(".chatErrorCard.compact", { hasText: "OpenAI is overloaded" }).waitFor();
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: a provider refusing the server's network reads as the network, and its fix opens Network proxy", async () => {
+    // A provider that answers every call as OpenAI does a region it doesn't
+    // serve: the server's network is refused, not the key (net_proxy.refused_network).
+    const provider = http.createServer((req, res) => {
+      req.resume();
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { code: "unsupported_country_region_territory",
+        message: "Country, region, or territory not supported", type: "request_forbidden" } }));
+    });
+    await new Promise((listening) => provider.listen(0, "127.0.0.1", listening));
+    await server.manage("create-user", "refused-admin", "refused-admin-pw");
+    await server.manage("set-admin", "refused-admin", "on");
+    const admin = await new Account(server, "refused-admin", "refused-admin-pw").login();
+    await admin.api("/api/ai/providers", { method: "POST", body: {
+      protocol: "openai", name: "OpenAI", api_key: "sk-refused", models: "gpt-x",
+      base_url: `http://127.0.0.1:${provider.address().port}/v1`,
+    } });
+    const chatPage = await admin.api("/api/pages", { method: "POST", body: { title: "Refused network" } });
+    const ctx = await admin.context(browser);
+    const page = await openPage(ctx, `${server.base}/?ws=${admin.ws}&page=${chatPage.id}`);
+    const proxyPane = page.locator('.settingsPane .setHead[data-setting="Network proxy"]');
+    try {
+      // The login check: the strip names the network, and Fix… opens Network proxy.
+      const strip = page.locator(".chatHealthStrip", { hasText: "OpenAI refused this server's network" });
+      await strip.waitFor();
+      await strip.getByRole("button", { name: "Fix…" }).click();
+      await proxyPane.waitFor();
+      await page.keyboard.press("Escape");
+      await proxyPane.waitFor({ state: "detached" });
+      // A chat: the card says the key is kept, and its fix is the proxy.
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.fill("hi");
+      await input.press("Enter");
+      const card = page.locator(".chatErrorCard", { hasText: "OpenAI refused this server's network" });
+      await card.waitFor();
+      assert((await card.innerText()).includes("not the key or sign-in, which are kept"), "the card keeps the key");
+      assertEq(await card.getByRole("button", { name: "Update key" }).count(), 0, "no key to update");
+      await card.getByRole("button", { name: "Network proxy", exact: true }).click();
+      await proxyPane.waitFor();
+      assertNoProblems(page, ["POST /api/ai/chat -> 502"]);
+    } finally {
+      await ctx.close();
+      provider.close();
+    }
   });
 
   await step("chat navigation: the agent's steps sum up in one pill that names the running step; its changes link to what changed", async () => {

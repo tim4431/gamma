@@ -52,6 +52,7 @@ TEST_TIMEOUT_S = 10
 # The Test's destinations, (name, url, guarded): a guarded one is fetched
 # through net_guard, as a link a person or the assistant opens.
 TEST_TARGETS = (("OpenAI", "https://api.openai.com/v1/models", False),
+                ("ChatGPT", "https://chatgpt.com/backend-api/codex/models", False),
                 ("Anthropic", "https://api.anthropic.com/v1/models", False),
                 ("Zotero", "https://api.zotero.org/", False),
                 ("arXiv", "https://arxiv.org/", True))
@@ -361,9 +362,12 @@ def _try(trial: Policy, name: str, url: str, guarded: bool) -> dict:
         with (net_guard.guarded_urlopen(url, timeout=TEST_TIMEOUT_S, policy=trial) if guarded
               else net_proxy.build_opener(policy=trial).open(url, timeout=TEST_TIMEOUT_S)) as response:
             result["status"] = response.status
-    except urllib.error.HTTPError as e:  # an answer all the same
-        e.close()
+    except urllib.error.HTTPError as e:  # an answer all the same, unless it refuses this network
         result["status"] = e.code
+        refused = net_proxy.refused_network(e)
+        if refused:
+            result["error"] = f"{e.code}: {refused}"
+        e.close()
     except Exception as e:  # noqa: BLE001 — every failure is a line of the Test
         result["error"] = _failure(e, parts.hostname or "")
     result.update(ok=not result["error"], ms=round((time.monotonic() - started) * 1000))
@@ -375,7 +379,8 @@ def test(fields: dict | None = None, url: str = "") -> dict:
     ``save`` would (nothing saved), tried in parallel against Gamma Cloud
     (when an issuer is configured), TEST_TARGETS and ``url`` (an http or
     https address, when given). ``{results: [{name, url, route, via,
-    reason, ok, status, ms, error}]}``, any HTTP answer counting as reached.
+    reason, ok, status, ms, error}]}``, any HTTP answer counting as reached
+    but one that refuses this server's network (net_proxy.refused_network).
     ValueError for a draft or an address that cannot be tried."""
     from . import cloud_auth  # local: only the Test needs the issuer
 

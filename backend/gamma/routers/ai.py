@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import (ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
-                search_services, translate_engines)
+                net_proxy, search_services, translate_engines)
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -674,6 +674,15 @@ _RENEWAL_UNREACHABLE = {"ok": False, "auth": False, "kind": "unreachable",
                         "error": "couldn't reach the sign-in service to renew the token — try again"}
 
 
+def _listing_detail(error: urllib.error.HTTPError) -> str:
+    """A settings form's line for a provider's error answer to a listing or
+    an inquiry: its status and words, and when it refuses this server's
+    network (net_proxy.refused_network), why and the proxy setting."""
+    refused = net_proxy.refused_network(error)
+    detail = _upstream_detail(error, 200)
+    return f"{detail} — {refused}. {net_proxy.REFUSED_HINT}" if refused else detail
+
+
 def _renewing(user_id: str, provider_id: str, conf: dict, call):
     """``call(conf)``, and once more when the provider answers a sign-in's
     token with a 401 and renewing it (ai_settings.renew_rejected) gives a
@@ -744,8 +753,8 @@ def _probe_entry(user_id: str, entry: dict, fallback_model: str = "", retry: boo
     except chatgpt_oauth.RefreshUnavailable:
         return {**_RENEWAL_UNREACHABLE, "model": model}
     except Exception as e:
-        auth = isinstance(e, UpstreamError) and e.status in (401, 403)
-        return {"ok": False, "model": model, "error": str(e), "auth": auth, "kind": failure_kind(e)}
+        kind = failure_kind(e)
+        return {"ok": False, "model": model, "error": str(e), "auth": kind == "auth", "kind": kind}
     result = {"ok": True, "model": model, "latency_ms": int((time.time() - started) * 1000)}
     if verdict is not None:
         _tool_check_retry.pop(_tool_check_key(user_id, row["id"]), None)
@@ -969,11 +978,14 @@ def ai_provider_usage(provider_id: str, request: Request):
         return {"available": False, "auth": False,
                 "reason": "Couldn't reach OpenAI to renew the sign-in — try again."}
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
+        kind = failure_kind(e)
+        if kind == "auth":
             # Expired/revoked sign-in: an expected state, not a server error —
             # report it in-body so the UI can say "reconnect".
             return {"available": False, "auth": True,
                     "reason": "The sign-in expired — sign in again in this entry's edit form."}
+        if kind == "blocked":  # the server's network, not the sign-in
+            return {"available": False, "auth": False, "reason": f"Usage inquiry refused: {_listing_detail(e)}"}
         raise HTTPException(status_code=502,
                             detail=f"usage inquiry failed: {_upstream_detail(e, 200)}")
     except Exception as e:
@@ -1037,7 +1049,7 @@ def ai_model_catalog(payload: ModelCatalogRequest, request: Request):
     try:
         models = ai_catalog.list_models(conf)
     except urllib.error.HTTPError as e:
-        raise HTTPException(status_code=status, detail=f"model list failed: {_upstream_detail(e, 200)}")
+        raise HTTPException(status_code=status, detail=f"model list failed: {_listing_detail(e)}")
     except Exception as e:
         raise HTTPException(status_code=status, detail=f"model list failed: {e}")
     return {"models": [m["id"] for m in models]}
@@ -1115,7 +1127,7 @@ def ai_health(payload: AIHealthRequest, request: Request):
     except chatgpt_oauth.RefreshUnavailable:
         return {**result, **_RENEWAL_UNREACHABLE}
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
+        if failure_kind(e) == "auth":
             return {**result, "ok": False, "auth": True, "kind": "auth", "error": _upstream_detail(e, 200)}
         if e.code in (404, 405):
             # An OpenAI-compatible gateway without /v1/models — can't verify

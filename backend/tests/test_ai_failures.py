@@ -4,6 +4,7 @@ its plain-string ``detail``, which names the upstream status — on the HTTP err
 and on the stream's closing error line — so the chat can show an error card
 with the action that fixes it."""
 
+import io
 import json
 import socket
 import urllib.error
@@ -12,6 +13,7 @@ import pytest
 
 from ai_fixtures import FakeResp, ai_provider, org  # noqa: F401  (fixtures)
 from conftest import login, make_user
+from gamma import ai_client
 from gamma.ai_client import AllowanceExhausted, UpstreamError, failure_kind, sse_events
 from gamma.ai_protocols.base import NotAnAIStream
 
@@ -45,6 +47,49 @@ def _provider(ai_provider):
 ])
 def test_failure_kind(error, kind):
     assert failure_kind(error) == kind
+
+
+REGION = (b'{"error": {"code": "unsupported_country_region_territory", "message": '
+          b'"Country, region, or territory not supported", "param": null, "type": "request_forbidden"}}')
+
+
+def _answer(status, body, headers=None):
+    """An HTTP error answer, as urllib raises it."""
+    return urllib.error.HTTPError("https://api.example.test", status, "error", headers or {}, io.BytesIO(body))
+
+
+@pytest.mark.parametrize("answer, kind", [
+    (lambda: _answer(403, REGION, {"Server": "cloudflare", "CF-RAY": "1"}), "blocked"),
+    (lambda: _answer(403, b"<!DOCTYPE html><title>Just a moment...</title>", {"cf-mitigated": "challenge"}), "blocked"),
+    (lambda: _answer(403, b"<!DOCTYPE html><title>Attention Required! | Cloudflare</title>",
+                     {"Server": "cloudflare"}), "blocked"),
+    (lambda: _answer(403, b'{"error": {"message": "insufficient permissions"}}', {"Server": "cloudflare", "CF-RAY": "1"}),
+     "auth"),
+    (lambda: _answer(403, b"<html><title>403 Forbidden</title></html>", {"Server": "nginx"}), "auth"),
+    (lambda: _answer(401, b"<!DOCTYPE html>", {"cf-mitigated": "challenge"}), "auth"),
+    (lambda: UpstreamError(403, "upstream 403: Just a moment...", "Cloudflare in front of it refused"), "blocked"),
+], ids=["region", "challenge", "cloudflare page", "the API's own 403", "another server's page", "a 401",
+        "an upstream error"])
+def test_a_403_refusing_the_network_is_blocked_not_auth(answer, kind):
+    """OpenAI refusing the region the server connects from, or Cloudflare's
+    challenge or block page in front of a service, is about the network,
+    not the key or the sign-in; a service's own JSON 403 still is."""
+    assert failure_kind(answer()) == kind
+
+
+def test_a_refused_call_keeps_its_words_and_its_kind(monkeypatch):
+    """open_ai reads the refusal's body once for both: the detail still has
+    OpenAI's words, and the error knows the network was refused."""
+    def urlopen(req, timeout=None):
+        raise _answer(403, REGION)
+
+    monkeypatch.setattr(ai_client.urllib.request, "urlopen", urlopen)
+    rt = {"providers": {"p": {"protocol": "openai", "api_key": "k", "base_url": "https://api.openai.test/v1",
+                              "name": "OpenAI"}}}
+    with pytest.raises(UpstreamError) as failed:
+        ai_client.open_ai([{"role": "user", "content": "hi"}], "", {"provider": "p", "model": "gpt-x"}, rt)
+    assert str(failed.value) == "upstream 403: Country, region, or territory not supported"
+    assert failure_kind(failed.value) == "blocked"
 
 
 def test_a_stream_without_any_event_is_not_an_ai_api():
