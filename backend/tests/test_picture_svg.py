@@ -330,12 +330,16 @@ def test_an_svg_that_draws_too_long_is_killed_and_holds_no_lock(tmp_path, monkey
     assert pdf_text.page_raster(_pdf(), 1, 0.1)[0] is not None and drawing.is_alive()   # the lock is free
     drawing.join(30)
     assert failed and time.monotonic() - began < 10
+    # A second draw would wait out the limit again: one this long is told
+    # from the export's own work on a busy machine, which the old limit of
+    # 1 s was not (CI took 1.1 s with no draw).
+    monkeypatch.setattr(pdf_image, "SVG_DRAW_SECONDS", 5)
     uploads, url = _stored(tmp_path, LAYERED, ext="svg")
     began = time.monotonic()
     assert annotate_pdf(_pdf(), [], stored=files_in(uploads), pictures=[_entry(_pic(url))])[1] == 0
     with pytest.raises(ValueError, match="SVG_DRAW_SECONDS"):
         pdf_image.svg_pdf(LAYERED)
-    assert time.monotonic() - began < 1 and processes == [pdf_image.SVG_DRAW_SIDE]
+    assert time.monotonic() - began < 5 and processes == [pdf_image.SVG_DRAW_SIDE]
 
 
 def test_a_drawing_is_kept_by_the_files_content(processes, monkeypatch):
