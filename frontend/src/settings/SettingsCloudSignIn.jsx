@@ -116,7 +116,7 @@ export function CloudSignInSettings({ setStatus, action }) {
       hint={saved?.needs_connect && !dirty
         ? t("This server has a public address, so it needs a client of its own: connect it once through Gamma Cloud")
         : t("How this server identifies itself to the account server. Leave empty on your own machine; a hosted server enters the client id and secret it was given")}
-      title={t("Not a person: the OpenID Connect client this Gamma is. Empty = the account server's built-in public desktop client (loopback callback, PKCE only). Connect asks Gamma Cloud for a client of this server's own; you approve it there with your account.")}>
+      title={t("Not a person: the OpenID Connect client this Gamma is. Empty = the account server's built-in public desktop client (loopback callback, PKCE only). Connect asks Gamma Cloud for a client of this server's own; you approve it there with your account.")} wide>
       <span className="setRowControls">
         {saved?.needs_connect && !dirty ? (
           <button className="uiBtn sm primary" onClick={connect}
@@ -124,14 +124,16 @@ export function CloudSignInSettings({ setStatus, action }) {
             <CloudIcon size={14} /> {t("Connect")}
           </button>
         ) : null}
-        <input className="aiKeyInput" type="text" aria-label={t("Client id")} value={draft.client_id} spellCheck={false}
-          autoComplete="off" name="gamma-cloud-client-id" disabled={disabled} placeholder={t("empty = desktop client")}
-          onChange={(e) => set("client_id")(e.target.value)} />
-        {draft.client_id.trim() || saved?.has_secret ? (
-          <PasswordInput aria-label={t("Client secret")} value={draft.secret} disabled={disabled} autoComplete="new-password"
-            name="gamma-cloud-client-secret" placeholder={saved?.has_secret ? t("secret set — type to replace") : t("client secret")}
-            onChange={(e) => set("secret")(e.target.value)} />
-        ) : null}
+        <span className="setFieldPair">
+          <input className="aiKeyInput" type="text" aria-label={t("Client id")} value={draft.client_id} spellCheck={false}
+            autoComplete="off" name="gamma-cloud-client-id" disabled={disabled} placeholder={t("empty = desktop client")}
+            onChange={(e) => set("client_id")(e.target.value)} />
+          {draft.client_id.trim() || saved?.has_secret ? (
+            <PasswordInput aria-label={t("Client secret")} value={draft.secret} disabled={disabled} autoComplete="new-password"
+              name="gamma-cloud-client-secret" placeholder={saved?.has_secret ? t("secret set — type to replace") : t("client secret")}
+              onChange={(e) => set("secret")(e.target.value)} />
+          ) : null}
+        </span>
       </span>
     </Row>
     <Row icon={UserIcon} label={t("Unknown cloud accounts")}

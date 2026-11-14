@@ -166,11 +166,11 @@ export default function McpConsent({ requestId, userCode }) {
           <p className="settingDesc mcpCallback">{t("Returns to: {redirect_uri}", { redirect_uri: details.redirect_uri })}</p>
         </details>}
       <div className="mcpConsentActions">
-        <button className="loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
+        <button className="uiBtn primary loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
           <MorphText>{busy ? t("Connecting…") : editing ? t("Allow reading and editing")
             : feedback ? t("Allow reading and answering") : t("Allow read-only access")}</MorphText>
         </button>
-        <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
+        <button className="uiBtn loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>
     </> : null}
     {error ? <div className="loginError" role="alert"><AlertCircleIcon size={16} aria-hidden="true" /><span>{error}</span></div> : null}

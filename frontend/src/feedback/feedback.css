@@ -98,6 +98,5 @@
   overflow: hidden;
 }
 .feedbackRequest[data-state="failed"] .feedbackRequestDetail { color: var(--danger); }
-.feedbackRequestState { flex-shrink: 0; font-size: var(--fs-xs); color: var(--text-muted); }
-.feedbackRequest[data-state="failed"] .feedbackRequestState { color: var(--danger); }
-.feedbackRequest[data-state="done"] .feedbackRequestState { color: var(--ok); }
+/* Its state is the entries' tag (StateTag), in the tag's own colours. */
+.feedbackRequestState { flex-shrink: 0; }

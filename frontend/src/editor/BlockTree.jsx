@@ -48,7 +48,7 @@ import { useNoteAsk, useNoteChange } from "../chat/noteReview.js";
 import { ImageIcon, LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import { isRelativeHref } from "../explorer/workPaths.js";
-import { PathLink, PathLinkScope } from "./PathLink";
+import { InternalLinkChip, PathLink, PathLinkScope } from "./PathLink";
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
@@ -517,20 +517,15 @@ export const BlockMarkdown = React.memo(function BlockMarkdown({ content, blockI
             // An id nothing answers to reads as a hand-typed title no page
             // has: the unlinked chip below.
             if (!ref?.missing) return (
-              <a
+              <InternalLinkChip
                 href={`?block=${refId}`}
-                className={`blockRefChip${ref?.trashed ? " trashedRef" : ""}`}
+                className={ref?.trashed ? "trashedRef" : ""}
                 title={ref?.trashed ? t("“{title}” is in Recently deleted.", { title: ref.trashed.title })
                   : ref?.page_title ? t("From: {page_title}", { page_title: ref.page_title }) : undefined}
-                onClick={(e) => {
-                  if (e.metaKey || e.ctrlKey) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onBlockRefClick?.(refId);
-                }}
+                onOpen={() => onBlockRefClick?.(refId)}
               >
                 {ref?.trashed ? ref.trashed.title : ref?.content || String(children)}
-              </a>
+              </InternalLinkChip>
             );
           }
           if (href?.startsWith("unlinked:") || href?.startsWith("blockref:")) {

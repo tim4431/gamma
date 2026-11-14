@@ -165,8 +165,8 @@ export function ProxySettings({ setStatus }) {
               autoComplete="off" name="gamma-proxy-server" disabled={disabled} placeholder="http://127.0.0.1:7890"
               onChange={(event) => set("server")(event.target.value)} onKeyDown={onEnter(save)} />
           </Row>
-          <Row icon={KeyIcon} label={t("Sign-in")} hint={t("Only if the proxy asks for one")}>
-            <span className="setRowControls">
+          <Row icon={KeyIcon} label={t("Sign-in")} hint={t("Only if the proxy asks for one")} wide>
+            <span className="setFieldPair">
               <input className="aiKeyInput" type="text" aria-label={t("Username")} placeholder={t("Username")} value={draft.username}
                 spellCheck={false} autoComplete="off" autoCapitalize="none" autoCorrect="off" name="gamma-proxy-username" disabled={disabled}
                 onChange={(event) => set("username")(event.target.value)} onKeyDown={onEnter(save)} />
@@ -177,7 +177,7 @@ export function ProxySettings({ setStatus }) {
           </Row>
           <Row icon={ListIcon} label={t("Don't use the proxy for")}
             hint={t("Hosts, domains (*.example.com), IP addresses and ranges (10.0.0.0/8), <local>. This computer always connects directly.")}
-            title={t("Separated by commas or new lines. A domain covers its subdomains; <local> is any name without a dot; * is everything.")}>
+            title={t("Separated by commas or new lines. A domain covers its subdomains; <local> is any name without a dot; * is everything.")} wide>
             <span className="setRowControls">
               <textarea className="aiKeyInput" rows={3} aria-label={t("Don't use the proxy for")} value={draft.bypass} spellCheck={false}
                 disabled={disabled} onChange={(event) => set("bypass")(event.target.value)} />

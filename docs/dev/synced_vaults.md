@@ -145,7 +145,8 @@ Gamma's server is the **remote**, the directory or the file here is
 - The sync panel: a row per vault with its name, its direction and its
   state, its place and its remote in the row's tooltip. Its *…* opens the
   vault's view: the switches *Pull* and *Push* (a work folder's *Add its
-  PDFs and notes to the library* too), then *Sync now*, *Pull now*, *Push
+  PDFs and notes to the library* too), a row each with the name at the left
+  and the switch at the right edge, then *Sync now*, *Pull now*, *Push
   now*, *Pause* and the directory as a bar of buttons named by their
   tooltips, and *Choose files…* for a work folder, *Go on…* for a held
   vault, *Locate…* for a stopped one, *Force pull…*, *Force push…* and

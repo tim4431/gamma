@@ -154,16 +154,17 @@ export function inCode(sel, root) {
 // gutters): narrower, the column does not stand and the badges speak for
 // the threads.
 export const MIN_TEXT_W = 360;
-// What the column takes at the view's right edge: the content's right
-// padding while it stands, and where its track ends (viewers.css
-// --doc-margin-w, which TextViewer sets from it).
+// What the column takes at the view's right edge: the band the scroller
+// leaves it while it stands (viewers.css --doc-margin-w, which TextViewer
+// sets from it).
 export const MARGIN_W = CARD_W + COLUMN_GAP + EDGE;
 
-// Whether a scroller `scrollerW` wide, its gutters `gutterW` of it, has
-// room for the column beside MIN_TEXT_W of text (comments/marginLayout.js
-// marginLeft's rule: EDGE left at both sides).
-export function hasRoom(scrollerW, gutterW) {
-  return marginLeft(scrollerW, gutterW + MIN_TEXT_W) != null;
+// Whether a view `viewW` wide (the editor's, which the column standing does
+// not change), its gutters `gutterW` of it, has room for the column beside
+// MIN_TEXT_W of text (comments/marginLayout.js marginLeft's rule: EDGE left
+// at both sides).
+export function hasRoom(viewW, gutterW) {
+  return marginLeft(viewW, gutterW + MIN_TEXT_W) != null;
 }
 
 // The 1-based line a range's card stands at in a file of `lines` lines

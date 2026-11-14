@@ -23,6 +23,7 @@ import { API, apiJson, makeId, withWorkspace } from "../shared/lib/utils";
 import { Segmented, SubDialog } from "../settings/SettingsKit";
 import { FileTextIcon, HighlightIcon, MessageSquareIcon, PenIcon, RectSelectIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
+import { StateTag } from "../shared/ui/StateTag";
 import { anchorSnippet, sentChip } from "../comments/comments.js";
 import { entryHeading, placedText, requestLine, sendWords, sourceText, withdrawTitle } from "./feedbackText.js";
 import {
@@ -37,8 +38,9 @@ const JSON_POST = (body) => ({ method: "POST", headers: { "Content-Type": "appli
 // One entry's row: a click opens its thread on its page. The picture is an
 // <img> request, which carries no workspace header, so its URL names the
 // workspace (withWorkspace, as every API picture drawn by the browser).
-// `answers`: the agent that takes the reader's Sends, whose computer the
-// chip of one waiting names (sendAgent's plan; null for none).
+// `answers`: the agent that takes the reader's Sends, which the chip of
+// one waiting names, or the computer it runs on (sendAgent's plan; null
+// for none).
 function Entry({ entry, answers, onOpen }) {
   const Icon = KIND_ICONS[entry.kind] || MessageSquareIcon;
   const chip = sentChip(entry, answers);
@@ -51,7 +53,7 @@ function Entry({ entry, answers, onOpen }) {
       <span className="feedbackEntryMain">
         <span className="feedbackEntryHead">
           <span className="feedbackEntryTitle">{entryHeading(entry)}</span>
-          {chip ? <span className={`uiTag ${chip.tone}`} data-sent={chip.state} title={chip.title}>{chip.label}</span> : null}
+          {chip ? <StateTag state={chip} data-sent={chip.kind} /> : null}
         </span>
         {meta ? <span className="feedbackEntryMeta">{meta}</span> : null}
         <span className="feedbackEntryFirst">
@@ -68,12 +70,14 @@ function Entry({ entry, answers, onOpen }) {
 }
 
 // One request's row: when it was sent and how many comments, what became
-// of it with the agent's own words on a line under the note (its progress,
-// summary or reason, at most three lines, whole in its title), and Withdraw
-// on the person's own while it waits or runs, which names the computer
-// that runs them (`computer`, "" for this one) while it waits.
-function RequestRow({ request, me, computer, busy, onWithdraw }) {
-  const { line, state, detail, kind } = requestLine(request, Date.now(), request.by === me ? computer : "");
+// of it, the entries' tag, with the agent's own words on a line under the
+// note (its progress, summary or reason, at most three lines, whole in its
+// title), and Withdraw on the person's own while it waits or runs; one of
+// theirs waiting names the agent that runs them or its computer
+// (`answers`, as the entries').
+function RequestRow({ request, me, answers, busy, onWithdraw }) {
+  const sent = requestLine(request, Date.now(), request.by === me ? answers : null);
+  const { line, detail, kind } = sent;
   return (
     <li className="feedbackRequest" data-request-id={request.id} data-state={kind}>
       <span className="feedbackRequestLine">
@@ -81,7 +85,7 @@ function RequestRow({ request, me, computer, busy, onWithdraw }) {
         {request.note ? <span className="feedbackRequestNote" title={request.note}>{anchorSnippet(request.note, 120)}</span> : null}
         {detail ? <span className="feedbackRequestDetail" title={detail}>{detail}</span> : null}
       </span>
-      <span className="feedbackRequestState">{state}</span>
+      <StateTag state={sent} className="feedbackRequestState" />
       {canWithdraw(request, me) ? (
         <button type="button" className="uiBtn sm" disabled={busy} title={withdrawTitle(request) || undefined}
           onClick={() => onWithdraw(request)}>{t("Withdraw")}</button>
@@ -177,8 +181,8 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
   // person runs (the generic button).
   const plan = sendAgent(doc, !!(w && links?.get(w)));
   const words = sendWords(plan, n, othersCount(entries, me));
-  // Where another computer keeps the folder, what a Send of the person's waits for.
-  const answers = namesAgent(plan) && plan.computer ? plan : null;
+  // What a Send of the person's waits for: the folder's agent, or the computer that keeps the folder.
+  const answers = namesAgent(plan) ? plan : null;
   const choices = hasChoice(scope, workFolder) ? [
     ["scope", scope.kind === "file" ? t("This file") : t("This folder")],
     ["work_folder", workFolder.name || t("Work folder")],
@@ -227,7 +231,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
         <div className="feedbackRequests">
           <h3 className="feedbackFileName">{t("Sent to the agent")}</h3>
           <ul>{newestRequests(requests).map((request) => (
-            <RequestRow key={request.id} request={request} me={me} computer={answers?.computer || ""} busy={busy} onWithdraw={withdraw} />
+            <RequestRow key={request.id} request={request} me={me} answers={answers} busy={busy} onWithdraw={withdraw} />
           ))}</ul>
         </div>
       ) : null}

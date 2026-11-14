@@ -176,11 +176,20 @@ export const filedIn = (map, ids) => (Array.isArray(ids) ? ids.filter((id) => ma
 // The path of the first folder a page is filed in ("" when none).
 export const firstFolderPath = (tree, ids) => folderPath(tree, filedIn(tree.folders, ids)[0]);
 
+// Whether folder `id` is inside a work folder: a folder of its chain, its
+// own included, carries the mark (explorer/workFolders.js workOf's rule).
+const inWorkFolder = (tree, id) => folderChain(tree, id).some((f) => tree.folders.get(f)?.mark);
 // A page's folders and labels as chips, {id, name} — a folder named by its
 // path — from its properties: what a card, a row and a lookup show and match.
+// A work folder's file (`work_folder`) sits in its directory rather than
+// being filed there: its chips are its library folders and its labels, and
+// the directory is its place (explorer/workPaths.js filePlace, the crumbs).
 export function filingChips(tree, properties) {
+  const file = !!workFolderOf({ properties });
   return {
-    folders: filedIn(tree.folders, properties?.folders).map((id) => ({ id, name: folderPath(tree, id) })),
+    folders: filedIn(tree.folders, properties?.folders)
+      .filter((id) => !(file && inWorkFolder(tree, id)))
+      .map((id) => ({ id, name: folderPath(tree, id) })),
     labels: filedIn(tree.labels, properties?.labels).map((id) => ({ id, name: tree.labels.get(id).name })),
   };
 }
@@ -314,7 +323,10 @@ export function pageBlocksOf(rows, tree) {
     const own = filingChips(tree, b.properties);
     const top = chain.length ? byId.get(chain[0].id) : b;
     const lost = !!top._parentPage && !byId.has(top._parentPage);
-    const folders = lost ? [] : top === b ? own.folders : filingChips(tree, top.properties).folders;
+    // its top's folders, a work folder's file's directory among them: the
+    // rules and the crumbs read it in `_folders`, and the cards and the
+    // pickers that show `_folderChips` have no place line to name it
+    const folders = lost ? [] : filingChips(tree, { folders: top.properties?.folders }).folders;
     const fileName = b.properties?.file_name;
     return {
       id: b.id,

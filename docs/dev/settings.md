@@ -1277,8 +1277,8 @@ seed (`seedPresets`): one wash highlighter, `h0`, in the colour the
 released builds' single highlighter had (`highlighterColor`, which this
 build only reads), else the Text highlights group's first swatch: an
 upgraded account sees the button it had. The first edit of any kind stores
-the whole list in effect (useTextHighlighter's `setPresets` applies its
-updater to that list). Released builds go on writing `highlighterColor`
+the whole list in effect (each of useTextHighlighter's commands edits that
+list). Released builds go on writing `highlighterColor`
 after that, and this build ignores it: until they update, the same account
 can show another colour for its first highlighter there.
 
@@ -1336,7 +1336,9 @@ The tools (`pdf/MarkTools.jsx` on App's `MarkToolsContext`, the hook's
   (typed straight into the list, whose saves wait a moment, `prefs.js`;
   its look as the placeholder), its style row and its swatches (each edit
   keeps the menu open), *Color group ▸* (the Text highlights picker's
-  group, with two groups or more), then *Highlight with {name}* or *Turn
+  group, with two groups or more: `GroupRows`, a `menuitemradio` each, its
+  first six swatches as its icon, how many more beside its check), then
+  *Highlight with {name}* or *Turn
   off the highlighter*, *Move up* / *Move down* within its group (the pill
   names its new key), *Duplicate* (an unnamed copy right after it, armed,
   the menu going on to the copy; past a full strip it is hidden, and the
@@ -1355,7 +1357,8 @@ The tools (`pdf/MarkTools.jsx` on App's `MarkToolsContext`, the hook's
   `popupMarks`), the fold's button (a chevron, or the one-shot style while
   that is a line), then the popup's tools. The fold holds the one-shot
   style row (*Mark as*, local to this popup), *More highlighters* (the
-  hidden ones), the colour group (two groups or more) and *Edit
+  hidden ones), the colour group (two groups or more; the same rows, a
+  radio group there, which the arrow keys walk like the style row) and *Edit
   highlighters…*, which puts the popup away and opens Settings at the
   section (the `highlighters` entry, `settings/settingsNavigation.js`).
   Keys 1–9 press the highlighter at that key while it is open, and Enter
@@ -1401,7 +1404,14 @@ no wash highlighter has, then an underline, and so on). No set of
 highlighters comes ready-made beyond the seed: what each one means is the
 reader's, made with Add highlighter, Duplicate or Save look as
 highlighter. Reset stores `[]` again, which brings the seed back; it leaves
-`highlighterColor` alone, which released builds still read.
+`highlighterColor` alone, which released builds still read. Every row and
+button runs the hook's own command (App hands its `textHighlighter` to the
+section as `hl`), so each says in the pill what the strip's menu says:
+Remove with *Undo*, Hide with *Show*, a Duplicate or an Add past a full
+strip with *Put it on the strip*, a move its new key, and Reset "Text
+highlighters reset." with an *Undo* that stores the list from before it.
+A Duplicate here arms nothing (`duplicate(id, {arm: false})`); a drag is
+the hook's `place(id, slot)`.
 
 ## Chat settings are global
 
@@ -1438,7 +1448,12 @@ the exact values without changing them.
 level down names its way back in `PaneHead`'s `crumbs`, and `action` puts a
 control at the head's right end (the workspace Manage page's Open
 workspace). Ordinary rows show a small icon, a label, a short hint and a
-control, with the shared hover background. A section holds one subject;
+control, with the shared hover background. A text field in a row's control
+slot, alone or beside its tag and button, is one width (`--set-field-w`,
+260 px at 100 %) and narrows before its button wraps. A list to type (a
+textarea) or a pair of fields is a `Row wide`: its control on a second line
+under the text, spanning to the row's end, a pair as two equal columns
+(`.setFieldPair`: Network proxy's Sign-in, Server's Server client). A section holds one subject;
 its settings stay in it even when a few are stored differently (a row's own
 `scope` tag says so) rather than splitting into a second section of the
 same subject. Put consequences in the visible hint; supplementary `title`

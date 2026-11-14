@@ -1,5 +1,5 @@
 // A work folder's paths on the client (docs/dev/work_folders.md "Paths"):
-// where a file is, as its crumbs show it, and which links of a note are
+// where a file is, as its crumbs and a list's place line show it, and which links of a note are
 // paths, the twin of gamma/work_folders/paths.py's is_relative_href; a
 // file's path, and a link's page, are the server's to give (each row it
 // answers carries its path). A path is the names of the directories from
@@ -12,7 +12,8 @@
 // directory first), work (W's id)}, built from a page row
 // (libraryUtils.pageBlocksOf: _folders, _workFolder) or from the open
 // page's own state, so nothing is read to answer.
-import { folderChain } from "../library/libraryUtils.js";
+import { workFolderOf } from "../documents/library.js";
+import { PATH_SEP, folderChain } from "../library/libraryUtils.js";
 import { workOf } from "./workFolders.js";
 
 // The folders from W down to the page's directory, ids; null when the page
@@ -37,6 +38,24 @@ export const fileNameOf = (row) => row?.properties?.file_name || row?.content ||
 export function fileCrumbs(libTree, workTree, filed) {
   const chain = chainOf(libTree, workTree, filed);
   return chain ? chain.map((id) => ({ id, name: libTree.folders.get(id)?.name || "" })) : [];
+}
+
+// Where a work folder's file is, as every list names it (a picker's row,
+// library/PageOption.jsx FileOption; the search panel's lead; the crumbs
+// are the same chain as buttons): `name` its file's name (fileNameOf),
+// `work` W's name, `dirs` the names of its directories below W down to its
+// own, and `text` the place line, "W / a / b" (libraryUtils.PATH_SEP).
+// `page` is a page block or a row the server answered; one that carries
+// its directory (`dir`, "a/b": GET /api/files' rows, a search hit's path's)
+// is placed by it, the server's to give, any other by the tree
+// (fileCrumbs). null for a page in no work folder.
+export function filePlace(libTree, workTree, page) {
+  const work = workFolderOf(page);
+  if (!work) return null;
+  const dirs = typeof page.dir === "string" ? page.dir.split("/").filter(Boolean)
+    : fileCrumbs(libTree, workTree, { folders: page.properties.folders, work }).slice(1).map((f) => f.name);
+  const name = libTree.folders.get(work)?.name || "";
+  return { name: fileNameOf(page), work: name, dirs, text: [name, ...dirs].filter(Boolean).join(PATH_SEP) };
 }
 
 // The folders the Files window opens to show a page (`row`: App's page row,

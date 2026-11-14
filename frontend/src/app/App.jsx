@@ -9709,9 +9709,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     open: (id) => fileChipActionsRef.current.openBlock(id, { pushNav: true, link: true }),
     say: setStatus,
   } : null), [focusedFile, focusedBlockId, shareMode, sharedFolder, pageFolders, setStatus]);
-  // A file's directory is its crumbs' (PageCrumbs): its folder chips are the
-  // library's folders and its labels only.
-  const chipFolders = (ids) => (focusedFile ? ids.filter((id) => !workOf(workTree, id)) : ids);
   // Who a note can mention (editor/MentionMenu.jsx MentionContext,
   // docs/dev/mentions.md): the workspace's members, read once per
   // workspace, and the signed-in account. A share view mentions no one.
@@ -10850,7 +10847,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {labelEditing ? (() => {
                     const filed = openPageFiling();
                     // a page inside another is filed by labels only
-                    const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : { ...filed, folders: chipFolders(filed.folders) });
+                    // a file's directory is its crumbs', no chip (filingChips)
+                    const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : { ...filed, work_folder: focusedFile });
                     const q = labelInput.trim();
                     const ql = q.toLowerCase();
                     // A path ending in "/" is a folder opened, not a name
@@ -10953,7 +10951,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     );
                   })() : (() => {
-                    const chips = filingChips(libTree, { folders: openSubPage ? [] : chipFolders(pageFolders), labels: pageLabels });
+                    const chips = filingChips(libTree, { folders: openSubPage ? [] : pageFolders, labels: pageLabels, work_folder: focusedFile });
                     return (
                     <span
                       className={`categoryFrontmatterValue ${chips.folders.length || chips.labels.length ? "" : "empty"}`}
@@ -14686,9 +14684,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           palette,
           setPalette,
           highlightPresets,
-          setHighlightPresets: textHighlighter.setPresets,
-          highlighterColor,
-          firstSwatch: textHighlighter.firstSwatch,
+          textHighlighter, // the editor's commands: the strip's, with their pills
           suggestTours,
           setSuggestTours,
           recentThumbs,

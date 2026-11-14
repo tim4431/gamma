@@ -129,7 +129,7 @@ layer from these scales instead of a number of its own:
 | Spacing | `--space-1`…`-8` = 2 · 4 · 6 · 8 · 12 · 16 · 24 · 32 | the shared controls and new rules. The ratchet below doesn't count spacing, so layout rules may keep their pixels |
 | Controls | `--ctl-btn` 35 · `-btn-sm` 31 · `-icon-btn` 29 · `-icon-btn-xs` 24 · `-close-sm` 22 · `-close` 26 · `-close-lg` 31 · `-tab` 33 | a `uiBtn` and a `uiBtn sm` (an `iconSq` is that square, a topbar icon button a button tall); the frameless icon button (`ctlBtn`, the viewer's control boxes, search toggles); a compact button inside a line of text (find arrows, metadata rows, the chat's change list); the round × in its three sizes; a tab. One set for a mouse and a finger alike: no pointer media query changes them ([below](#one-behaviour-for-mouse-and-finger)). What sits around a control derives from them with `calc()` (a control box's width, a field's room for its eye button, the gap kept clear of the viewer's control boxes), so a size changes in one place |
 | Motion | durations `--dur-fast` 100 ms · `-base` 160 ms · `-slow` 240 ms · `-long` 400 ms; easings `--ease-out` · `--ease-swap` · `--ease-pop`; travel `--move-sm` 4 · `-md` 8 · `-lg` 16; `--scale-in` 0.97 · `--scale-out` 0.99; `--blur-swap` 2 px | fast: hover, press, a tooltip going; base: a surface leaving, a swap in place, a tooltip coming; slow: a surface arriving, bars and larger moves; long: a toast or panel arriving, a reveal. `--ease-out` for whatever moves, scales or resizes, `--ease-swap` for a cross-fade in place, `--ease-pop` for a badge or a switch's thumb; a colour or opacity fade leaves its easing out. Loops and attention effects of half a second or more (spinners, pulses, the landed flash) keep their own period and easing. How each kind of thing moves is [Motion](#motion) |
-| Layers | `--z-dock` 20 · `--z-float` 30 · `--z-phone-overlay` 80 · `--z-editbar` 90 · `--z-dropdown` 100 · `--z-overlay` 1000 · `--z-popover` 1100 · `--z-modal` 1200 · `--z-subdialog` 1290 · `--z-confirm` 1300 · `--z-lightbox` 1500 · `--z-ctxmenu` 1600 · `--z-refpopup` 2000 · `--z-drop` 9999 · `--z-tip` 30000 | every z-index above 9 is a layer token (one step above a layer is `calc(var(--z-dock) + 1)`); 1–9 only orders siblings inside one component |
+| Layers | `--z-dock` 20 · `--z-float` 30 · `--z-phone-overlay` 80 · `--z-editbar` 90 · `--z-dropdown` 100 · `--z-overlay` 1000 · `--z-popover` 1100 · `--z-modal` 1200 · `--z-modal-pill` 1250 (the status pill over an open dialog) · `--z-subdialog` 1290 · `--z-confirm` 1300 · `--z-lightbox` 1500 · `--z-ctxmenu` 1600 · `--z-refpopup` 2000 · `--z-drop` 9999 · `--z-tip` 30000 | every z-index above 9 is a layer token (one step above a layer is `calc(var(--z-dock) + 1)`); 1–9 only orders siblings inside one component |
 
 **Reduced motion.** One rule in app.css's primitives layer honours the OS
 setting. Under `prefers-reduced-motion: reduce` every transition and
@@ -239,13 +239,14 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat `--ctl-icon-btn` (29 px) icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on, `danger` = destructive (red under the pointer or the keyboard's focus); `pdfCtlGroup` keeps a run of a box's buttons together (a guide anchor) without changing the layout. The zoom column of the PDF and the notebook viewer stands in the account's one Viewer tools order, by default the same buttons first in both (zoom out, zoom in, fit to width, the pen) and what only one viewer has after them; a hidden tool is a row of the ⋯ button that ends the column ([settings.md](settings.md#bars-order-and-modes)). **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image tools) use it, not bespoke button styles |
 | `uiClose` (+ `uiCloseSm`/`uiCloseLg`) | every × close button: round, `--ctl-close` 26 px (Sm 22 for chips and rows, Lg 31 for dialogs and panes) |
 | `MenuButton` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | a row's or a card's "⋯": the visible way into the menu its right-click or held finger opens ([below](#one-behaviour-for-mouse-and-finger)) |
-| `aiKeyInput` | every text/number/password input in dialogs and settings |
+| `aiKeyInput` | every text/number/password input in dialogs and settings; in a settings row one width, and a list or a pair of fields on a line of its own (`Row wide`, [settings.md](settings.md#settings-primitives)) |
 | `Palette` ([shared/ui/Palette.jsx](../../frontend/src/shared/ui/Palette.jsx)) / `PagePicker` ([library/PagePicker.jsx](../../frontend/src/library/PagePicker.jsx)) | every dialog that picks one thing from a long list by typing: a field near the top of the window, the options in sections under it (↑↓ go round, Enter takes, Esc closes), a line saying what a pick does and the keys, led by the `note` when the list cannot say it (quick open's file search under way, failed, or matching nothing). Quick open (Ctrl+P and the command palette) is one; `PagePicker` is the palette over library pages, with quick open's rows (`PageOption`, a sub-page naming the pages it is in) and its ranking: Move to page, Move into page, the PDF's link dialog. A new page picker is a `PagePicker`, never a list of its own |
 | `switch` / `switchTrack` | every on/off toggle |
 | `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
-| `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per toolbar: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style and Convert ([below](#menus-and-submenus)) |
+| `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per toolbar: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style and Convert, a dock window header's actions and its "⋯" ([below](#menus-and-submenus), [Dock windows](#dock-windows)) |
 | `MenuItem` / `MenuLabel` / `MenuDivider` / `SubMenuItem` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every row inside a menu, context or popover: icon column + ellipsizing label (+ `danger`, `trailing`, `keys`); `MenuDivider` between groups. `SubMenuItem` is the nested flyout — hover-opened, safe-triangle guarded; a popover menu hosts one through `MenuScope` |
 | `categoryTag`, `uiTag` | chips and small badges |
+| `StateTag` ([shared/ui/StateTag.jsx](../../frontend/src/shared/ui/StateTag.jsx)) | a `uiTag` whose state changes while it is shown, a Send's (`comments.js` `sendState`, one wording for the thread, the Comments window and the Feedback dialog): a spinner and `.shimmerText` while work is under way, its label through `MorphText` |
 | `KeyCaps` / `KeyBinding` ([SettingsKit.jsx](../../frontend/src/settings/SettingsKit.jsx); `KeyCaps` lives in [shared/ui/KeyCaps.jsx](../../frontend/src/shared/ui/KeyCaps.jsx), shared with the guide) | a keyboard chord as `.keyCap` key caps; `KeyBinding` is the rebindable version (click, press the new keys; reset button when changed) — [hotkeys.md](hotkeys.md) |
 | `ColorPicker` ([shared/ui/ColorPicker.jsx](../../frontend/src/shared/ui/ColorPicker.jsx)) | a colour with alpha, where the native `<input type="color">` (no alpha, a different dialog per browser) will not do: a saturation / value square, a hue bar and an alpha bar (any pointer drags, arrow keys step; `role="slider"`), a preview over a checkerboard, a hex field that takes `#rrggbbaa`, an opacity field in percent, and the eyedropper where `window.EyeDropper` exists. Controlled, `{hex, alpha}`; its gradients are inline, so the stylesheet keeps no raw colours. Appearance › Colors' swatch editor ([settings.md](settings.md)); the tool strip's custom-colour swatch keeps the native input |
 | `popoverAnchor` | the `position: relative; inline-flex` wrapper every popover trigger sits in (`data-popover="…"` on the same element) — never inline that style |
@@ -589,7 +590,8 @@ row itself sets passes its own role with `aria-checked`. A toggle is a
 `menuitemcheckbox` (the View menu's windows, a page's labels, the strip
 More's Ruler, Shapes and Zoom window). One of a set is a `menuitemradio`
 (`MenuSelect`'s choices, the account menu's workspaces, the player's mode
-and speed, the Style menu's brushes, a `Segmented` inside a menu). A
+and speed, the Style menu's brushes, a strip highlighter's colour groups,
+a `Segmented` inside a menu). A
 `MenuSelect` with headings puts each set of radios in a `group` named by
 its heading. In Move to folder (a page's) and Move to (a folder's) a check
 marks the folder it is in. That is no state the row sets, so the row stays
@@ -605,7 +607,10 @@ own inside its row's wrapper, as the pattern nests a submenu. So a
 flyout's rows sit in two menus and every other row in exactly one. No
 element adds a second `role="menu"` around rows that already have one.
 Outside a menu (a dialog's list, the Add popover, a settings popover) a
-`MenuItem` stays a plain button. A `ContextMenu` that holds something
+`MenuItem` stays a plain button. Rows of one choice there are radios in a
+`radiogroup` instead, the checked one the group's Tab stop and the arrow
+keys moving the choice (the selection popup's colour groups, the same
+`GroupRows` as the strip menu's flyout). A `ContextMenu` that holds something
 else passes `role="none"`: the handwriting selection menu and the text
 box menu are toolbars, and the model picker's list is a listbox. The
 selection menu's Style picker and its Convert button each open a menu of
@@ -613,17 +618,17 @@ their own, portalled outside that toolbar.
 
 A menu is named by what opens it. `MenuSelect`, `ActionMenu`, a flyout
 and every `useMenuTrigger` menu (the player's mode and speed, the strip's
-More and Tool, the selection menu's Convert) point `aria-labelledby` at
-their button or row. Another menu with a button of its own takes that
-button's name as its `aria-label` (Account & settings, View, Document,
-Export chat, Translate, Comment actions, Recording actions, Table
-options). The Style menu is named Pen style, not by its picker, whose
+More and Tool, the selection menu's Convert, a dock window header's
+action menus and its "⋯") point `aria-labelledby` at their button or
+row. Another menu with a button of its own takes that button's name as
+its `aria-label` (Account & settings, View, Document, Translate, Comment
+actions, Recording actions, Table options). The Style menu is named Pen style, not by its picker, whose
 name is the brush it shows. A context menu opens at the pointer, on a
 right-click, a held finger or a row's "⋯" standing in for them. No
 control of its own names it, so it goes without a name, as a native
 context menu does. The dropdowns' buttons, every `useMenuTrigger`
-button, a flyout's row, the account, View and Document buttons and the
-chat's export button say `aria-haspopup="menu"` and `aria-expanded`. A `MenuButton` says
+button (the chat's Export among them), a flyout's row and the account,
+View and Document buttons say `aria-haspopup="menu"` and `aria-expanded`. A `MenuButton` says
 `aria-haspopup` alone. The roles change neither the keyboard nor the
 focus. The rows are Tab stops, and the pattern's arrow keys and its focus
 moving into an opening menu are not built. The browser suite's
@@ -709,9 +714,10 @@ frame of the surface where it stood. The side is chosen by the surface
 itself, from its measured size, never by a caller from a guessed one: the
 handwriting and text box menus give `ContextMenu` the selection's edges
 (`useSelectionMenuAnchor`) and it picks above or below. `ContextMenu`, the
-selection popups of the PDF and the code view (`shared/ui/TipFrame.jsx`:
-from the point where the mouse was released, when that is near the
-selection, else under the selection; `pdf/selectionTip.js`) and the caret-anchored popups
+selection popups of the PDF, the code view and a picture's drawn region
+(`shared/ui/TipFrame.jsx`: from the point where the mouse was released,
+when that is near the selection, else under the selection or the region;
+`pdf/selectionTip.js`) and the caret-anchored popups
 (`useCaretAnchored`: "/", `[[`, `@`, the LaTeX completion and preview) and
 a note's selection toolbar (`SelectionToolbar.jsx`: above the selection's
 first line, else under its last, inside the box the note scrolls in,
@@ -760,7 +766,10 @@ in. The question goes away when the work ends on its own (the upload
 fails). When the focused control goes, the question by Keep or on its own,
 a button disabled while its work runs (the feedback view's Send), the
 dialog takes the focus back, so Escape still closes it. The footer's Cancel
-stays direct: it is the labelled way to stop. It asks only for a draft.
+stays direct: it is the labelled way to stop. It asks only for a draft, or
+when the guard says the Cancel itself destroys something (`cancel: true`).
+The question (`.settingsUnsaved`) stands in the footer's place, and Escape
+while it shows dismisses it, so no second question stacks under it.
 
 A dialog takes the focus as it opens, unless something inside it holds it
 already, and gives it back on close to what had it as it opened. When
@@ -781,10 +790,10 @@ tri-state box per row (`boxOf`) and its folders read as they open
 `<details>` names the pages that leave), the library switch as a
 `Toggle`, and Cancel and Save. A row's muted hint says "git ignores it",
 why it is never tracked, or that Gamma reads it later; its kind chip names
-the format. Cancel of a work folder still being made removes it, so it is
-the one footer Cancel that asks first, with the `settingsUnsaved` row in
-place of the footer ("Cancel making this work folder?"); Choose files…
-asks through its draft once something changed ("Leave without saving?").
+the format. Cancel of a work folder still being made removes it, so its
+guard has `cancel: true` and the footer Cancel asks first, as Escape and ×
+do ("Cancel making this work folder?"); Choose files… asks through its
+draft once something changed ("Leave without saving?").
 
 **The feedback view** (Feedback, `feedback/FeedbackDialog.jsx`,
 [feedback.md](feedback.md) "In the app") is one `SubDialog`
@@ -801,8 +810,9 @@ right, 96 px tall, lazily loaded), a click opening the thread on its page
 `textarea` beside the primary Send button, which counts the comments and is
 disabled at none or while sending; and the work folder's requests
 (`.feedbackRequest` rows: when it was sent and how many comments, the
-instruction muted, the state at the right — `--ok` once done, `--danger`
-once failed — and Withdraw on the person's own while it waits or runs).
+instruction muted, the state at the right as the entries' Sent chip —
+`StateTag`, `--ok` once done, `--danger` once failed — and Withdraw on
+the person's own while it waits or runs).
 A paused work folder shows a muted notice over the list. It is opened
 from the work folder's list bar (a `uiBtn sm` Feedback beside the sort),
 the Comments window's header (a `ctlBtn` with the bot icon on a work
@@ -1004,12 +1014,14 @@ inside, [mcp.md](mcp.md) "Asking first"). It
 shows the brand mark (`shared/ui/BrandMark.jsx`, the favicon artwork) over the name, or over the
 situation's headline on a status page. The card hangs at a fixed height near
 the optical centre instead of being centred, so an error that appears
-mid-form grows it downward and the fields never move. Log in is the one
-primary button; Gamma Cloud is an outlined secondary above an "or use your
+mid-form grows it downward and the fields never move. Its buttons are the
+app's own, `uiBtn primary` and `uiBtn`, laid out full width by
+`.loginBtn`, `.loginGuestBtn` and `.loginCloudBtn` (layout only). Log in is the one
+primary button; Gamma Cloud is a secondary above an "or use your
 account on this server" divider. On a Gamma Cloud server (`cloud.lead` in
 `GET /api/server-config`: a hosted container or the share host, where every
 account signs in through Gamma Cloud) the cloud button is the primary
-(`.loginCloudBtn.lead`) and the password form folds behind Admin sign-in,
+(`.loginCloudBtn.primary`) and the password form folds behind Admin sign-in,
 as a demo server folds it behind Try the demo. A failed sign-in says why (wrong password,
 too many attempts, server unreachable) in a `--danger`-tinted `.loginError`
 box, and a refused password also takes the focus and a red border. A
@@ -1065,6 +1077,12 @@ never learns which gesture it was.
     or Space on the focused button).
   - The click after a press belongs to the press, so it does nothing. The
     right and middle buttons do nothing either.
+- **`tipPress(run)`**: `triggerPress` for a selection popup's button,
+  which must not take the selection it acts on. It answers the mouse's
+  press (a finger's and a pen's send one too), whose default it prevents
+  and which it keeps from the page's listeners (`keepSelection`) for
+  every button, and runs `run` only for the primary one, or a click no
+  press led to.
 - **The timings** are exported (`HOLD_MS`, `HOLD_SLOP`, `DOUBLE_MS`,
   `DOUBLE_SLOP`) for gestures these helpers do not cover: the reorder
   drag (`shared/ui/useDragOrder.js`, below) and the finger-undo chords
@@ -1077,12 +1095,15 @@ never learns which gesture it was.
     zoom, a resize grip's natural size.
   - `triggerPress`: the buttons `useMenuTrigger` drives (the recording
     player's mode and speed, the tool strip's More, Tool and Style, the
-    selection menu's Style and Convert).
+    selection menu's Style and Convert, a dock window header's menus).
+  - `tipPress`: every button of the selection popups (the PDF's, the code
+    view's, a picture's region tip), their marks (`TipMarks`' `act`) and
+    their tools (`shared/ui/SelectionTip.jsx`).
   - A widget built outside React (the editor's picture and table widgets,
     `BlockCmEditor.jsx`) attaches the same handlers with
     `addEventListener`.
   - `tests/press.test.mjs` covers the counting and which press or click
-    `triggerPress` answers.
+    `triggerPress` and `tipPress` answer.
 
 ### Reorder by dragging: `shared/ui/useDragOrder.js`
 
@@ -1205,7 +1226,10 @@ popup's other tools) carry one.
 
 `DockWindow` (`shared/ui/Widgets.jsx`) is the header the Notes, Chat,
 Comments and Files windows share: the grip ("⠿ Chat"), the close button,
-then the window's own controls (the Files window's Collapse all). App keeps
+then the window's own controls (`headerContent`: the chat's side switch,
+the Comments' Open and Resolved) and its actions (`actions`: the chat's
+icon strip, the Comments' Notify me and Feedback, the Files window's
+Collapse all). App keeps
 the four in one layout of three slots (left, right, bottom), each window's
 showing its own flag and its grip's guide anchor one table (`GRIP_GUIDE`);
 a window shown with no slot holding it takes its first one (Comments last
@@ -1213,6 +1237,31 @@ on the right, Files first on the left, which is empty by default).
 
 - **The grip** spans the header's full height and is padded past its
   text, with a clear gap before the close button.
+- **Nothing leaves the window.** A header too narrow for what it holds
+  gives way in this order. The grip's title ellipsizes, down to its
+  `min-width` (4em, about "⠿ C…"). A `Segmented` whose options have icons
+  shows the icons alone, each word kept as its button's name and tooltip:
+  an open window's header is a size container (`dockHeader`), and the
+  compact form turns on at 34rem, so at the same place for every
+  interface size. Then the actions that still do not fit fold into a "⋯"
+  at the header's end, from the last one, those with a `keep` rank after
+  the others, the higher later (the chat's Find, History, then New chat,
+  the last to go). As one shown beside the "⋯" takes the room it would,
+  the fold takes two or more at once. `useHeaderFold`
+  measures the room once per resize (a `ResizeObserver` on the header,
+  its grip and its spacer) and after each render: the header's width less
+  everything else at its narrowest, the same however many are folded, so a
+  fold never undoes itself. Every action is a `ctlBtn` of one size, so
+  the room counts in buttons. An action is `{id, icon, label, title,
+  onClick}`, plus `on` for a toggle (`aria-pressed`), `popover` and
+  `open` for one that opens a popover, `items` for one that opens a menu
+  (the chat's Export) and `choice` for a choice of one (the Comments'
+  Notify me); its menu opens on the press (`useMenuTrigger`, one at a time
+  with the "⋯"'s). In the "⋯" menu a toggle is a `menuitemcheckbox`, a
+  menu or a choice a `SubMenuItem` (the choice's rows `menuitemradio`).
+  A popover hangs from the header's right edge, 8 px in and never wider
+  than the window less 16 px (`.dockHeaderPop`), whether its button shows
+  or is folded.
 - **Drag.** A press that travels 8 px drags the window (App's
   `startWindowDock`); the drop preview re-renders only when the zone
   changes. A `pointercancel` (the system took the touch) moves nothing,
@@ -1339,17 +1388,26 @@ its own chunk.
 - **Colours.** The grammar's tokens are mapped to the `.hljs-*` classes
   app.css colours for every theme (`viewers/hljsTags.js`, the notes' and
   the chat's fenced code), so the view brings no colour and no
-  `EditorView.darkTheme`; its chrome, gutters, panel, field and buttons are
-  the tokens (`viewers/viewers.css`).
-- **Keys and touch.** Ctrl+F is CodeMirror's own search panel, at the top
-  (the pane's foot holds the × and the full-screen box; the scroller pads
-  its bottom 56 px for them); App's `app.search` declines inside
-  `.docTextView`, so the panel opens alone. A finger has no Ctrl+F, so the
-  bar carries **Find** (rule 1 under [Adding a control](#adding-a-control)),
-  beside **Wrap** (on by default in the phone layout; session state) and
-  **Download**. Ctrl+wheel over the text is the text size, through
-  `useTextScale` on the scroller (`--text-scale`), not a page zoom. Escape
-  closes the panel.
+  `EditorView.darkTheme`; its chrome and gutters are the tokens
+  (`viewers/viewers.css`).
+- **Find.** Ctrl+F opens Find at the top (the pane's foot holds the × and
+  the full-screen box; the scroller pads its bottom 56 px for them); App's
+  `app.search` declines inside `.docTextView`, so it opens alone. It is
+  CodeMirror's search with its panel built from the app's find row
+  (`viewers/FindPanel.jsx`, `search({ createPanel })`), the pieces of the
+  search popover's and the chat's: the field in `.searchInputWrap` (the
+  fields' focus ring), the count and the `searchNavBtn` arrows, the
+  `searchToggle` toggles Match case, Match whole word and Regular
+  expression, and a `uiClose uiCloseSm`; never CodeMirror's own field,
+  buttons and checkboxes. Typing goes to the first match from the
+  selection (from the top of the view when the selection is out of
+  sight); Enter and Shift+Enter step, Escape closes. CodeMirror's Go to
+  line is left out, its dialog being CodeMirror's own.
+- **Keys and touch.** A finger has no Ctrl+F, so the bar carries **Find**
+  (rule 1 under [Adding a control](#adding-a-control); its title names the
+  chord), beside **Wrap** (on by default in the phone layout; session
+  state) and **Download**. Ctrl+wheel over the view is the text size,
+  through `useTextScale` on the editor (`--text-scale`), not a page zoom.
 - **The head first.** A file opens with one Range request of its first
   2 MiB (`viewers/textLoad.js`), cut at its last whole line (a file that is
   one line, a minified bundle, shows that line) and at 10,000 characters a
@@ -1376,18 +1434,25 @@ its own chunk.
 - **The highlights** ([documents.md](documents.md) "A range of a text
   file") are the PDF's looks on a themed page (`viewers/viewers.css`): a
   wash of the colour at 45% (no blend mode; a dark scheme reads the
-  dark-tuned colour), a line style's line, a commented one stronger with a
-  line at its foot, one to check outlined dashed, one not placed again yet
-  faint at 25%, the active card's strong; lines at the foot are
-  box-shadows, so no line moves. A lost one is a hollow dashed tag at its
-  old first line, never a mark over the text there now. Every range's
+  dark-tuned colour), a commented one stronger with a line at its foot,
+  one to check outlined dashed, one not placed again yet faint at 25%, the
+  active card's strong; lines at the foot are box-shadows, so no line
+  moves. A line style's line is app.css's rule for both surfaces
+  (`:is(.pdfPageWrap [data-hl-id], .docTextView .docHl)[data-hl-style]`),
+  drawn as the background's image while every state sets
+  `background-color` alone; as on a PDF page the line wins over the
+  commented look, and the active card's lays a faint wash under it. A
+  lost one is a hollow dashed tag at its old first line, never a mark
+  over the text there now. Every range's
   lines carry a 3 px bar in its line tone inside the line's padding (dashed
   when lost), beside a line link's bar at the gutter's edge, so both show
   on one line. The selection's popup is the PDF's (`.plainTip`, its
   swatches, highlighters and fold) with Copy where the host's menu is off
-  and Comment; its buttons act on the press, which keeps the selection.
+  and Comment, the PDF's tools (`shared/ui/SelectionTip.jsx`); its
+  buttons act on the press, which keeps the selection (`tipPress`).
   The comment column stands at the view's right edge, not beside a page,
-  and the badges ride at the ranges' ends ([comments.md](comments.md)
+  in a band the scroller leaves it (a long line never runs under the
+  cards), and the badges ride at the ranges' ends ([comments.md](comments.md)
   "The code view's column").
 
 ### The image view
@@ -1406,9 +1471,11 @@ page of a PDF viewer in all but rendering.
   fingers always pinch. Never from a comment card, a note badge or the tip,
   and not at all when the page is read-only (a share, a tab group's pane).
   The rubber band is `.regionMarquee`; on release the tip (the PDF
-  selection popup's look, `TipMarks area`) offers the colours, Comment,
-  Note and Ask AI, and the drawn box stays until it is answered or
-  dismissed (a press outside, Escape).
+  selection popup's frame, marks and tools: `TipFrame` under the drawn
+  box, `TipMarks area`, `SelectionTip.jsx`) offers the colours (each
+  makes the region, its row's editor open), Comment and Ask AI, and the
+  drawn box stays until it is answered or dismissed (a press outside,
+  Escape).
 - **Regions** are drawn as the PDF draws areas, in percent of the box, with
   the `commented` and `active` looks, dashed with a title when drawn on an
   earlier version of the picture, flashed once by a jump; each carries
@@ -1567,7 +1634,9 @@ is plain markup, and a first render never moves.
   every frame.
   The chat's reply pill is one label from the start of a turn:
   "Thinking", each step running, "Responding", then its summary, every
-  change a morph.
+  change a morph. Both sides of the chat draw it with `StepsPill`
+  (`chat/StepsPill.jsx`), each giving it its words: Gamma AI's replies and
+  the computer side's turns.
 - **`Collapse`** `open still`: a body under the header that opens it. Its
   row grows from nothing over `--dur-slow` while it comes into focus, and
   folds over `--dur-base`; shut, nothing is rendered, and while it folds
@@ -1587,7 +1656,8 @@ is plain markup, and a first render never moves.
   library's view and kind toggles). The group renders a `.slidePill` as
   its first child; its stylesheet gives the pill its look.
 - **`.shimmerText`**: text that says work is under way (the chat's
-  Thinking) carries a soft light across its letters while it holds.
+  Thinking, a Send's `StateTag` while its agent works) carries a soft
+  light across its letters while it holds.
 - **`.countIn`**, keyed by the number: a badge's number rises into
   place when it changes; the Inbox badge also pops on when it comes.
 - **`FADE_IN`**, spread on an `<img>`: a picture fades in once loaded
@@ -1703,7 +1773,10 @@ again shows still: its messages are the ones a load just delivered. Its
 rows are keyed by the conversation too, so a switch renders its own from
 the first frame, and in a conversation that came from a load each reply's
 steps pill opens and shuts at once and its label changes without a morph
-and is not read out: only this tab's own reply is a live region.
+and is not read out: only this tab's own reply is a live region. The
+computer side's pill holds still the same way for a turn that had ended
+when it was first shown (a conversation opened from History), and its
+strip under the header is a plain line, never read out.
 
 The tab strip (`OpenTabs`) is another. A tab opened rises in, one closed
 sinks back out where it stood while the tabs after it glide over its
@@ -1952,7 +2025,7 @@ page's notes refuse what the single-block action refuses
 |---|---|
 | `app/App.jsx` | routing, block-tree editor state, docks, the page's live session glue, AI chat glue (decomposition in progress) |
 | `documents/formats.js`, `documents/pageDocument.js`, `documents/documentView.js`, `documents/viewers.js`, `documents/DocumentPane.jsx` | a page's document ([documents.md](documents.md)): a file name's format and language (twin of `gamma/documents/formats.py`), the one read of what a block carries (`pageDocument`, the view, and its predicates `ownHash`, `fileHash`, `isPdf`, `pdfFileHash`, `inPlace`, `isListed`, `sourceAddress`; `documentViewerUrl`, `documentFileUrl`, `copyDocument`), which viewer a page shows and whether it shows (`documentView`, App's `docView` and `PagePane`'s), the viewer registry and what each pane brings to the frame (`viewers.js`), and the pane that draws the viewer it names: the PDF and the notebook from the host's render functions, every other format from its own lazily loaded viewers, given one surface object |
-| `documents/viewers/TextViewer.jsx`, `documents/viewers/FileViews.jsx`, `documents/viewers/textLoad.js`, `documents/viewers/hljsTags.js`, `documents/viewers/viewers.css` | the code view ([above](#the-code-view)), the picture ([above](#the-image-view)), the player and the file pane; the file's head and its decoding; the grammar tokens mapped to the notes' `.hljs-*` palette; their layout and the CodeMirror chrome on the tokens |
+| `documents/viewers/TextViewer.jsx`, `documents/viewers/FindPanel.jsx`, `documents/viewers/FileViews.jsx`, `documents/viewers/textLoad.js`, `documents/viewers/hljsTags.js`, `documents/viewers/viewers.css` | the code view ([above](#the-code-view)) and its Find row, the picture ([above](#the-image-view)), the player and the file pane; the file's head and its decoding; the grammar tokens mapped to the notes' `.hljs-*` palette; their layout and the CodeMirror chrome on the tokens |
 | `shared/ui/regionDrag.js`, `shared/ui/regionGeometry.js` | the one region drag of the PDF page and the picture ([The PDF viewer](#the-pdf-viewer)), and its arithmetic: the drag's rectangle, the click threshold, the picture's frame, a region's stored `image_position` and the fractions it is drawn by |
 | `comments/NoteBadge.jsx` | the speech-bubble badge at a highlight's or a region's edge: a note's hover tip, the threads' count, the popover's anchor where no margin card shows them |
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)), and `PersonAvatar`, the avatar of someone not on the page by username (a share's owner, a person to mention, a comment's author, an Inbox item's actor) |
@@ -1979,18 +2052,20 @@ page's notes refuse what the single-block action refuses
 | `shared/lib/viewerZoom.js`, `shared/model/zoom.js` | the Ctrl+wheel and two-finger pinch/pan gestures both zooming viewers read, and the zoom limits every entry point clamps to (above) |
 | `shared/lib/stableActions.js`, `shared/lib/keepIfSame.js` | what a memoized row or page relies on: one stable wrapper per handler name calling the latest handler (`useStableActions` for the page tools, `makeStableActions` for the outliner's `rowProps`), and a derived map or object kept by identity while it reads the same (`keepIfSame` with `sameMap` / `sameObject`) ([frontend-refactor.md](frontend-refactor.md)) |
 | `chat/ChatDock.jsx` | the AI chat panel (incl. agent wiring); header = a `.ctlBtnRow` of `.ctlBtn` icon buttons (the PDF zoom column's buttons laid flat) with the ⚙ settings popover |
+| `chat/StepsPill.jsx` | a turn's steps pill, worded by its caller (ChatDock's `AgentSteps`, the computer side's `AgentMessage`): `MorphText` label, spinner and `.shimmerText` while live, a shield while it waits for the person, a check and the failed / not allowed counts once done, the steps under a `Collapse`, the whole in the `chatStepsFold` fold ([Things that change in place](#things-that-change-in-place)) |
 | `pdf/PdfViewer.jsx` | the custom pdf.js viewer. A highlight's colour (`#rrggbbaa`, `shared/model/palette.js`) rides in `--hl` beside the dark-page variant the viewer derives for it (`darkPageColor`: the same hue, saturated, at a middle lightness, mostly transparent; `--hl-dark`, and `--hl-dark-line` for an area outline, which also draws a commented passage's underline on a light page), so on a dark page — Flip page colors or Gamma Dark — app.css draws that with normal blending in place of the screened pastel, whatever app the colour came from. The selection popup's swatches are the account's wash palette (`usePalette`, `shared/ui/paletteContext.js`), drawn in a one-shot style, then the account's text highlighters as square glyph buttons (`.markBtn`, `pdf/MarkTools.jsx`, [settings.md](settings.md#text-highlighters)), every mark's hit area at least 30 px through an `::after` past its edge; a passage marked by a line draws it by `data-hl-style` in `--hl-mark`, its colour's line tone (`lineColor`), and a flipped page's `--hl-dark-line`. A jump to a highlight (its note's dot, a deep link, a search hit) pulses it once in its own hue: App's `triggerFlash` → `flashHighlightId` → `.pdfHlFlash` on its rects, a still ring under reduced motion |
 | `ink/ink.js`, `ink/finishStroke.js`, `ink/inkInput.js`, `ink/stabilizer.js`, `ink/shapes.js`, `ink/gestures.js`, `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`, `ink/hostInk.js`, `ink/ruler.js`, `ink/shapeTool.js`, `ink/zoomWindow.js`, `ink/surfaceScale.js`, `ink/inkStore.js`, `ink/inkFlush.js`, `ink/inkJournal.js`, `ink/inkLive.js`, `ink/grain.js`, `ink/InkStylePicker.jsx`, `ink/ZoomWindow.jsx`, `ink/InkLayer.jsx` | handwriting ([handwriting.md](handwriting.md)): the stroke codec + geometry (pure), the finish pipeline and brush table (the only width laws), pointer sampling, Smoothing, the shape recogniser, scribble detection, finger chords, the strip's keys, the Pencil mapping, the iPad shell's side of a stroke, the ruler, the Shapes tool's drag, the zoom window's rules, a screen distance in a surface's points (Duplicate's offset), the files/drafts store, the flush plan, the drafts journal, the peers' wet strokes, the pencil grain, the Style picker, the zoom window's panel, and the page layer + selection menu (`.inkEditMenu`, placed by `useSelectionMenuAnchor`) + notes card + `ColorChoices`, the swatches and custom colour that a pen preset's row, a text box's style and the selection menu's Color and Fill rows share |
 | `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx`, `markup/PageTools.jsx` | the tool strip (`.pdfInkBar`: `ctlBtn`s and `colorBtn` swatches; the Text tool's `TypeIcon`), the one mount of a page surface's layers (text boxes, then ink), and the tools context they read, with `armedClasses` for a surface's armed-tool classes ([handwriting.md](handwriting.md)) |
 | `markup/TextBoxLayer.jsx`, `markup/useTextBoxes.js`, `markup/textBox.js`, `markup/markup.css` | text boxes ([text_boxes.md](text_boxes.md)): the boxes of a page (frame, width handle and band in screen pixels over a box sized in the page's points), the box menu (the handwriting menu's `inkEditMenu` rows: `TextSizeIcon`, `PaletteIcon`, `PaintBucketIcon`, then Duplicate, Show note, Delete), and `TextStyleChoices`, the size numbers, the pen palette through `ColorChoices`, and the four backgrounds ("none" a struck-out swatch, `.textNoBackground`) that the menu and the strip's Text row share; the notes row's `TypeIcon` marker (`.textBoxMarker`) |
 | `search/SearchPanel.jsx`, `search/snippets.js`, `search/queryParse.js`, `search/searchFilters.js`, `library/librarySearch.js` | workspace search (Ctrl+F); `MarkedText`, the query's matches as `mark.searchMark` (quick open's rows and the `[[` picker's too), over the pure result text of `snippets.js`; the typed qualifiers' grammar (`queryParse.js`) and table (`searchFilters.js`), whose dropdown is the shared `.categorySuggestions` list (role listbox, quick open's option props) placed by CSS under the input, and whose "searched as text" line is `.searchHint.warn`; the title scorer it shares with chat, and the library matcher (title + folder/label chips) shared by the home filter box and quick open |
-| `library/QuickOpen.jsx` | quick open (Ctrl+P): a `.reportOverlay` palette over the library ([home_library.md](home_library.md)) — no query: recents, open tabs, the rest; a query: pages, files (a member's: the server's rows, name in bold over its work folder and directory in `small.quickOpenPath`, the matched spans as `mark.searchMark`), folders and labels in sections, then the search-everywhere and create-page actions, with Palette's `note` line while files are asked for, on a failure, or when nothing matched; rows are the chat mention picker's `chatMentionOption`; a query starting with `>` (Ctrl+Shift+P) is the command palette over App's `paletteCommands()` ([hotkeys.md](hotkeys.md)) |
-| `library/PageOption.jsx` | a library page as a picker option, for quick open and the chat mention picker: kind glyph, marked title, authors and year, folder/label chips, then a check, "Current" or the time; also the Recent / Open tabs / Everything else headings (`recencySections`) |
+| `library/QuickOpen.jsx` | quick open (Ctrl+P): a `.reportOverlay` palette over the library ([home_library.md](home_library.md)) — no query: recents, open tabs, the rest; a query: pages, files (a member's: the server's rows, each a `FileOption` with the matched spans as `mark.searchMark`), folders and labels in sections (the listbox named "Pages, files, folders and labels"), then the search-everywhere and create-page actions, with Palette's `note` line while files are asked for, on a failure, or when nothing matched; rows are the chat mention picker's `chatMentionOption`; a query starting with `>` (Ctrl+Shift+P) is the command palette over App's `paletteCommands()` ([hotkeys.md](hotkeys.md)) |
+| `library/PageOption.jsx` | a library page as a picker option, for quick open and the chat mention picker: kind glyph, marked title, authors and year, folder/label chips, then a check, "Current" or the time; also the Recent / Open tabs / Everything else headings (`recencySections`). A work folder's file is one row wherever a picker lists it (a recent, a tab, a title hit, a file the server found): `FileOption`, its file's name in bold over its place in `small.quickOpenPath` ("W / a / b", `explorer/workPaths.js` `filePlace`, the one spelling of a file's place, which the search panel's lead and the crumbs share), its library folders and labels (`filingChips` leaves a file's directory out), then the same end |
 | `chat/PaperMentionInput.jsx`, `chat/paperMentions.js` | chat mention picker (quick open's page list over the composer), mention text edits and `MAX_CHAT_REFERENCES` (six attached pages plus the current page) |
-| `chat/ApprovalCard.jsx`, `chat/approvals.js` | the card a tool call waits on while the user decides ([ai.md](ai.md#asking-before-a-call-approvals)): the fetch handoff card's look (accent border and tint), a caption naming the permission, the change as a word diff (`del` on `--danger-bg`, `ins` on an `--ok` tint), **Allow once** as the one primary button, **Don't allow** ghost; the buttons never take the focus themselves. A card for a call naming several pages has a counted headline ("Rename 37 pages"), one diff line per page in the same scrolling box, and `.chatApprovalNote` lines for a folder or labels made first, the pages left out and the pages already so. A deletion's card (a `delete_*` tool) has the same four answers, its **Allow once** as `uiBtn sm primary danger`. A permission's state (Allow / Ask / Off) is a `MenuSelect` whose icon is tinted by state (`.agentPermState` in settings.css) |
+| `chat/ApprovalShell.jsx` | the one shell of every card a call waits on while the user decides: Gamma AI's (`ApprovalCard`) and the computer side's (`chat/computer/ComputerAsk.jsx`). The caption and head, the card's preview as children, the answers that allow as props (`[{decision, label, primary, danger, title}]`), then a spacer and **Don't allow** (ghost), which opens the line for what to do instead (Enter declines, Escape or **Back** closes it); once answered "Allowed. … goes on…" / "Not allowed. … goes on without it…", and a refusal as an inline `role="alert"` line. The bar of a note an edit is drawn in renders the same answers (`useApprovalAnswer` + `ApprovalAnswers`). A new card a call waits on is this shell, never a copy of its rows |
+| `chat/ApprovalCard.jsx`, `chat/approvals.js` | the card a tool call waits on while the user decides ([ai.md](ai.md#asking-before-a-call-approvals)), on `ApprovalShell`: the fetch handoff card's look (accent border and tint), a caption naming the permission, the change as a word diff (`del` on `--danger-bg`, `ins` on an `--ok` tint), **Allow once** as the one primary button, **Don't allow** ghost (`toolAnswers` has the three that allow, for the card and the note's bar); the buttons never take the focus themselves. A card for a call naming several pages has a counted headline ("Rename 37 pages"), one diff line per page in the same scrolling box, and `.chatApprovalNote` lines for a folder or labels made first, the pages left out and the pages already so. A deletion's card (a `delete_*` tool) has the same four answers, its **Allow once** as `uiBtn sm primary danger`. A permission's state (Allow / Ask / Off) is a `MenuSelect` whose icon is tinted by state (`.agentPermState` in settings.css) |
 | `chat/PlanCard.jsx`, `chat/plan.js` | a reply's plan ([ai.md](ai.md#planning-first-plan-mode)): the approval card's look (`chatApproval chatPlan`, without its guide anchor or hint) with a caption badge through `MorphText` ("Awaiting your approval", "Approved", "2 of 4 done"), the steps an `ol.chatPlanSteps` under `ListMotion` of a glyph column (the number, a dot or `transferSpin` for the step under way, an `--ok` check) and the text; **Approve plan** `uiBtn sm primary` and **Revise** `uiBtn sm`, shown only while the plan is the last reply's and nothing streams. The composer's Plan switch is a `chatAttachToggle chatPdfToggle chatPlanToggle` with `aria-pressed`, its word giving way in a narrow dock as the grant chip's does |
 | `chat/AgentChanges.jsx`, `chat/aiRevert.js` | what an agent reply changed, under its steps pill ([ai_tools.md](ai_tools.md#reverting-a-note-change)): `.chatChanges` rows behind an accent rule, a note row, a deleted folder's or label's row, or pages renamed, moved, labelled, deleted or restored (one or many), ending in a frameless `ctlBtn` undo icon, "Revert…" a `uiBtn sm ghost` in the reply's first group's head, a reverted row muted with its "Reverted" tag and a redo icon in the same place; a call that changed several pages is one row whose muted "Show the pages" `<summary>` (a native `<details>`, `.chatChangeItems`) unfolds each page's one-page row in a box that scrolls past 16em; a row that stops shows its reason, the approval card's `WordDiff`, and **Revert anyway** (`uiBtn sm`) beside **Keep it** (ghost) — a stop that can't be forced (`gone`, the pages' `kept`) shows **Dismiss** alone; a revert or redo that left some pages as they are adds a `role="status"` note with **Dismiss** only |
-| `chat/noteReview.js`, `editor/mdDiff.js`, `editor/NoteReviewBar.jsx` | an AI's note edit drawn in its note as tracked changes ([ai.md](ai.md#watching-the-agent-work-live-footprint)): the word diff's marks in the note's own rendering (`del.mdDiff` struck in the full `--danger` on `--danger-bg`, its words in `--text-secondary`; `ins.mdDiff` on an `--ok` tint), a formula or picture that went faded, a code block or display formula marked whole by a 3px `--danger` / `--ok` bar at its side (`.mdDiffBlock`), a new note's text on the inserted tint with the bar (`.mdDiffNew`). Under the note, `.noteReviewBar`, by the permission the edit ran under: one waiting on its card has the card's four answers, **Allow once** (`uiBtn sm primary`), **Allow in this chat** and **Always allow** (`uiBtn sm`, the card's titles) and **Don't allow** (ghost), beside a shield and "Waiting for your approval"; one that ran without asking is a record with nothing to approve: an accent sparkle and "Edited by AI" / "Added by AI" in `--fs-xs`, **Revert** (the undo icon), **Hide** (the eye-off icon) and, with more on the page, **Hide all**, all `uiBtn sm ghost`; a revert that stops shows its reason with the row's **Revert anyway** / **Keep it** |
+| `chat/noteReview.js`, `editor/mdDiff.js`, `editor/NoteReviewBar.jsx` | an AI's note edit drawn in its note as tracked changes ([ai.md](ai.md#watching-the-agent-work-live-footprint)): the word diff's marks in the note's own rendering (`del.mdDiff` struck in the full `--danger` on `--danger-bg`, its words in `--text-secondary`; `ins.mdDiff` on an `--ok` tint), a formula or picture that went faded, a code block or display formula marked whole by a 3px `--danger` / `--ok` bar at its side (`.mdDiffBlock`), a new note's text on the inserted tint with the bar (`.mdDiffNew`). Under the note, `.noteReviewBar`, by the permission the edit ran under: one waiting on its card has the card's four answers (`ApprovalAnswers`), **Allow once** (`uiBtn sm primary`), **Allow in this chat** and **Always allow** (`uiBtn sm`, the card's titles) and, at the row's end, **Don't allow** (ghost), which opens the card's line for what to do instead, beside a shield and "Waiting for your approval"; one that ran without asking is a record with nothing to approve: an accent sparkle and "Edited by AI" / "Added by AI" in `--fs-xs`, **Revert** (the undo icon), **Hide** (the eye-off icon) and, with more on the page, **Hide all**, all `uiBtn sm ghost`; a revert that stops shows its reason with the row's **Revert anyway** / **Keep it** |
 | `chat/RevertChanges.jsx` | the dialog that reverts several of a conversation's changes at once ([ai_tools.md](ai_tools.md#reverting-a-note-change)): a `.reportModal` with a `.confirmHead` (undo icon), "Select all" and the page picker's checkbox rows (`.docPickerItem` in a `.reportPageList`), one per change under a muted row per message that asked (each a checkbox for its changes, mixed when some are ticked), the change's sentence as its row reads without links; a reverted row muted with its "Reverted" tag; the row that stopped shows the reply row's question (`.chatRevertAsk`) with **Revert anyway** and **Skip it**; the footer counts what went back, then **Cancel** / **Done** and the primary **Revert N changes** |
 | `chat/chatErrors.js`, `chat/agentSteps.js`, `chat/chipText.js` | pure helpers of the chat panel: the error card's copy per failure kind (also the login check's strip), the agent's steps pill and change list, a context chip's plain-text preview ([ai.md](ai.md); its words through `search/snippets.js` `plainSnippet`, the one markdown-to-words rule) |
 | `editor/BlockTree.jsx`, `editor/refLabels.js`, `shared/model/blockModel.js` | outliner rendering (its rows are memoized), every row's `[[ref]]` and Gamma-link labels resolved once per tree change by the pure `refLabels.js`, and the pure tree ops (`shared/model/palette.js` is the colour palette both share with the viewer: a highlight's stored colour, its default, its line tone). Line breaks in a rendered note: one Enter is a hard line break (`remark-breaks`), one blank line the paragraph break, and every further blank line a visible empty line (`expandBlankLines` in `editor/mdMarks.js`, applied by `mdPreprocess` outside math and code) — what the editor shows is what the note renders |
@@ -2011,12 +2086,12 @@ page's notes refuse what the single-block action refuses
 | `editor/slashCommands.js`, `editor/SlashMenu.jsx`, `editor/useSlashMenu.js` (their text-only insertions in `editor/slashInserts.js`) | the "/" command catalog and its matching (pure, `tests/slashCommands.test.mjs`): headings, to-do, lists, quote, callout, divider, equations, `/page` (a new library page, linked) and `/note` (a sheet of paper), table, code, mermaid, image, date, link, embed, highlight, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches. The bare "/" list is the catalog in order under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style); a typed query is one ranked list, by tier: the command's own name, a name it begins, a word of its label it begins, a keyword it begins, then a VS Code-style fuzzy match of the name or label (anchored on the first letter, jumping to word starts: `/cb` → Code block), like the `\command` completion's ([latex_editing.md](latex_editing.md)). A command that `needs` an ability (`newPage`, `sheet`, `image`, `embed`) is left out where the editor lacks it (`filterSlashCommands`' `can`: a share's editor makes no library page, a comment's field writes text only). `SlashMenuPopup` draws a row as an icon tile (`MENU_ICONS` by the item's `icon` key; the colors keep a tinted "A" `glyph`), the label over a one-line description, and the `/name` to type at the right, the matched letters marked with search's `mark.searchMark` in the name or the label, wherever they matched; a key-hint footer (Tab or Enter inserts). The same popup is the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link), without names. `useSlashMenu.js` owns the menu's trigger (typed only, never inside math or a code fence), its keys and the run of a command, for a note row and a comment's field; BlockTree owns the "Paste as" chooser |
 | `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title, then by their folder and label chips and a sub-page's path (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); when that search stopped at the server's time budget (`partial`) the key-hint footer leads with a "stopped early" line; the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip; `refQueryAt`, `refInsertEdit` and `typedTitleLink` are the typed `[[query`, a picked row's edit and the hand-typed rule's edit. `editor/useRefPicker.js` owns the trigger, the block search, the keys and the insertion, for a note row and a comment's field |
 | `editor/mentions.js`, `editor/MentionMenu.jsx`, `editor/useMentionMenu.js`, `app/useReminders.js`, `app/ReminderAlerts.jsx` | the `@` menu and mentions ([mentions.md](mentions.md)): the pure syntax, date words, rows and chip text (`mentions.js`); the menu's trigger, keys and insertion for a note row and a comment's field (`useMentionMenu.js`); the popup on the `[[` picker's surface and rows (`refPopup mentionMenu`; Date, People with a `PersonAvatar` each, Link to page with where the page is as the meta line (a sub-page's path, else its folder); a row's aside such as "(You)" muted in `.mentionAside`); the chip (`.mentionChip`, the ref chip's shape in the quiet fill, a reminder accent-coloured behind a masked alarm clock, red once due), drawn by the rendered view and the editor alike; the due reminders as `.reminderCard`s on the floating surface in the bottom right corner (Open a `uiBtn sm`, dismiss a `uiClose uiCloseSm`) |
-| `comments/ThreadPopover.jsx`, `comments/Thread.jsx`, `comments/CommentMargin.jsx`, `comments/CommentComposer.jsx`, `comments/CommentsPanel.jsx`, `comments/comments.css` | comments ([comments.md](comments.md) "In the app"): the row's `ctlBtn` control after the body (the open count in the accent, else revealed with the row like the ×), the thread popover (a portalled `.popover` placed by `useFloatingPosition` from its anchor, `PersonAvatar` + name + time over each comment rendered by `BlockMarkdown`, a `MenuButton` per comment, Resolve / Reopen as a `ctlBtn` icon on the first comment's author line), the composer (the note editor, `BlockCmEditor` with the `blockEditorCm` look in the comment's type, which grows to 40vh and then scrolls, inside a bordered `.commentBox` on the field surface that takes the focus ring while focused within; the chat's round `chatCircleBtn` send inside the box at the right, at `--ctl-icon-btn-xs` with a 12px arrow, on the text's line while it is one line and at its last line once it wraps; the note's `[[`, `@`, "/" and LaTeX popups over the popover), the PDF note badge's `.hasThread` accent, the PDF margin's cards (a `.commentCard` on `--bg-card` with a `--border` hairline, `--radius-md` and `--shadow-1`, lifted to `--shadow-2` while active, holding the popover's thread view; a card stands beside a highlight or an ink group, `data-card-for` naming it), and the Comments dock window (an Open / Resolved `Segmented` in its header, a row per thread, and on a work folder's file a `ctlBtn` Feedback with the bot icon). An agent's comment reads under the token's name (`comments.js` `authorLabel`), the connection it wrote through in the avatar's title; the first comment's line carries the Sent chip (`uiTag pending`, Sent or The agent is working; `uiTag failed`, Failed) while a Send waits on the thread, and under it a muted `.commentThreadState` line says when its passage moved or was not found in the new version, or that the handwriting was drawn on an earlier version ([feedback.md](feedback.md)) |
+| `comments/ThreadPopover.jsx`, `comments/Thread.jsx`, `comments/CommentMargin.jsx`, `comments/CommentComposer.jsx`, `comments/CommentsPanel.jsx`, `comments/comments.css` | comments ([comments.md](comments.md) "In the app"): the row's `ctlBtn` control after the body (the open count in the accent, else revealed with the row like the ×), the thread popover (a portalled `.popover` placed by `useFloatingPosition` from its anchor, `PersonAvatar` + name + time over each comment rendered by `BlockMarkdown`, a `MenuButton` per comment, Resolve / Reopen as a `ctlBtn` icon on the first comment's author line), the composer (the note editor, `BlockCmEditor` with the `blockEditorCm` look in the comment's type, which grows to 40vh and then scrolls, inside a bordered `.commentBox` on the field surface that takes the focus ring while focused within; the chat's round `chatCircleBtn` send inside the box at the right, at `--ctl-icon-btn-xs` with a 12px arrow, on the text's line while it is one line and at its last line once it wraps; the note's `[[`, `@`, "/" and LaTeX popups over the popover), the PDF note badge's `.hasThread` accent, the PDF margin's cards (a `.commentCard` on `--bg-card` with a `--border` hairline, `--radius-md` and `--shadow-1`, lifted to `--shadow-2` while active, holding the popover's thread view; a card stands beside a highlight or an ink group, `data-card-for` naming it), and the Comments dock window (an Open / Resolved `Segmented` in its header, Notify me and, on a work folder's file, Feedback with the bot icon as its actions ([Dock windows](#dock-windows)), a row per thread). An agent's comment reads under the token's name (`comments.js` `authorLabel`), the connection it wrote through in the avatar's title; the first comment's line carries the Sent chip (`StateTag` in `comments.js` `sendState`'s words: `pending` Waiting for Codex, or Codex is working… with a spinner; `failed` Failed) while a Send waits on the thread, and under it a muted `.commentThreadState` line says when its passage moved or was not found in the new version, or that the handwriting was drawn on an earlier version ([feedback.md](feedback.md)) |
 | `inbox/InboxButton.jsx`, `inbox/InboxPanel.jsx`, `inbox/inbox.css` | the Inbox ([comments.md](comments.md) "The Inbox"): the topbar bell, an `iconBtn` with an accent count badge (`.inboxBadge`, after `.navBackBadge`, "9+" past nine; inline as a More sheet row's `trailing`), and the header popover under it: a `popoverTitle` row with Mark all read as `uiBtn ghost sm`, an Unread / All / Archived `Segmented`, `popoverSection` day captions, and a row per item (`PersonAvatar`, the sentence in bold while unread with an accent dot, the snippet behind a left rule, muted meta, `ctlBtn` actions revealed on hover and focus) |
 | `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the section is off until the account turns it on (`backlinksVisible`, Settings → Reading & editing › Notes — off, no backlinks are fetched), and its fold is the browser pref `backlinksCollapsed` |
 | `editor/SubPagesPanel.jsx` | "N pages inside" under a page's notes, above Linked from ([home_library.md](home_library.md#sub-pages)): the open page's sub-pages from `GET /pages/{id}/family`, a row each (a 14 px `FileGlyph` of the entry's `format`, the family answer's, so the PDF one for `pdf`, and the title, a button that opens the page, then the row's `MenuButton` "⋯" outside a share view, shown with the row as a `.rowMenuHost`'s, the page menu also on a right-click or a held finger through `menuPress`), and where the library may be changed a last "New page inside" row with a plus; there a row drags a page and wears `.dragOver` (the accent's background and a 1 px ring) while a page dragged over it would go inside. It borrows the backlinks panel's head, caret, rows and box (`.subPagesPanel` joins `.backlinksPanel`'s rule), folds in `Collapse`, and its fold is the browser pref `subPagesCollapsed`; a page with no sub-pages shows nothing |
 | `editor/PageCrumbs.jsx` | the crumbs at the top of a sub-page's or a work folder file's header (`nav.pageCrumbs`, "Where this page is"): a file's folders from its work folder down to its directory, each a `crumbBtn crumbFolder` opening that folder in the library (no drop target), or a sub-page's pages above it, top first, each opening that page; each crumb followed by a `/` `crumbSep`, the title below; one muted `--fs-xs` line, long titles cut with an ellipsis (`library.css`), a page crumb in the accent while a page dragged over it would go inside its page (`.dragOver`, as the folder path's crumbs); nothing for a library page |
-| `editor/PathLink.jsx` | a relative link in a note (`a.pathLink`): in a work folder's note (`PathLinkContext`, App's) a click opens the file the path names, or the status says "No tracked file at …"; elsewhere the plain link |
+| `editor/PathLink.jsx` | a relative link in a note (`a.pathLink`): in a work folder's note (`PathLinkContext`, App's) a click opens the file the path names, or the status says "No tracked file at …"; elsewhere the plain link. `InternalLinkChip` is the notes' internal link, the `[[ref]]` chip's look (`.blockRefChip`) and click (Ctrl/⌘ left to the browser), drawn by the `[[ref]]` chip and the path link, which leads with its file's 14px `FileGlyph` and is muted with `aria-busy` while the server is asked. Any other link in a note takes the accent (`:where(.blockRendered) a`), never the browser's blue |
 | `editor/BlockProperties.jsx`, `editor/blockProps.js`, `editor/blockProperties.css` | the Properties popover ([above](#the-properties-popover)): the surface, loaded on first use (head, status chips, Details / JSON, the row menu, placement, the server read), and the pure model it draws (`tests/blockProps.test.mjs`): a block's kind by the server's `block_kind` order (`blockKind`, `effectiveKind`), its sections of rows, one `CATALOG` entry per key of the [block properties catalog](../research/block-properties.md#the-catalog) and the rest under Other keys, the status chips, the key and SQL paths; the menus' Properties rows and `block.properties` / `app.pageProperties` use `BracesIcon` |
 | `editor/noteSanitize.js` | `rehypeNoteSanitize`, the sanitizer every rendered note goes through between `rehype-raw` and KaTeX ([One control set, everywhere](#one-control-set-everywhere)) |
 | `editor/callouts.js` | remark plugin for `> [!note] Title` callouts (type aliases → note/tip/warning/danger/important/quote; each type's colour is a `--callout-*` token); Obsidian's `[!note]-` / `+` fold flag makes a native `<details>` with the title as `<summary>` (chevron in app.css) |
@@ -2037,6 +2112,6 @@ page's notes refuse what the single-block action refuses
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |
 | `shared/ui/listKeys.js` | `stepList`: ↑/↓ between a search box and the results listed under it (Settings search, the move-to-page filter, the chat's page picker) |
 | `shared/ui/DiagramFigure.jsx`, `shared/ui/ResizeGrip.jsx` | the diagram figure (a Mermaid diagram inline, or a sanitized SVG drawing shown as an image) with its toolbar of `ctlBtn`s, ended by a note's object "⋯" (`tools`) ([diagrams.md](diagrams.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike, a double-click or double tap on a grip restoring the natural size |
-| `shared/ui/press.js`, `shared/lib/pointer.js`, `shared/lib/pickFiles.js` | one behaviour for mouse and finger (above): `menuPress` / `doublePress` / `pressAt` / `triggerPress`, the three device questions, and the system file picker opened from code |
+| `shared/ui/press.js`, `shared/lib/pointer.js`, `shared/lib/pickFiles.js` | one behaviour for mouse and finger (above): `menuPress` / `doublePress` / `pressAt` / `triggerPress` / `tipPress`, the three device questions, and the system file picker opened from code |
 | `app/CommandMenuItem.jsx` | a catalog command as a menu row (the View menu's Undo, Redo, Go to page, Command palette; [Menus and submenus](#menus-and-submenus)) |
 | `shared/ui/menuAim.js` | pointer-trajectory ("safe triangle") hover intent for hierarchical menus and hover cards — UI-agnostic, consumed by `shared/ui/Menus.jsx` and `CitationPill` |

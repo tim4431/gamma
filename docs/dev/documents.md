@@ -712,7 +712,7 @@ image view"); what they are:
 
 | Pane | Shows | Takes from the surface |
 |---|---|---|
-| `text` | the file's text read-only in CodeMirror, coloured by `codeLanguageName`, with line numbers, Find (CodeMirror's panel at the top; Ctrl+F in `.docTextView` is left to it by `app.search`), Wrap and Download in its bar, Ctrl+wheel for the text size (`useTextScale`, as the notes and the chat; no A−/A+ buttons, since none of them has any); a binary after all, a file the server refuses (404: a work folder's file on another computer), or no `fileUrl`, hands over to `FilePane`; a line link's lines marked (below); the page's ranges of the file drawn over its text, a selection made into one or sent to the chat, and their comment cards in a column beside the text or their badges ("A range of a text file", below) | `doc`, `fileUrl`, `phone`, `hidden`, `readOnly`, `preview`, `place {line}`, `onPlace`, `reportRef`, `mark`, `onMarkDone`, `onReveal`, `regions`, `anchors`, `flashId`, `onRegionJump`, `onRegionContext`, `onRegionThread`, `commentMargin`, `marginRef`, `onMarginLost`, `scrollRef`, `onAnchor`, `onChatSelection`, `onHighlightAction` |
+| `text` | the file's text read-only in CodeMirror, coloured by `codeLanguageName`, with line numbers, Find (CodeMirror's search, its panel the app's find row at the top, `FindPanel.jsx`; Ctrl+F in `.docTextView` is left to it by `app.search`), Wrap and Download in its bar, Ctrl+wheel for the text size (`useTextScale`, as the notes and the chat; no A−/A+ buttons, since none of them has any); a binary after all, a file the server refuses (404: a work folder's file on another computer), or no `fileUrl`, hands over to `FilePane`; a line link's lines marked (below); the page's ranges of the file drawn over its text, a selection made into one or sent to the chat, and their comment cards in a column beside the text or their badges ("A range of a text file", below) | `doc`, `fileUrl`, `phone`, `hidden`, `readOnly`, `preview`, `place {line}`, `onPlace`, `reportRef`, `mark`, `onMarkDone`, `onReveal`, `regions`, `anchors`, `flashId`, `onRegionJump`, `onRegionContext`, `onRegionThread`, `commentMargin`, `marginRef`, `onMarginLost`, `scrollRef`, `onAnchor`, `onChatSelection`, `onHighlightAction` |
 | `image` | the picture at fit or at App's zoom, its regions drawn as the PDF draws areas (dashed with "Drawn on an earlier version of this picture" when `image_position.hash` is not the file's), the comment margin beside it or a badge per commented region, the region drag and its tip (Comment, Note, Ask AI); a picture that will not load, or no `fileUrl`, hands over to `FilePane`, and the next version of the file mounts a picture again | `doc`, `fileUrl`, `readOnly`, `hidden`, `scale`, `place {top, left, scale}`, `onPlace`, `reportRef`, `regions`, `anchors`, `flashId`, `regionMode`, `onRegion`, `onRegionJump`, `onRegionContext`, `onRegionThread`, `commentMargin`, `marginRef`, `onMarginLost`, `scrollRef`, `captureRef`, `onAskRegion`, `onReveal` |
 | `media` | `<audio>` or `<video>` with the browser's controls (a `.webm` a video until its metadata says it has no picture), paused when the pane closes | `doc`, `fileUrl`, `hidden`, `onReveal` |
 | `file` | the format's glyph, the name, the format and size (`doc.size`, else one HEAD's `Content-Length`), one sentence (a binary, a listed file, a document at an address, whose `fileUrl` is `""`, a file whose bytes are on another computer, a file that would not play or was binary after all), Download (not for a listed file, nor one with no `fileUrl`, nor one the HEAD answered 404; no HEAD is sent for those) and Show in folder where `onReveal` is given | `doc`, `fileUrl`, `onReveal`, `sentence` (the other panes' hand-over) |
@@ -818,14 +818,17 @@ on). In the code view:
   the text clears the chat's passages, except a click on a range, which
   adds its quote instead. Read-only, the ranges draw and no popup opens;
   a tab group's pane (`preview`) draws the ranges alone. The popup's frame
-  is `shared/ui/TipFrame.jsx`, the PDF's, so the chunk imports nothing of
-  pdf.js. No Link, Translate or Move.
+  and tools are the PDF's (`shared/ui/TipFrame.jsx`,
+  `shared/ui/SelectionTip.jsx`), so the chunk imports nothing of pdf.js.
+  No Link or Translate.
 - *The marks* (`viewers/textMarks.js`): one state field of decorations,
   fed the page's ranges (`regions`), the active card's and the flashing
   one's ids and the file's stem, and rebuilt from them whenever the text
   changes. A placed range is a mark over its text (`markSpec`: a wash, or
-  its line style; to check dashed, one measured on another version and
-  not placed again yet faint, a commented one stronger with a line at its
+  its line style, drawn by the PDF's rule and winning over the commented
+  look, the active card's laying a faint wash under it; to check dashed,
+  one measured on another version and not placed again yet faint, a
+  commented one stronger with a line at its
   foot, a link's line, the active card's strong, a jump's flash); a lost
   one, whose old lines now hold other text, is never a mark: a dashed tag
   at the start of its old first line (the file's last when it is past
@@ -843,10 +846,11 @@ on). In the code view:
   shows. The comment column (`.docTextMarginHost`, beside the scroller)
   stands at the view's right edge however far the text scrolls sideways,
   its track moved with the vertical scroll alone, the cards level with
-  their ranges' first lines (`CommentMarginSlot`'s `topOf`); the content
-  keeps the column's room at its right while it stands, so wrapped text
-  never runs under it, and a long line scrolled sideways passes under the
-  gap. It stands with room for 360 px of text beside it, never on a
+  their ranges' first lines (`CommentMarginSlot`'s `topOf`); while it
+  stands the scroller ends where it begins, so wrapped text wraps short of
+  it and a long line scrolls sideways inside the text's own box, never
+  under the cards, and a wheel over the column scrolls the text. It
+  stands with room for 360 px of text beside it, never on a
   phone; `marginRef` answers App by that room, and a resize or a wrap
   that takes it from the active card calls `onMarginLost`. Every place is
   read in CodeMirror's measure phase, again as its geometry, viewport or
@@ -887,7 +891,8 @@ highlight shape"). On a
 picture a mouse or a pen draws with no key held (a picture has no text to
 select), a finger only in region mode (the strip's toggle), two fingers
 pinch; never from the margin, a badge or the tip, and not at all when
-read-only. The tip offers the colour, Comment, Note and Ask AI. The
+read-only. The tip (the PDF's frame, marks and tools) offers the colour,
+Comment and Ask AI. The
 region's row in the notes (`editor/BlockTree.jsx`) is a highlight's row
 with "Region of the picture" where the page chip would be and its crop
 (`AreaSnapshot`, through the picture's `captureRef`; a crop that comes
