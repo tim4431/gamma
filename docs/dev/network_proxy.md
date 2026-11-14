@@ -391,13 +391,19 @@ off-site ones ([api.md](api.md) "Admin").
 
 `proxy_settings.test` tries, in parallel threads, Gamma Cloud (the
 configured issuer, first, only when cloud sign-in is on), then
-`TEST_TARGETS`: OpenAI (`https://api.openai.com/v1/models`), Anthropic
+`TEST_TARGETS`: OpenAI (`https://api.openai.com/v1/models`), ChatGPT
+(`https://chatgpt.com/backend-api/codex/models`, the ChatGPT sign-in's
+calls), Anthropic
 (`https://api.anthropic.com/v1/models`), Zotero (`https://api.zotero.org/`)
 and arXiv (`https://arxiv.org/`), then the admin's `url`. arXiv goes
 through `net_guard.guarded_urlopen`, so the Test exercises the pinned or
 `proxy_dns` path of links; the others through the trusted opener. Each is
 one GET with a 10 s timeout on each socket operation (the Test as a whole
-has no limit), and any HTTP status counts as reached. A result:
+has no limit), and any HTTP status counts as reached, except one that
+refuses the server's network (`net_proxy.refused_network`: OpenAI's
+`unsupported_country_region_territory`, Cloudflare's challenge or block
+page), whose line fails with the reason ("403: it doesn't serve the country
+or region this server connects from"). A result:
 
 ```json
 {"name": "OpenAI", "url": "https://api.openai.com/v1/models", "route": "proxy",

@@ -1865,7 +1865,8 @@ export default function ChatDock({
     const openEntry = () => openAiKeysEditor({ entry: m.errorProviderId });
     const fix = {
       connect: openAiKeysEditor, own_key: openAiKeysEditor, key: openEntry, signin: openEntry,
-      connection: openEntry, new_chat: latest ? newChat : null,
+      connection: openEntry, proxy: isAdmin && openSettings ? () => openSettings("proxy") : null,
+      new_chat: latest ? newChat : null,
     }[copy.fix];
     if (fix && !readOnly) {
       out.push(<button key="fix" type="button" className="uiBtn sm primary" {...(fix === newChat ? {} : settingsIntent)}
@@ -2146,7 +2147,8 @@ export default function ChatDock({
           <span className="chatHealthText">
             {failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline}
           </span>
-          <button className="uiBtn sm" {...settingsIntent} onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
+          <button className="uiBtn sm" {...settingsIntent} onClick={() => (aiHealth.kind === "blocked" && isAdmin && openSettings
+            ? openSettings("proxy") : openAiKeysEditor({ entry: aiHealth.provider_id }))}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
         </div>
       ) : null}

@@ -1,6 +1,6 @@
 // What a failed chat request says, per failure kind. The server names the
-// kind (ai_client.failure_kind: not_configured, allowance, auth, rate,
-// overloaded, unreachable, bad_endpoint, too_long, other) on the HTTP error
+// kind (ai_client.failure_kind: not_configured, allowance, auth, blocked,
+// rate, overloaded, unreachable, bad_endpoint, too_long, other) on the HTTP error
 // and on the stream's error line; a connection probe adds "no_model" (an
 // entry with no model picked); "network" is the browser losing Gamma
 // itself. The chat's error card, the login check's warning strip and the
@@ -9,11 +9,12 @@
 //
 // `fix` names the card's main action (ChatDock turns it into a button):
 // connect / own_key open Settings → Connections, key / signin / connection
-// open the failing connection's own form, new_chat starts over. `switchModel`
+// open the failing connection's own form, proxy opens Settings → Network
+// proxy (an admin's), new_chat starts over. `switchModel`
 // says another model could get around the failure.
 import { t } from "../shared/i18n/i18n.js";
 
-export const FAILURE_KINDS = ["not_configured", "allowance", "auth", "rate", "overloaded",
+export const FAILURE_KINDS = ["not_configured", "allowance", "auth", "blocked", "rate", "overloaded",
   "unreachable", "bad_endpoint", "too_long", "no_model", "network", "other"];
 
 export function failureCopy(kind, { provider = "", auth = "key" } = {}) {
@@ -34,6 +35,14 @@ export function failureCopy(kind, { provider = "", auth = "key" } = {}) {
         : { headline: t("{provider} rejected the API key", { provider: name }),
             text: t("The key saved as “{provider}” no longer works. Update it, or pick another model for this chat.", { provider: name }),
             fix: "key", switchModel: true };
+    case "blocked":
+      // A 403 about the network the server connects from (OpenAI's region
+      // block, Cloudflare's challenge): the key or sign-in is not in question.
+      return {
+        headline: t("{provider} refused this server's network", { provider: name }),
+        text: t("It refuses the region or network the Gamma server connects from, not the key or sign-in, which are kept. If your browser reaches {provider} through a proxy or VPN, give the server the same one in Settings → Network proxy.", { provider: name }),
+        fix: "proxy", switchModel: true,
+      };
     case "rate":
       return {
         headline: t("Rate limit or quota reached"),
@@ -89,6 +98,7 @@ export function fixLabel(fix) {
     key: t("Update key"),
     signin: t("Sign in again"),
     connection: t("Edit connection"),
+    proxy: t("Network proxy"),
     new_chat: t("New chat"),
   }[fix] || "";
 }
