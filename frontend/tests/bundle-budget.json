@@ -6,10 +6,10 @@
     "why": "The merge of dev's chat computer side (agent-collab steps 3a and 3b) with the file-explorer plan's step 6 (text ranges in blockModel and the margin's text tops): together 160 bytes over the startup ceiling"
   },
   "startupJsRaw": {
-    "max": 3123000,
-    "set": "2026-11-08",
-    "measured": 2838326,
-    "why": "Reset on the merged learn-from-oleafly build over dev fd6f9104: React 19.2 adds about 12 KB Brotli to the entry, and search qualifiers, model checks and plan mode add their parts to the App chunk."
+    "max": 3463000,
+    "set": "2026-11-14",
+    "measured": 3148031,
+    "why": "The merge of dev into main (the UI check's shared pieces, Ask on this computer, HTTPS with a NAS, the bucket's snapshots, a slash kept in a file's name): 28,047 bytes raw over main's 3,119,984, which sat 3 KB under the ceiling, spread over the App chunk; Brotli stays under its own (850,568 of 926,000)"
   },
   "startupCssBrotli": {
     "max": 81000,
