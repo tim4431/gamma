@@ -12,9 +12,9 @@ see the refiling like any edit. A deleted folder's AI chats (its bucket and
 its subfolders') are filed into the library chat's history, and its share
 links stop. Workspace editors; never through a share link. Inside a work
 folder the tree is its vault's (``work_folders.filing.tree_op``): a person's
-delete there is refused with the ``locked`` conflict. A workspace owner
-lets go of a work folder whose vault is not on this server (``POST
-/api/folders/{id}/let-go``).
+delete there is refused with the ``locked`` conflict. A work folder leaves
+Gamma by its Detach (``GET`` and ``POST /api/folders/{id}/detach``,
+work_folders/detach.py), on every server, whatever keeps it.
 
 The library listing leaves a work folder's files out unless they are in the
 library; ``GET /api/folders/{id}/pages`` lists one of its directories
@@ -27,15 +27,18 @@ file's ``path``.
 """
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
-from .. import comments
+from .. import comments, workspaces
 from ..auth import actor_of, require_user_id, require_ws, resolve_ws, share_scope, writer_client, ws_role
 from ..blocks_store import FOLDERS, LABELS
 from ..db import SQL_FILE_NAME, connect_pages_db
 from ..ops import OpError, delete_tree
-from ..work_folders import file_search, paths
+from ..vault.remote import Refused
+from ..work_folders import detach, elsewhere, file_search, paths
 from ..work_folders.marks import Tree
 from .blocks import SUMMARY_COLUMNS, changes_seq, op_refusal, page_summary, summaries
 
@@ -82,48 +85,72 @@ def delete_folder(folder_id: str, request: Request):
     return delete_tree_block(ws, FOLDERS, folder_id, actor=actor_of(request), client=writer_client(request))
 
 
-@router.post("/folders/{folder_id}/let-go")
-def let_go_of_work_folder(folder_id: str, request: Request):
-    """A work folder whose vault is not on this server let go by a
-    workspace owner (``takeover.let_go``): a computer gone, its token
-    revoked or expired, or its vault removed while this server did not
-    answer would leave the folder locked for every member. Its files not in
-    the library go to Recently deleted, the others stay as library pages
-    filed where they were, its mark is taken off and its directory folders
-    that hold no page go → ``{ok, kept, trashed}``, the files kept and those
-    sent. The computer that kept it stops at its next round
-    (gamma/folder_links.py ``MARK_GONE``). A session of the workspace's
-    owner (403 otherwise, and for a token or a share link); 404 for a
-    folder that carries no mark; 409 for one a synced vault of this server
-    keeps, which is removed instead, and for any in a workspace something
-    else keeps in step (a clone, a Zotero link: ``elsewhere.kept_elsewhere``),
-    whose marks are copies: a clone's let-go would reach its source as the
-    mirror's writes, which no work-folder rule holds, so the source's owner
-    lets go there."""
-    from .. import folder_links
-    from ..work_folders import elsewhere, takeover
+class Detach(BaseModel):
+    pages: Literal["keep", "remove"]   # the files stay in Gamma as pages, or those not in the library leave it
 
+
+def _detaching(request: Request, folder_id: str) -> tuple[str, str]:
+    """``(account, workspace)`` of a Detach of the work folder ``folder_id``:
+    a member's session (403 for a token, a share link and anyone else);
+    ``detach.allowed`` decides who may. 404 for a folder that is no work
+    folder's root."""
     user_id = require_user_id(request)
-    ws = _writer(request)
-    if ws_role(request) != "owner":
-        raise HTTPException(status_code=403, detail="Only the workspace's owner may let go of a work folder.")
-    with connect_pages_db(ws) as conn:
-        marked = Tree.read(conn).mark(folder_id) is not None
-    if not marked:
-        raise HTTPException(status_code=404, detail="That folder is no work folder.")
+    if request.query_params.get("share"):
+        raise HTTPException(status_code=403, detail="folders cannot be detached through a share link")
+    ws = require_ws(request)
+    if not detach.marked(ws, folder_id):
+        raise HTTPException(status_code=404, detail="That folder is no synced folder.")
+    return user_id, ws
+
+
+@router.get("/folders/{folder_id}/detach")
+def detach_plan(folder_id: str, request: Request):
+    """What detaching the work folder would do, to say before it is asked
+    (``detach.plan``): ``{may, files, in_library, too_large, bytes,
+    computer: {name, online} | null}``, ``{may: false}`` alone
+    for a member who may not detach it. The refusals of ``POST``'s but the
+    gate's."""
+    user_id, ws = _detaching(request, folder_id)
+    return detach.plan(ws, folder_id, user_id, ws_role(request) == "owner")
+
+
+@router.post("/folders/{folder_id}/detach")
+def detach_folder(folder_id: str, payload: Detach, request: Request):
+    """``{pages}``: the work folder detached (``detach.detach``): its sync
+    stops, its directory stays as it is but for Gamma's own marker and
+    ``.gamma/``, and its files stay in Gamma as ordinary pages (``keep``,
+    their bytes stored) or those not in the library go to Recently deleted
+    (``remove``) → ``{ok, kept, trashed, mark_stays?}``. For the maker of the
+    vault of this server that keeps it; where none does, the workspace's
+    owner and an editor whose computer keeps it (403 otherwise, 423 while a
+    delete holds the workspace, ``workspaces.refuse_writes``); 404 for a
+    folder that is no work folder's root; 409 in a workspace something else
+    keeps in step (a clone, a Zotero link: ``elsewhere.kept_elsewhere``),
+    whose marks are copies: a clone's detach would reach its source as the
+    mirror's writes, which no work-folder rule holds, so the source's owner
+    detaches there; 409 too when the vault of this server cannot be removed
+    now (a file that cannot be stored, a file another program holds, the
+    other server of its work folder not answering)."""
+    from .. import folder_links
+
+    user_id, ws = _detaching(request, folder_id)
     if elsewhere.kept_elsewhere(ws):
         raise HTTPException(status_code=409, detail="This workspace is kept in step by something else (a clone of "
-                                                    "another, or a Zotero link): let go of the work folder in the "
+                                                    "another, or a Zotero link): detach the synced folder in the "
                                                     "workspace it comes from, or stop keeping this one in step first.")
-    if any(link["kind"] == "folder" and not link["remote_url"] and link["workspace_id"] == ws
-           and link["folder_id"] == folder_id for link in folder_links.all_links()):
-        raise HTTPException(status_code=409, detail="This work folder is kept by a synced vault on this server: "
-                                                    "remove the vault instead.")
+    if not detach.allowed(ws, folder_id, user_id, ws_role(request) == "owner"):
+        raise HTTPException(status_code=403, detail="Only the account whose computer keeps this synced folder may "
+                                                    "detach it, or the workspace's owner when no vault here keeps "
+                                                    "it.")
+    workspaces.refuse_writes(ws)
     try:
-        done = takeover.let_go(ws, folder_id, user_id)
+        return detach.detach(ws, folder_id, user_id, payload.pages)
+    except folder_links.LinkError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Refused as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except OpError as e:
         return op_refusal(e)
-    return {"ok": True, **done}
 
 
 @router.delete("/labels/{label_id}")

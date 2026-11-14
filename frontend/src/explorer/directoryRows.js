@@ -1,10 +1,9 @@
 // A work folder's directory read from GET /api/folders/{id}/pages, as pure
 // rules: the rows an answer gives, how many a read again asks for and in
-// how many requests, and, for the Files window (explorer/
-// useDirectoryRows.js holds them in React), which of its open directories
-// to read now (docs/dev/work_folders.md "The Files window"). The home list
-// view's one directory (useFolderRows.js) reads by the same rows rules.
-// Pure: tests/directoryRows.test.mjs.
+// how many requests, and which of the open directories of a tree to read
+// now (docs/dev/work_folders.md "The Files window", "The folder view";
+// explorer/useDirectoryRows.js holds them in React, for the Files window
+// and the folder view alike). Pure: tests/directoryRows.test.mjs.
 
 // Rows one read asks for, and the most one request does (the server's
 // MAX_FOLDER_PAGES), which is also as far as the reveal pages: a directory
@@ -14,8 +13,11 @@ export const MAX_ROWS = 500;
 
 // A directory never read: `loaded` false until its first answer, `count`
 // the listing's count of its files the rows were read at, `seq` the change
-// log's seq they were read at (the answer's).
-export const NONE = Object.freeze({ rows: [], total: 0, next: null, loading: false, failed: false, loaded: false, count: -1, seq: -1 });
+// log's seq they were read at (the answer's), `sort` the sort and order
+// they were read in ("name|asc"), `version` the listing they were read
+// with (wantedReads' `version`).
+export const NONE = Object.freeze({ rows: [], total: 0, next: null, loading: false, failed: false, loaded: false, count: -1, seq: -1,
+  sort: "", version: null });
 
 // An answer's rows as the listing's: a file is inside no page.
 export const listed = (pages) => (pages || []).map((r) => ({ ...r, _parentPage: r.parent || "" }));
@@ -36,7 +38,7 @@ export function merged(held, answer, replace) {
   const rows = listed(answer.pages);
   const kept = replace ? rows : joined(base.rows, rows);
   return { rows: kept, total: answer.total ?? kept.length, next: answer.next ?? null, loading: false, failed: false, loaded: true,
-    count: answer.count ?? base.count, seq: replace ? answer.seq ?? base.seq : base.seq };
+    count: answer.count ?? base.count, seq: replace ? answer.seq ?? base.seq : base.seq, sort: base.sort, version: base.version };
 }
 
 // How many rows a read from the top asks for: as many as are held, one
@@ -73,19 +75,23 @@ export function changedSince(entry, id, changes) {
 }
 
 // The directories of `wanted` (the open ones) to read now, from `held`
-// (id → entry): none while `enabled` is false (the window is not shown);
-// one never read; one whose count in `counts` (the listing's files right in
+// (id → entry): none while `enabled` is false (the tree is not shown); one
+// never read; one whose count in `counts` (the listing's files right in
 // each directory, libTree.workCounts) differs from the count it was read
 // at, or that was written since (`changes`, libTree.workChanges:
-// changedSince). A listing read again with nothing changed reads nothing,
-// and one in flight is not asked again.
-export function wantedReads(wanted, held, counts, changes, enabled) {
+// changedSince); one read in another `sort` than the one asked; and, where
+// a `version` is given (the folder view's listing), one read with another.
+// Without one, a listing read again with nothing changed reads nothing; one
+// in flight in the same sort and listing is not asked again (one in another
+// is read again, its answer dropped).
+export function wantedReads(wanted, held, counts, changes, enabled, { sort, version } = {}) {
   if (!enabled) return [];
   return wanted.filter((id) => {
     const entry = held.get(id);
     if (!entry) return true;
-    if (entry.loading) return false;
-    return (counts?.[id] || 0) !== entry.count || changedSince(entry, id, changes);
+    const other = (sort !== undefined && entry.sort !== sort) || (version !== undefined && entry.version !== version);
+    if (entry.loading) return other;
+    return other || (counts?.[id] || 0) !== entry.count || changedSince(entry, id, changes);
   });
 }
 

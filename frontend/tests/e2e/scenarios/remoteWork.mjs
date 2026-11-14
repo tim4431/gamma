@@ -17,9 +17,9 @@ import { Account, Server, makePdf, wanted } from "../harness.mjs";
 // `tracked`) while the vault pushes the files there. On the NAS the folder
 // lists them, an editor's rename, refiling or trash of a tracked file is
 // refused, as is a vault's second mark inside it; then, the computer gone,
-// the workspace's owner lets go of the folder from its menu: the files outside
-// the library go to Recently deleted, the mark comes off, and what stays is
-// the members' again.
+// the workspace's owner detaches the folder from its menu, removing its files
+// from Gamma: those outside the library go to Recently deleted, the mark
+// comes off, and what stays is the members' again.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 // a 1×1 PNG
@@ -185,9 +185,9 @@ export async function remoteWorkScenarios(env) {
       const ctx = await alice.context(browser);
       try {
         const page = await openPage(ctx, `${nas.base}/?ws=${wsId}&folder=${folderId}`);
-        const list = page.locator(".workList");
+        const list = page.locator(".folderTree");
         await list.waitFor({ timeout: 15000 });
-        await until(async () => (await list.locator(".fileRowName, .folderName").allInnerTexts()).map((s) => s.trim()).join("|")
+        await until(async () => (await list.locator(".fileTreeName").allInnerTexts()).map((s) => s.trim()).join("|")
           === "figures|.env|main.tex|notes.md|paper.pdf", { timeout: 15000, what: "the directory, then the files by name" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
@@ -210,30 +210,32 @@ export async function remoteWorkScenarios(env) {
         body: JSON.stringify({ client: "disk", ops: [{ op: "set", id: ids.figures, props: { vault: { pull: true, library: false } } }] }) });
       assertEq(marked.status, 403, "a second mark inside a work folder is refused");
       const said = await marked.text();
-      assert(said.includes("locked") && said.includes("never inside another work folder"), `with why: ${said}`);
+      assert(said.includes("locked") && said.includes("never inside another synced folder"), `with why: ${said}`);
       const figures = (await paperFolder()).children.find((f) => f.id === ids.figures);
       assertEq(figures.properties?.vault ?? null, null, "the folder inside carries no mark");
     });
 
-    await step("remote-work: the computer gone, the workspace's owner lets go of the folder from its menu: the files outside the library go to Recently deleted, and what stays is the members' again", async () => {
+    await step("remote-work: the computer gone, the workspace's owner detaches the folder from its menu, removing its files: those outside the library go to Recently deleted, and what stays is the members' again", async () => {
       await computer.stop();
       computerUp = false;
-      // an editor is offered no Let go, and may not let go
+      // an editor is offered no Detach, and may not detach it
       const bctx = await bob.context(browser);
       try {
         const page = await openPage(bctx, `${nas.base}/?ws=${wsId}`);
         const row = page.locator(".fileList .folderRow", { has: page.locator(`.folderName:text-is("Paper")`) });
         await row.waitFor({ timeout: 15000 });
+        const plan = page.waitForResponse((r) => r.url().endsWith(`/api/folders/${folderId}/detach`));
         await row.click({ button: "right" });
         const menu = page.locator(".ctxMenu");
         await menu.locator(".ctxMenuItem").first().waitFor();
+        assertEq(JSON.stringify(await (await plan).json()), JSON.stringify({ may: false }), "the menu asked, and was told nothing");
         const items = (await menu.locator(".ctxMenuItem").allInnerTexts()).map((s) => s.trim());
-        assert(!items.some((s) => s.startsWith("Let go")), `no Let go for an editor: ${items.join(", ")}`);
+        assert(!items.some((s) => s.startsWith("Detach")), `no Detach for an editor: ${items.join(", ")}`);
         await page.keyboard.press("Escape");
         assertNoProblems(page);
       } finally { await bctx.close(); }
-      const refused = await bobAsks(`/api/folders/${folderId}/let-go`, "POST");
-      assertEq(refused.status, 403, "an editor's let-go is refused");
+      const refused = await bobAsks(`/api/folders/${folderId}/detach`, "POST", { pages: "remove" });
+      assertEq(refused.status, 403, "an editor's detach is refused");
 
       const ctx = await alice.context(browser);
       try {
@@ -241,18 +243,22 @@ export async function remoteWorkScenarios(env) {
         const row = page.locator(".fileList .folderRow", { has: page.locator(`.folderName:text-is("Paper")`) });
         await row.waitFor({ timeout: 15000 });
         await row.click({ button: "right" });
-        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Let go of this work folder…" }).click();
-        const confirm = page.locator(".confirmModal", { hasText: "Let go of this work folder?" });
-        await confirm.waitFor();
-        assert((await confirm.innerText()).includes("The files outside your library go to Recently deleted; your notes and papers stay in the folder."),
-          "the box says what happens to the files");
-        const answered = page.waitForResponse((r) => r.url().endsWith(`/api/folders/${folderId}/let-go`));
-        await confirm.getByRole("button", { name: "Let go", exact: true }).click();
+        // no computer of hers keeps it here: the row names none
+        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Detach…" }).click();
+        const dialog = page.locator(".detachDialog");
+        await dialog.waitFor();
+        await dialog.getByText("5 files sync with it. 2 of them are in your library and stay there either way.").waitFor();
+        const said = await dialog.innerText();
+        assert(said.includes("Detach the synced folder “Paper”?") && said.includes("3 files go to Recently deleted.")
+          && said.includes("The directory on the computer stays as it is"), `the dialog says what each choice does: ${said}`);
+        await dialog.getByLabel(/Remove them from Gamma/).check();
+        const answered = page.waitForResponse((r) => r.url().endsWith(`/api/folders/${folderId}/detach`) && r.request().method() === "POST");
+        await dialog.getByRole("button", { name: "Detach", exact: true }).click();
         const answer = await (await answered).json();
         assertEq(JSON.stringify({ kept: answer.kept, trashed: answer.trashed }), JSON.stringify({ kept: 2, trashed: 3 }),
           "the PDF and the note kept, the other three files sent");
-        await confirm.waitFor({ state: "detached" });
-        await page.getByText("Let go of the work folder: 3 files went to Recently deleted.").first().waitFor({ timeout: 10000 });
+        await dialog.waitFor({ state: "detached" });
+        await page.getByText("Detached “Paper”: 3 files went to Recently deleted.").first().waitFor({ timeout: 10000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
 

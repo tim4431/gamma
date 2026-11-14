@@ -140,6 +140,19 @@ def page_computers(page_id: str, request: Request):
     return {"computers": registry.of_page(user_id, require_ws(request), page_id)}
 
 
+@router.get("/folders/computers")
+def folder_computers(request: Request):
+    """``{folders: {folder id: {name, online, since, paused}}}``: the
+    signed-in account's computers that keep a folder vault of the
+    workspace, one per folder (``registry.of_folders``), which a synced
+    folder's card and rows name. A share's reader 404, a token or a guest
+    403."""
+    if request.query_params.get("share"):
+        raise HTTPException(status_code=404, detail="Not found")
+    user_id = require_personal_user_id(request, "Sign in with your own account to see the computers you keep this on.")
+    return {"folders": registry.of_folders(user_id, require_ws(request))}
+
+
 # --- the Sends a computer runs (step 4c) ----------------------------------------------------------
 
 class SendClaim(BaseModel):

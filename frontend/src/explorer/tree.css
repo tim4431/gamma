@@ -1,0 +1,88 @@
+/* A tree's rows (explorer/TreeRow.jsx): the Files window's and a synced
+   folder's folder view. Each is indented by its depth (--level, set on the
+   row), 28px tall under a pointer and 44px under a finger on a phone, with
+   a guide line down the middle of each folder's chevron above it. The "⋯"
+   shows on hover through .rowMenuHost (shared/styles/app.css). */
+.fileTreeRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px 0 calc(8px + (var(--level, 1) - 1) * 14px);
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.fileTreeRow::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 20px;
+  width: calc((var(--level, 1) - 1) * 14px);
+  background: repeating-linear-gradient(to right, var(--border-subtle) 0 1px, transparent 1px 14px);
+  pointer-events: none;
+}
+.fileTreeRow:hover { background: var(--bg-hover); }
+.fileTreeRow.selected { background: var(--bg-selected); }
+/* rows that fill a list draw the ring inside (ui-design.md "Keyboard focus") */
+.fileTreeRow:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.fileTreeRow.dragOver {
+  background: var(--accent-bg);
+  border-color: var(--accent-fill);
+  border-style: dashed;
+}
+.fileTreeRow > :is(svg, .fileIcon) { flex-shrink: 0; }
+.fileTreeRow > svg:not(.fileGlyph) { color: var(--accent); }
+.fileTreeChevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-muted);
+}
+.fileTreeName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fileTreeCount { color: var(--text-muted); font-size: var(--fs-xs); }
+/* a synced folder's root: the computer that keeps it and its sync */
+.fileTreeKeeper {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.fileTreeMore { color: var(--accent); }
+.fileTreeMore[aria-disabled="true"] { opacity: 0.6; cursor: default; }
+.fileTreeNote { color: var(--text-muted); cursor: default; }
+.fileTreeNote:hover { background: none; }
+.phoneUI .fileTreeRow { min-height: 44px; }
+.phoneUI .fileTreeRow::before { left: 30px; }
+.phoneUI .fileTreeChevron { width: 44px; height: 44px; }
+
+/* The folder view (explorer/FolderTree.jsx), in the listing's place: the
+   rows a little taller, the name larger, and after it the columns the
+   header names (library.css's .fileRowFormat, .fileRowSize, .fileRowDate,
+   .fileRowComments, the pin slot and the "⋯"), which line up under it. */
+.folderTree .fileTreeRow { min-height: 32px; gap: 10px; padding-right: 10px; border-radius: var(--radius-md); }
+.folderTree .fileTreeRow:hover { background: var(--bg-block); }
+.folderTree .fileTreeRow.selected { background: var(--accent-bg-light); border-color: var(--accent-fill); }
+.folderTree .fileTreeName { font-size: var(--fs-md); }
+.folderTree .fileTreeChevron { margin-right: -4px; }
+.folderTreeHead { padding-left: 65px; padding-right: 11px; }
+.folderTree .fileRowRename { padding: 1px 6px; }
+.phoneUI .folderTree .fileTreeRow { min-height: 44px; }
+.phoneUI .folderTreeHead { padding-left: 85px; }

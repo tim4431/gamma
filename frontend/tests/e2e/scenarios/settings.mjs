@@ -754,7 +754,7 @@ export async function settingsScenarios(env) {
       await secret.waitFor({ state: "detached" });
       // A token that answers feedback: it reads the workspaces ticked too, and its row says so
       await page.getByRole("button", { name: "Read and answer feedback", exact: true }).click();
-      await page.getByText(/replies to and resolves comments on your work folders' files/).waitFor();
+      await page.getByText(/replies to and resolves comments on your synced folders' files/).waitFor();
       assert(await tokenSpaces.isVisible(), "a feedback token reads the workspaces ticked");
       await nameField.fill("Feedback script");
       await page.getByRole("button", { name: "Create token", exact: true }).click();

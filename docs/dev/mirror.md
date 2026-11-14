@@ -45,7 +45,8 @@ forgets once the link is made. A synced vault of the desktop app
 a clone or a linked workspace only as one that pulls or pushes PDFs: a
 full clone (`create_mirror` with no `page_filter`) and a Zotero link refuse
 a workspace a vault pushes everything into (`folder_links.pushing_vault`:
-"let it push only PDFs, or only pull, first"), and the vault refuses to push
+"that workspace has a synced folder, kept on this computer or another:
+detach it first"), and the vault refuses to push
 everything into a clone or a linked workspace (`check_vault`). Publishing
 refuses a page a vault keeps. The vault's conflicts share `sync_conflicts`
 as kind `file_won` (`sync_engine.VAULT_KINDS`): the mirror's and Zotero's

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, isOpenedFile,
+  addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, folderKeeper, isOpenedFile,
   keeperAgent, libraryWorkspaces, mentionAgent, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultBanner,
   vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
@@ -296,7 +296,7 @@ test("when a computer went offline: the time today, the day this year, the year 
 test("the computer's chip: its name, connected or offline since, the vault it keeps, and the assistants there", () => {
   const now = new Date(2026, 10, 13, 18, 0);
   const chip = computerChip([pc()], now);
-  assert.equal(chip.label, "Synced vault on TIM-PC");
+  assert.equal(chip.label, "Synced folder on TIM-PC");
   assert.equal(chip.online, true);
   assert.equal(chip.state, "Connected");
   assert.equal(chip.vault, "Folder: cavity");
@@ -308,8 +308,9 @@ test("the computer's chip: its name, connected or offline since, the vault it ke
   assert.match(away.state, /^Offline since 2:02/);
   assert.equal(computerChip([pc({ online: false })], now).state, "Offline", "no time known");
   assert.equal(computerChip([pc({ vault: { kind: "file", name: "main.pdf", paused: true } })], now).vault, "File: main.pdf");
+  assert.equal(computerChip([pc({ vault: { kind: "file", name: "main.pdf" } })], now).label, "Synced vault on TIM-PC", "a vault of one file");
   assert.equal(computerChip([pc({ vault: { kind: "file", name: "main.pdf", paused: true } })], now).paused, "Paused on TIM-PC");
-  assert.equal(computerChip([pc({ online: false }), pc({ id: "c2", name: "LAPTOP" })], now).label, "Synced vault on TIM-PC", "the first: the server sends online ones first");
+  assert.equal(computerChip([pc({ online: false }), pc({ id: "c2", name: "LAPTOP" })], now).label, "Synced folder on TIM-PC", "the first: the server sends online ones first");
   assert.equal(computerChip([], now), null);
   assert.equal(computerChip(null, now), null);
 });
@@ -328,6 +329,23 @@ test("the assistants there: by their code, never the computer's own words; none 
   assert.equal(line([{ ...codexThere, found: false, ready: false, code: "missing" }]), "");
   assert.equal(line([]), "");
   assert.equal(line(undefined), "");
+});
+
+test("a synced folder's root names the computer that keeps it and how its sync stands", () => {
+  const now = new Date(2026, 10, 13, 18, 0);
+  const link = (status = {}, more = {}) => ({ id: "v1", status, choosing: false, ...more });
+  assert.deepEqual(folderKeeper(link({ last_sync: "x" }), null, now), { text: "This computer · Synced", title: "Kept on This computer\nSynced" });
+  assert.equal(folderKeeper(link({ paused_at: "x" }), null, now).text, "This computer · Paused");
+  assert.equal(folderKeeper(link({ stopped: "gone" }), null, now).text, "This computer · Not syncing");
+  assert.equal(folderKeeper(link({ running: true }), null, now).text, "This computer · Syncing…");
+  assert.equal(folderKeeper(link({}, { choosing: true }), null, now).text, "This computer · Choosing files…");
+  const pc = { name: "TIM-PC", online: true, since: null, paused: false };
+  assert.equal(folderKeeper(link(), pc, now).text, "This computer · Synced", "this desktop app's own vault first");
+  assert.equal(folderKeeper(null, pc, now).text, "TIM-PC · Connected");
+  assert.equal(folderKeeper(null, { ...pc, paused: true }, now).text, "TIM-PC · Paused");
+  assert.match(folderKeeper(null, { ...pc, online: false, since: new Date(2026, 10, 13, 14, 2).toISOString() }, now).text, /^TIM-PC · Offline since 2:02/);
+  assert.equal(folderKeeper(null, { ...pc, online: false }, now).text, "TIM-PC · Offline");
+  assert.equal(folderKeeper(null, null, now), null, "nobody this account knows keeps it");
 });
 
 test("the computer's chip names the agent there that runs the work folder's Sends", () => {

@@ -441,7 +441,7 @@ def test_a_page_follows_a_file_on_this_computer(owner, disk, retained, monkeypat
 
     # removing the link never touches the file
     kept = build.read_bytes()
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
     assert build.read_bytes() == kept
     assert folder_links.get_link(link["id"]) is None
 
@@ -503,9 +503,9 @@ def test_files_and_folders_are_counted_apart(owner, disk, monkeypatch):
     assert r.status_code == 400 and "synced vaults of files" in r.json()["detail"]
     folder = _create(owner, folder=make_folder(owner, "DP limits"), path=str(disk / "Limits"))   # a folder still fits
     r = owner.post("/api/folder-links", json={"folder": make_folder(owner, "DP limits"), "path": str(disk / "Limits 2")})
-    assert r.status_code == 400 and "synced vaults of folders" in r.json()["detail"]
+    assert r.status_code == 400 and "synced folders." in r.json()["detail"]
     for l in (first, folder):
-        owner.delete(f"/api/folder-links/{l['id']}", params={"files": "trash"}).raise_for_status()
+        owner.delete(f"/api/folder-links/{l['id']}").raise_for_status()
 
 
 def test_a_push_stops_once_the_account_may_no_longer_edit(owner, disk, retained, monkeypatch):
@@ -611,4 +611,4 @@ def test_a_file_or_a_folder_on_another_server_sends_with_a_token_that_may_write(
     assert _props(owner, paper["id"])["doc"]["hash"] == gamma_sync.doc_of(target)
     r = owner.patch(f"/api/folder-links/{kept['id']}", json={"push": "off"})
     assert r.status_code == 200 and r.json()["push"] == "off"
-    owner.delete(f"/api/folder-links/{kept['id']}", params={"files": "trash"}).raise_for_status()
+    owner.delete(f"/api/folder-links/{kept['id']}").raise_for_status()

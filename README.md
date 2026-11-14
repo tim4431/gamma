@@ -272,6 +272,9 @@ Multi-stage build: a Node stage compiles the frontend, the final Python image ru
 
 Gamma is licensed under the [GNU Affero General Public License v3.0 only](LICENSE)
 (`AGPL-3.0-only`). Third-party components and assets retain their respective licenses.
+The file and folder icons of synced folders are [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme)'s
+(MIT, Copyright (c) 2025 Material Extensions); every build ships its license beside them,
+in `assets/file-icons/<version>/LICENSE`.
 
 ## Friends
 

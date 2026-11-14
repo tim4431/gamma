@@ -129,7 +129,7 @@ export default function McpConsent({ requestId, userCode }) {
     editing ? [PenIcon, t("Create, edit and move notes in the workspaces marked Edit. Never deletes anything, or changes pages, folders or settings.")] : null,
     editing ? [ShieldIcon, asks ? t("Asks you before each change, in the assistant's own window; one that cannot ask changes nothing.")
       : t("Changes notes without asking you first.")] : null,
-    feedback ? [MessageSquareIcon, t("Answer comments on your work folders' files: reply and resolve.")] : null,
+    feedback ? [MessageSquareIcon, t("Answer comments on your synced folders' files: reply and resolve.")] : null,
     editing || feedback ? null : [LockIcon, t("Cannot edit or delete your library.")],
   ].filter(Boolean);
   return <AuthShell headline={details ? t("Connect {name}", { name }) : t("Connect your library")} className="mcpConsent">
@@ -152,7 +152,7 @@ export default function McpConsent({ requestId, userCode }) {
       <Section title={t("Permissions")}>
         {editing ? <Toggle icon={ShieldIcon} label={t("Ask me before each change it makes")} checked={asks} onChange={setAsks}
           disabled={busy} hint={t("Gamma's question shows in the assistant's own window.")} /> : null}
-        <Toggle icon={MessageSquareIcon} label={t("Answer my comments on work-folder files")} checked={feedback}
+        <Toggle icon={MessageSquareIcon} label={t("Answer my comments on synced folders' files")} checked={feedback}
           onChange={setFeedback} disabled={busy} hint={t("Reply to and resolve them")} />
       </Section>
       <Section title={editing ? t("Read and edit notes") : feedback ? t("Read and answer feedback") : t("Read-only access")}>

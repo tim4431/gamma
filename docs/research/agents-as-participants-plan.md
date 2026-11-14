@@ -239,6 +239,37 @@ Independent of the other steps.
   icon asserted. Docs: [dev/work_folders.md](../dev/work_folders.md),
   [dev/home_library.md](../dev/home_library.md).
 
+**As built** (1.1, 1.2, the word). The icons are C5's: `material-icon-theme`
+5.40.0 pinned as a dev dependency, `frontend/tools/fileIcons.mjs` emitting
+every SVG into `dist/assets/file-icons/<version>/` with the theme's
+`LICENSE`, the lowercased map as `virtual:file-icons` (a 27 KB Brotli lazy
+chunk; `tools/bundleBudget.mjs` names a virtual module's chunk as Rollup
+does), and `iconFor(map, path, {dir, open, root, light})` taking the path
+from the synced folder's name down, so `parent/name` keys and the
+language patterns work; twelve built-in languages, VS Code's thirteenth
+(`*.log.?`) never matching. `FileIcon` draws `FileGlyph`'s classes, so every
+place that sizes a kind glyph sizes it, and is drawn also in the `@` and
+`[[` pickers and Linked from. The folder view is `FolderTree.jsx` over
+`useFolderTree.js` (`useFolderRows.js`, `FolderList.jsx` and `listDirs`
+gone); both trees share `TreeRow.jsx`, `useTree.js` (the keys and the
+focus, out of `FileTree.jsx`) and `tree.css`, and `fileTree.js` builds
+both trees' rows (`folderRows`, `openDirs`). `useDirectoryRows.js` takes a
+sort and a `version`: the folder view reads in its own sort and again with
+each listing, as the list did, the Files window by name and only on a
+change. A directory press opens it in place; the folder view keeps no
+`ListMotion`, as the window has none. The root's computer is a new read,
+`GET /api/folders/computers` (`registry.of_folders`, the account's own
+computers only), with this desktop app's own link first; neither the mark
+nor the page's computers name a folder's keeper. The word: every
+user-facing "work folder", and "synced vault" where it names a folder's,
+is "synced folder" (同步文件夹) in the frontend, the zh catalog, the
+server's refusals a person reads (`filing.WORDS`, `folder_links`,
+`linked_files`), the desktop panel, launcher and notices, and the user
+guide, whose sections are now "Synced folders and files" and "Working in a
+synced folder"; a vault of one file keeps "synced vault". The chat's and
+the local agents' strings (`chat/`, `local_agents/`, the agents' routes)
+keep "work folder" for step 2, which rewrites them.
+
 ### 1.3 Detach
 
 - **Backend.** `folder_links.delete_link` (`folder_links.py:1906`) gains
@@ -277,6 +308,32 @@ Independent of the other steps.
   [dev/work_folders.md](../dev/work_folders.md) "Removing a work folder",
   [dev/synced_vaults.md](../dev/synced_vaults.md),
   `desktop/docs/architecture.md`, the user guide.
+
+**As built** (1.3). One path in every window instead of three: a page asks
+its own server, `GET` and `POST /api/folders/{id}/detach`
+(`gamma/work_folders/detach.py`), which removes this server's vault
+(`delete_link` with `pages`) or lets the folder go in place
+(`takeover.let_go` with the choice) and wakes the computers that announced
+a vault of it (`let_go`, `registry.keepers`); there is no `detach-folder`
+ask in the shell. The computer's channel runs a round of its work folders
+of that server, which records `LET_GO_THERE`, and the shell's next reading
+(at most 15 s) forgets the vault through the same `DELETE` as *Remove the
+vault…* (`forgetDetached`), so the token minted for it is revoked and the
+computer hidden there with the last vault, which the host alone could not
+do. `POST …/let-go`, `files=trash` and its helpers, Let go's client
+(`mayLetGo`, `letGoSaid`, `keptFolders`, `useVault`'s `kept`) are gone.
+`removal()` now answers `files` as every file (not those leaving), with
+`too_large`, and `bytes` as what keep stores; *remove* stores the PDFs read
+in place as before, *keep* every format. Every removal also takes `.gamma/`
+away once it is left empty. Who may: the link's maker alone where a vault
+of this server keeps the folder (its directory is on that account's
+computer); elsewhere the owner, or the account of a computer that
+announced any folder vault of the root while it may edit the workspace
+(the announce does not say which vault is the work folder's, and a
+viewer's computer token announces what it likes); the computer is named
+to that account alone, so the owner's row reads *Detach…*. The row
+shows once the plan read as the menu opens answers; the panel's button
+reads *Detach…* for a work folder.
 
 Done when: a synced folder is told from a Gamma folder in the listing
 and the Files window, a `.tex`, a `.py` and a `figures/` directory each

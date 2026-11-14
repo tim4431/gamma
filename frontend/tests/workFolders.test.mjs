@@ -84,7 +84,7 @@ test("the twin leaves its input alone, and takes the listing's tree as it takes 
 test("every refusal has the server's words", () => {
   const kinds = new Set(["patch", "create", "trash", "restore", "tree"].flatMap((g) => FILING[g]).filter((c) => !c.allowed).map((c) => c.kind));
   assert.deepEqual([...kinds].sort(), Object.keys(WORDS).sort());
-  assert.equal(refusalText("directories"), "A work folder's directories follow the disk.");
+  assert.equal(refusalText("directories"), "A synced folder's directories follow the disk.");
   assert.equal(refusalText("nonsense"), "");
 });
 

@@ -448,7 +448,7 @@ def test_a_work_folder_with_a_deselected_pdf_is_removed_its_bytes_stored(work):
     assert v.state(page) == "trashed"
     assert [rel for _page, rel, _doc in folder_links._in_place(v.link)] == ["Paper.pdf"]
     assert folder_links.removal(v.link)["bytes"] == (v.root / "Paper.pdf").stat().st_size
-    folder_links._store_in_place(v.link, v.root)
+    folder_links._store_in_place(v.link, v.root, every=False)
     assert storage.exists(v.ws, stored_name(v.props(page)["doc"]["hash"], ".pdf"))
 
 

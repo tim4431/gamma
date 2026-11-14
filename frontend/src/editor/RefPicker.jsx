@@ -8,7 +8,7 @@
 import React, { useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { MarkedText } from "../search/SearchPanel";
-import { FileGlyph } from "../shared/ui/Icons";
+import FileIcon from "../shared/ui/FileIcon.jsx";
 import { t } from "../shared/i18n/i18n.js";
 
 export function RefPickerPopup({ rows, selected, anchor, query, partial = false, onPick }) {
@@ -27,7 +27,7 @@ export function RefPickerPopup({ rows, selected, anchor, query, partial = false,
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onPick(r)}
           >
-            <span className="refPopupIcon">{r.kind === "page" ? <FileGlyph format={r.format} size={16} /> : <span className="refPopupDot" />}</span>
+            <span className="refPopupIcon">{r.kind === "page" ? <FileIcon path={r.file} format={r.format} size={16} /> : <span className="refPopupDot" />}</span>
             <span className="refPopupBody">
               <span className="refPopupText"><MarkedText text={r.title} query={query} lead={r.kind === "block" ? 48 : 0} /></span>
               {r.meta ? <span className="refPopupMeta">{r.meta}</span> : null}

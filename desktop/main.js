@@ -1700,7 +1700,7 @@ async function remotePages(api, origin, headers, folderId) {
 // that server keeps work folders (`work_folders`) and the account's role
 // there, which writes as an owner's or an editor's.
 async function remoteWorkRefusal(api, origin, wsId, remoteName) {
-  const older = `${remoteName} is older than this app and keeps no work folders`;
+  const older = `${remoteName} is older than this app and keeps no synced folders`;
   let who;
   try {
     who = await api(origin, '/api/sync/whoami', { headers: { 'X-Gamma-Workspace': wsId } });
@@ -1727,7 +1727,7 @@ async function makeWorkFolder({ srv, origin, api, ws, headers, name, picked, pre
     showNotice(preview.refusal);
     return null;
   }
-  busy = `Adding the work folder ${name}…`;
+  busy = `Adding the synced folder ${name}…`;
   pushState();
   let link;
   try {
@@ -1746,7 +1746,7 @@ async function makeWorkFolder({ srv, origin, api, ws, headers, name, picked, pre
   }
   await openGammaWorkspace(ws.id, { folder: link.folder_id, track: link.id, tick });
   refreshKeeping().catch(() => {});
-  offerBackground(`The work folder “${name}”`).catch(() => {});
+  offerBackground(`The synced folder “${name}”`).catch(() => {});
   return link;
 }
 
@@ -1788,7 +1788,7 @@ async function makeRemoteWorkFolder({ host, api, origin, shown, wsId, folderId, 
     return null;
   }
   const wsHeaders = { 'X-Gamma-Workspace': wsId };
-  busy = `Adding the work folder ${name}…`;
+  busy = `Adding the synced folder ${name}…`;
   pushState();
   let token = null;
   let link;
@@ -1826,7 +1826,7 @@ async function makeRemoteWorkFolder({ host, api, origin, shown, wsId, folderId, 
   await openGammaWorkspace(hostWs, { track: link.id });
   if (unshown) showNotice(unshown);
   refreshKeeping().catch(() => {});
-  offerBackground(`The work folder “${name}”`).catch(() => {});
+  offerBackground(`The synced folder “${name}”`).catch(() => {});
   return link;
 }
 
@@ -1962,7 +1962,7 @@ async function addFolderVault(wsId, folderId) {
       });
     }
     showNotice(`${name} is synced with ${link.dest}${unshown ? `. ${unshown}` : ''}`);
-    offerBackground(`The synced vault “${name}”`).catch(() => {});
+    offerBackground(`The synced folder “${name}”`).catch(() => {});
     refreshKeeping().catch(() => {});
     return link;
   } catch (e) {
@@ -2015,7 +2015,7 @@ async function vaultPlace(wsId) {
 // the folder…", the Mac App Store build's *Open with Gamma*), asks for none;
 // `wsId`, the workspace it was asked in there.
 async function addDirectoryVault(dir, wsId) {
-  const picked = dir || await pickDirectory('Add a synced vault',
+  const picked = dir || await pickDirectory('Add a synced folder',
     'Choose a directory: it becomes a folder of Gamma named after it, and you choose the files it tracks.');
   if (!picked) return null;
   const made = await workFolderOf(picked, wsId);
@@ -2072,8 +2072,8 @@ async function broadOk(dir, work = true) {
   const label = openFiles.broadPlace(dir, knownPlaces());
   if (!label) return true;
   const r = await ask(work ? {
-    type: 'question', buttons: ['Make it a work folder', 'Cancel'], defaultId: 1, cancelId: 1,
-    message: `Make all of ${label} a work folder?`,
+    type: 'question', buttons: ['Make it a synced folder', 'Cancel'], defaultId: 1, cancelId: 1,
+    message: `Make all of ${label} a synced folder?`,
     detail: `${dir} is your ${label} folder. Gamma would write a hidden .gamma folder there, read the folder while it runs, and ask which of its files to track. For one project, open that project's folder instead.`,
   } : {
     type: 'question', buttons: ['Use it', 'Cancel'], defaultId: 1, cancelId: 1,
@@ -2192,7 +2192,7 @@ async function oneByOne(api, origin, wsId, file) {
   const r = await ask({
     type: 'question', buttons: ['Sync the folder…', 'Push this file only', 'Cancel'], defaultId: 0, cancelId: 2,
     message: `${beside.length + 1} files in ${dir} are synced one by one. Sync the folder instead?`,
-    detail: 'A synced vault of the folder takes these files’ pages in, with their notes and highlights, and keeps every PDF and note in it in step, the ones added later too.',
+    detail: 'A synced folder takes these files’ pages in, with their notes and highlights, and keeps every PDF and note in it in step, the ones added later too.',
   }, 1);
   return ['folder', 'file', null][r] ?? null;
 }
@@ -2312,7 +2312,7 @@ async function setLibrary(serverId, linkId, on) {
     method: 'PATCH', headers: { ...headers, ...JSON_TYPE }, body: JSON.stringify({ library: on }),
   });
   showNotice(on ? `The PDFs and notes ${item.name} finds from now on are added to the library too.`
-    : `The PDFs and notes ${item.name} finds from now on stay in the work folder only.`);
+    : `The PDFs and notes ${item.name} finds from now on stay in the synced folder only.`);
   refreshKeeping().catch(() => {});
   return true;
 }
@@ -2518,7 +2518,7 @@ async function locateVault(serverId, linkId) {
   const { srv, origin, api, link, item, headers } = await vaultOn(serverId, linkId);
   const picked = item.scope === 'file'
     ? await pickPdf(`Where is ${path.basename(item.dest)} now?`, `Choose the PDF “${item.name}” is pushed from.`)
-    : await pickDirectory(`Where is “${item.name}” now?`, `Choose the directory of the synced vault “${item.name}”, wherever it is now.`);
+    : await pickDirectory(`Where is “${item.name}” now?`, `Choose the directory of the synced folder “${item.name}”, wherever it is now.`);
   if (!picked || (item.scope !== 'file' && !(await broadOk(picked, false)))) return null;
   let at = { origin, api };
   if (await reachFolder(srv, picked)) at = await localServer(serverId);
@@ -2663,19 +2663,22 @@ async function hideComputerOf(serverId, linkId) {
   return !!had;
 }
 
-// Remove the vault…: its pages stay (the PDFs it read where they are stored
-// in Gamma first), and the token the shell minted on a remote for it is
-// revoked there. Asked first with GET .../removal's counts, unless `files`
-// says: `keep`, the directory's files stay as they are; `trash`, the files
-// the sync wrote move to the vault's trash (.gamma/trash). A file's vault
-// never touches its file. A work folder of another server is let go of
-// there; while that server cannot be reached the host refuses (409), and
+// Remove the vault…, a work folder's Detach…: its directory stays as it is
+// but for Gamma's own .gamma folder, and the token the shell minted on a
+// remote for it is revoked there. Asked first with GET .../removal's counts
+// (keeping.removalAsk, the web app's Detach dialog in its words), unless
+// `pages` says: a work folder's files `keep` in Gamma as pages, every one's
+// bytes stored first, or those not in the library `remove` to Recently
+// deleted; any other vault's pages stay as they are (the PDFs it read where
+// they are stored in Gamma first). A file's vault never touches its file. A
+// work folder of another server is let go of there, as its Detach there
+// does; while that server cannot be reached the host refuses (409), and
 // asked (keeping.farRemovalAsk; Cancel under the harness unless a test
 // queued the answer) the vault is forgotten here all the same (`force=1`),
-// the folder staying a work folder there until its owner lets go of it.
-// GET .../removal saying that server could not be counted (`unreachable`)
-// asks that at once, never the usual question with counts it could not read.
-async function removeVault(serverId, linkId, files) {
+// the folder staying a synced folder there until it is detached there. GET
+// .../removal saying that server could not be counted (`unreachable`) asks
+// that at once, never the usual question with counts it could not read.
+async function removeVault(serverId, linkId, pages) {
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
   const far = Boolean(link.remote_url && item.work);
   const unreachable = (e) => far && [409, 502, 503, 504].includes(e && e.status);
@@ -2684,7 +2687,7 @@ async function removeVault(serverId, linkId, files) {
     return await ask({ type: 'warning', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 1, cancelId: 1 }, 1) === 0;
   };
   let force = false;
-  if (!files) {
+  if (!pages) {
     let removal = null;
     try {
       removal = await api(origin, `/api/folder-links/${link.id}/removal`, { headers });
@@ -2695,18 +2698,18 @@ async function removeVault(serverId, linkId, files) {
     if (far && removal.unreachable) {
       if (!await forced(removal.reason)) return false;
       force = true;
-      files = 'keep';
+      pages = 'keep';
     } else {
-      const q = keeping.removalAsk(item, removal);
+      const q = keeping.removalAsk(item, removal, COMPUTER_NAME);
       const r = await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: q.buttons.length - 1 }, 0);
-      files = q.choices[r];
-      if (!files) return false;
+      pages = q.choices[r];
+      if (!pages) return false;
     }
   }
-  busy = `Removing the synced vault ${item.name}…`;
+  busy = item.work ? `Detaching ${item.name}…` : `Removing the synced folder ${item.name}…`;
   pushState();
   try {
-    const remove = () => api(origin, `/api/folder-links/${link.id}?files=${files === 'trash' ? 'trash' : 'keep'}${force ? '&force=1' : ''}`,
+    const remove = () => api(origin, `/api/folder-links/${link.id}?pages=${pages === 'remove' ? 'remove' : 'keep'}${force ? '&force=1' : ''}`,
       { method: 'DELETE', headers });
     try {
       await remove();
@@ -2718,15 +2721,41 @@ async function removeVault(serverId, linkId, files) {
     }
     const stranded = link.remote_url ? await releaseRemote(origin, api, serverId, link, item.remote) : '';
     showNotice((item.scope === 'file' ? `${item.name} is no longer pushed from ${path.basename(item.dest)}; the file stays as it is.`
-      : force ? `${item.name} is no longer synced with this computer; on ${item.remote} its folder stays a work folder until the workspace's owner lets go of it there.`
+      : force ? `${item.name} is no longer synced with this computer; on ${item.remote} its folder stays a synced folder until it is detached there.`
       : item.offline || item.stopped ? `${item.name} is no longer synced; nothing in ${item.dest} was touched.`
-      : files === 'trash' ? `${item.name} is no longer synced; the files the sync wrote are in its trash, .gamma/trash.`
+      : item.work && pages === 'remove' ? `Detached ${item.name}: its files not in the library went to Recently deleted; ${item.dest} stays as it is.`
+      : item.work ? `Detached ${item.name}: its files stay in Gamma as pages; ${item.dest} stays as it is.`
       : `${item.dest} is no longer synced; its files stay.`) + (stranded ? ` ${stranded}` : ''));
     return true;
   } finally {
     busy = null;
     pushState();
     refreshKeeping().catch(() => {});
+  }
+}
+
+// A work folder of another server detached there (its Detach, which woke
+// this computer's channel: docs/dev/computers.md): its vault here is
+// forgotten as Remove the vault… forgets one that server let go of, its
+// directory as it is but for Gamma's own .gamma folder, the token minted for
+// it revoked there, the last vault of that server taking this computer off
+// it, and the bar says so. Once per vault while it is being forgotten
+// (`forgetting`); one that fails is tried again at the next reading.
+const forgetting = new Set(); // vault ids
+async function forgetDetached(item) {
+  if (forgetting.has(item.id)) return;
+  forgetting.add(item.id);
+  try {
+    const { origin, api, link, headers } = await vaultOn(item.server, item.id);
+    await api(origin, `/api/folder-links/${link.id}?pages=keep`, { method: 'DELETE', headers });
+    const stranded = await releaseRemote(origin, api, item.server, link, item.remote);
+    showNotice(`${item.name} was detached on ${item.remote}: this computer no longer syncs it; ${item.dest} stays as it is.`
+      + (stranded ? ` ${stranded}` : ''));
+    refreshKeeping().catch(() => {});
+  } catch {
+    // the host not answering now: the next reading tries again
+  } finally {
+    forgetting.delete(item.id);
   }
 }
 
@@ -2883,6 +2912,7 @@ function refreshKeeping() {
     const net = netState();
     const host = servers.find((s) => s.type === 'local');
     let asksHere = null; // whether the host keeps a work folder whose agent may ask on this computer; null: not read
+    const detached = []; // the vaults of work folders their other server detached, forgotten here once read
     for (const srv of servers) {
       if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
       try {
@@ -2910,6 +2940,7 @@ function refreshKeeping() {
         // did not come leaves that as it was.
         if (z) zoteroHosts.set(srv.id, kept.some((i) => i.kind === 'zotero' && !i.paused));
         if (host && srv.id === host.id) asksHere = kept.some((i) => i.kind === 'vault' && i.agentRuns === 'computer');
+        detached.push(...kept.filter((i) => i.kind === 'vault' && i.letGo && i.mine));
         items.push(...kept);
       } catch {
         // a server that does not answer now is left out of this reading
@@ -2925,6 +2956,7 @@ function refreshKeeping() {
     else if (asksHere === false) stopAsks();
     keepingState = { items, summary: keeping.summarize(items) };
     pushState();
+    for (const item of detached) forgetDetached(item);
   })().finally(() => {
     keepingRead = null;
     scheduleKeeping(keepingState.summary.state === 'busy' ? KEEPING_BUSY_MS : KEEPING_MS);
@@ -3590,7 +3622,7 @@ async function newWorkFolder(dir, tick = '', unchecked = []) {
   const made = await workFolderOf(dir, '', tick);
   if (!made) return null;
   waiting.push({ srv: made.srv.id, ws: made.ws.id, linkId: made.link.id, name: made.name });
-  showNotice(`“${made.name}” is a work folder of ${made.ws.name} on ${made.srv.name} now: choose the files it tracks.${uncheckedSaid(unchecked)}`);
+  showNotice(`“${made.name}” is a synced folder of ${made.ws.name} on ${made.srv.name} now: choose the files it tracks.${uncheckedSaid(unchecked)}`);
   return made.link;
 }
 
@@ -3617,13 +3649,13 @@ async function openFolderWithGamma(dir) {
   }
   const vaults = r.is === 'around' ? r.vaults || [] : [];
   if (vaults.length > 1) {
-    showNotice(`${dir} holds ${vaults.length} synced vaults (${vaults.map((v) => `“${v.name}”`).join(', ')}): open one of their folders with Gamma, or pick it in the sync panel.`);
+    showNotice(`${dir} holds ${vaults.length} synced folders (${vaults.map((v) => `“${v.name}”`).join(', ')}): open one of their folders with Gamma, or pick it in the sync panel.`);
     return {};
   }
   if (vaults.length === 1) {
     const [v] = vaults;
     const opened = await openVaultFolder(r, { ...v, kind: 'folder' }, dir, { folder: v.folder });
-    showNotice(`${dir} holds the ${v.work ? 'work folder' : 'synced vault'} “${v.name}”, which opened: a work folder is never inside or around another.`);
+    showNotice(`${dir} holds the synced folder “${v.name}”, which opened: a synced folder is never inside or around another.`);
     return opened.at;
   }
   if (r.refusal) throw new Error(r.refusal);
@@ -3649,7 +3681,7 @@ async function openVaultFolder(r, link, dir, { folder, rel = '', exact = true, n
   const name = path.basename(dir) || dir;
   const W = link.name;
   if (link.work && link.choosing) {
-    if (!link.mine) throw new Error(`Only the account that made the work folder “${W}” chooses what it tracks.`);
+    if (!link.mine) throw new Error(`Only the account that made the synced folder “${W}” chooses what it tracks.`);
     landOn(r, name);
     await chooseFiles(r.srv.id, link.id);
     return { at: { workspace: link.workspace, folder: link.folder, track: link.id }, said: `“${W}” waits for its files to be chosen.` };
@@ -3732,14 +3764,14 @@ async function openVaultFile(r, file) {
     return { workspace: link.workspace, page: r.page };
   }
   if (link.work && (link.choosing || !r.tracked)) {
-    if (!link.mine) throw new Error(`Only the account that made the work folder “${W}” chooses what it tracks: ask it to track ${name}.`);
+    if (!link.mine) throw new Error(`Only the account that made the synced folder “${W}” chooses what it tracks: ask it to track ${name}.`);
     landOn(r, name);
     await chooseFiles(r.srv.id, link.id, r.rel);
     showNotice(`${name} is not tracked by “${W}” yet: tick it and save to open it.`);
     return { workspace: link.workspace, folder: link.folder, track: link.id, tick: r.rel };
   }
   if (!link.work) return readFile(file);
-  if (link.remote_url) throw new Error(`${name} has not reached ${hostName(link.remote_url)} yet: it opens there after the work folder's next round.`);
+  if (link.remote_url) throw new Error(`${name} has not reached ${hostName(link.remote_url)} yet: it opens there after the synced folder's next round.`);
   if (link.paused) throw new Error(`“${W}” is paused: resume it in the sync panel, then open ${name} again.`);
   landOn(r, name);
   busy = `Opening ${name}…`;
@@ -3792,7 +3824,7 @@ async function editOrView(file, r) {
       dir = d;
       break;
     }
-    reason = a.is === 'none' ? a.refusal : `${d} holds a synced vault, so it cannot be a work folder.`;
+    reason = a.is === 'none' ? a.refusal : `${d} holds a synced folder, so it cannot be one itself.`;
   }
   if (!dir) return readFile(file, { more: ` ${reason}${uncheckedSaid(unchecked)}` });
   const w = await stillChoosing();
@@ -3804,7 +3836,7 @@ async function editOrView(file, r) {
   const choice = await ask({
     type: 'question', buttons: ['Edit in Gamma', 'Just view it'], defaultId: EDIT, cancelId: VIEW,
     message: `Edit ${name} in Gamma?`,
-    detail: `${name} is in no work folder. Edit in Gamma makes ${dir} a work folder: Gamma writes a hidden .gamma folder there, asks which of its files to track, and saves your edits back to ${name}. Just view it opens the file read-only.${repo ? ` ${dir} is the repository ${name} is in.` : ''}`,
+    detail: `${name} is in no synced folder. Edit in Gamma makes ${dir} a synced folder: Gamma writes a hidden .gamma folder there, asks which of its files to track, and saves your edits back to ${name}. Just view it opens the file read-only.${repo ? ` ${dir} is the repository ${name} is in.` : ''}`,
   }, VIEW);
   if (choice !== EDIT) return readFile(file, { more: uncheckedSaid(unchecked), hint: true });
   const tick = path.relative(dir, file).split(path.sep).join('/');
@@ -4831,7 +4863,7 @@ function registerIpc() {
   ipcMain.handle('shell:folders', shellOnly((wsId) => listFolders(wsId)));
   ipcMain.handle('shell:add-folder-vault', shellOnly((wsId, folderId) =>
     withDialog('Could not sync the folder with this computer.', oneAsk(() => addFolderVault(wsId, folderId)))()));
-  ipcMain.handle('shell:add-vault', shellOnly(() => withDialog('Could not add the synced vault.', oneAsk(() => addDirectoryVault()))()));
+  ipcMain.handle('shell:add-vault', shellOnly(() => withDialog('Could not add the synced folder.', oneAsk(() => addDirectoryVault()))()));
   ipcMain.handle('shell:answer-vault', shellOnly((id, answer) => answerVault(id, answer)));
   ipcMain.handle('shell:keeping', shellOnly(() => { refreshKeeping().catch(() => {}); return keepingState; }));
   // Of a vault's actions, those that change it or run a round leave the sync
@@ -4876,7 +4908,7 @@ function registerIpc() {
     'shell:relocate-from-page': ['Could not locate the file.', relocateFile],
     'shell:carry-from-page': ['Could not add the page to the other server\'s library.', carryToServer],
     'shell:terminal-from-page': ['Could not open a terminal.', terminalFromPage],
-    'shell:tracked-from-page': ['Could not go back to the work folder.', trackedFromPage],
+    'shell:tracked-from-page': ['Could not go back to the synced folder.', trackedFromPage],
   };
   for (const [channel, [message, run]] of Object.entries(PAGE_ASKS)) {
     ipcMain.on(channel, (event, wsId, id, flag) => {

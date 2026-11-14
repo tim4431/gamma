@@ -107,11 +107,11 @@ export async function computerScenarios(env) {
         const button = chip(page);
         await button.waitFor({ timeout: 10000 });
         assertEq(await button.getAttribute("data-computer"), "online", "the chip's dot says online");
-        assertEq(await button.getAttribute("aria-label"), `Synced vault on ${name}: Connected`, "the chip's name");
+        assertEq(await button.getAttribute("aria-label"), `Synced folder on ${name}: Connected`, "the chip's name");
         await button.click();
         const card = page.locator(".vaultPopover");
         await card.waitFor();
-        assertEq((await card.locator(".popoverTitle").innerText()).trim(), `Synced vault on ${name}`, "the card's title");
+        assertEq((await card.locator(".popoverTitle").innerText()).trim(), `Synced folder on ${name}`, "the card's title");
         assertEq((await card.locator(".vaultComputerState").innerText()).trim(), "Connected", "its state");
         assertEq(await card.locator(".vaultComputerState").getAttribute("data-computer"), "online");
         const lines = (await card.locator(".popoverHint").allInnerTexts()).map((s) => s.trim());
@@ -163,7 +163,7 @@ export async function computerScenarios(env) {
         await until(async () => (await button.getAttribute("data-computer").catch(() => "")) === "offline",
           { timeout: 25000 + GRACE_S * 1000 + 15000, every: 250, what: "the chip turns offline" });
         const label = await button.getAttribute("aria-label");
-        assert(new RegExp(`^Synced vault on ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: Offline since \\S`).test(label),
+        assert(new RegExp(`^Synced folder on ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: Offline since \\S`).test(label),
           `the chip reads offline since a time: ${label}`);
         await button.click();
         const card = page.locator(".vaultPopover");

@@ -185,7 +185,8 @@ function assistantText(assistant) {
 // The chip of a page another computer keeps (readComputers' first), drawn
 // where vaultChip has nothing to say (any server but this computer's own):
 // {online, label, title, state, vault, paused, assistants}. `label` names
-// the computer ("Synced vault on TIM-PC"); `state` is "Connected" or when it
+// the computer ("Synced folder on TIM-PC", a vault of one file's "Synced
+// vault on TIM-PC"); `state` is "Connected" or when it
 // went offline; `vault` the folder or file it keeps, as the page's server
 // names it; `paused` whether its vault is paused there ("" if not);
 // `assistants` the assistants found there, a not-ready one saying why (""
@@ -209,9 +210,35 @@ export function computerChip(computers, now = new Date()) {
   const answers = vaultAgent(computer);
   const agent = answers ? t("Agent: {agent} on {computer}", { agent: answers.label, computer: name }) : "";
   return {
-    online, label: t("Synced vault on {computer}", { computer: name }), state, vault: kept, paused, assistants, agent,
+    online, label: vault.kind === "file" ? t("Synced vault on {computer}", { computer: name }) : t("Synced folder on {computer}", { computer: name }),
+    state, vault: kept, paused, assistants, agent,
     title: [state, kept, paused, assistants, agent].filter(Boolean).join("\n"),
   };
+}
+
+// What a synced folder's card, row and Files window row say of the computer
+// that keeps it: {text, title}, "TIM-PC · Connected". `link` this desktop
+// app's own vault of the folder (useVault's links, GET /api/folder-links:
+// its `status` and `choosing`), which names this computer and how its last
+// round stands; else `computer`, the account's computer that keeps it as
+// the folder's server knows it (GET /api/folders/computers: {name, online,
+// since, paused}), named with whether it is connected, paused there, or
+// since when it is offline. Null for neither (a member who is not the
+// keeper's account).
+export function folderKeeper(link, computer, now = new Date()) {
+  if (!link && !computer?.name) return null;
+  let name, state;
+  if (link) {
+    const status = link.status || {};
+    name = t("This computer");
+    state = link.choosing ? t("Choosing files…") : status.paused_at ? t("Paused")
+      : status.stopped || status.offline || status.last_error ? t("Not syncing") : status.running ? t("Syncing…") : t("Synced");
+  } else {
+    const when = computer.online ? "" : sinceText(computer.since, now);
+    name = computer.name;
+    state = computer.online ? (computer.paused ? t("Paused") : t("Connected")) : when ? t("Offline since {when}", { when }) : t("Offline");
+  }
+  return { text: t("{computer} · {state}", { computer: name, state }), title: [t("Kept on {computer}", { computer: name }), state].join("\n") };
 }
 
 // A computer's agent on the work folder it keeps of the page's server
