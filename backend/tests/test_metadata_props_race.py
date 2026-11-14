@@ -147,15 +147,19 @@ def test_uploaded_filename_is_auto_replaced_by_metadata(guest, monkeypatch):
     assert "auto_title" not in saved["properties"]
 
 
-def test_uploaded_pdf_title_uses_filename_leaf_only(guest):
+def test_uploaded_pdf_title_keeps_the_whole_filename(guest):
+    # A "/" or "\\" in an uploaded name is part of the name, never a
+    # directory (storage.display_filename): the title, the document's name
+    # and the automatic-title marker keep it whole.
+    name = "papers\\readout\\original-paper.pdf"
     created = guest.post("/api/blocks/by-doc/filetitlepath", json={
         "default_title": "papers/readout/original-paper.pdf",
-        "original_filename": "papers\\readout\\original-paper.pdf",
+        "original_filename": name,
         "source_url": "/api/uploads/filetitlepath.pdf",
     }).json()
-    assert created["content"] == "original-paper.pdf"
-    assert created["properties"]["doc"]["name"] == "original-paper.pdf"
-    assert created["properties"]["auto_title"] == "original-paper.pdf"
+    assert created["content"] == name
+    assert created["properties"]["doc"]["name"] == name
+    assert created["properties"]["auto_title"] == name
 
 
 def test_rename_during_metadata_fetch_wins(guest, monkeypatch):
