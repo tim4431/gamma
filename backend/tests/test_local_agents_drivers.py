@@ -2,16 +2,27 @@
 against the stand-ins in tests/fake_agents/, through the real procs.spawn:
 what each sends, the events it makes of what comes back, the answer, and
 every way a turn ends (its end, a stop, a crash, a stream that is not
-JSON, silence) with exactly one done and no process left."""
+JSON, silence) with exactly one done and no process left; Gamma's tools
+(step 2.7 of docs/research/agents-as-participants-plan.md): the config and
+the flags each driver adds, the token in the agent's environment alone, a
+server that did not start or connect failing the turn, a call a ``gamma``
+step, a new Codex thread named, and the turn's token on a real ``/mcp``
+(``serve_mcp``): read with while it lives, refused once deleted, refused
+by every route of the HTTP API, never listed, reading its one
+workspace."""
 
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
-from fake_agents import ARGV, alive, gone, read_log, requests_in, script_agent
-from gamma.local_agents import claude, codex, events, procs
+from conftest import account_of, login, make_page, make_user
+from fake_agents import ARGV, alive, gone, read_log, requests_in, script_agent, serve_mcp
+from gamma import auth, integrations, mcp_server, workspaces
+from gamma.local_agents import claude, codex, events, procs, tools
+from test_mcp import call, rpc
 
 PROMPT = 'The comments:\n```json\n{\n "thread_id": "t1"\n}\n```\n```json\n{\n "thread_id": "t2"\n}\n```\n'
 SCHEMA = {"type": "object", "properties": {"answers": {"type": "array"}, "summary": {"type": "string"}},
@@ -156,6 +167,25 @@ def test_codex_resumes_its_thread_and_checks_the_sandbox_on_windows(monkeypatch,
     assert resume["sandbox"] == "workspace-write" and resume["config"]["web_search"] == "disabled"
     start = sent[5]["params"]
     assert len(start["input"]) == 1 + codex.MAX_IMAGES and "outputSchema" not in start
+
+
+def test_codex_names_a_new_thread_with_its_title(monkeypatch, work, log):
+    # a new thread takes the conversation's title, which `codex resume` lists it by (C3)
+    script_agent(monkeypatch, log, fail="resume")
+    assert _all(_turn("codex", work, session="019a-gone", title="Tighten the method"))[-1]["ok"]
+    sent = requests_in(log)
+    assert [m.get("method") for m in sent][-4:] == ["thread/resume", "thread/start", "thread/name/set", "turn/start"]
+    assert sent[-2]["params"] == {"threadId": "019a0000-fake-thread", "name": "Tighten the method"}
+    # a thread resumed keeps its name, and one with no title gets none
+    for session, title in (("019a-earlier", "Tighten the method"), ("", "")):
+        log.unlink()
+        script_agent(monkeypatch, log)
+        assert _all(_turn("codex", work, session=session, title=title))[-1]["ok"]
+        assert "thread/name/set" not in [m.get("method") for m in requests_in(log)]
+    # a Codex that names no thread, or never answers, runs the turn all the same
+    for fail in ("name", "name_silent"):
+        script_agent(monkeypatch, log, fail=fail)
+        assert _all(_turn("codex", work, title="Tighten the method"))[-1]["ok"]
 
 
 def test_codex_sandbox_not_ready(monkeypatch, work, log):
@@ -341,3 +371,169 @@ def test_a_turn_closed_unread_ends_its_process(monkeypatch, work, log):
         time.sleep(0.05)
     assert turn.child.proc.poll() is not None
     turn.close()  # again: nothing to do
+
+
+# --- Gamma's tools ---------------------------------------------------------------------
+
+UNREACHED = events.Gamma("http://127.0.0.1:9/mcp", "gamma_the-turns-own-token")   # nothing answers there
+
+
+def _gamma_steps(out):
+    return [(e["kind"], e["tool"], e["status"]) for e in out if e["type"] == "tool" and e["kind"] == "gamma"]
+
+
+def test_codex_gets_gammas_server_beside_the_rule_that_starts_no_other(monkeypatch, work, log):
+    script_agent(monkeypatch, log, gamma=[{"tool": "list_pages", "arguments": {"title_contains": "x"}}])
+    out = _all(_turn("codex", work, gamma=UNREACHED))
+    assert out[-1]["ok"]
+    # the call is a gamma step named by its tool (it failed: nothing answers there)
+    assert _gamma_steps(out) == [("gamma", "list_pages", "started"), ("gamma", "list_pages", "failed")]
+    assert next(e for e in out if e["type"] == "tool")["title"] == "Read Gamma: list_pages"
+    started = next(m for m in requests_in(log) if m.get("method") == "thread/start")["params"]
+    assert started["config"] == {
+        "mcp_servers": {"fake_server": {"enabled": False}, "gamma_turn": {
+            "enabled": True, "url": UNREACHED.url, "bearer_token_env_var": events.TOKEN_ENV}},
+        "features": {"apps": False}, "web_search": "disabled",
+        "shell_environment_policy": {"exclude": [events.TOKEN_ENV]}}
+    # the token is in the app-server's environment, never in what it was sent or on its command line
+    first = read_log(log)[0]
+    assert [n for n in first["env"] if n.startswith("GAMMA_")] == [events.TOKEN_ENV]
+    assert UNREACHED.token not in log.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("user_exclude, exclude", [
+    (["AWS_*", "*_SECRET"], ["AWS_*", "*_SECRET", events.TOKEN_ENV]),
+    ([events.TOKEN_ENV, "AWS_*"], [events.TOKEN_ENV, "AWS_*"]),
+])
+def test_codex_keeps_the_users_own_server_named_gamma_off_and_their_excludes(monkeypatch, work, log, user_exclude,
+                                                                             exclude):
+    # an override replaces a list: the user's excludes stay, the token's variable added once; the user's
+    # own connection to Gamma (`codex mcp add gamma`) stays off beside the turn's server
+    script_agent(monkeypatch, log, config={
+        "shell_environment_policy": {"inherit": "core", "exclude": user_exclude},
+        "mcp_servers": {"gamma": {"url": "https://gamma.example/mcp", "enabled_tools": ["search_library"]}}})
+    assert _all(_turn("codex", work, gamma=UNREACHED))[-1]["ok"]
+    config = next(m for m in requests_in(log) if m.get("method") == "thread/start")["params"]["config"]
+    assert config["shell_environment_policy"] == {"exclude": exclude}
+    assert config["mcp_servers"]["gamma"] == {"enabled": False}
+    assert config["mcp_servers"]["gamma_turn"]["url"] == UNREACHED.url
+
+
+@pytest.mark.parametrize("fail, error", [
+    ("gamma_down", "Gamma's tools did not start for Codex: MCP client for `gamma_turn` failed to start: "
+                   "Environment variable GAMMA_AGENT_MCP_TOKEN for MCP server 'gamma_turn' is not set"),
+    ("mcp", "Codex started the MCP server fake_server although Gamma asked for no other."),
+])
+def test_codex_fails_a_turn_whose_servers_are_not_gammas_alone(monkeypatch, work, log, fail, error):
+    script_agent(monkeypatch, log, fail=fail)
+    out = _all(_turn("codex", work, gamma=UNREACHED))
+    assert not out[-1]["ok"] and out[-1]["error"] == error
+    assert out[-1]["gamma_down"] is (fail == "gamma_down")
+
+
+def test_claude_gets_gammas_server_and_its_tools_under_its_flags(monkeypatch, work, log):
+    script_agent(monkeypatch, log, gamma=[{"tool": "read_page", "arguments": {"page_id": "p1"}}])
+    out = _all(_turn("claude", work, gamma=UNREACHED))
+    assert out[-1]["ok"]
+    assert _gamma_steps(out) == [("gamma", "read_page", "started"), ("gamma", "read_page", "failed")]
+    argv = read_log(log)[0]["argv"]
+    assert argv == claude.FLAGS + ["--mcp-config", claude.mcp_config(UNREACHED.url),
+                                   "--allowedTools", "mcp__gamma_turn"]
+    assert json.loads(claude.mcp_config(UNREACHED.url)) == {"mcpServers": {"gamma_turn": {
+        "type": "http", "url": UNREACHED.url, "headers": {"Authorization": "Bearer ${GAMMA_AGENT_MCP_TOKEN}"}}}}
+    assert [n for n in read_log(log)[0]["env"] if n.startswith("GAMMA_")] == [events.TOKEN_ENV]
+    assert UNREACHED.token not in log.read_text(encoding="utf-8")
+    # an ask turn: the same, under its own flags
+    assert claude.command(["claude"], ask=True, stream=True, gamma_url=UNREACHED.url) == [
+        "claude", *claude.ASK_FLAGS, "--mcp-config", claude.mcp_config(UNREACHED.url),
+        "--allowedTools", "mcp__gamma_turn", claude.STREAM_FLAG]
+
+
+def test_claude_fails_a_turn_whose_gamma_did_not_connect(monkeypatch, work, log):
+    script_agent(monkeypatch, log, fail="gamma_down", gamma=[{"tool": "list_pages"}])
+    out = _all(_turn("claude", work, gamma=UNREACHED))
+    assert not out[-1]["ok"] and out[-1]["error"] == "Gamma's tools did not connect for Claude Code (it says failed)."
+    assert out[-1]["gamma_down"] and not _gamma_steps(out)
+
+
+def test_the_address_comes_from_a_request_this_computer_sent_straight(monkeypatch):
+    monkeypatch.setattr(tools, "_url", "")
+
+    def scope(server, client="127.0.0.1", scheme="http", headers=()):
+        return {"type": "http", "server": server, "client": (client, 50123), "scheme": scheme, "headers": list(headers)}
+
+    for ignored in (scope(("testserver", 80), client="testclient"),            # no socket of this computer's
+                    scope(("192.168.1.5", 9001), client="192.168.1.9"),        # another computer's
+                    scope(("192.168.1.5", 9001)),                              # an address MCP does not take
+                    scope(("127.0.0.1", 9001), client="10.0.0.4"),             # from elsewhere, through a tunnel
+                    scope(("127.0.0.1", 9001), headers=[(b"x-forwarded-proto", b"https")]),   # a proxy's
+                    {"type": "websocket", "server": ("127.0.0.1", 9001), "client": ("127.0.0.1", 1)}):
+        tools.heard(ignored)
+        assert tools.mcp_url() == ""
+    assert tools.mint("someone", "ws", "Codex", 60) is None   # no address: no token either
+    tools.heard(scope(("::1", 9124), client="::1"))
+    assert tools.mcp_url() == "http://[::1]:9124/mcp"
+    tools.heard(scope(("127.0.0.1", 9001), scheme="https"))
+    assert tools.mcp_url() == "http://[::1]:9124/mcp", "the first one names it"
+    monkeypatch.setattr(tools, "_url", "")
+    tools.heard(scope(("127.0.0.1", 9443), scheme="https"))
+    assert tools.mcp_url() == "https://127.0.0.1:9443/mcp"
+
+
+@pytest.fixture(scope="module")
+def reader(client):
+    """An account with two workspaces, a page in its own, and this server's
+    /mcp on a socket of its own."""
+    ws = make_user("turn_reader", "pw-turn")
+    other = workspaces.create("Elsewhere", account_of("turn_reader"), kind="shared")["id"]
+    c = login("turn_reader", "pw-turn")
+    page = make_page(c, "Heliotrope notes")
+    with serve_mcp() as url:
+        yield SimpleNamespace(ws=ws, other=other, client=c, page=page, url=url, user=account_of("turn_reader"))
+
+
+@pytest.mark.parametrize("name", ["codex", "claude"])
+def test_a_turn_reads_gamma_with_its_token_and_is_refused_once_it_is_gone(monkeypatch, work, log, reader, name):
+    token_id, token = integrations.mint_turn(reader.user, reader.ws, "Codex", 60)
+    gamma = events.Gamma(reader.url, token)
+    script_agent(monkeypatch, log, gamma=[{"tool": "list_pages", "arguments": {"title_contains": "Heliotrope"}}])
+    out = _all(_turn(name, work, gamma=gamma))
+    assert out[-1]["ok"] and _gamma_steps(out)[-1] == ("gamma", "list_pages", "completed")
+    called = [e for e in read_log(log) if "gamma" in e][-1]
+    assert called["http"] == 200 and not called["error"] and reader.page["id"] in called["text"]
+    integrations.drop(token_id)
+    out = _all(_turn(name, work, gamma=gamma))
+    called = [e for e in read_log(log) if "gamma" in e][-1]
+    assert called["http"] == 401 and _gamma_steps(out)[-1] == ("gamma", "list_pages", "failed")
+
+
+def test_a_turns_token_opens_mcp_in_its_workspace_alone_and_nothing_else(reader, anon, client):
+    token_id, token = integrations.mint_turn(reader.user, reader.ws, "Claude Code", 60)
+    try:
+        bearer = {"Authorization": f"Bearer {token}", "X-Gamma-Workspace": reader.ws}
+        for path in ("/api/pages", f"/api/pages/{reader.page['id']}/family", "/api/session",
+                     "/api/integrations/tokens", "/api/computers/poll"):
+            r = anon.get(path, headers=bearer)
+            assert (r.status_code, r.json()["detail"]) == (403, auth.TURN_ONLY), path
+        # never a connection the person sees or manages
+        listed = reader.client.get("/api/integrations/tokens").json()["tokens"]
+        assert token_id not in [t["id"] for t in listed]
+        assert reader.client.delete(f"/api/integrations/tokens/{token_id}").json()["revoked"] is False
+        assert reader.client.patch(f"/api/integrations/tokens/{token_id}",
+                                   json={"all_workspaces": True}).status_code == 404
+        # MCP: the read tools, in its workspace alone
+        connection = integrations.resolve_connection(token)
+        assert (connection.scope, connection.workspaces, connection.editable, connection.name) == (
+            "turn", [reader.ws], (), "Claude Code")
+        offered = {t["name"] for t in rpc(client, token, "tools/list").json()["result"]["tools"]}
+        assert offered == mcp_server.READ_TOOLS | {"list_workspaces", "read_gamma_link", "export_page"}
+        read = call(client, token, "list_workspaces", {})["structuredContent"]["workspaces"]
+        assert [w["id"] for w in read] == [reader.ws]
+        assert call(client, token, "reply_feedback", {"thread_id": "t", "body": "hi"})["isError"]
+        assert call(client, token, "edit_block", {"block_id": reader.page["id"], "content": "x"})["isError"]
+    finally:
+        integrations.drop(token_id)
+    assert integrations.resolve_connection(token) is None
+    # a crash's leftovers go at the next start (runner.recover)
+    integrations.mint_turn(reader.user, reader.ws, "Codex", 60)
+    assert integrations.drop_turns() == 1 and integrations.drop_turns() == 0

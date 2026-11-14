@@ -1,12 +1,15 @@
 """Stand-ins for Codex CLI and Claude Code (fake_codex.py, fake_claude.py)
 and what the local agents' tests share: the argv that starts each, scripting
-it, reading its log, and whether a process is still alive."""
+it, reading its log, whether a process is still alive, and this server's
+``/mcp`` on a socket the stand-ins reach (``serve_mcp``)."""
 
 import json
 import os
 import sys
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -67,6 +70,32 @@ def turns_in(log: Path) -> list[dict]:
         elif "-p" in argv and "--tools" in argv:
             out.append(entry)
     return out
+
+
+@contextmanager
+def serve_mcp():
+    """This server's ``/mcp`` (gamma/mcp_lazy.py, the real transport and
+    tokens, this test's data) on a socket of its own at a free port of
+    127.0.0.1, which a stand-in's process reaches → its URL."""
+    import uvicorn
+    from starlette.applications import Starlette
+
+    from gamma.mcp_lazy import LazyMCP
+
+    mcp = LazyMCP()
+    server = uvicorn.Server(uvicorn.Config(Starlette(routes=[mcp.route()], lifespan=mcp.lifespan), host="127.0.0.1",
+                                           port=0, log_config=None))
+    thread = threading.Thread(target=server.run, name="test-mcp", daemon=True)
+    thread.start()
+    end = time.monotonic() + 20
+    while not server.started and thread.is_alive() and time.monotonic() < end:
+        time.sleep(0.02)
+    assert server.started, "the MCP server did not start"
+    try:
+        yield f"http://127.0.0.1:{server.servers[0].sockets[0].getsockname()[1]}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(10)
 
 
 def settle_probes(timeout: float = 30.0) -> None:

@@ -33,6 +33,7 @@ made the agents the computer's, where they were each vault's.
 | `catalog.py` | the known agents, where each is on this computer, whether it is ready ("Finding the agents") |
 | `procs.py` | running a CLI: its environment, no console window, a process tree that dies with the turn or the server ("Processes") |
 | `events.py`, `codex.py`, `claude.py` | the drivers: one turn of an agent as a stream of plain events ("The drivers") |
+| `tools.py` | Gamma's tools for a turn: this server's `/mcp` as the agent reaches it, the turn's token ("Gamma's tools") |
 | `prompt.py` | what the agent is told and the shape of its answer ("The prompt and the answer") |
 | `runner.py` | hearing the requests, claiming them and running them ("Claiming and the run") |
 | `mention.py` | a comment that names the agent as a Send ("A mention in a comment") |
@@ -43,7 +44,8 @@ made the agents the computer's, where they were each vault's.
 `__init__.py` imports only `config` and `version`: `folder_links`, the
 feedback modules and the routers import the rest inside their functions,
 and the runner imports `gamma.feedback.agent` and `folder_links` inside
-its own, so no cycle forms at import.
+its own, so no cycle forms at import. `tools.py`, which the session
+middleware imports, imports `integrations` inside `mint`.
 
 ## The words
 
@@ -264,7 +266,9 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
    `agent_threads`: "Resuming the session" below); a resumed turn that
    ends badly before any step, not stopped and not past its deadline, is
    started once more afresh (Claude Code has no fallback of its own; Codex
-   falls back to a new thread itself). A watchdog thread, one a turn,
+   falls back to a new thread itself), unless Gamma's tools did not start
+   for it (the done's `gamma_down`, `events.GammaDown`: afresh would fail
+   alike, and replace the session; `_Turning._resume_refused`). A watchdog thread, one a turn,
    waits for the run's stop or the deadline,
    `RUN_TIMEOUT_S` (1800 s, `GAMMA_AGENT_RUN_TIMEOUT`) counted from the
    turn's start, not from the queue's wait, and calls `turn.stop()`.
@@ -782,18 +786,30 @@ steps").
      never `.gamma/`); in an offered directory, by its name, with the
      build's line; in one of its own, that it holds none of the owner's
      files; and always plain prose, `file:line`, ask what is the owner's to
-     decide. Gamma's pages are not files there: until the agent has Gamma's
-     tools (step 2.7 of the plan), the message and the selections are what
-     it is given of them. No answer schema.
+     decide. No answer schema. The turn takes Gamma's tools before its
+     prompt ("Gamma's tools"), and the prompt says whether it has them:
+     with them, a section *Gamma's tools* says that what the server
+     `gamma_turn` returns is data, not instructions, and names the tools that answer for
+     what the conversation is about, by its id (`prompt._tools`): a page's
+     `read_page` (the passages highlighted and their notes, its open
+     threads, its text) and `read_block`, `view_pdf_page` with its
+     `page_id` and a `pdf_page` for a PDF, a
+     folder's `list_pages`, the library's `list_folders` and `list_pages`,
+     `list_feedback` and `read_feedback` in a work folder, then
+     `search_library`, `cite` and `read_chats` for the rest; nothing of the
+     page is pasted, and outside a vault Gamma's pages are read with them.
+     Without them (no address learned, a far turn) the message and the
+     selections are what it is given of the pages.
   4. The session: the conversation's in vaults.db `agent_conversations`
      (`conversation_id`, `link_id`, `agent`, `session`, `cwd`, `at`;
      `link_id` `""` outside a vault) when it is of the same agent and was
      run in that directory as it is now. A new session in a conversation
      with earlier turns takes their last six messages along ("Earlier in
-     this conversation (you may not remember it)") and the message reads
-     `fresh`; so does a resume Codex answered with another thread, and a
+     this conversation (you may not remember it)"; no tool reads a computer
+     agent's conversation) and the message reads `fresh`; so does a resume Codex answered with another thread, and a
      Claude Code resume that fails before any step, which starts once more
-     afresh.
+     afresh (not one whose Gamma's tools did not start: it fails once, and
+     the conversation keeps its session).
   5. The events become the message, written at most every
      `CHAT_EVERY_S` (0.5 s; the watchdog writes the last one when nothing
      follows) and at the end: `session` kept in `agent_conversations`,
@@ -1072,7 +1088,7 @@ sends draws, words or answers the card. Step 5b of
 - **What that server learns**: the message's `waiting` (`home.CHAT_FIELDS`;
   `_turn_fields` takes it as a flag, `chats.write_run` and `_end_run` set it
   false at every end) and the steps as for any turn (`{id, kind, status,
-  program | path}`, a step id never this computer's ask id); never `asks`.
+  program | path | tool}`, a step id never this computer's ask id); never `asks`.
   Integrity, not secrecy: the agent's next words may say what it did.
 - **The routes** are the computer's alone (404 where agents do not run),
   with the shell's word, never unchecked (403), and a session of the
@@ -1102,20 +1118,81 @@ sends draws, words or answers the card. Step 5b of
 - **Background tasks** there read the turn's phase `asking` while its
   message says `waiting` (`chats.remote_turns`' `asking`).
 
+## Gamma's tools
+
+Step 2.7 of
+[agents-as-participants-plan.md](../research/agents-as-participants-plan.md)
+gives a turn of this server Gamma's read tools: the agent calls this
+server's own MCP endpoint ([mcp.md](mcp.md)) with a token of the turn's
+(`tools.py`, `runner._Turning._tools`).
+
+- **The token** (`integrations.mint_turn`): scope `turn`, the turn owner's,
+  of the turn's workspace alone, named with the agent's label (`Codex`,
+  `Claude Code`), living the run's timeout (`RUN_TIMEOUT_S`) and
+  `TOKEN_SLACK_S` (60 s). It is minted when the turn starts, once, for a
+  chat turn (`_ChatTurn`, before its prompt and the folder's snapshot) and
+  a Send's run (`_Run`) of this server; each start of the agent (a retry
+  afresh too) renews it to that start's deadline when it would expire
+  sooner, and while the turn's deadline moves (an ask waits for the person)
+  the watch renews it, at most once a minute and `TOKEN_SLACK_S` past the
+  deadline (`_keep_tools`; a renewal that failed is tried a minute later).
+  It is deleted when the turn ends, however it ends (`_drop_tools`, in
+  `go`'s `finally`: done, failed, stopped, the agent's process gone), and
+  every turn token a server that stopped left is deleted at start
+  (`runner.recover`, `integrations.drop_turns`). It opens `/mcp` and
+  nothing else: every `/api/` route answers 403 `auth.TURN_ONLY`, its
+  reads included, as a computer's token is refused outside its channel. It
+  is no connection: Settings' list leaves it out, it counts toward none of
+  the account's twenty, and the routes that change or revoke a connection
+  do not find it. Step 3.3 adds the *Comment* level.
+- **The address** (`tools.mcp_url`): this server's `/mcp` as a process on
+  this computer reaches it, learned from the requests this server is sent
+  (`tools.heard`, from the session middleware): the first that came from a
+  loopback client to `127.0.0.1` or `::1` (the hosts MCP's transport takes)
+  without `X-Forwarded-Proto`, which would have uvicorn take the proxy's
+  scheme for the socket's, names the socket's scheme, address and port.
+  The desktop app's window is such a client, so its server knows the
+  address before any turn. A server reached only through a proxy or from
+  other computers learns none, and its turns run without Gamma's tools
+  (logged). A server that serves https itself names `https://127.0.0.1:…`,
+  which its certificate may not cover.
+- **What reaches the agent**: the token in `GAMMA_AGENT_MCP_TOKEN`
+  (`events.TOKEN_ENV`) of that one process's environment (`procs.spawn`
+  adds a driver's variables after `child_env` dropped every `GAMMA_*` of
+  the server's), the address in its config; never the token on a command
+  line, in a prompt, in a file, a log or a stored turn. The drivers' part
+  is under Codex and Claude Code below.
+- **The prompt** of a chat turn names the tools that answer for what the
+  conversation is about and keeps Gamma's text data ("The chat's computer
+  side", step 3); a chat turn mints the token before it, a Send's run when
+  its turn starts. The Send's prompt (`prompt.build`) names no tool: its
+  comments are in it.
+- **A step** of a call is of kind `gamma` with the tool's name (`tool`:
+  `read_page`, `list_pages`, …): the runner keeps `{id, kind: "gamma",
+  status, tool}`, the export words it "Read Gamma: read_page", and the
+  chat's chip is the kind Gamma AI's own call of that tool is
+  (`computerChat.stepChip`).
+- **A far turn** (one this computer runs for another server's work folder
+  over the channel, "A work folder of another server") gets no token here:
+  this server's token reads this server, not that one. Step 4.2 has that
+  server mint one at the claim and hand it over with its own address.
+
 ## The drivers
 
-`events.start(name, argv=, cwd=, prompt=, schema=, session=, images=, ask=)`
-starts one turn of an agent and gives a `Turn`: `session` (the agent's
-session or thread id, "" until known), `pid`, `events()` (blocks; read
-once) and `stop()` (thread-safe, returns at once, idempotent). `events()`
-gives plain dicts:
+`events.start(name, argv=, cwd=, prompt=, schema=, session=, images=, ask=,
+gamma=, title=)` starts one turn of an agent and gives a `Turn`: `session` (the
+agent's session or thread id, "" until known), `pid`, `events()` (blocks;
+read once) and `stop()` (thread-safe, returns at once, idempotent).
+`gamma` is `events.Gamma(url, token)`, Gamma's tools for the turn, or
+None; `title` a new Codex thread's name (a chat turn's conversation's
+title; Claude Code takes none). `events()` gives plain dicts:
 
 | type | fields |
 |---|---|
 | `session` | `id` |
 | `text` | `text`, a whole message the agent wrote |
-| `tool` | `id`, `kind` (`read`, `edit`, `run`, `search`, `other`), `title` (one line: `Read sections/intro.tex`, `Run latexmk -pdf main.tex`), `status` (`started`, `completed`, `failed`), `path` (read, edit: relative to the directory with `/` when inside it, else absolute), `command` (run), `output` (a run's last 2000 characters, at its end) |
-| `done` | `ok`, `answer` (the parsed answer or None), `text` (the last message), `error` ("" when ok), `stopped`, `usage` |
+| `tool` | `id`, `kind` (`read`, `edit`, `run`, `search`, `gamma`, `other`), `title` (one line: `Read sections/intro.tex`, `Run latexmk -pdf main.tex`, `Read Gamma: read_page`), `status` (`started`, `completed`, `failed`), `path` (read, edit: relative to the directory with `/` when inside it, else absolute), `command` (run), `output` (a run's last 2000 characters, at its end), `tool` (gamma: the tool's name) |
+| `done` | `ok`, `answer` (the parsed answer or None), `text` (the last message), `error` ("" when ok), `stopped`, `usage`, `gamma_down` (Gamma's tools did not start or connect: `events.GammaDown`) |
 
 Every turn ends with exactly one `done`: at its end, on `stop()`, on a
 crash, a malformed stream, a broken pipe, or `TURN_IDLE_S` (600 s) without
@@ -1135,9 +1212,9 @@ used only when it is no timestamped log line, then "Codex stopped
 unexpectedly (exit N)." The stderr tail (8 KB) stays for the run's row.
 
 Only the user's own settings shape the agent, its `AGENTS.md` or
-`CLAUDE.md`, its models, its hooks, except that a feedback run gets **no
-MCP servers and no web tools**: it needs the folder alone, and with
-approvals off nothing would ask before such a tool ran.
+`CLAUDE.md`, its models, its hooks, except that a turn gets **no MCP
+server but Gamma's and no web tools**: with approvals off nothing would
+ask before such a tool ran.
 
 ### Codex
 
@@ -1173,10 +1250,30 @@ sandbox check) or 120 s (`thread/start`, `thread/resume`, `turn/start`).
    A server that reports starting all the same fails the turn ("Codex
    started the MCP server … although Gamma asked for none."), one that
    reports it before `thread/start` answers too (the thread's id is not
-   known yet, so any such report is this turn's). The thread's
+   known yet, so any such report is this turn's). With `gamma`, `_quiet`
+   also names Gamma's server, `mcp_servers.gamma_turn = {enabled: true,
+   url, bearer_token_env_var: "GAMMA_AGENT_MCP_TOKEN"}` (`events.MCP_NAME`:
+   not `gamma`, the name Gamma's own setup gives the user's connection,
+   `codex mcp add gamma`, since the override merges into a server of the
+   same name, whose headers, tools turned off or command would then be
+   the turn's; the user's `gamma` is turned off with the rest), and
+   `shell_environment_policy.exclude`, the user's own list with
+   `GAMMA_AGENT_MCP_TOKEN` added (an override replaces a list, so the
+   user's excludes are kept by naming them), without
+   which the agent's own commands printed the token (C1 of the plan): its
+   `starting` and `ready` are its own, its `failed` fails the turn ("Gamma's
+   tools did not start for Codex: …", `events.GammaDown`), any other server's start still
+   fails it ("… although Gamma asked for no other."). The thread's
    id is the `session`; a thread whose effective sandbox is not
    `workspaceWrite` ends the turn ("Codex did not take the workspace
-   sandbox.").
+   sandbox."). A new thread (`thread/start`, not a resume) with a `title`
+   is named `thread/name/set {threadId, name}`, so `codex resume` in the
+   directory lists Gamma's conversation by its title rather than by its
+   long first prompt (C3 of the plan); a computer agent's conversation is
+   never renamed, so this is once per thread. Its answer is not waited for:
+   a Codex that refuses the request, or never answers it, runs the turn
+   all the same. Claude Code lists a `-p` session as
+   it lists its own and needs nothing.
 5. `turn/start {threadId, input: [{type: "text", text: prompt}] +
    [{type: "localImage", path}] (at most 6), outputSchema, sandboxPolicy:
    {type: "workspaceWrite", writableRoots: [cwd], networkAccess: false}}`.
@@ -1184,7 +1281,9 @@ sandbox check) or 120 s (`thread/start`, `thread/resume`, `turn/start`).
 6. Items (`item/started`, `item/completed`): `commandExecution` → `run`
    (failed unless it completed with exit 0, its `aggregatedOutput` on
    completion); `fileChange` → one `edit` per changed path; `mcpToolCall`
-   → `other` ("Use <server>.<tool>"); `webSearch` → `search`;
+   of Gamma's server → `gamma` with its `tool` ("Read Gamma: <tool>",
+   failed when its `status` is), of another → `other` ("Use
+   <server>.<tool>"); `webSearch` → `search`;
    `agentMessage`, completed → `text`. An `error` notification with
    `willRetry` false is kept as the reason. `turn/completed` of this turn
    ends it: `completed` ok, `interrupted` after a stop stopped, else the
@@ -1234,17 +1333,25 @@ sandbox check) or 120 s (`thread/start`, `thread/resume`, `turn/start`).
 `claude -p --output-format stream-json --verbose --restricted
 --permission-mode acceptEdits --permission-prompts none --strict-mcp-config
 --tools Read,Edit,Write,Glob,Grep --disallowedTools Bash,WebFetch,WebSearch`,
-then `--json-schema <the schema>` and `--resume <session>` when the session
-matches `^[A-Za-z0-9_-]{1,128}$` (`claude.command`). The flags are Claude
-Code 2.1.318's `--help`; `--tools` and `--disallowedTools` take several
-values, so nothing positional follows them.
+then, with `gamma`, `--mcp-config {"mcpServers":{"gamma_turn":{"type":"http",
+"url":<the address>,"headers":{"Authorization":"Bearer
+${GAMMA_AGENT_MCP_TOKEN}"}}}} --allowedTools mcp__gamma_turn` (`claude.mcp_config`:
+Claude Code fills the variable from its own environment, so the token is
+on no command line; `--allowedTools` runs Gamma's tools without a prompt,
+which with prompts off would deny them; `--tools` limits the built-in
+tools only: C2 of the plan), then `--json-schema <the schema>` and
+`--resume <session>` when the session matches `^[A-Za-z0-9_-]{1,128}$`
+(`claude.command`). The flags are Claude Code 2.1.318's `--help`;
+`--tools`, `--disallowedTools` and `--allowedTools` take several values,
+so nothing positional follows them.
 
 - **No shell.** Its tools are the file tools alone. A rule such as
   `Bash(latexmk *)` would let it run anything: latexmk takes Perl with `-e`
   and runs any `.latexmkrc` the agent writes. `acceptEdits` accepts edits
   inside the working directory only, and with permission prompts off
   anything that would ask is denied, an edit elsewhere among them.
-  `--strict-mcp-config` with no `--mcp-config` starts no MCP server.
+  `--strict-mcp-config` starts no MCP server of the user's: none, or
+  Gamma's alone with `--mcp-config`.
 - **Restricted.** `--restricted` reads no settings file: a folder's own
   `.claude/settings.json` could otherwise add hooks, which `-p` runs
   without asking whether the folder is trusted, and a Codex run may write
@@ -1260,11 +1367,15 @@ values, so nothing positional follows them.
   (Claude Code waits about 3 s for stdin), and stdin is closed after it.
   The pictures are not passed: the prompt names them and Claude Code opens
   them with Read.
-- **Lines**: `system`/`init` → `session` (`session_id`). `assistant`: every
+- **Lines**: `system`/`init` → `session` (`session_id`); with `gamma` its
+  `mcp_servers` must name `gamma_turn` `connected`, else the turn fails
+  ("Gamma's tools did not connect for Claude Code (it says failed).",
+  `events.GammaDown`): Claude Code would go on without them. `assistant`: every
   block of `message.content` (one message may come split over several
   lines): `tool_use` → a tool started (`Read` → read `file_path`; `Edit`,
   `MultiEdit`, `Write`, `NotebookEdit` → edit; `Bash` → run; `Glob`,
-  `Grep` → search; `StructuredOutput`, the tool `--json-schema` answers
+  `Grep` → search; `mcp__gamma_turn__<tool>` → `gamma` with its `tool`;
+  `StructuredOutput`, the tool `--json-schema` answers
   through, is no step; anything else `other`); `text` → `text`. `user`
   lines' `tool_result` blocks end the matching tool (`is_error` failed).
   `result` → `done`: ok when `subtype` is `success` and not `is_error`,
@@ -1323,7 +1434,10 @@ values, so nothing positional follows them.
   attach to that session's message socket. The user's own configuration
   stays: `CODEX_HOME`, `ANTHROPIC_*`, `OPENAI_*`, and `CLAUDE_CODE_*`
   settings such as `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_OAUTH_TOKEN` or
-  `CLAUDE_CODE_GIT_BASH_PATH`. `NO_COLOR=1`.
+  `CLAUDE_CODE_GIT_BASH_PATH`. `NO_COLOR=1`. A driver's own variables are
+  added after (`spawn`'s `env`): Claude Code's `ASK_ENV`, and the turn's
+  token in `GAMMA_AGENT_MCP_TOKEN` ("Gamma's tools"), the one `GAMMA_*`
+  name an agent sees.
   A frozen Linux build gives back the library path its bootloader replaced
   (`LD_LIBRARY_PATH_ORIG`) or drops it.
 - **Windows**: `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` (no console
@@ -1352,7 +1466,8 @@ values, so nothing positional follows them.
 
 `app._startup_maintenance`, after vaults.db is made, calls
 `runner.recover()` when `enabled()`, in a `try` that logs (the agents never
-stop the server). Every run a stopped server left open
+stop the server). Every turn's token a stopped server left is deleted
+(`integrations.drop_turns`: no turn runs yet). Every run a stopped server left open
 (`store.open_runs`) fails its request, `only_from=("running",)` (a
 withdrawn one is left as it is): "Gamma stopped while Codex worked on
 this. Send again.", and the run ends `failed`; that includes a run left
@@ -1571,7 +1686,9 @@ either agent.
   steps pill's words (`turnLabel`: "Codex is working: Editing
   sections/intro.tex", "Codex is waiting for you", "3 steps"), `actions`
   its steps as plain chips of kinds of their own (`stepChip`: a file
-  read, a file edited, a command, a search, other work; none a change of
+  read, a file edited, a command, a search, other work; a call of Gamma's
+  tools the kind Gamma AI's own call of that tool is, `GAMMA_KINDS`: list,
+  view, cite, read…; none a change of
   the library or the notes, so Gamma AI's changes list and revert pass
   them by), `asks` while it waits on the person and the page draws them,
   `files` what it changed, `notice` the line of a session not resumed,
@@ -1742,15 +1859,35 @@ are drawn in the bar over the whole window and answered with `POST
   page of Gamma cannot ("Who turns it on").
 - **What each agent may touch.** Codex: the vault's directory, written in
   its `workspace-write` sandbox, network off, approvals refused, no MCP
-  server and no web search; its commands run, the build among them. It
-  **reads** whatever the account can read: the sandbox confines writes and
-  the network, not reads. Claude Code: the file tools inside the directory
-  (`--restricted`), edits accepted there only, no write to a settings, git
-  or tool-configuration file, no shell, no MCP server, no web tools, no
-  settings file of the folder's. Neither holds a Gamma credential:
-  its environment has none of the server's variables, it is handed the
-  comments and answers in its final message, and Gamma writes the replies.
-  Nothing is started with a bypass flag.
+  server but Gamma's and no web search; its commands run, the build among
+  them. It **reads** whatever the account can read: the sandbox confines
+  writes and the network, not reads. Claude Code: the file tools inside the
+  directory (`--restricted`), edits accepted there only, no write to a
+  settings, git or tool-configuration file, no shell, no MCP server but
+  Gamma's, no web tools, no settings file of the folder's. Its environment
+  has none of the server's variables, it is handed the comments and
+  answers in its final message, and Gamma writes the replies. Nothing is
+  started with a bypass flag.
+- **The turn's token** ("Gamma's tools"). The one Gamma credential an agent
+  holds: Gamma's read tools on MCP, in the turn's workspace alone, as the
+  turn's owner; refused by every route of the HTTP API; gone when the turn
+  ends and at the next start, and never more than 60 s past its turn's
+  deadline (the run's timeout from the agent's start, moved while an ask
+  holds the turn). It reaches
+  the agent's process in `GAMMA_AGENT_MCP_TOKEN` alone. Codex's own
+  commands do not inherit it (`shell_environment_policy.exclude`, the
+  user's own excludes kept beside it).
+  **In an ask turn Claude Code's Bash can read it**: an allowed command
+  inherits Claude Code's environment, and no setting of Claude Code's was
+  found that keeps one variable from Bash (C2 of the plan). The plan accepts
+  that: the token only reads what the person can read in that workspace,
+  and only for that turn, and the command was the person's to allow; a
+  command that sends it elsewhere sends what the person reads anyway, until
+  the turn ends. Any process of the same user can read another's
+  environment by the operating system's means, so the token is kept short
+  rather than hidden. The agent reads PDFs and other people's comments
+  while it holds it (prompt injection, below): what it reads can only be
+  read by the person already, and nothing it holds writes.
 - **What asking opens** ("Asking in the chat"). Only where its owner let the
   agent ask at the computer, only in the chat (never a Send), only what the
   person allows on a card, one exact command at a time: an allowed command
@@ -1773,9 +1910,9 @@ are drawn in the bar over the whole window and answered with `POST
   computer cannot show whole is declined unseen. The shell's secret is
   read once and taken off the server's environment (`config.shell_secret`,
   on Linux and macOS its bytes in the block the process began with too,
-  which /proc and `ps eww` read), and no agent inherits
-  a `GAMMA_*` variable (`procs.child_env`), so a confined command cannot
-  answer its own ask by reading it.
+  which /proc and `ps eww` read), and no agent inherits a `GAMMA_*`
+  variable of the server's (`procs.child_env`; the turn's token is its
+  own), so a confined command cannot answer its own ask by reading it.
 - **Prompt injection.** A viewer and a share visitor may comment, so a
   comment is not trusted text. Other members' comments reach the agent
   named as theirs (`is_owner` false), escaped in JSON, under an instruction
@@ -1871,10 +2008,10 @@ are drawn in the bar over the whole window and answered with `POST
   it ask; no diff or Revert of what it changed (Gamma writes no file the
   disk made: a decision first), no *Attach what I see*, no *Open comments
   on this page*, no rename of a conversation in History. The @ row names the account's first agent
-  alone until a comment sent to an agent is a turn (step 3.5). Outside a
-  work folder the agent has no way yet to read the page
-  beyond the message and its selections (Gamma's tools, step 2.7 of the
-  plan). The window polls while a turn is to end (no push), so the
+  alone until a comment sent to an agent is a turn (step 3.5). Gamma's
+  tools read only (commenting is step 3.3), a far turn has none (step
+  4.2), and a server that learned no address of its own from this
+  computer runs its turns without them. The window polls while a turn is to end (no push), so the
   typed reply grows in steps of about a second and a half. *Continue in a
   terminal* is unit-tested on every platform but opened for real on none
   yet; on macOS and Linux the terminal is found by name. When Codex silently answers a resume with a new thread,
@@ -1889,7 +2026,15 @@ are drawn in the bar over the whole window and answered with `POST
   stand-ins for the two CLIs (`--version`, the status, `app-server`, `-p`
   stream-json), scripted by `FAKE_AGENT` (edits, the answer or `each`, a
   delay, a failure mode, `resume` among them, `distinct` for a session id
-  of its own each, a log of every argv, request and stdin). Tests
+  of its own each, the fake Codex's `config` for what `config/read`
+  answers, a log of every argv, request and stdin). Each reads
+  Gamma's server from the config or the flags it was given and, scripted
+  with `gamma`, calls a tool over HTTP with the token from its environment
+  (`gamma_call.py`); the fake Codex's `turns` scripts one chat message's
+  turn apart (`$page` in an argument is the page the prompt is about,
+  `{gamma}` in its reply what the call read); `fake_agents.serve_mcp` puts this server's `/mcp` on a
+  socket of its own for them (`test_local_agents_drivers.py`, the chat's
+  turn in `test_local_agents_chat.py`). Tests
   point `GAMMA_AGENT_CODEX` / `GAMMA_AGENT_CLAUDE` at them, set
   `GAMMA_LOCAL_AGENTS=1`, hide the real CLIs (no PATH, no fallbacks) and
   call `runner.reset()` around each test; `tests/conftest.py` pops the four
@@ -1903,7 +2048,12 @@ are drawn in the bar over the whole window and answered with `POST
   flags, a stop ending with `done(stopped=True)` and no process left, a
   crash, garbage lines, silence, the approval answers' shapes, the sandbox
   not ready, an MCP server that starts anyway (also before `thread/start`
-  answers), every step one of `events.KINDS`, a turn closed unread.
+  answers), every step one of `events.KINDS`, a turn closed unread, a new
+  Codex thread named with its title (not a resumed one, nor one with no
+  title; a Codex that refuses it or never answers), Gamma's server under
+  a name of its own beside a user's `gamma` turned off, the user's
+  excludes kept with the token's variable added once, a Gamma that did
+  not start or connect marked `gamma_down`.
 - `tests/test_local_agents_runner.py`: the whole loop on the sample paper
   as a work folder (replies signed Codex with `agent_kind` local, the fixed
   ones resolved, `done` with the summary and the changed files, progress
@@ -1991,7 +2141,13 @@ are drawn in the bar over the whole window and answered with `POST
   is refused), the agent turned off meanwhile, recovery (a turn whose
   vault was removed too), the vault forgotten, the transcript in no
   backup and gone with its page, the prompt (a page, a folder, the
-  library; a vault, an offered directory, one of its own), what a message
+  library; a vault, an offered directory, one of its own; with Gamma's
+  tools, those that answer for each, and without them), a turn's token
+  (minted before its prompt, which points to the tools by the page's id,
+  its thread named with the conversation's title, gone however the turn
+  ends, living as long as its deadline with a failed renewal tried a
+  minute later), a follow-up whose Gamma's tools did not start failing
+  once with its session kept, for both agents, what a message
   keeps; a library page's turn in a directory of its own (made, resumed
   there, its terminal, removed with its conversation and by the sweep),
   an offered directory and another one (a new conversation, a bad id),
@@ -2052,4 +2208,9 @@ are drawn in the bar over the whole window and answered with `POST
   running turn's Background tasks row and its Stop; with no AI service, a
   library PDF's chat that is Codex's, the setup card picking Codex again
   after Gamma AI, a directory offered picked in the strip and edited, the
-  reply and what it changed in the transcript; turning it off.
+  reply and what it changed in the transcript; with no AI service, Codex
+  reading a library PDF's highlight through Gamma's tools with its turn's
+  token (the prompt pointing to `read_page` by the page's id and pasting
+  none of its notes, the call answered, the reply quoting the highlight
+  and its note, the step *Read Gamma: read_page* in the pill, the server
+  log saying the token was deleted); turning it off.

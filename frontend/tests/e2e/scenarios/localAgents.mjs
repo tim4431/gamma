@@ -23,6 +23,11 @@ const PAGE = { width: 612, height: 792 };
 const SUMMARY = "Moved the legend and introduced the penalty's weight.";
 const CHAT_REPLY = "Tightened the sentence in sections/method.tex:3.";
 const BUILD = "latexmk -pdf main.tex";
+// Gamma's tools (step 2.7): the variable that alone carries a turn's token
+// (gamma/local_agents/events.py TOKEN_ENV), and the message whose turn
+// reads the page through them and quotes what it read.
+const TOKEN_ENV = "GAMMA_AGENT_MCP_TOKEN";
+const READ_ASK = "what did I highlight?";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -49,7 +54,10 @@ export async function localAgentScenarios(env) {
       ask: [{ command: BUILD, reason: "The build fetches a font", host: "fonts.example" }],
       // a chat turn's reply comes as it is typed (3c): a word every half second
       typing: 0.5,
-      edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }] }),
+      edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }],
+      // 2.7: this message's turn reads its page with Gamma's tools and answers with what it read
+      turns: { [READ_ASK]: { gamma: [{ tool: "read_page", arguments: { page_id: "$page" } }], edits: [], delay: 0, typing: 0,
+        chat: "From Gamma:\n\n{gamma}" } } }),
   } });
   try {
     await server.start();
@@ -249,7 +257,8 @@ export async function localAgentScenarios(env) {
       const seen = fs.readFileSync(agentLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
       const servers = seen.filter((e) => e.argv?.[0] === "app-server");
       assert(servers.some((e) => path.relative(e.cwd, paperDir) === ""), `an app-server ran in the work folder: ${JSON.stringify(servers)}`);
-      assert(seen.every((e) => !e.env || !e.env.some((name) => name.startsWith("GAMMA_"))), "no GAMMA_ variable reached the agent");
+      assert(seen.every((e) => !e.env || e.env.every((name) => !name.startsWith("GAMMA_") || name === TOKEN_ENV)),
+        "no GAMMA_ variable but the turn's token reached the agent");
       const turn = seen.find((m) => m.in?.method === "turn/start").in.params;
       const prompt = turn.input.filter((p) => p.type === "text").map((p) => p.text).join("\n");
       assert(threads.every((th) => prompt.includes(`"thread_id": "${th.id}"`)), "the prompt names both threads");
@@ -661,6 +670,56 @@ export async function localAgentScenarios(env) {
       assertEq(stored.messages.at(-1).state, "done", "the turn ran");
       assert(fs.readFileSync(path.join(notesDir, "sections", "method.tex"), "utf8").includes("weight decay"), "Codex edited the directory offered");
       await user.api("/api/local-agents/dirs", { method: "PUT", body: [] });
+    });
+
+    // Step 2.7: Gamma's tools for the agent (docs/dev/local_agents.md "Gamma's tools").
+    await step("local-agents: with no AI service, Codex reads a library PDF's highlight through Gamma's tools with its turn's token, gone when the turn ends", async () => {
+      const quote = "Heliotrope blooms at dusk";
+      const note = "the line for my talk";
+      const up = await user.upload("/api/uploads", makePdf([[quote, "and closes at dawn"]]), "heliotrope.pdf", "application/pdf");
+      const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+        body: { default_title: "Heliotrope paper", source_url: up.source_url, original_filename: "heliotrope.pdf" } });
+      const rect = { x1: 72, y1: 60, x2: 300, y2: 80 };
+      await user.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: note, properties: {
+        quote, color: "#ffe5648c", pdf_position: { pageNumber: 1, ...PAGE, boundingRect: rect, rects: [rect] } } } });
+      const before = heard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(paper.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await openChat(page);
+        await dock.locator(".computerStrip").waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(READ_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        // the answer quotes the highlight and its note, which only Gamma's tools gave it
+        const reply = dock.locator(".chatBubble.ai", { hasText: "From Gamma:" });
+        await reply.waitFor({ timeout: 40000 });
+        await until(async () => { const said = await reply.innerText(); return said.includes(quote) && said.includes(note); },
+          { what: "the reply quotes the highlight and its note" });
+        // the transcript shows the call as a step
+        const pill = dock.locator(".chatSteps").last();
+        await until(async () => (await pill.innerText()).trim() === "1 step", { what: "the steps pill, done" });
+        await pill.click();
+        await dock.locator(".chatToolAction", { hasText: "Read Gamma: read_page" }).waitFor();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const since = heard().slice(before);
+      const told = since.find((e) => e.in?.method === "turn/start").in.params.input.map((p) => p.text || "").join("\n");
+      assert(told.includes("## Gamma's tools") && told.includes(`\`read_page\` with \`page_id\` "${paper.id}"`),
+        `the prompt points Codex to the page through the tools: ${told.slice(0, 800)}`);
+      assert(!told.includes(note), "the prompt pastes none of the page's notes");
+      // the turn's app-server, in its thread's directory (a probe's, in the server's temporary one, gets no token)
+      const cwd = since.find((e) => e.in?.method === "thread/start").in.params.cwd;
+      const appServer = since.find((e) => e.argv?.[0] === "app-server" && path.relative(e.cwd, cwd) === "");
+      assert(appServer?.env.includes(TOKEN_ENV), `the turn's token reached the agent in its environment: ${JSON.stringify(appServer)}`);
+      const called = since.find((e) => e.gamma === "read_page");
+      assert(called && called.http === 200 && !called.error && called.text.includes(quote), `the call read the page: ${JSON.stringify(called)}`);
+      const stored = (await user.api(`/api/local-agents/chat?bucket=${paper.id}`)).conversation;
+      const turned = stored.messages.at(-1);
+      assertEq(JSON.stringify([turned.state, turned.steps.map((s) => [s.kind, s.tool, s.status])]),
+        JSON.stringify(["done", [["gamma", "read_page", "completed"]]]), "the turn and its step as stored");
+      await until(async () => server.log().includes(`[agents] the token of ${turned.turn_id} deleted`),
+        { what: "the server deleted the turn's token" });
     });
 
     await step("local-agents: a running turn is a Background tasks row, whose Stop ends it", async () => {

@@ -6,9 +6,13 @@ A turn: ``initialize`` (the streaming delta notifications opted out: only
 whole items are used) and ``initialized``; on Windows
 ``windowsSandbox/readiness``; ``config/read``; ``thread/start`` (or
 ``thread/resume`` of the session) in the work folder with the
-workspace-write sandbox, approvals off and the override ``_quiet``;
-``turn/start`` with the prompt, the pictures, the answer's schema and a
-sandbox policy writable in the folder only, without network. Items map to
+workspace-write sandbox, approvals off and the override ``_quiet``; a new
+thread with a ``title`` (a chat's conversation's) ``thread/name/set``, so
+``codex resume`` in the directory lists it by that name (C3 of
+docs/research/agents-as-participants-plan.md), its answer not waited for (a
+Codex that names no thread runs the turn all the same); ``turn/start`` with the
+prompt, the pictures, the answer's schema and a sandbox policy writable in
+the folder only, without network. Items map to
 events (``_item``), approvals are refused (``_REFUSALS``), and
 ``turn/completed`` ends it. One loop reads every message in every phase:
 notifications and the server's requests can come before the response a
@@ -37,10 +41,10 @@ checkpoint) and a file change to a protected part of the folder
 ``cancel``. ``serverRequest/resolved`` for one Gamma did
 not answer withdraws it. Every other request is refused as without.
 
-No MCP server and no web search, whatever the user's config.toml says (a
-feedback run needs the folder alone, and nothing would ask before such a
-tool ran). Verified on this machine (codex-cli 0.167.0, three MCP servers
-in config.toml, a zero-token probe of ``thread/start`` counting
+No MCP server but Gamma's and no web search, whatever the user's
+config.toml says (nothing would ask before such a tool ran). Verified on
+this machine (codex-cli 0.167.0, three MCP servers in config.toml, a
+zero-token probe of ``thread/start`` counting
 ``mcpServer/startupStatus/updated``): ``config.mcp_servers = {}`` does
 nothing (it merges: 6 notifications); ``mcp_servers.<name>.enabled =
 false`` for every server ``config/read`` lists keeps the user's servers
@@ -48,6 +52,19 @@ down but ChatGPT's apps server (``codex_apps``) still starts (2);
 ``features.apps = false`` beside it leaves none (0). ``web_search =
 "disabled"`` is the documented switch of the search tool. A server that
 reports starting all the same fails the turn (``_dispatch``).
+
+A turn with ``gamma`` (Gamma's tools, gamma/local_agents/tools.py) adds
+one server to that config, ``mcp_servers.gamma_turn`` (``events.MCP_NAME``,
+a name of its own, so no server of the user's merges into it): this
+server's ``/mcp`` with the bearer token read from ``events.TOKEN_ENV``,
+which the app-server's environment alone holds, and that variable added to
+the user's own ``shell_environment_policy.exclude`` (an override replaces a
+list), without which the agent's own commands printed it (C1 of
+docs/research/agents-as-participants-plan.md, codex-cli 0.167.0: exactly
+that server starts, ``networkAccess: false`` does not block it, nothing
+asks before a call). Its startup status ``starting`` and ``ready`` are its
+own; ``failed`` fails the turn with why (``events.GammaDown``). A call is
+an ``mcpToolCall`` item, a ``gamma`` step named by its tool.
 """
 
 import json
@@ -115,14 +132,26 @@ def _initialize(stream: bool = False) -> dict:
             "capabilities": {"optOutNotificationMethods": quiet}}
 
 
-def _quiet(config: dict) -> dict:
+def _quiet(config: dict, gamma_url: str = "") -> dict:
     """The thread's config override that starts no MCP server and no web
     search: every server the user's config names turned off, ChatGPT's apps
-    off, web search disabled."""
-    servers = config.get("mcp_servers") if isinstance(config, dict) else None
+    off, web search disabled; with ``gamma_url``, Gamma's server alone at
+    that address, its token read from ``events.TOKEN_ENV``, which the
+    user's own excludes and that variable keep from every command the agent
+    runs."""
+    config = config if isinstance(config, dict) else {}
+    servers = config.get("mcp_servers")
     names = list(servers) if isinstance(servers, dict) else []
-    return {"mcp_servers": {name: {"enabled": False} for name in names}, "features": {"apps": False},
-            "web_search": "disabled"}
+    out = {"mcp_servers": {name: {"enabled": False} for name in names}, "features": {"apps": False},
+           "web_search": "disabled"}
+    if gamma_url:
+        out["mcp_servers"][events.MCP_NAME] = {"enabled": True, "url": gamma_url,
+                                               "bearer_token_env_var": events.TOKEN_ENV}
+        policy = config.get("shell_environment_policy")
+        exclude = policy.get("exclude") if isinstance(policy, dict) else None
+        exclude = [p for p in exclude if isinstance(p, str)] if isinstance(exclude, list) else []
+        out["shell_environment_policy"] = {"exclude": list(dict.fromkeys([*exclude, events.TOKEN_ENV]))}
+    return out
 
 
 def _refusal(message: dict) -> dict:
@@ -268,11 +297,13 @@ class CodexTurn(events.Turn):
     label = LABEL
 
     def __init__(self, argv: list[str], *, cwd: str, prompt: str, schema: dict | None, session: str,
-                 images: list[str], ask: bool = False, stream: bool = False, model: str = "", effort: str = ""):
-        super().__init__(argv + ["app-server"], cwd=cwd, ask=ask)
+                 images: list[str], ask: bool = False, stream: bool = False, model: str = "", effort: str = "",
+                 gamma: events.Gamma | None = None, title: str = ""):
+        super().__init__(argv + ["app-server"], cwd=cwd, ask=ask, gamma=gamma)
         self._prompt = prompt
         self._schema = schema
         self._resume = session
+        self._title = title
         self.stream = stream
         self._model, self._effort = model, effort
         self._images = list(images or ())[:MAX_IMAGES]
@@ -372,10 +403,16 @@ class CodexTurn(events.Turn):
         elif method == "mcpServer/startupStatus/updated":
             # Before thread/start answers, the thread's id is not known yet:
             # any server starting then is this turn's.
-            if params.get("status") in ("starting", "ready") and (
-                    not self._thread or params.get("threadId") in (None, self._thread)):
-                name = params.get("name") or "?"
-                raise TurnFailed(f"Codex started the MCP server {name} although Gamma asked for none.")
+            if self._thread and params.get("threadId") not in (None, self._thread):
+                return
+            name, status = params.get("name") or "?", params.get("status")
+            if self.gamma_url and name == events.MCP_NAME:
+                if status == "failed":
+                    error = events.one_line(str(params.get("error") or ""), 300)
+                    raise events.GammaDown("Gamma's tools did not start for Codex" + (f": {error}" if error else "."))
+            elif status in ("starting", "ready"):
+                raise TurnFailed(f"Codex started the MCP server {name} although Gamma asked for "
+                                 + ("no other." if self.gamma_url else "none."))
 
     def _ours(self, params: dict) -> bool:
         """A notification of this thread's turn (one that comes before
@@ -406,6 +443,8 @@ class CodexTurn(events.Turn):
                     out.append(events.tool(f"{item_id}:{i}", "edit", f"Edit {path}", status, path=path))
             return out
         if kind == "mcpToolCall":
+            if self.gamma_url and item.get("server") == events.MCP_NAME:
+                return [events.gamma_step(item_id, str(item.get("tool") or ""), status)]
             return [events.tool(item_id, "other", f"Use {item.get('server')}.{item.get('tool')}", status)]
         if kind == "webSearch":
             return [events.tool(item_id, "search", f"Search {item.get('query') or 'the web'}", status)]
@@ -517,7 +556,7 @@ class CodexTurn(events.Turn):
         except RequestError as e:
             raise TurnFailed(f"Codex did not say which MCP servers it would start: {e}") from None
         thread_params = {"cwd": self.cwd, "sandbox": "workspace-write", "approvalPolicy": "never",
-                         "config": _quiet(config)}
+                         "config": _quiet(config, self.gamma_url)}
         if self.ask:
             thread_params.update(approvalPolicy=APPROVAL_POLICY, approvalsReviewer="user")
         if self._model:
@@ -529,7 +568,8 @@ class CodexTurn(events.Turn):
                                                           "excludeTurns": True}, START_S)
             except RequestError as e:  # a thread that is gone: a new one does the work
                 log.info(f"[agents] Codex could not resume {self._resume}: {e}")
-        if started is None:
+        new = started is None
+        if new:
             started = self._request("thread/start", thread_params, START_S)
         yield from self._flush()
         self._thread = str((started.get("thread") or {}).get("id") or "")
@@ -544,6 +584,10 @@ class CodexTurn(events.Turn):
             # Another policy or reviewer (an administrator's, a subagent's) would not ask the person.
             yield events.done(ok=False, error="Codex did not take Gamma's way of asking you.")
             return
+        if new and self._title:
+            # Not waited for: a Codex that names no thread, or answers late,
+            # lists it by its first prompt and runs the turn all the same.
+            self._request("thread/name/set", {"threadId": self._thread, "name": self._title}, 0, wait=False)
         turn_params = {"threadId": self._thread,
                        "input": [{"type": "text", "text": self._prompt}]
                        + [{"type": "localImage", "path": path} for path in self._images],
@@ -553,7 +597,7 @@ class CodexTurn(events.Turn):
             turn_params["outputSchema"] = self._schema
         if self._effort:
             turn_params["effort"] = self._effort
-        turn =self._request("turn/start", turn_params, START_S).get("turn") or {}
+        turn = self._request("turn/start", turn_params, START_S).get("turn") or {}
         self._turn_id = self._turn_id or str(turn.get("id") or "")
         while True:
             yield from self._flush()
@@ -578,10 +622,11 @@ class CodexTurn(events.Turn):
 
 def start(*, argv: list[str], cwd: str, prompt: str, schema: dict | None = None, session: str = "",
           images: list[str] = (), ask: bool = False, stream: bool = False, model: str = "",
-          effort: str = "") -> CodexTurn:
+          effort: str = "", gamma: events.Gamma | None = None, title: str = "") -> CodexTurn:
     """Start Codex's app-server in ``cwd`` for one turn of ``prompt``
     (``session`` a thread to resume; ``ask``, it may ask to step outside its
     sandbox; ``stream``, its text as it is written; ``model`` its thread's,
-    ``effort`` its turn's); read the turn with ``events()``."""
+    ``effort`` its turn's; ``gamma``, Gamma's tools; ``title``, a new
+    thread's name); read the turn with ``events()``."""
     return CodexTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, images=list(images),
-                     ask=ask, stream=stream, model=model, effort=effort)
+                     ask=ask, stream=stream, model=model, effort=effort, gamma=gamma, title=title)

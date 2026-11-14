@@ -4,7 +4,8 @@
 // conversation in the shape the chat's transcript draws Gamma AI's in
 // (`shownMessages`, chat/ChatTranscript.jsx). The server keeps the
 // conversation and writes the agent's message as the turn goes; it stores
-// the steps as data ({kind, path, program, status}), so they are worded
+// the steps as data ({kind, path, program, tool, status}, `tool` the name
+// of the Gamma tool a step of kind "gamma" called), so they are worded
 // here, in the reader's language. Node tests it (tests/computerChat.test.mjs).
 //
 // A person's message is {id, role: "user", text, selections: [{text,
@@ -211,7 +212,8 @@ function askedStep(step, path) {
 const ASKED = new Set(["asked", "allowed", "declined"]);
 
 // A step in words, done: "Read sections/intro.tex", "Edited …", "Ran
-// latexmk", "Searched the sources", "Worked"; one asked about says so.
+// latexmk", "Searched the sources", "Read Gamma: read_page" (a call of
+// Gamma's tools, by the tool's name), "Worked"; one asked about says so.
 export function stepText(step) {
   const path = placeOf(step);
   if (ASKED.has(step?.status)) return askedStep(step, path);
@@ -220,6 +222,7 @@ export function stepText(step) {
     case "edit": return path ? t("Edited {path}", { path }) : t("Edited a file");
     case "run": return step.program ? t("Ran {program}", { program: step.program }) : t("Ran a command");
     case "search": return t("Searched the sources");
+    case "gamma": return step.tool ? t("Read Gamma: {tool}", { tool: step.tool }) : t("Read Gamma");
     default: return t("Worked");
   }
 }
@@ -234,6 +237,7 @@ export function stepNow(step) {
     case "edit": return path ? t("Editing {path}", { path }) : t("Editing a file");
     case "run": return step.program ? t("Running {program}", { program: step.program }) : t("Running a command");
     case "search": return t("Searching the sources");
+    case "gamma": return step.tool ? t("Reading Gamma: {tool}", { tool: step.tool }) : t("Reading Gamma");
     default: return "";
   }
 }
@@ -480,13 +484,20 @@ export function canSend(info, conversation, text) {
 // What a step's chip is among the turn's steps in the transcript (the
 // chips of Gamma AI's tool calls, with no call to unfold): its words, its
 // icon by a kind of the chat's own (chat/AgentChanges.jsx ACTION_ICONS: a
-// file read, a file edited, a command, a search, other work), none of
-// which is a change of the library or the notes (chat/agentSteps.js
-// isChange), and whether it failed or was not allowed.
+// file read, a file edited, a command, a search, other work; a call of
+// Gamma's tools the kind Gamma AI's own call of that tool has, so the
+// steps pill counts it as it counts Gamma AI's reads, chat/agentSteps.js
+// stepsSummary), none of which is a change of the library or the notes
+// (chat/agentSteps.js isChange), and whether it failed or was not allowed.
 const STEP_KINDS = { read: "file", edit: "fileEdit", run: "run", search: "search" };
+const GAMMA_KINDS = {
+  list_pages: "list", list_folders: "list", list_feedback: "list", list_workspaces: "list",
+  search_library: "search", view_pdf_page: "view", view_ink: "ink", view_image: "image", cite: "cite",
+};
+const chipKind = (step) => (step?.kind === "gamma" ? GAMMA_KINDS[step.tool] || "read" : STEP_KINDS[step?.kind] || "work");
 export function stepChip(step) {
   return {
-    kind: STEP_KINDS[step?.kind] || "work", summary: stepText(step),
+    kind: chipKind(step), summary: stepText(step),
     ...(step?.status === "failed" ? { error: true } : {}), ...(step?.status === "declined" ? { declined: true } : {}),
   };
 }

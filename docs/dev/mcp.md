@@ -674,7 +674,7 @@ manual tokens in **Integrations**, where users can revoke them.
 
 ## Permissions and credentials
 
-- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads), `feedback` (everything `read` may, plus replying to and resolving the comment threads on a work folder's files and setting a Send request's state, [feedback.md](feedback.md); a viewer may make one, since viewers comment) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers); a fourth, `computer`, is a computer's channel to the server ([computers.md](computers.md)), which opens nothing else and no MCP connection. A read or feedback token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes": `''`, `'*'` or a list), only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included); a `feedback` token the same, but for its answers (`auth.require_commenter`'s `answer`), which it gives in its own workspace alone, whatever else its MCP connection reads. `POST /api/ai/chat` through either arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
+- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads), `feedback` (everything `read` may, plus replying to and resolving the comment threads on a work folder's files and setting a Send request's state, [feedback.md](feedback.md); a viewer may make one, since viewers comment) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers); a fourth, `computer`, is a computer's channel to the server ([computers.md](computers.md)), which opens nothing else and no MCP connection; a fifth, `turn`, is the token of one turn of an agent on this computer ("The token of an agent's turn" below), which opens MCP alone. A read or feedback token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes": `''`, `'*'` or a list), only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included); a `feedback` token the same, but for its answers (`auth.require_commenter`'s `answer`), which it gives in its own workspace alone, whatever else its MCP connection reads. `POST /api/ai/chat` through either arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
   `?ws=` and `X-Gamma-Workspace` cannot select another workspace.
 - Only token SHA-256 hashes are stored in `users.db`. Tokens contain 256 random bits.
 - HTTP share URLs also stay within the integration token's workspace and
@@ -683,7 +683,7 @@ manual tokens in **Integrations**, where users can revoke them.
   token into a writer. `auth.request_share_access` applies this boundary
   to the link resolver and the shared data endpoints.
 - Tokens expire after 90 days by default (API range: 1–365 days); accounts may
-  have at most 20 unexpired tokens. Revoke a connection in the same settings panel.
+  have at most 20 unexpired tokens (a turn's not counted). Revoke a connection in the same settings panel.
 - Each request checks the account still exists and can access the workspace:
   an MCP connection reads only those of its workspaces the account can still
   open, and none left denies it. Removing access, expiration, or revocation
@@ -715,6 +715,41 @@ PATCH  /api/integrations/tokens/{id}  {"workspaces":[…]} or {"all_workspaces":
                                       and "asks": whether each change asks first (left out: as it was)
 DELETE /api/integrations/tokens/{id}
 ```
+
+None of them lists, changes or revokes a turn's token: the list leaves it
+out, the PATCH answers 404 and the DELETE `revoked: false`.
+
+### The token of an agent's turn
+
+Codex or Claude Code turned on for this computer
+([local_agents.md](local_agents.md) "Gamma's tools") reads Gamma through
+this endpoint during a turn of this server, with a token of the turn's
+own (`integrations.mint_turn`, scope `turn`):
+
+- the turn owner's, of the turn's workspace alone (`workspaces` `''`,
+  `edits` `''`), named with the agent's label, so `list_workspaces` names
+  that one workspace and the read tools (`READ_TOOLS`, with
+  `list_workspaces`, `read_gamma_link` and `export_page`) are offered and
+  dispatched as for a read token; the answering and note tools are refused
+  as for one (step 3.3 of
+  [agents-as-participants-plan.md](../research/agents-as-participants-plan.md)
+  adds a *Comment* level);
+- living the run's timeout and a minute, renewed at each start of the
+  agent and while an ask holds the turn, deleted
+  when the turn ends however it ends (`integrations.drop`) and, for what a
+  server that stopped left, at the next start (`integrations.drop_turns`);
+- refused by every route of the HTTP API (403 `auth.TURN_ONLY`), its reads
+  included, as a `computer` token is outside `auth.CHANNEL_PREFIX`: a read
+  token opens the API's reads as well as MCP, and this one should not;
+- no connection: never listed in Settings, none of the twenty, never in
+  Background tasks or a log, and the agent gets it in an environment
+  variable of its own process alone, never on a command line or in a file.
+
+The address the agent is given is this server's `/mcp` as a process on
+this computer reaches it, `http://127.0.0.1:<port>/mcp` on the desktop
+app's server (`local_agents.tools.mcp_url`), which the transport's
+allowed hosts take at any port, under the server name `gamma_turn`
+(`events.MCP_NAME`), never the user's own `gamma` connection.
 
 ### A setup command's sign-in
 

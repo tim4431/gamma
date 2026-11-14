@@ -30,6 +30,15 @@ session that is gone); ``distinct`` gives each new session an id of its
 own. The log gets ``{"argv", "cwd", "env"}`` and ``{"stdin": text}`` (the
 prompt), and with stream-json ``{"in": line}`` (each line read) and
 ``{"answer": control_response}`` (to a ``can_use_tool``).
+
+``--mcp-config`` naming the HTTP server ``gamma_turn`` makes system/init
+list it ``connected`` once its headers' ``${VAR}`` are filled from the
+environment (``failed`` when a variable is not set, or ``fail`` is
+``gamma_down``), and ``gamma``, ``[{"tool", "arguments"?}]`` as
+fake_codex.py's, the calls of its tools a turn makes while
+``--allowedTools`` names ``mcp__gamma_turn``: each a
+``mcp__gamma_turn__<tool>`` tool_use made over HTTP (gamma_call.py) with
+those headers, logged ``{"gamma": tool, "http", "error", "text"}``.
 """
 
 import json
@@ -42,8 +51,42 @@ import threading
 import time
 import uuid
 
+import gamma_call
+
 FAKE = json.loads(os.environ.get("FAKE_AGENT") or "{}")
 FAIL = FAKE.get("fail", "")
+GAMMA = "gamma_turn"   # the server Gamma's --mcp-config names for its tools
+
+
+def gamma_server(args: list[str]) -> tuple[dict, str]:
+    """``(Gamma's server as --mcp-config gives it, with its headers' ${VAR}
+    filled from the environment, its status)``; ``({}, "")`` for none."""
+    config = json.loads(flag(args, "--mcp-config") or "{}")
+    server = (config.get("mcpServers") or {}).get(GAMMA)
+    if not server:
+        return {}, ""
+    missing = []
+
+    def fill(found):
+        if found.group(1) not in os.environ:
+            missing.append(found.group(1))
+        return os.environ.get(found.group(1), "")
+
+    headers = {k: re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", fill, v) for k, v in (server.get("headers") or {}).items()}
+    status = "failed" if missing or FAIL == "gamma_down" else "connected"
+    return {**server, "headers": headers}, status
+
+
+def call_gamma(session: str, server: dict) -> None:
+    """The scripted calls of Gamma's tools, each a tool_use and its result."""
+    token = (server.get("headers") or {}).get("Authorization", "").removeprefix("Bearer ")
+    for n, called in enumerate(FAKE.get("gamma") or []):
+        tool_id = f"toolu_gamma{n}"
+        assistant(session, "msg_g", {"type": "tool_use", "id": tool_id, "name": f"mcp__{GAMMA}__{called['tool']}",
+                                     "input": called.get("arguments") or {}})
+        got = gamma_call.call(server["url"], token, called["tool"], called.get("arguments"))
+        log({"gamma": called["tool"], **got})
+        tool_result(session, tool_id, got["text"], error=got["error"])
 
 sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 sys.stdin.reconfigure(encoding="utf-8")
@@ -232,8 +275,9 @@ def turn(args: list[str]) -> int:
     session = flag(args, "--resume") or ("5e55-fake-session-" + uuid.uuid4().hex[:8] if FAKE.get("distinct")
                                          else "5e55-fake-session")
     cwd = os.getcwd()
+    gamma, status = gamma_server(args)
     out({"type": "system", "subtype": "init", "session_id": session, "cwd": cwd, "tools": ["Read", "Edit"],
-         "mcp_servers": [], "permissionMode": "acceptEdits"})
+         "mcp_servers": [{"name": GAMMA, "status": status}] if gamma else [], "permissionMode": "acceptEdits"})
     if FAIL == "exit":
         sys.stderr.write("Error: fake claude could not reach the model\n")
         sys.stderr.flush()
@@ -249,6 +293,8 @@ def turn(args: list[str]) -> int:
              "usage": {}})
         return 1
     assistant(session, "msg_1", {"type": "thinking", "thinking": "", "signature": "x"})
+    if status == "connected" and f"mcp__{GAMMA}" in (flag(args, "--allowedTools") or "").split(","):
+        call_gamma(session, gamma)
     for n, edit in enumerate(FAKE.get("edits") or FAKE.get("files") or []):
         path = os.path.join(cwd, edit["path"])
         assistant(session, "msg_1", {"type": "tool_use", "id": f"toolu_read{n}", "name": "Read",

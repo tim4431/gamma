@@ -764,6 +764,8 @@ def test_the_details_never_name_a_path_outside():
         "Running latexmk"
     assert runner._said({"kind": "run", "command": "/usr/bin/make all"}) == "Running make"
     assert runner._said({"kind": "search"}) == "Searching the sources"
+    assert runner._said({"kind": "gamma", "tool": "read_page"}) == "Reading Gamma: read_page"
+    assert runner._said({"kind": "gamma", "tool": ""}) == runner._said({"kind": "gamma"}) == "Reading Gamma"
     assert runner._said({"kind": "other", "title": "Use fs.read"}) == "Working"
     # the request's words name only what members see already (tracked, or a source an entry names)
     tracked = {"main.pdf", "sections/method.tex"}

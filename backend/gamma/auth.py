@@ -30,6 +30,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from . import guests, host_scope, publisher_sessions
+from .local_agents import tools as agent_tools
 from .blocks_store import (folder_subtree_ids, page_ancestors, page_descendants, page_in_folder, page_root_id,
                            pages_in_folder)
 from .db import account_names, connect_pages_db, connect_users_db, parse_stamp, share_token_workspace
@@ -48,6 +49,9 @@ _AUTH_PATHS = {"/api/login", "/api/login-guest", "/api/logout", "/api/session"}
 CHANNEL_PREFIX = "/api/computers/"
 _HELD_PATHS = {"/api/computers/poll"}
 CHANNEL_ONLY = "This token is a computer's channel; it opens nothing else."
+# The token of an agent's turn (integrations.mint_turn) reads through MCP
+# alone: every route of the HTTP API refuses it, its reads included.
+TURN_ONLY = "This token is an agent's turn; it opens Gamma's MCP endpoint alone."
 
 
 def _session_expired(created_at: str) -> bool:
@@ -227,6 +231,7 @@ async def session_middleware(request: Request, call_next):
     spot and the request goes on signed out, its cookie cleared.
     """
     started = time.perf_counter()
+    agent_tools.heard(request.scope)   # this server's /mcp as an agent on this computer reaches it
     request.state.request_id = secrets.token_hex(4)
     token = request.cookies.get(SESSION_COOKIE)
     request.state.user = None
@@ -259,6 +264,9 @@ async def session_middleware(request: Request, call_next):
             # workspace's data, its reads included.
             resp = JSONResponse({"detail": CHANNEL_ONLY}, status_code=403)
             return _finish_request_log(request, resp, started, None, "channel-token")
+        if found.scope == "turn":
+            resp = JSONResponse({"detail": TURN_ONLY}, status_code=403)
+            return _finish_request_log(request, resp, started, None, "turn-token")
     if token:
         row, expired_guest = await _off_loop(_middleware_session, token)
         if row:

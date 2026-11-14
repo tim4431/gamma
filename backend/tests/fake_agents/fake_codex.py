@@ -1,10 +1,10 @@
 """A stand-in for Codex CLI (gamma/local_agents/codex.py), standard library
 only: ``--version``, ``login status`` and ``app-server`` (initialize,
 initialized, windowsSandbox/readiness, model/list, config/read,
-thread/start, thread/resume, turn/start, turn/steer, turn/interrupt; the
-item notifications, the approvals, serverRequest/resolved, the final
-agentMessage and its deltas, and turn/completed), as codex-cli 0.167.0
-answers them.
+thread/start, thread/resume, thread/name/set, turn/start, turn/steer,
+turn/interrupt; the item notifications, the approvals,
+serverRequest/resolved, the final agentMessage and its deltas, and
+turn/completed), as codex-cli 0.167.0 answers them.
 
 Scripted by the environment variable ``FAKE_AGENT``, a JSON object (every
 key optional):
@@ -49,9 +49,25 @@ key optional):
   ``read_only`` (the thread gets a read-only sandbox whatever was asked),
   ``reviewer`` (the thread's approvals go to ``auto_review`` whatever was
   asked), ``models`` (``model/list`` is an error),
-  ``resume`` (thread/resume is an error: the thread is gone);
+  ``resume`` (thread/resume is an error: the thread is gone), ``name``
+  (thread/name/set is an error: an older Codex), ``name_silent``
+  (thread/name/set is never answered);
+- ``config``: what ``config/read``'s config holds beside its own server
+  (``mcp_servers`` merged with it, the rest as given);
 - ``distinct``: each thread/start makes a thread of its own id (else every
   one is ``THREAD``);
+- ``gamma``: the calls of Gamma's tools a turn makes, ``[{"tool",
+  "arguments"?}]``, each an ``mcpToolCall`` item of the server
+  ``gamma_turn`` that the thread's config names (``url``, the token read from the variable
+  ``bearer_token_env_var`` names), made over HTTP (gamma_call.py) and
+  logged ``{"gamma": tool, "http", "error", "text"}``; an argument
+  ``"$page"`` is the id of what a chat turn's prompt is about, and
+  ``{gamma}`` in ``chat`` the text the last call gave back. A thread whose
+  config names that server reports it ``starting`` then ``ready``, or
+  ``failed`` when the variable is not set (or ``fail`` is ``gamma_down``);
+- ``turns``: ``{message: {keys}}``, a chat turn of that message scripted
+  by those keys in place of the others' (``gamma``, ``edits``,
+  ``commands``, ``chat``, ``delay``, ``typing``);
 - ``log``: a file receiving one JSON line per thing seen: ``{"argv",
   "cwd", "env"}`` (the GAMMA_* and agent-session variable names it got),
   ``{"in": message}``, ``{"answer": message}`` (to a request it made),
@@ -68,11 +84,14 @@ import threading
 import time
 import uuid
 
+import gamma_call
+
 FAKE = json.loads(os.environ.get("FAKE_AGENT") or "{}")
 FAIL = FAKE.get("fail", "")
 THREAD = "019a0000-fake-thread"
 TURN = "019a0000-fake-turn"
 SERVER = "fake_server"
+GAMMA = "gamma_turn"   # the server Gamma adds to a thread's config for its tools
 
 sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 sys.stdin.reconfigure(encoding="utf-8")
@@ -173,8 +192,10 @@ def handle(message: dict) -> None:
     elif method == "windowsSandbox/readiness":
         send({"id": request_id, "result": {"status": "notConfigured" if FAIL == "sandbox_not_ready" else "ready"}})
     elif method == "config/read":
-        send({"id": request_id, "result": {"config": {"mcp_servers": {SERVER: {"command": "fake-mcp"}},
-                                                       "web_search": "live"}, "origins": {}}})
+        given = FAKE.get("config") or {}
+        config = {"web_search": "live", **given,
+                  "mcp_servers": {SERVER: {"command": "fake-mcp"}, **(given.get("mcp_servers") or {})}}
+        send({"id": request_id, "result": {"config": config, "origins": {}}})
     elif method == "thread/resume" and FAIL == "resume":
         send({"id": request_id, "error": {"code": -32600, "message": f"no rollout found for thread id "
                                                                      f"{params.get('threadId')}"}})
@@ -196,6 +217,23 @@ def handle(message: dict) -> None:
         server_off = (config.get("mcp_servers") or {}).get(SERVER, {}).get("enabled") is False
         if FAIL == "mcp" or not server_off:
             notify("mcpServer/startupStatus/updated", {"name": SERVER, "status": "starting", "threadId": None})
+        gamma = (config.get("mcp_servers") or {}).get(GAMMA)
+        if gamma and gamma.get("url"):
+            notify("mcpServer/startupStatus/updated", {"name": GAMMA, "status": "starting", "threadId": None})
+            variable = gamma.get("bearer_token_env_var") or ""
+            if FAIL == "gamma_down" or not os.environ.get(variable):
+                notify("mcpServer/startupStatus/updated", {
+                    "name": GAMMA, "status": "failed", "threadId": None,
+                    "error": f"MCP client for `{GAMMA}` failed to start: Environment variable {variable} for MCP "
+                             f"server '{GAMMA}' is not set"})
+            else:
+                notify("mcpServer/startupStatus/updated", {"name": GAMMA, "status": "ready", "threadId": None})
+    elif method == "thread/name/set" and FAIL == "name":
+        send({"id": request_id, "error": {"code": -32601, "message": "fake codex: no method thread/name/set"}})
+    elif method == "thread/name/set" and FAIL == "name_silent":
+        return
+    elif method == "thread/name/set":
+        send({"id": request_id, "result": {}})
     elif method == "turn/start":
         state["turn"] = {"id": request_id, "params": params, "thread": params.get("threadId")}
     elif method == "turn/steer":
@@ -218,10 +256,29 @@ def chat_message(prompt: str) -> str | None:
     return json.loads(found.group(1)) if found else None
 
 
-def answer_text(prompt: str, schema=None) -> str:
+def chat_about(prompt: str) -> str:
+    """The id of what a chat turn's prompt is about ("" for none): its JSON
+    block's ``about``."""
+    for body in re.findall(r"```json\n(.*?)\n```", prompt, re.S):
+        try:
+            block = json.loads(body)
+        except ValueError:
+            continue
+        if isinstance(block, dict) and "message" in block:
+            return str((block.get("about") or {}).get("id") or "")
+    return ""
+
+
+def script_of(prompt: str) -> dict:
+    """What this turn does: ``FAKE``, with the keys ``turns`` gives a chat
+    turn of its message in their place."""
+    return {**FAKE, **((FAKE.get("turns") or {}).get(chat_message(prompt)) or {})}
+
+
+def answer_text(prompt: str, schema=None, script: dict = FAKE, said: str = "") -> str:
     message = chat_message(prompt) if schema is None else None
     if message is not None:
-        return FAKE.get("chat") or f"Done: {message}"
+        return (script.get("chat") or f"Done: {message}").replace("{gamma}", said)
     if FAIL == "no_answer":
         return "I looked at the comments but have nothing to say in JSON."
     if "answer" in FAKE:
@@ -328,7 +385,21 @@ def run_turn() -> None:
         complete(thread, "failed")
         return
     cwd = os.getcwd()
-    for n, edit in enumerate(FAKE.get("edits") or FAKE.get("files") or []):
+    script = script_of(prompt_of(params))
+    gamma = (state["config"].get("mcp_servers") or {}).get(GAMMA) or {}
+    page, said = chat_about(prompt_of(params)), ""
+    for n, called in enumerate(script.get("gamma") or [] if gamma.get("url") else []):
+        arguments = {k: page if v == "$page" else v for k, v in (called.get("arguments") or {}).items()}
+        body = {"type": "mcpToolCall", "id": f"mc{n}", "server": GAMMA, "tool": called["tool"],
+                "arguments": arguments, "readOnlyHint": True, "status": "inProgress"}
+        item("item/started", thread, body)
+        got = gamma_call.call(gamma["url"], os.environ.get(gamma.get("bearer_token_env_var") or "", ""),
+                              called["tool"], arguments)
+        log({"gamma": called["tool"], **got})
+        said = got["text"]
+        item("item/completed", thread, {**body, "status": "failed" if got["error"] else "completed",
+                                        "result": {"content": [{"type": "text", "text": got["text"]}]}})
+    for n, edit in enumerate(script.get("edits") or script.get("files") or []):
         path = os.path.join(cwd, edit["path"])
         change = {"path": path, "kind": {"type": "update", "move_path": None}, "diff": ""}
         item("item/started", thread, {"type": "fileChange", "id": f"fc{n}", "changes": [change],
@@ -339,7 +410,7 @@ def run_turn() -> None:
             f.write(text.replace(edit.get("old", ""), edit.get("new", ""), 1))
         item("item/completed", thread, {"type": "fileChange", "id": f"fc{n}", "changes": [change],
                                         "status": "completed"})
-    for n, command in enumerate(FAKE.get("commands") or []):
+    for n, command in enumerate(script.get("commands") or []):
         body = {"type": "commandExecution", "id": f"ce{n}", "command": command, "cwd": cwd, "commandActions": [],
                 "status": "inProgress", "aggregatedOutput": None, "exitCode": None}
         item("item/started", thread, body)
@@ -359,20 +430,20 @@ def run_turn() -> None:
             "type": "reasoning", "id": "r0", "summary": [], "content": []}})
         while True:
             time.sleep(1)
-    end = time.monotonic() + float(FAKE.get("delay") or 0)
+    end = time.monotonic() + float(script.get("delay") or 0)
     while time.monotonic() < end and not state["interrupted"]:
         wait_for(lambda m: False, min(0.1, max(0.0, end - time.monotonic())))
     if state["interrupted"]:
         complete(thread, "interrupted")
         return
-    text = answer_text(prompt_of(params), params.get("outputSchema"))
-    if decisions and not FAKE.get("chat"):
+    text = answer_text(prompt_of(params), params.get("outputSchema"), script, said)
+    if decisions and not script.get("chat"):
         text = "Ran it." if decisions[-1] in ("accept", "acceptForSession") else "Did not run it."
     item("item/started", thread, {"type": "agentMessage", "id": "am0", "text": ""})
     if "item/agentMessage/delta" not in state["quiet"]:
         for piece in chunks(text):
             notify("item/agentMessage/delta", {"threadId": thread, "turnId": TURN, "itemId": "am0", "delta": piece})
-            wait_for(lambda m: False, float(FAKE.get("typing") or 0))
+            wait_for(lambda m: False, float(script.get("typing") or 0))
             if state["interrupted"]:
                 complete(thread, "interrupted")
                 return

@@ -143,9 +143,11 @@ All state is SQLite + files on disk under a data directory (env
   - `integration_tokens` — hashed assistant tokens per account, each of one
     workspace (with a `scope` — `read`, `write`, `feedback`, a read token
     that may also reply to and resolve the threads on a work folder's files
-    ([comments.md](comments.md) "Who may comment"), or `computer`, a
+    ([comments.md](comments.md) "Who may comment"), `computer`, a
     computer's channel to this server, which opens nothing else
-    ([computers.md](computers.md)); free text, so a scope
+    ([computers.md](computers.md)), or `turn`, the token of one turn of an
+    agent on this computer, which opens MCP alone and lives for the turn
+    ([local_agents.md](local_agents.md) "Gamma's tools"); free text, so a scope
     this server does not know reads as `read` — and `workspaces`, what a read
     or feedback token's MCP connection reads beside it: `''`, `'*'` or a JSON
     list), and `mcp_oauth` — the OAuth flow's

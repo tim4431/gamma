@@ -257,8 +257,8 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
 
     claimed = _claim(pc, turn)
     assert claimed["turn"] == {"id": turn, "conversation_id": made["conversation"]["id"], "page_id": lab.main,
-                               "text": "Tighten this paragraph.", "selections": [selection], "model": "gpt-5",
-                               "effort": "high"}
+                               "title": "Tighten this paragraph.", "text": "Tighten this paragraph.",
+                               "selections": [selection], "model": "gpt-5", "effort": "high"}
     assert claimed["history"] == [] and claimed["page"] == {"path": "main.pdf", "title": "main"} and claimed["seen"]
     assert _reply(lab)["state"] == "running" and _chats(pc)["turns"] == []
     assert _chat(lab)["computer"]["turn"]["state"] == "running"
@@ -266,13 +266,17 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
     assert _write(pc, turn, 1, state="running", text="Working ![x](http://evil.example/a.png)",
                   steps=[{"id": "s1", "kind": "read", "status": "done", "path": "main.tex"},
                          {"id": "s2", "kind": "edit", "status": "done", "path": "C:/Users/tim/secret.txt"},
-                         {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"}],
+                         {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"},
+                         {"id": "s4", "kind": "gamma", "status": "completed", "tool": "read_page"},
+                         {"id": "s5", "kind": "gamma", "status": "completed", "tool": "Read Page; rm -rf"}],
                   asks=[{"id": "a1"}]) == {"ok": True}
     reply = _reply(lab)
     assert reply["text"] == "Working [x](http://evil.example/a.png)"             # made inert again
     assert reply["steps"] == [{"id": "s1", "kind": "read", "status": "done", "path": "main.tex"},
                               {"id": "s2", "kind": "edit", "status": "done", "path": "outside"},
-                              {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"}]
+                              {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"},
+                              {"id": "s4", "kind": "gamma", "status": "completed", "tool": "read_page"},
+                              {"id": "s5", "kind": "gamma", "status": "completed", "tool": ""}]   # a name no tool has
     assert reply["asks"] == []                                                    # it never asks
     # a retry, or a late write, never goes back
     assert _write(pc, turn, 1, text="Older") == {"ok": True, "stale": True}

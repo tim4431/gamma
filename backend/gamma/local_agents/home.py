@@ -604,9 +604,10 @@ class LocalChatHome:
         self.ws = ws
 
     def claim(self, turning) -> dict | None:
-        """The turn's context, ``{user_id, text, selections, earlier}``
-        (the conversation's account, the person's message and its
-        selections, the conversation's last messages before it), while its
+        """The turn's context, ``{user_id, text, selections, earlier,
+        title}`` (the conversation's account, the person's message and its
+        selections, the conversation's last messages before it, its title),
+        while its
         message reads queued; None when it is gone or ended meanwhile (a
         Stop while it waited for a slot ended its message and its row)."""
         conversation, reply = chats.reply_of(self.ws, turning.conversation_id, turning.turn_id)
@@ -616,7 +617,8 @@ class LocalChatHome:
         at = next(i for i, m in enumerate(messages) if m.get("turn_id") == turning.turn_id)
         person = next((m for m in reversed(messages[:at]) if m.get("role") == "user"), None) or {}
         return {"user_id": conversation["user_id"], "text": person.get("text") or "",
-                "selections": person.get("selections") or [], "earlier": _earlier(messages, at, person)}
+                "selections": person.get("selections") or [], "earlier": _earlier(messages, at, person),
+                "title": conversation["title"]}
 
     def place(self, turning, context: dict) -> dict:
         """Where the turn works (``chats.place_of`` for the conversation's
@@ -723,7 +725,7 @@ class HttpChatHome(_Remote):
 
     def claim(self, turning) -> dict | None:
         """The vault and its agent checked, the turn taken there for this
-        computer's run → its context (``{text, selections, earlier}``; the
+        computer's run → its context (``{text, selections, earlier, title}``; the
         turn's agent, conversation, page, model and effort set on
         ``turning``), recorded here (``store.claimed_turn``); None when it is
         not this run's: stopped while it waited, the vault gone or no work
@@ -780,7 +782,7 @@ class HttpChatHome(_Remote):
                 place = raw.get("place") if isinstance(raw.get("place"), dict) else {}
                 selections.append({**kept[0], "doc_id": str(place.get("doc_id") or raw.get("doc_id") or "")})
         return {"text": str(turn.get("text") or ""), "selections": selections[:chats.MAX_SELECTIONS],
-                "earlier": earlier[-6:]}
+                "earlier": earlier[-6:], "title": chats.title_of(str(turn.get("title") or ""))}
 
     def _turned_off(self, turning, link: dict) -> None:
         """The turn's agent was turned off while the turn waited here: the

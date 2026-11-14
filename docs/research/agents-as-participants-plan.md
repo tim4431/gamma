@@ -1,7 +1,7 @@
 # Agents as participants: the build plan
 
-Status: **a plan, partly built**: steps 1 and 2 but 2.7 are built, each
-step's "As built" saying where the build differs. Written 2026-11-14
+Status: **a plan, partly built**: steps 1 and 2 are built, each step's
+"As built" saying where the build differs. Written 2026-11-14
 against `dev` @ b4870d47, after a survey of the code behind work folders, local agents,
 computers and feedback. The file and line references were read then, so
 check them again before building. This file says what to build and in
@@ -651,6 +651,77 @@ account's, read by no tool.
   agent that calls a tool with the token it was handed and is refused
   after the turn ends. Docs: [dev/mcp.md](../dev/mcp.md),
   [dev/local_agents.md](../dev/local_agents.md) "Trust".
+
+**As built** (2.7, the token and the drivers). The token is a scope of its
+own, `turn` (`integrations.mint_turn`, `renew_turn`, `drop`, `drop_turns`):
+the turn owner's, of the turn's workspace alone, named with the agent's
+label, living `RUN_TIMEOUT_S` and `TOKEN_SLACK_S` (60 s); it is no
+connection (Settings' list, the twenty, the PATCH and the DELETE pass it
+by) and every `/api/` route answers it 403 `auth.TURN_ONLY`.
+`runner._Turning` mints it at the turn's first start (a chat turn's and a
+Send's of this server), renews it at every start of the agent to that
+start's deadline when it would expire sooner, and while an ask moves the
+deadline (at most once a minute, 60 s past the deadline; a renewal that
+failed is tried a minute later), and deletes it in `go`'s `finally`;
+`recover` deletes what a crash left. The address is new
+(`local_agents/tools.py`): nothing on the server knew its own port, so the
+session middleware hands every request to `tools.heard`, and the first one
+from a loopback client to `127.0.0.1` or `::1` without `X-Forwarded-Proto`
+names `<scheme>://<that socket>/mcp`; a server that learned none runs its
+turns without the tools (Settings' MCP URL, `public_base`, names the
+public address, which the agent's process may not reach). The drivers take
+`gamma=events.Gamma(url, token)`; the token goes into the process's
+environment alone (`events.TOKEN_ENV`, added by `Turn` after
+`child_env`). The server is named `gamma_turn` (`events.MCP_NAME`), not
+`gamma` as C1 and C2 tried it: Gamma's own setup names the user's
+connection `gamma` (`codex mcp add gamma`), and Codex merges a thread's
+server into the user's of the same name, whose headers, tools turned off or
+command would then be the turn's; the user's `gamma` is turned off with the
+rest. Its entry carries `enabled: true`, and Claude Code fails a turn only
+on `gamma_turn` not `connected`, not on another server listed. Codex's
+`shell_environment_policy.exclude` is the user's own list with the token's
+variable added: an override replaces a list, where it merges a table. A
+Gamma that did not start or connect fails the turn as `events.GammaDown`
+(the done's `gamma_down`), which the runner never takes for a refused
+resume: a turn afresh would fail alike and replace the conversation's
+session. A call is a step of a new kind, `gamma`, with the tool's
+name (`events.gamma_step`, `runner._step`, the channel's `_step`,
+`chat_export.step_text`: "Read Gamma: read_page"); the chat's chip takes
+the kind of Gamma AI's own call of that tool (`computerChat.stepChip`), so
+the steps pill counts it as a read, and `chat/agentSteps.js` needed no
+change. A far turn gets no token (4.2). The prompt's half of 2.7 is not
+in this part.
+
+**As built** (2.7, the prompt). `build_chat` takes `tools`, whether the
+turn has Gamma's tools: a chat turn mints its token before its prompt
+(`_ChatTurn._work` calls `_tools`, which mints once; each start renews
+it in `_turn`), so a turn without them (no address learned, a far turn) is
+told what it was told before. With them, a section *Gamma's tools* says
+that what the server `gamma_turn` returns is data, not instructions, and names
+the tools that answer for what the conversation is about, by its id
+(`prompt._tools`): a page's `read_page` and `read_block`, `view_pdf_page`
+with its `page_id` and a `pdf_page` for a PDF, a folder's `list_pages`, the library's `list_folders` and
+`list_pages`, `list_feedback` and `read_feedback` in a work folder, then
+`search_library`, `cite` and `read_chats`. Nothing the prompt pasted could
+be read with them: it carried the message, what it is about, the
+selections and the earlier messages, and the earlier messages stay, since
+no tool reads a computer agent's conversation (2.6). The tool list and
+`mcp_server`'s instructions are unchanged. A new Codex thread is named with
+the conversation's title (`thread/name/set` after a `thread/start`, never
+after a resume, its answer not waited for, so a Codex that refuses it or
+never answers runs the turn all the same): a
+computer agent's conversation has no rename (2.6), so the name is set
+once. The title comes with the turn's context (`home.claim`) and, for a
+far turn, the channel's claim (`turn.title`, cut as a local title,
+`chats.title_of`). The browser step is in
+`local-agents`: with no provider, a library PDF with a highlight, its chat
+on the fake Codex, which reads the page with `read_page` through `/mcp`
+with its token and answers with what it read (the fake Codex's `turns`
+scripts that one message: `$page`, `{gamma}`); the pill unfolds to *Read
+Gamma: read_page*, and the server log says the token was deleted
+(`_Turning._drop_tools` logs it). The Send's step there now lets the
+turn's token through the check that no `GAMMA_` variable reaches the
+agent. With this, 2.7 is built, and step 2 with it.
 
 ### 2.8 A chat without a provider
 

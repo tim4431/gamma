@@ -2,9 +2,12 @@
 MCP connection, the HTTP API's reads), ``write`` tokens (a mirror pushing
 its edits, docs/dev/mirror.md), ``feedback`` tokens (a read token that
 may also reply to and resolve the comment threads on a work folder's files,
-docs/dev/feedback.md) and ``computer`` tokens (a computer's channel to this
+docs/dev/feedback.md), ``computer`` tokens (a computer's channel to this
 server, gamma/computers/: they open the channel's routes and nothing else,
-``auth.CHANNEL_PREFIX``, and no MCP connection).
+``auth.CHANNEL_PREFIX``, and no MCP connection) and ``turn`` tokens (the
+token of one turn of an agent on this computer, ``mint_turn``: Gamma's
+read tools on MCP in its one workspace and nothing else, ``auth.TURN_ONLY``;
+no connection a person sees or manages).
 
 A token belongs to one workspace, ``workspace_id``, the one the HTTP API
 reads. A read or feedback token's MCP connection may read more
@@ -37,7 +40,8 @@ def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-SCOPES = ("read", "write", "feedback", "computer")
+SCOPES = ("read", "write", "feedback", "computer", "turn")
+TURN = "turn"
 ONE_WORKSPACE = {"write": "A read and write token is for one workspace.",   # the scopes of exactly one workspace
                  "computer": "A computer's token is for one workspace."}
 ALL = "*"
@@ -149,7 +153,7 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
     made (``""``: that workspace alone), ``edits`` the one ``edit_grant``
     made (``""``: it changes nothing), ``asks`` whether each change waits
     for the person's yes."""
-    if scope not in SCOPES:
+    if scope not in SCOPES or scope == TURN:
         raise HTTPException(400, "scope must be read, write, feedback or computer")
     now = int(time.time())
     token = ("gamma_oauth_" if oauth_resource else "gamma_") + secrets.token_urlsafe(32)
@@ -159,7 +163,8 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
         # Serialize count + insert, including concurrent requests.
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM integration_tokens WHERE user_id = ? AND expires_at <= ?", (user_id, now))
-        count = conn.execute("SELECT COUNT(*) FROM integration_tokens WHERE user_id = ?", (user_id,)).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM integration_tokens WHERE user_id = ? AND scope != ?",
+                             (user_id, TURN)).fetchone()[0]
         if count >= 20:
             raise HTTPException(400, "Revoke an existing connection before creating another (limit 20).")
         conn.execute("INSERT INTO integration_tokens (id, token_hash, user_id, workspace_id, name, "
@@ -173,13 +178,51 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
     return {**item, "token": token}
 
 
+def mint_turn(user_id: str, ws: str, name: str, seconds: float) -> tuple[str, str]:
+    """The token of one turn of an agent on this computer
+    (gamma/local_agents/tools.py) → ``(its id, the token)``: the account's,
+    of ``ws`` alone, named ``name`` (the agent's label), living ``seconds``.
+    It reads through MCP and opens nothing else (``auth.TURN_ONLY``), is
+    never listed and does not count toward the account's connections; the
+    turn deletes it at its end (``drop``), the next start any a crash left
+    (``drop_turns``)."""
+    token = "gamma_" + secrets.token_urlsafe(32)
+    token_id = secrets.token_hex(16)
+    with connect_users_db() as conn:
+        conn.execute("INSERT INTO integration_tokens (id, token_hash, user_id, workspace_id, name, created_at, "
+                     "expires_at, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     (token_id, token_digest(token), user_id, ws, name, page_now(),
+                      int(time.time() + max(1.0, seconds)), TURN))
+    return token_id, token
+
+
+def renew_turn(token_id: str, seconds: float) -> None:
+    """A turn's token lives ``seconds`` more from now (its turn's deadline
+    moved: it waited for the person, or its agent started again)."""
+    with connect_users_db() as conn:
+        conn.execute("UPDATE integration_tokens SET expires_at = ? WHERE id = ? AND scope = ?",
+                     (int(time.time() + max(1.0, seconds)), token_id, TURN))
+
+
+def drop(token_id: str) -> None:
+    """A token gone: what the next request with it is refused."""
+    with connect_users_db() as conn:
+        conn.execute("DELETE FROM integration_tokens WHERE id = ?", (token_id,))
+
+
+def drop_turns() -> int:
+    """Every turn's token gone (at start: no turn runs yet) → how many."""
+    with connect_users_db() as conn:
+        return conn.execute("DELETE FROM integration_tokens WHERE scope = ?", (TURN,)).rowcount
+
+
 def set_workspaces(user_id: str, token_id: str, workspaces, edits=()) -> tuple[str, str, str]:
     """Change which workspaces one of the account's read or feedback
     tokens may read, and which of them it may edit; the stored
     ``(workspace_id, workspaces, edits)``."""
     with connect_users_db() as conn:
-        row = conn.execute("SELECT scope FROM integration_tokens WHERE id = ? AND user_id = ?",
-                           (token_id, user_id)).fetchone()
+        row = conn.execute("SELECT scope FROM integration_tokens WHERE id = ? AND user_id = ? AND scope != ?",
+                           (token_id, user_id, TURN)).fetchone()
     if not row:
         raise HTTPException(404, "This connection is gone.")
     if row[0] in ONE_WORKSPACE:
@@ -196,8 +239,8 @@ def set_asks(user_id: str, token_id: str, asks: bool) -> None:
     """Whether one of the account's connections asks before each change it
     makes (Settings, or the person's "don't ask again" on a question)."""
     with connect_users_db() as conn:
-        found = conn.execute("UPDATE integration_tokens SET asks = ? WHERE id = ? AND user_id = ?",
-                             (int(bool(asks)), token_id, user_id)).rowcount
+        found = conn.execute("UPDATE integration_tokens SET asks = ? WHERE id = ? AND user_id = ? AND scope != ?",
+                             (int(bool(asks)), token_id, user_id, TURN)).rowcount
     if not found:
         raise HTTPException(404, "This connection is gone.")
 
