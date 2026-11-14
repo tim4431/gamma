@@ -279,6 +279,12 @@ def test_a_withdraw_during_the_turn(lab, disk, monkeypatch):
     sent = _send(lab.owner, f)
     run = _turn_started(lab, sent["id"])
     assert runner.running(lab.ws, sent["id"])
+    # Background tasks lists the run for the folder's maker, its Stop the requester's withdraw
+    rows = [j for j in lab.owner.get("/api/jobs").json()["jobs"] if j["kind"] == "feedback-run"]
+    assert [(j["id"], j["workspace"], j["state"], j["stoppable"], j["params"]["label"], j["params"]["scope"]["kind"],
+             j["params"]["comments"]) for j in rows] == [(f"feedback-{sent['id']}", lab.ws, "running", True, "Codex",
+                                                          "folder", 2)]
+    assert not [j for j in lab.editor.get("/api/jobs").json()["jobs"] if j["kind"] == "feedback-run"]
     _until(lambda: TITLE not in (f.root / "main.tex").read_text(encoding="utf-8"))
     _withdraw(lab, sent["id"])
     assert runner.wait_idle(30)
@@ -289,6 +295,7 @@ def test_a_withdraw_during_the_turn(lab, disk, monkeypatch):
     assert ended["changes"] == ["main.tex"]  # what it changed already stays in the files
     assert all(len(t["comments"]) == 1 and not t["resolved_at"] for t in _threads(lab, f).values())
     assert not runner.running(lab.ws, sent["id"])
+    assert not [j for j in lab.owner.get("/api/jobs").json()["jobs"] if j["kind"] == "feedback-run"]
 
 
 def test_a_tokens_state_change_is_refused_while_it_runs(lab, disk, monkeypatch):

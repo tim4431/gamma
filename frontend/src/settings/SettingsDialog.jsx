@@ -1383,7 +1383,7 @@ export default function SettingsDialog({
                   <PaneHead icon={SlidersIcon} title={t("Tool usage")} />
                   <ToolUsageSettings value={context} />
                 </> : null}
-                {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} /> : null}
+                {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} setStatus={library?.setStatus} /> : null}
                 {pane === "account" ? <>
                   <UsersSettings value={users} selfOnly onServer={available("server") ? () => navigate("server", t("Account server")) : null} />
                   {workspace ? <SyncSettings value={workspace} /> : null}

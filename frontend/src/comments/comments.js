@@ -16,6 +16,7 @@ import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlo
 import { plainSnippet } from "../search/snippets.js";
 import { agentAway, peopleIn } from "../editor/mentions.js";
 import { AGENT_MAX } from "../feedback/feedbackView.js";
+import { agentWorking } from "../vault/vaultState.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
 
@@ -269,7 +270,7 @@ export function sendState(send, answers = null) {
     return { kind: state, label: t("Failed"), detail, title: detail ? t("Failed: {reason}", { reason: detail }) : t("Failed"), tone: "failed", live: false };
   }
   if (state === "running") {
-    const label = agent ? t("{agent} is working…", { agent }) : t("The agent is working…");
+    const label = agentWorking(agent);
     return { kind: state, label, detail, title: detail || label, tone: "pending", live: true };
   }
   if (state === "done") {

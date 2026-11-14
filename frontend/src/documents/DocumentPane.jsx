@@ -10,6 +10,7 @@
 import React from "react";
 import { LazyBoundary, lazySurface } from "../shared/ui/lazy";
 import { viewerOf } from "./viewers.js";
+import { t } from "../shared/i18n/i18n.js";
 
 const TextViewer = lazySurface(() => import("./viewers/TextViewer.jsx"));
 const ImageViewer = lazySurface(() => import("./viewers/FileViews.jsx"), (m) => m.ImageViewer);
@@ -36,7 +37,7 @@ export default function DocumentPane({ view, render, fallback = null, surface = 
   const Viewer = view.viewer ? DEFAULT[view.viewer] : null;
   if (!Viewer || !surface) return fallback;
   return (
-    <LazyBoundary fallback={<div className="docViewSkeleton" aria-busy="true" />}>
+    <LazyBoundary fallback={<div className="docViewSkeleton" aria-busy="true"><div className="docViewHint loadingHint">{t("Loading…")}</div></div>}>
       <Viewer {...surface} />
     </LazyBoundary>
   );

@@ -20,7 +20,7 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { API, apiJson, makeId, withWorkspace } from "../shared/lib/utils";
-import { Segmented, SubDialog } from "../settings/SettingsKit";
+import { FormNotice, Segmented, SubDialog } from "../settings/SettingsKit";
 import { FileTextIcon, HighlightIcon, MessageSquareIcon, PenIcon, RectSelectIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
 import { StateTag } from "../shared/ui/StateTag";
@@ -78,16 +78,20 @@ function Entry({ entry, answers, onOpen }) {
 function RequestRow({ request, me, answers, busy, onWithdraw }) {
   const sent = requestLine(request, Date.now(), request.by === me ? answers : null);
   const { line, detail, kind } = sent;
+  const withdraws = canWithdraw(request, me);
+  // what Withdraw does to a run of this computer's agent, said on a line (a finger has no hover)
+  const stops = withdraws ? withdrawTitle(request) : "";
   return (
     <li className="feedbackRequest" data-request-id={request.id} data-state={kind}>
       <span className="feedbackRequestLine">
         <span>{line}</span>
         {request.note ? <span className="feedbackRequestNote" title={request.note}>{anchorSnippet(request.note, 120)}</span> : null}
         {detail ? <span className="feedbackRequestDetail" title={detail}>{detail}</span> : null}
+        {stops ? <span className="feedbackRequestHint">{stops}</span> : null}
       </span>
       <StateTag state={sent} className="feedbackRequestState" />
-      {canWithdraw(request, me) ? (
-        <button type="button" className="uiBtn sm" disabled={busy} title={withdrawTitle(request) || undefined}
+      {withdraws ? (
+        <button type="button" className="uiBtn sm" disabled={busy} title={stops || undefined}
           onClick={() => onWithdraw(request)}>{t("Withdraw")}</button>
       ) : null}
     </li>
@@ -102,7 +106,9 @@ function RequestRow({ request, me, answers, busy, onWithdraw }) {
 // blockId, pageId) opens a thread on its page (App's openThreadAt).
 export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread, onClose }) {
   const [choice, setChoice] = useState("scope");
-  const [read, setRead] = useState(null); // {doc} | {error}
+  // {target, doc, error}: the document of `target` read last, and the
+  // error of the read since that failed, which keeps the document shown.
+  const [read, setRead] = useState(null);
   const [requests, setRequests] = useState([]);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -126,9 +132,12 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
     const load = async () => {
       try {
         const next = await apiJson(`${API}/feedback?scope=${encodeURIComponent(target)}`);
-        if (live) setRead({ doc: next });
+        if (live) setRead({ target, doc: next });
       } catch (err) {
-        if (live) setRead({ error: err.message || String(err) });
+        // A poll that fails says so over the entries, which stay, as the
+        // instruction being typed does; another scope's are not shown.
+        const error = err.message || String(err);
+        if (live) setRead((r) => r?.target === target ? { ...r, error } : { target, error });
       }
       if (!w) return;
       try {
@@ -143,7 +152,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
 
   const reload = async () => {
     try {
-      setRead({ doc: await apiJson(`${API}/feedback?scope=${encodeURIComponent(target)}`) });
+      setRead({ target, doc: await apiJson(`${API}/feedback?scope=${encodeURIComponent(target)}`) });
       if (w) setRequests((await apiJson(`${API}/feedback/requests?scope=${encodeURIComponent(w)}&limit=100`)).requests || []);
     } catch {}
   };
@@ -195,8 +204,8 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
         </div>
       ) : null}
       {paused ? <p className="feedbackNotice" role="status">{t("This work folder is paused: its feedback files wait until it syncs again.")}</p> : null}
-      {read?.error ? <p className="importWarning" role="alert">{read.error}</p> : null}
-      {!read ? <p className="reportModalHint">{t("Reading…")}</p> : null}
+      {read?.error ? <FormNotice>{read.error}</FormNotice> : null}
+      {!read ? <p className="reportModalHint loadingHint">{t("Reading…")}</p> : null}
       {doc ? (
         <div className="feedbackEntries" data-count={n}>
           {n ? groupByFile(entries).map((group) => (
@@ -222,11 +231,11 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
       {doc && canSend ? (
         <div className="feedbackAgent" id={notesId} role="status">
           {words.notes.map((line) => (
-            <p key={line.text} className="feedbackAgentNote" data-tone={line.tone}>{line.text}</p>
+            <p key={line.text} className={`feedbackAgentNote${line.tone === "warn" ? " agentProblem" : ""}`} data-tone={line.tone}>{line.text}</p>
           ))}
         </div>
       ) : null}
-      {problem ? <p className="importWarning" role="alert">{problem}</p> : null}
+      {problem ? <FormNotice>{problem}</FormNotice> : null}
       {requests.length ? (
         <div className="feedbackRequests">
           <h3 className="feedbackFileName">{t("Sent to the agent")}</h3>

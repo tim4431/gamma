@@ -12,7 +12,9 @@ The listing also shows the account's scheduled backup tasks while one runs
 kind ``scheduled-backup``; and the account's turns of the chat's computer
 side while an agent on this computer has them queued or running, or they
 wait for or run on another computer of the account's (step 4d): read-only
-rows of kind ``computer-turn``.
+rows of kind ``computer-turn``; and the Sends an agent on this computer
+answers in a work folder of the account's: read-only rows of kind
+``feedback-run``.
 
 A share view's exports are the share's (``auth.share_job_owner``): a
 request carrying the ``?share=`` that started one reads, stops, removes and
@@ -154,6 +156,51 @@ def _turn_row(user_id: str, turn: dict, page_title: str, *, asking: bool = False
     }
 
 
+def _feedback_runs(user_id: str) -> list[dict]:
+    """The Sends an agent on this computer answers now in a work folder the
+    account made (runner ``send_runs``), in the jobs' shape: read-only rows
+    titled ``<agent> · <file or folder>``, ``progress.item`` the agent's
+    own words (the request's detail). A click opens the Feedback dialog on
+    the Send's file or folder; Stop is its requester's withdraw, theirs
+    alone (``POST /api/feedback/requests/{id}/state``)."""
+    from ..db import connect_pages_db
+    from ..feedback import requests
+    from ..folder_links import get_link
+    from ..local_agents import catalog, enabled, runner, store
+
+    if not enabled():
+        return []
+    rows = []
+    try:
+        for held in runner.send_runs():
+            link = get_link(held["link_id"])
+            if not link or link["created_by"] != user_id:
+                continue
+            with connect_pages_db(held["ws"]) as conn:
+                record = requests.get(conn, held["request_id"])
+                mine = requests.requester(conn, held["request_id"]) == user_id
+            if not record or record["state"] != "running":
+                continue
+            run = store.run_of(held["ws"], held["request_id"])
+            label = catalog.label(run["agent"]) if run else record["state_by"]
+            scope = record["scope"]
+            rows.append({
+                "id": f"feedback-{record['id']}", "kind": "feedback-run", "owner": user_id, "workspace": held["ws"],
+                "title": f"{label} · {scope['name'] or 'Untitled'}",
+                "params": {"request": record["id"], "label": label, "name": scope["name"],
+                           "scope": {"kind": "file" if scope["kind"] == "file" else "folder", "id": scope["id"]},
+                           "comments": len(record["threads"])},
+                "state": "running", "progress": {"item": record["detail"]} if record["detail"] else {}, "error": "",
+                "created_at": record["at"], "started_at": (run or {}).get("started_at") or record["state_at"],
+                "finished_at": "", "artifact": None, "downloaded": False,
+                "stoppable": mine and not held["stopping"], "stopping": held["stopping"], "readonly": True,
+            })
+    except Exception:  # noqa: BLE001 — the tray never breaks over the agents
+        log.exception("[jobs] could not read the Sends the agents answer")
+        return []
+    return rows
+
+
 def _far_turns(user_id: str, ws: str) -> list[dict]:
     """The account's turns of the chat's computer side queued or running on
     another computer (step 4d, ``chats.remote_turns``: kept in the
@@ -177,12 +224,13 @@ def _far_turns(user_id: str, ws: str) -> list[dict]:
 def list_jobs(request: Request):
     """``{jobs: [...]}``: the account's jobs (newest first, without their
     results), the running scheduled backups, the paper fetches waiting for
-    their browser and the chat turns this computer's agents have queued or
-    running and those queued or running on another computer, plus the own
-    jobs of the workspace the request works in."""
+    their browser, the chat turns this computer's agents have queued or
+    running and those queued or running on another computer, and the Sends
+    this computer's agents answer in the account's work folders, plus the
+    own jobs of the workspace the request works in."""
     user_id, ws, _ = _context(request)
     return {"jobs": _running_backup_tasks(user_id) + _waiting_papers(user_id) + _computer_turns(user_id)
-            + _far_turns(user_id, ws) + jobs.for_account(user_id, ws)}
+            + _far_turns(user_id, ws) + _feedback_runs(user_id) + jobs.for_account(user_id, ws)}
 
 
 @router.post("/clear")

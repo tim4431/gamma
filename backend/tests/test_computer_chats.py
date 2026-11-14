@@ -179,8 +179,8 @@ def test_the_announce_keeps_each_assistants_models(lab):
 def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, guest):
     assert _chat(lab) == {"computer": {
         "agent": "codex", "label": "Codex", "ready": True, "problem": "", "models": MODELS, "folder": "ccx-paper",
-        "paused": False, "turn": None, "session": False, "computer": "TIM-PC", "online": True, "since": None,
-        "remote": True}, "conversation": None}
+        "paused": False, "turn": None, "session": False, "folder_id": lab.W, "grants": [], "computer": "TIM-PC",
+        "online": True, "since": None, "remote": True}, "conversation": None}
     for status, who in ((404, lab.editor), (403, lab.stranger), (401, anon)):   # no member: the workspace's 403
         assert who.get("/api/local-agents/chat", params={"page": lab.main}).status_code == status
         assert who.post("/api/local-agents/chat/turns", json={"page": lab.main, "text": "hi"}).status_code == status

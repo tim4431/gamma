@@ -456,6 +456,16 @@ def at_work(link_ids) -> dict[str, dict]:
                 for (ws, kind, key_id), run in _active.items() if run["link_id"] in wanted and run["claimed"]}
 
 
+def send_runs() -> list[dict]:
+    """The Sends this server's agents work on now, a Send of another
+    server's left out: ``{ws, request_id, link_id, stopping}`` (Background
+    tasks' rows, routers/jobs.py)."""
+    with _lock:
+        return [{"ws": ws, "request_id": key_id, "link_id": run["link_id"], "stopping": run["stop"].is_set()}
+                for (ws, kind, key_id), run in _active.items()
+                if kind == SEND and run["claimed"] and not run.get("remote")]
+
+
 def chat_state(ws: str, turn_id: str) -> dict | None:
     """Where the chat turn ``turn_id`` stands in the runner: ``{turn_id,
     state: "queued" | "running", ahead}``, ``ahead`` whether another run

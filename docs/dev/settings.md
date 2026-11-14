@@ -669,7 +669,10 @@ AI:
   popover's View / Edit `Segmented` (eye and pen): Edit lets the connection
   change notes there ([mcp.md](mcp.md) "Editing notes"); a workspace the
   account only views says *view only* instead. Each command box carries its copy button in
-  its corner (a check for two seconds after a copy).
+  its corner (a check for two seconds after a copy). The pane reads its
+  connections through the dialog's reads (`PANE_READS.integrations`,
+  "What a pane reads" below), again in place when the window comes back
+  into focus; a disconnect shows the list without the row at once.
 
 Library:
 

@@ -41,6 +41,7 @@ import { useMarkTools } from "../../pdf/MarkTools.jsx";
 import { textSpan } from "../../shared/model/blockModel.js";
 import { selectionTint } from "../../shared/model/markStyle.js";
 import { useTextScale } from "../../shared/ui/Widgets";
+import { MorphText } from "../../shared/ui/MotionWidgets";
 import { menuPress } from "../../shared/ui/press.js";
 import { DownloadIcon, SearchIcon } from "../../shared/ui/Icons";
 import { chordLabel } from "../../shared/lib/hotkeys.js";
@@ -167,16 +168,20 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
   const readCtl = useRef(null);
   const wholeFor = useRef(null); // the mark the whole file was read for, in this version
   const docHash = fileHash(doc);
+  const [readingAll, setReadingAll] = useState(false); // a whole read under way: Show all says Loading…
   const read = useCallback((whole) => {
     readCtl.current?.abort();
     const ctl = new AbortController();
     readCtl.current = ctl;
+    setReadingAll(whole);
     if (viewRef.current) keepLine.current = standing();
     loadText(fileUrl, { whole, signal: ctl.signal }).then((got) => {
       if (ctl.signal.aborted) return;
+      setReadingAll(false);
       setLoad(got.binary ? { status: "binary" } : { status: "ready", ...got, url: fileUrl, hash: docHash });
     }, (err) => {
       if (ctl.signal.aborted) return;
+      setReadingAll(false);
       if (err?.tooLarge) setLoad((prev) => ({ ...prev, tooLarge: true }));
       else setLoad({ status: "gone", httpStatus: err?.status || 0 });
     });
@@ -416,7 +421,11 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
     };
   }, [marked, unmark]);
 
-  if (filePane) return <FilePane doc={doc} fileUrl={fileUrl} onReveal={onReveal} />;
+  // A read that failed but for a 404 (the bytes elsewhere: the file pane's
+  // own sentence) offers Try again, which reads the head again.
+  const retry = load.status === "gone" && load.httpStatus !== 404 && fileUrl
+    ? () => { setLoad({ status: "loading" }); read(false); } : null;
+  if (filePane) return <FilePane doc={doc} fileUrl={fileUrl} onReveal={onReveal} onRetry={retry} />;
   const lines = ready ? countLines(load.text) : 0;
   const word = formatLabel(doc);
   const style = { ...textScale.style, "--doc-margin-w": `${MARGIN_W}px`, ...(tint ? { "--selection-color": tint } : null) };
@@ -443,6 +452,7 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
       {ready ? <div className={`docMarkNotice${marked?.shown ? "" : " srOnly"}`} role="status" aria-live="polite">{marked?.text || ""}</div> : null}
       <div className="docTextBody">
         {textScale.badge}
+        {ready ? null : <div className="docViewHint loadingHint">{t("Loading…")}</div>}
         <div className="docTextHost" ref={host} aria-busy={!ready || undefined} />
       </div>
       {ready && !load.whole ? (
@@ -450,7 +460,9 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
           {load.tooLarge ? t("Too large to show here. Download it to read it all.") : (
             <>
               <span>{t("Showing the first {shown} of {size}", { shown: fmtBytes(load.read), size: fmtBytes(load.size ?? load.read) })}</span>
-              <button type="button" className="uiBtn sm" onClick={() => read(true)}>{t("Show all")}</button>
+              <button type="button" className="uiBtn sm" disabled={readingAll} onClick={() => read(true)}>
+                <MorphText>{readingAll ? t("Loading…") : t("Show all")}</MorphText>
+              </button>
             </>
           )}
         </div>

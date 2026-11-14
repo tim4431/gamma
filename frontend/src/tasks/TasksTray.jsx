@@ -12,10 +12,10 @@ import ListMotion from "../shared/ui/ListMotion";
 import {
   ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, DatabaseIcon, DownloadIcon,
   ExportIcon, FileIcon, HardDriveIcon, ImportIcon, RefreshIcon, SearchIcon, SparklesIcon, StopIcon,
-  TerminalIcon, Trash2Icon, UploadIcon, XIcon,
+  ShieldIcon, TerminalIcon, Trash2Icon, UploadIcon, XIcon,
 } from "../shared/ui/Icons";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { isActive, progressFraction } from "./taskModel.js";
+import { isActive, progressFraction, waitsForYou } from "./taskModel.js";
 import { canOpen, kindOf, progressText, taskActions, taskInfo, taskTime, taskTitle } from "./taskKinds.js";
 import "./tasks.css";
 import { Popover } from "../shared/ui/Surfaces";
@@ -57,7 +57,8 @@ export function TasksButton({ tasks, open, onToggle }) {
 }
 
 // The button's mark: a spinner while anything runs, a red dot for a failure
-// worth a look, an accent dot for a file waiting to be downloaded.
+// worth a look, an accent dot for a task waiting for the person or a file
+// waiting to be downloaded.
 export function TaskBadge({ badge, inline = false }) {
   if (badge === "running") return <span className={`transferSpin${inline ? " inline" : ""}`} aria-hidden="true" />;
   if (badge === "failed" || badge === "ready") {
@@ -66,8 +67,11 @@ export function TaskBadge({ badge, inline = false }) {
   return null;
 }
 
+// The row's state, at its left: a task waiting for the person (taskModel
+// waitsForYou) the shield, still, as an approval card heads its ask.
 function StatusGlyph({ state }) {
-  const glyph = state === "running" ? <span className="transferSpin inline" />
+  const glyph = state === "waiting" ? <ShieldIcon size={14} />
+    : state === "running" ? <span className="transferSpin inline" />
     : state === "queued" ? <ClockIcon size={14} />
       : state === "done" ? <CheckIcon size={14} />
         : state === "failed" ? <AlertCircleIcon size={14} /> : <XIcon size={14} />;
@@ -98,19 +102,20 @@ function TaskRow({ task, tasks, now, onOpen, onRetry }) {
   const when = taskTime(task, now);
   const Icon = ICONS[kindOf(task).icon] || ActivityIcon;
   const openable = onOpen && canOpen(task);
+  const waiting = waitsForYou(task);
   const body = (
     <>
       <span className="taskTitleLine">
         <span className="taskName">{title}</span>
         {when ? <span className="taskTime">{when}</span> : null}
       </span>
-      {isActive(task) ? <TaskBar task={task} label={t("{name} progress", { name: title })} /> : null}
+      {isActive(task) && !waiting ? <TaskBar task={task} label={t("{name} progress", { name: title })} /> : null}
       {info ? <span className={`taskInfo${task.state === "failed" ? " error" : ""}`}>{info}</span> : null}
     </>
   );
   return (
     <div className={`taskRow ${task.state}`} data-motion-key={task.id} data-guide="tasks.row" title={info ? `${title} — ${info}` : title}>
-      <StatusGlyph state={task.state} />
+      <StatusGlyph state={waiting ? "waiting" : task.state} />
       <span className="taskKind" aria-hidden="true"><Icon size={14} /></span>
       {openable ? (
         <button type="button" className="taskMain" onClick={() => onOpen(task)} aria-label={t("Open {name}", { name: title })}>{body}</button>

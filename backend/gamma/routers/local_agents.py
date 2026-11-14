@@ -179,7 +179,8 @@ def _refused(e) -> HTTPException:
 
 def _computer(ws: str, link: dict, conversation: dict | None) -> dict:
     """What the strip says: ``{agent, label, ready, problem, models, folder,
-    paused, turn, session}``, ``agent`` the work folder's agent here (null for none),
+    paused, turn, session, folder_id, grants}``, ``agent`` the work
+    folder's agent here (null for none),
     ``ready``, ``problem`` and ``models`` (what it offers, ``[{id, label,
     efforts, effort, default}]``) as last asked (``catalog.cached``: nothing
     runs; ``ready`` null while it is asked), ``folder`` the work folder's
@@ -187,7 +188,9 @@ def _computer(ws: str, link: dict, conversation: dict | None) -> dict:
     ``turn`` where the conversation's turn stands in the runner
     (``runner.chat_state``) or null, ``session`` whether a terminal can
     continue the conversation (``_session_of``; the id itself goes only to
-    the shell, ``terminal``)."""
+    the shell, ``terminal``), ``folder_id`` the work folder's (W, what the
+    changed files' paths are relative to), ``grants`` the commands allowed
+    in the conversation (``store.grants_of``: ``[{command, cwd, host}]``)."""
     from .. import folder_links
     from ..db import connect_pages_db
     from ..local_agents import catalog, chats, runner, store
@@ -203,7 +206,9 @@ def _computer(ws: str, link: dict, conversation: dict | None) -> dict:
             "folder": (named[0] if named else "") or folder_links.dest_of(link).name,
             "paused": bool(link["status"].get(folder_links.PAUSED)) or folder_links.choosing(link),
             "turn": runner.chat_state(ws, reply["turn_id"]) if reply else None,
-            "session": bool(_session_of(link, name, conversation))}
+            "session": bool(_session_of(link, name, conversation)),
+            "folder_id": link["folder_id"],
+            "grants": store.grants_of(conversation["id"], link_id=link["id"]) if conversation else []}
 
 
 def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
@@ -213,7 +218,8 @@ def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
     while it is online and its agent is not ready, in the words the @ menu
     says it), ``turn`` where the conversation's turn stands here
     (``{turn_id, state, ahead: false}``, ``computer_chat_runs``), no
-    ``session``, and ``computer`` its name, ``online``, ``since`` when it
+    ``session``, no ``grants`` (it never asks), ``folder_id`` the work
+    folder's, and ``computer`` its name, ``online``, ``since`` when it
     went offline (null while online), ``remote: true``."""
     from ..computers import registry
     from ..db import connect_pages_db
@@ -231,7 +237,8 @@ def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
             "folder": (named[0] if named else "") or "", "paused": far["paused"],
             "turn": {"turn_id": row["turn_id"], "state": row["state"], "ahead": False}
             if row and row["state"] in chats.BUSY else None,
-            "session": False, "computer": far["computer"], "online": far["online"],
+            "session": False, "folder_id": far["folder_id"], "grants": [],
+            "computer": far["computer"], "online": far["online"],
             "since": None if far["online"] else (seen_at or None), "remote": True}
 
 
@@ -417,6 +424,19 @@ def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
     except chats.ChatError as e:
         raise _refused(e) from None
     return {"answered": True}
+
+
+@router.delete("/chat/grants/{conversation_id}")
+def forget_grants(conversation_id: str, request: Request):
+    """Allowed in this chat taken back: the conversation's commands ask
+    again (``store.forget_grants``) → ``{forgotten: true}``. A conversation
+    whose agent runs on another computer has none here."""
+    from ..local_agents import store
+
+    _, conversation, far = _conversation_of(request, conversation_id)
+    if far is None:
+        store.forget_grants(conversation["id"])
+    return {"forgotten": True}
 
 
 @router.get("/chat/terminal")

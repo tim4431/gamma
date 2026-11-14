@@ -20,15 +20,20 @@
   color: inherit;
 }
 
-/* Under a reply: what the turn changed, a turn that could not resume the
-   agent's session, and how a turn ended when it did not answer. */
-.computerChanges, .computerFresh {
-  margin: 4px 0 2px;
+/* Under a reply: what the turn changed (AgentChanges' card, after the
+   reply's text rather than before it), a turn that could not resume the
+   agent's session, and how a stopped turn ended (a failed one is the
+   chat's error card). */
+.chatChanges.computerChanges { margin: 6px 0 2px; }
+.computerFresh {
+  margin: 0 0 6px;
   color: var(--text-muted);
   font-size: calc(var(--fs-xs) * var(--text-scale, 1));
   line-height: var(--lh-ui);
+  font-style: italic;
 }
-.computerFresh { margin: 0 0 6px; font-style: italic; }
+/* A conversation that could not be read: Try again under the reason. */
+.chatEmpty .computerAgain { margin-top: 6px; font-style: normal; }
 .computerEnded {
   display: flex;
   align-items: flex-start;
@@ -38,7 +43,6 @@
   font-size: calc(var(--fs-sm) * var(--text-scale, 1));
   line-height: 1.5;
 }
-.computerEnded.err { color: var(--danger); }
 .computerEnded svg { flex: none; margin-top: 0.25em; }
 
 /* What the agent asks (ComputerAsk.jsx), on the approval card's shell: the

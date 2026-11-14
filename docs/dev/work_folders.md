@@ -933,6 +933,8 @@ menu. A share view has none.
   row while it reads, could not read (Try again) or holds nothing. A
   folder counts its library pages, or in a work folder the files below it
   (the listing's `work_counts`). A folder share's tree keeps to the share.
+  With no folders at all the window says so (SettingsKit's `Empty`, as the
+  Comments window does), once the listing is in; before, it shows nothing.
 - **The reads** (`useDirectoryRows.js` over `directoryRows.js`): only while
   the window shows, and only of the open directories the tree draws (every
   folder above them open). A directory is read when it first opens, then

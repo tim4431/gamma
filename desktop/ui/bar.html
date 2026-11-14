@@ -142,6 +142,8 @@
   .vaultBox .switch input:disabled + .switchTrack { opacity: 0.45; }
   .vaultBox .say { color: var(--text-secondary); line-height: 1.45; }
   .vaultBox .say.no { color: var(--danger); }
+  /* an agent that cannot run: amber, a warning, as Gamma's .agentProblem */
+  .vaultBox .say.warn { color: var(--warn); }
   .vaultBox .agentRow { display: flex; flex-direction: column; gap: 5px; }
   .vaultBox .btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
@@ -675,26 +677,27 @@
   };
 
   // A work folder's agent row (its maker's alone): the segment, then as
-  // visible lines the problem of the chosen agent and of each one that
-  // cannot be chosen, what the chosen one does, and what it does now; with
+  // visible lines the problem of the chosen agent (amber; one that cannot
+  // be chosen says why in its button's tooltip), what the chosen one does,
+  // and what it does now (Gamma's agentWorking words); with
   // an agent on, the row What it may run and its line (none for a work
   // folder of another server, whose agent asks nothing in the chat).
   function agentRow(i) {
     const box = document.createElement('div');
     box.className = 'agentRow';
     box.appendChild(switchRow([['Agent in this folder', agentSeg(i.agent, i.agents, (name) => runKept(i, 'agent', name))]]));
-    const line = (text, no) => {
+    const line = (text, warn) => {
       const say = document.createElement('div');
-      say.className = `say${no ? ' no' : ''}`;
+      say.className = `say${warn ? ' warn' : ''}`;
       say.textContent = text;
       box.appendChild(say);
     };
-    const problems = new Set();
-    if (i.agent && i.agentReady === false && i.agentProblem) problems.add(i.agentProblem);
-    for (const a of i.agents) if (a.ready !== true && a.problem) problems.add(a.problem);
-    for (const p of problems) line(p, true);
+    if (i.agent && i.agentReady === false && i.agentProblem) line(i.agentProblem, true);
     line(AGENT_SAYS[i.agent] || AGENT_SAYS[''], false);
-    if (i.agentRunning) line(`Now: ${i.agentLabel} is working · ${i.agentRunning}`, false);
+    if (i.agentRunning) {
+      const doing = i.agentRunning === 'Working' ? '' : i.agentRunning; // 'Working': a step of no name, or none told
+      line(doing ? `${i.agentLabel} is working: ${doing}` : `${i.agentLabel} is working…`, false);
+    }
     if (i.agent && !i.remoteUrl) {
       box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, (word) => runKept(i, 'agent-runs', word))]]));
       if (RUNS_SAYS[i.agent]) line(RUNS_SAYS[i.agent], false);

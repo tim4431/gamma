@@ -651,13 +651,13 @@ pushed with the switches so the lock of a vault whose workspace the
 account left shuts it too: *Agent in this folder*, a segmented *Off* | *Codex* | *Claude Code*
 (`agentSeg`, `item.agents` from `keeping.agentChoices`), an agent not on
 this computer or not ready shut with its problem in its tooltip; under it,
-as visible lines, the problem of the chosen agent and of each one that
-cannot be chosen, one line of what the choice does (*Sends wait for an
+as visible lines, the problem of the chosen agent (amber, `.say.warn`), one
+line of what the choice does (*Sends wait for an
 agent you run yourself.*; *Codex answers this folder's Sends: it edits the
 files here and runs commands in its sandbox, without network.*; *Claude
 Code answers this folder's Sends: it edits the files here and runs no
-commands.*), and while a run works *Now: Codex is working · Editing
-main.tex*. Opening a work folder's view as its maker looks for the agents
+commands.*), and while a run works *Codex is working: Editing main.tex*
+(Gamma's `agentWorking` words; *Codex is working…* for a step of no name). Opening a work folder's view as its maker looks for the agents
 again (`check-agents`, `checkAgents`: `GET /api/local-agents?fresh=1`,
 then a reading). Its
 everyday actions follow as a bar of round buttons

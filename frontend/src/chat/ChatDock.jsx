@@ -16,6 +16,9 @@ import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
 import StepsPill from "./StepsPill";
 import ApprovalCard from "./ApprovalCard";
+import ChatErrorCard from "./ChatErrorCard";
+import ChatHistoryPop, { deleteQuestion, matchRows } from "./ChatHistoryPop";
+import GrantChip from "./GrantChip";
 import AgentChanges, { ACTION_ICONS, refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
 import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
@@ -34,8 +37,8 @@ import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
 import { filedIn, topPageOf } from "../library/libraryUtils";
 import { fileHash, isPdf, pageDocument, pdfFileHash } from "../documents/pageDocument.js";
-import { ActionMenu, ContextMenu, MenuButton, MenuItem, MenuSelect } from "../shared/ui/Menus";
-import { backdropPress, menuPress } from "../shared/ui/press.js";
+import { ActionMenu, MenuItem, MenuSelect } from "../shared/ui/Menus";
+import { backdropPress } from "../shared/ui/press.js";
 import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
@@ -52,7 +55,7 @@ import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
 import { chipSegments } from "./chipText";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
-import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { FlagIcon } from "../shared/ui/Icons";
 import { openReport } from "../support/reportContent.js";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
@@ -89,19 +92,6 @@ function filedRow(id, { title, messages }) {
     id, title: title || deriveTitle(messages), preview: (first?.text || "").replace(/\s+/g, " ").trim().slice(0, 120),
     count: messages.length, updated_at: new Date().toISOString(),
   };
-}
-
-// Compact age for a history row: "now", "5m", "3h", "2d", "4mo", "1y".
-function relAge(iso) {
-  const ms = Date.now() - Date.parse(iso || "");
-  if (!Number.isFinite(ms) || ms < 60000) return t("now");
-  const m = Math.floor(ms / 60000);
-  if (m < 60) return t("{n}m", { n: m });
-  const h = Math.floor(m / 60);
-  if (h < 24) return t("{n}h", { n: h });
-  const d = Math.floor(h / 24);
-  if (d < 30) return t("{n}d", { n: d });
-  return d < 365 ? t("{n}mo", { n: Math.floor(d / 30) }) : t("{n}y", { n: Math.floor(d / 365) });
 }
 
 // What the model was given for a reply, per document — streamed by
@@ -172,26 +162,16 @@ function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated,
   );
 }
 
-// A failed request as a card (message.errorKind, chat/chatErrors.js): a
-// headline saying what went wrong, one plain sentence, the buttons that fix
-// it, and the provider's own words folded under "Details". A reply that
-// broke off partway keeps its text and gets the compact card (no sentence)
-// under it.
-function ChatErrorCard({ message, compact, actions }) {
+// A failed request as the error card (ChatErrorCard), worded per its kind
+// (message.errorKind, chat/chatErrors.js), the provider's own words folded
+// under "Details". A reply that broke off partway keeps its text and gets
+// the compact card (no sentence) under it.
+function ReplyErrorCard({ message, compact, actions }) {
   const copy = failureCopy(message.errorKind, { provider: message.errorProvider, auth: message.errorAuth });
   const fromProvider = !["network", "not_configured"].includes(message.errorKind);
   return (
-    <div className={`chatErrorCard${compact ? " compact" : ""}`}>
-      <div className="chatErrorHead"><AlertCircleIcon size={16} /><span>{copy.headline}</span></div>
-      {!compact ? <div className="chatErrorText">{copy.text}</div> : null}
-      {actions.length ? <div className="chatErrorActions">{actions}</div> : null}
-      {message.errorDetail ? (
-        <details className="chatErrorDetails">
-          <summary>{fromProvider ? t("Details from the provider") : t("Details")}</summary>
-          <pre>{message.errorDetail}</pre>
-        </details>
-      ) : null}
-    </div>
+    <ChatErrorCard headline={copy.headline} text={copy.text} actions={actions} compact={compact}
+      detail={message.errorDetail || ""} detailLabel={fromProvider ? t("Details from the provider") : t("Details")} />
   );
 }
 
@@ -514,6 +494,9 @@ export default function ChatDock({
   // the page's work folder (keeperComputer, `remote`), else null: the
   // header's switch and the side chat/computer/ draws.
   computer = null,
+  // What the switch's agent side shows from either side (computerChat.js
+  // sideMark: it works, or it waits for the person).
+  computerMark = null,
   onGrip, onFold, collapsed, onClose,
 }) {
   const [loadedMessages, setChatMessages] = useState(NO_MESSAGES);
@@ -993,18 +976,16 @@ export default function ChatDock({
   const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
   const [picked, setPicked] = useState(() => new Set()); // history entries ticked for deleting
   const renameCancelRef = useRef(false);
-  const [rowMenu, setRowMenu] = useState(null); // {x, y, row}: a history row's menu
   const historyOpen = openPopover === "chathistory";
   useEffect(() => { setHistoryRead(""); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
   // The selection belongs to the open popover: closing it drops the ticks.
-  useEffect(() => { if (!historyOpen) { setPicked(new Set()); setRowMenu(null); } }, [historyOpen]);
+  useEffect(() => { if (!historyOpen) setPicked(new Set()); }, [historyOpen]);
   const togglePicked = (id) => setPicked((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
   const pickOrOpen = (id) => (picked.size ? togglePicked(id) : openHistory(id));
-  const openRowMenu = (row) => (e) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, row }); };
   useEffect(() => {
     if (readOnly || !historyOpen || historyRead === chatKey) return;
     let cancelled = false;
@@ -1138,11 +1119,7 @@ export default function ChatDock({
         setHistoryRead("");
       }
     };
-    askConfirm({
-      title: T("Delete conversation"),
-      message: t("Delete “{title}” from this chat's history? This can't be undone.", { title: entry.title || t("Untitled") }),
-      confirmLabel: t("Delete"), danger: true, onConfirm: run,
-    });
+    askConfirm(deleteQuestion(entry, run));
   }
 
   // The ticked entries in one call (POST /chat-history/delete). The active
@@ -1172,10 +1149,8 @@ export default function ChatDock({
   // Rows of the history popover: the active conversation first, then the
   // archived ones newest-first, filtered by the search box.
   const historyRows = useMemo(() => {
-    const q = historyQuery.trim().toLowerCase();
     const active = { id: "", title: activeTitle, preview: deriveTitle(chatMessages), updated_at: "", active: true };
-    const rows = [active, ...(history || [])];
-    return q ? rows.filter((s) => `${s.title} ${s.preview || ""}`.toLowerCase().includes(q)) : rows;
+    return matchRows([active, ...(history || [])], historyQuery);
   }, [history, historyQuery, activeTitle, chatMessages]);
   // The rows a selection can hold: the listed archived ones ("Select all"
   // takes the search's results, not the whole history). A tick survives
@@ -1874,7 +1849,7 @@ export default function ChatDock({
   // The switch between the two sides leads the header, whether Gamma AI is
   // set up or not: an account with an agent here and no AI still has a chat.
   const sides = computer && !readOnly
-    ? <ChatSides side={side} onSide={setSide} label={computer.label} where={computer.remote ? computer.computer : ""} /> : null;
+    ? <ChatSides side={side} onSide={setSide} label={computer.label} where={computer.remote ? computer.computer : ""} mark={computerMark} /> : null;
   if (onComputer) {
     return (
       <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}
@@ -1950,76 +1925,51 @@ export default function ChatDock({
       title: t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") }),
       onClick: () => setOpenPopover((p) => (p === "chathistory" ? null : "chathistory")),
       popover: { name: "chathistory", content: historyOpen ? (
-        <Popover className="chatHistoryPop">
-          <input
-            autoFocus={!touchTyping()}
-            className="searchInput"
-            value={historyQuery}
-            onChange={(e) => setHistoryQuery(e.target.value)}
-            placeholder={t("Search conversations…")}
-            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setOpenPopover(null); } }}
-          />
-          <div className={`chatHistList${picked.size ? " picking" : ""}`}>
-            {historyRows.map((s) => renaming?.id === s.id ? (
-              <div key={s.id} className="chatHistRow renaming">
-                <input
-                  autoFocus
-                  className="aiKeyInput"
-                  value={renaming.text}
-                  placeholder={t("Conversation name")}
-                  enterKeyHint="done"
-                  onChange={(e) => setRenaming({ id: s.id, text: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (composing(e)) return;
-                    if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
-                    else if (e.key === "Escape") { e.preventDefault(); renameCancelRef.current = true; e.currentTarget.blur(); }
-                  }}
-                  onBlur={commitRename}
-                />
-              </div>
-            ) : (
-              // A row opens its conversation; while rows are ticked it
-              // ticks instead. Its menu (⋯, a right-click or a held
-              // finger) renames, selects and deletes.
-              <div key={s.id} className={`chatHistRow rowMenuHost${s.active ? " active" : ""}`}
-                role="button" tabIndex={0}
-                title={s.active ? t("The conversation shown now") : `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
-                onClick={() => { if (!s.active) pickOrOpen(s.id); }}
-                onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget && !s.active) pickOrOpen(s.id); }}
-                {...menuPress(openRowMenu(s))}>
-                {s.active ? null : (
-                  <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
-                    aria-label={t("Select this conversation")} title={t("Select for deleting")}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={() => togglePicked(s.id)} />
-                )}
-                <span className="chatHistTitle">{s.title || t("Untitled")}</span>
-                <span className="chatHistAge">{s.active ? t("now") : relAge(s.updated_at)}</span>
-                <MenuButton open={openRowMenu(s)} />
-              </div>
-            ))}
-            {rowMenu ? (
-              <ContextMenu x={rowMenu.x} y={rowMenu.y} onClose={() => setRowMenu(null)}>
-                <MenuItem icon={PenIcon} onClick={() => {
-                  setRowMenu(null);
-                  renameCancelRef.current = false;
-                  setRenaming({ id: rowMenu.row.id, text: rowMenu.row.active ? chatTitle : rowMenu.row.title || "" });
-                }}>{t("Rename")}</MenuItem>
-                <MenuItem icon={DownloadIcon} title={t("Download this conversation as Markdown, with its pictures")}
-                  onClick={() => { setRowMenu(null); exportConversation(rowMenu.row.active ? null : rowMenu.row); }}>{t("Export")}</MenuItem>
-                {rowMenu.row.active ? null : <>
-                  {picked.has(rowMenu.row.id) ? null : (
-                    <MenuItem icon={SquareCheckIcon} onClick={() => { setRowMenu(null); togglePicked(rowMenu.row.id); }}>{t("Select")}</MenuItem>
-                  )}
-                  <MenuItem icon={TrashIcon} danger onClick={() => { setRowMenu(null); deleteHistory(rowMenu.row); }}>{t("Delete")}</MenuItem>
-                </>}
-              </ContextMenu>
-            ) : null}
-            {history == null ? <div className="popoverHint loadingHint">{t("Loading…")}</div>
-              : historyRows.length <= 1 && !historyQuery.trim() ? <div className="popoverHint">{t("No earlier conversations — New chat keeps the current one here.")}</div>
-              : !historyRows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
-              : null}
-          </div>
+        // A row opens its conversation; while rows are ticked it ticks
+        // instead. Its menu renames, exports, selects and deletes.
+        <ChatHistoryPop query={historyQuery} onQuery={setHistoryQuery} onClose={() => setOpenPopover(null)}
+          rows={historyRows} loading={history == null} picking={picked.size > 0}
+          onOpen={(s) => pickOrOpen(s.id)}
+          tip={(s) => `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
+          lead={(s) => (s.active ? null : (
+            <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
+              aria-label={t("Select this conversation")} title={t("Select for deleting")}
+              onClick={(e) => e.stopPropagation()}
+              onChange={() => togglePicked(s.id)} />
+          ))}
+          menuItems={(row, close) => <>
+            <MenuItem icon={PenIcon} onClick={() => {
+              close();
+              renameCancelRef.current = false;
+              setRenaming({ id: row.id, text: row.active ? chatTitle : row.title || "" });
+            }}>{t("Rename")}</MenuItem>
+            <MenuItem icon={DownloadIcon} title={t("Download this conversation as Markdown, with its pictures")}
+              onClick={() => { close(); exportConversation(row.active ? null : row); }}>{t("Export")}</MenuItem>
+            {row.active ? null : <>
+              {picked.has(row.id) ? null : (
+                <MenuItem icon={SquareCheckIcon} onClick={() => { close(); togglePicked(row.id); }}>{t("Select")}</MenuItem>
+              )}
+              <MenuItem icon={TrashIcon} danger onClick={() => { close(); deleteHistory(row); }}>{t("Delete")}</MenuItem>
+            </>}
+          </>}
+          editing={(s) => (renaming?.id === s.id ? (
+            <div key={s.id} className="chatHistRow renaming">
+              <input
+                autoFocus
+                className="aiKeyInput"
+                value={renaming.text}
+                placeholder={t("Conversation name")}
+                enterKeyHint="done"
+                onChange={(e) => setRenaming({ id: s.id, text: e.target.value })}
+                onKeyDown={(e) => {
+                  if (composing(e)) return;
+                  if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
+                  else if (e.key === "Escape") { e.preventDefault(); renameCancelRef.current = true; e.currentTarget.blur(); }
+                }}
+                onBlur={commitRename}
+              />
+            </div>
+          ) : null)}>
           {picked.size ? (
             <div className="chatHistBulk">
               <span>{tn("{n} selected", "{n} selected", picked.size)}</span>
@@ -2031,7 +1981,7 @@ export default function ChatDock({
               <button type="button" className="uiBtn sm danger" onClick={deletePicked}>{t("Delete")}</button>
             </div>
           ) : null}
-        </Popover>
+        </ChatHistoryPop>
       ) : null },
     },
     {
@@ -2278,7 +2228,7 @@ export default function ChatDock({
                         onOpenPage={onOpenPage} onLibraryChange={onLibraryChange} />
                     ) : null}
                     {!isUser && m.errorKind && !isResponding ? (
-                      <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
+                      <ReplyErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
                     ) : null}
                   </div>
                   {!isResponding ? <div className="chatMsgFoot">
@@ -2523,13 +2473,10 @@ export default function ChatDock({
           ) : null}
           <span className="chatComposerSpacer" />
           {grantedHere.length && !aiOff ? (
-            <button type="button" className="chatAttachToggle chatGrantChip"
-              onClick={() => updateGrants((store) => withoutGrants(store, activeUser(), conversationId(chatMessages)))}
+            <GrantChip list={grantedHere.map(permissionLabel).join(", ")}
+              onRevoke={() => updateGrants((store) => withoutGrants(store, activeUser(), conversationId(chatMessages)))}
               title={t("The assistant doesn't ask before these in this chat: {list}. Click to make it ask again.",
-                { list: grantedHere.map(permissionLabel).join(", ") })}
-              aria-label={t("Allowed in this chat: {list}. Ask again", { list: grantedHere.map(permissionLabel).join(", ") })}>
-              <ShieldIcon size={14} /><span className="chatGrantLabel">{t("Allowed in this chat")}</span><XIcon size={12} />
-            </button>
+                { list: grantedHere.map(permissionLabel).join(", ") })} />
           ) : null}
           {noTools && !aiOff && toolsEnabled && agentPayload(chatMessages).agent_scope ? (
             <button type="button" className="chatAttachToggle chatGrantChip" disabled={checkingTools}

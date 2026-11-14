@@ -157,7 +157,15 @@ jobs".
   running for the account ([local_agents.md](local_agents.md) "Its model,
   its typing, a terminal…"): a click opens the page's chat on the computer
   side (a turn of another workspace, only its page), and its Stop goes to
-  the turn's own stop route, not `cancelJob`.
+  the turn's own stop route, not `cancelJob`. While one asks the person
+  (`progress.phase` `asking`, taskModel `waitsForYou`) its row has a still
+  shield and no bar, and the tray button the accent dot instead of the
+  spinner. A fourth, `feedback-run`, is a Send an agent on this computer
+  answers in a work folder the account made: titled "Codex on this
+  computer: main.tex · 2 comments", the agent's words as its progress; a
+  click opens the Feedback dialog on the Send's file or folder, and its
+  Stop is the requester's withdraw (a kind's `stopBody` is what the Stop
+  posts), the requester's alone.
 - `GET /api/jobs/{id}` is one job with its `result`.
 - `POST /api/jobs/{id}/cancel`, `DELETE /api/jobs/{id}` and
   `POST /api/jobs/clear` stop, remove and clear jobs.

@@ -8,7 +8,9 @@
 // Copy link, Report on anyone else's, Delete), the
 // thread's Resolve and its reply field once the thread is the active one.
 // The first comment's line carries the chip of a Send waiting on the
-// thread, and under it a line says when its place moved in a new version.
+// thread, and under it a line says when its place moved in a new version
+// and one gives the agent's own words of the Send while it works or once it
+// failed (its progress, the reason; its summary is its replies').
 // A comment that comes (a reply, yours or someone's) rises into place
 // (ListMotion).
 import React, { startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -16,7 +18,7 @@ import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
 import { CheckIcon, FlagIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
 import ListMotion from "../shared/ui/ListMotion";
 import { IconSwap } from "../shared/ui/MotionWidgets";
-import { StateTag } from "../shared/ui/StateTag";
+import { StateDetail, StateTag } from "../shared/ui/StateTag";
 import { PersonAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { MentionContext } from "../editor/MentionMenu";
@@ -121,6 +123,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
           <div className="commentDeleted">{t("Comment deleted")}</div>
         ) : mentions ? <MentionContext.Provider value={mentions}>{text}</MentionContext.Provider> : text}
         {placeText ? <div className="commentThreadState" data-place={place}>{placeText}</div> : null}
+        {chip?.kind !== "done" ? <StateDetail state={chip} /> : null}
       </div>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} aria-label={t("Comment actions")}>

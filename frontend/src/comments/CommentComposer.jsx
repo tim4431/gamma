@@ -222,7 +222,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
       {tooLong || cancel || hint ? (
         <div className="commentComposerBar">
           {tooLong ? <span className="commentTooLong">{t("At most {n} characters", { n: MAX_COMMENT.toLocaleString() })}</span>
-            : hint ? <span className={`commentAgentHint${hint.warn ? " problem" : ""}`} data-agent-hint>{hint.text}</span> : null}
+            : hint ? <span className={`commentAgentHint${hint.warn ? " agentProblem" : ""}`} data-agent-hint>{hint.text}</span> : null}
           <span className="commentComposerSpacer" />
           {cancel ? <button type="button" className="uiBtn sm ghost" onClick={cancel}>{t("Cancel")}</button> : null}
           {cancel ? (

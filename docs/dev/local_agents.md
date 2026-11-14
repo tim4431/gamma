@@ -774,7 +774,15 @@ sources, Background tasks"); there is no diff or Revert yet
   chat on the computer side on a click (a turn of another workspace opens
   only its page there: the app loads that workspace anew), and its Stop
   calls the turn's stop route (in the turn's workspace) instead of
-  `cancelJob`.
+  `cancelJob`. A Send this computer's agent answers is a row too, for the
+  work folder's maker (`{id: "feedback-<request>", kind: "feedback-run",
+  params: {request, label, name, scope: {kind, id}, comments}, progress:
+  {item: <the request's detail>}}`, runner `send_runs`): a click opens the
+  Feedback dialog on the Send's file or folder, and Stop, on the maker's
+  own Send, withdraws it. The chat's side switch shows the agent from
+  either side (`computerChat.js` `sideMark`): a spinner on its segment
+  while it works in the folder or on a turn of the page, the accent dot
+  while a turn of the page waits for the person.
 
 Checked against the real CLIs (Codex 0.167.0, Claude Code 2.1.318): both
 list their models with no model use, stream a reply in deltas, and take a
@@ -825,7 +833,10 @@ turned asking on behaves as without it.
   vault, is answered `once` by Gamma and never shown; the same command
   elsewhere asks again. Never a prefix, never a rule written into the
   agent's settings or the folder. A file change has no chat grant beyond
-  Codex's own `acceptForSession` for the turn.
+  Codex's own `acceptForSession` for the turn. The strip lists the
+  conversation's grants (`computer.grants`, `store.grants_of`), which the
+  composer's chip shows; `DELETE /api/local-agents/chat/grants/{id}` takes
+  them all back (`store.forget_grants`), and each command asks again.
 - **Turned back to *Nothing more*** while a turn runs: the asks waiting are
   declined (the turn goes on), a later ask in it is declined unseen, and no
   grant is written any more.
@@ -1154,11 +1165,12 @@ and nothing of the run's row.
 | GET | `/api/folder-links` | each link's `agent`: `{name, label, ready, problem, running: {kind: "send" \| "chat", request_id (null for a chat turn), detail} \| null}` for a work folder with one, else null (`local_agents.info.listing`: one store query for the whole listing, readiness from `catalog.cached`, nothing run). A member who cannot act on the vault (`_acts`) reads `running.detail` as "" (it may name files) |
 | GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only, and `mine` (whether this account made the vault, whose comments may name its agent) on every server. Turning an agent on, off or to another (`set_agent`) tells each open page of the folder `{t: "vault"}` (`_tell_open_pages`, from `collab.open_pages()`), so its chip and the comments' @ menu read it again |
 | POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment that names the folder's agent is a Send too, answered as `send` ("A mention in a comment") |
-| GET | `/api/local-agents/chat?page=&version=` | the chat's computer side ("The chat's computer side"), the vault's maker only: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session}`, `session` whether a terminal can continue the conversation, `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null) and `conversation` the page's active one (`{id, title, agent, messages, version}`, null for none); with `version` the stored one, `{computer, same: true}` |
+| GET | `/api/local-agents/chat?page=&version=` | the chat's computer side ("The chat's computer side"), the vault's maker only: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session, folder_id, grants}`, `session` whether a terminal can continue the conversation, `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null, `folder_id` the work folder's, `grants` the commands allowed in the conversation, `[{command, cwd, host}]`) and `conversation` the page's active one (`{id, title, agent, messages, version}`, null for none); with `version` the stored one, `{computer, same: true}` |
 | POST | `/api/local-agents/chat/turns` | `{page, text, selections?, id?, model?, effort?}` → 202 `{conversation, turn: {id, state}}`; 400 for no text, past 20,000 characters, a malformed `id`, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running, for a folder with no agent, paused or choosing its files, and for an agent known not to be ready (its problem); 403 when the maker is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
 | POST | `/api/local-agents/chat/turns/{id}/stop` | `{stopped}` (`runner.stop_chat`) |
 | POST | `/api/local-agents/chat/new` | `{page}` → `{conversation: null}`; 409 while a turn runs |
 | GET | `/api/local-agents/chat/history?page=` | `{conversations: [{id, title, agent, updated_at, turns}]}`, newest first |
+| DELETE | `/api/local-agents/chat/grants/{id}` | the conversation's Allowed in this chat taken back (`store.forget_grants`) → `{forgotten: true}`; 404 for a conversation not the account's |
 | POST, DELETE | `/api/local-agents/chat/history/{id}/open`, `/api/local-agents/chat/history/{id}` | open (→ `{conversation}`, 409 while a turn runs, 404 for one not archived) or delete (→ `{deleted: true}`, 409 for the active one) an archived conversation |
 | POST | `/api/local-agents/chat/turns/{turn}/asks/{ask}` | `{decision: "once" \| "chat" \| "deny", note?}` (a note at most 2,000 characters) → `{answered: true}`: the person's answer to a waiting ask ("Asking in the chat"); 400 for another decision, a longer note or `chat` on anything but a command; 404 for no such turn of the account or ask; 409 when it was answered, withdrawn or declined already, or the turn ended |
 | GET | `/api/local-agents/chat/terminal?page=` | the desktop shell's alone in practice (Continue in a terminal): `{cwd, argv, agent, label}`, the conversation's session resumed ("Its model, its typing, a terminal…"); 404 "This conversation has no session to continue.", 409 while a turn runs, when the folder has no agent or it is not on this computer |
@@ -1265,14 +1277,28 @@ either agent.
   shield and no spinner while it waits for an answer, how many steps
   failed or were not allowed; still and not read out for a turn that had
   ended when it was first shown, as in a conversation opened from History),
-  its reply through `ChatMarkdown`, "Changed a.tex and 1 more · The PDF
-  was rebuilt", how a turn ended, the fresh-session line), and a composer
-  with the PDF passages selected (App's `pdfSelections`, Gamma AI's too,
-  cleared once the server accepts the turn), Send, and Stop in its place
-  while a turn is queued or running. `useComputerChat` reads the
-  conversation on opening the side, on focus, after each action and every
-  1.5 s while a turn is to end, with `version` so an unchanged one answers
-  `same`. Every word is the client's (`computerChat.js`, through `t()`);
+  its reply through `ChatMarkdown`, what it changed in Gamma AI's changes
+  card (`AgentChanges`' `ChangesCard`, "Changed in the work folder · 2": a
+  row a file, its path a `PathLink` resolved from the work folder's top,
+  the strip's `folder_id`, the first three then "and N more" unfolding to
+  the rest, and "The PDF was rebuilt" last), how a turn ended (a failed
+  one Gamma AI's error card, `ChatErrorCard`, headed by the server's
+  sentence, with **Retry** on the newest, which sends the person's message
+  again with its passages; a stopped one a muted line), the fresh-session
+  line), and a composer with the PDF passages selected (App's
+  `pdfSelections`, Gamma AI's too, cleared once the server accepts the
+  turn), the **Allowed in this chat** chip while the strip lists `grants`
+  (Gamma AI's `GrantChip`: the commands in its title, a press takes them
+  back), Send, and Stop in its place while a turn is queued or running.
+  History is Gamma AI's popover (`ChatHistoryPop`, with its search; a row's
+  menu deletes); while a turn is to end its earlier rows are greyed and,
+  with New chat, titled "Stop Codex or wait for it to finish…".
+  `useComputerChat` reads the conversation on opening the side, on focus,
+  after each action and every 1.5 s while a turn is to end, with `version`
+  so an unchanged one answers `same`. A first read that fails says so where
+  the conversation would be ("Could not load chat: …", **Try again**) and
+  Send stays off until a read lands; a poll that fails keeps what was
+  read. Every word is the client's (`computerChat.js`, through `t()`);
   the server sends structured steps. The side's steps never carry a
   `page_id` or `block_id` and never go through `/api/ai/*`, `chatSession`,
   `MentionContext` or Gamma's model list. While a live turn has `asks`,
@@ -1293,8 +1319,9 @@ either agent.
   goes on without it…" until the read that drops the ask; a refusal is
   said on the card and the conversation read again at once.
 - **The vault chip's card** (`vault/VaultChip.jsx`, `vaultState.agentLine`):
-  "Agent: Codex on this computer", the problem when it is not ready, and
-  "Codex is working: <detail>" during a run. Opening the card reads the
+  "Agent: Codex on this computer", the problem when it is not ready (amber,
+  `.agentProblem`), and during a run the live tag "Codex is working…" with
+  its detail on a line under it, the chip's icon a spinner. Opening the card reads the
   page's standing again (App's `vault.refresh`), since a run's start and
   end tell the page's room nothing.
 - **The Inbox** is unchanged.
@@ -1316,7 +1343,8 @@ summary *Agent working* when no round runs anywhere; a vault's own problem
 said in its title. Opening a work
 folder's view as its maker asks `?fresh=1` (`check-agents`, main.js
 `checkAgents`). The row offers Off | Codex | Claude Code, an agent not found
-or not ready shut with its problem shown under it. Turning one on asks
+or not ready shut with its problem in its tooltip; the chosen agent's
+problem is an amber line under the row. Turning one on asks
 first (`keeping.agentAsk`: "Let Codex work in <directory>?", with what it
 may do and how many waiting Sends will be handed to it, counted by the
 server, `GET /api/local-agents/waiting`), then `PATCH {agent}` with the
@@ -1406,8 +1434,7 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
 - Asking is the chat's alone: a Send never asks, so there Claude Code edits
   and does not build, and Codex's requests for approval are refused. The
   plan's *Ask on this computer* (a card on the computer's own screen) is
-  not built; neither is taking back a chat grant (New chat starts with
-  none). On Windows a Codex command's card shows the shell it runs through
+  not built. On Windows a Codex command's card shows the shell it runs through
   (`powershell.exe -Command '…'`).
 - Codex's Windows sandbox must be set up once in a terminal; until then
   Codex is not ready. On Windows, Codex edits through shell commands and
