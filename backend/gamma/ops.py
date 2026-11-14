@@ -732,9 +732,13 @@ class _Batch:
             # A folder's conversations are never dropped with it, whichever
             # path deletes it (DELETE /folders/{id}, or a tree batch as a
             # mirror or the iPad relays one): filed into the library chat's
-            # history in this transaction. Local import: the router imports ops.
+            # history in this transaction, and so are its conversations with
+            # a computer's agent. Local imports: the router imports ops, the
+            # agents' package is loaded where it is used.
+            from .local_agents import chats as agent_chats
             from .routers.chats import file_into_home
             self.chats_filed.update(file_into_home(self.conn, [r[0] for r in rows]))
+            agent_chats.file_into_home(self.conn, [r[0] for r in rows])
         self.applied.append({"op": "delete", "id": block_id})
 
     def merge(self, op: dict) -> None:
@@ -1383,8 +1387,8 @@ def _purge(conn, page_id: str, actor: str) -> list:
     conn.execute("DELETE FROM page_ops WHERE page_id = ?", (page_id,))
     conn.execute("DELETE FROM chats WHERE bucket = ?", (page_id,))
     conn.execute("DELETE FROM chat_history WHERE bucket = ?", (page_id,))
-    conn.execute("DELETE FROM computer_chats WHERE page_id = ?", (page_id,))
-    conn.execute("DELETE FROM computer_chat_runs WHERE page_id = ?", (page_id,))
+    conn.execute("DELETE FROM computer_chats WHERE bucket = ?", (page_id,))
+    conn.execute("DELETE FROM computer_chat_runs WHERE bucket = ?", (page_id,))
     if not trashed:
         touch_page(conn, page_id, actor, "deleted")
     return rows

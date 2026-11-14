@@ -87,9 +87,9 @@ person's `PersonAvatar` in the icon column.
   `/` menu's fuzzy match (`fuzzyIndices`). Invite… follows when the editor
   may share the page (App's `onInvite`: not a viewer, a share view or a
   guest).
-- **The work folder's agent.** A comment's field, for the maker of the
-  page's work-folder vault on the desktop app with an agent on (the field's
-  `links.agent`, `vaultState.mentionAgent`), lists that agent in People
+- **The synced folder's agent.** A comment's field on a file of a synced
+  folder kept on a computer of the account with an agent on there (the
+  field's `links.agent`, `chat/agents.js` `mentionAgent`), lists that agent in People
   after the people (`mentionRows`' `agents`, past their cap of five):
   a bot icon, its label (*Codex*, *Claude Code*) matched by name or label,
   and "on this computer", or its problem when it cannot run. A member of

@@ -18,7 +18,7 @@ const PANE_FILES = {
   reading: ["SettingsDialog.jsx"],
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
-  ai: ["SettingsDialog.jsx", "SettingsAi.jsx"],
+  ai: ["SettingsDialog.jsx", "SettingsAi.jsx", "SettingsAgents.jsx"],
   assistant: ["SettingsDialog.jsx"],
   tools: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx"],
   integrations: ["SettingsIntegrations.jsx"],

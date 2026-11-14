@@ -3,7 +3,7 @@ store.py, prompt.py; docs/dev/local_agents.md): the whole loop against the
 stand-in Codex (tests/fake_agents/) through the real processes, on the
 sample paper (samples/synctex/paper) as a work folder of this computer.
 
-The maker's Send is claimed, the turn edits the folder, its answers come
+The Send of the account that turned the agent on is claimed, the turn edits the folder, its answers come
 back as replies signed Codex (``agent_kind`` local), the fixed ones are
 resolved and the request is done with its summary and the files it changed;
 the progress shows on the way, no path outside the folder in it; a reply
@@ -12,10 +12,10 @@ member's Send is not taken, a token's is refused; a withdraw during the
 probe or the turn writes nothing and leaves no process; an agent not ready,
 a timeout, nothing new to answer, too many comments and answers that could
 not be written each fail (or end) the request as they should; startup
-recovery fails an open run and takes only the Sends made since the agent
-was turned on; turning one on takes the waiting Sends; a pause stops the
-run, an unpause takes what waits. What the store keeps and what the prompt
-says are checked on their own at the end."""
+recovery fails an open run, carries the agent a vault had over to the
+computer and takes the Sends a session made; turning one on takes the
+waiting Sends; a pause stops the run, an unpause takes what waits. What the
+store keeps and what the prompt says are checked on their own at the end."""
 
 import json
 import os
@@ -96,12 +96,14 @@ def disk(tmp_path, monkeypatch):
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM linked_files WHERE substr(path, 1, ?) = ?", (len(below), below))
         conn.execute("DELETE FROM agent_runs")
-        conn.execute("DELETE FROM agent_folders")
+        conn.execute("DELETE FROM computer_agents")
+        conn.execute("DELETE FROM agent_folders")  # what an older app kept, which the carry-over's tests write
+        conn.execute("DELETE FROM agent_policies")
+        conn.execute("DELETE FROM agent_dirs")
         conn.execute("DELETE FROM agent_threads")
         conn.execute("DELETE FROM agent_conversations")
         conn.execute("DELETE FROM agent_turns")
-        conn.execute("DELETE FROM agent_policies")
-        conn.execute("DELETE FROM agent_grants")
+        conn.execute("DELETE FROM agent_dir_grants")
     with folder_links._dirty_guard:
         folder_links._dirty.clear()
     assert not left, f"children left running: {[c.proc.pid for c in left]}"
@@ -116,7 +118,8 @@ def _detail(ws, request_id) -> tuple:
 
 def _folder(lab, disk, *, agent="codex", comments=("lambda is never introduced", "the title is too long")):
     """The paper as a vault of lar_owner's, two comments on main.pdf, the
-    agent turned on (as the PATCH does, through the store)."""
+    agent turned on for this computer by lar_owner (as the PATCH does,
+    through the store)."""
     root = disk.root / "paper"
     for rel in ("main.pdf", "main.synctex.gz", "main.tex", "sections/method.tex", "figures/fig1.pdf"):
         _put(root / rel, (PAPER / "v1" / rel).read_bytes())
@@ -126,7 +129,7 @@ def _folder(lab, disk, *, agent="codex", comments=("lambda is never introduced",
     page = _page_of(link, "main.pdf")
     threads = [thread_on(lab.owner, page, page, body)["id"] for body in comments]
     if agent:
-        store.set_agent(link["id"], agent, by=lab.user)
+        store.set_agent(agent, True, by=lab.user)
     return SimpleNamespace(root=root, link=link, id=link["id"], w=link["folder_id"], page=page, threads=threads)
 
 
@@ -379,7 +382,7 @@ def test_too_many_comments_at_once(lab, disk, monkeypatch):
     assert runner.wait_idle(30)
     got = _request(lab, sent["id"])
     assert got["state"] == "failed"
-    assert got["detail"] == ("Codex takes at most 1 comments at a time: send a file or a directory of this work "
+    assert got["detail"] == ("Codex takes at most 1 comments at a time: send a file or a directory of this synced "
                              "folder.")
 
 
@@ -398,15 +401,15 @@ def test_no_reply_written_fails_the_request(lab, disk, monkeypatch):
     assert all(not t["resolved_at"] for t in _threads(lab, f).values())
 
 
-# --- the folder's setting, the pause, the startup ---------------------------------------------
+# --- the computer's agents, the pause, the startup ---------------------------------------------
 
 def test_turning_on_takes_the_waiting_sends(lab, disk):
     f = _folder(lab, disk, agent="")
     sent = _send(lab.owner, f)
-    other = _send(lab.editor, f)
+    other = _send(lab.editor, f)  # an account with no agent on here: never taken
     assert runner.wait_idle(10) and _request(lab, sent["id"])["state"] == "sent"
-    store.set_agent(f.id, "codex", by=lab.user)
-    assert runner.queue_folder(lab.ws, f.id) == 1
+    store.set_agent("codex", True, by=lab.user)
+    assert runner.queue_waiting() == 1
     assert runner.wait_idle(60)
     assert _request(lab, sent["id"])["state"] == "done"
     assert _request(lab, other["id"])["state"] == "sent"
@@ -421,7 +424,7 @@ def test_a_pause_stops_the_run_and_an_unpause_takes_what_waits(lab, disk, monkey
     runner.stop_link(f.id)  # what pausing calls (folder_links); a second call changes nothing
     assert runner.wait_idle(30)
     got = _request(lab, sent["id"])
-    assert (got["state"], got["detail"]) == ("failed", "Stopped: the work folder was paused.")
+    assert (got["state"], got["detail"]) == ("failed", "Stopped: the synced folder was paused.")
     assert store.run_of(lab.ws, sent["id"])["state"] == "failed" and gone(run["pid"])
 
     # a Send made while it is paused waits; the unpause hands it over
@@ -434,22 +437,55 @@ def test_a_pause_stops_the_run_and_an_unpause_takes_what_waits(lab, disk, monkey
     assert _request(lab, waiting["id"])["state"] == "done"
 
 
+def test_a_detach_stops_the_run_and_forgets_the_grants_there(lab, disk, monkeypatch):
+    """Detach of the synced folder (its vault removed here): one refused
+    leaves the run going; one done stops it with why, whenever it ends
+    against the vault's removal, and the grants of its conversations go with
+    the vault's rows."""
+    script_agent(monkeypatch, disk.log, delay=30)
+    f = _folder(lab, disk)
+    sent = _send(lab.owner, f)
+    run = _turn_started(lab, sent["id"])
+    store.ran_conversation("rr-conversation", link_id=f.id, agent="codex", session="s1", cwd=str(f.root))
+    store.grant("rr-conversation", "latexmk", agent="codex", dir=str(f.root))
+
+    def unstored(*_args, **_kwargs):
+        raise folder_links.LinkError("draft.pdf could not be stored, so the vault was not removed.")
+
+    with monkeypatch.context() as m:
+        m.setattr(folder_links, "_store_in_place", unstored)
+        r = lab.owner.post(f"/api/folders/{f.w}/detach", json={"pages": "keep"})
+    assert r.status_code == 409, r.text
+    assert _request(lab, sent["id"])["state"] == "running" and not gone(run["pid"])
+    r = lab.owner.post(f"/api/folders/{f.w}/detach", json={"pages": "keep"})
+    assert r.status_code == 200, r.text
+    assert runner.wait_idle(30) and gone(run["pid"])
+    got = _request(lab, sent["id"])
+    assert (got["state"], got["detail"]) == ("failed", "Stopped: the synced folder is no longer kept on this computer.")
+    assert store.conversation_of("rr-conversation") is None
+    assert not store.granted("rr-conversation", "latexmk", dir=str(f.root))
+
+
 def test_turning_the_agent_off_stops_the_run(lab, disk, monkeypatch):
     script_agent(monkeypatch, disk.log, delay=30)
     f = _folder(lab, disk)
     sent = _send(lab.owner, f)
     _turn_started(lab, sent["id"])
-    store.set_agent(f.id, "", by=lab.user)
-    runner.stop_link(f.id)
+    store.set_agent("codex", False, by=lab.user)
+    runner.stop_agent("claude")  # another agent's stop leaves the run be
+    assert runner.running(lab.ws, sent["id"])
+    runner.stop_agent("codex")
     assert runner.wait_idle(30)
-    assert _request(lab, sent["id"])["detail"] == "Stopped: the agent was turned off for this folder."
+    assert _request(lab, sent["id"])["detail"] == "Stopped: the agent was turned off on this computer."
 
 
 def test_recover_fails_an_open_run_and_takes_what_waits(lab, disk, monkeypatch):
     f = _folder(lab, disk, agent="")
     monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")  # this server stopped: nothing is taken meanwhile
     before = _send(lab.owner, f)
-    store.set_agent(f.id, "codex", by=lab.user)
+    with connect_vaults_db() as conn:  # the agent as an older app turned it on: the vault's, carried over at start
+        conn.execute("INSERT INTO agent_folders (link_id, agent, set_by, set_at) VALUES (?, 'codex', ?, '2026-11-01')",
+                     (f.id, lab.user))
     since = _send(lab.owner, f)
     left = _send(lab.owner, f)
     with connect_pages_db(lab.ws) as conn:
@@ -458,14 +494,13 @@ def test_recover_fails_an_open_run_and_takes_what_waits(lab, disk, monkeypatch):
         tokens = requests.create(lab.ws, conn, scope, by=lab.user, by_name=OWNER, via=requests.TOKEN)["request"]
         old = requests.create(lab.ws, conn, scope, by=lab.user, by_name=OWNER)["request"]  # before step 58: unknown
     open_run = store.start_run(ws=lab.ws, link_id=f.id, request_id=left["id"], agent="codex")
-    store.set_agent("noSuchLink", "claude", by=lab.user)
     monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "1")
 
     runner.recover()
     got = _request(lab, left["id"])
     assert (got["state"], got["detail"]) == ("failed", "Gamma stopped while Codex worked on this. Send again.")
     assert store.get_run(open_run)["state"] == "failed" and not store.open_runs()
-    assert store.agent_of("noSuchLink") is None and store.agent_of(f.id)["agent"] == "codex"
+    assert store.agent_for(lab.user)["agent"] == "codex"
     _until(lambda: all(_request(lab, r["id"])["state"] == "done" for r in (before, since)), timeout=90)
     assert runner.wait_idle(30)
     assert _request(lab, tokens["id"])["state"] == "sent" and _request(lab, old["id"])["state"] == "sent"
@@ -477,7 +512,7 @@ def test_recover_waits_for_a_workspace_behind_on_its_migrations(lab, disk, monke
     f = _folder(lab, disk, agent="")
     monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")
     sent = _send(lab.owner, f)
-    store.set_agent(f.id, "codex", by=lab.user)
+    store.set_agent("codex", True, by=lab.user)
     monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "1")
     upgraded = time.monotonic() + 0.5
     monkeypatch.setattr(migrations, "is_behind", lambda ws: time.monotonic() < upgraded)
@@ -488,29 +523,69 @@ def test_recover_waits_for_a_workspace_behind_on_its_migrations(lab, disk, monke
 
 def test_the_folder_agent_the_routes_ask_for(lab, disk):
     f = _folder(lab, disk)
-    found = runner.folder_agent(lab.ws, f.w)
-    assert {k: found[k] for k in ("name", "label", "link_id", "maker", "set_by", "writable")} == {
-        "name": "codex", "label": "Codex", "link_id": f.id, "maker": lab.user, "set_by": lab.user, "writable": True}
+    found = runner.folder_agent(lab.ws, f.w, lab.user)
+    assert found == {"name": "codex", "label": "Codex", "link_id": f.id, "owner": lab.user, "writable": True}
+    # another account, with no agent on here, is answered the owner's: it takes that account's Sends, never this one's
+    assert runner.folder_agent(lab.ws, f.w, account_of(EDITOR))["owner"] == lab.user
+    store.set_agent("claude", True, by=account_of(EDITOR))
+    assert runner.folder_agent(lab.ws, f.w, account_of(EDITOR))["name"] == "claude"
     folder_links.set_paused(f.id, True)
-    assert runner.folder_agent(lab.ws, f.w)["writable"] is False
-    store.set_agent(f.id, "", by=lab.user)
-    assert runner.folder_agent(lab.ws, f.w) is None
+    assert runner.folder_agent(lab.ws, f.w, lab.user)["writable"] is False
+    store.set_agent("codex", False, by=lab.user)
+    store.set_agent("claude", False, by=account_of(EDITOR))
+    assert runner.folder_agent(lab.ws, f.w, lab.user) is None
+    assert runner.folder_agent(lab.ws, "noSuchFolder", lab.user) is None
     assert not runner.running(lab.ws, "noSuchRequest")
 
 
 # --- what the store keeps, what the prompt says ------------------------------------------------
 
 def test_the_store(disk):
-    store.set_agent("lnkA", "codex", by="u1")
-    first = store.agent_of("lnkA")
-    assert first["agent"] == "codex" and first["set_by"] == "u1" and first["set_at"]
-    store.set_agent("lnkA", "codex", by="u2")  # the same agent again keeps when it was turned on
-    assert store.agent_of("lnkA") == first
-    store.set_agent("lnkB", "claude", by="u1")
-    assert set(store.agents_of(["lnkA", "lnkB", "lnkC"])) == {"lnkA", "lnkB"} and store.agents_of([]) == {}
-    assert store.forget_links({"lnkA"}) == 1 and store.agent_of("lnkB") is None
-    vault_store.forget_link("lnkA")
-    assert store.agent_of("lnkA") is None
+    # the computer's agents: turned on by an account, which owns it; the first in the catalog's order is its agent
+    assert store.agents() == {} and store.agent_for("u1") is None
+    assert store.set_agent("claude", True, by="u1") and store.agent_for("u1")["agent"] == "claude"
+    first = store.agents()["claude"]
+    assert (first["enabled"], first["runs"], first["set_by"]) == (True, "never", "u1") and first["set_at"]
+    assert not store.set_agent("claude", True, by="u2")  # on already: its owner and its time stay
+    assert store.agents()["claude"] == first and not store.owns("u2", "claude") and store.owns("u1", "claude")
+    store.set_agent("codex", True, by="u1")
+    assert list(store.agents()) == ["codex", "claude"] and store.agent_for("u1")["agent"] == "codex"
+    assert store.agent_for("u2") is None and store.agent_for("") is None
+    with pytest.raises(ValueError):
+        store.set_agent("gpt", True, by="u1")
+
+    # what it may run: its owner's to set; never takes the grants of its chats with it, and so does turning it off
+    with pytest.raises(ValueError):
+        store.set_runs("codex", "always", by="u1")
+    assert not store.set_runs("codex", "ask", by="u2") and store.runs_of("codex") == "never"
+    assert store.set_runs("codex", "ask", by="u1") and store.runs_of("codex") == "ask"
+    store.grant("cv1", "latexmk -pdf main.tex", agent="codex", dir="/p")
+    store.grant("cv2", "make", agent="claude", dir="/p")
+    assert store.granted("cv1", " latexmk -pdf main.tex\n", dir="/p") and not store.granted("cv1", "latexmk", dir="/p")
+    assert not store.granted("cv1", "latexmk -pdf main.tex", dir="/q")  # keyed by the directory the turn works in
+    assert store.grants_of("cv1", dir="/p") == [{"command": "latexmk -pdf main.tex", "cwd": ".", "host": ""}]
+    assert store.set_runs("codex", "never", by="u1") and not store.granted("cv1", "latexmk -pdf main.tex", dir="/p")
+    assert not store.set_agent("claude", False, by="u2")  # another account's: never turned off here
+    assert store.set_agent("claude", False, by="u1") and not store.granted("cv2", "make", dir="/p")
+    off = store.agents()["claude"]
+    assert (off["enabled"], off["runs"], off["set_by"]) == (False, "never", "u1") and store.runs_of("claude") == "never"
+    assert list(store.enabled_agents()) == ["codex"] and not store.owns("u1", "claude")
+    store.set_agent("claude", True, by="u2")  # off, then on by another account: that account's now
+    assert store.agent_for("u2")["agent"] == "claude" and store.agents()["claude"]["set_at"] >= first["set_at"]
+
+    # the directories offered: replaced whole, an id offered kept with when it was added
+    a, b = Path(disk.tmp, "a"), Path(disk.tmp, "b")
+    added = store.set_dirs([{"path": str(a), "name": ""}, {"path": str(b), "name": "Notes"}])
+    assert [(d["path"], d["name"]) for d in added] == [(str(a), "a"), (str(b), "Notes")]
+    kept = store.set_dirs([{"id": added[1]["id"], "path": str(b), "name": "Lab notes"}, {"id": "noSuchDir",
+                                                                                         "path": str(a)}])
+    assert {d["path"]: d["id"] for d in kept}[str(b)] == added[1]["id"]
+    assert {d["path"]: d["id"] for d in kept}[str(a)] not in (added[0]["id"], "noSuchDir")
+    assert [d["name"] for d in kept if d["id"] == added[1]["id"]] == ["Lab notes"]
+    for refused in ([{"path": str(a)}, {"path": str(a)}], [{"path": f"/d{n}"} for n in range(store.MAX_DIRS + 1)]):
+        with pytest.raises(ValueError):
+            store.set_dirs(refused)
+    assert store.set_dirs([]) == [] and store.dirs() == []
 
     run_id = store.start_run(ws="ws1", link_id="lnkA", request_id="req1", agent="codex")
     store.update_run(run_id, session="s1", pid=42)
@@ -541,6 +616,24 @@ def test_the_store(disk):
     store.forget_links({"lnkC"})  # a vault gone while this server was not looking
     vault_store.forget_link("lnkC")  # a vault removed
     assert store.threads_of("lnkB", ["t3"]) == {} and store.threads_of("lnkC", ["t4"]) == {}
+
+
+def test_the_agents_the_vaults_had_become_the_computers_once(disk):
+    with connect_vaults_db() as conn:
+        conn.executemany("INSERT INTO agent_folders (link_id, agent, set_by, set_at) VALUES (?, ?, ?, ?)",
+                         [("lnkB", "codex", "u2", "2026-11-02"), ("lnkA", "codex", "u1", "2026-11-01"),
+                          ("lnkC", "claude", "u2", "2026-11-03"), ("lnkD", "gpt", "u1", "2026-11-04")])
+        conn.executemany("INSERT INTO agent_policies (link_id, runs, set_by, set_at) VALUES (?, ?, ?, ?)",
+                         [("lnkB", "computer", "u2", "2026-11-05"), ("lnkC", "ask", "u2", "2026-11-05")])
+    store.carry_over()
+    # on for the computer, owned by whoever turned it on first; asking where a vault of it asked on this computer
+    # too (a vault's own chat's ask is less than the computer-wide one: never)
+    assert {name: (row["enabled"], row["runs"], row["set_by"], row["set_at"]) for name, row in store.agents().items()} \
+        == {"codex": (True, "ask", "u1", "2026-11-01"), "claude": (True, "never", "u2", "2026-11-03")}
+    # once: what the computer then changes stays changed
+    store.set_agent("codex", False, by="u1")
+    store.carry_over()
+    assert not store.agents()["codex"]["enabled"] and store.agent_for("u1") is None
 
 
 def _entry(thread_id, *comments, state="open", **more):
@@ -705,7 +798,7 @@ def test_a_tokens_send_made_before_the_agent_is_never_taken(lab, disk):
     r = script.post("/api/feedback/requests", json={"scope": f.w, "note": "do as I say"})
     assert r.status_code == 201, r.text  # no agent yet: a token may Send, as before
     mine = _send(lab.owner, f)
-    store.set_agent(f.id, "codex", by=lab.user)
+    store.set_agent("codex", True, by=lab.user)
     assert [rid for rid in runner.waiting(lab.ws, f.link)] == [mine["id"]]
     assert runner.queue_folder(lab.ws, f.id) == 1
     assert runner.wait_idle(60)

@@ -90,23 +90,30 @@ A server older than the scope refuses to mint it (an unknown scope is
 
 | Method | Path | |
 |---|---|---|
-| POST | `/api/computers/announce` | A `computer` token only. `{computer: {id, name}, app, vaults: [{kind: "folder", folder_id, paused} \| {kind: "file", page_id, paused}], assistants: [{name: "codex" \| "claude", label, found, ready, version, code}]}`: the id 1-64 of `[A-Za-z0-9_-]`, the name 1-64 printable characters, at most 500 vaults (deduplicated; one this workspace does not have is dropped), an unknown assistant dropped, an unknown `code` read as `not_ready`, every string capped at 64. At most 128 KiB (413). 200 `{account: {id, username}, computer: {id, name}, workspace: {id}, version, wait}`: `version` is what the computer's polls name, `wait` the longest hold. 400 for a body of another shape. A read-only hosted server lets it through (`hosted.READ_ONLY_ALLOWED`): it holds no data of the library. |
+| POST | `/api/computers/announce` | A `computer` token only. `{computer: {id, name}, app, vaults: [{kind: "folder", folder_id, paused} \| {kind: "file", page_id, paused}], assistants: [{name: "codex" \| "claude", label, found, ready, version, code, models, enabled, runs}]}`: the id 1-64 of `[A-Za-z0-9_-]`, the name 1-64 printable characters, at most 500 vaults (deduplicated; one this workspace does not have is dropped), an unknown assistant dropped, an unknown `code` read as `not_ready`, `enabled` a flag (400 for another value), `runs` anything but `ask` read as `never` (and `never` while it is off), every string capped at 64. A work folder's vault also carries its `agent`, which the app still sends for an older server; this server drops it, and reads it only from an announce whose assistants carry no `enabled` (an older app's), where the first agent a folder vault names is on, `runs` `never`. At most 128 KiB (413). 200 `{account: {id, username}, computer: {id, name}, workspace: {id}, version, wait}`: `version` is what the computer's polls name, `wait` the longest hold. 400 for a body of another shape. A read-only hosted server lets it through (`hosted.READ_ONLY_ALLOWED`): it holds no data of the library. |
 | GET | `/api/computers/poll?v=<version>&wait=<s>` | A `computer` token only, `async def`: a hold uses no worker thread, and every SQLite read is off the event loop. `{announce: true}` at once when this server does not know the computer (a restart) or `v` is not its last announce's version. Else held up to `min(wait, 25)` s (0 answers at once): `{}` when the hold ends, `{announce: true}` when woken for it, `{wake: [...]}` for later steps' work. After the hold the token is resolved again: revoked meanwhile, or its account gone from the workspace, it is 401 and the computer is forgotten. Not written as a slow request (`auth._finish_request_log`), quiet in uvicorn's access log (`logbuf._QuietPolls`). |
 | GET | `/api/folders/computers` | The signed-in account's computers that keep a folder vault of the workspace, by folder (`registry.of_folders`): `{folders: {folder id: {name, online, since, paused}}}`, each folder's first computer (online ones first, then the most recently seen; the whole library's vault left out), which a synced folder's card, row and Files window row name with its state ([work_folders.md](work_folders.md) "File icons"). A session only, a share's reader 404; `{folders: {}}` for an account none of whose computers keeps one. Read with the listing. |
-| GET | `/api/pages/{page_id}/computer` | The signed-in account's computers that keep the page: a session only (`require_personal_user_id`: a token or the guest 403), a share's reader 404. `{computers: [{id, name, online, since, vault: {kind, name, paused}, assistants}]}`: a `file` vault of that page, or a `folder` vault the page is filed in or below (`blocks_store.page_in_folder`; the library's root covers every page), the one that keeps it when several do (a vault of that file, else the deepest folder: the computer's own rule); `since` the time it went offline, null while online; `vault.name` the folder's name or the page's title as this server has it; online ones first, then the most recently seen. `[]` for none and for any other account. |
+| GET | `/api/pages/{page_id}/computer` | The signed-in account's computers that keep the page: a session only (`require_personal_user_id`: a token or the guest 403), a share's reader 404. `{computers: [{id, name, online, since, vault: {kind, name, paused, agent}, assistants}]}`: a `file` vault of that page, or a `folder` vault the page is filed in or below (`blocks_store.page_in_folder`; the library's root covers every page), the one that keeps it when several do (a vault of that file, else the deepest folder: the computer's own rule); `since` the time it went offline, null while online; `vault.name` the folder's name or the page's title as this server has it; online ones first, then the most recently seen. `[]` for none and for any other account. |
+| GET | `/api/computers` | The signed-in account's computers shown to the workspace, for Settings → AI → Agents (`registry.of_account`): `{computers: [{id, name, online, since, assistants}]}`, as the page's route says them, without a vault; the same session-only gate. `[]` for none. Its path is not under the channel's prefix, so a `computer` token never opens it. |
 
-`assistants` are `[{name, label, found, ready, version, code}]`: `ready`
-null while the computer is still checking, `code` one of `""` (ready),
-`missing`, `signed_out`, `not_ready`, `checking`, worded by the client in
-its language; never the computer's English problem.
+`assistants` are `[{name, label, found, ready, version, code, models,
+enabled, runs}]`: `ready` null while the computer is still checking,
+`code` one of `""` (ready), `missing`, `signed_out`, `not_ready`,
+`checking`, worded by the client in its language, never the computer's
+English problem; `enabled` whether the agent is on there for the token's
+account (on, and that account turned it on: another account's agent is
+not this server's to use) and `runs` what it may run then (`never` or
+`ask`). The agents are the computer's ([local_agents.md](local_agents.md)
+"Who turns it on"): a vault names none.
 
 ### The Sends (step 4c)
 
-A computer that announces a work folder with an agent (the vault's
-`agent`) takes its maker's Sends there ([local_agents.md](local_agents.md)
-"A work folder of another server"). The routes answer only the token's
-own account's Sends, in the work folders that token announced with an
-agent:
+A computer that keeps a work folder while an agent is on there for the
+token's account (`registry._agent`: the first assistant `enabled`, in the
+catalog's order, Codex then Claude Code) takes that account's Sends there
+([local_agents.md](local_agents.md) "A work folder of another server").
+The routes answer only the token's own account's Sends, in the work
+folders that token announced while it has an agent:
 
 | Method | Path | |
 |---|---|---|
@@ -119,14 +126,18 @@ agent:
 The claim's key, `seen` and the comments the run read are a pages.db
 `feedback_request_runs` row (additive).
 
-An agent's binding is kept only
-for a folder that carries a work folder's mark itself and an account that
-may edit there, and read per account: a member's computer serves only
+An agent's binding is read when it is asked
+(`registry.agent_folders`, `registry.agent_of`: the computer's agent, for a
+folder it keeps that carries a work folder's mark itself, of an account
+that may edit there; until step 4 of
+[the plan](../research/agents-as-participants-plan.md) only a folder the
+computer keeps), and per account: a member's computer serves only
 that member's Sends. An agent that takes a request that is not running
 ends the open runs of it (their next write refused), and a computer whose
 token goes fails the Sends its runs hold. An older server's 401/403 on
 `/sends` is asked again only after 180 s. The page route's `vault` gains
-`agent: {name, label} | null`; the Feedback document's `agent`, for the
+`agent: {name, label} | null` (the computer's agent, for a work folder's
+vault); the Feedback document's `agent`, for the
 maker alone, comes from the binding (`{name, label, computer, online,
 ready, problem, takes, why}`); a token's Send to such a folder is refused
 (403, a token of the account whose computer keeps it), and while a
@@ -223,7 +234,7 @@ server now at that address cannot match this computer to the one that left.
 | Method | Path | |
 |---|---|---|
 | GET | `/api/computer-links` | The account's channels (a session): `{links: [{id, remote_url, plain, workspace_id, account, username, status, created_at}]}`, never the token. `plain` says whether the address is plain http, without DNS (`remote_servers.plain`: `""` for https:// and loopback, `"lan"`, `"name"`). |
-| POST | `/api/computer-links` | The shell's word and a session (`_from_shell`, as the folder-links **P** routes): `{remote_url, workspace, token, token_id}`, checked with one announce. 201 `{link, replaced: {token_id} \| null}`: one already kept for that server, workspace and account takes the new token, and `replaced` names the old one, the shell's to revoke there. 400 "That server refused this computer's token.", a token of another workspace, or a new channel over http:// to a host on the internet (refused before any request; one kept there takes its new token: `remote_servers.refuse_plain_far`), 409 "That server is older than this app: it cannot show this computer." or a redirect (the same host over https: "*old* now redirects to *to*: open *to* in Gamma and show this computer from there."; any other address: "That server redirects to another address (*to*). If you moved it, change its address in the launcher.", never "open"), 502 unreachable, a certificate not trusted here, no HTTPS, or a sign-in or proxy in the way (their words). The channel starts at once. |
+| POST | `/api/computer-links` | The shell's word and a session (`routers/shell.py` `from_shell`, as the folder-links **P** routes): `{remote_url, workspace, token, token_id}`, checked with one announce. 201 `{link, replaced: {token_id} \| null}`: one already kept for that server, workspace and account takes the new token, and `replaced` names the old one, the shell's to revoke there. 400 "That server refused this computer's token.", a token of another workspace, or a new channel over http:// to a host on the internet (refused before any request; one kept there takes its new token: `remote_servers.refuse_plain_far`), 409 "That server is older than this app: it cannot show this computer." or a redirect (the same host over https: "*old* now redirects to *to*: open *to* in Gamma and show this computer from there."; any other address: "That server redirects to another address (*to*). If you moved it, change its address in the launcher.", never "open"), 502 unreachable, a certificate not trusted here, no HTTPS, or a sign-in or proxy in the way (their words). The channel starts at once. |
 | DELETE | `/api/computer-links/{id}` | The shell's word, the link's maker (404 otherwise): the channel stops and is forgotten, `{ok: true, token_id}` for the shell to revoke there. |
 
 ### The channel
@@ -245,7 +256,10 @@ failure ([https.md](https.md)), timeout the hold plus 15 s. Each turn:
    assistants as the catalog last found them (`catalog.known`: one probe
    when none was ever made, never one to refresh it, so a channel keeps no
    agent probed; `[]` where agents do not run here,
-   `local_agents.enabled()`).
+   `local_agents.enabled()`), each with whether it is on for the link's
+   local account and what it may run (`channel.assistants`). An agent
+   turned on or off nudges the threads (`folder_links.agents_changed`), so
+   the next turn announces it.
 2. **Announces** when that differs from what it last announced, or the
    server asked, keeping the answer's `version` and account.
 3. **Polls**, held up to 25 s; a poll answered at once (with nothing, or
@@ -298,10 +312,9 @@ for the shell to revoke there.
   than this app*, *not reachable*, the error in the tooltip, the first two
   in red), with *Stop showing*; without a link, *Not shown on
   NAS* with *Show this computer there*, which mints and hands over as
-  above. *Stop showing* deletes the host's link and revokes its token,
-  and turns off the agent of each work folder of that server it
-  announced (turned on again only with the shell's question);
-  when that server did not revoke it (not reached, signed out, another
+  above. *Stop showing* deletes the host's link and revokes its token
+  (the computer's agents stay on: that server, told nothing more of this
+  computer, gives it no work); when that server did not revoke it (not reached, signed out, another
   account signed in there: the revoke route answers `revoked: false`),
   the notice says so and names the connection to remove in that server's
   Settings.
@@ -310,7 +323,7 @@ for the shell to revoke there.
   the removal's notice saying so when it could not be.
 - **A work folder detached there** (the host's list says `let_go`): the
   shell's next reading of the host, at most 15 s on, forgets the vault as
-  *Remove the vault…* forgets one that server let go of (`forgetDetached`):
+  *Detach…* forgets one (`forgetDetached`):
   `DELETE /api/folder-links/{id}`, which only forgets it, its directory as
   it is but for `.gamma/`; the token minted for it revoked there and, for
   the last vault of that server and workspace, this computer taken off it

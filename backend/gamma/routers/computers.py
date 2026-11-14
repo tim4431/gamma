@@ -1,19 +1,21 @@
-"""A computer's channel to this server, and the computers a page is kept on
-(gamma/computers/registry.py; docs/research/agent-collab.md "How the server
-sees a vault"). Every Gamma server answers.
+"""A computer's channel to this server, the computers a page or a folder is
+kept on and the account's computers (gamma/computers/registry.py;
+docs/research/agent-collab.md "How the server sees a vault"). Every Gamma
+server answers.
 
 The channel's routes take a token of the ``computer`` scope and nothing
 else (a session or any other token: 403), and such a token opens nothing
 but them (``auth.CHANNEL_PREFIX``). ``POST /announce`` says what the
 computer is and keeps; ``GET /poll`` is held up to ``registry.POLL_S``, on
 the event loop without a worker thread, and is the computer's heartbeat: a
-GET, so a read-only hosted server lets it through. The page's route is
-the signed-in account's alone: a session, never a token, a guest or a
-share, and only that account's computers.
+GET, so a read-only hosted server lets it through. The page's route,
+``GET /folders/computers`` and ``GET /computers`` (Settings → AI) are the
+signed-in account's alone: a session, never a token, a guest or a share,
+and only that account's computers.
 
-The Sends (step 4c): a work folder of this server the computer keeps with
-an agent there (its announce's folder vault with ``agent``,
-``registry.agent_folders``) has its maker's Sends made in Gamma run on
+The Sends (step 4c): a work folder of this server the computer keeps
+while an agent is on there (the first of its announce's assistants
+``enabled``, ``registry.agent_folders``) has its maker's Sends made in Gamma run on
 that computer. ``GET /sends`` lists the ones waiting and the runs
 withdrawn meanwhile; a run takes one with ``/claim``, keyed by the id the
 computer minted for it (a retry is told it holds it; another taker 409),
@@ -140,6 +142,17 @@ def page_computers(page_id: str, request: Request):
     return {"computers": registry.of_page(user_id, require_ws(request), page_id)}
 
 
+@router.get("/computers")
+def account_computers(request: Request):
+    """``{computers: [{id, name, online, since, assistants: [{name, label,
+    found, ready, version, code, models, enabled, runs}]}]}``: the signed-in
+    account's computers shown to the workspace (``registry.of_account``),
+    each with its agents as it last announced them, for Settings → AI.
+    ``[]`` for none; a token or a guest 403."""
+    user_id = require_personal_user_id(request, "Sign in with your own account to see your computers.")
+    return {"computers": registry.of_account(user_id, require_ws(request))}
+
+
 @router.get("/folders/computers")
 def folder_computers(request: Request):
     """``{folders: {folder id: {name, online, since, paused}}}``: the
@@ -259,9 +272,9 @@ def claim_send(request_id: str, payload: SendClaim, request: Request):
         folder = folders[row[2]]
         label = _label(folder["agent"])
         if payload.agent != folder["agent"]:
-            raise FeedbackError(409, f"This work folder's agent is {label}.")
+            raise FeedbackError(409, f"This synced folder's agent is {label}.")
         if folder["paused"]:
-            raise FeedbackError(409, f"The work folder is paused: {label} starts once it syncs again.")
+            raise FeedbackError(409, f"The synced folder is paused: {label} starts once it syncs again.")
         seen = page_now()
         found = requests.entries_of(ws, conn, requests.get(conn, request_id), places=True)
         read = {e["id"]: [c["id"] for c in e["comments"]] for e in found}
@@ -468,7 +481,7 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
         with connect_pages_db(ws) as conn:
             row = chats.run_of(conn, turn_id)
             page = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
-                                (row["page_id"],)).fetchone() if row else None
+                                (row["bucket"],)).fetchone() if row else None
         if row is None or row["user_id"] != user_id:
             raise chats.ChatError(404, chats.NO_TURN)
         if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):   # agent_folders then has none
@@ -479,9 +492,9 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
         folder = folders[page[0]]
         label = _label(folder["agent"])
         if payload.agent != folder["agent"]:
-            raise chats.ChatError(409, f"This work folder's agent is {label}.")
+            raise chats.ChatError(409, f"This synced folder's agent is {label}.")
         if folder["paused"]:
-            raise chats.ChatError(409, f"The work folder is paused: {label} starts once it syncs again.")
+            raise chats.ChatError(409, f"The synced folder is paused: {label} starts once it syncs again.")
         return chats.claim(ws, turn_id, user_id=user_id, holder=token_id, run=run, agent=folder["agent"],
                            computer=registry.computer_name(token_id))
 

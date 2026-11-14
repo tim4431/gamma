@@ -84,7 +84,7 @@ const label = (ask) => shown(oneLine(ask.label, 40) || 'The agent')[0];
 // mono]`: In, Network, Files, From, As), `diff`, `says` (the agent's
 // reason, marked as the agent's), `notes` (the marks, the background, the
 // risk, a replaced card, the time it is declined by itself), `stop` (the
-// footer's link), `folder` (the directory's name, for a notification) and
+// footer's link: what the agent may run set back to never), `folder` (the directory's name, for a notification) and
 // `marked` (how many characters Gamma marked: the bar draws ⟨U+…⟩ as a mark
 // only then, since the agent may write the same letters itself).
 // `replaced`: the id of an ask main.js shows in place of one that went
@@ -117,7 +117,7 @@ function cardOf(queue, servers, replaced = '') {
   const notes = [
     marks ? `This holds ${marks === 1 ? '1 character that does' : `${marks} characters that do`} not show: Gamma marks ${marks === 1 ? 'it' : 'them'} ⟨U+…⟩.` : '',
     ask.background && !files ? 'Asked to run in the background: Gamma runs it in the foreground, so Stop ends it.' : '',
-    files ? 'It changes files outside the work folder.'
+    files ? 'It changes files outside the synced folder.'
       : `It runs as you, with your files and the network. A build also runs what this folder's files say, and ${from.name} can change them.`,
     replaced && replaced === ask.id ? 'The question before this one went away: this is another one.' : '',
     at ? `Declined by itself at ${at} unless you answer.` : '',
@@ -130,7 +130,7 @@ function cardOf(queue, servers, replaced = '') {
     lines: !files && lines ? `${lines} lines` : '', box: files ? '' : inner || command,
     through: !files && inner ? `Through ${mark(ask.shell)}: ${command}` : '',
     rows, diff: files ? mark(ask.diff) : '', says: reason ? `${name} says: “${reason}”` : '', notes,
-    stop: `Stop ${name} asking from ${from.name}`, folder: mark(baseName(ask.folder)), expires: at,
+    stop: `Stop ${name} asking`, folder: mark(baseName(ask.folder)), expires: at,
     marked: marks,
   };
 }
@@ -139,7 +139,7 @@ function cardOf(queue, servers, replaced = '') {
 // stop), and around it.
 function notice(card, decision) {
   if (decision === 'once') return `Allowed once: ${card.label} goes on.`;
-  if (decision === 'stop') return `Declined, and ${card.label} no longer asks on this computer for ${card.from.name}.`;
+  if (decision === 'stop') return `Declined, and ${card.label} no longer asks to run more, here or in the chat.`;
   return `Declined: ${card.label} goes on without it.`;
 }
 const stale = (card) => `${card.label} no longer waits for that: nothing was allowed.`;

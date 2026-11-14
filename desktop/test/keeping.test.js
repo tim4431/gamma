@@ -80,184 +80,115 @@ test('a work folder is a folder of the server\'s own that pushes everything; one
   assert.match(choosing.title, /^Nothing is tracked yet: Choose files… opens its tracking dialog in Gamma/);
 });
 
-test('a work folder is what the link says: one of another server is made so there, pushes everything and pulls, and has an agent here once this computer is shown there', () => {
+test('a work folder is what the link says: one of another server is made so there, pushes everything and pulls', () => {
   const nas = { remote_url: 'http://nas.lan:9001', push: 'everything', status: { last_sync: now, folder_path: ['Paper'] } };
-  const codex = [{ name: 'codex', label: 'Codex', found: true, ready: true }];
-  const farOf = (computers) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Paper', pull: true, mine: true, work: true, ...nas },
-    servers, null, codex, computers);
-  const far = farOf(null);
-  assert.deepEqual([far.work, far.agentHere, far.agents, far.remote, far.push, far.pull], [true, false, null, 'NAS', 'everything', true]);
-  // not shown there (another workspace's link does not count): no agent; shown, in any state of its link: one is offered
-  const link = (more = {}) => ({ id: 'c1', remote_url: 'http://nas.lan:9001', workspace_id: 'lab', username: 'tim', status: { state: 'connected' }, ...more });
-  assert.equal(farOf({ links: [link({ workspace_id: 'other' })], name: 'TIM-PC' }).agentHere, false);
-  for (const state of ['connected', 'unreachable', 'connecting']) {
-    const shown = farOf({ links: [link({ status: { state } })], name: 'TIM-PC' });
-    assert.deepEqual([shown.agentHere, shown.agents.map((a) => a.name), shown.computer.who], [true, ['codex', 'claude'], 'tim'], state);
-  }
-  // a kept folder of another server, shown there, is no work folder and has none
-  assert.equal(keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Paper', pull: true, mine: true, work: false, ...nas },
-    servers, null, codex, { links: [link()], name: 'TIM-PC' }).agentHere, false);
+  const far = keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Paper', pull: true, mine: true, work: true, ...nas },
+    servers);
+  assert.deepEqual([far.work, far.remote, far.push, far.pull], [true, 'NAS', 'everything', true]);
   assert.match(far.title, /Notes, PDFs, new files, renames and deletions are pulled and pushed\.$/);
   // a kept folder of another server that pushes everything stays one; the link's word wins over the push
   assert.equal(folder({ ...nas, work: false }).work, false);
   assert.equal(folder({ push: 'everything', work: false, status: {} }).work, false);
   assert.equal(folder({ ...nas, folder_id: 'root', work: true }).work, false, 'never the whole library');
-  const here = folder({ push: 'everything', work: true, status: {} });
-  assert.deepEqual([here.work, here.agentHere], [true, true]);
+  assert.equal(folder({ push: 'everything', work: true, status: {} }).work, true);
   assert.equal(keeping.REMOTE_WORK_RULE, 'A synced folder of another server pushes everything and pulls: detach it to stop.');
   // an empty folder there that cannot be one: why, while the vault dialog asks instead
   assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'NAS is older than this app and keeps no synced folders'),
     '“Lab” cannot be a synced folder of NAS: NAS is older than this app and keeps no synced folders. It can be synced as a vault that pulls instead.');
-  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'A clone keeps no work folder.'),
-    '“Lab” cannot be a synced folder of NAS: A clone keeps no work folder. It can be synced as a vault that pulls instead.');
+  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'A clone keeps no synced folder.'),
+    '“Lab” cannot be a synced folder of NAS: A clone keeps no synced folder. It can be synced as a vault that pulls instead.');
   assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', ''), '“Lab” cannot be a synced folder of NAS: NAS refused it. It can be synced as a vault that pulls instead.');
   // detaching it: its files kept as pages there, or sent to Recently deleted there; that server not reached, the
   // vault is forgotten here only if asked
   assert.match(keeping.removalAsk(far, { pages: 4, files: 4, in_library: 1 }, 'TIM-PC').detail,
     /Remove them from Gamma: 3 files go to Recently deleted on NAS\. The directory on TIM-PC stays as it is/);
-  const q = keeping.farRemovalAsk(far, 'NAS cannot be reached: remove the vault when it can, or detach the synced folder there');
-  assert.equal(q.message, 'NAS cannot be reached: remove the synced folder “Paper” all the same?');
-  assert.match(q.detail, /^NAS cannot be reached: remove the vault when it can, or detach the synced folder there\. Remove anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it is detached there\./);
-  assert.deepEqual(q.buttons, ['Remove anyway', 'Cancel']);
+  const q = keeping.farRemovalAsk(far, 'NAS cannot be reached: detach it once it answers, or detach the synced folder there');
+  assert.equal(q.message, 'NAS cannot be reached: detach “Paper” all the same?');
+  assert.match(q.detail, /^NAS cannot be reached: detach it once it answers, or detach the synced folder there\. Detach anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it is detached there\./);
+  assert.deepEqual(q.buttons, ['Detach anyway', 'Cancel']);
 });
 
-test('a work folder\'s agent: who made it, the agent and how it stands, the agents found here, and a run that works reads busy', () => {
-  const work = (link, agents) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Papers\\Quantum', remote_url: '',
-    pull: true, push: 'everything', status: { last_sync: now }, ...link }, servers, null, agents);
-  const found = [{ name: 'codex', label: 'Codex', found: true, version: 'codex-cli 0.167.0', ready: true, problem: '' },
-    { name: 'claude', label: 'Claude Code', found: true, version: '2.1.318', ready: false, problem: 'Claude Code is not signed in on this computer: run `claude` in a terminal and sign in.' }];
+test('the agent at work in a work folder reads busy, its detail on the row, said as a Send\'s or the chat\'s', () => {
+  const work = (link) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Papers\\Quantum', remote_url: '',
+    pull: true, push: 'everything', status: { last_sync: now }, ...link }, servers);
 
-  const none = work({ mine: true, agent: null }, found);
-  assert.deepEqual([none.mine, none.agent, none.agentLabel, none.agentReady, none.agentProblem, none.agentRunning], [true, '', '', null, '', '']);
-  assert.deepEqual(none.agents.map((a) => [a.name, a.label, a.ready]), [['codex', 'Codex', true], ['claude', 'Claude Code', false]]);
-  assert.equal(none.state, 'ok');
-
-  const on = work({ mine: true, agent: { name: 'codex', label: 'Codex', ready: false, problem: 'Codex is not signed in on this computer: run `codex login` in a terminal.', running: null } }, found);
-  assert.deepEqual([on.agent, on.agentLabel, on.agentReady, on.agentRunning], ['codex', 'Codex', false, '']);
-  assert.match(on.agentProblem, /^Codex is not signed in/);
-  // what it may run: never unless the link says ask (a server from before 3b says nothing)
-  assert.deepEqual([none.agentRuns, on.agentRuns], ['never', 'never']);
-  assert.equal(work({ mine: true, agent: { name: 'claude', label: 'Claude Code', ready: true, runs: 'ask' } }, found).agentRuns, 'ask');
-  assert.equal(work({ mine: true, agent: { name: 'claude', label: 'Claude Code', ready: true, runs: 'always' } }, found).agentRuns, 'never');
-
-  const checking = work({ agent: { name: 'claude', label: 'Claude Code', ready: null, problem: '', running: null } }, found);
-  assert.deepEqual([checking.mine, checking.agentReady], [false, null], 'another account\'s, and the server still checks');
+  const none = work({ mine: true, agent: null });
+  assert.deepEqual([none.mine, none.agentLabel, none.agentRunning, none.state], [true, '', '', 'ok']);
+  const idle = work({ mine: true, agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: null } });
+  assert.deepEqual([idle.agentLabel, idle.agentRunning, idle.state], ['Codex', '', 'ok']);
+  for (const gone of ['agent', 'agents', 'agentHere', 'agentRuns', 'agentReady', 'agentProblem', 'secure']) {
+    assert.ok(!(gone in idle), `${gone}: the agents are set in Settings, not on a vault`);
+  }
 
   // a run at work: busy, its detail on the row
-  const running = work({ mine: true, agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: { request_id: 'r1', detail: 'Editing sections/intro.tex' } } }, found);
+  const running = work({ mine: true, agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: { request_id: 'r1', detail: 'Editing sections/intro.tex' } } });
   assert.deepEqual([running.state, running.text, running.agentRunning], ['busy', 'Codex is working · Editing sections/intro.tex', 'Editing sections/intro.tex']);
   assert.match(running.title, /answering a Send of this folder/);
-  const hidden = work({ agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: { request_id: 'r1', detail: '' } } }, found);
+  const hidden = work({ agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: { request_id: 'r1', detail: '' } } });
   assert.deepEqual([hidden.state, hidden.text], ['busy', 'Codex is working · Working'], 'a member who cannot act reads no detail');
   assert.deepEqual([keeping.summarize([running]).state, keeping.summarize([running]).text], ['busy', 'Agent working'],
     'no round runs: the title bar says an agent works, not "Syncing…"');
   const round = work({ mine: true, agent: { name: 'codex', running: { request_id: 'r1', detail: 'Reading main.tex' } },
-    status: { running: true, progress: { done: 1, total: 4 } } }, found);
+    status: { running: true, progress: { done: 1, total: 4 } } });
   assert.equal(round.text, 'Syncing 1 / 4', 'a round of the vault reads first');
   assert.equal(keeping.summarize([running, round]).text, 'Syncing…', 'a round anywhere still reads as syncing');
 
   // the vault's own problem keeps its row while the agent works, the run said in its title
   const at = { name: 'codex', label: 'Codex', ready: true, problem: '', running: { request_id: 'r1', detail: 'Editing main.tex' } };
-  const failing = work({ mine: true, agent: at, status: { last_sync: now, last_error: 'The disk is full.' } }, found);
+  const failing = work({ mine: true, agent: at, status: { last_sync: now, last_error: 'The disk is full.' } });
   assert.deepEqual([failing.state, failing.text], ['error', 'Sync problem']);
   assert.match(failing.title, /^The disk is full\. Codex is working on a Send meanwhile\.$/);
-  const held = work({ mine: true, agent: at, status: { last_sync: now, held: { removals: 3, total: 9 } } }, found);
+  const held = work({ mine: true, agent: at, status: { last_sync: now, held: { removals: 3, total: 9 } } });
   assert.equal(held.state, 'held');
   assert.match(held.title, /Codex is working on a Send meanwhile\.$/);
   assert.equal(keeping.summarize([failing]).state, 'error');
 
   // a turn of a page's chat works the folder too: busy, said as the chat's, not a Send's
   const chatting = { name: 'codex', label: 'Codex', ready: true, problem: '', running: { kind: 'chat', request_id: null, detail: 'Editing sections/intro.tex' } };
-  const chat = work({ mine: true, agent: chatting }, found);
+  const chat = work({ mine: true, agent: chatting });
   assert.deepEqual([chat.state, chat.text, chat.agentChat], ['busy', 'Codex is working · Editing sections/intro.tex', true]);
   assert.equal(chat.title, 'Codex is working in the chat of a file of this folder on this computer: the files here may change meanwhile.');
   assert.equal(keeping.summarize([chat]).text, 'Agent working');
-  assert.match(work({ mine: true, agent: chatting, status: { last_sync: now, last_error: 'The disk is full.' } }, found).title,
+  assert.match(work({ mine: true, agent: chatting, status: { last_sync: now, last_error: 'The disk is full.' } }).title,
     /^The disk is full\. Codex is working in the chat meanwhile\.$/);
   assert.equal(running.agentChat, false, 'a Send\'s run, kind "send" or none, is no chat');
 
-  // a server that runs no agents offers none; one that lists only some reads the others as not here; only a work folder offers them
-  assert.equal(work({ mine: true }, null).agents, null);
-  assert.deepEqual(work({ mine: true }, [found[0]]).agents[1], { name: 'claude', label: 'Claude Code', found: false, ready: false, problem: 'Claude Code is not on this computer.' });
-  assert.equal(work({ mine: true, push: 'pdfs' }, found).agents, null);
-  assert.equal(keeping.itemsOf(local, { links: [{ id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\P', push: 'everything', mine: true, status: {} }], agents: found }, servers)[0].agents.length, 2);
+  // a vault of another server reached over plain http says so, as the list does
+  const far = { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Paper', remote_url: 'http://nas.lan:9001', pull: true, push: 'off', status: {} };
+  assert.equal(keeping.vault(local, { ...far, plain: 'lan' }, servers).plain, 'lan');
+  assert.equal(keeping.vault(local, { ...far, plain: 'anything' }, servers).plain, '');
 });
 
-test('turning on a work folder\'s agent is asked with what it may do and the Sends waiting; the outcome is said', () => {
-  const item = { name: 'Quantum', dest: 'C:\\Papers\\Quantum', agentLabel: 'Codex' };
-  const codex = keeping.agentAsk(item, 'codex', 2);
-  assert.equal(codex.message, 'Let Codex work in C:\\Papers\\Quantum?');
-  assert.equal(codex.detail, 'Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network. 2 waiting Sends will be handed to it.');
+test('turning on an agent of this computer is asked with what it does here and what a server it is shown on can then do; the outcome is said', () => {
+  const codex = keeping.agentAsk('codex');
+  assert.equal(codex.message, 'Turn on Codex on this computer?');
+  assert.equal(codex.detail, "Codex will work for you in your chats on this computer, in a synced folder's directory for a page in one, else in a directory you offer it, else in an empty directory of its own: it edits files in the directory it works in and runs commands in its sandbox, without network." +
+    ' It answers the Sends you make in your synced folders and talks with you in the chat. On a server this computer is shown on, whoever can sign in there as you, and whoever runs it, can send work to Codex here: Codex reads your files, and its answers are stored on that server.');
   assert.deepEqual(codex.buttons, ['Turn on Codex', 'Cancel']);
-  assert.equal(keeping.agentAsk(item, 'claude', 0).detail, 'Claude Code will answer the Sends you make on this folder: it edits files in this directory and runs no commands.');
-  assert.match(keeping.agentAsk(item, 'claude', 1).detail, / 1 waiting Send will be handed to it\.$/);
-  assert.equal(keeping.agentSaid(item, 'codex', 0), 'Codex now answers the Sends on Quantum.');
-  assert.equal(keeping.agentSaid(item, 'claude', 3), 'Claude Code now answers the Sends on Quantum; 3 waiting were handed to it.');
-  assert.equal(keeping.agentSaid(item, ''), 'Codex no longer answers the Sends on Quantum: they wait for an agent you run yourself.');
+  assert.match(keeping.agentAsk('claude').detail, /^Claude Code will work for you .*: it edits files in the directory it works in and runs no commands\. /);
+  assert.equal(keeping.agentSaid('codex', true), 'Codex is on: it answers the Sends you make in your synced folders.');
+  assert.equal(keeping.agentSaid('claude', true, 3), 'Claude Code is on: it answers the Sends you make in your synced folders; 3 waiting were handed to it.');
+  assert.equal(keeping.agentSaid('codex', true, 1), 'Codex is on: it answers the Sends you make in your synced folders; 1 waiting was handed to it.');
+  assert.equal(keeping.agentSaid('codex', false), 'Codex is off on this computer: your Sends wait for an agent you run yourself.');
 });
 
-test('turning on the agent of a work folder of another server says what that server can then do, and the plain http of one outside this computer', () => {
-  const far = (remoteUrl, who = 'tim', plain = '') => ({ name: 'Paper', dest: 'C:\\Paper', remote: 'NAS', remoteUrl, plain, computer: { state: 'connected', who } });
-  const said = 'Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network.' +
-    ' Whoever can sign in to NAS as tim, and whoever runs NAS, can send work to Codex here. Codex reads your files and its answers are stored on NAS.';
-  const plain = ' NAS is reached without encryption: someone on your network could read what is sent and pose as NAS.';
-  const https = keeping.agentAsk(far('https://nas.example.org'), 'codex');
-  assert.deepEqual([https.message, https.detail, https.buttons], ['Let Codex work in C:\\Paper?', said, ['Turn on Codex', 'Cancel']]);
-  // the link's `plain`, as the server lists it: "" for https and this computer's own
-  assert.equal(keeping.agentAsk(far('http://nas.lan:9001', 'tim', 'lan'), 'codex').detail, said + plain);
-  assert.equal(keeping.agentAsk(far('http://nas.example.org', 'tim', 'name'), 'codex').detail, said + plain);
-  for (const url of ['http://127.0.0.1:9100', 'http://localhost:9100', 'http://[::1]:9100']) {
-    assert.equal(keeping.agentAsk(far(url), 'codex').detail, said, `${url} is this computer's own`);
-  }
-  // as the vault's item makes it, from the listed link
-  const link = { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Paper', remote_url: 'http://nas.lan:9001', pull: true, push: 'off', status: {} };
-  assert.equal(keeping.vault(local, { ...link, plain: 'lan' }, servers).plain, 'lan');
-  assert.equal(keeping.vault(local, { ...link, plain: 'anything' }, servers).plain, '');
-  assert.match(keeping.agentAsk(far('https://nas.example.org', ''), 'claude').detail,
-    /runs no commands\. Whoever can sign in to NAS as your account, and whoever runs NAS, can send work to Claude Code here\. Claude Code reads your files/);
-  assert.equal(keeping.FAR_RUNS_RULE, 'Asking in the chat is for a work folder of this computer\'s server: for one of another server, choose Ask on this computer.');
-});
-
-test('Ask on this computer: read from the link, secure only where the list says so, asked with who writes what the agent is asked, Cancel the default', () => {
-  const link = { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Paper', remote_url: 'https://nas.lab:5001', pull: true, push: 'everything', work: true,
-    mine: true, status: {}, agent: { name: 'codex', label: 'Codex', ready: true, runs: 'computer' } };
-  const far = keeping.vault(local, { ...link, plain: '' }, servers);
-  assert.deepEqual([far.agentRuns, far.secure], ['computer', true]);
-  assert.equal(keeping.vault(local, { ...link, plain: 'lan', remote_url: 'http://nas.lan:9001' }, servers).secure, false);
-  assert.equal(keeping.vault(local, { ...link, plain: undefined }, servers).secure, false, 'a list that says nothing is not secure');
-  assert.equal(keeping.vault(local, { ...link, remote_url: '', plain: '' }, servers).secure, true, 'a local folder');
-  assert.equal(keeping.vault(local, { ...link, agent: { ...link.agent, runs: 'always' } }, servers).agentRuns, 'never');
-
-  const item = { name: 'Paper', dest: 'C:\\Paper', remote: 'NAS', agent: 'codex', agentLabel: 'Codex', computer: { state: 'connected', who: 'alice' } };
-  const q = keeping.runsComputerAsk(item);
-  assert.equal(q.message, 'Let Codex ask on this computer to run more in C:\\Paper?');
-  assert.equal(q.detail, 'In a chat on NAS, Codex can then ask you to run a command with the network or to change files outside this folder.' +
-    ' The question shows here only, in Gamma\'s window, and nothing of it runs until you allow it there, one command at a time.' +
-    ' Whoever can sign in to NAS as alice, and whoever runs NAS, writes what Codex is asked to do: read each command before you allow it.' +
+test('letting an agent ask is asked with what it may ask for, here and from a server this computer is shown on; the outcome is said', () => {
+  const codex = keeping.runsAsk('codex');
+  assert.equal(codex.message, 'Let Codex ask to run more?');
+  assert.equal(codex.detail, "In your chats on this computer (a synced folder's directory, a directory you offer it, or its own), Codex can then ask you to run a command with the network or to change files outside the directory it works in; nothing of it runs until you allow it." +
+    ' In a chat on another server this computer is shown on, the question shows here only, in Gamma\'s window, one command at a time: whoever can sign in there as you, and whoever runs that server, writes what Codex is asked to do, so read each command before you allow it.' +
     ' A command you allow runs as you, with your files and the network.');
-  assert.deepEqual([q.buttons, q.defaultId, q.cancelId], [['Ask on this computer', 'Cancel'], 1, 1]);
-  assert.match(keeping.runsComputerAsk({ ...item, agent: 'claude', agentLabel: 'Claude Code', computer: null }).detail,
-    /^In a chat on NAS, Claude Code can then ask you to run a command, such as your build\. .* sign in to NAS as your account,/);
-  assert.equal(keeping.runsSaid(item, 'computer'), 'Codex may now ask on this computer to run more on Paper.');
-  assert.equal(keeping.plainRule(item), 'Ask on this computer needs https: NAS is reached over plain http.');
-  assert.equal(keeping.olderServer(item), 'NAS runs an older Gamma: its page will not say that Codex waits here. The question still shows in this window.');
-  assert.equal(keeping.NEAR_COMPUTER_RULE, 'Ask on this computer is for a work folder of another server: here the agent asks in the chat.');
-});
-
-test('letting a work folder\'s agent ask in the chat is asked with what it may ask for and the risk; the outcome is said', () => {
-  const codex = keeping.runsAsk({ name: 'Quantum', dest: 'C:\\Papers\\Quantum', agent: 'codex', agentLabel: 'Codex' });
-  assert.equal(codex.message, 'Let Codex ask to run more in C:\\Papers\\Quantum?');
-  assert.equal(codex.detail, 'In the chat of a file of this folder, Codex can then ask you to run a command with the network or to change files outside this folder; nothing of it runs until you allow it there. A command you allow runs as you, with your files and the network.');
-  assert.deepEqual(codex.buttons, ['Ask me in the chat', 'Cancel']);
-  const claude = { name: 'Quantum', dest: 'C:\\Papers\\Quantum', agent: 'claude', agentLabel: 'Claude Code' };
-  assert.match(keeping.runsAsk(claude).detail, /^In the chat of a file of this folder, Claude Code can then ask you to run a command, such as your build; .* runs as you, with your files and the network\.$/);
-  assert.equal(keeping.runsSaid(claude, 'ask'), 'Claude Code may now ask you in the chat to run more on Quantum.');
-  assert.equal(keeping.runsSaid(claude, 'never'), 'Claude Code no longer asks to run more on Quantum: it keeps to its confinement.');
+  assert.deepEqual(codex.buttons, ['Let it ask', 'Cancel']);
+  assert.match(keeping.runsAsk('claude').detail, /^In your chats on this computer \(a synced folder's directory, a directory you offer it, or its own\), Claude Code can then ask you to run a command, such as your build; /);
+  assert.equal(keeping.runsSaid('claude', 'ask'), 'Claude Code may now ask you to run more.');
+  assert.equal(keeping.runsSaid('claude', 'never'), 'Claude Code no longer asks to run more: it keeps to its confinement.');
+  assert.equal(keeping.dirSaid('C:\\Notes'), 'C:\\Notes is offered to the agents: a chat whose page is in no synced folder can work in it.');
+  assert.equal(keeping.dirSaid('C:\\Notes', true), 'The agents work in C:\\Notes from now on, in place of the directory offered before.');
 });
 
 test('a vault of another server says whether this computer is shown there, in its link\'s state, with Stop showing or Show this computer there', () => {
   const remote = (computers, more = {}) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Papers\\Lab',
-    remote_url: 'http://nas.lan:9001', pull: true, push: 'off', status: { last_sync: now, folder_path: ['Lab'] }, ...more }, servers, null, null, computers);
+    remote_url: 'http://nas.lan:9001', pull: true, push: 'off', status: { last_sync: now, folder_path: ['Lab'] }, ...more }, servers, null, computers);
   const shown = (state, more = {}) => ({ links: [{ id: 'c1', remote_url: 'http://nas.lan:9001/', workspace_id: 'lab', account: 'u_1', username: 'tim',
     status: { state, error: '', at: now }, created_at: now, ...more }], name: 'TIM-PC' });
 
@@ -284,7 +215,7 @@ test('a vault of another server says whether this computer is shown there, in it
   }
   // unread, a vault of this server's own, or another account's seen by a viewer: nothing said
   assert.equal(remote(null).computer, null);
-  assert.equal(keeping.vault(local, { id: 'f2', kind: 'folder', folder_id: 'x', dest: 'C:\\Lab', remote_url: '', status: {} }, servers, null, null, shown('connected')).computer, null);
+  assert.equal(keeping.vault(local, { id: 'f2', kind: 'folder', folder_id: 'x', dest: 'C:\\Lab', remote_url: '', status: {} }, servers, null, shown('connected')).computer, null);
   assert.equal(remote(shown('connected'), { dest: '' }).computer, null);
   // itemsOf hands the links on; a vault's state is its own
   const [item] = keeping.itemsOf(local, { links: [{ id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Lab', remote_url: 'http://nas.lan:9001', status: { last_sync: now } }],
@@ -320,7 +251,7 @@ test('a row of another server that failed on the way there reads by its kind, th
   const all = [local, nas];
   const cert = { sha256: 'a'.repeat(64), subject: 'CN=nas.lan', issuer: 'CN=nas.lan', not_before: '', not_after: '' };
   const row = (status, url = 'https://nas.lan:5001', net = {}) => keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', dest: 'C:\\Lab',
-    remote_url: url, pull: true, push: 'off', status: { last_sync: now, folder_path: ['Lab'], ...status } }, all, null, null, null, net);
+    remote_url: url, pull: true, push: 'off', status: { last_sync: now, folder_path: ['Lab'], ...status } }, all, null, null, net);
   const said = (r) => [r.state, r.text.replace(/ · .*$/, ''), r.title, r.fix ? r.fix.action : null, r.fix ? r.fix.button : null];
 
   assert.deepEqual(said(row({ last_error: 'http://nas.lan:5000 now redirects to https://nas.lan:5001', error_kind: 'redirected', move_to: 'https://nas.lan:5001' }, 'http://nas.lan:5000')),
@@ -356,7 +287,7 @@ test('a row of another server that failed on the way there reads by its kind, th
   const line = row({}, 'https://nas.lan:5001').computer;
   assert.equal(line, null, 'no computer links read');
   const v = keeping.vault(local, { id: 'f1', kind: 'folder', folder_id: 'x', workspace_id: 'lab', dest: 'C:\\Lab', remote_url: 'https://nas.lan:5001', status: { last_sync: now } },
-    all, null, null, { name: 'TIM-PC', links: [{ remote_url: 'https://nas.lan:5001', workspace_id: 'lab', username: 'tim',
+    all, null, { name: 'TIM-PC', links: [{ remote_url: 'https://nas.lan:5001', workspace_id: 'lab', username: 'tim',
       status: { state: 'unreachable', error: 'The certificate of nas.lan changed', error_kind: 'certificate_changed' } }] });
   assert.equal(v.computer.text, 'Shown on NAS as TIM-PC · certificate changed');
   assert.match(v.computer.title, /The certificate of nas\.lan changed\. Open NAS in Gamma to check the new one\.$/);
@@ -378,13 +309,13 @@ test('plain http: a dotted name\'s link says its token travels in clear, and the
 test('moving a server\'s links: the question names the tokens and the new address, and the bar says what followed', () => {
   const q = keeping.moveAsk('http://nas.lan:9001', 'https://nas.lan', { kind: 'upgrade', plain: false, moved: { vaults: 2, computers: 1, mirrors: 1 } });
   assert.equal(q.message, 'Move the links of http://nas.lan:9001 to https://nas.lan?');
-  assert.equal(q.detail, 'Gamma will send the tokens of 2 synced vaults, this computer and 1 offline copy to https://nas.lan, and use https://nas.lan from now on. Only continue if https://nas.lan is the same server.');
+  assert.equal(q.detail, 'Gamma will send the tokens of 2 synced folders or files, this computer and 1 offline copy to https://nas.lan, and use https://nas.lan from now on. Only continue if https://nas.lan is the same server.');
   assert.deepEqual(q.buttons, ['Move the links', 'Cancel']);
   const down = keeping.moveAsk('https://nas.lan', 'http://nas.lan:9001', { plain: true, moved: { vaults: 1, computers: 0, mirrors: 0 } });
-  assert.equal(down.detail, 'Gamma will send the tokens of 1 synced vault to http://nas.lan:9001, and use http://nas.lan:9001 from now on. Only continue if http://nas.lan:9001 is the same server.' +
+  assert.equal(down.detail, 'Gamma will send the tokens of 1 synced folder or file to http://nas.lan:9001, and use http://nas.lan:9001 from now on. Only continue if http://nas.lan:9001 is the same server.' +
     ' http://nas.lan:9001 is http://: the tokens will travel without encryption, and someone on your network could read them.');
-  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 2, computers: 1, mirrors: 1 }), 'http://a is now https://a: 2 synced vaults, this computer and 1 offline copy follow it.');
-  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 1 }), 'http://a is now https://a: 1 synced vault follows it.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 2, computers: 1, mirrors: 1 }), 'http://a is now https://a: 2 synced folders or files, this computer and 1 offline copy follow it.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 1 }), 'http://a is now https://a: 1 synced folder or file follows it.');
   assert.equal(keeping.moveSaid('http://a', 'https://a', { computers: 2 }), 'http://a is now https://a: this computer follows it.');
   assert.equal(keeping.moveSaid('http://a', 'https://a', { mirrors: 3 }), 'http://a is now https://a: 3 offline copies follow it.');
   assert.equal(keeping.moveSaid('http://a', 'https://a', {}), 'http://a is now https://a.');
@@ -414,13 +345,13 @@ test('an up-to-date vault lists the names its scan refused among those not synce
   const v = folder({ status: { last_sync: now, upgraded_at: now,
     kept: [{ path: 'b.pdf', why: 'attachment belongs to another page', force: false }],
     refused: [{ path: 'notes.md', why: 'differs from another name here only by case' }, { path: 'con.md', why: 'is a name Windows keeps for a device' }],
-    push_off: 'push turned off when it was taken onto synced vaults: Its folder holds pages the synced vault D:\\Old pushes into too: only one vault pushes into a page.',
+    push_off: 'push turned off when it was taken onto synced folders: Its folder holds pages the synced folder D:\\Old pushes into too: only one vault pushes into a page.',
     shared: [{ page: 'p1', title: 'Attention' }, { page: 'p2', title: 'BERT' }] } });
   assert.equal(v.state, 'ok');
   assert.match(v.text, /^Up to date · .+ · 3 not synced · 2 in another vault · push turned off$/);
   assert.equal(v.left, 3);
   assert.match(v.title, /Not synced: b\.pdf \(attachment belongs to another page\); notes\.md \(differs from another name here only by case\); con\.md \(is a name Windows keeps for a device\)\./);
-  assert.match(v.title, / Push turned off when it was taken onto synced vaults: Its folder holds pages the synced vault D:\\Old pushes into too: only one vault pushes into a page\./);
+  assert.match(v.title, / Push turned off when it was taken onto synced folders: Its folder holds pages the synced folder D:\\Old pushes into too: only one vault pushes into a page\./);
   assert.match(v.title, / Kept by an older synced folder beside this one, so not written here: “Attention”, “BERT”\./);
   assert.match(v.title, / Kept on this computer before; a synced folder since .+, with \.gamma\/ in place of \.gamma-sync\.json\./);
   const plain = folder({ status: { last_sync: now } });
@@ -479,7 +410,7 @@ test('a vault of a workspace its maker left says so, paused it stays quiet; anot
     ...keeping.itemsOf(local, { links: [link(), link({ id: 'f2', workspace_id: 'lab' }), link({ id: 'f3', remote_url: 'http://nas.lan:9001' })], roles }, servers),
     ...keeping.itemsOf(local, { links: [link()] }, servers)];
   assert.deepEqual([away.away, away.state, away.text, away.name, away.where], [true, 'error', 'No access to its workspace', 'Papers', 'C:\\Papers ⇄ Local · Papers']);
-  assert.match(away.title, /no longer a member.*Remove the vault to free its directory/);
+  assert.match(away.title, /no longer a member.*Remove the synced folder to free its directory/);
   assert.deepEqual([inLab.away, inLab.text], [false, 'Sync problem'], 'a viewer is still in the workspace');
   assert.equal(remote.away, false, 'a vault of another server names a workspace there');
   assert.equal(unread.away, false, 'no session read: nothing is assumed');
@@ -498,7 +429,7 @@ test('the button shows the worst state; a detached clone or a paused vault never
   const busy = folder({ id: 'f2', status: { running: true } });
   const bad = clone({ status: { last_error: 'x', last_sync: now } });
   const off = clone({ workspace_id: 'w2', mode: 'off' });
-  assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 synced vault on this computer: synced' });
+  assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 synced folder on this computer: synced' });
   assert.equal(keeping.summarize([ok, busy]).text, 'Syncing…');
   assert.equal(keeping.summarize([ok, busy, bad]).text, '1 problem');
   const held = folder({ id: 'f4', status: { held: { removals: 6, total: 10 } } });
@@ -507,7 +438,7 @@ test('the button shows the worst state; a detached clone or a paused vault never
   assert.equal(keeping.summarize([ok, folder({ id: 'f5', status: { offline: true } })]).text, 'Waiting', 'a disk unplugged only says so');
   const paused = folder({ id: 'f3', status: { last_error: 'x', paused_at: now } });
   assert.equal(keeping.summarize([ok, paused]).text, 'Synced');
-  assert.deepEqual(keeping.summarize([off, paused]), { state: 'paused', text: 'Paused', title: '1 clone and 1 synced vault on this computer: paused' });
+  assert.deepEqual(keeping.summarize([off, paused]), { state: 'paused', text: 'Paused', title: '1 clone and 1 synced folder on this computer: paused' });
 });
 
 test('the paused states of a vault and a clone', () => {
@@ -598,16 +529,16 @@ test('a server lists its Zotero links among what it keeps, and the button counts
   assert.deepEqual(keeping.summarize([waiting]), { state: 'waiting', text: 'Waiting', title: '1 Zotero link on this computer: waiting' });
   const ok = folder({ status: { last_sync: now } });
   const off = clone({ workspace_id: 'w2', mode: 'off' });
-  assert.equal(keeping.summarize([ok, off, link({ status: { last_sync: now } })]).title, '1 clone, 1 Zotero link and 1 synced vault on this computer: synced');
+  assert.equal(keeping.summarize([ok, off, link({ status: { last_sync: now } })]).title, '1 clone, 1 Zotero link and 1 synced folder on this computer: synced');
   assert.equal(keeping.summarize([link({ status: { last_error: 'x', error_kind: 'auth' } }), ok]).state, 'error');
 });
 
-test('the summary counts vaults of both scopes together; a paused one never raises it', () => {
+test('the summary counts a folder\'s vaults as synced folders and a file\'s as synced vaults; a paused one never raises it', () => {
   const ok = folder({ status: { last_sync: now } });
   const sent = file({ status: { last_sync: now, last_sent: now } });
   const cl = clone({ status: { last_sync: now } });
   const zl = link({ status: { last_sync: now } });
-  assert.equal(keeping.summarize([cl, zl, ok, sent]).title, '1 clone, 1 Zotero link and 2 synced vaults on this computer: synced');
+  assert.equal(keeping.summarize([cl, zl, ok, sent]).title, '1 clone, 1 Zotero link, 1 synced folder and 1 synced vault on this computer: synced');
   const paused = file({ id: 'p3', status: { last_error: 'x', paused_at: now } });
   assert.equal(keeping.summarize([ok, paused]).text, 'Synced');
   assert.equal(keeping.summarize([paused]).state, 'paused');
@@ -648,8 +579,8 @@ test('the dialog shuts Sync for a vault that would be refused, and says why', ()
   assert.deepEqual(say({}, { whole: true, push: 'everything' }), { ok: false, text: keeping.WHOLE_RULE }, 'the server\'s words');
   assert.equal(say({ notes: 2 }, { whole: true, push: 'pdfs' }).ok, true, 'the whole library pulls, and pushes PDFs');
   assert.equal(folder({ folder_id: 'root', status: {} }).whole, true);
-  assert.deepEqual(say({ refusal: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' }),
-    { ok: false, text: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' });
+  assert.deepEqual(say({ refusal: 'D:\\Papers holds the marker of the synced folder E:\\Papers: was it copied?' }),
+    { ok: false, text: 'D:\\Papers holds the marker of the synced folder E:\\Papers: was it copied?' });
   assert.match(say({ pages: 3, notes: 1 }, { push: 'everything' }).text, /^Both the folder and the directory hold files/);
   assert.equal(say({ pages: 3, notes: 1 }, { push: 'everything' }).ok, false);
   assert.equal(say({ pages: 0, notes: 1 }, { push: 'everything', newFolder: true }).ok, true);
@@ -666,7 +597,7 @@ test('removing a vault: the pages stay, the PDFs read in place are stored first,
   assert.equal(q.message, 'Remove the synced folder “Papers”?');
   assert.equal(q.detail, 'Its 12 pages stay in Gamma; 2 PDFs read where they are (3.4 MB) are stored in Gamma first. '
     + "The directory on TIM-PC stays as it is: only Gamma's own .gamma folder goes.");
-  assert.deepEqual([q.buttons, q.choices], [['Remove the vault', 'Cancel'], ['keep', null]], 'nothing on disk to choose');
+  assert.deepEqual([q.buttons, q.choices], [['Remove the synced folder', 'Cancel'], ['keep', null]], 'nothing on disk to choose');
   assert.match(keeping.removalAsk(v, { pages: 1 }).detail, /^Its page stays in Gamma\. The directory on this computer stays/);
   assert.match(keeping.removalAsk(v, { pages: 0 }).detail, /^It holds no pages yet\. /);
   const away = keeping.removalAsk(folder({ status: { offline: true } }), { pages: 3 });
@@ -674,7 +605,7 @@ test('removing a vault: the pages stay, the PDFs read in place are stored first,
   assert.match(away.detail, /is not there now, so nothing on disk is touched\.$/);
   // a stopped vault (its marker gone or another's): the server touches nothing there
   const stopped = keeping.removalAsk(folder({ status: { stopped: 'The marker is gone.' } }), { pages: 3 });
-  assert.deepEqual(stopped.buttons, ['Remove the vault', 'Cancel']);
+  assert.deepEqual(stopped.buttons, ['Remove the synced folder', 'Cancel']);
   assert.match(stopped.detail, /is no longer this vault's directory, so nothing in it is touched\.$/);
   const f = keeping.removalAsk(file({ status: {} }), { pages: 1 });
   assert.deepEqual(f.choices, ['keep', null]);

@@ -1,6 +1,6 @@
 // The card a call waits on while the person decides, whoever asks: Gamma
-// AI's tool call (ApprovalCard.jsx) and what the agent on this computer
-// asks (computer/ComputerAsk.jsx). A caption, the head (an icon and what
+// AI's tool call (ApprovalCard.jsx) and what a computer's agent asks
+// (ApprovalCard.jsx AskCard). A caption, the head (an icon and what
 // the call would do), the card's preview as its children, then the
 // answers: the card's own that allow (`answers`, [{decision, label,
 // primary, danger, title, disabled}]) and, after a spacer, Don't allow, which opens

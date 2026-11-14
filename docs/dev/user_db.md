@@ -412,24 +412,28 @@ All state is SQLite + files on disk under a data directory (env
     nothing references them (`name`, `keep_s`, `since`; "Stored files"
     below);
   - `computer_chats` — the chat's computer side
-    ([local_agents.md](local_agents.md) "The chat's computer side"): a
-    page's conversations of the work folder vault's maker with the agent on
-    the computer, one row a conversation (its messages as JSON, a
-    `version`, `archived_at` null for the active one). Private to the
-    account (`ws_backup.PRIVATE_TABLES`: a backup has it empty, a restore
-    keeps the live rows), read by no export, mirror or share, gone with
-    its page deleted for good (`ops._purge`), and an account's rows go when
-    its membership ends or the account is deleted
-    (`db.delete_workspace_prefs`). From `db.PAGES_SCHEMA` as the file opens
-    (no workspace step);
+    ([local_agents.md](local_agents.md) "The chat's computer side"): an
+    account's conversations with its agent on the computer, one row a
+    conversation: its `bucket` (a page's id, a folder's or `home`, as
+    `chats`), `dir` (where its agent works: the work folder's id, an
+    offered directory's id, or "" for an empty one of its own), its
+    messages as JSON, a `version`, `archived_at` null for the active one.
+    Private to the account (`ws_backup.PRIVATE_TABLES`: a backup has it
+    empty, a restore keeps the live rows), read by no export, mirror or
+    share, gone with its page deleted for good (`ops._purge`), filed into
+    the library's History with its folder deleted, and an account's rows go
+    when its membership ends or the account is deleted
+    (`db.delete_workspace_prefs`). Step 59 renamed `page_id` to `bucket`
+    and added `dir` ([migrations.md](migrations.md));
   - `computer_chat_runs` — a turn of such a conversation run on another
     computer (step 4d, [local_agents.md](local_agents.md) "The chat on
-    another server's page"): the turn, its conversation, page and account,
-    the turn's agent and the computer last known to take it, the computer
-    token holding it and its run once claimed, the last
+    another server's page"): the turn, its conversation, its `bucket` (a
+    page) and account, the turn's agent and the computer last known to take
+    it, the computer token holding it and its run once claimed, the last
     write's `seq`, a stop flag, its state, when it was queued and started.
     Private like `computer_chats` (`ws_backup.PRIVATE_TABLES`), gone with
-    its page (`ops._purge`) and with its account's rows; additive;
+    its page (`ops._purge`) and with its account's rows; `bucket` was
+    `page_id` until step 59;
   - `feedback_request_runs` — the run of a computer that holds a Send of
     this server's (step 4c, [computers.md](computers.md) "The Sends"): the
     request, the holding token, the run, the agent, the `seen` time, the

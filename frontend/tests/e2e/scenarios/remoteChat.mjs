@@ -13,8 +13,8 @@ import { waitForPdf } from "./pdf.mjs";
 // workspace holds the folder "Paper", its maker alice and an editor, bob; the
 // computer's own account makes a work folder of it from the SyncTeX sample
 // paper's directory, shows the computer there and turns Codex on for it.
-// Alice's plain browser on the NAS then has the Gamma AI | Codex switch in the
-// PDF page's chat, its strip naming Codex on the computer: a message with a
+// Alice's plain browser on the NAS then lists "Codex on <host>" beside Gamma AI
+// in the PDF page's chat's chip, its strip naming Codex on the computer: a message with a
 // PDF passage runs on the computer and its reply and steps come back into the
 // conversation the NAS keeps; a tab closed mid-turn finds the turn again and
 // the follow-up resumes Codex's session there; Stop of a running turn ends
@@ -74,7 +74,7 @@ export async function remoteChatScenarios(env) {
     let pdf = "";
     const at = () => `${nas.base}/?ws=${wsId}&page=${pdf}`;
     const computersOf = async (account) => (await account.api(`/api/pages/${pdf}/computer`)).computers;
-    const chatOf = (account) => account.api(`/api/local-agents/chat?page=${pdf}`);
+    const chatOf = (account) => account.api(`/api/local-agents/chat?bucket=${pdf}`);
     const conversation = async () => (await chatOf(alice)).conversation;
     // The chat window, opened from the View menu when it is closed.
     const openChat = async (page) => {
@@ -87,10 +87,22 @@ export async function remoteChatScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The chat's Codex side, its strip shown.
+    // The agents the composer's chip lists, by name, its menu closed again.
+    const agentsListed = async (page, dock) => {
+      await dock.locator(".chatModelChip .uiSelectBtn").click();
+      const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").allInnerTexts();
+      await page.keyboard.press("Escape");
+      return names.map((s) => s.trim());
+    };
+    // The chat's Codex side, picked in the composer's chip unless it shows
+    // already (no AI service: the agent is the chat's own), its strip shown.
     const codexSide = async (page) => {
       const dock = await openChat(page);
-      await dock.locator(".segGroup").getByRole("button", { name: "Codex", exact: true }).click();
+      await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+      if (!(await dock.locator(".computerStrip").count())) {
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: /^Codex on / }).click();
+      }
       await dock.locator(".computerStrip").waitFor();
       return dock;
     };
@@ -115,7 +127,7 @@ export async function remoteChatScenarios(env) {
       assert(codex?.found && codex.ready, `Codex is found and ready on the computer: ${JSON.stringify(codex)}`);
       // as the shell's makeRemoteWorkFolder: a write token on the NAS, the work folder on the host
       const token = await alice.api("/api/integrations/tokens", { method: "POST",
-        body: { name: "Gamma desktop: Paper synced vault", scope: "write", expires_in_days: 365 } });
+        body: { name: "Gamma desktop: Paper synced folder", scope: "write", expires_in_days: 365 } });
       const link = await owner.api("/api/folder-links", { method: "POST", body: { folder: folderId, path: dir, notes: true, pull: true,
         push: "everything", choose: true, remote_url: nas.base, workspace: wsId, token: token.token, token_id: token.id } });
       assertEq(JSON.stringify([link.work, link.choosing]), JSON.stringify([true, true]), "a work folder of the NAS, its files to be chosen");
@@ -135,8 +147,8 @@ export async function remoteChatScenarios(env) {
         body: { remote_url: nas.base, workspace: wsId, token: minted.token, token_id: minted.id } });
       await until(async () => (await owner.api("/api/computer-links")).links.find((l) => l.id === made.link.id)?.status?.state === "connected",
         { timeout: 45000, every: 500, what: "the channel connected" });
-      const turned = await owner.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent: "codex" } });
-      assertEq(turned.agent?.name, "codex", "Codex on for the work folder");
+      const turned = await owner.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: true } });
+      assertEq(turned.enabled, true, "Codex on for the computer");
       const [seen] = await until(async () => {
         const list = await computersOf(alice);
         return list.length && list[0].online && list[0].vault?.agent?.name === "codex" ? list : null;
@@ -162,13 +174,13 @@ export async function remoteChatScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
-        // Their names: a narrow window shows the sides' icons alone.
-        assertEq(await dock.locator(".segGroup button").evaluateAll((b) => b.map((x) => x.getAttribute("aria-label")).join("|")), "Gamma AI|Codex",
-          "the switch names Gamma AI and the folder's agent");
+        await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+        assertEq((await agentsListed(page, dock)).join("|"), `Gamma AI|Codex on ${name}`,
+          "the chip lists Gamma AI and the agent of the computer that keeps the folder");
         await codexSide(page);
         const ready = `Codex on ${name}${folder ? ` · ${folder}` : ""}`;
         await until(async () => (await stripText(dock)) === ready, { what: `the strip reads ${ready}: ${await stripText(dock)}` });
-        await dock.locator(".chatEmpty", { hasText: `it works in the work folder's directory on ${name}.` }).waitFor();
+        await dock.locator(".chatEmpty", { hasText: `it works in the synced folder's directory on ${name}.` }).waitFor();
         assertEq(await dock.getByRole("textbox", { name: "Message Codex", exact: true }).getAttribute("placeholder"),
           `Message Codex on ${name}…`, "the composer names the computer");
         assertEq(await dock.locator(".computerStripMenu").count(), 0, "no menu: Show in folder and the terminal need the computer itself");
@@ -273,7 +285,7 @@ export async function remoteChatScenarios(env) {
         await until(async () => heard().slice(before).some((e) => e.in?.method === "turn/start"),
           { timeout: 20000, every: 250, what: "Codex's turn started on the computer" });
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).click({ timeout: 10000 });
-        await dock.locator(".computerEnded", { hasText: "Stopped" }).waitFor({ timeout: 30000 });
+        await dock.locator(".chatBubble.ai", { hasText: "(stopped)" }).waitFor({ timeout: 30000 });
         await dock.getByRole("button", { name: "Send", exact: true }).waitFor();
         assertEq(await lastState(), "stopped", "stored as stopped");
         await dock.getByRole("button", { name: "New chat", exact: true }).click();
@@ -284,7 +296,7 @@ export async function remoteChatScenarios(env) {
         assertNoProblems(page);
       } finally { await ctx.close(); }
       assert(heard().slice(before).some((e) => e.in?.method === "turn/interrupt"), "Codex was interrupted on the computer");
-      assertEq((await alice.api(`/api/local-agents/chat/history?page=${pdf}`)).conversations.length, 0,
+      assertEq((await alice.api(`/api/local-agents/chat/history?bucket=${pdf}`)).conversations.length, 0,
         "the opened conversation is the active one again");
     });
 
@@ -296,18 +308,19 @@ export async function remoteChatScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
         await sleep(800);
-        assertEq(await dock.getByRole("button", { name: "Codex", exact: true }).count(), 0, "no switch to Codex");
+        const listed = (await dock.locator(".chatModelChip").count()) ? await agentsListed(page, dock) : [];
+        assertEq(listed.filter((n) => n.startsWith("Codex")).length, 0, "no Codex to pick");
         assertEq(await dock.locator(".computerStrip").count(), 0, "no computer side");
         assertNoProblems(page);
       } finally { await ctx.close(); }
       // the expected refusals, outside the page
-      const asBob = await fetch(`${nas.base}/api/local-agents/chat?page=${pdf}`, { headers: bob.headers() });
+      const asBob = await fetch(`${nas.base}/api/local-agents/chat?bucket=${pdf}`, { headers: bob.headers() });
       assertEq(asBob.status, 404, `another member reads no seat: ${await asBob.text()}`);
       const sent = await fetch(`${nas.base}/api/local-agents/chat/turns`, { method: "POST",
-        headers: bob.headers({ "Content-Type": "application/json" }), body: JSON.stringify({ page: pdf, text: "hello" }) });
+        headers: bob.headers({ "Content-Type": "application/json" }), body: JSON.stringify({ bucket: pdf, text: "hello" }) });
       assertEq(sent.status, 404, `nor sends: ${await sent.text()}`);
       const token = await alice.api("/api/integrations/tokens", { method: "POST", body: { name: "a script", scope: "write", expires_in_days: 1 } });
-      const asToken = await fetch(`${nas.base}/api/local-agents/chat?page=${pdf}`,
+      const asToken = await fetch(`${nas.base}/api/local-agents/chat?bucket=${pdf}`,
         { headers: { Authorization: `Bearer ${token.token}`, "X-Gamma-Workspace": wsId } });
       assertEq(asToken.status, 403, `a token is refused: ${await asToken.text()}`);
       await alice.api(`/api/integrations/tokens/${token.id}`, { method: "DELETE" });

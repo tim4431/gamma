@@ -12,8 +12,10 @@ What it does depends on what keeps W:
   kept on a PC, docs/dev/computers.md), **or none any more**: the folder is
   let go in place with the choice (``takeover.let_go``), and each computer
   that announced a vault of W is woken (``let_go``), so its vault finds the
-  mark gone at once (``folder_links.LET_GO_THERE``) and is forgotten there;
-  one offline finds it at its next round.
+  mark gone at once (``folder_links.LET_GO_THERE``), its agent's run there
+  stops, and it is forgotten there; one offline finds it at its next
+  round. Once it is let go, the chat turns queued for a computer in its
+  pages fail (``chats.fail_detached``); a refused let go fails none.
 
 The choice (``pages``): ``keep``, every file stays in Gamma as an ordinary
 page filed where it was, its bytes stored (a file too large to keep stays
@@ -110,13 +112,17 @@ def detach(ws: str, w: str, actor: str, pages: str) -> dict:
     a file another program holds): nothing was detached. The caller checks
     ``allowed`` and the mark."""
     from ..computers import registry
+    from ..local_agents import chats
     from .. import folder_links
 
     link = _link_of(ws, w)
     if link is not None:
         return folder_links.delete_link(link["id"], pages) or {"ok": True, "kept": 0, "trashed": 0}
     keeping = registry.keepers(ws, w)
+    with connect_pages_db(ws) as conn:   # read while they still name it: let_go unstamps them
+        ids = [r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE work_folder = ?", (w,))]
     done = takeover.let_go(ws, w, actor, trash_files=pages == "remove")
+    chats.fail_detached(ws, ids)
     for computer in keeping:
         registry.wake(computer["token_id"], "let_go")
     return {"ok": True, **done}

@@ -70,7 +70,7 @@ export async function computerScenarios(env) {
       assert(claude && !claude.found, `Claude Code is not on this computer: ${JSON.stringify(claude)}`);
       // as the shell's addFolderVault: a read token on the NAS (the vault does not push), the vault on the host
       const read = await alice.api("/api/integrations/tokens", { method: "POST",
-        body: { name: "Gamma desktop: Cavity synced vault", scope: "read", expires_in_days: 365 } });
+        body: { name: "Gamma desktop: Cavity synced folder", scope: "read", expires_in_days: 365 } });
       const dir = path.join(disk, "Cavity");
       fs.mkdirSync(dir);
       const vault = await owner.api("/api/folder-links", { method: "POST", body: { folder: folderId, path: dir, notes: true, pull: true,

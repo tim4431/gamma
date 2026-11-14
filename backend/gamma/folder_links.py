@@ -620,10 +620,32 @@ def _apart(link: dict, other: dict, within=inside) -> None:
             raise LinkError(f"{theirs}, a file synced on its own, is inside {mine}: remove that one first.")
 
 
+def _apart_from_agents(link: dict, earlier: bool) -> None:
+    """A vault's place and the directories this computer offers its agents
+    (gamma/local_agents/store.py): a vault is not inside one, and a
+    directory vault is not around one either, so that one directory has
+    one agent's queue at a time. ``earlier`` as ``check_vault``'s: only
+    those offered before the vault was made, compared by spelling."""
+    from . import local_agents  # local: the agents' modules import this one inside functions
+
+    if not local_agents.enabled():
+        return
+    from .local_agents import store
+
+    within = inside if earlier else _within
+    for entry in store.dirs():
+        if earlier and entry["added_at"] >= link["created_at"]:
+            continue
+        if within(link["path"], entry["path"]) or (link["kind"] == "folder" and within(entry["path"], link["path"])):
+            raise LinkError(f"{link['path']} is inside or around a directory offered to agents ({entry['path']}); "
+                            "withdraw it in Settings → AI first.")
+
+
 def check_vault(link: dict, *, earlier: bool = False) -> None:
     """The refusals of a vault, LinkError with the reason: a place inside
     Gamma's data directory; one inside or around another vault's
-    (``_apart``); a marker another live link holds (a copied directory);
+    (``_apart``) or a directory offered to agents (``_apart_from_agents``);
+    a marker another live link holds (a copied directory);
     pushing everything into a clone or a Zotero-linked workspace
     (``_kept_elsewhere``; pulling is allowed there, it writes nothing into
     Gamma); a folder that overlaps the folder of another vault of the
@@ -656,6 +678,7 @@ def _check_vault(link: dict, earlier: bool) -> None:
         raise LinkError("That place is Gamma's data directory, inside it or around it; pick another.")
     for other in others:
         _apart(link, other, inside if earlier else _within)
+    _apart_from_agents(link, earlier)
     if link["kind"] != "folder":
         return
     if not link["remote_url"]:
@@ -1431,65 +1454,16 @@ def set_library(link_id: str, on: bool) -> dict | None:
     return get_link(link_id)
 
 
-def set_agent(link_id: str, agent: str, *, by: str) -> int:
-    """A work folder's agent on this computer (docs/dev/local_agents.md):
-    ``agent`` (``codex``, ``claude``) answers its Sends from now on, turned
-    on by the account ``by``, or ``""`` none. The row is this computer's
-    (``local_agents.store``, which forgets what the agent may run when it
-    is turned off or changed); a run of the agent it had stops when it is
-    turned off or changed, the folder's open pages hear ``{t: "vault"}``
-    (their chip and the comments' @ menu read the agent again), and an
-    agent turned on (or changed) takes the Sends that wait now → how many
-    it took. The route checks who may and whether the agent is ready. A
-    work folder of another server (``agent_folder``; step 4c) needs this
-    computer shown there (its channel, gamma/computers/channel.py), which
-    then announces the agent and asks that server for the Sends that wait
-    (0 here). LinkError for a vault that is no work folder, or one of
-    another server not shown there; 0 for no such link."""
-    from .computers import channel  # local: it imports this module
-    from .local_agents import runner, store as agents  # local: the runner imports the feedback modules
-
-    link = get_link(link_id)
-    if link is None:
-        return 0
-    if agent and not agent_folder(link):
-        raise LinkError("Only a work folder can have an agent.")
-    if agent and link["remote_url"] and channel.of_vault(link) is None:
-        raise LinkError(f"Show this computer on {server_name(link)} first.")
-    had = (agents.agent_of(link_id) or {}).get("agent", "")
-    agents.set_agent(link_id, agent, by=by)
-    if had and had != agent:
-        _stop_agent(link_id)
-    if had != agent:
-        _tell_open_pages(link)
-        if link["remote_url"]:
-            _vaults_changed()   # its channel announces the folder's agent there
-    if agent and agent != had:
-        return runner.queue_folder(link["workspace_id"], link_id)
-    return 0
-
-
-def set_agent_runs(link_id: str, runs: str, *, by: str) -> None:
-    """What a work folder's agent on this computer may run
-    (docs/dev/local_agents.md): ``ask``, its chat's turns may ask the
-    person, set by the account ``by``, or ``never``. The row is this
-    computer's (``local_agents.store.set_runs``), read when a turn starts;
-    turning the agent off or changing it forgets it. The folder's open
-    pages hear ``{t: "vault"}``. Set back to never, the chat turns running
-    decline the asks that wait and whatever they ask next
-    (``runner.runs_never``). The route checks who may and that the agent
-    is on. Nothing for no such link."""
-    from .local_agents import runner, store as agents  # local: the runner imports the feedback modules
-
-    link = get_link(link_id)
-    if link is None:
-        return
-    had = agents.runs_of(link_id)
-    agents.set_runs(link_id, runs, by=by)
-    if runs == "never":
-        runner.runs_never(link_id)
-    if had != runs:
-        _tell_open_pages(link)
+def agents_changed() -> None:
+    """An agent of this computer was turned on or off
+    (gamma/routers/local_agents.py): each page of a work folder of this
+    server open in a window hears ``{t: "vault"}`` (its chip and the
+    comments' @ menu read the agent again), and this computer's channels
+    announce its agents to the other servers (gamma/computers/channel.py)."""
+    for link in all_links():
+        if work_folder_link(link):
+            _tell_open_pages(link)
+    _vaults_changed()
 
 
 def _tell_open_pages(link: dict) -> None:
@@ -1515,14 +1489,14 @@ def _tell_open_pages(link: dict) -> None:
         collab.publish(ws, page_id, {"t": "vault"})
 
 
-def _stop_agent(link_id: str) -> None:
+def _stop_agent(link_id: str, why: str = "") -> None:
     """The run of the vault's agent on this computer stops, if one runs: its
     agent was turned off or changed, the vault paused, moved, removed or no
     longer pushes everything (gamma/local_agents/runner.py ``stop_link``,
-    which reads why when the run ends)."""
+    which reads why when the run ends unless ``why`` says it)."""
     from .local_agents import runner  # local: the runner imports the feedback modules
 
-    runner.stop_link(link_id)
+    runner.stop_link(link_id, why)
 
 
 def _mark_again(link: dict) -> None:
@@ -1899,7 +1873,8 @@ def delete_link(link_id: str, pages: str = "keep", *, force: bool = False) -> di
     server let go of already (``LET_GO_THERE``) is only forgotten. A remote
     source's token stays on that server (whoever minted it revokes it: the
     desktop app does when it drops a link it made). A run of the vault's
-    agent stops first; its row goes with the vault's
+    agent stops once nothing can refuse the removal (a refused one leaves
+    it running); its row goes with the vault's
     (``vault_store.forget_link``). → ``{ok, kept, trashed, mark_stays?}``,
     the work folder's files kept as pages and those sent to Recently
     deleted; None for no such link."""
@@ -1907,7 +1882,6 @@ def delete_link(link_id: str, pages: str = "keep", *, force: bool = False) -> di
     if link is None:
         return None
     out = {"ok": True, "kept": 0, "trashed": 0}
-    _stop_agent(link_id)
     with _holding(link_id):
         link = get_link(link_id, with_token=True) or link
         if choosing(link):
@@ -1921,6 +1895,7 @@ def delete_link(link_id: str, pages: str = "keep", *, force: bool = False) -> di
                 out.update(released)
             elif _works(link) and (remote is None or link["remote_url"]):
                 out["mark_stays"] = True
+        _stop_agent(link_id, "removed")
         _forget(link)
     return out
 
@@ -1945,10 +1920,10 @@ def _letting_go(link: dict, force: bool):
         if force:
             return None
         if isinstance(e, Unreachable):
-            raise LinkError("The other server cannot be reached: remove the vault when it can, or detach the "
+            raise LinkError("The other server cannot be reached: detach it once it answers, or detach the "
                             "synced folder there.", 409) from e
         raise LinkError(f"The other server cannot let go of this synced folder now ({getattr(e, 'detail', '') or e}): "
-                        "remove the vault when it can, or detach the synced folder there.", 409) from e
+                        "detach it later, or detach the synced folder there.", 409) from e
     return remote
 
 
@@ -2302,8 +2277,7 @@ def page_vault(ws: str, page_id: str, *, can_act: bool, user_id: str) -> dict | 
     first (``_halted``), ``conflicts`` the clashes the file won that are
     open; ``work_folder`` whether the vault is one, ``choosing`` whether its
     files wait to be chosen, ``library`` its library switch, ``mine``
-    whether ``user_id`` made the vault (whose comments may name its
-    agent: gamma/local_agents/mention.py), and ``page``
+    whether ``user_id`` made the vault, and ``page``
     the page's own stamps: whether it is in the library, and its file's
     name. On a server that runs agents, ``agent`` too: the work folder's
     agent on this computer (``local_agents.info``: its run's detail for
@@ -2778,7 +2752,7 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
             return _stopped(link, started, str(e))
         with connect_users_db() as conn:      # two folders kept before, both let push one folder's PDFs then
             conn.execute("UPDATE folder_links SET push = ? WHERE id = ?", (PUSH_OFF, link["id"]))
-        link, lowered = {**link, "push": PUSH_OFF}, f"push turned off when it was taken onto synced vaults: {e}"
+        link, lowered = {**link, "push": PUSH_OFF}, f"push turned off when it was taken onto synced folders: {e}"
     if older(link):
         try:
             link = vault_upgrade.upgrade(link, vault_sync.remote_for(link))
@@ -2810,6 +2784,8 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
     if work_folder_link(link) and not status.get("stopped") and not status.get("offline"):
         status["feedback"] = feedback_files.write(link)
     _write_status(link["id"], status, cursor=result.cursor, state=result.state)
+    if result.state.get(LET_GO_THERE) and not link["state"].get(LET_GO_THERE):
+        _stop_agent(link["id"], "detached")
     return status
 
 

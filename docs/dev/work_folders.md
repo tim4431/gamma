@@ -742,7 +742,7 @@ and git's `?` and sets match a byte where this one matches a character.
 ## The tracking dialog
 
 **Making a work folder.** The desktop shell picks the directory, since only
-the shell may name a path: *Add a synced vault…* makes one in a new folder,
+the shell may name a path: *Add a synced folder…* makes one in a new folder,
 and *Sync with this computer…* on an empty folder of a local server whose
 directory holds notes or PDFs makes that folder one (`makeWorkFolder`). It
 posts `POST /api/folder-links` with `push: "everything"` and
@@ -944,8 +944,10 @@ folder its `FolderIcon`.
   fails to load draw `FileGlyph` (a directory `FolderIcon`). Where: the
   Files window's rows and the folder view's, a file's tab, quick open's and
   the chat picker's file rows (`FileOption`), search results, a path link in
-  a note, the `@` and `[[` pickers' page rows and Linked from, each by the
-  file's name (`file_name`) or path.
+  a note and in the files an agent's turn changed (`FileChanges`), a
+  passage's source line in the chat's composer (`SelChip`'s `file`), the
+  `@` and `[[` pickers' page rows and Linked from, each by the file's name
+  (`file_name`) or path.
 - **The root**: W's card and row in the library, and its row in the Files
   window, wear the root folder's icon and say the computer that keeps it
   and how its sync stands (`vault/vaultState.js` `folderKeeper`, read by
@@ -1241,9 +1243,12 @@ W:
   stamped while the first sweep ran is not left with a stamp no mark
   names. Then each computer that announced a vault of W is woken
   (`let_go`, [computers.md](computers.md) "The server"): its round finds
-  the mark gone (`LET_GO_THERE`) and the desktop app forgets the vault as
-  *Remove the vault…* forgets one, its directory as it is but for
-  `.gamma/`. A computer offline finds it at its next round.
+  the mark gone (`LET_GO_THERE`), its agent's run there stops ("Stopped:
+  the synced folder was detached."), and the desktop app forgets the vault
+  as *Detach…* forgets one, its directory as it is but for `.gamma/`. A
+  computer offline finds it at its next round. The chat turns queued for a
+  computer in its pages fail at once (`chats.fail_detached`, its pages
+  read before the let go unstamps them; a let go refused fails none).
 - **A work folder of another server** kept here is detached through that
   server from the sync panel (`_letting_go`, above), or on that server's
   pages by its own Detach.

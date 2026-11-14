@@ -245,8 +245,9 @@ import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
-import { addsToLibrary, baseName, carriesToServer, computerAgent, isOpenedFile, keeperAgent, keeperComputer, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
-import { sideMark } from "../chat/computer/computerChat.js";
+import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
+import { chatAgents, mentionAgent } from "../chat/agents.js";
+import { useLocalAgents } from "../chat/useLocalAgents.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -3484,7 +3485,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
-    openPageChat: (id) => (id === focusedBlockId ? showChat() : openBlock(id, { then: "ask" })),
+    // a page's chat, or a folder's or the library's (`home`) in the library's view
+    openPageChat: (id) => {
+      if (id !== "home" && !libTree.folders.has(id)) return id === focusedBlockId ? showChat() : openBlock(id, { then: "ask" });
+      if (focusedBlockId) goHome(true, true);
+      openFolder(id === "home" ? "" : id);
+      showChat();
+    },
   });
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
@@ -4904,22 +4911,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const vaultState = vault.state;
   const vaultConflicts = vaultConflictsPath(vaultState);
   const vaultConflictCount = vaultState?.vault?.conflicts || 0;
-  // The work folder's agent on this computer that the maker names in a
-  // comment (`@codex`, vaultState.js mentionAgent), else, in any window,
-  // the agent of the computer that keeps a work folder of the page's server
-  // (keeperAgent: "Codex on TIM-PC"): the comment fields' `links.agent`,
-  // never MentionContext, which reaches the notes.
+  // The agents the chat talks to (chat/agents.js chatAgents): Gamma AI, the
+  // agents this computer runs that the account turned on (GET
+  // /api/local-agents, chat/useLocalAgents.js), or on a page of a work
+  // folder another computer keeps, that computer's. The comment fields'
+  // `links.agent` is the one a comment names (`@codex`, mentionAgent: the
+  // agent of the computer that keeps the page's work folder, "Codex on
+  // TIM-PC", or the account's first here on a work folder's file), never
+  // MentionContext, which reaches the notes.
   const pageComputers = pageComputer.computers;
-  const commentAgent = useMemo(() => (IS_DESKTOP ? mentionAgent(vaultState) : null) || keeperAgent(pageComputers),
-    [vaultState, pageComputers]);
-  // The same agent for the chat's computer side (vaultState.js computerAgent,
-  // else keeperComputer: the maker's messages on the page's server run on
-  // the computer that keeps the work folder).
-  const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null) || keeperComputer(pageComputers),
-    [vaultState, pageComputers]);
-  // Whether that agent works or waits for the person, for the chat's side switch (sideMark).
-  const chatComputerMark = useMemo(() => sideMark(chatComputer, tasks.jobs, focusedBlockId),
-    [chatComputer, tasks.jobs, focusedBlockId]);
+  const localAgents = useLocalAgents(!shareMode && !!authUser?.user && !authUser?.is_guest);
+  const chatAgentList = useMemo(() => chatAgents({
+    aiInfo, models: providerModels(aiInfo?.models, aiProvider), local: localAgents, computers: pageComputers,
+  }), [aiInfo, aiProvider, localAgents, pageComputers]);
+  const commentAgent = useMemo(() => mentionAgent(chatAgentList, vaultState), [chatAgentList, vaultState]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept
@@ -12596,8 +12601,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
-          computer={chatComputer}
-          computerMark={chatComputerMark}
+          agents={chatAgentList} localAgents={localAgents}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {

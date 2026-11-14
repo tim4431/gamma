@@ -106,23 +106,27 @@ def read_feedback(request: Request, scope: str = "", state: str = "open", format
 
 
 def _agent_of(ws: str, w: str, user_id: str) -> dict | None:
-    """The agent of the work folder ``w``'s vault here, as the dialog says
-    it: ``{name, label, ready, problem, takes, why}``, ``ready`` and
-    ``problem`` as last asked (``catalog.cached``: nothing runs), ``takes``
-    whether a Send of ``user_id`` would reach it now (the vault's maker,
-    the vault writing its directory), ``why`` in English when not; None
-    for no agent."""
+    """The agent here that takes ``user_id``'s Sends of the work folder
+    ``w`` kept in a vault here (``runner.folder_agent``: its first agent on,
+    else another account's), as the dialog says it: ``{name, label, ready,
+    problem, takes, why}``, ``ready`` and ``problem`` as last asked
+    (``catalog.cached``: nothing runs), ``takes`` whether a Send of
+    ``user_id`` would reach it now (its own agent, the vault writing its
+    directory), ``why`` in English when not; None for no agent. Until the
+    dialog goes (docs/research/agents-as-participants-plan.md, step 3.7) a
+    Send is taken by the first of the person's agents in the catalog's
+    order."""
     from ..local_agents import catalog, runner
 
-    found = runner.folder_agent(ws, w)
+    found = runner.folder_agent(ws, w, user_id)
     if found is None:
         return None
     label = found["label"]
     why = ""
-    if user_id != found["maker"]:
-        why = f"Only the person who keeps this folder on this computer can send to {label}."
+    if user_id != found["owner"]:
+        why = f"Only the person who turned on {label} on this computer can send to it."
     elif not found["writable"]:
-        why = f"The work folder is paused on this computer: {label} starts once it syncs again."
+        why = f"The synced folder is paused on this computer: {label} starts once it syncs again."
     probe = catalog.cached(found["name"])
     return {"name": found["name"], "label": label, "ready": probe["ready"], "problem": probe["problem"],
             "takes": not why, "why": why}
@@ -145,7 +149,7 @@ def _computer_agent(ws: str, w: str, user_id: str) -> dict | None:
     if found is None:
         return None
     label, computer = found["label"], found["computer"]
-    why = f"The work folder is paused on {computer}: {label} starts once it syncs again." if found["paused"] else ""
+    why = f"The synced folder is paused on {computer}: {label} starts once it syncs again." if found["paused"] else ""
     problem = _problem(found) if found["online"] else f"{computer} is offline: this runs when it connects."
     return {"name": found["agent"], "label": label, "computer": computer, "online": found["online"],
             "ready": found["ready"], "problem": problem, "takes": not why, "why": why}
@@ -234,7 +238,7 @@ def create_request(payload: RequestCreate, request: Request):
         if is_token(request) and local_agents.enabled():
             from ..local_agents import runner
 
-            if runner.folder_agent(ws, scope.work_folder) is not None:
+            if runner.folder_agent(ws, scope.work_folder, request.state.user_id) is not None:
                 raise FeedbackError(403, "An agent on this computer takes Sends made in Gamma, not with a token.")
         if is_token(request):
             from ..computers import registry

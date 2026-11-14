@@ -1,11 +1,13 @@
-"""A mention of a work folder's agent in a comment (docs/dev/local_agents.md
-"A mention in a comment"): the vault's maker writes ``@codex`` (or
-``@claude``) in a comment on a file of a work folder whose agent on this
-computer is that one, and the comment is a Send of its thread to the agent,
-or, written in the page's own thread, of the file's open comments. On a
-server that runs no agent for the folder (a NAS), the computer that keeps
-that work folder there with an agent stands for it (step 4c): the Send is
-made here the same way, and that computer takes it over its channel.
+"""A mention of an agent in a comment (docs/dev/local_agents.md "A mention
+in a comment"): an account with an agent on this computer writes ``@codex``
+(or ``@claude``) in a comment on a file of a work folder a vault here
+keeps, naming its agent (the first of its agents that is on, which takes
+its Sends: ``store.agent_for``), and the comment is a Send of its thread to
+the agent, or, written in the page's own thread, of the file's open
+comments. On a server that runs no agent for the folder (a NAS), the
+computer that keeps that work folder there with an agent stands for it
+(step 4c): the Send is made here the same way, and that computer takes it
+over its channel.
 
 ``agent_named`` is the rule, the one place it is decided: the comment
 routes ask it once per write, before ``comments.written``, and put the name
@@ -13,7 +15,7 @@ on the event (``agent_named``), so the Inbox reads the same answer (an
 account of that name is not told of it); ``agent_of_page`` is the same
 lookup for the Inbox's earlier comments. ``send`` then makes the Send
 (``requests.create``, made in Gamma: ``via`` session, so the runner takes it
-as any Send of the maker's) or says why not. Everywhere else ``@codex`` is
+as any Send of the agent's owner) or says why not. Everywhere else ``@codex`` is
 what it was: plain text, or a member named codex.
 
 This module is imported inside functions (gamma/local_agents/__init__.py).
@@ -39,8 +41,8 @@ def agent_named(ws: str, event: dict, *, via: str) -> str:
     share it came through, none) made, replied or edited, newly mentioning
     (for an edit, not in its text before) the agent of the work folder its
     page is a file of (``agent_of_page``: on this computer, or on the
-    computer that keeps that folder of this server), by that vault's
-    maker. A comment that names no agent reads nothing."""
+    computer that keeps that folder of this server), by that agent's
+    owner. A comment that names no agent reads nothing."""
     if event.get("kind") not in KINDS or event.get("agent") or event.get("agent_id") or via:
         return ""
     names = mentions.people_in(event.get("body") or "")
@@ -50,17 +52,19 @@ def agent_named(ws: str, event: dict, *, via: str) -> str:
     if not names:
         return ""
     agent = agent_of_page(ws, event["page_id"], event.get("actor") or "")
-    if agent is None or agent["name"] not in names or agent["maker"] != event.get("actor"):
+    if agent is None or agent["name"] not in names or agent["owner"] != event.get("actor"):
         return ""
     return agent["name"]
 
 
 def agent_of_page(ws: str, page_id: str, user_id: str = "") -> dict | None:
-    """``{name, label, maker}`` of the agent of the work folder the page is
-    a live file of: the one on this computer (``runner.folder_agent``, on a
-    server that runs agents), else the one of the account ``user_id``'s
-    computer that keeps that folder of this server with an agent
-    (gamma/computers/registry.py ``agent_of``: ``maker`` that account, whose
+    """``{name, label, owner}`` of the agent that works in the work folder
+    the page is a live file of for the account ``user_id``: the one on
+    this computer (``runner.folder_agent``, on a server that runs agents:
+    ``owner`` the account that turned it on, another account's when
+    ``user_id`` has none on), else the one of the account's computer that
+    keeps that folder of this server with an agent
+    (gamma/computers/registry.py ``agent_of``: ``owner`` that account, whose
     Send it then takes over its channel; another account's computer never
     answers, and without ``user_id`` none does); None for none."""
     from ..computers import registry  # local: the registry reaches the workspaces
@@ -70,13 +74,13 @@ def agent_of_page(ws: str, page_id: str, user_id: str = "") -> dict | None:
                            (page_id,)).fetchone()
     if not row or not row[0]:
         return None
-    found = runner.folder_agent(ws, row[0]) if enabled() else None
-    if found is not None and found["name"] in catalog.AGENTS:
-        return {"name": found["name"], "label": found["label"], "maker": found["maker"]}
+    found = runner.folder_agent(ws, row[0], user_id) if enabled() else None
+    if found is not None:
+        return {"name": found["name"], "label": found["label"], "owner": found["owner"]}
     far = registry.agent_of(ws, row[0], user_id)
     if far is None:
         return None
-    return {"name": far["agent"], "label": far["label"], "maker": far["user_id"]}
+    return {"name": far["agent"], "label": far["label"], "owner": far["user_id"]}
 
 
 def _refused(label: str, code: str, why: str) -> dict:

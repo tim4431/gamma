@@ -139,7 +139,7 @@ Gamma's server is the **remote**, the directory or the file here is
 
 - A library folder's menu: *Sync with this computer…*; a work folder's:
   *Choose files…*. A page's Document menu: *Push from a file on this
-  computer…*. The launcher and the sync panel: *Add a synced vault…*,
+  computer…*. The launcher and the sync panel: *Add a synced folder…*,
   which starts from a directory. The desktop app's Server menu: *Open a
   PDF…*.
 - The sync panel: a row per vault with its name, its direction and its
@@ -150,7 +150,8 @@ Gamma's server is the **remote**, the directory or the file here is
   now*, *Pause* and the directory as a bar of buttons named by their
   tooltips, and *Choose files…* for a work folder, *Go on…* for a held
   vault, *Locate…* for a stopped one, *Force pull…*, *Force push…* and
-  *Remove the vault…* as rows.
+  *Detach…* (a work folder), *Remove the synced folder…* (another folder)
+  or *Remove the vault…* (a file's) as rows.
 - A page of a vault: a chip among the page header's buttons, one icon for
   how the page stands: kept in step, pushed from a file of its own,
   paused, or something to see to. Its tooltip says it in words, *Synced:
@@ -1689,8 +1690,10 @@ As built:
   id of the path and each directory above it, so a `\\?\` device path or
   an administrative share `\\host\C$\…` counts); a directory vault inside
   or around another's; a file vault inside a directory vault (open the
-  page from there instead); a marker another live link holds (a copied
-  directory); pushing everything into a clone or a workspace with a Zotero
+  page from there instead); a vault inside a directory offered to the
+  agents, or a directory vault around one (`_apart_from_agents`,
+  [local_agents.md](local_agents.md) "Who turns it on"); a marker another
+  live link holds (a copied directory); pushing everything into a clone or a workspace with a Zotero
   link (pulling, and pushing PDFs, are allowed there); and a folder that
   holds pages another vault of the workspace pushes into, when both push.
   For vaults of this server the folders overlap by the folder tree; for two
@@ -1990,7 +1993,7 @@ In short, from `desktop/main.js`: the shell starts its local servers with
 `lib/sidecar.js`), and sends it as `X-Gamma-Shell` on the routes that take
 a path, only to a local server of its own (`shellWord`). The ways in are a
 folder's *Sync with this computer…* and the panel's chooser
-(`addFolderVault`), *Add a synced vault…* in the launcher and the panel
+(`addFolderVault`), *Add a synced folder…* in the launcher and the panel
 (`addDirectoryVault`, which needs no open server: the host's personal
 workspace unless a local server's workspace is open), and a page's *Push
 from a file on this computer…* (`addFileVault`). The page asks by posting

@@ -5,11 +5,17 @@ library root, the active conversation of each, and the archive of earlier
 ones; and how one is exported with its pictures. The chat request itself is
 in [ai.md](ai.md).
 
-The chat's computer side (talking to Codex or Claude Code on this
-computer, [local_agents.md](local_agents.md) "The chat's computer side")
-keeps nothing here: its conversations are the vault maker's alone, in
-their own private table (`computer_chats`), written by the server's
-runner, and no member, share, export or backup reads them.
+A conversation with a computer's agent (Codex or Claude Code,
+[local_agents.md](local_agents.md) "The chat's computer side") keeps
+nothing here: its conversations use the same buckets (a page, a folder,
+`home`) but are the account's alone, in their own private table
+(`computer_chats`, with where each one's agent works), written by the
+server's runner, and no member, share, workspace export, backup or
+`read_chats` reads them. A deleted folder files them into the library's
+History too (`local_agents.chats.file_into_home`, in the same
+transaction), each keeping its directory. The chat's History lists them
+beside the bucket's conversations here ("Every agent's conversations"),
+and their owner exports them as these are ("Exporting a conversation").
 
 ## Buckets
 
@@ -158,6 +164,22 @@ active conversation) and `/api/chat-history` (the archive).
     (`POST /chat-history/delete` `{ids}`). The ticks belong to the open
     popover: closing it, or a search that hides a ticked row, drops them, so
     Delete never takes a row the user cannot see.
+- **Every agent's conversations.** While the chat has a computer's agent
+  ([ai.md](ai.md) "The picker"), History reads the bucket's conversations
+  with it beside these (`GET /api/local-agents/chat/history?bucket=`:
+  the archived ones and its active one, `active`, of whichever agent) and
+  lists all of them together (`chat/computer/computerChat.js`
+  `historyRows`): the conversation shown first, then by time Gamma AI's
+  archived ones, the computer agents' archived ones, and each agent's
+  current conversation while another agent is shown (Gamma AI's active
+  one, or the computer's `active`), every row led by its agent's icon. A
+  row opens with its agent picked: one of Gamma AI's as above, one of a
+  computer agent's through `POST /api/local-agents/chat/history/{id}/open`
+  (the active one there archived), and an agent's current one by picking
+  that agent alone; while a computer agent's turn is to end its other rows
+  are greyed, with why in their title. Rename is Gamma AI's; Export, Select
+  and Delete (`DELETE /api/local-agents/chat/history/{id}`) work on either,
+  and a bulk Delete sends each to its own table.
 - History follows its bucket: a folder delete moves its entries into
   `home`'s with the active rows, and `ops.delete_page` drops the active row
   and the entries of a page deleted for good, in the deleting transaction
@@ -205,7 +227,19 @@ sent ([ai.md](ai.md#exporting-the-context)).
   `GET /api/chat-history/{id}/export` reads an archived one. Both take any
   member (`require_ws`), a viewer too. They answer in the request, like the
   context export, and are not a background job.
+- **A computer agent's conversation** exports for its owner alone, active
+  or archived, from the server's copy (`GET
+  /api/local-agents/chat/history/{id}/export`, 404 for another account's):
+  the same file, headed "Chat with Codex of …", with the person's messages
+  and the passages they carried (each quoted with its page), and the
+  agent's with its steps in words ("Read sections/intro.tex", "Not allowed
+  to run curl", `chat_export.step_text`), its reply, the files it changed
+  ("**Changed · 2**", "The PDF was rebuilt") and how a turn ended that did
+  not answer ("*Stopped.*", "*This turn failed: …*"). Such a conversation
+  holds no pictures, so it is always the bare `.md`.
 
-Covered by `backend/tests/test_chat_export.py`, the e2e step "a picked
+Covered by `backend/tests/test_chat_export.py` (a computer agent's by
+`test_local_agents_chat.py`'s `test_a_turn_runs_and_its_reply_is_kept`),
+the e2e step "a picked
 picture is stored and attached by URL" (the zip and its two pictures) and
 "Alt+click New chat discards the conversation" (a History row's export).

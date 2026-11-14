@@ -128,7 +128,7 @@ export function sendWords(plan, n, others = 0) {
   if (!namesAgent(plan)) {
     if (plan.mode === "other" && plan.why) notes.push({ tone: "hint", text: plan.why });
     if (plan.mode === "offer") {
-      notes.push({ tone: "hint", text: t("To have Codex or Claude Code answer here, turn one on in the sync panel: the sync button in the title bar, then ⋯ on this folder.") });
+      notes.push({ tone: "hint", text: t("To have Codex or Claude Code answer here, turn one on in Settings → AI.") });
     }
     return { button: tn("Send {n} comment", "Send {n} comments", n), notes, blocked: false };
   }

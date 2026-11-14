@@ -817,8 +817,7 @@ async function startLocalNow(srv) {
   // its trusted certificates as the registry has them, before its first round reads one
   await pushPins(srv.id);
   // the host started again: its asks are followed again when the last reading wanted them
-  if (keepingState.items.some((i) => i.kind === 'vault' && i.server === srv.id && i.agentRuns === 'computer')
-    && (state.servers.find((s) => s.type === 'local') || {}).id === srv.id) followAsks(srv.id);
+  if (asksWanted && (state.servers.find((s) => s.type === 'local') || {}).id === srv.id) followAsks(srv.id);
   return entry;
 }
 
@@ -1798,7 +1797,7 @@ async function makeRemoteWorkFolder({ host, api, origin, shown, wsId, folderId, 
     token = await api(origin, '/api/integrations/tokens', {
       method: 'POST',
       headers: { ...JSON_TYPE, ...wsHeaders },
-      body: JSON.stringify({ name: `Gamma desktop: ${name} synced vault`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
+      body: JSON.stringify({ name: `Gamma desktop: ${name} synced folder`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
     });
     link = await api(host.origin, '/api/folder-links', {
       method: 'POST',
@@ -1851,7 +1850,7 @@ async function trackedFromPage(_wsId, linkId, cancelled) {
     showNotice(`“${t.name}” is not synced with this computer; its folder on ${t.remoteName} stays as it was.${stranded ? ` ${stranded}` : ''}`);
   } else if (kept && kept.choosing && !cancelled) {
     // a fresh dialog's every way out cancels: one that leaves the vault choosing was refused
-    showNotice(`“${t.name}” could not be cancelled, ${t.remoteName} not reached: it waits for its files to be chosen. Choose files… in the sync panel, or remove the vault once ${t.remoteName} answers.`);
+    showNotice(`“${t.name}” could not be cancelled, ${t.remoteName} not reached: it waits for its files to be chosen. Choose files… in the sync panel, or detach it once ${t.remoteName} answers.`);
   } else if (kept && kept.choosing) {
     showNotice(`“${t.name}” waits for its files to be chosen: Choose files… in the sync panel.`);
   } else if (kept && !cancelled) {
@@ -1943,7 +1942,7 @@ async function addFolderVault(wsId, folderId) {
       token = await api(origin, '/api/integrations/tokens', {
         method: 'POST',
         headers: { ...JSON_TYPE, ...wsHeaders },
-        body: JSON.stringify({ name: `Gamma desktop: ${name} synced vault`.slice(0, 80), scope: choice.push === 'off' ? 'read' : 'write', expires_in_days: 365 }),
+        body: JSON.stringify({ name: `Gamma desktop: ${name} synced folder`.slice(0, 80), scope: choice.push === 'off' ? 'read' : 'write', expires_in_days: 365 }),
       });
       link = await api(at.origin, '/api/folder-links', {
         method: 'POST',
@@ -2008,7 +2007,7 @@ async function vaultPlace(wsId) {
   return { ...host, ws };
 }
 
-// "Add a synced vault…" (the launcher, the sync panel): a directory the user
+// "Add a synced folder…" (the launcher, the sync panel): a directory the user
 // picks becomes a work folder, a new folder named after it whose files the
 // person chooses in its tracking dialog (makeWorkFolder). No server need be
 // open (vaultPlace). `dir`, the directory already chosen (oneByOne's "Sync
@@ -2207,7 +2206,7 @@ async function vaultOn(serverId, linkId) {
   const shown = link.remote_url ? await at.api(at.origin, '/api/computer-links').catch(() => null) : null;
   const computers = shown && Array.isArray(shown.links) ? { links: shown.links, name: COMPUTER_NAME } : null;
   // A vault of the server's own workspace is changed in that workspace; one of a remote's is the account's.
-  return { ...at, link, item: keeping.vault(at.srv, link, registry.load().servers, null, null, computers),
+  return { ...at, link, item: keeping.vault(at.srv, link, registry.load().servers, null, computers),
     headers: link.remote_url ? {} : { 'X-Gamma-Workspace': link.workspace_id } };
 }
 
@@ -2317,47 +2316,57 @@ async function setLibrary(serverId, linkId, on) {
   return true;
 }
 
-// A work folder's agent (docs/dev/local_agents.md): `name` ('codex' or
-// 'claude') answers the Sends its maker makes on the folder, working in its
-// directory; '' turns it off. Turning one on, or another one, is the
-// computer's decision: asked first with the Sends waiting now (handed to it
-// once it is on; `confirmed` answers in tests, where the question takes
-// Cancel), and the PATCH carries the shell's word, which a page of Gamma
-// cannot. The server checks the agent meanwhile ("Checking Codex…") and
-// refuses one that is not ready with why. Turning it off asks nothing. A
-// work folder of another server has one once this computer is shown there
-// (item.agentHere): its question says what that server can then do, and
-// counts no Sends, which wait there, not on this computer's server.
-async function setAgent(serverId, linkId, name, confirmed) {
-  const word = name || '';
-  if (word && !Object.prototype.hasOwnProperty.call(keeping.AGENT_LABELS, word)) throw new Error(`An agent is codex or claude, not ${word}`);
-  const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
-  if (!item.work) throw new Error('Only a work folder can have an agent.');
-  if (word && !item.agentHere) throw new Error(`Show this computer on ${item.remote} first.`);
-  if (word === item.agent) return false;
-  const patch = (extra) => api(origin, `/api/folder-links/${link.id}`, {
-    method: 'PATCH', headers: { ...headers, ...JSON_TYPE, ...extra }, body: JSON.stringify({ agent: word }),
+// The agents of this computer (docs/dev/local_agents.md "Who turns it on"),
+// on local server `serverId`: Settings → AI asks through the page
+// (setAgentFromPage and the others below). The shell's own session acts, so
+// its account owns an agent it turns on. The server's listing first
+// (`GET /api/local-agents`): `agents`, `[{name, enabled, runs, …}]`, and
+// `dirs`, the directories offered.
+async function agentsOf(serverId) {
+  const at = await localServer(serverId);
+  const listed = await at.api(at.origin, '/api/local-agents');
+  return { ...at, agents: listed.agents || [], dirs: listed.dirs || [] };
+}
+
+// The agent `name` of that listing, null for one the server did not list.
+async function agentOn(serverId, name) {
+  if (!Object.prototype.hasOwnProperty.call(keeping.AGENT_LABELS, name)) throw new Error(`An agent is codex or claude, not ${name}`);
+  const at = await agentsOf(serverId);
+  return { ...at, found: at.agents.find((a) => a.name === name) || null };
+}
+
+// `name` ('codex' or 'claude') turned on (`on`) or off for this computer,
+// where it works for the account in its chats here (in a synced folder's
+// directory, one offered to it or one of its own), and for a server this
+// computer is shown on. Turning one on is the
+// computer's decision: asked first (`confirmed` answers in tests, where the
+// question takes Cancel), and the PATCH carries the shell's word, which a
+// page of Gamma cannot. The server checks the agent meanwhile ("Checking
+// Codex…") and refuses one that is not ready with why. Turning it off asks
+// nothing and carries the word too, so the person here turns off an agent
+// whose owner is signed out of the app or gone. → false when it was so
+// already.
+async function setAgent(serverId, name, on, confirmed) {
+  const { origin, api, found } = await agentOn(serverId, name);
+  if (found && Boolean(found.enabled) === Boolean(on)) return false;
+  const patch = (extra) => api(origin, `/api/local-agents/${name}`, {
+    method: 'PATCH', headers: { ...JSON_TYPE, ...extra }, body: JSON.stringify({ enabled: Boolean(on) }),
   });
-  if (!word) {
-    await patch({});
-    showNotice(keeping.agentSaid(item, ''));
+  if (!on) {
+    await patch(shellWord(origin));
+    showNotice(keeping.agentSaid(name, false));
     refreshKeeping().catch(() => {});
     return true;
   }
   if (!confirmed) {
-    // The Sends the agent would be handed, counted by the server's own rule
-    // (the maker's, made in Gamma); not said when it does not answer.
-    const counted = link.remote_url ? null : await api(origin, `/api/local-agents/waiting?link=${encodeURIComponent(link.id)}`,
-      { signal: AbortSignal.timeout(5000) }).catch(() => null);
-    const waiting = counted && Number.isInteger(counted.waiting) ? counted.waiting : null;
-    const q = keeping.agentAsk(item, word, waiting);
+    const q = keeping.agentAsk(name);
     if (await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: 1 }, 1) !== 0) return null;
   }
-  busy = `Checking ${keeping.AGENT_LABELS[word]}…`;
+  busy = `Checking ${keeping.AGENT_LABELS[name]}…`;
   pushState();
   try {
     const after = await patch(shellWord(origin));
-    showNotice(keeping.agentSaid(item, word, (after && after.queued) || 0));
+    showNotice(keeping.agentSaid(name, true, (after && after.queued) || 0));
     return true;
   } finally {
     busy = null;
@@ -2366,56 +2375,66 @@ async function setAgent(serverId, linkId, name, confirmed) {
   }
 }
 
-// What a work folder's agent may run beyond its confinement: 'ask', it may
-// ask in the chat of a file of the folder (Codex to go past its sandbox,
-// Claude Code to run a command, each allowed or declined there), or 'never'.
-// Letting it ask is the computer's decision, as turning the agent on is:
-// asked first (`confirmed` answers in tests, where the question takes
-// Cancel), and the PATCH carries the shell's word. Back to 'never' asks
-// nothing. A work folder of another server never lets it ask in the chat
-// (the server refuses it too), but may let it ask on this computer
-// ('computer'), in the bar of this window alone (below, "An agent's ask on
-// this computer"): refused for a local work folder and for a server the
-// host says is reached over plain http (`item.secure`), asked first with
-// who writes what the agent is asked (keeping.runsComputerAsk, Cancel the
-// default), and a server whose whoami does not say it shows that a turn
-// waits (the PATCH's `older`) is said in the bar.
-async function setAgentRuns(serverId, linkId, runs, confirmed) {
-  if (!['never', 'ask', 'computer'].includes(runs)) throw new Error(`What an agent may run is never, ask or computer, not ${runs}`);
-  const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
-  if (!item.agentHere || !item.agent) throw new Error('Turn an agent on first.');
-  if (runs === item.agentRuns) return false;
-  if (runs === 'ask' && link.remote_url) throw new Error(keeping.FAR_RUNS_RULE);
-  if (runs === 'computer' && !link.remote_url) throw new Error(keeping.NEAR_COMPUTER_RULE);
-  if (runs === 'computer' && !item.secure) throw new Error(keeping.plainRule(item));
-  if (runs !== 'never' && !confirmed) {
-    const q = runs === 'computer' ? keeping.runsComputerAsk(item) : { ...keeping.runsAsk(item), defaultId: 0, cancelId: 1 };
-    if (await ask({ type: runs === 'computer' ? 'warning' : 'question', message: q.message, detail: q.detail, buttons: q.buttons,
-      defaultId: q.defaultId, cancelId: q.cancelId }, 1) !== 0) return null;
+// What an agent of this computer may run beyond its confinement: 'ask', it
+// may ask (Codex to go past its sandbox, Claude Code to run a command): in
+// the account's chats of the host, wherever the agent works, and, for a turn
+// started on another server this computer is shown on, in the bar of this
+// window alone (below, "An agent's ask on this computer"); or 'never'.
+// Letting it ask is the computer's decision, as turning it on is: asked
+// first, with who writes what it is asked on another server, Cancel the
+// default (`confirmed` answers in tests), and the PATCH carries the shell's
+// word. Back to 'never' asks nothing. → false when it was so already.
+async function setAgentRuns(serverId, name, runs, confirmed) {
+  if (!['never', 'ask'].includes(runs)) throw new Error(`What an agent may run is never or ask, not ${runs}`);
+  const { origin, api, found } = await agentOn(serverId, name);
+  if (!found || !found.enabled) throw new Error(`Turn ${keeping.AGENT_LABELS[name]} on first.`);
+  if (runs === found.runs) return false;
+  if (runs === 'ask' && !confirmed) {
+    const q = keeping.runsAsk(name);
+    if (await ask({ type: 'warning', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 1, cancelId: 1 }, 1) !== 0) return null;
   }
-  const after = await api(origin, `/api/folder-links/${link.id}`, {
-    method: 'PATCH', headers: { ...headers, ...JSON_TYPE, ...(runs !== 'never' ? shellWord(origin) : {}) },
-    body: JSON.stringify({ agent_runs: runs }),
+  await api(origin, `/api/local-agents/${name}`, {
+    method: 'PATCH', headers: { ...JSON_TYPE, ...(runs === 'ask' ? shellWord(origin) : {}) }, body: JSON.stringify({ runs }),
   });
-  showNotice(`${keeping.runsSaid(item, runs)}${runs === 'computer' && after && after.older ? ` ${keeping.olderServer(item)}` : ''}`);
+  showNotice(keeping.runsSaid(name, runs));
   refreshKeeping().catch(() => {});
   return true;
 }
 
-// The agents on this computer looked for again (`?fresh=1`: the server runs
-// their version and sign-in checks, at most every few seconds), as a work
-// folder's view opens in the panel, then the panel read with what was found.
-// Quiet: the panel keeps what it had when the server does not answer.
-async function checkAgents(serverId) {
-  try {
-    const { origin, api } = await localServer(serverId);
-    await api(origin, '/api/local-agents?fresh=1', { signal: AbortSignal.timeout(60_000) });
-  } catch {
-    return false;
-  }
-  await refreshKeeping().catch(() => {});
-  return true;
+// A directory offered to the agents beyond the synced folders, picked with
+// the native dialog: a new one (`dirId` 'new'), or the one `dirId` names
+// moved to the directory picked. Only the shell names a path
+// (`PUT /api/local-agents/dirs` with its word); the page leaves one out or
+// renames it itself. → the directories offered, null when nothing was
+// picked.
+async function agentDirs(serverId, dirId) {
+  const { origin, api, dirs } = await agentsOf(serverId);
+  const was = dirs.find((d) => d.id === dirId);
+  if (dirId !== 'new' && !was) throw new Error('That directory is no longer offered to the agents.');
+  const picked = await pickDirectory(was ? `Move “${was.name}”` : 'Offer a directory to the agents',
+    'Choose a directory on this computer. Codex and Claude Code can then work in it from a chat whose page is in no synced folder.',
+    was ? path.dirname(was.path) : undefined);
+  if (!picked) return null;
+  const entries = was ? dirs.map((d) => (d.id === dirId ? { id: d.id, path: picked, name: d.name } : d))
+    : [...dirs, { path: picked, name: '' }];
+  const after = await api(origin, '/api/local-agents/dirs', {
+    method: 'PUT', headers: { ...JSON_TYPE, ...shellWord(origin) },
+    body: JSON.stringify(entries.map(({ id, path: at, name }) => ({ ...(id ? { id } : {}), path: at, name }))),
+  });
+  showNotice(keeping.dirSaid(picked, Boolean(was)));
+  return after.dirs;
 }
+
+// Settings → AI's asks about the agents of this computer (preload.js
+// PAGE_ASKS `set-agent`, `set-agent-runs`, `agent-dirs`): only on a page of
+// a server on this computer, the shell then asking its own question.
+function pageAgents() {
+  if (current.type !== 'local') throw new Error('The agents of this computer are set from a server on this computer.');
+  return current.id;
+}
+const setAgentFromPage = async (wsId, name, on) => setAgent(pageAgents(), name, on);
+const agentRunsFromPage = async (wsId, name, asks) => setAgentRuns(pageAgents(), name, asks ? 'ask' : 'never');
+const agentDirsFromPage = async (wsId, dirId) => agentDirs(pageAgents(), dirId);
 
 // Choose files…: the server's window on the work folder, its tracking dialog
 // open (makeWorkFolder's navigation); for a work folder of another server,
@@ -2489,7 +2508,7 @@ async function changePush(serverId, linkId, word) {
     const token = await remote(remoteOrigin, '/api/integrations/tokens', {
       method: 'POST',
       headers: { ...JSON_TYPE, 'X-Gamma-Workspace': link.workspace_id },
-      body: JSON.stringify({ name: `Gamma desktop: ${item.name} synced vault`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
+      body: JSON.stringify({ name: `Gamma desktop: ${item.name} synced folder`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
     });
     let after;
     try {
@@ -2736,7 +2755,7 @@ async function removeVault(serverId, linkId, pages) {
 
 // A work folder of another server detached there (its Detach, which woke
 // this computer's channel: docs/dev/computers.md): its vault here is
-// forgotten as Remove the vault… forgets one that server let go of, its
+// forgotten as Detach… forgets one, its
 // directory as it is but for Gamma's own .gamma folder, the token minted for
 // it revoked there, the last vault of that server taking this computer off
 // it, and the bar says so. Once per vault while it is being forgotten
@@ -2834,7 +2853,7 @@ async function terminalFromPage(wsId, pageId) {
   try {
     if (current.type !== 'local') throw new Error('A conversation goes on in a terminal only from a server on this computer.');
     const at = await localServer(current.id);
-    const answer = await at.api(at.origin, `/api/local-agents/chat/terminal?page=${encodeURIComponent(pageId)}`, {
+    const answer = await at.api(at.origin, `/api/local-agents/chat/terminal?bucket=${encodeURIComponent(pageId)}`, {
       headers: { 'X-Gamma-Workspace': wsId },
     });
     const run = terminal.terminalCommand(process.platform, answer.cwd, answer.argv, (name) => terminal.onPath(name));
@@ -2880,6 +2899,7 @@ function hintServers() {
 const KEEPING_MS = 15_000;
 const KEEPING_BUSY_MS = 2_000;
 let keepingState = { items: [], summary: keeping.summarize([]) };
+let asksWanted = false; // whether the last reading of the host wanted its asks followed (refreshKeeping)
 let keepingTimer = null;
 let keepingRead = null; // the reading in flight
 let keepingNext = null; // the reading asked for while it ran, which follows it
@@ -2911,7 +2931,7 @@ function refreshKeeping() {
     const moves = new Map(); // a redirected address -> the same server over https (autoUpgrade)
     const net = netState();
     const host = servers.find((s) => s.type === 'local');
-    let asksHere = null; // whether the host keeps a work folder whose agent may ask on this computer; null: not read
+    let asksHere = null; // whether the host keeps a work folder of another server while an agent may ask; null: not read
     const detached = []; // the vaults of work folders their other server detached, forgotten here once read
     for (const srv of servers) {
       if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
@@ -2928,7 +2948,7 @@ function refreshKeeping() {
         const roles = who && Array.isArray(who.workspaces) ? who.workspaces : null;
         const agents = found && Array.isArray(found.agents) ? found.agents : null;
         const computers = shown && Array.isArray(shown.links) ? { links: shown.links, name: COMPUTER_NAME } : null;
-        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles, agents, computers }, servers, net);
+        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles, computers }, servers, net);
         // A clone, a vault or a computer link redirected to the same server over https moves there by itself.
         for (const row of [...(m.mirrors || []), ...(f.links || []), ...((computers && computers.links) || [])]) {
           const s = (row && row.status) || {};
@@ -2939,7 +2959,9 @@ function refreshKeeping() {
         // whose links all went or were detached no longer does. A list that
         // did not come leaves that as it was.
         if (z) zoteroHosts.set(srv.id, kept.some((i) => i.kind === 'zotero' && !i.paused));
-        if (host && srv.id === host.id) asksHere = kept.some((i) => i.kind === 'vault' && i.agentRuns === 'computer');
+        if (host && srv.id === host.id && agents) {
+          asksHere = agents.some((a) => a.enabled && a.runs === 'ask') && kept.some((i) => i.kind === 'vault' && i.remoteUrl && i.work);
+        }
         detached.push(...kept.filter((i) => i.kind === 'vault' && i.letGo && i.mine));
         items.push(...kept);
       } catch {
@@ -2952,6 +2974,7 @@ function refreshKeeping() {
     // The asks are followed while the host keeps a folder that may ask here,
     // and stop once a reading of it says none does; a reading that did not
     // come leaves the follower as it is.
+    if (asksHere !== null) asksWanted = asksHere;
     if (asksHere === true) followAsks(host.id);
     else if (asksHere === false) stopAsks();
     keepingState = { items, summary: keeping.summarize(items) };
@@ -2965,12 +2988,10 @@ function refreshKeeping() {
 }
 
 // What a vault's row and its view in the panel do (VAULT_ACTIONS), `value`
-// the switch's new setting for `pull` and `library` (a bool), `push` (a
-// word), `agent` (an agent's name, "" for none) and `agent-runs` ('never',
-// 'ask' or 'computer'); `choose` opens a work folder's tracking dialog in Gamma, and
-// `check-agents` looks for the agents on this computer again as a work
-// folder's view opens; `show-computer` and `hide-computer` show this
-// computer on a vault of another server's server, or stop showing it.
+// the switch's new setting for `pull` and `library` (a bool) and `push` (a
+// word); `choose` opens a work folder's tracking dialog in Gamma;
+// `show-computer` and `hide-computer` show this computer on a vault of
+// another server's server, or stop showing it.
 const VAULT_ACTIONS = {
   pause: (serverId, id) => pauseVault(serverId, id, true),
   resume: (serverId, id) => pauseVault(serverId, id, false),
@@ -2986,9 +3007,6 @@ const VAULT_ACTIONS = {
   remove: (serverId, id) => removeVault(serverId, id),
   choose: (serverId, id) => chooseFiles(serverId, id),
   library: (serverId, id, value) => setLibrary(serverId, id, Boolean(value)),
-  agent: (serverId, id, value) => setAgent(serverId, id, value),
-  'agent-runs': (serverId, id, value) => setAgentRuns(serverId, id, value),
-  'check-agents': (serverId) => checkAgents(serverId),
   'show-computer': (serverId, id) => showComputerOf(serverId, id),
   'hide-computer': (serverId, id) => hideComputerOf(serverId, id),
 };
@@ -3053,15 +3071,16 @@ function showNotice(text) {
 
 // ------------------------------------------ an agent's ask on this computer -----
 // A turn of a chat on another server's page, which the host runs for a
-// work folder whose agent may ask on this computer (setAgentRuns
-// 'computer'), asks to run a command or to change files outside its
+// work folder while its agent may ask (setAgentRuns 'ask'), asks to run a
+// command or to change files outside its
 // sandbox (docs/architecture.md "An agent's ask on this computer";
 // docs/dev/local_agents.md "Asking on this computer"). The question is the
 // host's and is drawn here alone, in the bar, over the whole window with
 // the content view hidden: the page that started the turn is neither seen
 // nor clicked, and nothing that server sends draws, words or answers it.
 // One follower holds `GET /api/local-agents/asks` on the host, with the
-// shell's word, while the host keeps such a folder (refreshKeeping); the
+// shell's word, while the host keeps such a folder and an agent may ask
+// (refreshKeeping); the
 // queue (lib/agentAsks.js take) keeps the card shown until it is answered
 // or goes, the asks that come meanwhile behind it. A new card disarms the
 // buttons, which arm after a quiet, focused second (startArming), and an
@@ -3286,12 +3305,12 @@ async function answerAgentAsk(key, decision) {
     askQueue = askQueue.filter((a) => a.id !== ask.id);
     answeredKey = ask.id;
     asksChanged();
-    // Stop asking: the folder no longer asks on this computer, the safe way, whatever became of the ask
-    if (decision === 'stop' && ask.link_id) {
+    // Stop asking: the agent no longer asks, the safe way, whatever became of the ask
+    if (decision === 'stop' && Object.prototype.hasOwnProperty.call(keeping.AGENT_LABELS, ask.agent)) {
       try {
         const { origin, api } = await localServer(ask.hostId);
-        await api(origin, `/api/folder-links/${encodeURIComponent(ask.link_id)}`, {
-          method: 'PATCH', headers: { ...JSON_TYPE, ...shellWord(origin) }, body: JSON.stringify({ agent_runs: 'never' }),
+        await api(origin, `/api/local-agents/${ask.agent}`, {
+          method: 'PATCH', headers: JSON_TYPE, body: JSON.stringify({ runs: 'never' }),
         });
       } catch (e) {
         said += ` Could not stop ${card.label} asking: ${String((e && e.message) || e).replace(/\.$/, '')}.`;
@@ -3588,7 +3607,7 @@ function hostName(url) {
 const folderAt = (folder) => (folder && folder !== 'root' ? { folder } : {});
 
 // What a notice adds for the local servers whereIs could not ask (`names`).
-const uncheckedSaid = (names) => (names || []).map((n) => ` Gamma could not check ${n}'s synced vaults: it did not start.`).join('');
+const uncheckedSaid = (names) => (names || []).map((n) => ` Gamma could not check ${n}'s synced folders: it did not start.`).join('');
 
 // The work folders *Open with Gamma* made in this run of the app, `{ srv, ws,
 // linkId, name }`. While one still waits for its files to be chosen, the
@@ -3613,7 +3632,7 @@ async function stillChoosing() {
   return null;
 }
 
-// A work folder of the directory `dir`, made as *Add a synced vault…* makes
+// A work folder of the directory `dir`, made as *Add a synced folder…* makes
 // one (workFolderOf: the broad-place question, vaultPlace, the preview), its
 // tracking dialog open with `tick` ticked; remembered in `waiting`, and the
 // bar says where it went (`unchecked`: the servers whereIs could not ask).
@@ -4869,8 +4888,7 @@ function registerIpc() {
   // Of a vault's actions, those that change it or run a round leave the sync
   // panel open on the new state (bar.html keptRow); the others ask first, or
   // open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents',
-    'show-computer', 'hide-computer'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'show-computer', 'hide-computer'];
   ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action, value) =>
     withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action, value), !STAYS_OPEN.includes(action))()));
   // A page's asks about this computer in Gamma's own menus (a folder's "Sync
@@ -4878,12 +4896,14 @@ function registerIpc() {
   // file shown in its folder, its missing file located, an opened PDF carried
   // to another server's library, its computer chat continued in a terminal,
   // the tracking dialog of a work folder of another server answered in the
-  // host's window, `flag` saying whether it was cancelled), passed on by the
-  // page preload: only from the content view's page of the open server,
-  // with plain ids, one action at a time (oneAsk: none while a picker, a
-  // question or the vault dialog is up), and at most one a second, so a page
-  // asking in a loop opens no row of file manager windows. The native picker
-  // is the user's say, so the page can start nothing on its own.
+  // host's window, `flag` saying whether it was cancelled; Settings → AI's
+  // agents of this computer turned on or off, let ask or not, a directory
+  // offered to them), passed on by the page preload: only from the content
+  // view's page of the open server, with plain ids, one action at a time
+  // (oneAsk: none while a picker, a question or the vault dialog is up), and
+  // at most one a second, so a page asking in a loop opens no row of file
+  // manager windows. The native picker and the native question are the
+  // user's say, so the page can start nothing on its own.
   const PAGE_ASK_MS = 1000;
   let pageAskAt = 0;
   const fromPage = (event, ...ids) => {
@@ -4909,6 +4929,9 @@ function registerIpc() {
     'shell:carry-from-page': ['Could not add the page to the other server\'s library.', carryToServer],
     'shell:terminal-from-page': ['Could not open a terminal.', terminalFromPage],
     'shell:tracked-from-page': ['Could not go back to the synced folder.', trackedFromPage],
+    'shell:set-agent-from-page': ['Could not change the agent.', setAgentFromPage],
+    'shell:agent-runs-from-page': ['Could not change what the agent may run.', agentRunsFromPage],
+    'shell:agent-dirs-from-page': ['Could not offer the directory.', agentDirsFromPage],
   };
   for (const [channel, [message, run]] of Object.entries(PAGE_ASKS)) {
     ipcMain.on(channel, (event, wsId, id, flag) => {
@@ -5174,6 +5197,10 @@ if (process.env.GAMMA_SHELL_TEST) {
     setPush,
     setAgent,
     setAgentRuns,
+    agentDirs,
+    setAgentFromPage,
+    agentRunsFromPage,
+    agentDirsFromPage,
     forceVault,
     goOnVault,
     locateVault,

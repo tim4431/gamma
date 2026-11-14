@@ -1,8 +1,9 @@
 """``@codex`` in a comment (gamma/local_agents/mention.py, the comment routes,
 the runner's follow-ups; docs/dev/local_agents.md "A mention in a comment"):
-the work folder's maker mentions the folder's agent on this computer, and
-the comment is a Send of its thread, or of the file's open comments from
-the page's own thread, its other words the instruction.
+the account that turned an agent on here mentions it in a comment on a
+file of a work folder kept here, and the comment is a Send of its thread,
+or of the file's open comments from the page's own thread, its other words
+the instruction.
 
 Each gate off leaves the mention plain text (another member, a token, the
 agent off, a server that runs no agents, another agent's name, code, a
@@ -10,11 +11,11 @@ page outside a work folder, the agent's own replies); an edit sends only a
 new mention of the thread's newest comment; a resolved thread, a viewer, a
 server that takes no writes and too many comments are refused with the
 comment posted; a retried POST sends once. The Inbox tells a member named
-codex nothing of the maker's mention, as before elsewhere. A mention made
+codex nothing of the owner's mention, as before elsewhere. A mention made
 while a run works on the thread is the next run's (the thread is not
 resolved over it), a follow-up resumes the session that answered, and a
-resume refused starts afresh. The vault says whose it is, and a switch of
-its agent reaches the folder's open pages."""
+resume refused starts afresh. The vault says whose it is, and an agent
+turned on or off reaches the work folders' open pages."""
 
 from types import SimpleNamespace
 
@@ -22,7 +23,7 @@ import pytest
 
 from conftest import account_of, fresh_client, login, make_page, make_user, token_for
 from fake_agents import requests_in, script_agent, turns_in
-from gamma import collab, folder_links, hosted, mentions, workspaces
+from gamma import collab, hosted, mentions, workspaces
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.local_agents import mention, runner, store
 from test_local_agents_runner import _folder, _request, _turn_started, disk  # noqa: F401: the disk fixture
@@ -126,16 +127,16 @@ def test_where_a_mention_is_plain_text(lab, disk, monkeypatch):
     script.headers["Authorization"] = f"Bearer {token_for(lab.owner, 'write', 'Script')}"
     script.headers["X-Gamma-Workspace"] = lab.ws
     before = _requests(lab)
-    for who, page, block, body in ((lab.editor, f.page, note, "@codex fix it"),       # another member
+    for who, page, block, body in ((lab.editor, f.page, note, "@codex fix it"),       # an account with no agent on
                                    (script, f.page, note, "@codex fix it"),           # a token
                                    (lab.owner, f.page, note, "@claude fix it"),       # another agent's name
                                    (lab.owner, f.page, note, "see `@codex` here"),    # code
                                    (lab.owner, f.page, note, "@Codex fix it"),        # not its name
                                    (lab.owner, library, library, "@codex fix it")):   # no work folder's file
         assert "send" not in _post(who, page, block, body)
-    store.set_agent(f.id, "", by=lab.user)  # the agent off
+    store.set_agent("codex", False, by=lab.user)  # the agent off
     assert "send" not in _post(lab.owner, f.page, note, "@codex fix it")
-    store.set_agent(f.id, "codex", by=lab.user)
+    store.set_agent("codex", True, by=lab.user)
     monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")  # a server that runs no agents
     assert "send" not in _post(lab.owner, f.page, note, "@codex fix it")
     assert _requests(lab) == before
@@ -255,8 +256,8 @@ def test_a_member_named_codex_hears_nothing_of_the_makers_mention(lab, disk, mon
     assert "send" not in scripted and scripted["comment"]["id"] in _told(lab, "comment_mention")
     later = _post(lab.editor, f.page, note, "the units are SI", thread_id=scripted["thread"]["id"])
     assert later["comment"]["id"] in _told(lab, "reply")
-    # the agent off: the maker's mention is the person's again
-    store.set_agent(f.id, "", by=lab.user)
+    # the agent off: the owner's mention is the person's again
+    store.set_agent("codex", False, by=lab.user)
     plain = _post(lab.owner, f.page, note, "@codex can you look?")
     assert plain["comment"]["id"] in _told(lab, "comment_mention")
 
@@ -368,7 +369,7 @@ def test_a_refused_resume_starts_afresh(lab, disk, monkeypatch):
 
 # --- the vault ----------------------------------------------------------------------------------
 
-def test_the_vault_says_whose_it_is_and_its_pages_hear_the_switch(lab, disk, monkeypatch):
+def test_the_vault_says_whose_it_is_and_its_pages_hear_an_agent_turned_on(lab, disk, monkeypatch):
     f = _folder(lab, disk, comments=())
     assert lab.owner.get(f"/api/folder-links/page/{f.page}").json()["vault"]["mine"] is True
     assert lab.editor.get(f"/api/folder-links/page/{f.page}").json()["vault"]["mine"] is False
@@ -377,10 +378,12 @@ def test_the_vault_says_whose_it_is_and_its_pages_hear_the_switch(lab, disk, mon
     monkeypatch.setattr(collab, "open_pages", lambda: [(lab.ws, f.page), (lab.ws, library), ("otherWs", f.page)])
     heard: list = []
     monkeypatch.setattr(collab, "publish", lambda ws, page_id, message, exclude="": heard.append((ws, page_id, message)))
-    folder_links.set_agent(f.id, "", by=lab.user)
+    shell = {"X-Gamma-Shell": "the-secret"}
+    monkeypatch.setenv("GAMMA_SHELL_SECRET", "the-secret")
+    assert lab.owner.patch("/api/local-agents/codex", json={"enabled": False}).status_code == 200
     assert heard == [(lab.ws, f.page, {"t": "vault"})]
-    folder_links.set_agent(f.id, "", by=lab.user)  # no change: nothing to hear
-    assert len(heard) == 1
-    folder_links.set_agent(f.id, "codex", by=lab.user)
+    assert lab.owner.patch("/api/local-agents/codex", json={"enabled": False}).status_code == 200
+    assert len(heard) == 1  # no change: nothing to hear
+    assert lab.owner.patch("/api/local-agents/codex", json={"enabled": True}, headers=shell).status_code == 200
     assert heard[-1] == (lab.ws, f.page, {"t": "vault"}) and len(heard) == 2
     assert runner.wait_idle(30)

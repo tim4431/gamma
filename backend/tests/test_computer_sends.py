@@ -1,9 +1,10 @@
 """Sends of a work folder a computer keeps with an agent, the server's side
 (step 4c of docs/research/agent-collab.md; gamma/routers/computers.py,
-gamma/computers/registry.py, gamma/feedback/requests.py): the announce's
-vault agent, kept and shown to its maker alone; the channel's Send routes
+gamma/computers/registry.py, gamma/feedback/requests.py): the agent a
+computer announces on for the token's account, the agent of the work
+folders it keeps, shown to that account alone; the channel's Send routes
 with a computer token, each answering only for its account's Sends made in
-Gamma in a folder it announced with an agent; the claim keyed by the run (a
+Gamma in a work folder it keeps while an agent is on there; the claim keyed by the run (a
 retry held, another taker refused); progress and answers only from the run
 that holds the request; the answers written here, signed as the agent with
 the claim's ``seen``, a retry writing nothing twice; a withdraw told once
@@ -32,7 +33,9 @@ from gamma.documents.model import document
 
 MAKER, EDITOR, STRANGER = "cps_maker", "cps_editor", "cps_stranger"
 FRAME = {"width": 600, "height": 800}
-CODEX = [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": ""}]
+CODEX = [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": "",
+          "enabled": True, "runs": "never"}]
+OFF = [{**CODEX[0], "enabled": False}]   # Codex there, turned off
 
 
 def _pdf() -> bytes:
@@ -96,13 +99,13 @@ def _mint(c, name="Gamma desktop: TIM-PC") -> dict:
                201)
 
 
-def _announce(c, *vaults, name="TIM-PC", computer_id="cps-pc") -> str:
+def _announce(c, *vaults, name="TIM-PC", computer_id="cps-pc", assistants=CODEX) -> str:
     return _ok(c.post("/api/computers/announce", json={"computer": {"id": computer_id, "name": name}, "app": "v9",
-                                                       "vaults": list(vaults), "assistants": CODEX}))["version"]
+                                                       "vaults": list(vaults), "assistants": assistants}))["version"]
 
 
-def _kept(lab, agent="codex", **more) -> dict:
-    return {"kind": "folder", "folder_id": lab.W, "agent": agent, **more}
+def _kept(lab, **more) -> dict:
+    return {"kind": "folder", "folder_id": lab.W, **more}
 
 
 @pytest.fixture
@@ -161,19 +164,23 @@ def _comments(lab, thread_id) -> list:
 
 # --- the binding --------------------------------------------------------------------------------------
 
-def test_the_announce_keeps_a_work_folders_agent_and_shows_it_to_its_maker_alone(lab):
+def test_the_announced_agent_is_its_work_folders_shown_to_its_account_alone(lab):
     item = _mint(lab.maker)
     c = _bearer(item["token"])
-    _announce(c, _kept(lab), {"kind": "folder", "folder_id": lab.W2, "agent": "gpt"},
-              {"kind": "folder", "folder_id": lab.plain, "agent": "claude"},
-              {"kind": "file", "page_id": lab.other, "agent": "codex"})
+    _announce(c, _kept(lab, agent="claude"), {"kind": "folder", "folder_id": lab.plain},
+              {"kind": "file", "page_id": lab.other},
+              assistants=[*CODEX, {"name": "claude", "label": "Claude Code", "found": True, "ready": True,
+                                   "enabled": True, "runs": "always"}, {"name": "gpt", "enabled": True}])
     with connect_users_db() as conn:
-        vaults = json.loads(conn.execute("SELECT vaults FROM computers WHERE token_id = ?", (item["id"],)).fetchone()[0])
-    assert vaults == [{"kind": "folder", "folder_id": lab.W, "paused": False, "agent": "codex"},
-                      {"kind": "folder", "folder_id": lab.W2, "paused": False},          # an agent unknown here: none
-                      {"kind": "folder", "folder_id": lab.plain, "paused": False},       # no work folder: none
-                      {"kind": "file", "page_id": lab.other, "paused": False}]           # a file vault has none
-    # only a work folder's root here counts
+        vaults, assistants = (json.loads(v) for v in conn.execute(
+            "SELECT vaults, assistants FROM computers WHERE token_id = ?", (item["id"],)).fetchone())
+    # a vault names no agent (one a vault says is dropped); the assistants say which are on, an unknown one none
+    assert vaults == [{"kind": "folder", "folder_id": lab.W, "paused": False},
+                      {"kind": "folder", "folder_id": lab.plain, "paused": False},
+                      {"kind": "file", "page_id": lab.other, "paused": False}]
+    assert [(a["name"], a["enabled"], a["runs"]) for a in assistants] == [("codex", True, "never"),
+                                                                          ("claude", True, "never")]
+    # only a work folder's root here counts, with the first agent on, in the catalog's order
     assert registry.agent_folders(item["id"], lab.ws) == {lab.W: {"agent": "codex", "paused": False}}
     found = registry.agent_of(lab.ws, lab.W, account_of(MAKER))
     assert found == {
@@ -191,6 +198,20 @@ def test_the_announce_keeps_a_work_folders_agent_and_shows_it_to_its_maker_alone
         assert c.get("/api/computers/sends").status_code == 403
         assert c.post("/api/computers/sends/x/claim", json={"run": "r", "agent": "codex"}).status_code == 403
     assert _bearer(item["token"]).get("/api/feedback/requests").status_code == 403
+
+
+def test_an_older_apps_announce_names_its_agent_on_the_work_folders_vault(lab):
+    """An app older than the computer's agents names none ``enabled`` and
+    puts the agent on the folder vaults instead: that one is on, never
+    asking."""
+    item = _mint(lab.maker)
+    old = [{k: v for k, v in CODEX[0].items() if k not in ("enabled", "runs")},
+           {"name": "claude", "label": "Claude Code", "found": True, "ready": True}]
+    _announce(_bearer(item["token"]), _kept(lab, agent="codex"), assistants=old)
+    assert registry.agent_folders(item["id"], lab.ws) == {lab.W: {"agent": "codex", "paused": False}}
+    assert registry.agent_of(lab.ws, lab.W, account_of(MAKER))["agent"] == "codex"
+    _announce(_bearer(item["token"]), _kept(lab), assistants=old)          # no vault names one: none on
+    assert registry.agent_folders(item["id"], lab.ws) == {}
 
 
 def test_another_members_computer_never_takes_the_makers_binding(lab, pc):
@@ -249,7 +270,7 @@ def test_the_makers_sends_made_in_gamma_wait_for_the_computer_and_no_one_elses(l
                       "withdrawn": []}
     _send(lab, t, who=lab.editor)                                       # another account's Send: never this computer's
     o = thread_on(lab.maker, lab.other, lab.other, "elsewhere")["id"]
-    _send(lab, o, page=lab.other)                                       # a folder kept without an agent
+    _send(lab, o, page=lab.other)                                       # a work folder it does not keep
     whole = _send(lab, page=lab.W)                                      # a Send of the whole folder: no page
     assert [s.get("page_id") for s in _sends(pc)["sends"]] == [lab.main, None] and _sends(pc)["sends"][1]["id"] == whole["id"]
     # a token's Send there is refused: the computer takes the Sends made in Gamma
@@ -258,7 +279,7 @@ def test_the_makers_sends_made_in_gamma_wait_for_the_computer_and_no_one_elses(l
     # paused there: nothing waits for it
     _announce(pc.c, _kept(lab, paused=True))
     assert _sends(pc)["sends"] == []
-    assert _claim(pc, sent["id"], status=409)["detail"] == "The work folder is paused: Codex starts once it syncs again."
+    assert _claim(pc, sent["id"], status=409)["detail"] == "The synced folder is paused: Codex starts once it syncs again."
 
 
 def test_a_send_wakes_the_computers_held_poll_or_its_next(lab, pc):
@@ -319,7 +340,7 @@ def test_a_claim_is_one_write_keyed_by_its_run(lab, pc):
     stranger = _bearer(_mint(lab.stranger)["token"])
     assert stranger.post(f"/api/computers/sends/{sent['id']}/claim", json={"run": "r", "agent": "codex"}).status_code == 404
     other = _send(lab, thread_on(lab.maker, lab.main, lab.main, "another")["id"])
-    assert _claim(pc, other["id"], agent="claude", status=409)["detail"] == "This work folder's agent is Codex."
+    assert _claim(pc, other["id"], agent="claude", status=409)["detail"] == "This synced folder's agent is Codex."
     assert _claim(pc, other["id"], run="bad id!", status=400)
     # a Send withdrawn before it is claimed is no longer sent
     _ok(lab.maker.post(f"/api/feedback/requests/{other['id']}/state", json={"state": "failed"}))
@@ -472,7 +493,8 @@ def test_a_mention_made_here_is_a_send_the_computer_takes(lab, pc):
     # another member's @codex is no Send; nor the maker's once the agent is off there
     r = _ok(lab.editor.post(f"/api/pages/{lab.main}/comments", json={"block_id": lab.main, "body": "@codex hi"}), 201)
     assert "send" not in r
-    _announce(pc.c, {"kind": "folder", "folder_id": lab.W})
+    _announce(pc.c, _kept(lab), assistants=OFF)
+    assert registry.agent_folders(pc.id, lab.ws) == {} and registry.workspaces_of(account_of(MAKER)) == []
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments", json={"block_id": lab.main, "body": "@codex hi"}), 201)
     assert "send" not in r
 
@@ -485,7 +507,7 @@ def test_the_feedback_document_names_the_computers_agent_to_its_maker_alone(lab,
     assert not _ok(lab.maker.get("/api/feedback", params={"scope": lab.W2})).get("agent")
     _announce(pc.c, _kept(lab, paused=True))
     agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
-    assert (agent["takes"], agent["why"]) == (False, "The work folder is paused on TIM-PC: Codex starts once it syncs "
+    assert (agent["takes"], agent["why"]) == (False, "The synced folder is paused on TIM-PC: Codex starts once it syncs "
                                                      "again.")
     # away: a Send waits for it, and the dialog says so
     _announce(pc.c, _kept(lab))

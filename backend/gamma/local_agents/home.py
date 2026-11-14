@@ -46,9 +46,10 @@ and the channel's next announce there, or the next start, fails it there
 (``fail_left_open``). Any other refusal raises at once (``Refused``).
 
 A turn of the chat's computer side has a home too (``chat_home_for``, the
-runner's ``_ChatTurn``): ``LocalChatHome`` is a page of this server, its
-conversation in this server's pages.db (``chats.reply_of`` and
-``write_reply``, the checks its route made), as it always was;
+runner's ``_ChatTurn``): ``LocalChatHome`` is a bucket of this server (a
+page, a folder, the library), its conversation in this server's pages.db
+(``chats.reply_of`` and ``write_reply``, the checks its route made, where
+it works: ``chats.place_of``);
 ``HttpChatHome`` a page of a work folder of another server (step 4d), whose
 conversation that server keeps and writes:
 
@@ -72,8 +73,8 @@ conversation that server keeps and writes:
 - **Source lines** of the selections are computed here, as a Send's
   entries' (``feedback.sources.source_in_vault``).
 
-A turn there asks only on this computer (the vault's policy ``computer``,
-runner.py ``ask_refusal``): what it asks is drawn and answered in the
+A turn there asks only on this computer (its agent's ``ask``, runner.py
+``ask_refusal``): what it asks is drawn and answered in the
 desktop app's window, never written there; the message says ``waiting``
 while an ask waits, and a write that did not reach that server is said
 (``missed``), so the flush tries it again.
@@ -138,9 +139,10 @@ class LocalHome:
         self.ws = ws
 
     def claim(self, run) -> dict | None:
-        """The vault, its agent and its maker checked again, the request
-        taken (``requests.claim``) → the request, None when it is not this
-        run's (``run``'s link, agent, label and maker set on the way)."""
+        """The vault, the requester's agent and its role checked again, the
+        request taken (``requests.claim``) → the request, None when it is
+        not this run's (``run``'s link, agent, label and owner set on the
+        way)."""
         from .. import workspaces
         from .runner import _ours, _request_row
 
@@ -150,15 +152,13 @@ class LocalHome:
         link = requests._local_link(self.ws, row[3])
         if link is None or link["id"] != run.link_id or not _ours(link, row[2], row[4]):
             return None
-        agent = store.agent_of(link["id"])
-        if agent is None or agent["agent"] not in catalog.AGENTS:
-            return None
-        if not workspaces.at_least(workspaces.role_of(self.ws, link["created_by"]), "editor"):
+        agent = store.agent_for(row[2])
+        if agent is None or not workspaces.at_least(workspaces.role_of(self.ws, row[2]), "editor"):
             return None
         run.link, run.agent, run.label = link, agent["agent"], catalog.label(agent["agent"])
-        run.maker = link["created_by"]
+        run.owner = row[2]
         with connect_users_db() as users:
-            run.maker_name = account_names(users, {run.maker}).get(run.maker, "")
+            run.owner_name = account_names(users, {run.owner}).get(run.owner, "")
         run.run["agent"] = run.agent
         with connect_pages_db(self.ws) as conn:
             return requests.claim(self.ws, conn, run.request_id, by_name=run.label, detail=f"Starting {run.label}")
@@ -211,8 +211,8 @@ class LocalHome:
 
         # Signed as the agent's label; its id ``local:<name>`` makes the
         # comment read as an agent on this computer's (comments.LOCAL_AGENT).
-        return Connection(user_id=run.maker, workspaces=[self.ws], scope="feedback",
-                          token_id=f"{comments.LOCAL_AGENT}{run.agent}", name=run.label, username=run.maker_name)
+        return Connection(user_id=run.owner, workspaces=[self.ws], scope="feedback",
+                          token_id=f"{comments.LOCAL_AGENT}{run.agent}", name=run.label, username=run.owner_name)
 
     def reply(self, run, thread_id: str, body: str) -> None:
         """The answer written as the agent's reply, saying when the run read
@@ -358,8 +358,8 @@ class HttpHome(_Remote):
         if (link is None or not link["remote_url"] or not folder_links.work_vault(link)
                 or link["status"].get(folder_links.PAUSED) or folder_links.choosing(link)):
             return None
-        agent = store.agent_of(link["id"])
-        if agent is None or agent["agent"] not in catalog.AGENTS:
+        agent = store.agent_for(link["created_by"])
+        if agent is None:
             return None
         if not self._connect(link):
             log.warning(f"[agents] a Send of vault {self.link_id} not taken: show this computer on "
@@ -384,8 +384,8 @@ class HttpHome(_Remote):
         self.found = [e for e in answer.get("entries") or [] if isinstance(e, dict) and isinstance(e.get("id"), str)]
         self.speakers = _speakers(answer.get("threads"))
         self.seen = str(answer.get("seen") or "")
-        run.maker = link["created_by"]
-        run.maker_name = str(record.get("by") or self.username or "")
+        run.owner = link["created_by"]
+        run.owner_name = str(record.get("by") or self.username or "")
         return record
 
     def withdrawn(self, run) -> bool:
@@ -566,9 +566,10 @@ class HttpHome(_Remote):
 # --- a turn of the chat's computer side ------------------------------------------------------
 
 def chat_home_for(ws: str, link_id: str, turn_id: str):
-    """The home of a chat turn keyed ``(ws, "chat", turn id)`` in the vault
-    ``link_id``'s queue: a remote turn's key names its vault in place of the
-    workspace (``runner.queue_remote_chat``), as a remote Send's does."""
+    """The home of a chat turn keyed ``(ws, "chat", turn id)``, of the vault
+    ``link_id`` ("" for none): a remote turn's key names its vault in place
+    of the workspace (``runner.queue_remote_chat``), as a remote Send's
+    does."""
     return HttpChatHome(link_id, turn_id) if ws == link_id else LocalChatHome(ws)
 
 
@@ -591,8 +592,8 @@ def _earlier(messages: list[dict], at: int, person: dict) -> list[dict]:
 
 
 class LocalChatHome:
-    """A page of this server: the conversation in its pages.db, the checks
-    the turn's route made."""
+    """A bucket of this server: the conversation in its pages.db, the
+    checks the turn's route made."""
 
     remote = False
     run_id = ""         # a local turn is this server's own
@@ -617,51 +618,64 @@ class LocalChatHome:
         return {"user_id": conversation["user_id"], "text": person.get("text") or "",
                 "selections": person.get("selections") or [], "earlier": _earlier(messages, at, person)}
 
-    def kept(self, link: dict) -> bool:
-        from .. import folder_links  # local: folder_links imports this package's modules inside functions
+    def place(self, turning, context: dict) -> dict:
+        """Where the turn works (``chats.place_of`` for the conversation's
+        account), which must still be where the conversation works: the
+        turn fails when its bucket is gone, when the account may no longer
+        talk to an agent here, when its work folder is no longer kept here
+        or its directory no longer offered, and when its bucket moved into
+        a work folder kept here."""
+        place = chats.place_of(self.ws, turning.bucket, context["user_id"], turning.dir, turning.conversation_id)
+        if place is None:
+            with connect_pages_db(self.ws) as conn:
+                gone = chats.about(conn, turning.bucket) is None
+            turning._fail("What this conversation is about is gone." if gone
+                          else f"{turning.label} was turned off on this computer.")
+        if place["dir"] != turning.dir:
+            if turning.dir and turning.dir == place["about"]["w"]:
+                turning._fail("The synced folder is no longer kept on this computer.")
+            turning._fail("The directory this conversation works in is no longer offered on this computer."
+                          if turning.dir else "This page is in a synced folder now: start a new chat to work there.")
+        return place
 
-        return folder_links.work_folder_link(link)
+    def whose(self, link: dict | None, context: dict) -> str:
+        """The account whose agent the turn runs: the conversation's."""
+        return context["user_id"]
 
-    def ours(self, link: dict, context: dict) -> bool:
-        """Whether the vault is the conversation's account's."""
-        return link["created_by"] == context["user_id"]
-
-    def editor(self, link: dict) -> bool:
-        """Whether the vault's maker edits the workspace."""
+    def editor(self, user_id: str) -> bool:
+        """Whether the account edits the workspace."""
         from .. import workspaces
 
-        return workspaces.at_least(workspaces.role_of(self.ws, link["created_by"]), "editor")
+        return workspaces.at_least(workspaces.role_of(self.ws, user_id), "editor")
 
     def cannot_write(self) -> str:
         from .runner import _cannot_write
 
         return _cannot_write(self.ws)
 
-    def owner(self, link: dict) -> str:
+    def owner_name(self, user_id: str) -> str:
         with connect_users_db() as users:
-            return account_names(users, {link["created_by"]}).get(link["created_by"], "") or "the owner"
+            return account_names(users, {user_id}).get(user_id, "") or "the owner"
 
-    def where(self, turning, link: dict, context: dict) -> tuple[str, str, list[dict]]:
-        """``(the page's path in the work folder, the work folder's name,
-        the person's selections for the prompt)``, each selection ``{page,
-        quote, source}``, ``source`` the line its passage maps to in the
-        sources (``feedback.sources.source_for``) when its box is known, else
-        None."""
+    def where(self, turning, place: dict, context: dict) -> tuple[dict, list[dict]]:
+        """``(what the conversation is about, the person's selections for
+        the prompt)``: the place's ``about``, a file's ``path`` as the
+        vault's rows name it, and each selection ``{page, quote, source}``,
+        ``source`` the line its passage maps to in the work folder's sources
+        (``feedback.sources.source_for``) when its box is known, else None
+        (always, outside a work folder kept here)."""
         from ..feedback import entries
         from ..vault import store as vault_store
-        from ..work_folders.marks import Tree
 
-        with connect_pages_db(self.ws) as conn:
-            tree = Tree.read(conn)
-            try:
-                scope = entries.resolve_scope(conn, turning.page_id, tree)
-            except FeedbackError:
-                turning._fail("This page is no longer a file of the work folder.")
-            chosen = context["selections"]
-            selections = [{"page": c.get("page"), "quote": c.get("text") or "", "source": source}
-                          for c, source in zip(chosen, chats.sources_of(self.ws, conn, turning.page_id, chosen))]
-        file = entries.paths_of(vault_store.files(link["id"])).get(turning.page_id) or scope.name
-        return file, tree.names.get(scope.work_folder, "") or Path(link["path"]).name, selections
+        about, link, chosen = dict(place["about"]), place["link"], context["selections"]
+        sources = [None] * len(chosen)
+        if link is not None and about["kind"] == "page":
+            about["path"] = entries.paths_of(vault_store.files(link["id"])).get(turning.bucket) or about["path"]
+            with connect_pages_db(self.ws) as conn:
+                sources = chats.sources_of(self.ws, conn, turning.bucket, chosen)
+        selections = [{"page": c.get("page"), "quote": c.get("text") or "", "source": source}
+                      for c, source in zip(chosen, sources)]
+        return about, selections
 
     def vault_file(self, turning, link: dict) -> str:
         return _vault_file(turning, link)
@@ -679,7 +693,7 @@ def _vault_file(turning, link: dict) -> str:
     from ..feedback import entries
     from ..vault import store as vault_store
 
-    return entries.paths_of(vault_store.files(link["id"])).get(turning.page_id) or ""
+    return entries.paths_of(vault_store.files(link["id"])).get(turning.bucket) or ""
 
 
 class HttpChatHome(_Remote):
@@ -726,8 +740,8 @@ class HttpChatHome(_Remote):
         link = folder_links.get_link(self.link_id)
         if link is None or not self.kept(link):
             return None
-        agent = store.agent_of(link["id"])
-        if agent is None or agent["agent"] not in catalog.AGENTS:
+        agent = store.agent_for(link["created_by"])
+        if agent is None:
             self._turned_off(turning, link)
             return None
         if not self._connect(link):
@@ -748,13 +762,13 @@ class HttpChatHome(_Remote):
             log.warning(f"[agents] the claim of chat turn {self.turn_id}: {e}")
             self.unsure = True
             store.claimed_turn(self.turn_id, link_id=self.link_id, conversation_id=turning.conversation_id,
-                               page_id=turning.page_id, agent=turning.agent)
+                               page_id=turning.bucket, agent=turning.agent)
             return None
         turning.conversation_id = str(turn.get("conversation_id") or turning.conversation_id)
-        turning.page_id = str(turn.get("page_id") or turning.page_id)
+        turning.bucket = str(turn.get("page_id") or turning.bucket)
         turning.model, turning.effort = str(turn.get("model") or ""), str(turn.get("effort") or "")
         store.claimed_turn(self.turn_id, link_id=self.link_id, conversation_id=turning.conversation_id,
-                           page_id=turning.page_id, agent=turning.agent)
+                           page_id=turning.bucket, agent=turning.agent)
         self.page = answer["page"] if isinstance(answer.get("page"), dict) else {}
         history = answer.get("history") if isinstance(answer.get("history"), list) else []
         earlier = [{"role": "owner" if m.get("role") in ("owner", "user") else "agent", "text": m["text"]}
@@ -769,9 +783,9 @@ class HttpChatHome(_Remote):
                 "earlier": earlier[-6:]}
 
     def _turned_off(self, turning, link: dict) -> None:
-        """The vault's agent was turned off while the turn waited here: the
+        """The turn's agent was turned off while the turn waited here: the
         turn taken there by this run and failed with why ("Codex was turned
-        off for this folder."), as a turn of this server's page fails, never
+        off on this computer."), as a turn of this server's page fails, never
         left waiting there; nothing when that server no longer gives it to
         this computer (its announce without the agent came first) or the
         vault's computer is not shown there. Recorded here once taken, so an
@@ -779,7 +793,7 @@ class HttpChatHome(_Remote):
         (``unsure``)."""
         if turning.agent not in catalog.AGENTS or not self._connect(link):
             return
-        fields = {"state": "failed", "error": f"{catalog.label(turning.agent)} was turned off for this folder.",
+        fields = {"state": "failed", "error": f"{catalog.label(turning.agent)} was turned off on this computer.",
                   "ended_at": page_now()}
         try:
             self._json("POST", self._chats("claim"), {"run": self.run_id, "agent": turning.agent}, retry=False)
@@ -790,7 +804,7 @@ class HttpChatHome(_Remote):
             log.warning(f"[agents] the claim of chat turn {self.turn_id}, its agent turned off: {e}")
             self.unsure = True
         store.claimed_turn(self.turn_id, link_id=self.link_id, conversation_id=turning.conversation_id,
-                           page_id=turning.page_id, agent=turning.agent)
+                           page_id=turning.bucket, agent=turning.agent)
         if self.unsure:
             return
         try:
@@ -809,11 +823,23 @@ class HttpChatHome(_Remote):
 
         return bool(link["remote_url"]) and folder_links.work_vault(link)
 
-    def ours(self, link: dict, context: dict) -> bool:
-        """That server decided at the claim: the token's account's turn."""
-        return True
+    def place(self, turning, context: dict) -> dict:
+        """Where the turn works: the vault's directory, while it keeps a
+        work folder of that server (else the turn fails)."""
+        from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
-    def editor(self, link: dict) -> bool:
+        link = folder_links.get_link(self.link_id)
+        if link is None or not self.kept(link):
+            turning._fail("The synced folder is no longer kept on this computer.")
+        return {"kind": "vault", "dir": "", "path": link["path"], "name": Path(link["path"]).name, "link": link}
+
+    def whose(self, link: dict, context: dict) -> str:
+        """The account here whose channel took the turn, which made the
+        vault: that server decided at the claim it is the token's
+        account's turn."""
+        return link["created_by"]
+
+    def editor(self, user_id: str) -> bool:
         """That server refuses the claim of an account that cannot edit."""
         return True
 
@@ -822,41 +848,44 @@ class HttpChatHome(_Remote):
         being deleted)."""
         return ""
 
-    def owner(self, link: dict) -> str:
+    def owner_name(self, user_id: str) -> str:
         return self.username or "the owner"
 
-    def where(self, turning, link: dict, context: dict) -> tuple[str, str, list[dict]]:
-        """``(the page's path in the work folder, the work folder's name,
-        the person's selections for the prompt)``: the path the vault's rows
-        give the page (else the claim's), and each selection's source line
-        computed here from the PDF and the sources on this disk
+    def where(self, turning, place: dict, context: dict) -> tuple[dict, list[dict]]:
+        """``(what the conversation is about, the person's selections for
+        the prompt)``: the page, its path the one the vault's rows give it
+        (else the claim's), and each selection's source line computed here
+        from the PDF and the sources on this disk
         (``feedback.sources.source_in_vault``), on the version the selection
         was made on (its ``doc_id`` when that server names it, else the one
         the vault read: the page as it is shown)."""
         from ..feedback import entries, sources
         from ..vault import kinds, store as vault_store
 
+        link = place["link"]
         files = vault_store.files(link["id"])
         root = Path(link["path"])
-        shown = [row.get("hash") for row in files.values() if row.get("page_id") == turning.page_id
+        shown = [row.get("hash") for row in files.values() if row.get("page_id") == turning.bucket
                  and row.get("kind") == kinds.PDF.name and not row.get("was")]
         selections = []
         for chosen in context["selections"]:
             source = None
             if chosen.get("page") and chosen.get("box"):
                 doc_id = chosen.get("doc_id") or (shown[0] if len(shown) == 1 else "")
-                place = {"page_id": turning.page_id, "kind": "passage", "page": chosen["page"],
-                         "rects": [chosen["box"]], "doc_id": doc_id}
+                at = {"page_id": turning.bucket, "kind": "passage", "page": chosen["page"],
+                      "rects": [chosen["box"]], "doc_id": doc_id}
                 try:
-                    source = sources.source_in_vault(files, root, place)
+                    source = sources.source_in_vault(files, root, at)
                 except Exception as e:  # noqa: BLE001 — a selection without its line is searched for
-                    log.warning(f"[agents] the source of a selection on page {turning.page_id}: {e}")
+                    log.warning(f"[agents] the source of a selection on page {turning.bucket}: {e}")
             selections.append({"page": chosen.get("page"), "quote": chosen.get("text") or "", "source": source})
-        file = (entries.paths_of(files).get(turning.page_id) or str(self.page.get("path") or "")
+        file = (entries.paths_of(files).get(turning.bucket) or str(self.page.get("path") or "")
                 or str(self.page.get("title") or ""))
         if not file:
-            turning._fail("This page is no longer a file of the work folder.")
-        return file, str(self.page.get("folder") or "") or root.name, selections
+            turning._fail("This page is no longer a file of the synced folder.")
+        about = {"kind": "page", "id": turning.bucket, "title": str(self.page.get("title") or ""), "w": "",
+                 "path": file, "work_folder": str(self.page.get("folder") or "") or root.name}
+        return about, selections
 
     def vault_file(self, turning, link: dict) -> str:
         """The page's path from this computer's vault rows alone, "" for

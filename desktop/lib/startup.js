@@ -125,7 +125,7 @@ function diagnoseOpen(message, server = {}) {
     const host = new URL(server.url).hostname;
     if (sent.hsts) return httpsOnly(host, text);
     return { summary: `${host} now redirects to ${sent.to}.`, action: 'https', to: sent.to, detail: text,
-      hint: `Gamma does not follow a server to another address. Use ${sent.to}: this server's synced vaults, computer link and offline copies move there with it.` };
+      hint: `Gamma does not follow a server to another address. Use ${sent.to}: this server's synced folders and files, computer link and offline copies move there with it.` };
   }
   if (NOT_HTTPS.test(text) && server.url) {
     let u = null;

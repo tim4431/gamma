@@ -1160,7 +1160,7 @@ async function main() {
       return `${mine[0].dest}, then removed, its files as they were`;
     });
 
-    await step('synced vault from a remote: the chooser on a remote server makes the vault on the host — no clone, a read token for a vault that pushes nothing; "Remove the vault…" drops it', async () => {
+    await step('synced vault from a remote: the chooser on a remote server makes the vault on the host — no clone, a read token for a vault that pushes nothing; "Remove the synced folder…" drops it', async () => {
       // On the remote (Alpha by URL: the same server, so the session is there).
       await hook(app, (s, id) => s.openServer(id), ids.remote);
       await waitFor(async () => (await hook(app, (s) => s.current())).id === ids.remote && new URL(content.url()).origin === urls.alpha, 'remote open', 15_000);
@@ -1198,7 +1198,7 @@ async function main() {
       const said = JSON.stringify(minted.map((t) => [t.name, t.scope]));
       assert.deepEqual(minted.map((t) => t.scope).sort(), ['computer', 'read'], `the vault's token and the computer's minted: ${said}`);
       assert(minted.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), `the vault's: read scope, named after the folder: ${said}`);
-      // The chooser shows it synced; the vault's "Remove the vault…" drops it and revokes the token; the files stay.
+      // The chooser shows it synced; the vault's "Remove the synced folder…" drops it and revokes the token; the files stay.
       const shown = await chooserRow(bar, 'Far lab');
       assert((await shown.textContent()).includes('synced'), 'shown as synced');
       await bar.keyboard.press('Escape');

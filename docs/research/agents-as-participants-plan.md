@@ -1,7 +1,8 @@
 # Agents as participants: the build plan
 
-Status: **a plan; nothing is built.** Written 2026-11-14 against `dev` @
-b4870d47, after a survey of the code behind work folders, local agents,
+Status: **a plan, partly built**: steps 1 and 2 but 2.7 are built, each
+step's "As built" saying where the build differs. Written 2026-11-14
+against `dev` @ b4870d47, after a survey of the code behind work folders, local agents,
 computers and feedback. The file and line references were read then, so
 check them again before building. This file says what to build and in
 what order; the note beside it,
@@ -268,7 +269,7 @@ server's refusals a person reads (`filing.WORDS`, `folder_links`,
 guide, whose sections are now "Synced folders and files" and "Working in a
 synced folder"; a vault of one file keeps "synced vault". The chat's and
 the local agents' strings (`chat/`, `local_agents/`, the agents' routes)
-keep "work folder" for step 2, which rewrites them.
+were left to step 2, whose rewrite of them says "synced folder" too.
 
 ### 1.3 Detach
 
@@ -368,6 +369,48 @@ the directory untouched with either choice.
 - Tests: `test_local_agents_routes.py`, `test_local_agents_runner.py`,
   `test_computers.py`, a new case for the carry-over.
 
+**As built.** `runs` is `never` or `ask`, one setting per agent: `ask`
+lets a turn of this server ask in the chat and one of another server ask
+on this computer, so the vault's `computer` is gone, the https check moved
+to each ask (`runner.ask_refusal`, as it was), the PATCH's `older` (that
+server's whoami) and `remote_servers._unasked` went with it. The carry-over
+is `store.carry_over`, run by `runner.recover` at start and doing nothing
+once `computer_agents` has a row; it owns each agent by whoever turned it
+on first and counts a vault's `computer` as `ask`; a vault's `ask`, which
+let only its own chat ask, carries `never`, since `ask` now reaches every
+server's turns and the person agrees to that through the desktop's
+warning. The grants are a new table, `agent_dir_grants` (the conversation, the directory, the command,
+its folder, the host, the agent): vaults.db adds no column, so
+`agent_grants` joins `agent_folders` and `agent_policies` unread, its
+grants not carried. An agent on is its owner's alone: another account gets
+409 until the owner turns it off. Until the picker (2.4) the account's
+agent is its first on in the catalog's order (`store.agent_for`): the chat
+turns, the Sends and the mentions use it, a mention names it, the chat
+strip shows it, and a vault's `agent` in the links and the page shows the
+one at work there or the maker's; `runs` left the vault's `agent`.
+`chats.vault_of` answers an account with an agent on, or the vault's
+maker, who still reads their conversations with none on. `GET
+/api/local-agents/waiting` (the panel's per-folder count) is gone: turning
+an agent on hands over the Sends of every work folder kept here
+(`runner.queue_waiting`). `_from_shell`, `_shell_strict` and `_account`
+moved to `gamma/routers/shell.py` (`from_shell`, `shell_strict`,
+`account`), which the folder-links, computer-links, remote-servers and
+local-agents routers import. *Stop showing* turns no agent off (the
+channel's delete did): the agents are the computer's, and showing the
+computer again asks nothing of its own, so the question before an agent
+is turned on names what a server this computer is shown on can do. The
+registry no longer keeps a vault's `agent`: `registry._agent` reads the
+first assistant `enabled` wherever a folder's agent was read, the page
+route's `vault.agent` among them. The two sides ship apart, so the
+announce keeps the old shape both ways: the app still puts its agent on
+each work folder's vault for an older server, and `registry.normalise`
+reads an announce whose assistants carry no `enabled` (an older app's) by
+the agent its folder vaults name. Turning an agent off takes its owner or
+the shell's word (`shell_strict`), so the person at the computer turns off
+one whose owner is signed out of the app or gone, and an account deleted
+turns its agents off (`runner.release_account`). The offered directories
+are stored and routed; nothing reads them yet (2.5).
+
 ### 2.2 The desktop app
 
 - `preload.js`: asks `set-agent`, `set-agent-runs`, `agent-dirs`.
@@ -376,6 +419,27 @@ the directory untouched with either choice.
 - `ui/bar.html:616`: the vault's agent row goes; its place says where
   agents are set. `lib/keeping.js`: the agent's words move with it.
 - Tests: `desktop/test`. Docs: `desktop/docs/architecture.md`.
+
+**As built.** The three asks are page asks (`PAGE_ASKS`, as
+`continue-in-terminal`): `set-agent {agent, enabled}`, `set-agent-runs
+{agent, ask}` and `agent-dirs {dir}`, `dir` "new" to add a directory
+picked with the native dialog or an offered one's id to move it; a page
+of a remote server is refused. main.js `setAgent(serverId, name, on)`,
+`setAgentRuns(serverId, name, runs)` and `agentDirs(serverId, dirId)` act
+with the shell's own session, read `GET /api/local-agents` first (an
+agent so already is left as it is) and keep their questions, now the
+computer's (`keeping.agentAsk(name)`, `keeping.runsAsk(name)`, Cancel the
+default since it covers the asks of another server too). The panel's
+`agent`, `agent-runs` and `check-agents` actions went, and with them
+`agentChoices`, `farAgentWords`, `runsComputerAsk`, `olderServer`,
+`plainRule`, `FAR_RUNS_RULE`, `NEAR_COMPUTER_RULE` and the item's `agent`,
+`agentReady`, `agentProblem`, `agentRuns`, `agents`, `agentHere` and
+`secure`; the busy row keeps `agentLabel`, `agentRunning` and
+`agentChat`. The asks are followed while the host has an agent that may
+ask and keeps a work folder of another server; the card's *Stop Codex
+asking* sets that agent's `runs` back to `never`. The Feedback dialog's
+offer line names Settings → AI in place of the sync panel (with its
+`zh`).
 
 ### 2.3 Settings → AI → Agents
 
@@ -388,6 +452,22 @@ the directory untouched with either choice.
   {computer}*, but for turning an agent off.
 - Docs: [dev/settings.md](../dev/settings.md),
   [dev/local_agents.md](../dev/local_agents.md) "Who turns it on".
+
+**As built.** The section is *Agents*, first in Settings → AI →
+Connections: Gamma AI with the connection in use, then *This computer:
+TIM-PC* where `GET /api/local-agents` says `here`, then one read-only
+section per computer of the account's shown to this server, from a new
+`GET /api/computers` (`registry.of_account`, the page route's rows without
+a vault; one of the pane's reads). The listing now answers on every server,
+`{here: false, …}` where agents do not run, so every window reads it with
+no 404, and gains `computer` (this computer's name) and `code`
+(`catalog.code`, moved out of the channel), which the client words. What an
+agent may run is a `Segmented`, *Only in its sandbox* or *Asks before
+more*; a directory is renamed in place (`NameInput`), moved with the
+shell's dialog and removed with no shell's word. The shell answers a page
+nothing, so after an ask the pane reads the listing every second for a
+minute until it changed. Outside the desktop app the owner's switch turns
+an agent off with the session; nothing else is editable there.
 
 ### 2.4 The picker
 
@@ -403,6 +483,35 @@ the directory untouched with either choice.
   bucket's chosen agent.
 - Picking another agent in a conversation with messages asks *Start a
   new chat with {agent}?* (decision 10).
+
+**As built.** An agent's `id` is its name (`gamma`, `codex`, `claude`):
+the server binds a page that another computer keeps to that computer's
+agent, so a page lists either this computer's agents or that one, never
+both, and the name is what the routes take. `chat/agents.js` also carries
+`owner`, `code`, `version`, `enabled`, `runs` and, for another computer's,
+`remote`, `online`, `since`; `chatAgents`, `pickAgent`, `keeperAgent`,
+`mentionAgent` and `stripFacts` replace vaultState's `mentionAgent`,
+`computerAgent`, `keeperAgent` and `keeperComputer`, and App's
+`chatComputer` and `chatComputerMark` (with `computerChat.sideMark` and
+`Segmented`'s `trailing`, which only the switch used). The listing is one
+store per window, `chat/useLocalAgents.js`, read by the chat, the comments
+and Settings. The chip is `chat/AgentChip.jsx`, one `MenuSelect` both
+sides draw: the agents first, then the picked one's models and efforts.
+The server took the pick: a turn names `agent`, the read takes `?agent=`
+and shows no conversation of another agent, `chats.begin` archives one of
+another agent as it does one of another directory, and the terminal and
+New chat name the conversation's own agent. On yes, *Start a new chat*
+starts the picked agent's new conversation (Gamma AI's New chat, or `POST
+/chat/new`) and leaves the other where it is. A bucket never picked shows
+Gamma AI, or a computer's agent when no AI service is connected (a step
+toward 2.8). The strip shows the directory after its line, a menu of the
+offered ones and *No folder* until the first turn (`computerChat.workPlace`),
+and *Show in folder* only on a page of a work folder kept here. A
+Background tasks row picks its turn's agent and opens a folder's or the
+library's chat as well as a page's. The @ menu lists the agent a mention
+reaches, the account's first here (`store.agent_for`), not every agent it
+owns: a Send records no agent until a comment sent to an agent is a turn
+(3.5).
 
 ### 2.5 An agent on any page
 
@@ -424,6 +533,46 @@ the directory untouched with either choice.
 - Tests: `test_local_agents_chat.py`, `test_computer_chats.py`,
   `test_remote_chat.py`.
 
+**As built.** The tables keep their names, `computer_chats` and
+`computer_chat_runs`: they still hold a computer agent's conversations and
+their far turns, and `thread_id` waits for 3.5. Step 59
+(`computer_chat_buckets`, in `LOCAL_STEPS`) renames `page_id` to `bucket`
+in both and gives `computer_chats` a `dir`. A conversation in a work
+folder names the work folder's id W, not the vault's link id: the step
+fills it from pages.db alone (the page's `work_folder`), a far
+conversation names the same W, and `chats.place_of` finds the vault that
+keeps W from the bucket itself, so `dir` only tells whether the
+conversation still works where it began. `place_of(ws, bucket, user, dir,
+conversation_id)` → `{kind: vault | offered | own, dir, path, name, link,
+about}`, `about` what the bucket is (`chats.about`), and it is the one
+gate: an account with an agent on, for any bucket; a vault's maker with
+none, for its work folder alone. The own directory is
+`<data>/agents/<ws>/<conversation id>/` (`config.AGENTS_DIR`), made by the
+turn and removed by `chats.delete`, and at start by `chats.sweep_dirs` for
+conversations gone otherwise. A turn whose place is another than the
+active conversation's (another `dir` named, the bucket moved into or out
+of a work folder kept here, an offered directory withdrawn) archives it
+and starts a new one inside `chats.begin`. The queues are keyed by the
+directory's path as the file system compares it (`runner._place`), and
+`_queued` remembers each entry's vault; `runner.stop_dirs`, from `PUT
+/dirs`, stops a turn in a directory no longer offered, and one that waits
+there fails when taken. The strip gains `dir` (a vault's name, its path for
+the vault's maker; an offered directory's id and name; null for its own);
+`folder`, `folder_id` and `paused` stay the work folder's, empty outside
+one. The prompt's JSON names `about` in place of `file`, and `.gamma/` and
+the build line only where they apply. One directory has one queue, so an
+offered directory never overlaps a vault or another offered one: `PUT
+/dirs` refuses a new path inside or around either, `check_vault` a vault
+inside or around an offered directory, and a turn whose place's path is no
+longer its queue's (an offered directory moved while it waited) fails when
+it is taken. `PUT /dirs` takes an account with an agent on here, else the
+shell's word. A deleted folder's conversations go
+to the library's History (`chats.file_into_home`, in the tree delete's
+transaction). Background tasks' rows carry `params.bucket`. The channel
+still names a far turn's bucket `page_id`, a page's always, so a computer of
+an older Gamma keeps working. The client still opens the side on a page of
+a work folder only: 2.4 and 2.6 open it elsewhere.
+
 ### 2.6 One transcript
 
 - A computer agent's messages are drawn by the chat's own transcript.
@@ -444,6 +593,42 @@ the directory untouched with either choice.
   with a fake agent (`backend/tests/fake_agents`). Docs:
   [dev/ai.md](../dev/ai.md), [dev/chat_history.md](../dev/chat_history.md),
   [dev/local_agents.md](../dev/local_agents.md) "The chat's computer side".
+
+**As built.** The transcript moved first, out of `ChatDock.jsx` into
+`chat/ChatTranscript.jsx` (the rows with their pieces: `AgentSteps`,
+`ContextCoverage`, `ReplyErrorCard`, `UsageLine`, the tool chips' detail),
+and both draw through it; ChatDock is 2,466 lines. The adapter is
+`computerChat.shownMessages`: a computer agent's steps become plain chips
+of kinds of the chat's own (`stepChip`: `file`, `fileEdit`, `run`,
+`search`, `work`, in `ACTION_ICONS`, none a change, so Gamma AI's changes
+list and revert pass them by), the pill's words come with the message
+(`pill`, `turnLabel`), its asks are `AskCard` (`ApprovalCard.jsx`, on
+`ApprovalShell`), what it changed `FileChanges` (`AgentChanges.jsx`,
+"Changed in its directory" outside a work folder), a stopped turn ends
+"(stopped)" as a stopped Gamma AI reply does, and a failed one is the error
+card of a new kind, `agent`, headed by the computer's own sentence
+(`errorSaid`). A row that had ended when it was first drawn is still, for
+both agents, in place of the old side's per-message state. What a row
+offers comes from the handlers ChatDock passes (edit, report and revert
+are Gamma AI's; Save to library reads either's text). `useComputerSide`
+holds what `ComputerChat.jsx` held, the strip is `ComputerStrip.jsx`, the
+composer is ChatDock's with what such an agent takes alone (the message
+and the PDF passages: `PaperMentionInput` gains `mentions` and `label`),
+and `computer.css`'s rules are the chat's own in `app.css`;
+`ComputerChat.jsx`, `ComputerAsk.jsx` and `computer.css` are gone. History
+is one popover (`computerChat.historyRows`): `GET /chat/history` also
+answers the bucket's `active` conversation, whichever its agent, so every
+agent's current conversation is listed while another agent is shown, and
+a row's icon is its agent's (`AgentChip.agentIcon`) while the chat has
+several; rename stays Gamma AI's. The export is a route of its own, `GET
+/api/local-agents/chat/history/{id}/export` (its owner, active or
+archived; `chat_export.transcript` with the agent's label words the steps
+in English, `step_text`). History's list, export and delete ask no seat:
+a conversation stays its account's to keep or delete with its agent
+turned off, and History reads it on every server; opening one takes the
+seat, as a turn does. `read_chats` is left as it is: it reads the
+workspace's chats, and a computer agent's conversations stay their
+account's, read by no tool.
 
 ### 2.7 Gamma's tools for the agent
 
@@ -473,6 +658,18 @@ the directory untouched with either choice.
   *Connect an AI service*; `aiOff` no longer closes a chat whose agent
   is a computer's.
 - Docs: [dev/onboarding.md](../dev/onboarding.md), the user guide.
+
+**As built.** The setup card takes the chat's computer agents (a tile that
+picks one) and the agents `GET /api/local-agents` found here but not
+turned on (a tile that opens Settings → AI): App hands ChatDock the
+listing (`localAgents`) in place of its directories alone. `aiOff` closes
+only Gamma AI's side (`closed`): with a computer's agent picked the
+composer, the header's Export, Find, History and New chat, and the
+transcript stay. The browser step is in `local-agents`: with no provider a
+library PDF's chat is Codex's, Gamma AI picked shows the card and its tile
+picks Codex again, and the reply lands in a directory offered (the fake
+Codex edits a file, which a directory of its own lacks). Reading the
+page's highlights through Gamma's tools waits for 2.7.
 
 Done when: with no provider configured, in the desktop app, a library
 PDF's chat is opened, Codex is picked, it reads the page's highlights
@@ -683,9 +880,9 @@ answered on the phone.
 
 | Where | Change | How |
 |---|---|---|
-| vaults.db | `computer_agents`, `agent_dirs`, `agent_people` new; `agent_folders`, `agent_policies`, `agent_runs`, `agent_threads` unread | additive, with one carry-over at start (2.1) |
+| vaults.db | `computer_agents`, `agent_dirs`, `agent_dir_grants` new and `agent_folders`, `agent_policies`, `agent_grants` unread (built, 2.1, 2.2); `agent_people` new, `agent_runs`, `agent_threads` unread (later) | additive, with one carry-over at start (2.1) |
 | users.db | `integration_tokens.comments`; `feedback` tokens become commenting `read` tokens; `computer_links.asks`; `computers.assistants` reshaped | one global step, the next free number after 58 |
-| pages.db | `computer_chats` → `agent_chats` with `bucket`, `dir`, `thread_id`; `computer_chat_runs` renamed; the three `feedback_request*` tables dropped; `comments.agent_id` `local:<name>` rewritten to the new id | one workspace step, in `LOCAL_STEPS` as 54 and 58 are: no copy of a workspace syncs these tables |
+| pages.db | `computer_chats` keeps its name, `page_id` becoming `bucket`, with `dir`, and `computer_chat_runs` gains `bucket` (built, 2.5: workspace step 59, `computer_chat_buckets`); `thread_id` later; the three `feedback_request*` tables dropped; `comments.agent_id` `local:<name>` rewritten to the new id | one workspace step, in `LOCAL_STEPS` as 54 and 58 are: no copy of a workspace syncs these tables |
 | data.db | `feedback_pictures` renamed | rebuilt on demand, no step |
 | The directory | `.gamma/feedback/` removed, `.gamma/annotations/` written | at the vault's first round |
 

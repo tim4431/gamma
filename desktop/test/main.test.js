@@ -21,6 +21,7 @@ const os = require('os');
 const path = require('path');
 const { pages: shellPages, trustedShellSender } = require('../lib/shellSecurity');
 const { zipOf } = require('./zipOf');
+const keeping = require('../lib/keeping');
 
 test('shell IPC accepts only its bundled page in the correct top-level view', () => {
   const bar = { webContents: { mainFrame: { url: shellPages.bar } } };
@@ -511,7 +512,7 @@ test('a work folder\'s Detach… in the panel asks the web app\'s choice in its 
   assert.equal(shell.notice(), 'Detached Paper: its files stay in Gamma as pages; C:\\Papers stays as it is.');
 });
 
-test('a work folder its other server detached is forgotten here as Remove the vault… forgets it, its token revoked there', async () => {
+test('a work folder its other server detached is forgotten here as Detach… forgets it, its token revoked there', async () => {
   fresh();
   const host = server('Host');
   const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
@@ -628,7 +629,7 @@ test('a vault of another server keeps pulling and pushes PDFs at most: its switc
   assert.deepEqual(patches(), [{ pull: true }], 'turned on, as the rule wants');
 });
 
-test('a work folder of another server pushes everything and pulls: its switches refuse the rest, and it has no agent here until this computer is shown there; its library switch is the host\'s', async () => {
+test('a work folder of another server pushes everything and pulls: its switches refuse the rest; its library switch is the host\'s', async () => {
   fresh();
   const s = server('Host');
   s.fake.vaults = [vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', token_id: 't1', push: 'everything', work: true, mine: true })];
@@ -636,77 +637,14 @@ test('a work folder of another server pushes everything and pulls: its switches 
   const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
   await shell.refreshKeeping();
   const [item] = shell.keeping().items;
-  assert.deepEqual([item.work, item.agentHere, item.agents, item.push, item.pull], [true, false, null, 'everything', true]);
+  assert.deepEqual([item.work, item.push, item.pull], [true, 'everything', true]);
   const rule = /^Error: A synced folder of another server pushes everything and pulls: detach it to stop\.$/;
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'pull', false), rule);
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'pdfs'), rule);
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'off'), rule);
-  await assert.rejects(shell.setAgent(s.srv.id, 'v1', 'codex', true), /^Error: Show this computer on .+ first\.$/);
   assert.deepEqual(patches(), [], 'nothing was changed');
   await shell.keepingAction('vault', s.srv.id, 'v1', 'library', true);
   assert.deepEqual(patches().map((c) => [c.body, c.headers['X-Gamma-Workspace']]), [[{ library: true }, undefined]], 'the account\'s, no workspace of the host');
-});
-
-test('the agent of a work folder of another server this computer is shown on: offered, asked with what that server can then do, the shell\'s word, never asking in the chat', async () => {
-  fresh();
-  registry.addRemote('NAS', 'http://nas.lan:9001');
-  const s = server('Host');
-  const far = (agent) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', plain: 'lan', token_id: 't1', push: 'everything', work: true, mine: true, agent });
-  const codexOn = { name: 'codex', label: 'Codex', ready: true, problem: '', running: null, runs: 'never' };
-  s.fake.vaults = [far(null)];
-  s.fake.routes = (p, init) => {
-    if (p === '/api/local-agents') return { agents: [{ name: 'codex', label: 'Codex', found: true, ready: true, problem: '' }] };
-    if (p === '/api/computer-links') {
-      return { links: [{ id: 'c1', remote_url: 'http://nas.lan:9001', workspace_id: 'nas-ws', account: 'u_1', username: 'tim', status: { state: 'connected', error: '', at: '2026-11-13T10:00:00Z' } }] };
-    }
-    if (p === '/api/folder-links/v1' && init.method === 'PATCH') {
-      const body = JSON.parse(init.body);
-      if (body.agent_runs === 'ask') return { failWith: 409, body: { detail: 'Asking in the chat is for a work folder of this computer\'s server.' } };
-      s.fake.vaults = [far(body.agent ? codexOn : null)];
-      return { ...s.fake.vaults[0], queued: 0 };
-    }
-    return null;
-  };
-  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
-  await shell.refreshKeeping();
-  let [item] = shell.keeping().items;
-  assert.deepEqual([item.work, item.agentHere, item.agents.map((a) => a.name), item.computer.state], [true, true, ['codex', 'claude'], 'connected']);
-
-  // asked first with what NAS can then do, over plain http from outside this computer; no Sends counted here, where none wait
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
-  assert.deepEqual(patches(), [], 'nothing turned on');
-  assert.equal(shell.asked.at(-1), 'Let Codex work in C:\\Papers? Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network.' +
-    ' Whoever can sign in to NAS as tim, and whoever runs NAS, can send work to Codex here. Codex reads your files and its answers are stored on NAS.' +
-    ' NAS is reached without encryption: someone on your network could read what is sent and pose as NAS.');
-  assert.ok(!s.fake.calls.some((c) => c.path === '/api/local-agents/waiting'), 'the host counts no Sends of another server');
-
-  shell.answers.push(0);
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
-  const [on] = patches();
-  assert.deepEqual(on.body, { agent: 'codex' });
-  assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'turning an agent on is the computer\'s word');
-  assert.equal(on.headers['X-Gamma-Workspace'], undefined, 'the account\'s, no workspace of the host');
-  assert.equal(shell.notice(), 'Codex now answers the Sends on Papers.');
-  await shell.refreshKeeping();
-  [item] = shell.keeping().items;
-  assert.deepEqual([item.agent, item.agentRuns], ['codex', 'never']);
-
-  // never asking in the chat: refused before anything is asked or sent
-  const asks = shell.asked.length;
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask'), /^Error: Asking in the chat is for a work folder of this computer's server: for one of another server, choose Ask on this computer\.$/);
-  assert.equal(await shell.setAgentRuns(s.srv.id, 'v1', 'never'), false);
-  assert.equal(shell.asked.length, asks, 'nothing asked');
-  assert.equal(patches().length, 1);
-
-  // no longer shown there: no agent offered, none turned on; turning it off still goes
-  s.fake.routes = ((routes) => (p, init) => (p === '/api/computer-links' ? { links: [] } : routes(p, init)))(s.fake.routes);
-  await shell.refreshKeeping();
-  [item] = shell.keeping().items;
-  assert.deepEqual([item.agentHere, item.agents, item.computer.state], [false, null, 'none']);
-  await assert.rejects(shell.setAgent(s.srv.id, 'v1', 'claude', true), /^Error: Show this computer on NAS first\.$/);
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', '');
-  assert.deepEqual(patches().at(-1).body, { agent: '' });
-  assert.equal(patches().at(-1).headers['X-Gamma-Shell'], undefined);
 });
 
 test('a work folder choosing its files is shown so, its Choose files… opens its tracking dialog in the window, and its library switch is the server\'s', async () => {
@@ -733,125 +671,130 @@ test('a work folder choosing its files is shown so, its Choose files… opens it
   }
 });
 
-test('a work folder\'s agent from the panel: the agents found are read, turning one on is asked with the Sends waiting and carries the shell\'s word, off asks nothing', async () => {
-  fresh();
-  const s = server('Agents');
-  const codexOn = { name: 'codex', label: 'Codex', ready: true, problem: '', running: null };
-  // the link names its maker by account id, never by username
-  s.fake.vaults = [vaultLink({ push: 'everything', mine: true, created_by: 'u_7Xk3q', agent: null })];
-  const found = [{ name: 'codex', label: 'Codex', found: true, version: '0.167.0', ready: true, problem: '' },
-    { name: 'claude', label: 'Claude Code', found: false, version: '', ready: false, problem: 'Claude Code is not on this computer.' }];
+// The host's agents as `GET /api/local-agents` lists them (`agents`, each
+// `{name, enabled, runs}` over the catalog's found ones; `dirs`), and its
+// PATCH and PUT answering from them: what Settings → AI asks the shell.
+function agentsHost(name, agents, dirs = []) {
+  const s = server(name);
+  s.fake.agents = agents;
+  s.fake.dirs = dirs;
   s.fake.routes = (p, init) => {
-    if (p === '/api/local-agents') return { agents: found };
-    if (p === '/api/local-agents/waiting') return { waiting: 2 };  // the server counts by its own rule
-    if (p === '/api/folder-links/v1' && init.method === 'PATCH') {
-      const { agent } = JSON.parse(init.body);
-      s.fake.vaults = [vaultLink({ push: 'everything', mine: true, created_by: 'u_7Xk3q', agent: agent ? codexOn : null })];
-      return { ...s.fake.vaults[0], ...(agent ? { queued: 2 } : {}) };
+    if (p === '/api/local-agents') return { agents: s.fake.agents, dirs: s.fake.dirs };
+    const agent = /^\/api\/local-agents\/(codex|claude)$/.exec(p);
+    if (agent && init.method === 'PATCH') {
+      const body = JSON.parse(init.body);
+      s.fake.agents = s.fake.agents.map((a) => (a.name !== agent[1] ? a : {
+        ...a, ...(body.enabled !== undefined ? { enabled: body.enabled, runs: 'never' } : {}), ...(body.runs ? { runs: body.runs } : {}) }));
+      return { ...s.fake.agents.find((a) => a.name === agent[1]), queued: body.enabled ? 2 : 0 };
+    }
+    if (p === '/api/local-agents/dirs' && init.method === 'PUT') {
+      s.fake.dirs = JSON.parse(init.body).map((d, n) => ({ id: d.id || `d${n + 9}`, path: d.path, name: d.name || path.basename(d.path), added_at: '' }));
+      return { dirs: s.fake.dirs };
     }
     return null;
   };
-  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
-  await shell.refreshKeeping();
-  let [item] = shell.keeping().items;
-  assert.deepEqual([item.work, item.mine, item.agent], [true, true, '']);
-  assert.deepEqual(item.agents.map((a) => [a.name, a.ready]), [['codex', true], ['claude', false]]);
-  const read = s.fake.calls.find((c) => c.path === '/api/local-agents');
-  assert.equal(read.query, '', 'the panel\'s reading takes what the server has, never a fresh check');
+  return s;
+}
 
-  // asked first, with the maker's Sends that wait; under the harness the question takes Cancel
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
-  assert.deepEqual(patches(), [], 'nothing turned on');
-  assert.equal(shell.asked.at(-1), 'Let Codex work in C:\\Papers? Codex will answer the Sends you make on this folder: it edits files in this directory and runs commands in its sandbox, without network. 2 waiting Sends will be handed to it.');
-  const [counted] = s.fake.calls.filter((c) => c.path === '/api/local-agents/waiting');
-  assert.equal(new URLSearchParams(counted.query).get('link'), 'v1');
-  assert.ok(!s.fake.calls.some((c) => c.path === '/api/feedback/requests'), 'the shell counts nothing itself');
+const FOUND = [{ name: 'codex', label: 'Codex', found: true, version: '0.167.0', ready: true, problem: '', enabled: false, runs: 'never', mine: false },
+  { name: 'claude', label: 'Claude Code', found: true, version: '2.1.318', ready: true, problem: '', enabled: false, runs: 'never', mine: false }];
 
-  shell.answers.push(0);
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex');
-  const [on] = patches();
-  assert.deepEqual(on.body, { agent: 'codex' });
-  assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'turning an agent on is the computer\'s word');
-  assert.equal(on.headers['X-Gamma-Workspace'], 'mine');
-  assert.equal(shell.notice(), 'Codex now answers the Sends on Papers; 2 waiting were handed to it.');
-  await shell.refreshKeeping();
-  [item] = shell.keeping().items;
-  assert.deepEqual([item.agent, item.agentLabel, item.agentReady], ['codex', 'Codex', true]);
+test('an agent of this computer from Settings: the page asks the shell, turning one on is asked first and carries the shell\'s word, off asks nothing and carries the word too', async () => {
+  fresh();
+  const s = agentsHost('Agents', FOUND);
+  shell.pretendShown(s.srv, windowOn(s.fake));
+  const patches = () => s.fake.calls.filter((c) => c.path.startsWith('/api/local-agents/') && c.method === 'PATCH');
+  try {
+    // asked first, with what it does here and what a server it is shown on can then do; under the harness the question takes Cancel
+    assert.equal(await shell.setAgentFromPage('mine', 'codex', true), null);
+    assert.deepEqual(patches(), [], 'nothing turned on');
+    assert.equal(shell.asked.at(-1), `Turn on Codex on this computer? ${keeping.agentAsk('codex').detail}`);
 
-  // the same agent again changes nothing; a name that is none is refused; off asks nothing and carries no word
-  const asks = shell.asked.length;
-  assert.equal(await shell.setAgent(s.srv.id, 'v1', 'codex'), false);
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'gpt'), /codex or claude/);
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent', '');
-  const off = patches().at(-1);
-  assert.deepEqual(off.body, { agent: '' });
-  assert.equal(off.headers['X-Gamma-Shell'], undefined);
-  assert.equal(shell.asked.length, asks, 'nothing asked');
-  assert.equal(shell.notice(), 'Codex no longer answers the Sends on Papers: they wait for an agent you run yourself.');
+    shell.answers.push(0);
+    assert.equal(await shell.setAgentFromPage('mine', 'codex', true), true);
+    const [on] = patches();
+    assert.deepEqual([on.path, on.body], ['/api/local-agents/codex', { enabled: true }]);
+    assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'turning an agent on is the computer\'s word');
+    assert.equal(shell.notice(), 'Codex is on: it answers the Sends you make in your synced folders; 2 waiting were handed to it.');
 
-  // the work folder's view asks the server to look again
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'check-agents');
-  assert.ok(s.fake.calls.some((c) => c.path === '/api/local-agents' && c.query === '?fresh=1'));
+    // on already changes nothing; a name that is none is refused; off asks nothing and carries the word, so it turns off another account's
+    const asks = shell.asked.length;
+    assert.equal(await shell.setAgent(s.srv.id, 'codex', true), false);
+    await assert.rejects(shell.setAgent(s.srv.id, 'gpt', true), /codex or claude, not gpt/);
+    assert.equal(await shell.setAgentFromPage('mine', 'codex', false), true);
+    const off = patches().at(-1);
+    assert.deepEqual(off.body, { enabled: false });
+    assert.equal(off.headers['X-Gamma-Shell'], shell.shellSecret);
+    assert.equal(shell.asked.length, asks, 'nothing asked');
+    assert.equal(shell.notice(), 'Codex is off on this computer: your Sends wait for an agent you run yourself.');
 
-  // a folder that is no work folder has no agent; a server that runs none (404) offers none
-  s.fake.vaults = [vaultLink({ mine: true })];
-  s.fake.routes = () => null;
-  await shell.refreshKeeping();
-  [item] = shell.keeping().items;
-  assert.equal(item.agents, null);
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent', 'codex'), /Only a work folder/);
+    // a remote server's page is not asked of
+    const remote = server('NAS', [], { remote: 'https://nas.example' });
+    shell.pretendShown(remote.srv, windowOn(s.fake, [{ origin: 'https://nas.example', fake: remote.fake }]));
+    await assert.rejects(shell.setAgentFromPage('mine', 'codex', true), /set from a server on this computer/);
+    assert.equal(remote.fake.calls.length, 0);
+  } finally {
+    shell.pretendShown(null, null);
+  }
 });
 
-test('what a work folder\'s agent may run, from the panel: Ask is asked first with the risk and carries the shell\'s word, Nothing more asks nothing', async () => {
+test('what an agent of this computer may run: Ask is asked first with the risk here and from a server it is shown on, Cancel the default, and carries the shell\'s word; Never asks nothing', async () => {
   fresh();
-  const s = server('Asking');
-  const agentOf = (runs) => ({ name: 'claude', label: 'Claude Code', ready: true, problem: '', running: null, runs });
-  s.fake.vaults = [vaultLink({ push: 'everything', mine: true, agent: agentOf('never') })];
-  s.fake.routes = (p, init) => {
-    if (p === '/api/local-agents') return { agents: [{ name: 'claude', label: 'Claude Code', found: true, ready: true, problem: '' }] };
-    if (p === '/api/folder-links/v1' && init.method === 'PATCH') {
-      s.fake.vaults = [vaultLink({ push: 'everything', mine: true, agent: agentOf(JSON.parse(init.body).agent_runs) })];
-      return s.fake.vaults[0];
-    }
-    return null;
-  };
-  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
-  await shell.refreshKeeping();
-  let [item] = shell.keeping().items;
-  assert.deepEqual([item.agent, item.agentRuns], ['claude', 'never']);
+  const s = agentsHost('Asking', [FOUND[0], { ...FOUND[1], enabled: true, mine: true }]);
+  shell.pretendShown(s.srv, windowOn(s.fake));
+  const patches = () => s.fake.calls.filter((c) => c.path === '/api/local-agents/claude' && c.method === 'PATCH');
+  try {
+    assert.equal(await shell.agentRunsFromPage('mine', 'claude', true), null);
+    assert.deepEqual(patches(), [], 'Cancel, the default, under the harness');
+    assert.equal(shell.asked.at(-1), `Let Claude Code ask to run more? ${keeping.runsAsk('claude').detail}`);
 
-  // asked first, naming what it may ask for and the risk; under the harness the question takes Cancel
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask');
-  assert.deepEqual(patches(), [], 'nothing changed');
-  assert.equal(shell.asked.at(-1), 'Let Claude Code ask to run more in C:\\Papers? In the chat of a file of this folder, Claude Code can then ask you to run a command, such as your build; nothing of it runs until you allow it there. A command you allow runs as you, with your files and the network.');
+    shell.answers.push(0);
+    await shell.agentRunsFromPage('mine', 'claude', true);
+    const [on] = patches();
+    assert.deepEqual(on.body, { runs: 'ask' });
+    assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'letting an agent ask is the computer\'s word');
+    assert.equal(shell.notice(), 'Claude Code may now ask you to run more.');
 
-  shell.answers.push(0);
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask');
-  const [on] = patches();
-  assert.deepEqual(on.body, { agent_runs: 'ask' });
-  assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'letting an agent ask is the computer\'s word');
-  assert.equal(on.headers['X-Gamma-Workspace'], 'mine');
-  assert.equal(shell.notice(), 'Claude Code may now ask you in the chat to run more on Papers.');
-  await shell.refreshKeeping();
-  [item] = shell.keeping().items;
-  assert.equal(item.agentRuns, 'ask');
+    // the same again changes nothing; another word is refused; never asks nothing and carries no word; an agent off is refused
+    const asks = shell.asked.length;
+    assert.equal(await shell.setAgentRuns(s.srv.id, 'claude', 'ask'), false);
+    await assert.rejects(shell.setAgentRuns(s.srv.id, 'claude', 'always'), /never or ask, not always/);
+    await shell.agentRunsFromPage('mine', 'claude', false);
+    const off = patches().at(-1);
+    assert.deepEqual([off.body, off.headers['X-Gamma-Shell']], [{ runs: 'never' }, undefined]);
+    assert.equal(shell.asked.length, asks, 'nothing asked');
+    assert.equal(shell.notice(), 'Claude Code no longer asks to run more: it keeps to its confinement.');
+    await assert.rejects(shell.setAgentRuns(s.srv.id, 'codex', 'ask', true), /^Error: Turn Codex on first\.$/);
+    assert.equal(patches().length, 2);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
 
-  // the same again changes nothing; another word is refused; Nothing more asks nothing and carries no word
-  const asks = shell.asked.length;
-  assert.equal(await shell.setAgentRuns(s.srv.id, 'v1', 'ask'), false);
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'always'), /never, ask or computer, not always/);
-  await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'never');
-  const off = patches().at(-1);
-  assert.deepEqual(off.body, { agent_runs: 'never' });
-  assert.equal(off.headers['X-Gamma-Shell'], undefined);
-  assert.equal(shell.asked.length, asks, 'nothing asked');
-  assert.equal(shell.notice(), 'Claude Code no longer asks to run more on Papers: it keeps to its confinement.');
+test('a directory offered to the agents is picked with the native dialog and put with the shell\'s word; one offered is moved in place', async () => {
+  fresh();
+  const s = agentsHost('Dirs', FOUND, [{ id: 'd1', path: path.join(dir, 'old'), name: 'Old', added_at: '' }]);
+  shell.pretendShown(s.srv, windowOn(s.fake));
+  const puts = () => s.fake.calls.filter((c) => c.path === '/api/local-agents/dirs' && c.method === 'PUT');
+  const picked = fs.mkdtempSync(path.join(dir, 'Offered-'));
+  process.env.GAMMA_SHELL_PICK_DIR = picked;
+  try {
+    const added = await shell.agentDirsFromPage('mine', 'new');
+    assert.deepEqual(puts()[0].body, [{ id: 'd1', path: path.join(dir, 'old'), name: 'Old' }, { path: picked, name: '' }]);
+    assert.equal(puts()[0].headers['X-Gamma-Shell'], shell.shellSecret, 'only the shell names a path');
+    assert.deepEqual(added.map((d) => d.path), [path.join(dir, 'old'), picked]);
+    assert.equal(shell.notice(), `${picked} is offered to the agents: a chat whose page is in no synced folder can work in it.`);
 
-  // a work folder with no agent on has nothing to let it run
-  s.fake.vaults = [vaultLink({ push: 'everything', mine: true, agent: null })];
-  await shell.refreshKeeping();
-  await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'ask'), /Turn an agent on first/);
-  assert.equal(patches().length, 2);
+    const moved = fs.mkdtempSync(path.join(dir, 'Moved-'));
+    process.env.GAMMA_SHELL_PICK_DIR = moved;
+    await shell.agentDirsFromPage('mine', 'd1');
+    assert.deepEqual(puts()[1].body.map((d) => [d.id, d.path, d.name]), [['d1', moved, 'Old'], ['d10', picked, path.basename(picked)]]);
+    assert.equal(shell.notice(), `The agents work in ${moved} from now on, in place of the directory offered before.`);
+    await assert.rejects(shell.agentDirs(s.srv.id, 'noSuchDir'), /no longer offered/);
+  } finally {
+    delete process.env.GAMMA_SHELL_PICK_DIR;
+    shell.pretendShown(null, null);
+  }
 });
 
 // What `POST /api/folder-links/preview` finds in the directory `picked`:
@@ -902,7 +845,7 @@ test('a directory added becomes a work folder made to choose its files: nothing 
     assert.equal(new URL(view.loaded.at(-1)).searchParams.get('folder'), 'f2');
 
     // a refusal the preview tells is said in the bar, and nothing is made
-    found = previewOf(picked, { refusal: `${picked} holds the marker of the synced vault C:\\Other: was it copied?` });
+    found = previewOf(picked, { refusal: `${picked} holds the marker of the synced folder C:\\Other: was it copied?` });
     assert.equal(await shell.addDirectoryVault(), null);
     assert.equal(made().length, 2, 'nothing posted');
     assert.equal(shell.notice(), found.refusal);
@@ -925,12 +868,12 @@ test('a work folder made with no server open: on the host, started with a word o
   };
   host.fake.routes = (p, init) => {
     if (p === '/api/folder-links/preview') return previewOf(picked);
-    if (p === '/api/folder-links' && init.method === 'POST') return { failWith: 400, body: { detail: 'A workspace has at most 10 synced vaults of folders.' } };
+    if (p === '/api/folder-links' && init.method === 'POST') return { failWith: 400, body: { detail: 'A workspace has at most 10 synced folders.' } };
     return null;
   };
   process.env.GAMMA_SHELL_PICK_DIR = picked;
   try {
-    await assert.rejects(shell.addDirectoryVault(), /at most 10 synced vaults/, 'the server\'s refusal, and no window opened for it');
+    await assert.rejects(shell.addDirectoryVault(), /at most 10 synced folders/, 'the server\'s refusal, and no window opened for it');
     assert.equal(infos.length, 1, 'the host was started');
     assert.ok(infos[0].shellSecret && infos[0].shellSecret.length >= 32, 'with a word of its own');
     assert.equal(infos[0].shellSecret, shell.shellSecret);
@@ -1275,7 +1218,7 @@ test('an empty folder of another server synced with a directory of notes becomes
     const kept = revoked(nas).length;
     assert.equal(await shell.trackedFromPage('mine', 'w1', false), true);
     assert.equal(revoked(nas).length, kept, 'nothing revoked');
-    assert.equal(shell.notice(), '“Empty lab” could not be cancelled, NAS not reached: it waits for its files to be chosen. Choose files… in the sync panel, or remove the vault once NAS answers.');
+    assert.equal(shell.notice(), '“Empty lab” could not be cancelled, NAS not reached: it waits for its files to be chosen. Choose files… in the sync panel, or detach it once NAS answers.');
     assert.equal(shell.current().id, nas.srv.id);
     host.fake.vaults = [];
 
@@ -1328,7 +1271,7 @@ test('removing a work folder of another server that cannot be reached: refused, 
   host.fake.answer = async (p, init, url) => {
     if (p !== '/api/folder-links/v1' || init.method !== 'DELETE' || url.search.includes('force=1')) return answer(p, init, url);
     host.fake.calls.push({ path: p, query: url.search, method: 'DELETE', headers: init.headers || {}, body: null });
-    return { ok: false, status: 409, json: async () => ({ detail: 'NAS cannot be reached: remove the vault when it can, or detach the synced folder there' }) };
+    return { ok: false, status: 409, json: async () => ({ detail: 'NAS cannot be reached: detach it once it answers, or detach the synced folder there' }) };
   };
   const deletes = () => host.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'DELETE').map((c) => c.query);
   electron.session.defaultSession.fetch = async (url, init = {}) => nas.fake.answer(new URL(url).pathname, init, new URL(url));
@@ -1337,7 +1280,7 @@ test('removing a work folder of another server that cannot be reached: refused, 
     // the question takes Cancel under the harness: nothing forgotten
     assert.equal(await shell.removeVault(host.srv.id, 'v1', 'keep'), false);
     assert.deepEqual(deletes(), ['?pages=keep']);
-    assert.match(shell.asked.at(-1), /^NAS cannot be reached: remove the synced folder “Papers” all the same\? NAS cannot be reached: remove the vault when it can/);
+    assert.match(shell.asked.at(-1), /^NAS cannot be reached: detach “Papers” all the same\? NAS cannot be reached: detach it once it answers/);
     shell.answers.push(0);
     assert.equal(await shell.removeVault(host.srv.id, 'v1', 'keep'), true);
     assert.deepEqual(deletes(), ['?pages=keep', '?pages=keep', '?pages=keep&force=1']);
@@ -1351,7 +1294,7 @@ test('removing a work folder of another server that cannot be reached: refused, 
     await shell.refreshKeeping();
     shell.asked.length = 0;
     assert.equal(await shell.removeVault(host.srv.id, 'v1'), false);
-    assert.deepEqual(shell.asked, ['NAS cannot be reached: remove the synced folder “Papers” all the same? NAS does not answer. Remove anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it is detached there. Or cancel, and remove it once NAS answers.']);
+    assert.deepEqual(shell.asked, ['NAS cannot be reached: detach “Papers” all the same? NAS does not answer. Detach anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it is detached there. Or cancel, and detach it once NAS answers.']);
     assert.equal(deletes().length, 3, 'nothing removed');
     shell.answers.push(0);
     assert.equal(await shell.removeVault(host.srv.id, 'v1'), true);
@@ -1798,7 +1741,7 @@ test('a page\'s Continue in a terminal: the command is the open server\'s answer
 
     const run = await shell.terminalFromPage('mine', 'p1');
     const [call] = asks();
-    assert.deepEqual([call.query, call.method, call.headers['X-Gamma-Workspace']], ['?page=p1', 'GET', 'mine']);
+    assert.deepEqual([call.query, call.method, call.headers['X-Gamma-Workspace']], ['?bucket=p1', 'GET', 'mine']);
     assert.deepEqual(shell.terminals.at(-1), run);
     assert.equal(run.options.cwd, dir);
     assert.ok(run.args.includes('thread-1'), 'the session resumed');
@@ -1997,7 +1940,7 @@ test('whereIs skips a server that does not answer in 10 s or has no such route, 
     assert.equal(got.track, 'w1');
     assert.deepEqual([whereCalls(slow).length, whereCalls(later).length], [2, 2]);
     assert.equal(made(slow).length, 1, 'on the host');
-    assert.equal(shell.notice(), `“${path.basename(fresh1)}” is a synced folder of Mine on Slow now: choose the files it tracks. Gamma could not check Broken's synced vaults: it did not start.`);
+    assert.equal(shell.notice(), `“${path.basename(fresh1)}” is a synced folder of Mine on Slow now: choose the files it tracks. Gamma could not check Broken's synced folders: it did not start.`);
     assert.equal(nas.fake.calls.length, 0, 'the remote the window showed is never asked');
   } finally {
     restore();
@@ -2523,7 +2466,7 @@ test('a server\'s address changes with its links: a dry run first, asked when it
     // links to move, over plain http: asked, Cancel changes nothing
     moves.plan = { kind: 'downgrade', plain: true, moved: { vaults: 2, computers: 1, mirrors: 1 } };
     assert.equal(await shell.moveServer(nas.id, 'http://192.168.1.5:9001'), null);
-    assert.equal(shell.asked.at(-1), 'Move the links of https://nas.lan:5001 to http://192.168.1.5:9001? Gamma will send the tokens of 2 synced vaults, this computer and 1 offline copy to http://192.168.1.5:9001, and use http://192.168.1.5:9001 from now on. Only continue if http://192.168.1.5:9001 is the same server. http://192.168.1.5:9001 is http://: the tokens will travel without encryption, and someone on your network could read them.');
+    assert.equal(shell.asked.at(-1), 'Move the links of https://nas.lan:5001 to http://192.168.1.5:9001? Gamma will send the tokens of 2 synced folders or files, this computer and 1 offline copy to http://192.168.1.5:9001, and use http://192.168.1.5:9001 from now on. Only continue if http://192.168.1.5:9001 is the same server. http://192.168.1.5:9001 is http://: the tokens will travel without encryption, and someone on your network could read them.');
     assert.equal(moves.calls().length, 2, 'only the dry run');
     assert.equal(registry.get(nas.id).url, 'https://nas.lan:5001');
 
@@ -2534,12 +2477,12 @@ test('a server\'s address changes with its links: a dry run first, asked when it
     assert.deepEqual(moves.calls().at(-1).body, { from: 'https://nas.lan:5001', to: 'http://192.168.1.5:9001', plain_ok: true });
     assert.deepEqual(moves.revoked, ['DELETE http://192.168.1.5:9001/api/integrations/tokens/t9 team error']);
     assert.equal(registry.get(nas.id).url, 'http://192.168.1.5:9001');
-    assert.equal(shell.notice(), 'https://nas.lan:5001 is now http://192.168.1.5:9001: 2 synced vaults, this computer and 1 offline copy follow it.');
+    assert.equal(shell.notice(), 'https://nas.lan:5001 is now http://192.168.1.5:9001: 2 synced folders or files, this computer and 1 offline copy follow it.');
 
     // refused there: the host's words, nothing changed here
-    moves.answer = { failWith: 409, body: { detail: 'https://nas.example.com refused the token of the synced vault “main”.' } };
+    moves.answer = { failWith: 409, body: { detail: 'https://nas.example.com refused the token of the synced folder “main”.' } };
     shell.answers.push(0);
-    await assert.rejects(shell.moveServer(nas.id, 'https://nas.example.com'), /refused the token of the synced vault “main”/);
+    await assert.rejects(shell.moveServer(nas.id, 'https://nas.example.com'), /refused the token of the synced folder “main”/);
     assert.equal(registry.get(nas.id).url, 'http://192.168.1.5:9001');
     const calls = moves.calls().length;
     assert.equal((await shell.moveServer(nas.id, 'http://192.168.1.5:9001/')).url, 'http://192.168.1.5:9001');
@@ -2567,7 +2510,7 @@ test('a redirect to the same server over https moves its links by itself, once; 
     assert.deepEqual(shell.asked, [], 'nobody asked');
     assert.deepEqual(moves.calls().map((c) => c.body), [{ from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', dry_run: true },
       { from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', plain_ok: false }]);
-    await until(() => shell.notice() === 'http://nas.lan:9001 is now https://nas.lan:5001: 1 synced vault follows it.', 'said');
+    await until(() => shell.notice() === 'http://nas.lan:9001 is now https://nas.lan:5001: 1 synced folder or file follows it.', 'said');
 
     // another server's redirect whose move the host refuses: its row offers it, asked then
     const other = registry.addRemote('Lab', 'http://lab.lan');
@@ -2822,15 +2765,17 @@ test('an http:// address that sends the window to https:// on its own host is fo
 });
 
 // --- an agent's ask on this computer -------------------------------------
-// A work folder of another server whose agent may ask on this computer
-// (setAgentRuns 'computer'), and the card the host's asks draw in the bar:
+// A work folder of another server while its agent may ask (setAgentRuns
+// 'ask'), and the card the host's asks draw in the bar:
 // over the whole window, the content view hidden, armed after a quiet
 // focused second, answered only for a press made since, and what the bar
 // says of each answer.
 
-// A work folder of NAS kept by the host, its agent on and `runs`, reached as `plain` says.
-const farWork = (runs = 'never', more = {}) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'https://nas.lab:5001', plain: '', token_id: 't1',
-  push: 'everything', work: true, mine: true, agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: null, runs }, ...more });
+// A work folder of NAS kept by the host, Codex working there.
+const farWork = (more = {}) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'https://nas.lab:5001', plain: '', token_id: 't1',
+  push: 'everything', work: true, mine: true, agent: { name: 'codex', label: 'Codex', ready: true, problem: '', running: null }, ...more });
+// The host's Codex, on, and what it may run.
+const codexRuns = (runs) => [{ name: 'codex', label: 'Codex', found: true, ready: true, problem: '', enabled: true, runs, mine: true }];
 const SHOWN = { links: [{ id: 'c1', remote_url: 'https://nas.lab:5001', workspace_id: 'nas-ws', account: 'u_1', username: 'alice',
   status: { state: 'connected', error: '', at: '2026-11-13T10:00:00Z' } }] };
 
@@ -2851,7 +2796,7 @@ const fire = (t) => { t.cleared = true; t.fn(); };
 // at `version`; its answer route answers `answerWith(id, body)`.
 async function askingWindow({ focused = true } = {}) {
   const host = server('Host');
-  Object.assign(host.fake, { asks: [], version: 0, fail: null });
+  Object.assign(host.fake, { asks: [], version: 0, fail: null, agents: codexRuns('ask') });
   shell.forgetSurfaced();
   host.fake.routes = (p, init) => {
     if (p === '/api/local-agents/asks') return { version: host.fake.version, asks: host.fake.asks };
@@ -2861,7 +2806,8 @@ async function askingWindow({ focused = true } = {}) {
       return { answered: true, version: host.fake.version };
     }
     if (p === '/api/computer-links') return SHOWN;
-    if (p === '/api/folder-links/v1' && init.method === 'PATCH') return farWork('never');
+    if (p === '/api/local-agents') return { agents: host.fake.agents, dirs: [] };
+    if (p === '/api/local-agents/codex' && init.method === 'PATCH') return { ...codexRuns('never')[0], queued: 0 };
     return null;
   };
   await shell.showWindow();
@@ -2883,61 +2829,6 @@ function armedCard(key) {
   fire(armTimer());
   assert.equal(shell.agentAsk().armed, true);
 }
-
-test('Ask on this computer from the panel: refused for a folder of this server and over plain http, asked first with who writes what is asked, then set with the shell\'s word; an older server is said', async () => {
-  fresh();
-  registry.addRemote('NAS', 'https://nas.lab:5001');
-  const s = server('Host');
-  let older = true;
-  s.fake.vaults = [farWork('never')];
-  s.fake.routes = (p, init) => {
-    if (p === '/api/local-agents') return { agents: [{ name: 'codex', label: 'Codex', found: true, ready: true, problem: '' }] };
-    if (p === '/api/computer-links') return { links: [{ ...SHOWN.links[0], remote_url: s.fake.vaults[0].remote_url }] }; // shown where the folder is
-    if (p === '/api/folder-links/v1' && init.method === 'PATCH') return { ...farWork(JSON.parse(init.body).agent_runs), older };
-    return null;
-  };
-  const patches = () => s.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH');
-  try {
-    await shell.refreshKeeping();
-    const [item] = shell.keeping().items;
-    assert.deepEqual([item.agentRuns, item.secure], ['never', true]);
-
-    await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'computer');
-    assert.deepEqual(patches(), [], 'Cancel, the default, under the harness');
-    assert.equal(shell.asked.at(-1), 'Let Codex ask on this computer to run more in C:\\Papers? In a chat on NAS, Codex can then ask you to run a command with the network or to change files outside this folder.' +
-      ' The question shows here only, in Gamma\'s window, and nothing of it runs until you allow it there, one command at a time.' +
-      ' Whoever can sign in to NAS as alice, and whoever runs NAS, writes what Codex is asked to do: read each command before you allow it.' +
-      ' A command you allow runs as you, with your files and the network.');
-    shell.answers.push(0);
-    await shell.keepingAction('vault', s.srv.id, 'v1', 'agent-runs', 'computer');
-    const [on] = patches();
-    assert.deepEqual(on.body, { agent_runs: 'computer' });
-    assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret);
-    assert.equal(on.headers['X-Gamma-Workspace'], undefined, 'the account\'s, no workspace of the host');
-    assert.equal(shell.notice(), 'Codex may now ask on this computer to run more on Papers. NAS runs an older Gamma: its page will not say that Codex waits here. The question still shows in this window.');
-
-    // asking in the chat is not for it; over plain http nothing is asked or sent
-    const asks = shell.asked.length;
-    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'ask', true), /choose Ask on this computer\.$/);
-    s.fake.vaults = [farWork('never', { remote_url: 'http://nas.lan:9001', plain: 'lan' })];
-    await shell.refreshKeeping();
-    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'computer'), /^Error: Ask on this computer needs https: nas\.lan:9001 is reached over plain http\.$/);
-    // a work folder of this computer's server asks in the chat instead
-    s.fake.vaults = [farWork('never', { remote_url: '', workspace_id: 'mine' })];
-    await shell.refreshKeeping();
-    await assert.rejects(shell.setAgentRuns(s.srv.id, 'v1', 'computer', true), /^Error: Ask on this computer is for a work folder of another server: here the agent asks in the chat\.$/);
-    assert.equal(shell.asked.length, asks, 'nothing asked');
-    assert.equal(patches().length, 1);
-    // back to Nothing more asks nothing and carries no word
-    older = false;
-    s.fake.vaults = [farWork('computer')];
-    await shell.refreshKeeping();
-    await shell.setAgentRuns(s.srv.id, 'v1', 'never');
-    assert.equal(patches().at(-1).headers['X-Gamma-Shell'], undefined);
-  } finally {
-    shell.stopAsks();
-  }
-});
 
 test('a card covers the whole window with the page hidden and the title Gamma, waits behind the one shown, and goes with the queue', async () => {
   fresh();
@@ -3081,7 +2972,7 @@ test('a window closed and made again draws the card again, disarmed until drawn;
   }
 });
 
-test('what an answer says: gone meanwhile nothing was allowed and a list read before it does not bring it back; a timeout after it left is unsure; a refusal keeps the card and arms again; Stop declines, then the folder asks no more', async () => {
+test('what an answer says: gone meanwhile nothing was allowed and a list read before it does not bring it back; a timeout after it left is unsure; a refusal keeps the card and arms again; Stop declines, then the agent asks no more', async () => {
   fresh();
   registry.addRemote('NAS', 'https://nas.lab:5001');
   const { host } = await askingWindow();
@@ -3115,15 +3006,15 @@ test('what an answer says: gone meanwhile nothing was allowed and a list read be
     assert.match(shell.notice(), /^Could not answer Codex: Only the desktop app answers on this computer\. Without an answer it is declined at .+\.$/);
     assert.equal(shell.agentAsk().key, 'a2');
 
-    // Stop asking: a decline, then the folder's policy back to never with the shell's word
+    // Stop asking: a decline, then what the agent may run back to never, its owner's alone
     host.fake.fail = null;
     fire(armTimer());
     shell.pressed('mouseDown');
     await shell.answerAgentAsk('a2', 'stop');
     assert.deepEqual(posts().at(-1).body, { decision: 'deny' });
-    const patch = host.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'PATCH').at(-1);
-    assert.deepEqual([patch.body, patch.headers['X-Gamma-Shell']], [{ agent_runs: 'never' }, shell.shellSecret]);
-    assert.equal(shell.notice(), 'Declined, and Codex no longer asks on this computer for NAS.');
+    const patch = host.fake.calls.filter((c) => c.path === '/api/local-agents/codex' && c.method === 'PATCH').at(-1);
+    assert.deepEqual([patch.body, patch.headers['X-Gamma-Shell']], [{ runs: 'never' }, undefined]);
+    assert.equal(shell.notice(), 'Declined, and Codex no longer asks to run more, here or in the chat.');
     assert.equal(shell.agentAsk(), null);
 
     // an answer left unsure, then a 409 for the next one: the first may be the one taken, so never "nothing was allowed"
@@ -3155,7 +3046,7 @@ test('what an answer says: gone meanwhile nothing was allowed and a list read be
   }
 });
 
-test('the asks are followed on the host while it keeps a folder that may ask here, with the shell\'s word, each read held; the host stopping empties the queue', async () => {
+test('the asks are followed on the host while it keeps a work folder of another server and an agent may ask, with the shell\'s word, each read held; the host stopping empties the queue', async () => {
   fresh();
   registry.addRemote('NAS', 'https://nas.lab:5001');
   const { host } = await askingWindow();
@@ -3163,9 +3054,12 @@ test('the asks are followed on the host while it keeps a folder that may ask her
   let release = () => {};
   let held = null;
   try {
-    host.fake.vaults = [farWork('never')];
+    Object.assign(host.fake, { vaults: [farWork()], agents: codexRuns('never') });
     await shell.refreshKeeping();
-    assert.equal(shell.following(), '', 'no folder asks here: nothing followed');
+    assert.equal(shell.following(), '', 'no agent may ask: nothing followed');
+    Object.assign(host.fake, { vaults: [farWork({ remote_url: '', workspace_id: 'mine' })], agents: codexRuns('ask') });
+    await shell.refreshKeeping();
+    assert.equal(shell.following(), '', 'a work folder of the host\'s own asks in the chat: nothing followed');
     // the host holds a read until its list changes
     const answerOf = host.fake.answer.bind(host.fake);
     host.fake.answer = async (p, init, url) => {
@@ -3174,7 +3068,7 @@ test('the asks are followed on the host while it keeps a folder that may ask her
       }
       return answerOf(p, init, url);
     };
-    Object.assign(host.fake, { vaults: [farWork('computer')], version: 1, asks: [askOf('a1')] });
+    Object.assign(host.fake, { vaults: [farWork()], version: 1, asks: [askOf('a1')] });
     await shell.refreshKeeping();
     assert.equal(shell.following(), host.srv.id);
     await until(() => shell.agentAsk() && held, 'the first read gives the list, the next one is held');

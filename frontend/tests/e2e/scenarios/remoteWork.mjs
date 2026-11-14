@@ -80,7 +80,7 @@ export async function remoteWorkScenarios(env) {
     let token = null;
     await step("remote-work: the computer makes a work folder of an empty NAS folder with a write token minted there, and the folder there carries the mark", async () => {
       // as the shell's makeRemoteWorkFolder: a write token on the NAS, the work folder on the host
-      token = await writeToken("Gamma desktop: Paper synced vault");
+      token = await writeToken("Gamma desktop: Paper synced folder");
       link = await owner.api("/api/folder-links", { method: "POST", body: { folder: folderId, path: dir, notes: true, pull: true,
         push: "everything", choose: true, remote_url: nas.base, workspace: wsId, token: token.token, token_id: token.id } });
       assertEq(link.remote_url, nas.base, "the vault keeps the NAS's folder");

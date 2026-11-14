@@ -890,13 +890,15 @@ pictures are drawn, off the event loop. `FeedbackError` becomes the
 `before_url` the same with `at=before`.
 
 `doc.agent`, on the desktop app's own server only (`_agent_of`): null when
-the work folder has no agent on this computer; else `{name, label, ready,
-problem, takes, why}`, `ready` and `problem` as last asked
-(`local_agents.catalog.cached`: nothing runs, `ready` null while still
-checking), `takes` whether this account's Send would reach the agent now
-(the vault's maker, the vault writing its directory), and `why`, English,
-when not: "Only the person who keeps this folder on this computer can send
-to Codex." or "The work folder is paused on this computer: Codex starts
+no vault on this computer keeps the work folder or no agent is on here;
+else the agent that takes this account's Sends there (its first agent on,
+else another account's: [local_agents.md](local_agents.md) "Who turns it
+on") as `{name, label, ready, problem, takes, why}`, `ready` and `problem`
+as last asked (`local_agents.catalog.cached`: nothing runs, `ready` null
+while still checking), `takes` whether this account's Send would reach the
+agent now (its own agent, the vault writing its directory), and `why`,
+English, when not: "Only the person who turned on Codex on this computer
+can send to it." or "The work folder is paused on this computer: Codex starts
 once it syncs again.". `doc.agents_found` says whether this computer has
 either agent. Both are on this route alone: `open.json`, the request files
 and MCP's `read_feedback` stay as they are

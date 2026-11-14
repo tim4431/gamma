@@ -21,10 +21,10 @@ import pytest
 from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, workspace_of
 from gamma import collab, folder_links, gamma_sync, workspaces
 from gamma.computers import channel, registry
-from gamma.db import connect_users_db
+from gamma.db import connect_users_db, connect_vaults_db
 from gamma.folder_sync import ROOT
 from gamma.integrations import create_token, forget_workspace, grant, resolve_connection
-from gamma.local_agents import catalog
+from gamma.local_agents import catalog, store
 
 PASSWORD = "cm-pass-1234"
 SECRET = "cm-shell-secret"
@@ -156,9 +156,10 @@ def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(own
                    {"kind": "folder", "folder_id": "no-such-folder"}, {"kind": "file", "page_id": page["id"]},
                    {"kind": "file", "page_id": foreign["id"]}],
         "assistants": [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "9" * 100,
-                        "code": ""},
+                        "code": "", "enabled": True, "runs": "ask"},
                        {"name": "gpt", "label": "GPT", "found": True, "ready": True},
-                       {"name": "claude", "label": "Claude Code", "found": True, "ready": False, "code": "on fire"}]})
+                       {"name": "claude", "label": "Claude Code", "found": True, "ready": False, "code": "on fire",
+                        "runs": "ask"}]})
     me = account_of("cptr_owner")
     assert answer["account"] == {"id": me, "username": "cptr_owner"} and answer["computer"] == {"id": "cm_PC-1", "name": "TIM-PC"}
     assert answer["workspace"] == {"id": workspace_of("cptr_owner")} and answer["wait"] == registry.POLL_S and answer["version"]
@@ -166,11 +167,11 @@ def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(own
     assert row["computer"] == "cm_PC-1" and row["name"] == "TIM-PC"
     assert row["vaults"] == [{"kind": "folder", "folder_id": folder, "paused": True},
                              {"kind": "file", "page_id": page["id"], "paused": False}]
-    assert row["assistants"] == [
+    assert row["assistants"] == [   # what an agent off may run is never
         {"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "9" * 64, "code": "",
-         "models": []},
+         "models": [], "enabled": True, "runs": "ask"},
         {"name": "claude", "label": "Claude Code", "found": True, "ready": False, "version": "", "code": "not_ready",
-         "models": []}]
+         "models": [], "enabled": False, "runs": "never"}]
     assert told == [(me, {"t": "computer"})]                      # online now: the maker's windows alone
     _announce(computer, {**_body(), "computer": {"id": "cm_PC-1", "name": "TIM-PC"},
                          "vaults": [{"kind": "folder", "folder_id": folder, "paused": True},
@@ -182,7 +183,8 @@ def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(own
                 {"computer": {"id": "x", "name": "PC"}, "vaults": "all"},
                 {"computer": {"id": "x", "name": "PC"}, "vaults": [{"kind": "disk", "path": "C:/"}]},
                 {"computer": {"id": "x", "name": "PC"}, "vaults": [{"kind": "folder"}]},
-                {"computer": {"id": "x", "name": "PC"}, "vaults": [{"kind": "file", "page_id": "p"}] * 501}, []):
+                {"computer": {"id": "x", "name": "PC"}, "vaults": [{"kind": "file", "page_id": "p"}] * 501},
+                {"computer": {"id": "x", "name": "PC"}, "assistants": [{"name": "codex", "enabled": "yes"}]}, []):
         assert computer.post("/api/computers/announce", json=bad).status_code == 400, bad
     assert computer.post("/api/computers/announce", content=b"not json").status_code == 400
     r = computer.post("/api/computers/announce", content=b"{" + b" " * (129 * 1024) + b"}")
@@ -308,7 +310,8 @@ def test_the_page_shows_its_makers_computers_and_nobody_elses(owner, stranger, a
     assert shown == [{"id": "cm-laptop", "name": "LAPTOP", "online": True, "since": None,
                       "vault": {"kind": "file", "name": "CM loose paper", "paused": False, "agent": None},
                       "assistants": [{"name": "codex", "label": "Codex", "found": True, "ready": True,
-                                      "version": "0.167.0", "code": "", "models": []}]}]
+                                      "version": "0.167.0", "code": "", "models": [], "enabled": False,
+                                      "runs": "never"}]}]
     assert _shown(owner, elsewhere["id"]) == [] and _shown(owner, "no-such-page") == []
 
     # a restart forgets who is online, never when each was last seen
@@ -326,10 +329,17 @@ def test_the_page_shows_its_makers_computers_and_nobody_elses(owner, stranger, a
     _announce(_as(item["token"]), _body({"kind": "file", "page_id": shared_page["id"]}))
     assert [c["name"] for c in _shown(owner, shared_page["id"], **there)] == ["TIM-PC"]
     assert _shown(stranger, shared_page["id"], **there) == []
+    # Settings → AI lists the account's computers of the workspace, with no vault, and nobody else's
+    mine = owner.get("/api/computers", headers=there).json()["computers"]
+    assert [(c["name"], c["online"], sorted(c)) for c in mine] == [
+        ("TIM-PC", True, ["assistants", "id", "name", "online", "since"])]
+    assert stranger.get("/api/computers", headers=there).json() == {"computers": []}
+    assert {"LAPTOP", "TIM-PC"} <= {c["name"] for c in owner.get("/api/computers").json()["computers"]}
     assert stranger.get(f"/api/pages/{loose['id']}/computer",
                         headers={"X-Gamma-Workspace": workspace_of("cptr_owner")}).status_code == 403
     read = owner.post("/api/integrations/tokens", json={"name": "Reader", "scope": "read"}).json()["token"]
     assert _as(read).get(f"/api/pages/{loose['id']}/computer").status_code == 403
+    assert _as(read).get("/api/computers").status_code == 403
     assert owner.get(f"/api/pages/{loose['id']}/computer", params={"share": "x"}).status_code == 404
     assert anon.get(f"/api/pages/{loose['id']}/computer").status_code == 401
     anon.post("/api/login-guest")
@@ -528,8 +538,8 @@ def test_the_channel_announces_this_computers_vaults_of_that_server_and_shows_it
     assert row["computer"] == channel.computer_id(host["url"]) and len(row["computer"]) == 22
     assert row["vaults"] == [{"kind": "folder", "folder_id": folder, "paused": False},
                              {"kind": "file", "page_id": single["id"], "paused": False}]
-    assert [(a["name"], a["ready"], a["code"]) for a in row["assistants"]] == [("codex", True, ""),
-                                                                                 ("claude", False, "signed_out")]
+    assert [(a["name"], a["ready"], a["code"], a["enabled"]) for a in row["assistants"]] == [
+        ("codex", True, "", False), ("claude", False, "signed_out", False)]
     assert channel.get(link["id"])["status"]["state"] == "connected"
     shown = _shown(owner, filed["id"])
     assert [(c["id"], c["online"], c["vault"]["name"]) for c in shown] == [(row["computer"], True, "CM kept")]
@@ -544,6 +554,18 @@ def test_the_channel_announces_this_computers_vaults_of_that_server_and_shows_it
     assert 0 < turn.once() <= channel.QUICK_S and turn.announced is None   # announces again, after a moment
     turn.once()
     assert registry.online(registry._live[item["id"]])
+    # an agent turned on here for the channel's account is announced on; another account's is not this one's
+    try:
+        store.set_agent("claude", True, by=account_of("cptr_stranger"))
+        store.set_agent("codex", True, by=account_of("cptr_owner"))
+        store.set_runs("codex", "ask", by=account_of("cptr_owner"))
+        turn.once()
+        assert [(a["name"], a["enabled"], a["runs"]) for a in _row(item["id"])["assistants"]] == [
+            ("codex", True, "ask"), ("claude", False, "never")]
+        assert "agent" not in json.dumps(_row(item["id"])["vaults"])
+    finally:
+        with connect_vaults_db() as conn:
+            conn.execute("DELETE FROM computer_agents")
 
 
 def test_the_channel_says_refused_older_and_unreachable(owner, host):

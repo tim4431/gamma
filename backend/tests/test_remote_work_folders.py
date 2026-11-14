@@ -37,6 +37,7 @@ from gamma.blocks_store import FOLDERS, create_page, new_block_id
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.feedback import files as feedback_files
 from gamma.integrations import create_token
+from gamma.local_agents import runner
 from gamma.ops import LOCKED, OpError, commit_ops
 from gamma.vault import disk as vault_disk, http_remote as vault_http, kinds, store as vault_store
 from gamma.vault.local_remote import LocalRemote
@@ -377,9 +378,12 @@ def test_a_work_folder_let_go_there_stops_its_vault_for_good(owner, disk, over_h
     # its library switch, turned before its next round, writes no mark where none is
     owner.patch(f"/api/folder-links/{link['id']}", json={"library": False}).raise_for_status()
     assert _mark(far, w) is None
+    stopped = []
+    monkeypatch.setattr(runner, "stop_link", lambda link_id, why="": stopped.append((link_id, why)))
     status = _sync(owner, link["id"])
     assert status["stopped"] == folder_links.MARK_GONE and _mark(far, w) is None     # never marked again
     assert folder_links.get_link(link["id"])["state"][folder_links.LET_GO_THERE]
+    assert stopped == [(link["id"], "detached")]                                      # its agent's run here stops
     said = owner.get(f"/api/folder-links/{link['id']}").json()
     assert said["work"] is False and said["let_go"] is True                           # the desktop app forgets it
 
@@ -399,6 +403,7 @@ def test_a_work_folder_let_go_there_stops_its_vault_for_good(owner, disk, over_h
     monkeypatch.setattr(gamma_sync, "default_open", counting)
     status = _sync(owner, link["id"])
     assert status["stopped"] == folder_links.MARK_GONE and asked == []                # stopped at once
+    assert stopped == [(link["id"], "detached")]
     folder_links._mark_again(folder_links.get_link(link["id"], with_token=True))
     assert asked == [] and folder_links.removal(folder_links.get_link(link["id"]))["files"] == 0
     monkeypatch.setattr(gamma_sync, "default_open", opened)

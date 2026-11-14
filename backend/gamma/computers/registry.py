@@ -8,12 +8,14 @@ else (``auth.CHANNEL_PREFIX``). What it last announced is one users.db
 ``computers`` row per token: its id (one per server: the computer's HMAC
 of its install id and this server's origin, so two servers cannot match
 one computer by it), its name, the folders and pages of the token's
-workspace it keeps (ids only, ``vaults``, each paused or not, a work
-folder's with its agent when that is on there: ``agent_of``), the
-assistants there (``assistants``: name, label, found, ready, version and a
-problem's code, never its words), the app's version, and when it was last
-seen (``seen_at``), so "offline since 14:02" survives a restart. Never a
-path.
+workspace it keeps (ids only, ``vaults``, each paused or not), the
+assistants there (``assistants``: name, label, found, ready, version, a
+problem's code, never its words, the models it offers, whether it is on
+for the token's account and what it may run), the app's version, and when
+it was last seen (``seen_at``), so "offline since 14:02" survives a
+restart. Never a path. A work folder of this server it keeps has the
+computer's agent while one is on there (``_agent``: the first assistant
+``enabled``, in the catalog's order; ``agent_of``).
 
 Whether it is online is in memory (``_live``): a poll is held now, or the
 last one ended (or the computer announced) less than ``GRACE_S`` ago. A
@@ -30,8 +32,9 @@ there is begun or asked to stop (step 4d), or ``let_go`` when a work folder
 it keeps is detached here (gamma/work_folders/detach.py, ``keepers``), a
 wake while no poll is held answering the next.
 
-Only the token's account sees its computer (``of_page``); a revoked or
-expired token's row goes (``forget``, and when the rows are read).
+Only the token's account sees its computer (``of_page``, ``of_folders``,
+``of_account``); a revoked or expired token's row goes (``forget``, and
+when the rows are read).
 """
 
 import asyncio
@@ -57,7 +60,8 @@ MAX_TEXT = 64          # a name, a label, a version, the app's version
 MAX_ID = 128           # a folder's or a page's id
 MAX_MODELS = 32        # models one assistant announces
 MAX_EFFORTS = 8        # efforts one model announces
-AGENTS = ("codex", "claude")
+AGENTS = ("codex", "claude")                     # the catalog's, in its order
+RUNS = ("never", "ask")                          # what an assistant may run (local_agents.store.RUNS)
 CODES = ("", "missing", "signed_out", "not_ready", "checking")   # an assistant's problem, as a code
 NUDGE = {"t": "computer"}
 _COMPUTER_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -131,13 +135,13 @@ def _models(value) -> list[dict]:
 
 def normalise(body) -> dict:
     """The announce ``body`` as kept: ``{computer: {id, name}, app, vaults,
-    assistants}``, each string capped, the vaults deduplicated (a folder
-    vault's ``agent``, ``codex`` or ``claude``, kept when it has one: a work
-    folder of this server whose Sends run on the computer; another name, or
-    on a file vault, is none), an assistant this server does not know of
-    dropped, an unknown problem code read as ``not_ready``, each with the
-    ``models`` it offers there (``_models``). ValueError for a body of
-    another shape."""
+    assistants}``, each string capped, the vaults deduplicated, an
+    assistant this server does not know of dropped, an unknown problem code
+    read as ``not_ready``, each with the ``models`` it offers there
+    (``_models``), whether it is on (``enabled``) and what it may run then
+    (``runs``, ``never`` or ``ask``; anything else ``never``). An older
+    app's announce, whose assistants carry no ``enabled``, has on the agent
+    its folder vaults name. ValueError for a body of another shape."""
     if not isinstance(body, dict) or not isinstance(body.get("computer"), dict):
         raise ValueError("The announce names its computer.")
     computer_id, name = body["computer"].get("id"), body["computer"].get("name")
@@ -150,6 +154,11 @@ def normalise(body) -> dict:
         raise ValueError(f"The vaults are a list of at most {MAX_VAULTS}.")
     if not isinstance(assistants, list) or len(assistants) > 2 * len(AGENTS):
         raise ValueError("The assistants are a short list.")
+    # An older app names no assistant ``enabled`` and puts its agent on the
+    # folder vaults it works in instead: that agent is on, never asking.
+    legacy = not any(isinstance(a, dict) and "enabled" in a for a in assistants)
+    named = {v.get("agent") for v in vaults if isinstance(v, dict) and v.get("kind") == "folder"} if legacy else set()
+    old = next((name for name in AGENTS if name in named), None)
     kept, seen = [], set()
     for vault in vaults:
         if not isinstance(vault, dict) or vault.get("kind") not in ("folder", "file"):
@@ -158,11 +167,9 @@ def normalise(body) -> dict:
         target = vault.get(key)
         if not isinstance(target, str) or not 1 <= len(target) <= MAX_ID:
             raise ValueError(f"A {vault['kind']} vault names its {key}.")
-        agent = vault.get("agent") if vault["kind"] == "folder" and vault.get("agent") in AGENTS else None
         if (vault["kind"], target) not in seen:
             seen.add((vault["kind"], target))
-            kept.append({"kind": vault["kind"], key: target, "paused": bool(_flag(vault.get("paused"), "paused")),
-                         **({"agent": agent} if agent else {})})
+            kept.append({"kind": vault["kind"], key: target, "paused": bool(_flag(vault.get("paused"), "paused"))})
     there = []
     for agent in assistants:
         if not isinstance(agent, dict):
@@ -170,19 +177,19 @@ def normalise(body) -> dict:
         if agent.get("name") not in AGENTS or any(a["name"] == agent["name"] for a in there):
             continue
         code = agent.get("code") or ""
+        on = agent["name"] == old if legacy else bool(_flag(agent.get("enabled"), "enabled"))
         there.append({"name": agent["name"], "label": _text(agent.get("label"), "label") or agent["name"],
                       "found": _flag(agent.get("found"), "found"), "ready": _flag(agent.get("ready"), "ready"),
                       "version": _text(agent.get("version"), "version"),
-                      "code": code if code in CODES else "not_ready", "models": _models(agent.get("models"))})
+                      "code": code if code in CODES else "not_ready", "models": _models(agent.get("models")),
+                      "enabled": on, "runs": agent.get("runs") if on and agent.get("runs") in RUNS else "never"})
     return {"computer": {"id": computer_id, "name": name.strip()}, "app": _text(body.get("app"), "app"),
             "vaults": kept, "assistants": there}
 
 
-def _kept_here(ws: str, user_id: str, vaults: list[dict]) -> list[dict]:
+def _kept_here(ws: str, vaults: list[dict]) -> list[dict]:
     """The vaults of ``vaults`` the workspace has: a live folder (or the
-    whole library), a page of the library. A folder vault keeps its
-    ``agent`` only when the folder itself carries a work folder's mark and
-    the account ``user_id`` may edit the workspace (``_may_send``)."""
+    whole library), a page of the library."""
     with connect_pages_db(ws) as conn:
         def here(vault: dict) -> bool:
             if vault["kind"] == "folder":
@@ -191,12 +198,7 @@ def _kept_here(ws: str, user_id: str, vaults: list[dict]) -> list[dict]:
                     (vault["folder_id"],)).fetchone())
             row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (vault["page_id"],)).fetchone()
             return bool(row) and row[0] == "root"
-        kept = [vault for vault in vaults if here(vault)]
-        if not any(vault.get("agent") for vault in kept):
-            return kept
-        roots = _work_roots(conn, [v["folder_id"] for v in kept if v.get("agent")]) if _may_send(ws, user_id) else set()
-    return [vault if not vault.get("agent") or vault["folder_id"] in roots
-            else {k: v for k, v in vault.items() if k != "agent"} for vault in kept]
+        return [vault for vault in vaults if here(vault)]
 
 
 def _arm(token_id: str, live: _Live) -> None:
@@ -246,12 +248,12 @@ def announce(user_id: str, username: str, ws: str, token_id: str, body) -> dict:
     they show changed (online now, the name, the vaults, the assistants).
     ``{account: {id, username}, computer: {id, name}, workspace: {id},
     version, wait}``: ``version`` what its polls name, ``wait`` the
-    longest hold. A work folder it kept with an agent and no longer does
-    (turned off, another agent, gone) has the account's chat turns
-    queued there that no computer of it would take fail
+    longest hold. A folder it kept with an agent and no longer does (the
+    agent turned off, another agent, the folder gone) has the account's
+    chat turns queued there that no computer of it would take fail
     (``_end_orphaned``). ValueError for a malformed body."""
     found = normalise(body)
-    found["vaults"] = _kept_here(ws, user_id, found["vaults"])
+    found["vaults"] = _kept_here(ws, found["vaults"])
     shown = (found["computer"]["name"], json.dumps(found["vaults"]), json.dumps(found["assistants"]))
     now = page_now()
     with connect_users_db() as conn:
@@ -274,8 +276,8 @@ def announce(user_id: str, username: str, ws: str, token_id: str, body) -> dict:
     if came or before is None or tuple(before) != shown:
         collab.publish_account(user_id, NUDGE)
     if before is not None:
-        now_kept = _agent_vaults(found["vaults"])
-        _end_orphaned(ws, user_id, [w for w, agent in _agent_vaults(_loads(before[1])).items()
+        now_kept = _agent_vaults(found["vaults"], found["assistants"])
+        _end_orphaned(ws, user_id, [w for w, agent in _agent_vaults(_loads(before[1]), _loads(before[2])).items()
                                     if now_kept.get(w) != agent], _turned_off)
     return {"account": {"id": user_id, "username": username}, "computer": found["computer"], "workspace": {"id": ws},
             "version": version, "wait": POLL_S}
@@ -363,12 +365,12 @@ def forget(token_id: str) -> None:
         if live is not None and live.timer is not None:
             live.timer.cancel()
     with connect_users_db() as conn:
-        row = conn.execute("SELECT user_id, workspace_id, vaults FROM computers WHERE token_id = ?",
+        row = conn.execute("SELECT user_id, workspace_id, vaults, assistants FROM computers WHERE token_id = ?",
                            (token_id,)).fetchone()
         conn.execute("DELETE FROM computers WHERE token_id = ?", (token_id,))
     if row:
         _fail_held(row[1], token_id)
-        _end_orphaned(row[1], row[0], list(_agent_vaults(_loads(row[2]))), _taken_back)
+        _end_orphaned(row[1], row[0], list(_agent_vaults(_loads(row[2]), _loads(row[3]))), _taken_back)
     if row or live is not None:
         collab.publish_account(row[0] if row else live.user_id, NUDGE)
 
@@ -396,15 +398,27 @@ def _fail_held(ws: str, token_id: str) -> None:
         log.warning(f"[computers] the chat turns held by computer token {token_id} in workspace {ws}: {e}")
 
 
-def _agent_vaults(vaults: list) -> dict[str, str]:
-    """``{folder id: agent}`` of the folder vaults of ``vaults`` kept with an agent."""
-    return {v["folder_id"]: v["agent"] for v in vaults
-            if isinstance(v, dict) and v.get("kind") == "folder" and v.get("agent") in AGENTS}
+def _agent(assistants: list) -> str | None:
+    """The agent a computer's work folders of this server have: the first
+    of its ``assistants`` it announced on for the token's account, in the
+    catalog's order; None for none."""
+    on = {a.get("name") for a in assistants if isinstance(a, dict) and a.get("enabled") is True}
+    return next((name for name in AGENTS if name in on), None)
+
+
+def _agent_vaults(vaults: list, assistants: list) -> dict[str, str]:
+    """``{folder id: agent}`` of the folder vaults of ``vaults``, while the
+    computer has an agent on (``_agent``)."""
+    agent = _agent(assistants)
+    if agent is None:
+        return {}
+    return {v["folder_id"]: agent for v in vaults if isinstance(v, dict) and v.get("kind") == "folder"}
 
 
 def _turned_off(agent: str, agents) -> str:
     label = _label(agent) if agent in AGENTS else "The agent"
-    return f"{label} is no longer this folder's agent." if agents else f"{label} was turned off for this folder."
+    return (f"{label} is no longer this folder's agent." if agents
+            else f"{label} was turned off on the computer that keeps this folder.")
 
 
 def _taken_back(agent: str, _agents) -> str:
@@ -427,7 +441,7 @@ def _end_orphaned(ws: str, user_id: str, folders: list[str], words) -> None:
             rows = _valid_rows(conn, "c.workspace_id = ? AND c.user_id = ?", (ws, user_id))
         kept = {w: set() for w in folders}
         for row in rows:
-            for w, agent in _agent_vaults(_loads(row[3])).items():
+            for w, agent in _agent_vaults(_loads(row[3]), _loads(row[4])).items():
                 if w in kept:
                     kept[w].add(agent)
         chats.fail_queued(ws, user_id, kept, words)
@@ -487,13 +501,11 @@ def _loads(text: str) -> list:
     return value if isinstance(value, list) else []
 
 
-def of_page(user_id: str, ws: str, page_id: str) -> list[dict]:
-    """The account's computers that keep the page ``page_id`` of the
-    workspace ``ws`` (a file vault of that page, a folder vault the page is
-    filed in or below): ``[{id, name, online, since, vault: {kind, name,
-    paused}, assistants}]``, ``since`` the time it went offline (null while
-    online), online ones first, then the most recently seen. A row whose
-    token was revoked or expired goes here (``forget``)."""
+def _account_rows(user_id: str, ws: str) -> list[tuple]:
+    """The account's ``computers`` rows of the workspace ``ws`` whose token
+    still opens the channel: ``(token_id, computer, name, vaults,
+    assistants, seen_at)``. A row whose token was revoked or expired goes
+    here (``forget``)."""
     with connect_users_db() as conn:
         rows = conn.execute(
             "SELECT c.token_id, c.computer, c.name, c.vaults, c.assistants, c.seen_at, t.id FROM computers c "
@@ -501,7 +513,36 @@ def of_page(user_id: str, ws: str, page_id: str) -> list[dict]:
             "WHERE c.user_id = ? AND c.workspace_id = ?", (int(time.time()), user_id, ws)).fetchall()
     for gone in [r[0] for r in rows if r[6] is None]:
         forget(gone)
-    rows = [r for r in rows if r[6] is not None]
+    return [r[:6] for r in rows if r[6] is not None]
+
+
+def of_account(user_id: str, ws: str) -> list[dict]:
+    """The account's computers shown to the workspace ``ws`` (Settings → AI
+    on this server): ``[{id, name, online, since, assistants}]``, as
+    ``of_page`` says them, without a vault; online ones first, then the most
+    recently seen."""
+    found = []
+    for token_id, computer, name, _vaults, assistants, seen_at in _account_rows(user_id, ws):
+        with _lock:
+            now = online(_live.get(token_id))
+        found.append(({"id": computer, "name": name, "online": now, "since": None if now else seen_at,
+                       "assistants": _loads(assistants)}, seen_at))
+    found.sort(key=lambda pair: pair[1], reverse=True)
+    found.sort(key=lambda pair: not pair[0]["online"])
+    return [computer for computer, _seen in found]
+
+
+def of_page(user_id: str, ws: str, page_id: str) -> list[dict]:
+    """The account's computers that keep the page ``page_id`` of the
+    workspace ``ws`` (a file vault of that page, a folder vault the page is
+    filed in or below): ``[{id, name, online, since, vault: {kind, name,
+    paused, agent}, assistants}]``, ``since`` the time it went offline
+    (null while online), ``agent`` ``{name, label}`` of the computer's
+    agent (``_agent``) when the vault keeps a work folder of the
+    workspace, which the account may edit, else null; online ones first,
+    then the most recently seen. A row whose token was revoked or expired
+    goes here (``forget``)."""
+    rows = _account_rows(user_id, ws)
     if not rows:
         return []
     found: list[tuple[dict, str]] = []
@@ -509,13 +550,14 @@ def of_page(user_id: str, ws: str, page_id: str) -> list[dict]:
         top = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_top(conn, page_id),)).fetchone()
         if not top or top[0] != "root":
             return []
-        for token_id, computer, name, vaults, assistants, seen_at, _token in rows:
+        marks = Tree.read(conn).marks if _may_send(ws, user_id) else {}
+        for token_id, computer, name, vaults, assistants, seen_at in rows:
             vault = _holder(conn, _loads(vaults), page_id)
             if vault is None:
                 continue
             with _lock:
                 now = online(_live.get(token_id))
-            agent = vault.get("agent") if vault.get("agent") in AGENTS else None
+            agent = _agent(_loads(assistants)) if vault.get("folder_id") in marks else None
             found.append(({"id": computer, "name": name, "online": now, "since": None if now else seen_at,
                            "vault": {"kind": vault["kind"], "name": _vault_name(conn, ws, vault),
                                      "paused": bool(vault.get("paused")),
@@ -527,10 +569,11 @@ def of_page(user_id: str, ws: str, page_id: str) -> list[dict]:
 
 
 # --- the work folders a computer keeps with an agent (step 4c) ---------------------------------
-# A work folder of this server kept on a computer whose agent is on there
-# (the announce's folder vault with ``agent``): its maker's Sends made in
-# Gamma run on that computer, taken over the channel
-# (gamma/routers/computers.py), and this server writes the answers.
+# A work folder of this server kept on a computer with an agent on there
+# for the token's account (an assistant of the announce ``enabled``,
+# ``_agent``): that account's Sends made in Gamma run on that computer,
+# taken over the channel (gamma/routers/computers.py), and this server
+# writes the answers.
 
 def _label(agent: str) -> str:
     from ..local_agents import catalog  # local: the agents' package is loaded where an agent is named
@@ -587,11 +630,10 @@ def of_folders(user_id: str, ws: str) -> dict[str, dict]:
     each folder's first computer (online ones first, then the most recently
     seen), ``since`` when it went offline (null while online), ``paused``
     whether its vault is paused there. What a synced folder's card, row and
-    Files window row say of the computer that keeps it."""
-    with connect_users_db() as conn:
-        rows = _valid_rows(conn, "c.user_id = ? AND c.workspace_id = ?", (user_id, ws))
+    Files window row say of the computer that keeps it. A row whose token
+    was revoked or expired goes here (``_account_rows``)."""
     kept: dict[str, tuple[dict, str]] = {}
-    for token_id, _user, name, vaults, _assistants, seen_at in rows:
+    for token_id, _computer, name, vaults, _assistants, seen_at in _account_rows(user_id, ws):
         with _lock:
             now = online(_live.get(token_id))
         for vault in _loads(vaults):
@@ -629,11 +671,13 @@ def said_of(token_id: str) -> tuple[list, str]:
 
 
 def workspaces_of(user_id: str) -> list[str]:
-    """The workspaces a computer of the account ``user_id`` keeps a work
-    folder of with an agent, as announced."""
+    """The workspaces a computer of the account ``user_id`` keeps a folder
+    of while it has an agent on, as announced."""
     with connect_users_db() as conn:
-        return [r[0] for r in conn.execute("SELECT DISTINCT workspace_id FROM computers WHERE user_id = ? "
-                                           "AND vaults LIKE '%\"agent\"%' ORDER BY workspace_id", (user_id,))]
+        rows = conn.execute("SELECT workspace_id, vaults, assistants FROM computers WHERE user_id = ? "
+                            "ORDER BY workspace_id", (user_id,)).fetchall()
+    return list(dict.fromkeys(ws for ws, vaults, assistants in rows
+                              if _agent_vaults(_loads(vaults), _loads(assistants))))
 
 
 def agent_folders(token_id: str, ws: str) -> dict[str, dict]:
@@ -644,9 +688,9 @@ def agent_folders(token_id: str, ws: str) -> dict[str, dict]:
     the workspace)."""
     with connect_users_db() as conn:
         rows = _valid_rows(conn, "c.token_id = ? AND c.workspace_id = ?", (token_id, ws))
-    found = {v["folder_id"]: {"agent": v["agent"], "paused": bool(v.get("paused"))}
-             for row in rows for v in _loads(row[3])
-             if isinstance(v, dict) and v.get("kind") == "folder" and v.get("agent") in AGENTS}
+    found = {v["folder_id"]: {"agent": agent, "paused": bool(v.get("paused"))}
+             for row in rows if (agent := _agent(_loads(row[4])))
+             for v in _loads(row[3]) if isinstance(v, dict) and v.get("kind") == "folder"}
     if not found or not _may_send(ws, rows[0][1]):
         return {}
     with connect_pages_db(ws) as conn:
@@ -657,13 +701,15 @@ def agent_folders(token_id: str, ws: str) -> dict[str, dict]:
 def agent_of(ws: str, folder_id: str, user_id: str) -> dict | None:
     """The computer of the account ``user_id`` (the one mentioning,
     sending or reading) that keeps the work folder ``folder_id`` of ``ws``
-    is (or is below) with an agent, as announced: ``{token_id, user_id,
-    agent, label, computer, online, paused, ready, code}`` (``computer`` its
-    name, ``ready`` the agent's as the computer last said: true, false or
-    null, ``code`` its problem's, ``CODES``), an online one first, then the
-    most recently seen; None for none, and while that account may not edit
-    the workspace. Another account's computer never answers for it. Reads
-    the rows even while the computer is away, so its Sends wait for it."""
+    is (or is below), while an agent of it is on there, as announced:
+    ``{token_id, user_id, agent, label, computer, online, paused, ready,
+    code}`` (``agent`` the computer's first agent on, ``_agent``;
+    ``computer`` its name, ``ready`` the agent's as the computer last said:
+    true, false or null, ``code`` its problem's, ``CODES``), an online one
+    first, then the most recently seen; None for none, and while that
+    account may not edit the workspace. Another account's computer never
+    answers for it. Reads the rows even while the computer is away, so its
+    Sends wait for it."""
     if not user_id or not _may_send(ws, user_id):
         return None
     with connect_pages_db(ws) as conn:
@@ -672,19 +718,19 @@ def agent_of(ws: str, folder_id: str, user_id: str) -> dict | None:
     if not w:
         return None
     with connect_users_db() as conn:
-        rows = _valid_rows(conn, "c.workspace_id = ? AND c.user_id = ? AND c.vaults LIKE '%\"agent\"%'",
-                           (ws, user_id))
+        rows = _valid_rows(conn, "c.workspace_id = ? AND c.user_id = ?", (ws, user_id))
     found = []
     for token_id, user_id, name, vaults, assistants, seen_at in rows:
+        agent = _agent(_loads(assistants))
         vault = next((v for v in _loads(vaults) if isinstance(v, dict) and v.get("kind") == "folder"
-                      and v.get("folder_id") == w and v.get("agent") in AGENTS), None)
+                      and v.get("folder_id") == w), None) if agent else None
         if vault is None:
             continue
-        said = next((a for a in _loads(assistants) if isinstance(a, dict) and a.get("name") == vault["agent"]), {})
+        said = next((a for a in _loads(assistants) if isinstance(a, dict) and a.get("name") == agent), {})
         with _lock:
             now = online(_live.get(token_id))
-        found.append(({"token_id": token_id, "user_id": user_id, "agent": vault["agent"],
-                       "label": _label(vault["agent"]), "computer": name, "online": now,
+        found.append(({"token_id": token_id, "user_id": user_id, "agent": agent,
+                       "label": _label(agent), "computer": name, "online": now,
                        "paused": bool(vault.get("paused")), "ready": said.get("ready"),
                        "code": said.get("code") if said.get("code") in CODES else ""}, seen_at))
     if not found:
@@ -709,10 +755,9 @@ def heard(ws: str, request_id: str) -> None:
         return
     by, _state, w = row
     with connect_users_db() as conn:
-        rows = _valid_rows(conn, "c.workspace_id = ? AND c.user_id = ? AND c.vaults LIKE '%\"agent\"%'", (ws, by))
-    for token_id, _user_id, _name, vaults, _assistants, _seen_at in rows:
-        if any(isinstance(v, dict) and v.get("kind") == "folder" and v.get("folder_id") == w
-               and v.get("agent") in AGENTS for v in _loads(vaults)):
+        rows = _valid_rows(conn, "c.workspace_id = ? AND c.user_id = ?", (ws, by))
+    for token_id, _user_id, _name, vaults, assistants, _seen_at in rows:
+        if w in _agent_vaults(_loads(vaults), _loads(assistants)):
             wake(token_id, "sends")
 
 

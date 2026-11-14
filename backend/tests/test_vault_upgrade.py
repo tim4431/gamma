@@ -870,7 +870,7 @@ def test_a_sub_pages_note_the_client_put_beside_its_parents_is_that_pages(owner,
     else:
         first = _create(owner, folder=lab["folder"], path=str(dest), push="pdfs")
         _sync(owner, first["id"])
-        owner.delete(f"/api/folder-links/{first['id']}", params={"files": "keep"}).raise_for_status()
+        owner.delete(f"/api/folder-links/{first['id']}").raise_for_status()
     files, pages = _files_of(dest), _pages_of(lab["folder"])
     link = _create(owner, folder=lab["folder"], path=str(dest), push="pdfs")
     try:

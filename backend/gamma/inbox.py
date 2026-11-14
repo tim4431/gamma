@@ -367,8 +367,8 @@ def from_comment(ws: str, event: dict) -> None:
     thread someone else resolved. An integration token's write (the
     event's ``agent``) is someone else's to its own account too: each of
     these reaches the account when it would reach anyone else. The name of
-    a work folder's agent on this computer in its maker's comment on that
-    folder's files is the agent (the event's ``agent_named``, and
+    an agent on this computer in its owner's comment on a work folder's
+    files is the agent (the event's ``agent_named``, and
     ``_agent_of`` for the thread's earlier comments), so a member of that
     name hears nothing of it. A deleted comment's items go with it. Never
     raises."""
@@ -408,12 +408,12 @@ def _from_comment(ws: str, event: dict) -> None:
         with connect_pages_db(ws) as conn:
             others = conn.execute("SELECT author, body, agent_id FROM comments WHERE thread_id = ? AND id != ? "
                                   "ORDER BY created_at, id", (event["thread_id"], event["comment_id"])).fetchall()
-        # (author, the names it mentions, whether a person's session wrote it: only there the maker names the agent)
+        # (author, the names it mentions, whether a person's session wrote it: only there the owner names the agent)
         said = [(author, mentions.people_in(text), not agent_id) for author, text, agent_id in others]
         agent = _agent_of(ws, event["page_id"], said)
         in_thread = set()
         for author, names, own in said:
-            in_thread |= (names - {agent["name"]}) if agent and own and author == agent["maker"] else names
+            in_thread |= (names - {agent["name"]}) if agent and own and author == agent["owner"] else names
         people = [p for p in dict.fromkeys([a for a, _, _ in others] + sorted(_ids_of(in_thread).values()))
                   if p not in mentioned]
         emit("reply", people, actor, ws, snippet=body, **where)
@@ -423,10 +423,10 @@ def _from_comment(ws: str, event: dict) -> None:
 
 def _agent_of(ws: str, page_id: str, said: list[tuple[str, set, bool]]) -> dict | None:
     """The agent on this computer of the page's work folder
-    (``local_agents.mention.agent_of_page``: ``{name, label, maker}``) when
+    (``local_agents.mention.agent_of_page``: ``{name, label, owner}``) when
     a thread's earlier comments (``said``: ``(author, names, a person's
     session wrote it)``) mention an agent's name, None otherwise: in its
-    maker's own comments (not a token's) that name is the agent, as the
+    owner's own comments (not a token's) that name is the agent, as the
     switch is now, and no member of that name hears of it (on a server
     whose computers keep the folder, each such author's own computer is
     asked: ``mention.agent_of_page``'s ``user_id``)."""
@@ -434,7 +434,7 @@ def _agent_of(ws: str, page_id: str, said: list[tuple[str, set, bool]]) -> dict 
 
     for author in dict.fromkeys(author for author, names, own in said if own and names & set(catalog.AGENTS)):
         found = mention.agent_of_page(ws, page_id, author)
-        if found is not None and found["maker"] == author:
+        if found is not None and found["owner"] == author:
             return found
     return None
 

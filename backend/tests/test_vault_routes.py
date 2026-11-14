@@ -1057,7 +1057,7 @@ def test_a_viewer_is_told_no_path_in_a_link_its_status_or_a_files_problem(lab, d
     assert status["kept"] and "another program" in status["kept"][0]["why"]
     folder_links._write_status(link["id"], {**folder_links.get_link(link["id"])["status"],
                                             "last_error": f"Cannot write {root}: no", "stopped": f"{root} moved",
-                                            "push_off": f"push turned off: the synced vault {root} pushes into too"})
+                                            "push_off": f"push turned off: the synced folder {root} pushes into too"})
     seen = _state(vera, page)["vault"]
     got = vera.get(f"/api/folder-links/{link['id']}").json()
     listed = next(l for l in vera.get("/api/folder-links").json()["links"] if l["id"] == link["id"])
