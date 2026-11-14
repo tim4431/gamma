@@ -230,6 +230,16 @@
 .folderRow svg { color: var(--accent); flex-shrink: 0; }
 .folderRow.labelRow svg { color: var(--text-secondary); }
 .folderRow:hover { background: var(--bg-block); }
+/* a synced folder's own row: after its name, the computer that keeps it */
+.folderKeeper {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
 /* --- home file-manager: context menu --- */
 :is(.pageCard, .folderRow).dragOver {
   background: var(--accent-bg);
@@ -561,8 +571,9 @@
   color: var(--text-dim);
   user-select: none;
 }
-/* A work folder's list (explorer/FolderList.jsx) has its own columns after
-   the name: the format, the file's size, the date and the open comments. */
+/* A synced folder's folder view (explorer/FolderTree.jsx) has its own
+   columns after the name: the format, the file's size, the date and the
+   open comments. */
 .fileRowFormat, .fileRowSize, .fileRowComments {
   font-size: var(--fs-xs);
   color: var(--text-muted);
@@ -653,6 +664,9 @@
 .fileGlyph.text { color: var(--accent); }
 .fileGlyph.image, .fileGlyph.audio, .fileGlyph.video { color: var(--warn); }
 .fileGlyph.binary { color: var(--text-secondary); }
+/* A synced folder's file by its theme icon (shared/ui/FileIcon.jsx), its
+   room kept while the icons' map is read. */
+.fileIcon { display: inline-block; object-fit: contain; }
 .tileRenameInput {
   width: 100%;
   border-color: var(--accent-fill);
@@ -760,8 +774,6 @@
 .phoneUI .fileRow .fileRowDate { grid-area: 1 / 4; width: 110px; line-height: 20px; }
 .phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-area: 1 / 5; }
 .phoneUI .fileRow .fileRowMenu { grid-area: 1 / 6; }
-/* A work folder's rows keep one line of fixed columns on a phone too. */
-.phoneUI .workList .fileRow { display: flex; align-items: center; }
 @media (max-width: 600px) {
   .phoneUI .fileRow { grid-template-columns: 20px minmax(0, 1fr) auto auto auto; }
   .phoneUI .fileRow .fileRowKind { width: 52px; }

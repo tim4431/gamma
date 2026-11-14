@@ -589,7 +589,7 @@ runs more, and `ZOTERO_FUZZ_TRACE=<key>` follows one object round by round.
 
 The synced vaults' tests ([synced_vaults.md](synced_vaults.md)) work on
 real directories in `tmp_path` and a real workspace; a test that makes a
-vault removes it with `DELETE …?files=keep`, since the links live in the
+vault removes it with `DELETE /api/folder-links/{id}`, since the links live in the
 worker's shared users.db. By module: `test_md_lens.py` (the lens block by
 block, each law on small files) and `test_md_lens_corpus.py`, the gate: the
 lens's laws through `shape` over every Markdown file of the repository, the

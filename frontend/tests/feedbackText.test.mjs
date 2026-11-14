@@ -120,7 +120,7 @@ test("the Send block: the folder's agent named, its limit, its problem, others' 
   const many = sendWords(plan("ready"), 101);
   assert.equal(many.blocked, true);
   assert.equal(many.notes[1].tone, "warn");
-  assert.equal(many.notes[1].text, "Codex takes at most 100 comments at a time: send a file or a directory of this work folder.");
+  assert.equal(many.notes[1].text, "Codex takes at most 100 comments at a time: send a file or a directory of this synced folder.");
   assert.equal(sendWords(plan("ready"), 100).blocked, false, "100 is still one Send");
   const down = sendWords(plan("not_ready", { problem: "Codex is not signed in on this computer: run `codex login` in a terminal." }), 2);
   assert.equal(down.button, "Send 2 comments to Codex", "still named");

@@ -213,7 +213,7 @@ export const ZOTERO_LOG_ACTIONS = {
   "restored there": T("restored in Zotero (edited here after it was trashed there)"),
   "replaced here": T("Zotero's version replaced this one"),
   "replaced there": T("this version replaced Zotero's"),
-  "kept here": T("kept here — in Zotero's trash, but the folder is shared or a synced vault"),
+  "kept here": T("kept here — in Zotero's trash, but the folder is shared or a synced folder"),
 };
 
 // The name the server gives the personal library (zotero_web.libraries).

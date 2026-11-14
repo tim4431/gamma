@@ -265,7 +265,7 @@ word that lets a path through, and the ways in:
 |---|---|---|
 | a library folder's right-click *Sync with this computer…* (`frontend/src/app/App.jsx`) | a directory | `addFolderVault(ws, folder)` |
 | the sync panel's *Sync a folder of <workspace> with this computer…* (below, "The sync panel") | a folder, then a directory | `addFolderVault(ws, folder)` |
-| *Add a synced vault…* in the launcher's buttons and at the panel's end | a directory | `addDirectoryVault()` |
+| *Add a synced folder…* in the launcher's buttons and at the panel's end | a directory | `addDirectoryVault()` |
 | *Open with Gamma* on a folder in the file manager ("Opening files and folders") | the folder, or a Markdown file's project | `newWorkFolder(dir, tick)` |
 | a page's Document menu, *Push from a file on this computer…* | a PDF | `addFileVault(ws, page)` |
 
@@ -384,7 +384,7 @@ the host runs).
 
 **A directory's vault** (`addDirectoryVault`, `workFolderOf`): the
 directory becomes a work folder (below) in a new folder named after it
-(`new_folder`). It comes three ways: the picker of *Add a synced vault…*,
+(`new_folder`). It comes three ways: the picker of *Add a synced folder…*,
 a directory already chosen (`oneByOne`'s *Sync the folder…*), and a folder
 opened with Gamma from the file manager, or a Markdown file's project
 (`newWorkFolder`, "Opening files and folders"), which may name a file to
@@ -405,7 +405,7 @@ rather than a project, so before a vault takes one the shell asks: *Make
 all of Downloads a work folder?*, detail *<dir> is your Downloads folder.
 Gamma would write a hidden .gamma folder there, read the folder while it
 runs, and ask which of its files to track. For one project, open that
-project's folder instead.*, buttons *Make it a work folder* and *Cancel*
+project's folder instead.*, buttons *Make it a synced folder* and *Cancel*
 (the default, and the test harness's answer). A folder's *Sync with this
 computer…* and *Locate…*, which need not make a work folder, ask *Sync all
 of Downloads with Gamma?* instead, with *Use it* and *Cancel* (`broadOk(dir,
@@ -530,14 +530,18 @@ computer hidden there when no other vault of that server and workspace
 stays (`releaseRemote`); a cancel the host refused (that server not
 reached) leaves the link choosing and the token kept, and the bar says
 so. Removing one whose server the removal's question could not reach
-asks only whether to remove it anyway (`force=1`). *Choose files…* on such a folder opens the
+asks only whether to detach it anyway (`force=1`). *Choose files…* on such a folder opens the
 host's window the same way. Its push stays everything and its pull on
 (`REMOTE_WORK_RULE`), and removing it while that server cannot be reached
-asks first (*Remove anyway* forgets it with `force=1`, the folder staying a
-work folder there until the workspace's owner lets go of it). Once this
-computer is shown there, the computer's agents work in it as in a local
-work folder ([local_agents.md](../../docs/dev/local_agents.md) "A work
-folder of another server"); the question before an agent is turned on
+asks first (*Detach anyway* forgets it with `force=1`, the folder staying a
+synced folder there until it is detached there). One that server detached
+(its Detach woke this computer's channel: the list's `let_go`) is forgotten
+at the shell's next reading as *Detach…* forgets it (`forgetDetached`:
+`DELETE …`, its token revoked there, this computer hidden there with the
+last vault), the directory as it is but for `.gamma/`, and the bar says so.
+Once this computer is shown there, the computer's agents work in it as in
+a local work folder ([local_agents.md](../../docs/dev/local_agents.md) "A
+work folder of another server"); the question before an agent is turned on
 says what such a server can then do. The vaults of a remote workspace
 are the host's links with that origin and workspace (`listLinks`; the
 chooser lists only the folders'). `settings.folderHost` remembers the host
@@ -618,9 +622,10 @@ synced yet*, *Starting…*, *Waiting*, *Changes queued* and the like, with a
 matching icon and colour (*Agent working* when the only thing at work is a
 work folder's agent: a vault's own problem still ranks above it and keeps
 its row, the run said in the row's tooltip), and shows once a server is open, anything is
-kept or the vault dialog is up; its tooltip counts them ("1 clone and 2
-synced vaults on this computer: synced"). Its **panel** lists three
-groups, *Clones*, *Zotero links* and *Synced vaults*, each row with its
+kept or the vault dialog is up; its tooltip counts them, a folder's vault
+as a synced folder and a file's as a synced vault ("1 clone, 2 synced
+folders and 1 synced vault on this computer: synced"). Its **panel** lists three
+groups, *Clones*, *Zotero links* and *Synced folders and files*, each row with its
 name over its state, a state dot, and its action buttons, always shown
 (each named by its tooltip). A vault's row adds its direction after its
 name as the two arrows its view's *Pull now* and *Push now* carry: the
@@ -628,7 +633,7 @@ pull arrow lit while it pulls, the push arrow lit while it pushes
 everything and half-lit while it pushes PDFs only, dim while off (a vault
 of one file shows the push arrow alone). Its `path ⇄ remote · folder`,
 `D:\Papers ⇄ NAS · Research / Papers`, is in the row's tooltip. Under
-the groups come *Add a synced vault…* and, while a
+the groups come *Add a synced folder…* and, while a
 workspace is open, *Sync a folder of <workspace>…*. That opens the
 panel's second level, the chooser: *Whole library* and every folder of the open workspace
 (`shell:folders` → `listFolders`: the open server's `GET /api/sync/folders`
@@ -665,7 +670,7 @@ other asks for a directory (`shell:add-folder-vault` → `addFolderVault`).
   the switches are. A row carries none of its own: a push switch there
   could drop a vault that pushes everything to off in one click.
 
-**A vault's own view** has a back row (*Synced vaults*), *Local*, *Remote*
+**A vault's own view** has a back row (*Synced folders and files*), *Local*, *Remote*
 and *State* (the state's tooltip on it), and for a folder's vault the two
 switches as the dialog has them: a remote's folder keeps *Pull* on and
 *everything* shut (`keeping.REMOTE_RULE`, which `setPull` and `setPush`
@@ -676,9 +681,7 @@ server that runs agents, the vault's maker (`item.mine`) reads under the
 switches where the agents are set: *Codex and Claude Code work in this
 folder once they are turned on in Gamma's Settings → AI.* (`AGENTS_SET`):
 the agents are the computer's, set from Gamma's page ("A page's asks"
-above). Its
-everyday actions follow as a bar of round buttonsIts
-everyday actions follow as a bar of round buttons
+above). Its everyday actions follow as a bar of round buttons
 (`.vaultBar`: *Sync now*, *Pull now*, *Push now*, *Pause* or *Resume*, and
 the directory), each named by its tooltip; the rare and the grave ones
 keep their rows, where their words warn. Each goes through
@@ -695,7 +698,7 @@ keep their rows, where their words warn. Each goes through
 | *Locate…* (*Locate the file…*) | a stopped vault or one whose directory is not there; a file's vault always | the picker, then `POST …/relink {path}` with the shell's word; the directory's marker must be the vault's |
 | *Open the directory*, *Show in folder* | always | `openDirectory`, `revealFile` |
 | *Force pull…*, *Force push…* | a folder's vault | the page count from `GET …/removal`, a warning (`keeping.forceAsk`), then `…?force=pull` or `force=push` |
-| *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
+| *Remove the synced folder…* (*Detach…* for a work folder, *Remove the vault…* for a file's) | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?pages=keep` or, a work folder's files removed from Gamma, `pages=remove` |
 | the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
@@ -703,15 +706,21 @@ now* and the switches) leave the panel open on the new
 state (`STAYS_OPEN`, the same list in `main.js` and `bar.html`); the
 others close it, since they ask first or open something.
 
-*Remove the vault…* offers *Remove, keep the files* and
-*Remove, move them to the trash* (the files the sync wrote go to
-`.gamma/trash`; files the user added or changed stay). A vault of one file,
-a vault whose directory is not there and a stopped one (its marker gone or
-another's) offer only *Remove the vault*, which touches nothing on disk.
-The pages stay in every case but a work folder's files that are not in the
-library, which go to Recently deleted; the question says both numbers
-(`removal`'s `files` and `in_library`). A remote's vault then has its token
-revoked (`releaseRemote`).
+*Remove the vault…* never touches the directory but for Gamma's own
+`.gamma/` (its marker, its feedback files, then the folder when that leaves
+it empty), and a vault whose directory is not there or a stopped one (its
+marker gone or another's) not even that. A kept folder's vault offers
+*Remove the synced folder*, a vault of one file *Remove the vault*: their
+pages stay as they are. A work
+folder's, *Detach…* in the panel, asks the web app's Detach in its words
+(`keeping.removalAsk` is `frontend/src/explorer/detach.js` in English, with
+this computer's name): how many files sync with it and how many are in the
+library, then *Keep the files in Gamma* (each an ordinary page, its bytes
+stored first: `removal`'s `bytes`; a file too large to keep stays listed)
+or *Remove them from Gamma* (those not in the library to Recently deleted,
+of the other server for a work folder there), and that the directory on
+this computer stays as it is. A remote's vault then has its token revoked
+(`releaseRemote`).
 
 A folder's vault reads, worst first: *Choosing files* for a work folder
 whose files are not chosen yet (drawn as pending; its row has *Choose
@@ -1229,7 +1238,7 @@ first, and the first answer that is not `none` wins (`vault`, `hidden`,
 `around`, `file_vault`). Before a path is taken as nobody's, each local
 server that does not run is started and asked too (a second local server
 costs its start, rarely); one that does not start is named in the notice
-that follows (`Gamma could not check <server>'s synced vaults: it did not
+that follows (`Gamma could not check <server>'s synced folders: it did not
 start.`) and the open goes on. Each server has 10 s (`WHERE_MS`); an older
 server without the route (404, 405), a refusal, a timeout or a server that
 stopped is logged and skipped. Nobody's is the host's `none`, with its
@@ -1257,11 +1266,11 @@ the one that would navigate:
 | inside a vault of this server | the window on that server (opened when another shows), `?ws=&folder=` of the directory's folder: the list view there. `never`: *Gamma never tracks <rel>: <why>. “W” opened.*; not `exact`: *Nothing in <rel> is tracked yet: “W” opened at “<nearest>”.* (and *Choose files… picks what it tracks.* for a work folder). A paused vault opens as it is; a kept folder is never raised to a work folder here; a whole library's vault opens the library |
 | inside a vault of another server | the registry's remote at its origin, `?ws=&folder=` by that server's ids (its maker's work folder still choosing: the host's dialog, as *Choose files…*); a remote the registry lacks: `<dir> is synced with <host>: add that server to Gamma to open it here.` |
 | `hidden` | `<dir> is kept by another account on this computer.` |
-| `around` one vault | that vault, as above, and *<dir> holds the work folder “W”, which opened: a work folder is never inside or around another.* |
-| `around` several | *<dir> holds 3 synced vaults (“A”, “B”, “C”): open one of their folders with Gamma, or pick it in the sync panel.*, nothing opened |
+| `around` one vault | that vault, as above, and *<dir> holds the synced folder “W”, which opened: a synced folder is never inside or around another.* |
+| `around` several | *<dir> holds 3 synced folders (“A”, “B”, “C”): open one of their folders with Gamma, or pick it in the sync panel.*, nothing opened |
 | `none` with a `refusal` | the refusal (a drive's root, home or a directory around it, the data directory, a system place) |
 | `none`, a work folder made this run still choosing | *Choose the files of “W” first, then open <dir> with Gamma again.*, nothing made |
-| `none` | `newWorkFolder`: a work folder as *Add a synced vault…* makes one (`workFolderOf`: the broad-place question, `vaultPlace`, the preview, `makeWorkFolder`, "A directory's vault"), its dialog open; *“<name>” is a work folder of <workspace> on <server> now: choose the files it tracks.* A preview's refusal and the server's (`MAX_LINKS`, a clone or a Zotero-linked workspace) are said as for any work folder |
+| `none` | `newWorkFolder`: a work folder as *Add a synced folder…* makes one (`workFolderOf`: the broad-place question, `vaultPlace`, the preview, `makeWorkFolder`, "A directory's vault"), its dialog open; *“<name>” is a synced folder of <workspace> on <server> now: choose the files it tracks.* A preview's refusal and the server's (`MAX_LINKS`, a clone or a Zotero-linked workspace) are said as for any work folder |
 
 **One new work folder at a time.** The shell keeps the work folders the
 verb made in this run (`waiting`: server, workspace, link id, name).

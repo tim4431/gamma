@@ -293,10 +293,12 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
 7. **A stop.** A request withdrawn meanwhile (read again, or the stop set by
    a withdraw) gets nothing more written in Gamma; the run ends `stopped`.
    Stopped for another reason, the request fails with what the vault is
-   now: "Stopped: the agent was turned off on this computer.", "Stopped: the
-   work folder was paused.", "Stopped: the work folder is no longer kept on
-   this computer.", "Stopped: the work folder changed on this computer." or
-   "Stopped: Gamma is closing."
+   now, or as the stop said it (`stop_link`'s `why`: a vault being removed,
+   one its other server detached): "Stopped: the agent was turned off on
+   this computer.", "Stopped: the synced folder was paused.", "Stopped: the
+   synced folder is no longer kept on this computer.", "Stopped: the synced
+   folder was detached.", "Stopped: the synced folder changed on this
+   computer." or "Stopped: Gamma is closing."
 8. **The answers.** The turn ended well and `prompt.answers` keeps some:
    each is written by `gamma.feedback.agent.reply` with a connection of
    the requester (`integrations.Connection(user_id=<maker>,
@@ -757,7 +759,7 @@ steps").
   changed files):
   1. Checks again what its route checked (`home.place`): where it works,
      still the conversation's (`chats.place_of` for its account and
-     `dir`: else "The work folder is no longer kept on this computer.",
+     `dir`: else "The synced folder is no longer kept on this computer.",
      "The directory this conversation works in is no longer offered on this
      computer.", or what it is about gone), a vault not paused or choosing
      its files, the turn's agent still on and the conversation's account's
@@ -1625,7 +1627,7 @@ either agent.
   once. Another computer's turn draws no card: it waits for the answer on
   that computer.
 - **What it changed** is Gamma AI's changes card (`AgentChanges.jsx`
-  `FileChanges`, "Changed in the work folder · 2", "Changed in its
+  `FileChanges`, "Changed in the synced folder · 2", "Changed in its
   directory" outside one): a row a file, its path a `PathLink` resolved
   from the work folder's top (the strip's `folder_id`, the transcript's
   `PathLinkContext` while such a conversation shows), the first three then

@@ -652,7 +652,7 @@ included. A vault of one file pushes a PDF on that computer to a page each
 time it changes, and a PDF opened from that computer is read where it lies,
 a page inside *Opened files*. A folder's *Sync with this computer…*, a
 page's *Push from a file on this computer…* or the desktop app's sync panel
-(*Add a synced vault…*) starts them. A vault's writes are its maker's, as
+(*Add a synced folder…*) starts them. A vault's writes are its maker's, as
 op-log client `disk`, and its own conflicts (`file_won`) stay out of a
 clone's and a Zotero link's. A workspace that is a clone or has a Zotero
 link takes vaults that pull or push PDFs, never one that pushes everything,

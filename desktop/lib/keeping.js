@@ -350,7 +350,9 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // server's own that pushes everything), with its library switch (`library`)
 // and whether its files wait to be chosen in Gamma (`choosing`). A work
 // folder of another server, made from an empty folder there, pushes
-// everything and pulls, both locked (REMOTE_WORK_RULE).
+// everything and pulls, both locked (REMOTE_WORK_RULE). `letGo`: a work
+// folder of another server that server detached (the list's `let_go`),
+// which the shell forgets as Detach… does (main.js forgetDetached).
 //
 // `roles` is the workspaces the server's account may open, as its `GET
 // /api/session` lists them (`[{id, role}]`; null: not read). The server
@@ -401,6 +403,7 @@ function vault(server, link, servers, roles = null, computers = null, net = {}) 
     work: scope === 'folder' && link.folder_id !== 'root'
       && (typeof link.work === 'boolean' ? link.work : !link.remote_url && pushWord(link.push) === 'everything'),
     library: Boolean(link.library), choosing: Boolean(link.choosing), mine: Boolean(link.mine),
+    letGo: Boolean(link.remote_url && link.let_go),
     plain: link.remote_url && (link.plain === 'lan' || link.plain === 'name') ? link.plain : '',
   };
   item.computer = link.remote_url && !item.seen && computers && Array.isArray(computers.links)
@@ -509,9 +512,10 @@ const AGENT_LABELS = { codex: 'Codex', claude: 'Claude Code' };
 
 // A vault of a workspace its maker is no longer in, as its row says it.
 function awayState(item) {
-  const free = item.scope === 'file' ? 'the file; it stays as it is' : 'its directory; its files stay as they are';
+  const free = item.scope === 'file' ? 'Remove the vault to free the file; it stays as it is'
+    : `${item.work ? 'Detach it' : 'Remove the synced folder'} to free its directory; its files stay as they are`;
   return { ...item, state: 'error', text: 'No access to its workspace',
-    title: `Your account is no longer a member of the workspace this vault syncs with, so nothing is pulled or pushed. Remove the vault to free ${free}.` };
+    title: `Your account is no longer a member of the workspace this vault syncs with, so nothing is pulled or pushed. ${free}.` };
 }
 
 // Which way a vault goes, said after its state.
@@ -534,7 +538,7 @@ const said = (text) => `${capital(text)}${/[.!?]$/.test(text) ? '' : '.'}`;
 // its guard (Go on), its directory not there, a problem, never synced, up to
 // date.
 // Up to date, it also says what its last round left (`left`: not synced),
-// why its push was turned off when it was taken onto synced vaults
+// why its push was turned off when it was taken onto synced folders
 // (`push_off`), the pages filed in it that an older vault beside it keeps
 // (`shared`), and when a folder kept before became a vault (`upgraded_at`).
 function folderState(item, s, left, failure = null) {
@@ -581,8 +585,8 @@ function folderState(item, s, left, failure = null) {
       (changed ? ` ${plural(changed, 'file')} you changed on this computer ${isAre(changed)} kept as you left ${changed === 1 ? 'it' : 'them'}; Force pull… replaces ${changed === 1 ? 'it' : 'them'} with Gamma's.` : '') +
       (left.length ? ` Not synced: ${left.slice(0, 3).map((k) => `${k.path} (${k.why})`).join('; ')}${left.length > 3 ? `; ${left.length - 3} more` : ''}.` : '') +
       (s.push_off ? ` ${said(s.push_off)}` : '') +
-      (shared.length ? ` Kept by an older synced vault beside this one, so not written here: ${shared.slice(0, 3).map((p) => `“${p.title || 'Untitled'}”`).join(', ')}${shared.length > 3 ? `; ${shared.length - 3} more` : ''}.` : '') +
-      (s.upgraded_at ? ` Kept on this computer before; a synced vault since ${clock(s.upgraded_at)}, with .gamma/ in place of .gamma-sync.json.` : '') +
+      (shared.length ? ` Kept by an older synced folder beside this one, so not written here: ${shared.slice(0, 3).map((p) => `“${p.title || 'Untitled'}”`).join(', ')}${shared.length > 3 ? `; ${shared.length - 3} more` : ''}.` : '') +
+      (s.upgraded_at ? ` Kept on this computer before; a synced folder since ${clock(s.upgraded_at)}, with .gamma/ in place of .gamma-sync.json.` : '') +
       (item.untracked ? ` Untracked: ${plural(item.untracked, 'file')} Gamma does not read.` : '') };
 }
 
@@ -617,12 +621,13 @@ function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [], r
 }
 
 // The sync button's reading of all of it: the worst state, a word or two,
-// and a tooltip with the counts.
+// and a tooltip with the counts (a folder's vault a synced folder, a file's
+// a synced vault).
 function summarize(items) {
-  const kinds = (kind) => items.filter((i) => i.kind === kind).length;
-  const [clones, links, vaults] = [kinds('clone'), kinds('zotero'), kinds('vault')];
+  const kinds = (kind, scope) => items.filter((i) => i.kind === kind && (!scope || i.scope === scope)).length;
+  const [clones, links, folders, files] = [kinds('clone'), kinds('zotero'), kinds('vault', 'folder'), kinds('vault', 'file')];
   const what = listed([clones && plural(clones, 'clone'), links && plural(links, 'Zotero link'),
-    vaults && plural(vaults, 'synced vault')].filter(Boolean));
+    folders && plural(folders, 'synced folder'), files && plural(files, 'synced vault')].filter(Boolean));
   if (!items.length) return { state: 'none', text: '', title: 'Nothing syncs with this computer yet' };
   const live = items.filter((i) => !QUIET.includes(i.state));
   if (!live.length) return { state: 'paused', text: 'Paused', title: `${what} on this computer: paused` };
@@ -652,19 +657,19 @@ function summarize(items) {
 // that server (main.js makeRemoteWorkFolder) and only then pushes
 // everything. The dialog, the vault's view and the shell's switches
 // (main.js setPull, changePush) keep to it.
-const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most: a work folder there is made from an empty folder.';
+const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most: a synced folder there is made from an empty folder.';
 
 // What a work folder of another server is, whatever its switches are asked:
 // it pushes everything and pulls, until it is removed (the server refuses
 // the rest too: its release would read this computer's library).
-const REMOTE_WORK_RULE = 'A work folder of another server pushes everything and pulls: remove the vault to stop.';
+const REMOTE_WORK_RULE = 'A synced folder of another server pushes everything and pulls: detach it to stop.';
 
 // Why the empty folder `folder` of server `remote` did not become a work
 // folder there (`reason`: that server older than this app, the account only
 // a viewer there, or that server's or the host's refusal), for the bar while
 // the vault dialog asks how it is synced instead (main.js addFolderVault).
 function remoteWorkRefused(remote, folder, reason) {
-  return `“${folder}” cannot be a work folder of ${remote}: ${said(String(reason || `${remote} refused it`))} It can be synced as a vault that pulls instead.`;
+  return `“${folder}” cannot be a synced folder of ${remote}: ${said(String(reason || `${remote} refused it`))} It can be synced as a vault that pulls instead.`;
 }
 
 // What a vault of the whole library may not be: a work folder, which needs
@@ -718,7 +723,7 @@ function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = f
   // everything makes no page of a file Gamma did not write.
   const marker = p.marker || null;
   const more = [
-    marker && !marker.link_id ? `${dir} was a synced vault before: it is taken up again.`
+    marker && !marker.link_id ? `${dir} was a synced folder before: it is taken up again.`
       : marker ? '' : 'Gamma adds .gamma/ there, to know the directory again, and nothing else of its own.',
     pull && push !== 'everything' && files
       ? `The ${files === 1 ? 'note or PDF' : `${files} notes and PDFs`} already there ${isAre(files)} left as ${files === 1 ? 'it is' : 'they are'}.` : '',
@@ -728,52 +733,59 @@ function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = f
 }
 
 // The question before removing a vault, with `GET .../removal`'s counts
-// (`{pages, in_place, bytes, files, in_library}`): `{ message, detail,
-// buttons, choices }`, `choices[i]` the `files=` of button i (null: cancel).
-// A file's vault never touches its file; a vault whose directory is not
-// there, or is no longer its own (stopped: the marker gone or another
-// vault's), is forgotten without touching the disk. A work folder's files
-// not in the library go to Recently deleted (of the other server, for a work
-// folder there), and those in it stay: both are said.
-function removalAsk(item, removal = {}) {
+// (`{pages, files, in_library, too_large, in_place, bytes}`) and the name
+// of this computer (`computer`): `{ message, detail, buttons, choices }`,
+// `choices[i]` the `pages=` of button i (null: cancel). A work folder, here
+// or of another server, is a synced folder, and the question is its
+// Detach, in the web app's words (frontend/src/explorer/detach.js): its
+// files kept in Gamma as pages, or those not in the library removed to
+// Recently deleted (of the other server, for a work folder there). Any
+// other vault's pages stay as they are, and nothing is asked. The directory
+// stays as it is either way, but for Gamma's own .gamma folder; one not
+// there, or no longer this vault's (stopped: the marker gone or another
+// vault's), is not touched at all. A file's vault never touches its file.
+function removalAsk(item, removal = {}, computer = 'this computer') {
   if (item.scope === 'file') {
     return { message: `Remove the synced vault of “${item.name}”?`,
       detail: `${baseName(item.dest)} is no longer pushed to the page. The file and the page stay as they are.`,
       buttons: ['Remove the vault', 'Cancel'], choices: ['keep', null] };
   }
+  const disk = item.offline ? `${item.dest} is not there now, so nothing on disk is touched.`
+    : item.stopped ? `${item.dest} is no longer this vault's directory, so nothing in it is touched.`
+    : `The directory on ${computer} stays as it is: only Gamma's own .gamma folder goes.`;
+  if (item.work) {
+    const files = removal.files || 0;
+    const inLibrary = removal.in_library || 0;
+    const tooLarge = removal.too_large || 0;
+    const leaving = Math.max(files - inLibrary, 0);
+    const counts = [files ? `${plural(files, 'file')} ${files === 1 ? 'syncs' : 'sync'} with it.` : 'No file syncs with it yet.',
+      inLibrary ? `${inLibrary} of them ${isAre(inLibrary)} in your library and ${inLibrary === 1 ? 'stays' : 'stay'} there either way.` : ''];
+    const keep = ['Each file becomes an ordinary page, filed where it is.',
+      removal.bytes ? `Their bytes are stored in Gamma: ${bytesText(removal.bytes)}.` : '',
+      tooLarge ? `${plural(tooLarge, 'file')} too large to keep ${tooLarge === 1 ? 'stays' : 'stay'} listed by name, without ${tooLarge === 1 ? 'its' : 'their'} bytes.` : ''];
+    const remove = leaving ? `${plural(leaving, 'file')} ${leaving === 1 ? 'goes' : 'go'} to Recently deleted${item.remoteUrl ? ` on ${item.remote}` : ''}.`
+      : 'No file goes to Recently deleted: every one is in your library.';
+    return { message: `Detach “${item.name}” from ${computer}?`,
+      detail: [...counts, 'Keep the files in Gamma:', ...keep, 'Remove them from Gamma:', remove, disk].filter(Boolean).join(' '),
+      buttons: ['Keep the files in Gamma', 'Remove them from Gamma', 'Cancel'], choices: ['keep', 'remove', null] };
+  }
   const pages = removal.pages || 0;
-  const files = removal.files || 0;
-  const kept = removal.in_library || 0;
   const inPlace = removal.in_place || 0;
-  const pagesSaid = files
-    ? `${files === 1 ? 'Its file not in the library goes' : `Its ${files} files not in the library go`} to Recently deleted${item.remoteUrl ? ` on ${item.remote}` : ''}` +
-      (kept ? `; ${kept === 1 ? 'its page in the library stays' : `its ${kept} pages in the library stay`}` : '')
-    : pages ? `${pages === 1 ? 'Its page stays' : `Its ${pages} pages stay`} in Gamma` : 'It holds no pages yet';
-  const stays = pagesSaid +
+  const stays = (pages ? `${pages === 1 ? 'Its page stays' : `Its ${pages} pages stay`} in Gamma` : 'It holds no pages yet') +
     (inPlace ? `; ${plural(inPlace, 'PDF')} read where ${inPlace === 1 ? 'it is' : 'they are'} (${bytesText(removal.bytes)}) ${isAre(inPlace)} stored in Gamma first` : '') + '.';
-  const message = `Remove the synced vault “${item.name}”?`;
-  if (item.offline) {
-    return { message, detail: `${stays} ${item.dest} is not there now, so nothing on disk is touched.`,
-      buttons: ['Remove the vault', 'Cancel'], choices: ['keep', null] };
-  }
-  if (item.stopped) {
-    return { message, detail: `${stays} ${item.dest} is no longer this vault's directory, so nothing in it is touched.`,
-      buttons: ['Remove the vault', 'Cancel'], choices: ['keep', null] };
-  }
-  return { message,
-    detail: `${stays} Keep the files in ${item.dest} as they are, or move the files the sync wrote to its trash, .gamma/trash; files you added or changed stay.`,
-    buttons: ['Remove, keep the files', 'Remove, move them to the trash', 'Cancel'], choices: ['keep', 'trash', null] };
+  return { message: `Remove the synced folder “${item.name}”?`, detail: `${stays} ${disk}`,
+    buttons: ['Remove the synced folder', 'Cancel'], choices: ['keep', null] };
 }
 
 // The question when a work folder of another server cannot be removed as it
 // should, its server not reached (`reason`, the host's words): `{ message,
-// detail, buttons }`, button 0 removing it all the same, which forgets it on
-// this computer and leaves the folder a work folder there until its owner
-// lets go of it.
+// detail, buttons }`, button 0 detaching it all the same, which forgets it on
+// this computer and leaves the folder a synced folder there until it is
+// detached there.
 function farRemovalAsk(item, reason) {
-  return { message: `${item.remote} cannot be reached: remove the work folder “${item.name}” all the same?`,
-    detail: `${said(String(reason || `${item.remote} does not answer`))} Remove anyway, and this computer forgets it; the folder stays a work folder on ${item.remote}, its files locked, until the workspace's owner lets go of it there. Or cancel, and remove it once ${item.remote} answers.`,
-    buttons: ['Remove anyway', 'Cancel'] };
+  return { message: `${item.remote} cannot be reached: detach “${item.name}” all the same?`,
+    detail: `${said(String(reason || `${item.remote} does not answer`))} Detach anyway, and this computer forgets it; the folder stays a synced folder on ${item.remote}, its files locked, until it is detached there. Or cancel, and detach it once ${item.remote} answers.`,
+    buttons: ['Detach anyway', 'Cancel'] };
 }
 
 // The question before a force pull (the files become what Gamma holds) or
@@ -824,9 +836,11 @@ function plainAsk(host, warning, unsure = false) {
 }
 
 // The links a move takes along (the move's `moved`: `{vaults, computers,
-// mirrors}`), as a sentence lists them; '' for none.
+// mirrors}`, the vaults of folders and of files counted together), as a
+// sentence lists them; '' for none.
 function movedWords(moved = {}) {
-  const parts = [moved.vaults && plural(moved.vaults, 'synced vault'), moved.computers && 'this computer',
+  const parts = [moved.vaults && (moved.vaults === 1 ? '1 synced folder or file' : `${moved.vaults} synced folders or files`),
+    moved.computers && 'this computer',
     moved.mirrors && (moved.mirrors === 1 ? '1 offline copy' : `${moved.mirrors} offline copies`)];
   return listed(parts.filter(Boolean));
 }

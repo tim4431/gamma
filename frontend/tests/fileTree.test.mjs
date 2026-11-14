@@ -1,12 +1,13 @@
-// The Files window's tree as rows (explorer/fileTree.js): the order, the
+// The trees as rows (explorer/fileTree.js): the Files window's order, the
 // lazy rows of a work folder's directories, the "more" and "note" rows, a
-// page filed in two folders, a folder share's clamp, the keys and the one
+// page filed in two folders, a folder share's clamp, a synced folder's
+// paths and root, the folder view's rows and reads, the keys and the one
 // row in the tab order; and the folders the reveal opens
 // (explorer/workPaths.js revealPath).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { NONE } from "../src/explorer/directoryRows.js";
-import { focusAfter, keyAction, revealLimits, revealSettled, tabStop, treeRows } from "../src/explorer/fileTree.js";
+import { focusAfter, folderRows, keyAction, openDirs, revealLimits, revealSettled, tabStop, treeRows } from "../src/explorer/fileTree.js";
 import { revealPath } from "../src/explorer/workPaths.js";
 import { treeOf } from "../src/explorer/workFolders.js";
 import { libraryTree } from "../src/library/libraryUtils.js";
@@ -90,6 +91,35 @@ test("a work folder: its directories by name, numbers as numbers, then the files
   const main = rows.find((r) => r.id === "f2");
   assert.deepEqual([main.kind, main.level, main.format, main.work, main.parent], ["file", 2, "text", "W", "folder:W"]);
   assert.equal(rows.find((r) => r.id === "f1").format, "pdf");
+});
+
+test("a synced folder's rows carry their path from its name down, which picks their icons, and its own row is the root", () => {
+  const rows = rowsOf(["W", "fig"], { W: read([fileRow("f2", "main.tex", "text")]), fig: read([fileRow("p", "plot.py", "text")]) });
+  const of = (id) => rows.find((r) => r.id === id);
+  assert.deepEqual([of("W").path, of("W").root], ["Paper", true]);
+  assert.deepEqual([of("fig").path, of("fig").root], ["Paper/figures", false]);
+  assert.equal(of("f2").path, "Paper/main.tex");
+  assert.equal(of("p").path, "Paper/figures/plot.py");
+  assert.deepEqual([of("shelf").path, of("shelf").root], ["", false], "a library folder has none");
+});
+
+test("the folder view: what the directory shown holds, from level 1, its files kept to the filter by name", () => {
+  const reads = { W: read([fileRow("f2", "main.tex", "text"), fileRow("f1", "main.pdf")]), fig: read([fileRow("p", "plot.py", "text")]) };
+  const view = (expanded, query = "", folder = "W") => folderRows({ folder, libTree: LIB, workTree: WORK, dirs: dirsOf(reads), expanded, query });
+  let rows = view([]);
+  assert.deepEqual(rows.map((r) => [r.name, r.level, r.parent]),
+    [["dir 9", 1, ""], ["dir 10", 1, ""], ["figures", 1, ""], ["sections", 1, ""], ["main.tex", 1, ""], ["main.pdf", 1, ""]]);
+  rows = view(["fig"]);
+  assert.deepEqual(rows.filter((r) => r.parent === "folder:fig").map((r) => [r.kind, r.name, r.level]),
+    [["folder", "raw", 2], ["file", "plot.py", 2]], "a directory opens in place");
+  assert.equal(rows.find((r) => r.id === "p").path, "Paper/figures/plot.py");
+  rows = view(["fig", "raw"], "TEX");
+  assert.deepEqual(rows.filter((r) => r.kind === "file").map((r) => r.name), ["main.tex"]);
+  assert.ok(!rows.some((r) => r.kind === "note" && r.name === "No tracked files here."), "a filtered directory says nothing");
+  assert.deepEqual(view([], "", "fig").map((r) => r.name), ["raw", "plot.py"], "a directory shown");
+  assert.deepEqual(view([], "", "shelf"), [], "no work folder: no rows");
+  assert.deepEqual(openDirs(LIB, "W", ["fig", "raw", "sec", "deep"]), ["W", "sec", "fig", "raw"], "itself and the open ones below it, in order");
+  assert.deepEqual(openDirs(LIB, "W", ["raw"]), ["W"], "one under a closed directory is not read");
 });
 
 test("a directory not read yet says it is being read; nothing is drawn of a closed one", () => {

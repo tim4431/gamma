@@ -91,20 +91,21 @@ test('a work folder is what the link says: one of another server is made so ther
   assert.equal(folder({ push: 'everything', work: false, status: {} }).work, false);
   assert.equal(folder({ ...nas, folder_id: 'root', work: true }).work, false, 'never the whole library');
   assert.equal(folder({ push: 'everything', work: true, status: {} }).work, true);
-  assert.equal(keeping.REMOTE_WORK_RULE, 'A work folder of another server pushes everything and pulls: remove the vault to stop.');
+  assert.equal(keeping.REMOTE_WORK_RULE, 'A synced folder of another server pushes everything and pulls: detach it to stop.');
   // an empty folder there that cannot be one: why, while the vault dialog asks instead
-  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'NAS is older than this app and keeps no work folders'),
-    '“Lab” cannot be a work folder of NAS: NAS is older than this app and keeps no work folders. It can be synced as a vault that pulls instead.');
-  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'A clone keeps no work folder.'),
-    '“Lab” cannot be a work folder of NAS: A clone keeps no work folder. It can be synced as a vault that pulls instead.');
-  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', ''), '“Lab” cannot be a work folder of NAS: NAS refused it. It can be synced as a vault that pulls instead.');
-  // removing it: its files go to Recently deleted there; that server not reached, the vault is forgotten here only if asked
-  assert.match(keeping.removalAsk(far, { pages: 4, files: 3, in_library: 1 }).detail,
-    /^Its 3 files not in the library go to Recently deleted on NAS; its page in the library stays\. /);
-  const q = keeping.farRemovalAsk(far, 'NAS cannot be reached: remove the vault when it can, or let go of the folder there');
-  assert.equal(q.message, 'NAS cannot be reached: remove the work folder “Paper” all the same?');
-  assert.match(q.detail, /^NAS cannot be reached: remove the vault when it can, or let go of the folder there\. Remove anyway, and this computer forgets it; the folder stays a work folder on NAS, its files locked, until the workspace's owner lets go of it there\./);
-  assert.deepEqual(q.buttons, ['Remove anyway', 'Cancel']);
+  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'NAS is older than this app and keeps no synced folders'),
+    '“Lab” cannot be a synced folder of NAS: NAS is older than this app and keeps no synced folders. It can be synced as a vault that pulls instead.');
+  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'A clone keeps no synced folder.'),
+    '“Lab” cannot be a synced folder of NAS: A clone keeps no synced folder. It can be synced as a vault that pulls instead.');
+  assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', ''), '“Lab” cannot be a synced folder of NAS: NAS refused it. It can be synced as a vault that pulls instead.');
+  // detaching it: its files kept as pages there, or sent to Recently deleted there; that server not reached, the
+  // vault is forgotten here only if asked
+  assert.match(keeping.removalAsk(far, { pages: 4, files: 4, in_library: 1 }, 'TIM-PC').detail,
+    /Remove them from Gamma: 3 files go to Recently deleted on NAS\. The directory on TIM-PC stays as it is/);
+  const q = keeping.farRemovalAsk(far, 'NAS cannot be reached: detach it once it answers, or detach the synced folder there');
+  assert.equal(q.message, 'NAS cannot be reached: detach “Paper” all the same?');
+  assert.match(q.detail, /^NAS cannot be reached: detach it once it answers, or detach the synced folder there\. Detach anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it is detached there\./);
+  assert.deepEqual(q.buttons, ['Detach anyway', 'Cancel']);
 });
 
 test('the agent at work in a work folder reads busy, its detail on the row, said as a Send\'s or the chat\'s', () => {
@@ -308,13 +309,13 @@ test('plain http: a dotted name\'s link says its token travels in clear, and the
 test('moving a server\'s links: the question names the tokens and the new address, and the bar says what followed', () => {
   const q = keeping.moveAsk('http://nas.lan:9001', 'https://nas.lan', { kind: 'upgrade', plain: false, moved: { vaults: 2, computers: 1, mirrors: 1 } });
   assert.equal(q.message, 'Move the links of http://nas.lan:9001 to https://nas.lan?');
-  assert.equal(q.detail, 'Gamma will send the tokens of 2 synced vaults, this computer and 1 offline copy to https://nas.lan, and use https://nas.lan from now on. Only continue if https://nas.lan is the same server.');
+  assert.equal(q.detail, 'Gamma will send the tokens of 2 synced folders or files, this computer and 1 offline copy to https://nas.lan, and use https://nas.lan from now on. Only continue if https://nas.lan is the same server.');
   assert.deepEqual(q.buttons, ['Move the links', 'Cancel']);
   const down = keeping.moveAsk('https://nas.lan', 'http://nas.lan:9001', { plain: true, moved: { vaults: 1, computers: 0, mirrors: 0 } });
-  assert.equal(down.detail, 'Gamma will send the tokens of 1 synced vault to http://nas.lan:9001, and use http://nas.lan:9001 from now on. Only continue if http://nas.lan:9001 is the same server.' +
+  assert.equal(down.detail, 'Gamma will send the tokens of 1 synced folder or file to http://nas.lan:9001, and use http://nas.lan:9001 from now on. Only continue if http://nas.lan:9001 is the same server.' +
     ' http://nas.lan:9001 is http://: the tokens will travel without encryption, and someone on your network could read them.');
-  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 2, computers: 1, mirrors: 1 }), 'http://a is now https://a: 2 synced vaults, this computer and 1 offline copy follow it.');
-  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 1 }), 'http://a is now https://a: 1 synced vault follows it.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 2, computers: 1, mirrors: 1 }), 'http://a is now https://a: 2 synced folders or files, this computer and 1 offline copy follow it.');
+  assert.equal(keeping.moveSaid('http://a', 'https://a', { vaults: 1 }), 'http://a is now https://a: 1 synced folder or file follows it.');
   assert.equal(keeping.moveSaid('http://a', 'https://a', { computers: 2 }), 'http://a is now https://a: this computer follows it.');
   assert.equal(keeping.moveSaid('http://a', 'https://a', { mirrors: 3 }), 'http://a is now https://a: 3 offline copies follow it.');
   assert.equal(keeping.moveSaid('http://a', 'https://a', {}), 'http://a is now https://a.');
@@ -344,15 +345,15 @@ test('an up-to-date vault lists the names its scan refused among those not synce
   const v = folder({ status: { last_sync: now, upgraded_at: now,
     kept: [{ path: 'b.pdf', why: 'attachment belongs to another page', force: false }],
     refused: [{ path: 'notes.md', why: 'differs from another name here only by case' }, { path: 'con.md', why: 'is a name Windows keeps for a device' }],
-    push_off: 'push turned off when it was taken onto synced vaults: Its folder holds pages the synced vault D:\\Old pushes into too: only one vault pushes into a page.',
+    push_off: 'push turned off when it was taken onto synced folders: Its folder holds pages the synced folder D:\\Old pushes into too: only one vault pushes into a page.',
     shared: [{ page: 'p1', title: 'Attention' }, { page: 'p2', title: 'BERT' }] } });
   assert.equal(v.state, 'ok');
   assert.match(v.text, /^Up to date · .+ · 3 not synced · 2 in another vault · push turned off$/);
   assert.equal(v.left, 3);
   assert.match(v.title, /Not synced: b\.pdf \(attachment belongs to another page\); notes\.md \(differs from another name here only by case\); con\.md \(is a name Windows keeps for a device\)\./);
-  assert.match(v.title, / Push turned off when it was taken onto synced vaults: Its folder holds pages the synced vault D:\\Old pushes into too: only one vault pushes into a page\./);
-  assert.match(v.title, / Kept by an older synced vault beside this one, so not written here: “Attention”, “BERT”\./);
-  assert.match(v.title, / Kept on this computer before; a synced vault since .+, with \.gamma\/ in place of \.gamma-sync\.json\./);
+  assert.match(v.title, / Push turned off when it was taken onto synced folders: Its folder holds pages the synced folder D:\\Old pushes into too: only one vault pushes into a page\./);
+  assert.match(v.title, / Kept by an older synced folder beside this one, so not written here: “Attention”, “BERT”\./);
+  assert.match(v.title, / Kept on this computer before; a synced folder since .+, with \.gamma\/ in place of \.gamma-sync\.json\./);
   const plain = folder({ status: { last_sync: now } });
   assert.doesNotMatch(`${plain.text} ${plain.title}`, /not synced|another vault|turned off|before/);
 });
@@ -409,7 +410,7 @@ test('a vault of a workspace its maker left says so, paused it stays quiet; anot
     ...keeping.itemsOf(local, { links: [link(), link({ id: 'f2', workspace_id: 'lab' }), link({ id: 'f3', remote_url: 'http://nas.lan:9001' })], roles }, servers),
     ...keeping.itemsOf(local, { links: [link()] }, servers)];
   assert.deepEqual([away.away, away.state, away.text, away.name, away.where], [true, 'error', 'No access to its workspace', 'Papers', 'C:\\Papers ⇄ Local · Papers']);
-  assert.match(away.title, /no longer a member.*Remove the vault to free its directory/);
+  assert.match(away.title, /no longer a member.*Remove the synced folder to free its directory/);
   assert.deepEqual([inLab.away, inLab.text], [false, 'Sync problem'], 'a viewer is still in the workspace');
   assert.equal(remote.away, false, 'a vault of another server names a workspace there');
   assert.equal(unread.away, false, 'no session read: nothing is assumed');
@@ -428,7 +429,7 @@ test('the button shows the worst state; a detached clone or a paused vault never
   const busy = folder({ id: 'f2', status: { running: true } });
   const bad = clone({ status: { last_error: 'x', last_sync: now } });
   const off = clone({ workspace_id: 'w2', mode: 'off' });
-  assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 synced vault on this computer: synced' });
+  assert.deepEqual(keeping.summarize([ok, off]), { state: 'ok', text: 'Synced', title: '1 clone and 1 synced folder on this computer: synced' });
   assert.equal(keeping.summarize([ok, busy]).text, 'Syncing…');
   assert.equal(keeping.summarize([ok, busy, bad]).text, '1 problem');
   const held = folder({ id: 'f4', status: { held: { removals: 6, total: 10 } } });
@@ -437,7 +438,7 @@ test('the button shows the worst state; a detached clone or a paused vault never
   assert.equal(keeping.summarize([ok, folder({ id: 'f5', status: { offline: true } })]).text, 'Waiting', 'a disk unplugged only says so');
   const paused = folder({ id: 'f3', status: { last_error: 'x', paused_at: now } });
   assert.equal(keeping.summarize([ok, paused]).text, 'Synced');
-  assert.deepEqual(keeping.summarize([off, paused]), { state: 'paused', text: 'Paused', title: '1 clone and 1 synced vault on this computer: paused' });
+  assert.deepEqual(keeping.summarize([off, paused]), { state: 'paused', text: 'Paused', title: '1 clone and 1 synced folder on this computer: paused' });
 });
 
 test('the paused states of a vault and a clone', () => {
@@ -528,16 +529,16 @@ test('a server lists its Zotero links among what it keeps, and the button counts
   assert.deepEqual(keeping.summarize([waiting]), { state: 'waiting', text: 'Waiting', title: '1 Zotero link on this computer: waiting' });
   const ok = folder({ status: { last_sync: now } });
   const off = clone({ workspace_id: 'w2', mode: 'off' });
-  assert.equal(keeping.summarize([ok, off, link({ status: { last_sync: now } })]).title, '1 clone, 1 Zotero link and 1 synced vault on this computer: synced');
+  assert.equal(keeping.summarize([ok, off, link({ status: { last_sync: now } })]).title, '1 clone, 1 Zotero link and 1 synced folder on this computer: synced');
   assert.equal(keeping.summarize([link({ status: { last_error: 'x', error_kind: 'auth' } }), ok]).state, 'error');
 });
 
-test('the summary counts vaults of both scopes together; a paused one never raises it', () => {
+test('the summary counts a folder\'s vaults as synced folders and a file\'s as synced vaults; a paused one never raises it', () => {
   const ok = folder({ status: { last_sync: now } });
   const sent = file({ status: { last_sync: now, last_sent: now } });
   const cl = clone({ status: { last_sync: now } });
   const zl = link({ status: { last_sync: now } });
-  assert.equal(keeping.summarize([cl, zl, ok, sent]).title, '1 clone, 1 Zotero link and 2 synced vaults on this computer: synced');
+  assert.equal(keeping.summarize([cl, zl, ok, sent]).title, '1 clone, 1 Zotero link, 1 synced folder and 1 synced vault on this computer: synced');
   const paused = file({ id: 'p3', status: { last_error: 'x', paused_at: now } });
   assert.equal(keeping.summarize([ok, paused]).text, 'Synced');
   assert.equal(keeping.summarize([paused]).state, 'paused');
@@ -573,52 +574,60 @@ test('the dialog shuts Sync for a vault that would be refused, and says why', ()
   assert.deepEqual(say({}, { pull: false, push: 'off' }), { ok: false, text: 'A vault pulls, pushes, or both: turn one of them on.' });
   assert.equal(say({}, { remote: true, push: 'everything' }).ok, false);
   assert.deepEqual(say({}, { remote: true, pull: false, push: 'pdfs' }), { ok: false, text: keeping.REMOTE_RULE }, 'the rule the vault\'s switches keep to');
-  assert.equal(keeping.REMOTE_RULE, 'A vault of another server pulls, and pushes PDFs at most: a work folder there is made from an empty folder.');
+  assert.equal(keeping.REMOTE_RULE, 'A vault of another server pulls, and pushes PDFs at most: a synced folder there is made from an empty folder.');
   assert.equal(say({}, { remote: true, push: 'pdfs' }).ok, true, 'a remote\'s folder may push its PDFs');
   assert.deepEqual(say({}, { whole: true, push: 'everything' }), { ok: false, text: keeping.WHOLE_RULE }, 'the server\'s words');
   assert.equal(say({ notes: 2 }, { whole: true, push: 'pdfs' }).ok, true, 'the whole library pulls, and pushes PDFs');
   assert.equal(folder({ folder_id: 'root', status: {} }).whole, true);
-  assert.deepEqual(say({ refusal: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' }),
-    { ok: false, text: 'D:\\Papers holds the marker of the synced vault E:\\Papers: was it copied?' });
+  assert.deepEqual(say({ refusal: 'D:\\Papers holds the marker of the synced folder E:\\Papers: was it copied?' }),
+    { ok: false, text: 'D:\\Papers holds the marker of the synced folder E:\\Papers: was it copied?' });
   assert.match(say({ pages: 3, notes: 1 }, { push: 'everything' }).text, /^Both the folder and the directory hold files/);
   assert.equal(say({ pages: 3, notes: 1 }, { push: 'everything' }).ok, false);
   assert.equal(say({ pages: 0, notes: 1 }, { push: 'everything', newFolder: true }).ok, true);
 });
 
 test('a directory that was a vault no link holds is taken up again; one with its marker writes nothing of its own', () => {
-  assert.match(say({ marker: { id: 'v1', link_id: '' } }, { push: 'everything', newFolder: true }).text, /D:\\Papers was a synced vault before: it is taken up again\.$/);
+  assert.match(say({ marker: { id: 'v1', link_id: '' } }, { push: 'everything', newFolder: true }).text, /D:\\Papers was a synced folder before: it is taken up again\.$/);
   assert.doesNotMatch(say({ marker: { id: 'v1', link_id: 'l9' } }, { push: 'everything', newFolder: true }).text, /\.gamma\//);
 });
 
-test('removing a vault: the pages stay, the PDFs read in place are stored first; the files stay or go to its trash', () => {
+test('removing a vault: the pages stay, the PDFs read in place are stored first, the directory stays as it is', () => {
   const v = folder({ status: { last_sync: now, folder_path: ['Papers'] } });
-  const q = keeping.removalAsk(v, { pages: 12, in_place: 2, bytes: 3_400_000 });
-  assert.equal(q.message, 'Remove the synced vault “Papers”?');
-  assert.match(q.detail, /^Its 12 pages stay in Gamma; 2 PDFs read where they are \(3\.4 MB\) are stored in Gamma first\. /);
-  assert.match(q.detail, /\.gamma\/trash; files you added or changed stay\.$/);
-  assert.deepEqual(q.choices, ['keep', 'trash', null]);
-  assert.equal(q.buttons.length, q.choices.length);
-  assert.match(keeping.removalAsk(v, { pages: 1 }).detail, /^Its page stays in Gamma\. /);
+  const q = keeping.removalAsk(v, { pages: 12, in_place: 2, bytes: 3_400_000 }, 'TIM-PC');
+  assert.equal(q.message, 'Remove the synced folder “Papers”?');
+  assert.equal(q.detail, 'Its 12 pages stay in Gamma; 2 PDFs read where they are (3.4 MB) are stored in Gamma first. '
+    + "The directory on TIM-PC stays as it is: only Gamma's own .gamma folder goes.");
+  assert.deepEqual([q.buttons, q.choices], [['Remove the synced folder', 'Cancel'], ['keep', null]], 'nothing on disk to choose');
+  assert.match(keeping.removalAsk(v, { pages: 1 }).detail, /^Its page stays in Gamma\. The directory on this computer stays/);
   assert.match(keeping.removalAsk(v, { pages: 0 }).detail, /^It holds no pages yet\. /);
   const away = keeping.removalAsk(folder({ status: { offline: true } }), { pages: 3 });
   assert.deepEqual(away.choices, ['keep', null], 'a directory not there is never touched');
   assert.match(away.detail, /is not there now, so nothing on disk is touched\.$/);
-  // a stopped vault (its marker gone or another's): the server touches nothing there, so no trash is offered
+  // a stopped vault (its marker gone or another's): the server touches nothing there
   const stopped = keeping.removalAsk(folder({ status: { stopped: 'The marker is gone.' } }), { pages: 3 });
-  assert.deepEqual(stopped.choices, ['keep', null]);
-  assert.deepEqual(stopped.buttons, ['Remove the vault', 'Cancel']);
+  assert.deepEqual(stopped.buttons, ['Remove the synced folder', 'Cancel']);
   assert.match(stopped.detail, /is no longer this vault's directory, so nothing in it is touched\.$/);
   const f = keeping.removalAsk(file({ status: {} }), { pages: 1 });
   assert.deepEqual(f.choices, ['keep', null]);
   assert.match(f.detail, /^main\.pdf is no longer pushed to the page\. The file and the page stay as they are\.$/);
 });
 
-test('removing a work folder says both numbers: its files not in the library go to Recently deleted, those in it stay', () => {
+test('detaching a work folder asks the web app\'s Detach in its words: keep its files in Gamma, or remove them', () => {
   const w = folder({ push: 'everything', status: { last_sync: now, folder_path: ['Paper'] } });
-  assert.match(keeping.removalAsk(w, { pages: 5, files: 3, in_library: 2, in_place: 1, bytes: 2_000 }).detail,
-    /^Its 3 files not in the library go to Recently deleted; its 2 pages in the library stay; 1 PDF read where it is \(2 KB\) is stored in Gamma first\. /);
-  assert.match(keeping.removalAsk(w, { pages: 1, files: 1, in_library: 0 }).detail, /^Its file not in the library goes to Recently deleted\. /);
-  assert.match(keeping.removalAsk(w, { pages: 2, files: 0, in_library: 2 }).detail, /^Its 2 pages stay in Gamma\. /);
+  const q = keeping.removalAsk(w, { pages: 5, files: 5, in_library: 2, too_large: 1, in_place: 3, bytes: 2_000 }, 'TIM-PC');
+  assert.equal(q.message, 'Detach “Paper” from TIM-PC?');
+  assert.equal(q.detail, '5 files sync with it. 2 of them are in your library and stay there either way. Keep the files in Gamma: '
+    + 'Each file becomes an ordinary page, filed where it is. Their bytes are stored in Gamma: 2 KB. 1 file too large to keep stays '
+    + 'listed by name, without its bytes. Remove them from Gamma: 3 files go to Recently deleted. '
+    + "The directory on TIM-PC stays as it is: only Gamma's own .gamma folder goes.");
+  assert.deepEqual([q.buttons, q.choices], [['Keep the files in Gamma', 'Remove them from Gamma', 'Cancel'], ['keep', 'remove', null]]);
+  assert.match(keeping.removalAsk(w, { pages: 1, files: 1, in_library: 0 }).detail, /^1 file syncs with it\. Keep/);
+  assert.match(keeping.removalAsk(w, { pages: 2, files: 2, in_library: 2 }).detail,
+    /Remove them from Gamma: No file goes to Recently deleted: every one is in your library\./);
+  assert.match(keeping.removalAsk(w, {}).detail, /^No file syncs with it yet\. /);
+  const away = keeping.removalAsk(folder({ push: 'everything', status: { offline: true } }), { files: 2 });
+  assert.deepEqual(away.choices, ['keep', 'remove', null], 'its pages are still asked of');
+  assert.match(away.detail, /is not there now, so nothing on disk is touched\.$/);
 });
 
 test('a force pull or push and going on are counted and asked first', () => {

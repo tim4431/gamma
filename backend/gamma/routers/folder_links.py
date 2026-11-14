@@ -217,14 +217,14 @@ def _info(link: dict, can_act: bool = True, agents: dict | None = None) -> dict:
     info = {k: v for k, v in link.items() if k not in ("state", "token")}
     info.update(dest=str(folder_links.dest_of(link)), pull=bool(link["pull"]), push=folder_links.push_word(link["push"]),
                 choosing=folder_links.choosing(link), work=folder_links.work_vault(link),
-                plain=remote_servers.plain(link["remote_url"]))
+                let_go=bool(link["state"].get(folder_links.LET_GO_THERE)), plain=remote_servers.plain(link["remote_url"]))
     info["agent"] = agents[link["id"]] if agents is not None else agent_info.agent_info(link, can_act=can_act)
     if link["kind"] == "file":
         info["title"] = link["state"].get("title", "")
     if not can_act:
         status = dict(link["status"])
         for key, said in (("last_error", "The last round did not finish."), ("stopped", "The vault stopped."),
-                          ("push_off", "Push was turned off when the vault was taken onto synced vaults.")):
+                          ("push_off", "Push was turned off when the folder was taken onto synced folders.")):
             if status.get(key):
                 status[key] = said
         info.update(path="", dest="", status=status)
@@ -247,7 +247,7 @@ def _refused(e: folder_links.LinkError, status: int = 400) -> HTTPException:
 def list_links(request: Request):
     """``{links: [{id, kind, workspace_id, folder_id, page_id, path, notes,
     pull (a bool), push ("off" | "pdfs" | "everything"), library, choosing,
-    work, created_at, cursor, status, dest, remote_url, plain, token_id, title?}]}``
+    work, let_go, created_at, cursor, status, dest, remote_url, plain, token_id, title?}]}``
     — every link the account may see, whatever workspace the request names:
     those of this server's workspaces it has a role in (``remote_url``
     empty), and its own to another server (``remote_url`` the other server,
@@ -259,7 +259,9 @@ def list_links(request: Request):
     file. ``work`` says the link keeps a work folder, of this server or of
     another (``folder_links.work_vault``), ``library`` is a work folder's
     switch, ``choosing`` whether its
-    files wait for its tracking dialog, ``mine`` whether the account made
+    files wait for its tracking dialog, ``let_go`` whether the other server
+    of a work folder there detached it (``folder_links.LET_GO_THERE``: the
+    desktop app forgets such a vault), ``mine`` whether the account made
     the link (the tracking dialog's routes are its maker's alone), ``agent``
     a work folder's agent on this computer, ``{name, label, ready, problem,
     running: {kind: "send" | "chat", request_id (null for a chat turn),
@@ -679,12 +681,13 @@ def relink(link_id: str, payload: Relink, request: Request):
 @router.get("/{link_id}/removal")
 def removal(link_id: str, request: Request):
     """What removing the link would do, to say before it is asked: ``{pages,
-    in_place, bytes, files, in_library, unreachable?}`` — its pages, of
-    which a work folder's files not in the library (``files``) go to
-    Recently deleted and the others (``in_library``) stay, and the PDFs read
-    in place that are stored first, with their size; ``unreachable`` for a
-    work folder of another server that cannot be asked now, whose removal
-    is refused until it can (``DELETE``'s ``force``)."""
+    files, in_library, too_large, in_place, bytes, unreachable?}`` — its
+    pages; a work folder's files, those in the library already and those
+    too large to keep (listed without their bytes); the files read in place
+    that are stored first, with their size (a work folder's of every
+    format: what keeping its files stores); ``unreachable`` for a work
+    folder of another server that cannot be asked now, whose removal is
+    refused until it can (``DELETE``'s ``force``)."""
     return folder_links.removal(_kept(request, link_id))
 
 
@@ -777,25 +780,26 @@ def save_selection(link_id: str, payload: SelectionSave, request: Request):
 
 
 @router.delete("/{link_id}")
-def delete_link(link_id: str, request: Request, files: Literal["keep", "trash"] = "keep", force: int = 0):
+def delete_link(link_id: str, request: Request, pages: Literal["keep", "remove"] = "keep", force: int = 0):
     """Remove the link; its pages stay, the PDFs a vault read in place
-    stored first, but a work folder's files not in the library, which go to
-    Recently deleted. A folder's directory stays as it is with
-    ``files=keep`` (but for a vault's marker); with ``files=trash`` the
-    files its rounds made move to its trash (``.gamma/trash``: files changed
-    on disk and files the rounds never wrote stay). A followed file is never
-    touched. A work folder whose files were never chosen is cancelled: its
-    marker, its ``.gamma/`` and its folder go when they were made for it.
-    → ``{ok, mark_stays?}``. 409 when a PDF read in place could not be
-    stored, another program holds the state file a folder kept before left,
-    or the other server of a work folder there, removed or cancelled,
-    cannot let go of it now (``force=1``: removed all the same,
-    ``mark_stays`` true, for a workspace owner's Let go there, as when that
-    server stopped answering midway): nothing was removed; 403 but for the
-    link's maker. A run of an agent in it stops first."""
+    stored first, and its directory stays as it is but for Gamma's own
+    files (its marker, ``.gamma/``). A work folder is detached with
+    ``pages`` (gamma/work_folders/detach.py): ``keep``, its files stay in
+    Gamma as ordinary pages, every one's bytes stored first; ``remove``,
+    those not in the library go to Recently deleted. A followed file is
+    never touched. A work folder whose files were never chosen is
+    cancelled: its marker, its ``.gamma/`` and its folder go when they were
+    made for it. → ``{ok, kept, trashed, mark_stays?}``. 409 when a file read in
+    place could not be stored, another program holds the state file a
+    folder kept before left, or the other server of a work folder there,
+    removed or cancelled, cannot let go of it now (``force=1``: removed all
+    the same, ``mark_stays`` true, for a Detach there, as when that server
+    stopped answering midway): nothing was removed; 403 but for the link's
+    maker. A run of an agent in it stops once it is removed (a 409 leaves it
+    running); the computer's agents stay on."""
     _made(request, link_id)
     try:
-        out = folder_links.delete_link(link_id, files=files, force=bool(force))
+        out = folder_links.delete_link(link_id, pages, force=bool(force))
     except folder_links.LinkError as e:
         raise _refused(e, 409)
     return out or {"ok": True}

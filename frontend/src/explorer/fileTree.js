@@ -1,10 +1,12 @@
-// The Files window's tree as rows (docs/dev/work_folders.md "The Files
-// window"): the library's folders in their order, a work folder's
-// directories by name, then each open folder's files, and what the keys do
-// on them (a WAI-ARIA tree with one row in the tab order). Part of the
-// window's lazy chunk: App imports nothing from here. Pure:
-// tests/fileTree.test.mjs.
+// The trees of folders and files as rows (docs/dev/work_folders.md "The
+// Files window", "The folder view"): the Files window's, the library's
+// folders in their order, a work folder's directories by name, then each
+// open folder's files; a synced folder's folder view, the same rows below
+// the directory it shows; and what the keys do on them (a WAI-ARIA tree
+// with one row in the tab order). The window's lazy chunk and the folder
+// view (FolderTree.jsx) read it. Pure: tests/fileTree.test.mjs.
 import { pageDocument } from "../documents/pageDocument.js";
+import { folderChain } from "../library/libraryUtils.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { NONE, PAGE_ROWS, findStep } from "./directoryRows.js";
 import { workOf } from "./workFolders.js";
@@ -13,11 +15,75 @@ import { fileNameOf } from "./workPaths.js";
 const byName = (a, b) => a.localeCompare(b, undefined, { numeric: true });
 const byTitle = (a, b) => byName(a.content || "", b.content || "");
 
-// The rows the tree draws, top to bottom: [{key, kind ("folder", "file",
-// "more" or "note"), id (a page's, or the folder's a "more" or "note" row
-// is in), level (1 at the top), name, expanded, work (W's id, "" outside a
-// work folder), count, format, pinned, parent (the folder
-// row's key, "" at the top), page (a file's row), loading, failed}].
+// What treeRows and folderRows build with: `rows`, and walk(id, level,
+// parent, above), a folder's row (`above` the path of the folder it is in)
+// then, open, what is in it, and contents(id, level, parent, work, path),
+// what a folder holds alone.
+function rowsOf({ libTree, workTree, folderMeta = {}, libraryPages = [], dirs, expanded, limits = {}, query = "" }) {
+  const open = expanded instanceof Set ? expanded : new Set(expanded || []);
+  const q = query.trim().toLowerCase();
+  const filed = new Map();
+  for (const b of libraryPages) {
+    for (const f of b._folders || []) {
+      if (!filed.has(f)) filed.set(f, []);
+      filed.get(f).push(b);
+    }
+  }
+  const rows = [];
+  const row = (fields) => rows.push({ expanded: false, count: 0, format: "", pinned: false, page: null, loading: false, failed: false,
+    path: "", root: false, ...fields });
+  const note = (id, level, parent, work, kind, name) => row({ key: `note:${id}`, kind: "note", id, level, name, work, parent,
+    loading: kind === "reading", failed: kind === "failed" });
+  const more = (id, level, parent, work, n, loading) => row({ key: `more:${id}`, kind: "more", id, level,
+    name: tn("Show {n} more file", "Show {n} more files", n), work, count: n, parent, loading });
+  const file = (folderId, level, parent, work, page, name, format, pinned, path) => row({ key: `file:${folderId}:${page.id}`,
+    kind: "file", id: page.id, level, name, work, format, pinned, parent, page, path });
+  function walk(id, level, parent, above) {
+    const folder = libTree.folders.get(id);
+    if (!folder) return;
+    const work = workOf(workTree, id);
+    const isOpen = open.has(id);
+    const key = `folder:${id}`;
+    const path = work ? [above, folder.name].filter(Boolean).join("/") : "";
+    row({ key, kind: "folder", id, level, name: folder.name, expanded: isOpen, work, count: folderMeta[id]?.count || 0,
+      pinned: !!folder.pinned, parent, path, root: !!work && work === id });
+    if (isOpen) contents(id, level + 1, key, work, path);
+  }
+  function contents(id, inner, key, work, path) {
+    const folder = libTree.folders.get(id);
+    const children = work
+      ? folder.children.filter((c) => libTree.folders.has(c)).sort((a, b) => byName(libTree.folders.get(a).name, libTree.folders.get(b).name))
+      : folder.children;
+    for (const child of children) walk(child, inner, key, path);
+    if (work) {
+      const read = dirs?.of(id) || NONE;
+      for (const r of read.rows) {
+        const name = fileNameOf(r) || t("Untitled");
+        if (q && !name.toLowerCase().includes(q)) continue;
+        file(id, inner, key, work, r, name, pageDocument(r)?.format || "", !!r.properties?.pinned, `${path}/${name}`);
+      }
+      if (read.failed) note(id, inner, key, work, "failed", t("Could not read this folder."));
+      else if (!read.loaded) note(id, inner, key, work, "reading", t("Reading…"));
+      else if (read.next != null) more(id, inner, key, work, Math.min(PAGE_ROWS, Math.max(0, read.total - read.rows.length)), read.loading);
+      else if (!read.rows.length && !children.length && !q) note(id, inner, key, work, "none", t("No tracked files here."));
+      return;
+    }
+    const pages = [...(filed.get(id) || [])].sort(byTitle);
+    const limit = limits[id] || PAGE_ROWS;
+    for (const b of pages.slice(0, limit)) file(id, inner, key, "", b, b.content, b._doc?.format || "", !!b._pinned, "");
+    if (pages.length > limit) more(id, inner, key, "", Math.min(PAGE_ROWS, pages.length - limit), false);
+    else if (!pages.length && !children.length) note(id, inner, key, "", "empty", t("No pages in this folder."));
+  }
+  return { rows, walk, contents };
+}
+
+// The rows the Files window draws, top to bottom: [{key, kind ("folder",
+// "file", "more" or "note"), id (a page's, or the folder's a "more" or
+// "note" row is in), level (1 at the top), name, expanded, work (W's id, ""
+// outside a work folder), root (the row is W's own), path (in a work
+// folder, the row's from W's name down, "W/figures/plot.py", which picks
+// its icon; "" outside), count, format, pinned, parent (the folder row's
+// key, "" at the top), page (a file's row), loading, failed}].
 // `libTree` the listing's tree (libraryUtils.libraryTree), `workTree`
 // treeOf it, `folderMeta` App's rollup (a folder's count: its pages, or in
 // a work folder the files below it), `libraryPages` the pages the library
@@ -33,57 +99,40 @@ const byTitle = (a, b) => byName(a.content || "", b.content || "");
 // (a page of PAGE_ROWS at most), a "note" row says a directory is
 // being read, could not be read or holds nothing. Pages filed in no folder
 // and labels have no place in the tree.
-export function treeRows({ libTree, workTree, folderMeta = {}, libraryPages = [], dirs, expanded, lib, limits = {} }) {
+export function treeRows({ lib, ...opts }) {
+  const built = rowsOf(opts);
+  const top = lib?.contains ? opts.libTree.top.filter(lib.contains) : opts.libTree.top;
+  for (const id of top) built.walk(id, 1, "", "");
+  return built.rows;
+}
+
+// The rows of a synced folder's folder view: what the directory `folder`
+// (W or one of its directories) holds, as treeRows draws it under its row,
+// from level 1, its files only those whose names hold `query` (the filter
+// box's text), a directory that keeps none of them saying nothing. [] for
+// a folder in no work folder.
+export function folderRows({ folder, ...opts }) {
+  const work = workOf(opts.workTree, folder);
+  if (!work || !opts.libTree.folders.has(folder)) return [];
+  const chain = folderChain(opts.libTree, folder);
+  const path = chain.slice(chain.indexOf(work)).map((id) => opts.libTree.folders.get(id)?.name || "").join("/");
+  const built = rowsOf(opts);
+  built.contents(folder, 1, "", work, path);
+  return built.rows;
+}
+
+// The directories the folder view of `folder` reads: itself, then each
+// open one below it whose folders up to `folder` are open too, in the
+// tree's order.
+export function openDirs(libTree, folder, expanded) {
   const open = expanded instanceof Set ? expanded : new Set(expanded || []);
-  const filed = new Map();
-  for (const b of libraryPages) {
-    for (const f of b._folders || []) {
-      if (!filed.has(f)) filed.set(f, []);
-      filed.get(f).push(b);
-    }
-  }
-  const rows = [];
-  const note = (id, level, parent, work, kind, name) => rows.push({ key: `note:${id}`, kind: "note", id, level, name, expanded: false,
-    work, count: 0, format: "", pinned: false, parent, page: null, loading: kind === "reading", failed: kind === "failed" });
-  const more = (id, level, parent, work, n, loading) => rows.push({ key: `more:${id}`, kind: "more", id, level,
-    name: tn("Show {n} more file", "Show {n} more files", n), expanded: false, work, count: n, format: "", pinned: false,
-    parent, page: null, loading, failed: false });
-  const file = (folderId, level, parent, work, page, name, format, pinned) => rows.push({ key: `file:${folderId}:${page.id}`,
-    kind: "file", id: page.id, level, name, expanded: false, work, count: 0, format, pinned, parent, page, loading: false, failed: false });
-  function walk(id, level, parent) {
-    const folder = libTree.folders.get(id);
-    if (!folder) return;
-    const work = workOf(workTree, id);
-    const isOpen = open.has(id);
-    const key = `folder:${id}`;
-    rows.push({ key, kind: "folder", id, level, name: folder.name, expanded: isOpen, work, count: folderMeta[id]?.count || 0,
-      format: "", pinned: !!folder.pinned, parent, page: null, loading: false, failed: false });
-    if (!isOpen) return;
-    const children = work
-      ? folder.children.filter((c) => libTree.folders.has(c)).sort((a, b) => byName(libTree.folders.get(a).name, libTree.folders.get(b).name))
-      : folder.children;
-    for (const child of children) walk(child, level + 1, key);
-    const inner = level + 1;
-    if (work) {
-      const read = dirs?.of(id) || NONE;
-      for (const r of read.rows) {
-        file(id, inner, key, work, r, fileNameOf(r) || t("Untitled"), pageDocument(r)?.format || "", !!r.properties?.pinned);
-      }
-      if (read.failed) note(id, inner, key, work, "failed", t("Could not read this folder."));
-      else if (!read.loaded) note(id, inner, key, work, "reading", t("Reading…"));
-      else if (read.next != null) more(id, inner, key, work, Math.min(PAGE_ROWS, Math.max(0, read.total - read.rows.length)), read.loading);
-      else if (!read.rows.length && !children.length) note(id, inner, key, work, "none", t("No tracked files here."));
-      return;
-    }
-    const pages = [...(filed.get(id) || [])].sort(byTitle);
-    const limit = limits[id] || PAGE_ROWS;
-    for (const b of pages.slice(0, limit)) file(id, inner, key, "", b, b.content, b._doc?.format || "", !!b._pinned);
-    if (pages.length > limit) more(id, inner, key, "", Math.min(PAGE_ROWS, pages.length - limit), false);
-    else if (!pages.length && !children.length) note(id, inner, key, "", "empty", t("No pages in this folder."));
-  }
-  const top = lib?.contains ? libTree.top.filter(lib.contains) : libTree.top;
-  for (const id of top) walk(id, 1, "");
-  return rows;
+  const out = [];
+  const walk = (id) => {
+    out.push(id);
+    for (const child of libTree.folders.get(id)?.children || []) if (open.has(child)) walk(child);
+  };
+  if (libTree.folders.has(folder)) walk(folder);
+  return out;
 }
 
 // `limits` (treeRows') with each library folder the page `pageId` is filed

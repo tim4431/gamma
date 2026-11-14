@@ -17,8 +17,8 @@ from .. import config
 from ..auth import require_personal_user_id
 
 SIGN_IN = "Sign in with an account to sync with this computer."
-ELSEWHERE = ("Synced vaults are kept by the Gamma desktop app: open this server in it and use a folder's "
-             "“Sync with this computer…” menu item or the sync panel's “Add a synced vault…”.")
+ELSEWHERE = ("Synced folders are kept by the Gamma desktop app: open this server in it and use a folder's "
+             "“Sync with this computer…” menu item or the sync panel's “Add a synced folder…”.")
 SHELL_HEADER = "x-gamma-shell"
 PATH_ONLY = "Only the desktop app itself may name a path on this computer."
 

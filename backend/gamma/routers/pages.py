@@ -1007,7 +1007,7 @@ def _work_file(conn, page_id: str) -> dict:
     400 unless it is a work folder's file."""
     page = _load_page(conn, page_id)
     if not work_folder_of(page["properties"]):
-        raise HTTPException(status_code=400, detail="not a work folder's file")
+        raise HTTPException(status_code=400, detail="not a synced folder's file")
     return page
 
 
@@ -1168,7 +1168,7 @@ def copy_file_to_library(page_id: str, payload: LibraryFiling, request: Request)
         page = _work_file(conn, page_id)
         view = page_document(page["properties"])
         if view is None:
-            raise HTTPException(status_code=400, detail="only a work folder's file with a document is copied to the library")
+            raise HTTPException(status_code=400, detail="only a synced folder's file with a document is copied to the library")
         _library_folder(conn, folder)
     _store_bytes(ws, page)
     doc_id = own_hash(view)

@@ -1,20 +1,21 @@
-"""A computer's channel to this server, the computers a page is kept on and
-the account's computers (gamma/computers/registry.py; docs/research/agent-collab.md "How the server
-sees a vault"). Every Gamma server answers.
+"""A computer's channel to this server, the computers a page or a folder is
+kept on and the account's computers (gamma/computers/registry.py;
+docs/research/agent-collab.md "How the server sees a vault"). Every Gamma
+server answers.
 
 The channel's routes take a token of the ``computer`` scope and nothing
 else (a session or any other token: 403), and such a token opens nothing
 but them (``auth.CHANNEL_PREFIX``). ``POST /announce`` says what the
 computer is and keeps; ``GET /poll`` is held up to ``registry.POLL_S``, on
 the event loop without a worker thread, and is the computer's heartbeat: a
-GET, so a read-only hosted server lets it through. The page's route and
-``GET /computers`` (Settings → AI) are the signed-in account's alone: a
-session, never a token, a guest or a share, and only that account's
-computers.
+GET, so a read-only hosted server lets it through. The page's route,
+``GET /folders/computers`` and ``GET /computers`` (Settings → AI) are the
+signed-in account's alone: a session, never a token, a guest or a share,
+and only that account's computers.
 
-The Sends (step 4c): a work folder of this server the computer keeps with
-an agent there (its announce's folder vault with ``agent``,
-``registry.agent_folders``) has its maker's Sends made in Gamma run on
+The Sends (step 4c): a work folder of this server the computer keeps
+while an agent is on there (the first of its announce's assistants
+``enabled``, ``registry.agent_folders``) has its maker's Sends made in Gamma run on
 that computer. ``GET /sends`` lists the ones waiting and the runs
 withdrawn meanwhile; a run takes one with ``/claim``, keyed by the id the
 computer minted for it (a retry is told it holds it; another taker 409),
@@ -150,6 +151,19 @@ def account_computers(request: Request):
     ``[]`` for none; a token or a guest 403."""
     user_id = require_personal_user_id(request, "Sign in with your own account to see your computers.")
     return {"computers": registry.of_account(user_id, require_ws(request))}
+
+
+@router.get("/folders/computers")
+def folder_computers(request: Request):
+    """``{folders: {folder id: {name, online, since, paused}}}``: the
+    signed-in account's computers that keep a folder vault of the
+    workspace, one per folder (``registry.of_folders``), which a synced
+    folder's card and rows name. A share's reader 404, a token or a guest
+    403."""
+    if request.query_params.get("share"):
+        raise HTTPException(status_code=404, detail="Not found")
+    user_id = require_personal_user_id(request, "Sign in with your own account to see the computers you keep this on.")
+    return {"folders": registry.of_folders(user_id, require_ws(request))}
 
 
 # --- the Sends a computer runs (step 4c) ----------------------------------------------------------

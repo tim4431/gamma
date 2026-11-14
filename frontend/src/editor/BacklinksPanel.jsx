@@ -7,7 +7,7 @@
 import React, { useEffect, useMemo } from "react";
 import { BlockMarkdown } from "./BlockTree";
 import { REF_RE, refLabelOf } from "./refLabels.js";
-import { FileGlyph } from "../shared/ui/Icons";
+import FileIcon from "../shared/ui/FileIcon.jsx";
 import { Collapse } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
@@ -56,12 +56,12 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
         {tn("Linked from {n} page", "Linked from {n} pages", groups.length)}
       </button>
       <Collapse open={!collapsed}>{groups.map((g) => {
-        const format = pages?.find((p) => p.id === g.id)?._doc?.format || "";
+        const page = pages?.find((p) => p.id === g.id);
         return (
           <div key={g.id} className="backlinkGroup">
             <div className="backlinkPage" role="button" tabIndex={0} title={t("Open the page \"{name}\"", { name: g.title })}
               onClick={() => onOpen(g.items[0])} onKeyDown={keyOpen(g.items[0])}>
-              <FileGlyph format={format} size={14} />
+              <FileIcon path={page?._fileName} format={page?._doc?.format || ""} size={14} />
               <span className="backlinkPageTitle">{g.title}</span>
             </div>
             {g.items.map((bl) => (

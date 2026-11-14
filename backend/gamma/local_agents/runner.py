@@ -188,13 +188,15 @@ SEND, CHAT = "send", "chat"
 
 # Why a run's stop was set: the words its request is failed with (a withdraw
 # writes nothing). "link" is decided when the run ends, from what the vault
-# is then (``_link_reason``); "person" is a chat turn's Stop (it ends
+# is then (``_link_reason``), unless the stop said it (``stop_link``'s
+# ``why``, a key of ``STOPPED``); "person" is a chat turn's Stop (it ends
 # ``stopped``).
 WITHDRAWN, CLOSING, LINK, PERSON = "withdrawn", "closing", "link", "person"
 STOPPED = {"off": "Stopped: the agent was turned off on this computer.",
            "unoffered": "Stopped: the directory is no longer offered on this computer.",
            "paused": "Stopped: the synced folder was paused.",
            "removed": "Stopped: the synced folder is no longer kept on this computer.",
+           "detached": "Stopped: the synced folder was detached.",
            "changed": "Stopped: the synced folder changed on this computer.",
            CLOSING: "Stopped: Gamma is closing."}
 
@@ -781,16 +783,19 @@ def answer_computer(ask_id: str, decision: str, user_id: str) -> int:
     return asks_version()
 
 
-def stop_link(link_id: str) -> None:
+def stop_link(link_id: str, why: str = "") -> None:
     """Stop the run of the vault ``link_id``, if one runs: the vault was
-    paused, relinked, removed or its push lowered (what fits is read when the run ends). The Sends still queued
-    for it are dropped from the queue: a vault that takes them again
-    (``queue_folder``) finds them sent. Its chat turns stay: each, taken,
-    finds the vault as it is now and fails with why."""
+    paused, relinked, removed or its push lowered (what fits is read when
+    the run ends), or ``why`` says it (a key of ``STOPPED``): ``removed``
+    for a vault being removed, whose row may outlast the run's end,
+    ``detached`` for a work folder its other server detached. The Sends
+    still queued for it are dropped from the queue: a vault that takes them
+    again (``queue_folder``) finds them sent. Its chat turns stay: each,
+    taken, finds the vault as it is now and fails with why."""
     with _lock:
         for run in _active.values():
             if run["link_id"] == link_id and not run["stop"].is_set():
-                run["reason"] = LINK
+                run["reason"] = why or LINK
                 run["stop"].set()
         for key in [key for key, held in _queued.items() if held == link_id and key[1] == SEND]:
             _unqueue(key)
@@ -1389,9 +1394,7 @@ class _Turning:
 
     def _stop_words(self) -> str:
         reason = self.run["reason"]
-        if reason == CLOSING:
-            return STOPPED[CLOSING]
-        return STOPPED[self._link_reason()]
+        return STOPPED[reason if reason in STOPPED else self._link_reason()]
 
     def _push(self) -> None:
         """A work folder of another server pushes what the turn changed now,

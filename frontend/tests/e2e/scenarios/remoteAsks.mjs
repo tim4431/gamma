@@ -170,7 +170,7 @@ export async function remoteAskScenarios(env) {
 
     await step("remote-asks: letting Codex ask is set only with the shell's word", async () => {
       const token = await alice.api("/api/integrations/tokens", { method: "POST",
-        body: { name: "Gamma desktop: Paper synced vault", scope: "write", expires_in_days: 365 } });
+        body: { name: "Gamma desktop: Paper synced folder", scope: "write", expires_in_days: 365 } });
       const link = await shell.api("/api/folder-links", { method: "POST", body: { folder: folderId, path: dir, notes: true, pull: true,
         push: "everything", choose: true, remote_url: nas.base, workspace: wsId, token: token.token, token_id: token.id } });
       linkId = link.id;

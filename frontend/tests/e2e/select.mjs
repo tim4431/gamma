@@ -123,6 +123,8 @@ export const RULES = [
   ["frontend/tests/e2e/run.mjs", ALL],
   ["frontend/tests/e2e/**", []],
   ["frontend/tests/**", []],
+  // the build's plugin that ships the file icons, which the trees, the tabs and the viewers draw
+  ["frontend/tools/fileIcons.mjs", ["work-folders", "explorer", "viewers", "remote-work"]],
   ["frontend/tools/**", []],
 
   ["frontend/src/shared/i18n/locales/**", ["i18n", "settings"]],
@@ -250,13 +252,22 @@ export const RULES = [
   ["frontend/src/explorer/useFileSearch.js", ["quick-open", "sub-pages", "explorer"]],
   // a file's path, its crumbs and a note's relative link (BlockTree's renderer asks isRelativeHref)
   ["frontend/src/explorer/workPaths.js", ["work-folders", "vaults", "explorer", "notes-pdf-share", "sub-pages"]],
-  // a work folder's list view and the tracking dialog; the Files window, its owner and its rows
+  // a work folder's folder view and the tracking dialog; the Files window, its owner and the rows both trees draw
   // remote-work: the tracking dialog of a work folder of another server (what goes there, its secrets, the
-  // window handed back) and the folder menu's Let go of this work folder… there
+  // window handed back), the folder view there and the folder menu's Detach… there; viewers: the folder
+  // view's Format column
   ["frontend/src/explorer/trackRemote.js", ["remote-work", "work-folders"]],
+  ["frontend/src/explorer/DetachDialog.jsx", ["work-folders", "vaults", "explorer", "remote-work"]],
+  ["frontend/src/explorer/detach.js", ["work-folders", "vaults", "explorer", "remote-work"]],
   ["frontend/src/explorer/TrackDialog.jsx", ["work-folders", "vaults", "explorer", "remote-work"]],
   ["frontend/src/explorer/useWorkFolderActions.jsx", ["work-folders", "vaults", "explorer", "remote-work"]],
   ["frontend/src/explorer/workFolderActions.js", ["work-folders", "vaults", "explorer", "remote-work"]],
+  ["frontend/src/explorer/FolderTree.jsx", ["work-folders", "vaults", "explorer", "remote-work", "viewers"]],
+  ["frontend/src/explorer/useFolderTree.js", ["work-folders", "vaults", "explorer", "remote-work", "viewers"]],
+  ["frontend/src/explorer/TreeRow.jsx", ["work-folders", "vaults", "explorer", "remote-work", "viewers"]],
+  ["frontend/src/explorer/useTree.js", ["work-folders", "vaults", "explorer", "remote-work", "viewers"]],
+  ["frontend/src/explorer/tree.css", ["work-folders", "vaults", "explorer", "remote-work", "viewers"]],
+  ["frontend/src/explorer/fileTree.js", ["work-folders", "vaults", "explorer", "remote-work", "viewers"]],
   ["frontend/src/explorer/**", ["work-folders", "vaults", "explorer"]],
   ["frontend/src/library/QuickOpen.jsx", ["quick-open", "sub-pages", "explorer"]],
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash", "sub-pages"]],
@@ -357,8 +368,8 @@ export const RULES = [
   // (remote-sends: the binding of a work folder to its computer's agent, the channel's Sends;
   // remote-chat: the channel's chat turns, the models announced)
   // (https: the channel to a NAS over https, a redirect or a certificate in its way, the id kept across a move)
-  ["backend/gamma/computers/channel.py", ["computers", "remote-sends", "remote-chat", "remote-asks", "https"]],
-  ["backend/gamma/computers/**", ["computers", "remote-sends", "remote-chat", "remote-asks"]],
+  ["backend/gamma/computers/channel.py", ["computers", "remote-sends", "remote-chat", "remote-asks", "https", "remote-work"]],
+  ["backend/gamma/computers/**", ["computers", "remote-sends", "remote-chat", "remote-asks", "remote-work"]],
   ["backend/gamma/routers/computers.py", ["computers", "remote-sends", "remote-chat", "remote-asks"]],
   ["backend/gamma/routers/computer_links.py", ["computers", "https"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
@@ -368,7 +379,7 @@ export const RULES = [
   // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md);
   // files by name (file_search.py)
   // (remote-work: a work folder of another server, its mark refused in a clone or a Zotero-linked workspace
-  // (elsewhere.py), its tracking dialog over HTTP (selection.py) and the owner's Let go (takeover.py))
+  // (elsewhere.py), its tracking dialog over HTTP (selection.py) and its Detach (detach.py, takeover.let_go))
   ["backend/gamma/work_folders/**", ["work-folders", "vaults", "explorer", "remote-work"]],
   ["backend/gamma/folder_sync.py", []],
   // (https: the client every vault and channel of another server speaks through: redirects refused, TLS failures named)

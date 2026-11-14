@@ -508,6 +508,7 @@ ENDED = ("done", "failed", "stopped")
 MAX_WAITING = 20          # turns one listing gives a computer at most
 EARLIER = 6               # earlier messages a turn's prompt takes (runner._ChatTurn._work)
 NO_TURN = "No turn has that id."
+DETACHED = "The synced folder was detached before its computer took this turn."
 
 _RUN_COLUMNS = ("turn_id", "conversation_id", "bucket", "user_id", "agent", "computer", "holder", "run", "seq",
                 "stop", "state", "queued_at", "started_at")
@@ -752,6 +753,23 @@ def fail_queued(ws: str, user_id: str, kept: dict[str, set], words) -> list[str]
                 _end_run(conn, row, "failed", {"error": words(row["agent"], kept[w])})
                 failed.append(row["turn_id"])
     return failed
+
+
+def fail_detached(ws: str, pages: list[str]) -> list[str]:
+    """The turns queued for another computer in ``pages``, those of a work
+    folder just detached (gamma/work_folders/detach.py, which reads them
+    while they still name it), fail (``DETACHED``): once it is no work
+    folder, no computer is given them. One running there stops on that
+    computer, whose round finds the folder detached (gamma/folder_links.py
+    ``LET_GO_THERE``) → the turns failed."""
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        rows = [dict(zip(_RUN_COLUMNS, r)) for r in conn.execute(
+            f"SELECT {', '.join(_RUN_COLUMNS)} FROM computer_chat_runs "
+            "WHERE state = 'queued' AND bucket IN (SELECT value FROM json_each(?))", (json.dumps(pages),))]
+        for row in rows:
+            _end_run(conn, row, "failed", {"error": DETACHED})
+    return [row["turn_id"] for row in rows]
 
 
 def remote_turns(ws: str, user_id: str) -> list[dict]:

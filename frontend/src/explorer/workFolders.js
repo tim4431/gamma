@@ -21,12 +21,12 @@ const TOP = "folders";
 // The words a person reads, by kind (filing.WORDS, the server's English
 // word for word, so a refusal the server sends translates as these do).
 export const WORDS = {
-  filed: T("A work folder's file is filed by its directory: add it to the library to file it in library folders as well."),
-  named: T("A work folder's file is named by its file: rename it on disk."),
-  trash: T("A work folder's file leaves when its file is deleted or untracked: use Choose files…."),
+  filed: T("A synced folder's file is filed by its directory: add it to the library to file it in library folders as well."),
+  named: T("A synced folder's file is named by its file: rename it on disk."),
+  trash: T("A synced folder's file leaves when its file is deleted or untracked: use Choose files…."),
   restore: T("It comes back when its file is tracked again."),
-  directories: T("A work folder's directories follow the disk."),
-  remove: T("Remove the synced vault to delete its folder."),
+  directories: T("A synced folder's directories follow the disk."),
+  remove: T("Detach the synced folder to delete its folder."),
   document: T("That file's PDF is read where it is: it cannot be changed in Gamma."),
 };
 export const refusalText = (kind) => (Object.hasOwn(WORDS, kind) ? t(WORDS[kind]) : "");

@@ -117,7 +117,7 @@ function cardOf(queue, servers, replaced = '') {
   const notes = [
     marks ? `This holds ${marks === 1 ? '1 character that does' : `${marks} characters that do`} not show: Gamma marks ${marks === 1 ? 'it' : 'them'} ⟨U+…⟩.` : '',
     ask.background && !files ? 'Asked to run in the background: Gamma runs it in the foreground, so Stop ends it.' : '',
-    files ? 'It changes files outside the work folder.'
+    files ? 'It changes files outside the synced folder.'
       : `It runs as you, with your files and the network. A build also runs what this folder's files say, and ${from.name} can change them.`,
     replaced && replaced === ask.id ? 'The question before this one went away: this is another one.' : '',
     at ? `Declined by itself at ${at} unless you answer.` : '',

@@ -139,7 +139,7 @@ Gamma's server is the **remote**, the directory or the file here is
 
 - A library folder's menu: *Sync with this computer…*; a work folder's:
   *Choose files…*. A page's Document menu: *Push from a file on this
-  computer…*. The launcher and the sync panel: *Add a synced vault…*,
+  computer…*. The launcher and the sync panel: *Add a synced folder…*,
   which starts from a directory. The desktop app's Server menu: *Open a
   PDF…*.
 - The sync panel: a row per vault with its name, its direction and its
@@ -150,7 +150,8 @@ Gamma's server is the **remote**, the directory or the file here is
   now*, *Pause* and the directory as a bar of buttons named by their
   tooltips, and *Choose files…* for a work folder, *Go on…* for a held
   vault, *Locate…* for a stopped one, *Force pull…*, *Force push…* and
-  *Remove the vault…* as rows.
+  *Detach…* (a work folder), *Remove the synced folder…* (another folder)
+  or *Remove the vault…* (a file's) as rows.
 - A page of a vault: a chip among the page header's buttons, one icon for
   how the page stands: kept in step, pushed from a file of its own,
   paused, or something to see to. Its tooltip says it in words, *Synced:
@@ -1340,14 +1341,16 @@ unmarked folder gets the round above, unchanged. In a work folder:
 - **The trash.** A note a person trashed where the vault pulls goes to
   `.gamma/trash` as above; any other file of a page that left stays where it
   is, its row an in-place tombstone (below).
-- **Removal and release.** Removing the work folder stores its PDFs read
-  in place, as before, and nothing for a file of another format: Gamma
-  copies nothing of a directory but what was asked to be kept (a library
-  file's versions, a commented version), which is stored already
-  ([work folders](work_folders.md) "Removing a work folder"). A work folder
-  let go (`takeover.release`) forgets its `file` rows: their pages keep
-  their documents, and a kept folder's round meets no row of a class it does
-  not compare.
+- **Removal and release.** Removing the work folder is its Detach
+  ([work folders](work_folders.md) "Detaching a work folder"): keeping its
+  files stores every one read in place, whatever its format, a listed one
+  staying listed; removing them stores its PDFs read in place, as before,
+  and nothing for a file of another format, since Gamma copies nothing of a
+  directory but what was asked to be kept (a library file's versions, a
+  commented version), which is stored already. A work folder let go
+  (`takeover.release`) forgets its `file` rows: their pages keep their
+  documents, and a kept folder's round meets no row of a class it does not
+  compare.
 - **A library file's versions** are stored as they come (`LocalSink.store`
   before `replace_attachment`), its document still at `path`; so are a
   PDF's or a picture's while a comment thread on it is open
@@ -1768,19 +1771,21 @@ As built:
   vault sees no path of it, and no text a round wrote, which may name one:
   of the status, `push_off` is then a fixed sentence. The routes that take
   a path want the shell's secret ("The routes").
-- **Removing the vault** (`delete_link`) leaves its pages as they are. The
+- **Removing the vault** (`delete_link`) leaves its pages as they are and
+  its directory as it is: Gamma never moves or deletes a file of it. The
   PDFs it reads in place, and a kept folder's pictures, are stored first
-  (`GET /removal` counts them and their size; a work folder's files of other
-  formats are stored by nothing, "A work folder's round"), and one that
-  cannot be stored stops the
-  removal before anything is undone; its live pages' documents are then at
-  `store`, and a page in Recently deleted reads in place still, its copy
-  stored (`_store_in_place`). Then, with `files=keep`, the marker
-  goes and the files stay; with `files=trash`, the files its pulls made and
-  nobody wrote in since (`ours`, still as their base) move to its trash
-  first, and only the marker goes, never the trash. A vault whose disk is
-  not there keeps its pages reading their files, missing, to be located. A
-  file vault's file is never touched.
+  (`GET /removal` counts them and their size; a work folder's files of
+  every format when they are kept, "A work folder's round"), and one that
+  cannot be stored stops the removal before anything is undone; its live
+  pages' documents are then at `store`, and a page in Recently deleted
+  reads in place still, its copy stored (`_store_in_place`). Then its
+  feedback files and its marker go, and `.gamma/` when that leaves it
+  empty; `.gamma/trash`, whatever it holds, stays. A work folder is
+  detached with a choice, its files kept in Gamma as pages or those not in
+  the library sent to Recently deleted (`pages`, [work folders](work_folders.md)
+  "Detaching a work folder"). A vault whose disk is not there keeps its
+  pages reading their files, missing, to be located. A file vault's file is
+  never touched.
 - **Relink** (`POST /{id}/relink`): a vault's directory moved or its disk
   mounted elsewhere is found again only where the marker is this vault's;
   the PDFs it reads in place, and any opened page that reads one of them,
@@ -1838,10 +1843,8 @@ cannot both push now: the newer one's push is turned off at its upgrade and
 the status says why (`push_off`). A link made now over a directory an
 earlier link kept the same folder in, of the same server, goes on with it
 as an older one (`_kept_before`); one holding another folder's files is
-refused. Removing an older folder with `files=keep` leaves its directory,
-state file and all, for a link made there again; with `files=trash` it is
-taken onto the engine first, so the removal knows which files the client
-wrote.
+refused. Removing an older folder leaves its directory, state file and
+all, for a link made there again.
 
 ## A vault on another server
 
@@ -1990,7 +1993,7 @@ In short, from `desktop/main.js`: the shell starts its local servers with
 `lib/sidecar.js`), and sends it as `X-Gamma-Shell` on the routes that take
 a path, only to a local server of its own (`shellWord`). The ways in are a
 folder's *Sync with this computer…* and the panel's chooser
-(`addFolderVault`), *Add a synced vault…* in the launcher and the panel
+(`addFolderVault`), *Add a synced folder…* in the launcher and the panel
 (`addDirectoryVault`, which needs no open server: the host's personal
 workspace unless a local server's workspace is open), and a page's *Push
 from a file on this computer…* (`addFileVault`). The page asks by posting
@@ -2037,7 +2040,7 @@ deleted for good ("To another server" above).
 | `PATCH /{id}` | `notes`, `pull`, `push`, a token, `paused` |
 | `POST /{id}/sync` | a round: `wait`, `direction`, `force=pull\|push`, `confirm` |
 | `POST /{id}/relink` **P** | the vault found at another place |
-| `GET /{id}/removal`, `DELETE /{id}?files=keep\|trash` | what removing would do; remove |
+| `GET /{id}/removal`, `DELETE /{id}?pages=keep\|remove` | what removing would do; remove (a work folder's Detach: its files kept as pages, or removed to Recently deleted) |
 | `GET /{id}/conflicts`, `POST /{id}/conflicts/{cid}` | the vault's `file_won` rows |
 | `GET /page/{id}` | a page's standing: `{vault, reader}` |
 | `GET`, `PUT /page/{id}/file` | the page's notes file, for Gamma's file editor |

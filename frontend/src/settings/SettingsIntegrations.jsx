@@ -38,7 +38,7 @@ function ConnectionRow({ item, names, busy, onEdit, onRevoke }) {
   const edits = item.edit_all ? t("edits notes wherever you edit")
     : editing.length ? t("edits notes in {workspaces}", { workspaces: editing.join(", ") }) : null;
   const connected = item.created_at ? t("Connected {date}", { date: dateOf(item.created_at) }) : null;
-  const parts = (computer ? [spaces.length ? t("Shows its synced vaults of {workspaces}", { workspaces: spaces.join(", ") }) : t("Shows its synced vaults"),
+  const parts = (computer ? [spaces.length ? t("Shows its synced folders and files of {workspaces}", { workspaces: spaces.join(", ") }) : t("Shows its synced folders and files"),
     connected, expiry]
     : [oauth ? t("Browser sign-in") : t("Token"), item.scope === "write" ? t("Read and write") : reads, edits,
       edits && item.asks === false ? t("changes without asking") : null,
@@ -276,7 +276,7 @@ export function IntegrationSettings({ workspaceId, setStatus }) {
         <Row icon={ShieldIcon} label={t("Scope")} hint={scope === "write"
           ? t("Read and write: what an offline copy of this workspace on another Gamma (Settings → Workspaces → Clones and Zotero links there) signs in with. Assistants only need read.")
           : scope === "feedback"
-            ? t("For a local agent or script that replies to and resolves comments on your work folders' files. It can change nothing else. The HTTP API answers in the first workspace.")
+            ? t("For a local agent or script that replies to and resolves comments on your synced folders' files. It can change nothing else. The HTTP API answers in the first workspace.")
             : t("Read-only: assistants and scripts. Choose “Read and write” for an offline copy of this workspace on another Gamma.")}>
           <Segmented value={scope} onChange={setScope} options={[["read", t("Read-only")], ["feedback", t("Read and answer feedback")], ["write", t("Read and write")]]} />
         </Row>

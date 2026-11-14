@@ -322,7 +322,7 @@ def _check_rows(frm: str, to: str, rows: dict) -> None:
             continue
         if not link or not link["token"]:
             continue
-        what = f"the synced vault “{folder_links.vault_name(link)}”"
+        what = f"the synced {'folder' if link['kind'] == 'folder' else 'vault'} “{folder_links.vault_name(link)}”"
         try:
             who = gamma_sync.Server(to, link["token"], timeout=folder_links.ASK_TIMEOUT_S).get_json("/api/sync/whoami")
         except gamma_sync.Denied as e:

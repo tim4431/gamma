@@ -127,7 +127,7 @@ export async function remoteChatScenarios(env) {
       assert(codex?.found && codex.ready, `Codex is found and ready on the computer: ${JSON.stringify(codex)}`);
       // as the shell's makeRemoteWorkFolder: a write token on the NAS, the work folder on the host
       const token = await alice.api("/api/integrations/tokens", { method: "POST",
-        body: { name: "Gamma desktop: Paper synced vault", scope: "write", expires_in_days: 365 } });
+        body: { name: "Gamma desktop: Paper synced folder", scope: "write", expires_in_days: 365 } });
       const link = await owner.api("/api/folder-links", { method: "POST", body: { folder: folderId, path: dir, notes: true, pull: true,
         push: "everything", choose: true, remote_url: nas.base, workspace: wsId, token: token.token, token_id: token.id } });
       assertEq(JSON.stringify([link.work, link.choosing]), JSON.stringify([true, true]), "a work folder of the NAS, its files to be chosen");

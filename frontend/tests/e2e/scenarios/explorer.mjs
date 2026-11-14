@@ -7,7 +7,8 @@ import { Account, Server, makePdf, sleep, wanted } from "../harness.mjs";
 // "The Files window", "Files by name", "Paths"): a work folder of a paper,
 // with its sources, figures, a table and a note. Quick open finds a file by
 // name and by path among 20,000 seeded ones; the Files window beside an open
-// page reads nothing until it is shown, then reveals the page, opens and
+// page reads nothing until it is shown, then reveals the page, draws its
+// rows with their theme icons and the root with its computer, opens and
 // moves by the keys, folds, closes and comes back as it was; a library
 // folder stands in it with its pages; a file's crumbs open its directory;
 // a note's link to a file is a mention of its page, and a path typed in
@@ -16,8 +17,8 @@ import { Account, Server, makePdf, sleep, wanted } from "../harness.mjs";
 // vaults recipe (GAMMA_FOLDER_LINKS, no shell secret, a desktop user agent).
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
-// What the work folder tracks: its sources, PDFs, notes and the table.
-const IGNORE = "*\n!*/\n!*.tex\n!*.pdf\n!*.md\n!*.csv\n";
+// What the work folder tracks: its sources, PDFs, notes, the table and a script.
+const IGNORE = "*\n!*/\n!*.tex\n!*.pdf\n!*.md\n!*.csv\n!*.py\n";
 const NOTES = "# notes\n\nSee [the method](sections/method.tex) and [[main.pdf]].\n";
 const PLACEHOLDER = "Search pages, files, folders and labels";
 // What a path link naming no file asks: the server's "no tracked file" answer.
@@ -107,6 +108,7 @@ export async function explorerScenarios(env) {
     write(path.join(paperDir, "figures", "fig1.pdf"), Buffer.from(makePdf([["The first figure"]])));
     write(path.join(paperDir, "figures", "fig2.pdf"), Buffer.from(makePdf([["The second figure"]])));
     write(path.join(paperDir, "figures", "raw", "data.csv"), "x,y\n1,2\n");
+    write(path.join(paperDir, "figures", "plot.py"), "print('plot')\n");
     write(path.join(paperDir, ".gammaignore"), IGNORE);
 
     let link = null, W = "";
@@ -122,6 +124,7 @@ export async function explorerScenarios(env) {
         main: await page(W, "main.tex"), mainPdf: await page(W, "main.pdf"),
         intro: await page(ids.sections, "intro.tex"), method: await page(ids.sections, "method.tex"),
         fig1: await page(ids.figures, "fig1.pdf"), fig2: await page(ids.figures, "fig2.pdf"), data: await page(ids.raw, "data.csv"),
+        plot: await page(ids.figures, "plot.py"),
       });
       assert(ids.main !== ids.mainPdf, "main.tex and main.pdf are two pages (no main.md pairs them)");
       // a note read once its files are pages: the links become their mentions
@@ -253,6 +256,18 @@ export async function explorerScenarios(env) {
         await until(async () => (await treeRow(page, "fig1.pdf").getAttribute("aria-selected")) === "true", { timeout: 15000, what: "fig1.pdf revealed" });
         assertEq(await treeRow(page, "figures").getAttribute("aria-expanded"), "true", "figures opened");
         assertEq(await treeRow(page, "raw").getAttribute("aria-expanded"), "false", "raw stays closed");
+        // a synced folder's rows by Material Icon Theme: a file by its name, a directory by its own, the root its
+        // root folder, with the computer that keeps it
+        const icon = (name) => treeRow(page, name).locator("img.fileIcon").first().getAttribute("src", { timeout: 2000 }).catch(() => "");
+        for (const [name, id] of [["main.tex", "tex"], ["plot.py", "python"], ["figures", "folder-images-open"], ["raw", "folder"],
+          ["Paper", "folder-root-open"]]) {
+          await until(async () => new RegExp(`/assets/file-icons/[^/]+/${id}(_light)?\\.svg$`).test((await icon(name)) || ""),
+            { timeout: 10000, what: `${name}'s icon is ${id}` });
+        }
+        assert(/^This computer · /.test(await treeRow(page, "Paper").locator(".fileTreeKeeper").innerText()),
+          "the root names the computer that keeps it");
+        const served = await page.evaluate(async (src) => (await fetch(src)).headers.get("content-type"), await icon("main.tex"));
+        assert(/svg/.test(served || ""), `the icon is served as SVG: ${served}`);
 
         // fold and open by the grip, close and bring it back from the View menu
         await page.locator('[data-guide="files.grip"]').dblclick();
@@ -303,9 +318,10 @@ export async function explorerScenarios(env) {
         assertEq(await page.locator(".folderChip").count(), 0, "no directory chip beside the title: the crumbs say it");
         await crumbs.filter({ hasText: "sections" }).click();
         await until(async () => ((await page.locator(".folderCurrent .crumbBtn").last().textContent().catch(() => "")) || "").trim() === "sections",
-          { timeout: 15000, what: "the directory's list view" });
+          { timeout: 15000, what: "the directory's folder view" });
         for (const name of ["intro.tex", "method.tex"]) {
-          await page.locator(".workList .fileRow", { has: page.locator(`.fileRowName:text-is("${name}")`) }).waitFor({ timeout: 15000 });
+          await page.locator('.folderTree .fileTreeRow[data-kind="file"]', { has: page.locator(`.fileTreeName:text-is("${name}")`) })
+            .waitFor({ timeout: 15000 });
         }
         const q = new URL(page.url()).searchParams;
         assertEq(q.get("folder"), ids.sections, "the address names the directory");

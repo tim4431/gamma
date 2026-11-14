@@ -237,7 +237,7 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
   const tickLine = !ticked ? null
     : ticked.why === "never" ? { warn: true, text: t("{file} is {why}.",
       { file: tickName, why: NEVER[ticked.never]?.() || t("never tracked") }) }
-    : ticked.why === "gone" ? { warn: true, text: t("{file} is not in this work folder any more.", { file: tickName }) }
+    : ticked.why === "gone" ? { warn: true, text: t("{file} is not in this synced folder any more.", { file: tickName }) }
     : { warn: false, text: t("Opened from your computer: {file} is ticked. Save to track it and open it.", { file: tickName }) };
 
   async function save() {
@@ -264,7 +264,7 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
       await apiJson(url, { method: "DELETE" });
     } catch (err) {
       gone = false;
-      setStatus?.(t("Could not cancel the work folder: {message}", { message: err.message || err }));
+      setStatus?.(t("Could not cancel the synced folder: {message}", { message: err.message || err }));
     }
     if (handBack) tracked(gone);
     else onCancelled();
@@ -274,7 +274,7 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
   // from Escape or the × (SubDialog's guard, `cancel`); Choose files… asks
   // once something changed.
   const close = fresh ? cancelFresh : leave;
-  const guard = fresh ? { question: t("Cancel making this work folder?"), keep: t("Keep choosing"), leave: t("Cancel it"), cancel: true }
+  const guard = fresh ? { question: t("Cancel making this synced folder?"), keep: t("Keep choosing"), leave: t("Cancel it"), cancel: true }
     : changed ? { question: t("Leave without saving?"), keep: t("Keep choosing"), leave: t("Leave") } : null;
   const draft = fresh ? undefined : { changes: state.changes, library };
   const name = link.dest ? leaf(link.dest.replace(/\\/g, "/")) : link.path ? leaf(link.path.replace(/\\/g, "/")) : "";
@@ -287,8 +287,8 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
     <SubDialog title={t("Choose files")} onClose={close} guard={guard} draft={draft} className="trackDialog">
       <div className="importReviewHeader">
         <strong>{name}</strong>
-        <p>{fresh ? t("Pick what this work folder tracks: each file ticked becomes a page, and the rest stay on disk only.")
-          : t("Pick what this work folder tracks. A file unticked leaves Gamma for Recently deleted; it stays on disk.")}</p>
+        <p>{fresh ? t("Pick what this synced folder tracks: each file ticked becomes a page, and the rest stay on disk only.")
+          : t("Pick what this synced folder tracks. A file unticked leaves Gamma for Recently deleted; it stays on disk.")}</p>
       </div>
       {tickLine ? tickLine.warn ? <FormNotice tone="warn">{tickLine.text}</FormNotice> : <p className="reportModalHint">{tickLine.text}</p> : null}
       {read?.error ? <FormNotice>{read.error}</FormNotice> : null}
@@ -344,7 +344,7 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
               <FormNotice tone="warn">{secrets.text}</FormNotice>
               <ul>{secrets.files.map((path) => <li key={path}><strong>{path}</strong></li>)}</ul>
             </> : null}
-            {current.over_cap ? <FormNotice tone="warn">{t("A work folder tracks at most {cap} files: untick some to save.", { cap: current.cap })}</FormNotice> : null}
+            {current.over_cap ? <FormNotice tone="warn">{t("A synced folder tracks at most {cap} files: untick some to save.", { cap: current.cap })}</FormNotice> : null}
             {read.rules.exists && !current.rules_ours ? <p>{t("Your .gammaignore will be rewritten.")}</p> : null}
           </> : preview?.error && preview.key === selectionKey ? <FormNotice>{preview.error}</FormNotice> : <p>{t("Counting…")}</p>}
         </div>

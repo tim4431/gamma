@@ -360,9 +360,11 @@ that list and keeps only its layout in its own rule. The kind label on a card
   into it, ← closes it or moves to its parent, Enter opens a file or opens
   and closes a folder, Space selects, Shift+F10 or the menu key opens the
   row's menu at the row. Chords with Alt, Ctrl or ⌘ pass through (Alt+←
-  is Back). The one tree is the Files window's (`explorer/FileTree.jsx`,
-  its keys `explorer/fileTree.js` `keyAction`); a new tree takes the same
-  keys. No typeahead yet.
+  is Back). The trees are the Files window's (`explorer/FileTree.jsx`)
+  and a synced folder's folder view (`explorer/FolderTree.jsx`), both with
+  the keys and the focus of `explorer/useTree.js` (`fileTree.js`
+  `keyAction`) ([Trees](#trees)); a new tree takes the same. No typeahead
+  yet.
 - **Fields** show focus as the accent border plus a 3 px `--accent-bg` halo,
   on click and keyboard alike. The field list is next to the ring rule. A
   field inside a framing box (`.searchInputWrap`, `.homeFindBox`,
@@ -799,6 +801,16 @@ the format. Cancel of a work folder still being made removes it, so its
 guard has `cancel: true` and the footer Cancel asks first, as Escape and ×
 do ("Cancel making this work folder?"); Choose files… asks through its
 draft once something changed ("Leave without saving?").
+
+**Detach** (a synced folder's *Detach from TIM-PC…*, `explorer/DetachDialog.jsx`,
+[work_folders.md](work_folders.md) "Detaching a work folder") is a
+`SubDialog` (`.reportModal.detachDialog`) in the report dialog's shape: a
+muted line with the files and those in the library, the two choices as
+its radios (`.reportReasons`), each with what it does under its name
+(`.detachChoice`, the bytes keeping stores), the line that the directory
+on the computer stays as it is, a `FormNotice` (`warn`) for a computer
+offline and one for a refusal, and Cancel and Detach, red once *Remove
+them from Gamma* is picked.
 
 **The feedback view** (Feedback, `feedback/FeedbackDialog.jsx`,
 [feedback.md](feedback.md) "In the app") is one `SubDialog`
@@ -1820,19 +1832,6 @@ started elsewhere landing, and the server's view history landing after
 it. Each marks what it sets, and a change is still when all it
 changed was read that way, so a delete right after a load still moves.
 
-A work folder's list (`explorer/FolderList.jsx`, [work_folders.md](work_folders.md)
-"The folder's list view") is the listing's list view in place of either
-view: the same `.fileList` rows (`.workList`), its directories first as
-`folderRow`s, then its files as `fileRow`s, and one column table that draws
-the header and every row (Name, then `fileRowFormat`, `fileRowSize`,
-`fileRowDate`, `fileRowComments`, the pin slot and the ⋯), so they line up;
-a narrow list drops Comments and the date as the library's drops its date.
-The bar keeps the filter box ("Filter by name") and a sort `MenuSelect` of
-its own (Name, Format, File size, Modified), never inherited from the
-library's sort, and hides the view and kind toggles. Its `scope` is the
-folder, sort, filter text and how many pages of rows are loaded, and a read
-again of its rows comes still.
-
 The small lists are on it too. An empty state can be an item of its own
 (its key "empty"), so it fades in as the last item leaves; a section's
 header is one, so it goes with its last row.
@@ -1858,6 +1857,54 @@ header is one, so it goes with its last row.
 
 The copies drop the ids the app and the tests find these items by
 (`data-inbox-id`; `data-card-for`, `data-thread-id`, `data-comment-id`).
+
+### Trees
+
+A tree of folders and files draws every row with one component,
+`explorer/TreeRow.jsx` (its styles `explorer/tree.css`), and takes its keys
+and focus from `explorer/useTree.js` ([Keyboard focus](#keyboard-focus)).
+There are two: the Files window's (`FileTree.jsx`) and a synced folder's
+folder view (`FolderTree.jsx`, [work_folders.md](work_folders.md) "The
+folder view"), which stands in the listing's place for a work folder's
+directory whatever the library's view.
+
+- **A row** (`.fileTreeRow`, a `treeitem`): indented by its `--level` (14
+  px a level), a guide line down the middle of each folder's chevron above
+  it (its `::before`, `--border-subtle`), a 24 px chevron slot (44 px under
+  `.phoneUI`, the guides with it), its icon ([File icons](#file-icons)),
+  the name cut with an ellipsis, what follows it, and the "⋯"
+  `MenuButton` (`.fileTreeMenu`) revealed with the row as a
+  `.rowMenuHost`'s. Selected in `--bg-selected`, the focus ring inside, a
+  folder a page may be dropped on in `.dragOver`. A "Show {n} more files"
+  row and a muted note row (Reading…, Could not read this folder. with Try
+  again, No tracked files here.) are tree items too. A synced folder's
+  root row says its computer after the name (`.fileTreeKeeper`, muted).
+- **The folder view** (`.folderTree`) is the listing's width: 32 px rows
+  in `--fs-md`, hovered in `--bg-block`, selected as the listing's rows
+  (`--accent-bg-light`, an accent border), and after each name one column
+  table that the header (`.fileListHead.folderTreeHead`, its name column
+  starting where the rows' names do) draws too: `fileRowFormat`,
+  `fileRowSize`, `fileRowDate`, `fileRowComments`, the pin slot and the
+  ⋯, so they line up; a narrow view drops Comments and the date as the
+  library's list drops its date. A directory's Format cell counts its
+  files. The bar keeps the filter box ("Filter by name") and a sort
+  `MenuSelect` of its own (Name, Format, File size, Modified), never
+  inherited from the library's sort, and hides the view and kind toggles.
+  Rows come and go as directories open: no `ListMotion`, as in the Files
+  window.
+
+### File icons
+
+A synced folder's files and directories wear Material Icon Theme's icons,
+as VS Code draws them (`shared/ui/FileIcon.jsx` over `shared/ui/fileIcons.js`,
+[work_folders.md](work_folders.md) "File icons"): an `<img>` with
+`FileGlyph`'s classes (`.tileGlyph`, and `.kindGlyph` at a size), so every
+place that sets a kind glyph's size and alignment sets the icon's; its room
+stays empty (`.fileIcon`) while the map is first read. The theme's light
+variants show on a light scheme (`data-scheme`). A library page keeps its
+`FileGlyph`, a library folder `FolderIcon`; a name the theme has no icon
+for, and an icon that fails, fall back to them. A synced folder's own
+card and row wear the theme's root folder.
 
 ## Block editor interactions
 
@@ -2111,7 +2158,7 @@ page's notes refuse what the single-block action refuses
 | `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the section is off until the account turns it on (`backlinksVisible`, Settings → Reading & editing › Notes — off, no backlinks are fetched), and its fold is the browser pref `backlinksCollapsed` |
 | `editor/SubPagesPanel.jsx` | "N pages inside" under a page's notes, above Linked from ([home_library.md](home_library.md#sub-pages)): the open page's sub-pages from `GET /pages/{id}/family`, a row each (a 14 px `FileGlyph` of the entry's `format`, the family answer's, so the PDF one for `pdf`, and the title, a button that opens the page, then the row's `MenuButton` "⋯" outside a share view, shown with the row as a `.rowMenuHost`'s, the page menu also on a right-click or a held finger through `menuPress`), and where the library may be changed a last "New page inside" row with a plus; there a row drags a page and wears `.dragOver` (the accent's background and a 1 px ring) while a page dragged over it would go inside. It borrows the backlinks panel's head, caret, rows and box (`.subPagesPanel` joins `.backlinksPanel`'s rule), folds in `Collapse`, and its fold is the browser pref `subPagesCollapsed`; a page with no sub-pages shows nothing |
 | `editor/PageCrumbs.jsx` | the crumbs at the top of a sub-page's or a work folder file's header (`nav.pageCrumbs`, "Where this page is"): a file's folders from its work folder down to its directory, each a `crumbBtn crumbFolder` opening that folder in the library (no drop target), or a sub-page's pages above it, top first, each opening that page; each crumb followed by a `/` `crumbSep`, the title below; one muted `--fs-xs` line, long titles cut with an ellipsis (`library.css`), a page crumb in the accent while a page dragged over it would go inside its page (`.dragOver`, as the folder path's crumbs); nothing for a library page |
-| `editor/PathLink.jsx` | a relative link in a note (`a.pathLink`): in a work folder's note (`PathLinkContext`, App's) a click opens the file the path names, or the status says "No tracked file at …"; elsewhere the plain link. `InternalLinkChip` is the notes' internal link, the `[[ref]]` chip's look (`.blockRefChip`) and click (Ctrl/⌘ left to the browser), drawn by the `[[ref]]` chip and the path link, which leads with its file's 14px `FileGlyph` and is muted with `aria-busy` while the server is asked. Any other link in a note takes the accent (`:where(.blockRendered) a`), never the browser's blue |
+| `editor/PathLink.jsx` | a relative link in a note (`a.pathLink`): in a work folder's note (`PathLinkContext`, App's) a click opens the file the path names, or the status says "No tracked file at …"; elsewhere the plain link. `InternalLinkChip` is the notes' internal link, the `[[ref]]` chip's look (`.blockRefChip`) and click (Ctrl/⌘ left to the browser), drawn by the `[[ref]]` chip and the path link, which leads with its file's 14px theme icon ([File icons](#file-icons)) and is muted with `aria-busy` while the server is asked. Any other link in a note takes the accent (`:where(.blockRendered) a`), never the browser's blue |
 | `editor/BlockProperties.jsx`, `editor/blockProps.js`, `editor/blockProperties.css` | the Properties popover ([above](#the-properties-popover)): the surface, loaded on first use (head, status chips, Details / JSON, the row menu, placement, the server read), and the pure model it draws (`tests/blockProps.test.mjs`): a block's kind by the server's `block_kind` order (`blockKind`, `effectiveKind`), its sections of rows, one `CATALOG` entry per key of the [block properties catalog](../research/block-properties.md#the-catalog) and the rest under Other keys, the status chips, the key and SQL paths; the menus' Properties rows and `block.properties` / `app.pageProperties` use `BracesIcon` |
 | `editor/noteSanitize.js` | `rehypeNoteSanitize`, the sanitizer every rendered note goes through between `rehype-raw` and KaTeX ([One control set, everywhere](#one-control-set-everywhere)) |
 | `editor/callouts.js` | remark plugin for `> [!note] Title` callouts (type aliases → note/tip/warning/danger/important/quote; each type's colour is a `--callout-*` token); Obsidian's `[!note]-` / `+` fold flag makes a native `<details>` with the title as `<summary>` (chevron in app.css) |
@@ -2119,8 +2166,10 @@ page's notes refuse what the single-block action refuses
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/trashList.js` | the Recently deleted list asked for ahead of its dialog, as the pointer or the focus reaches the trash button (`prefetchTrash`, `aheadTrash`, `dropTrash`; [home_library.md](home_library.md) "Recently deleted") |
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder, and "with N pages inside" for a page deleted with its sub-pages) with Restore (a muted "Comes back when its file is tracked again." in its place for a work folder's file the server says a person may not restore) and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
-| `explorer/workFolders.js`, `explorer/knownPages.js`, `explorer/useFolderRows.js`, `explorer/useSummaries.js`, `explorer/FolderList.jsx`, `explorer/TrackDialog.jsx`, `explorer/trackSelection.js` | work folders ([work_folders.md](work_folders.md)): the rules a file and a work folder's folders follow (twin of `gamma/work_folders/filing.py`), the page rows the listing does not carry merged into App's (`mergeKnown`), a directory's files read a page of rows at a time and the summaries of files open in tabs or recents, the folder's list view ([Lists that change](#lists-that-change)), and the tracking dialog ([Dialogs](#dialogs)) with its pure choice |
-| `explorer/FilesWindow.jsx`, `explorer/FileTree.jsx`, `explorer/fileTree.js`, `explorer/filesWindow.css` | the Files window ([work_folders.md](work_folders.md) "The Files window"), a lazy chunk: a `DockWindow` titled Files with *Collapse all* (`ChevronUpIcon`) in its header over `.filesPanel`, the one `role="tree"` ([Keyboard focus](#keyboard-focus)); a row is `.fileTreeRow`, 28 px tall and indented by its `--level`, a 24 px chevron slot (44 px rows and chevron under `.phoneUI`), `FolderIcon` or a 16 px `FileGlyph`, the name cut with an ellipsis, a folder's muted count, and the "⋯" `MenuButton` (`.fileTreeMenu`) revealed with the row as a `.rowMenuHost`'s; selected in `--bg-selected`, the focus ring inside, a folder a page may be dropped on in `.dragOver` (the accent's background, a dashed accent border); a "Show {n} more files" row and a muted note row (Reading…, Could not read this folder. with Try again, No tracked files here.) are tree items too |
+| `explorer/workFolders.js`, `explorer/knownPages.js`, `explorer/useFolderTree.js`, `explorer/useSummaries.js`, `explorer/FolderTree.jsx`, `explorer/TrackDialog.jsx`, `explorer/trackSelection.js`, `explorer/DetachDialog.jsx`, `explorer/detach.js` | work folders ([work_folders.md](work_folders.md)): the rules a file and a work folder's folders follow (twin of `gamma/work_folders/filing.py`), the page rows the listing does not carry merged into App's (`mergeKnown`), the folder view's sort, open directories and reads and the summaries of files open in tabs or recents, the folder view ([Trees](#trees)), the tracking dialog ([Dialogs](#dialogs)) with its pure choice, and Detach ([Dialogs](#dialogs)) with its words |
+| `explorer/TreeRow.jsx`, `explorer/useTree.js`, `explorer/tree.css` | a tree's row and its keys and focus, the Files window's and the folder view's ([Trees](#trees)) |
+| `shared/ui/FileIcon.jsx`, `shared/ui/fileIcons.js`, `frontend/tools/fileIcons.mjs` | a synced folder's file and directory icons, Material Icon Theme's, the rule VS Code ranks them by and the build's plugin that ships them ([File icons](#file-icons)) |
+| `explorer/FilesWindow.jsx`, `explorer/FileTree.jsx`, `explorer/fileTree.js`, `explorer/filesWindow.css` | the Files window ([work_folders.md](work_folders.md) "The Files window"), a lazy chunk: a `DockWindow` titled Files with *Collapse all* (`ChevronUpIcon`) in its header over `.filesPanel`, a `role="tree"` ([Trees](#trees)) of `TreeRow`s, 28 px tall (44 px under `.phoneUI`), a library folder's with its muted count, a synced folder's root with its computer; `fileTree.js` the rows of both trees and their keys |
 | `feedback/FeedbackHost.jsx`, `feedback/FeedbackDialog.jsx`, `feedback/feedbackView.js`, `feedback/feedbackText.js`, `feedback/useFeedback.js`, `feedback/feedback.css` | feedback on a work folder's files ([feedback.md](feedback.md) "In the app"): the dialog's store each opener writes and the host App mounts, the view and Send dialog ([Dialogs](#dialogs), *The feedback view*), its pure part (the scope read, the entries by file, the requests listed, Withdraw's rule, a Send's body) and its words (an entry's heading, where it was placed, its source line, a request's line and state) |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), where a page sits among pages (`pageAncestors`, `topPageOf`, `pagePathLabel`, `pageDescendants`, [home_library.md](home_library.md#sub-pages)), and the library's page rows (`pageBlocksOf`, each with its document, `_doc`) |
 | `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, tabs that come, go and move through `ListMotion`, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |

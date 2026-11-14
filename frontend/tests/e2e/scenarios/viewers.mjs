@@ -176,16 +176,16 @@ export async function viewerScenarios(env) {
         assertEq(listed.hash, "", "a listed file has no hash");
         const root = new Set((await user.api("/api/blocks/root/children")).children.map((p) => p.id));
         for (const id of Object.values(ids)) assert(!root.has(id), "the listing leaves the work folder's files out");
-        // the folder's list view: the Format column says what each file is
-        await page.locator(".workList").waitFor({ timeout: 15000 });
-        const formatOf = async (name) => (await page.locator(".workList .fileRow", { has: page.locator(`.fileRowName:text-is("${name}")`) })
-          .locator(".fileRowFormat").innerText()).trim();
+        // the folder view: the Format column says what each file is
+        await page.locator(".folderTree").waitFor({ timeout: 15000 });
+        const fileRow = (name) => page.locator('.folderTree .fileTreeRow[data-kind="file"]', { has: page.locator(`.fileTreeName:text-is("${name}")`) });
+        const formatOf = async (name) => (await fileRow(name).locator(".fileRowFormat").innerText()).trim();
         for (const [name, label] of [["main.tex", "LaTeX"], ["data.json", "JSON"], ["blob.bin", "File"], ["run.log", "Text"],
           ["tone.wav", "Audio"], ["clip.mp4", "Video"], ["weights.ckpt", "File"]]) {
           assertEq(await formatOf(name), label, `${name}'s Format column`);
         }
         await page.goto(`${home}&folder=${figures.id}`);
-        await page.locator(".workList .fileRow", { has: page.locator('.fileRowName:text-is("fig.png")') }).waitFor({ timeout: 15000 });
+        await fileRow("fig.png").waitFor({ timeout: 15000 });
         assertEq(await formatOf("fig.png"), "Picture", "the figure's Format column");
         assertNoProblems(page);
       } finally { await ctx.close(); }
@@ -477,10 +477,12 @@ export async function viewerScenarios(env) {
           await menu.waitFor({ state: "detached" });
           return items;
         };
-        for (const [name, format, word, close] of [["main.tex", "text", "Text", "Close the file view"], ["fig.png", "image", "Picture", "Close the picture"],
-          ["tone.wav", "audio", "Player", "Close the player"], ["blob.bin", "binary", "File", "Close the file view"]]) {
+        // a tab of a synced folder's file wears the theme's icon of its name
+        for (const [name, icon, word, close] of [["main.tex", "tex", "Text", "Close the file view"], ["fig.png", "image", "Picture", "Close the picture"],
+          ["tone.wav", "audio", "Player", "Close the player"], ["blob.bin", "hex", "File", "Close the file view"]]) {
           await page.goto(at(ids[name]));
-          await page.locator(".tabStrip .tab", { hasText: name }).first().locator(`.fileGlyph.${format}`).waitFor({ timeout: 20000 });
+          await page.locator(`.tabStrip .tab img.fileIcon[src$="/${icon}.svg"], .tabStrip .tab img.fileIcon[src$="/${icon}_light.svg"]`)
+            .first().waitFor({ timeout: 20000 });
           const closeBtn = page.locator(".pdfCloseBtn");
           await closeBtn.waitFor();
           assertEq(await closeBtn.getAttribute("aria-label"), close, `${name}: the × names its pane`);

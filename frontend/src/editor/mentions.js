@@ -340,12 +340,13 @@ function remindTargets(rest, people, me) {
 //           or on the computer named that keeps it) by its name or label,
 //           a member of its name left out, then {kind: "invite"} when
 //           `canInvite`
-//   pages   {kind: "page", id, title, format, path} — `pages` (App's page
-//           list, libraryUtils.pageBlocksOf) by title, chips and path
+//   pages   {kind: "page", id, title, format, file, path} — `pages` (App's
+//           page list, libraryUtils.pageBlocksOf) by title, chips and path
 //           (rankRefPages: the recent ones before anything is typed), not
 //           the open page (`rootId`); `format` is its document's ("" for
-//           none, FileGlyph's); `path` is where the page is: a sub-page's
-//           pages above it (`_path`), else its first folder
+//           none, FileGlyph's), `file` a synced folder's file's name (its
+//           theme icon's, "" for any other page); `path` is where the page
+//           is: a sub-page's pages above it (`_path`), else its first folder
 // Every row has a `key` and its `section`. Empty when nothing answers,
 // which closes the menu.
 export function mentionRows({ query = "", people = [], me = "", pages = [], rootId = "", canInvite = false, agents = [], now = new Date() }) {
@@ -387,7 +388,7 @@ export function mentionRows({ query = "", people = [], me = "", pages = [], root
 
   // Link to page.
   rankRefPages(pages, q, rootId).slice(0, PAGE_ROWS).forEach((p) => add("pages", {
-    kind: "page", key: `page:${p.id}`, id: p.id, title: p.content, format: p._doc?.format || "",
+    kind: "page", key: `page:${p.id}`, id: p.id, title: p.content, format: p._doc?.format || "", file: p._fileName || "",
     path: p._path || p._folderChips?.[0]?.name || "",
   }));
   return rows;

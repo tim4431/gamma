@@ -92,6 +92,7 @@ A server older than the scope refuses to mint it (an unknown scope is
 |---|---|---|
 | POST | `/api/computers/announce` | A `computer` token only. `{computer: {id, name}, app, vaults: [{kind: "folder", folder_id, paused} \| {kind: "file", page_id, paused}], assistants: [{name: "codex" \| "claude", label, found, ready, version, code, models, enabled, runs}]}`: the id 1-64 of `[A-Za-z0-9_-]`, the name 1-64 printable characters, at most 500 vaults (deduplicated; one this workspace does not have is dropped), an unknown assistant dropped, an unknown `code` read as `not_ready`, `enabled` a flag (400 for another value), `runs` anything but `ask` read as `never` (and `never` while it is off), every string capped at 64. A work folder's vault also carries its `agent`, which the app still sends for an older server; this server drops it, and reads it only from an announce whose assistants carry no `enabled` (an older app's), where the first agent a folder vault names is on, `runs` `never`. At most 128 KiB (413). 200 `{account: {id, username}, computer: {id, name}, workspace: {id}, version, wait}`: `version` is what the computer's polls name, `wait` the longest hold. 400 for a body of another shape. A read-only hosted server lets it through (`hosted.READ_ONLY_ALLOWED`): it holds no data of the library. |
 | GET | `/api/computers/poll?v=<version>&wait=<s>` | A `computer` token only, `async def`: a hold uses no worker thread, and every SQLite read is off the event loop. `{announce: true}` at once when this server does not know the computer (a restart) or `v` is not its last announce's version. Else held up to `min(wait, 25)` s (0 answers at once): `{}` when the hold ends, `{announce: true}` when woken for it, `{wake: [...]}` for later steps' work. After the hold the token is resolved again: revoked meanwhile, or its account gone from the workspace, it is 401 and the computer is forgotten. Not written as a slow request (`auth._finish_request_log`), quiet in uvicorn's access log (`logbuf._QuietPolls`). |
+| GET | `/api/folders/computers` | The signed-in account's computers that keep a folder vault of the workspace, by folder (`registry.of_folders`): `{folders: {folder id: {name, online, since, paused}}}`, each folder's first computer (online ones first, then the most recently seen; the whole library's vault left out), which a synced folder's card, row and Files window row name with its state ([work_folders.md](work_folders.md) "File icons"). A session only, a share's reader 404; `{folders: {}}` for an account none of whose computers keeps one. Read with the listing. |
 | GET | `/api/pages/{page_id}/computer` | The signed-in account's computers that keep the page: a session only (`require_personal_user_id`: a token or the guest 403), a share's reader 404. `{computers: [{id, name, online, since, vault: {kind, name, paused, agent}, assistants}]}`: a `file` vault of that page, or a `folder` vault the page is filed in or below (`blocks_store.page_in_folder`; the library's root covers every page), the one that keeps it when several do (a vault of that file, else the deepest folder: the computer's own rule); `since` the time it went offline, null while online; `vault.name` the folder's name or the page's title as this server has it; online ones first, then the most recently seen. `[]` for none and for any other account. |
 | GET | `/api/computers` | The signed-in account's computers shown to the workspace, for Settings → AI → Agents (`registry.of_account`): `{computers: [{id, name, online, since, assistants}]}`, as the page's route says them, without a vault; the same session-only gate. `[]` for none. Its path is not under the channel's prefix, so a `computer` token never opens it. |
 
@@ -158,6 +159,24 @@ alone:
 
 The announce's assistants carry their `models` for the chat's model
 chip (at most 32, 8 efforts each); an announce is at most 128 KiB.
+
+### A work folder detached here
+
+A work folder of this server that a computer keeps (an announced folder
+vault of its root) leaves Gamma by its Detach, on this server, from any
+window ([work_folders.md](work_folders.md) "Detaching a work folder"):
+`registry.keepers` names the computers that announced a vault of it,
+whose account may detach it as the workspace's owner may, while it may
+edit the workspace (an announce is not checked beyond the folder, and a
+viewer's computer token announces what it likes), and the dialog
+names the first of the caller's own (an online one first) and whether it
+is online. The folder is let go in place, then each of those computers
+is woken with `let_go`: a held poll answers `{wake: ["let_go"]}` at once,
+and one of a computer offline is answered so at its next poll. The
+computer then runs a round of each work folder of this server it keeps,
+unless paused ("The channel"), which finds the mark gone; a computer whose
+server restarted meanwhile, or whose vault is paused, finds it at its next
+round all the same.
 
 ## The host
 
@@ -252,6 +271,14 @@ A vault added, paused, resumed or removed nudges the threads
 (`channel.nudge`, from `folder_links`): they see it when the poll they
 hold ends, at most 25 s later.
 
+A poll answered `{wake: ["let_go"]}` (a work folder of that server
+detached there) gives each work folder of that server kept here a round
+at once, in the background (`_Channel._let_go`): it finds the mark gone,
+stops, and records it (`folder_links.LET_GO_THERE`, the list's `let_go`),
+and the desktop shell forgets the vault (below). Paused ones wait, as the
+tick holds them: a paused vault learns of the detach at its next round, a
+sync asked for in the sync panel or the tick's once it is resumed.
+
 **An address move** (`POST /api/remote-servers/move`, the shell's word,
 `gamma/remote_servers.py`; [https.md](https.md)) re-points the account's
 vaults, channels and offline copies of one server to its new address in
@@ -294,6 +321,14 @@ for the shell to revoke there.
 - **The last vault** of that server and workspace removed
   (`releaseRemote`): the host's link goes and its token is revoked there,
   the removal's notice saying so when it could not be.
+- **A work folder detached there** (the host's list says `let_go`): the
+  shell's next reading of the host, at most 15 s on, forgets the vault as
+  *Detach…* forgets one (`forgetDetached`):
+  `DELETE /api/folder-links/{id}`, which only forgets it, its directory as
+  it is but for `.gamma/`; the token minted for it revoked there and, for
+  the last vault of that server and workspace, this computer taken off it
+  (`releaseRemote`); the bar says so. One that fails is tried again at the
+  next reading.
 
 ## The client
 
@@ -365,7 +400,12 @@ and the first failure stopping the rest, a channel already at the new
 address merged) and plain http refused before any request. `desktop/test/keeping.test.js` (the panel line per
 state, its button) and `main.test.js` (mint and hand-over when a vault of
 another server is made, a failure revoking, *Show this computer there*,
-*Stop showing*, the last vault removed). `frontend/tests/vaultState.test.mjs`
+*Stop showing*, the last vault removed, a work folder detached there
+forgotten with its token revoked). `backend/tests/test_remote_work_folders.py`:
+a work folder a computer keeps detached here, by the workspace's owner or
+the computer's account alone, the computer named to its own account, online
+or not, and woken (`let_go`); the woken channel's round of each work folder
+of that server. `frontend/tests/vaultState.test.mjs`
 (`readComputers`, `sinceText`, `computerChip`), `collabSession.test.mjs`
 and `collabPoll.test.mjs` (the nudge for another page, on hello, rejoin
 and poll). The browser group `computers` (`scenarios/computers.mjs`): two

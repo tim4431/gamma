@@ -90,7 +90,7 @@ test('a file change\'s card: its paths and its diff, no network, its own risk; b
   assert.deepEqual(card.rows[0], ['Files', 'D:\\Papers\\refs.bib\nD:\\Shared\\style.sty', true]);
   assert.equal(card.diff, '--- a\n+++ b\n-x\n+y');
   assert.deepEqual([card.box, card.through, card.says, card.count], ['', '', '', '1 of 2 waiting']);
-  assert.equal(card.notes[0], 'It changes files outside the work folder.');
+  assert.equal(card.notes[0], 'It changes files outside the synced folder.');
   const bg = agentAsks.cardOf([askOf('b', { background: true, label: 'Claude Code', agent: 'claude' })], servers, 'b');
   assert.ok(bg.notes.includes('Asked to run in the background: Gamma runs it in the foreground, so Stop ends it.'));
   assert.ok(bg.notes.includes('The question before this one went away: this is another one.'));

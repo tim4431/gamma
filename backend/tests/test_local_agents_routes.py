@@ -221,6 +221,11 @@ def test_the_directories_offered(lab, disk, monkeypatch):
                        headers=SHELL)
     assert r.status_code == 400 and "is inside or around a directory offered to agents" in r.json()["detail"], r.text
     assert put(lab.owner, [])["dirs"] == []
+    # a synced folder detached is no vault here: its directory may be offered
+    r = lab.owner.post(f"/api/folders/{f.w}/detach", json={"pages": "keep"})
+    assert r.status_code == 200, r.text
+    assert [d["path"] for d in put(lab.owner, [{"path": str(f.root)}], 200, SHELL)["dirs"]] == [str(f.root)]
+    assert put(lab.owner, [])["dirs"] == []
 
     monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")
     assert put(lab.owner, [], 404)["detail"] == "Agents run on the desktop app's own server."
@@ -229,7 +234,7 @@ def test_the_directories_offered(lab, disk, monkeypatch):
 def test_a_pause_stops_the_run_and_an_unpause_hands_over_what_waits(lab, disk, monkeypatch):
     f = _folder(lab, disk)
     stopped, queued = [], []
-    monkeypatch.setattr(runner, "stop_link", stopped.append)
+    monkeypatch.setattr(runner, "stop_link", lambda link_id, why="": stopped.append(link_id))
     monkeypatch.setattr(runner, "queue_folder", lambda ws, link_id: queued.append((ws, link_id)) or 0)
     _patch(lab.owner, f.id, paused=True)
     assert stopped == [f.id] and not queued
@@ -251,14 +256,20 @@ def test_a_pause_stops_the_run_and_an_unpause_hands_over_what_waits(lab, disk, m
 def test_a_relink_and_a_removal_stop_the_run_and_keep_the_agent(lab, disk, monkeypatch):
     f = _folder(lab, disk)
     stopped: list = []
-    monkeypatch.setattr(runner, "stop_link", stopped.append)
+    monkeypatch.setattr(runner, "stop_link", lambda link_id, why="": stopped.append((link_id, why)))
     r = lab.owner.post(f"/api/folder-links/{f.id}/relink", json={"path": str(f.root)})
     assert r.status_code == 200, r.text
-    assert r.json()["agent"]["name"] == "codex" and stopped == [f.id]
+    assert r.json()["agent"]["name"] == "codex" and stopped == [(f.id, "")]
 
     r = lab.owner.delete(f"/api/folder-links/{f.id}")
     assert r.status_code == 200, r.text
-    assert stopped == [f.id, f.id] and store.agent_for(lab.user)["agent"] == "codex"
+    assert stopped == [(f.id, ""), (f.id, "removed")] and store.agent_for(lab.user)["agent"] == "codex"
+
+    # a Detach of a synced folder removes its vault so too
+    second = _vault(lab.owner, disk.root / "second", {"s.md": "s\n"})
+    r = lab.owner.post(f"/api/folders/{second['folder_id']}/detach", json={"pages": "keep"})
+    assert r.status_code == 200, r.text
+    assert stopped[2:] == [(second["id"], "removed")] and store.agent_for(lab.user)["agent"] == "codex"
 
 
 # --- the read paths: nothing runs ------------------------------------------------------------

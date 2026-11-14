@@ -225,12 +225,15 @@ def set_dirs(entries: list[dict]) -> list[dict]:
 
 
 def forget_links(live_ids: set[str]) -> None:
-    """The threads, conversations and ended turns of the links not in
-    ``live_ids`` forgotten (a vault gone while this server was not
-    looking); a conversation's and a turn's of no vault (``link_id`` "")
-    stay."""
+    """The threads, conversations (their grants with them) and ended turns
+    of the links not in ``live_ids`` forgotten (a vault gone while this
+    server was not looking); a conversation's and a turn's of no vault
+    (``link_id`` "") stay."""
     live = json.dumps(sorted(live_ids))
     with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM agent_dir_grants WHERE conversation_id IN (SELECT conversation_id "
+                     "FROM agent_conversations WHERE link_id != '' "
+                     "AND link_id NOT IN (SELECT value FROM json_each(?)))", (live,))
         conn.execute("DELETE FROM agent_threads WHERE link_id NOT IN (SELECT value FROM json_each(?))", (live,))
         conn.execute("DELETE FROM agent_conversations WHERE link_id != '' "
                      "AND link_id NOT IN (SELECT value FROM json_each(?))", (live,))

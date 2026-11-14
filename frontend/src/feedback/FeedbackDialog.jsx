@@ -194,7 +194,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
   const answers = namesAgent(plan) ? plan : null;
   const choices = hasChoice(scope, workFolder) ? [
     ["scope", scope.kind === "file" ? t("This file") : t("This folder")],
-    ["work_folder", workFolder.name || t("Work folder")],
+    ["work_folder", workFolder.name || t("Synced folder")],
   ] : null;
   return (
     <SubDialog title={t("Feedback")} onClose={onClose} className="feedbackDialog">
@@ -203,7 +203,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
           <Segmented value={choice} onChange={setChoice} options={choices} />
         </div>
       ) : null}
-      {paused ? <p className="feedbackNotice" role="status">{t("This work folder is paused: its feedback files wait until it syncs again.")}</p> : null}
+      {paused ? <p className="feedbackNotice" role="status">{t("This synced folder is paused: its feedback files wait until it syncs again.")}</p> : null}
       {read?.error ? <FormNotice>{read.error}</FormNotice> : null}
       {!read ? <p className="reportModalHint loadingHint">{t("Reading…")}</p> : null}
       {doc ? (

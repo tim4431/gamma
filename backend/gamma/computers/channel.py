@@ -55,6 +55,12 @@ that wait (``_chats``), queues each for its vault
 (``runner.queue_remote_chat``) and stops the ones stopped there; the
 announce's assistants name the models each offers (``models``), which that
 server offers the chat's model chip and checks a turn's against.
+
+A work folder of that server detached there (gamma/work_folders/detach.py)
+wakes the poll with ``{wake: ["let_go"]}``: each work folder of that server
+kept here has a round at once (``_let_go``), which finds the mark gone and
+records it (``folder_links.LET_GO_THERE``); the desktop app forgets such a
+vault at its next look. A computer offline then finds it at its next round.
 """
 
 import base64
@@ -291,10 +297,15 @@ def state_of(link: dict) -> dict:
         vaults.append({"kind": vault["kind"], key: target, "paused": bool(vault["status"].get(folder_links.PAUSED))})
         if vault["kind"] == "folder" and vault["folder_id"] in agents:
             vaults[-1]["agent"] = agents[vault["folder_id"]][1]
-    name = device()[1].strip()[:64]
-    return {"computer": {"id": computer_id(link["remote_url"]), "name": name if name.isprintable() and name
-                         else "This computer"},
+    return {"computer": {"id": computer_id(link["remote_url"]), "name": computer_name()},
             "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link["created_by"])}
+
+
+def computer_name() -> str:
+    """This computer's name as every server sees it: its host name, or
+    "This computer" for one that cannot be shown."""
+    name = device()[1].strip()[:64]
+    return name if name.isprintable() and name else "This computer"
 
 
 def _call(server: gamma_sync.Server, method: str, path: str, obj=None) -> dict:
@@ -403,6 +414,8 @@ class _Channel:
                 self._sends(server, link)
             if "chat" in got["wake"]:
                 self._chats(server, link)
+            if "let_go" in got["wake"]:
+                self._let_go(link)
         # A poll answered at once (nothing, or announce again: a server that always asks so) rests a moment.
         return max(0.0, QUICK_S - (time.monotonic() - started))
 
@@ -491,6 +504,20 @@ class _Channel:
                         runner.end_stopped_remote(everywhere, gone["id"], run)
         except Exception:  # noqa: BLE001 — a chat turn never stops the channel
             log.exception(f"[computers] queueing the chat turns of channel {link['id']}")
+
+    def _let_go(self, link: dict) -> None:
+        """That server detached a work folder a vault here keeps (``{wake:
+        ["let_go"]}``): each work folder of that server kept here, unless
+        paused, has a round now, in the background, which finds its mark
+        gone there (``folder_links.LET_GO_THERE``) and stops, its agent's run
+        too; the desktop app then forgets that vault as Detach… does. A paused one
+        finds it at its next round, as the tick holds. Never raises."""
+        try:
+            for vault in _vaults_of(link):
+                if folder_links.work_vault(vault) and not vault["status"].get(folder_links.PAUSED):
+                    folder_links.run_in_background(vault["id"])
+        except Exception:  # noqa: BLE001 — a round never stops the channel
+            log.exception(f"[computers] the rounds of channel {link['id']} after a detach there")
 
     def _settle(self, link: dict) -> None:
         """That server reached again: the runs of its vaults left open while

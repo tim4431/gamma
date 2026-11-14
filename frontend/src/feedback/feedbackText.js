@@ -140,7 +140,7 @@ export function sendWords(plan, n, others = 0) {
   } else notes.push({ tone: "hint", text: t("{agent} works on this computer, in this folder's directory, and answers each comment.", { agent }) });
   const blocked = n > AGENT_MAX;
   if (blocked) {
-    notes.push({ tone: "warn", text: t("{agent} takes at most {max} comments at a time: send a file or a directory of this work folder.", { agent, max: AGENT_MAX }) });
+    notes.push({ tone: "warn", text: t("{agent} takes at most {max} comments at a time: send a file or a directory of this synced folder.", { agent, max: AGENT_MAX }) });
   }
   if (others) {
     notes.push({ tone: "hint", text: tn("{n} of these comments is by someone else: {agent} treats it as context.",

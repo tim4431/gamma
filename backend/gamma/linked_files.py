@@ -622,7 +622,7 @@ def _directory_vault_page(path: str, actor: str) -> dict | None:
         if not workspaces.role_of(link["workspace_id"], actor):
             return None
         if folder_links.choosing(link):
-            raise folder_links.LinkError("Choose what this work folder tracks first.")
+            raise folder_links.LinkError("Choose what this synced folder tracks first.")
         root, name = folder_links.dest_of(link), folder_links.vault_name(link)
         page_id, trashed = vault_page(link, rel)
         if trashed:
@@ -634,7 +634,7 @@ def _directory_vault_page(path: str, actor: str) -> dict | None:
                 raise folder_links.LinkError(f"Gamma never tracks {path}: {words}.")
             if not selection.tracked(root, rel):
                 if folder_links.work_folder_link(link):
-                    raise folder_links.LinkError(f"{path} is not tracked by its work folder: tick it in Choose files…")
+                    raise folder_links.LinkError(f"{path} is not tracked by its synced folder: tick it in Choose files…")
                 return None
             if link["status"].get(folder_links.PAUSED):
                 raise folder_links.LinkError(f"{path} is in “{name}”, which is paused: resume it in the sync panel, "
@@ -642,7 +642,7 @@ def _directory_vault_page(path: str, actor: str) -> dict | None:
             folder_links.run_link(link["id"], wait=True)
             page_id, _trashed = vault_page(link, rel)
             if not page_id:
-                raise folder_links.LinkError(f"{path} is in the synced vault {link['path']}, which has not made it "
+                raise folder_links.LinkError(f"{path} is in the synced folder {link['path']}, which has not made it "
                                              "a page yet: try again in a moment.")
         if not page_id:
             return None

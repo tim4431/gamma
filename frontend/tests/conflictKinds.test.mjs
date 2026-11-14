@@ -146,8 +146,8 @@ test("a drawing the remote merged says what each side lost, counted", () => {
 });
 
 test("a locked refusal says the server's words, the rule's in this language, a fixed sentence when it sent none", () => {
-  assert.equal(refusalWords("locked", "A work folder's directories follow the disk."), "A work folder's directories follow the disk.");
+  assert.equal(refusalWords("locked", "A synced folder's directories follow the disk."), "A synced folder's directories follow the disk.");
   assert.equal(refusalWords("locked", "Its bytes are on another computer."), "Its bytes are on another computer.");
-  assert.equal(refusalWords("locked"), "That file's name and place follow its work folder.");
+  assert.equal(refusalWords("locked"), "That file's name and place follow its synced folder.");
   assert.equal(refusalWords("cycle", "anything"), "");
 });

@@ -219,7 +219,7 @@ def test_a_move_moves_nothing_unless_the_new_address_is_that_server(owner, nas):
     # the vault's token refused there
     nas["answers"][(MOVED, "/api/sync/whoami")] = (401, {"detail": "Invalid token"})
     r = _move(owner)
-    assert r.status_code == 409 and "refused the token of the synced vault" in r.json()["detail"], r.text
+    assert r.status_code == 409 and "refused the token of the synced folder" in r.json()["detail"], r.text
     nas["answers"].clear()
 
     # not reached

@@ -8,7 +8,8 @@ import React, { createContext, useContext, useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { MarkedText } from "../search/SearchPanel";
 import { PersonAvatar } from "../collaboration/Presence";
-import { AlarmClockIcon, BotIcon, ClockIcon, FileGlyph, UserPlusIcon } from "../shared/ui/Icons";
+import FileIcon from "../shared/ui/FileIcon.jsx";
+import { AlarmClockIcon, BotIcon, ClockIcon, UserPlusIcon } from "../shared/ui/Icons";
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import {
@@ -37,7 +38,7 @@ function RowIcon({ row }) {
   if (row.kind === "person") return <PersonAvatar name={row.user} title={row.user} />;
   if (row.kind === "agent") return <BotIcon size={16} />;
   if (row.kind === "invite") return <UserPlusIcon size={16} />;
-  return <FileGlyph format={row.format} size={16} />;
+  return <FileIcon path={row.file} format={row.format} size={16} />;
 }
 
 function RowText({ row, query, now }) {

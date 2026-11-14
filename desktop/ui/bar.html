@@ -543,7 +543,7 @@
     const sum = (state.keeping && state.keeping.summary) || { state: 'none', text: '', title: '' };
     const b = $('syncBtn');
     b.dataset.state = sum.state;
-    b.title = sum.state === 'none' ? 'Clones, Zotero links and synced vaults on this computer: none yet' : sum.title;
+    b.title = sum.state === 'none' ? 'Clones, Zotero links, synced folders and files on this computer: none yet' : sum.title;
     $('syncIco').innerHTML = sum.state === 'busy' ? '<span class="spin"></span>'
       : sum.state === 'error' || sum.state === 'conflicts' || sum.state === 'held' ? ICONS.alert : ICONS.cloud;
     $('syncText').textContent = sum.text;
@@ -603,7 +603,7 @@
       ],
       vault: i.scope === 'file'
         ? [vault, sync('Push now'), ['more', ICONS.more, 'More: locate the file, remove the vault…']]
-        : [vault, sync('Sync now: push, then pull'), ['more', ICONS.more, 'More: its switches, pull now, push now, force, locate, remove the vault…']],
+        : [vault, sync('Sync now: push, then pull'), ['more', ICONS.more, `More: its switches, pull now, push now, force, locate, ${i.work ? 'detach…' : 'remove the synced folder…'}`]],
     }[i.kind] || [];
     b.innerHTML = `<span class="ico">${ICONS[KEPT_ICON[i.kind]] || ICONS[i.scope === 'file' ? 'file' : 'folder']}</span>` +
       `<span class="lines"><span class="head"><span class="label"></span>${i.kind === 'vault' ? dirMarks(i) : ''}</span>` +
@@ -674,7 +674,7 @@
       }
       vaultView = null; // gone since
     }
-    const groups = [['clone', 'Clones'], ['zotero', 'Zotero links'], ['vault', 'Synced vaults']];
+    const groups = [['clone', 'Clones'], ['zotero', 'Zotero links'], ['vault', 'Synced folders and files']];
     for (const [kind, title] of groups) {
       const rows = items.filter((i) => i.kind === kind);
       if (!rows.length) continue;
@@ -685,14 +685,14 @@
       const none = document.createElement('div');
       none.className = 'menuEmpty';
       none.textContent = 'Nothing syncs with this computer yet.';
-      none.title = 'Clone a workspace from the workspace menu, link a Zotero library in Settings › Workspaces, add a synced vault below, or right-click a folder in the library and choose Sync with this computer.';
+      none.title = 'Clone a workspace from the workspace menu, link a Zotero library in Settings › Workspaces, add a synced folder below, or right-click a folder in the library and choose Sync with this computer.';
       panel.appendChild(none);
     }
     const sep = document.createElement('div'); sep.className = 'sep'; panel.appendChild(sep);
     const add = document.createElement('button');
     add.className = 'item';
     add.id = 'addVaultBtn';
-    add.innerHTML = `<span class="ico">${ICONS.plus}</span><span class="label">Add a synced vault…</span>`;
+    add.innerHTML = `<span class="ico">${ICONS.plus}</span><span class="label">Add a synced folder…</span>`;
     add.title = 'A directory on this computer becomes a folder of Gamma, and you choose the files it tracks';
     add.onclick = () => { closeMenu(); gammaShell.addVault().catch(() => {}); };
     panel.appendChild(add);
@@ -710,12 +710,12 @@
   }
 
   // The panel's back row, from a vault's view or the folder list to the
-  // panel's list, where the synced vaults are.
+  // panel's list, where the synced folders and files are.
   function backRow(panel, onBack) {
     const back = document.createElement('button');
     back.className = 'item';
     back.id = 'panelBack';
-    back.innerHTML = `<span class="ico">${ICONS.back}</span><span class="label">Synced vaults</span>`;
+    back.innerHTML = `<span class="ico">${ICONS.back}</span><span class="label">Synced folders and files</span>`;
     back.onclick = onBack;
     panel.appendChild(back);
   }
@@ -733,8 +733,8 @@
 
   // Push: off / PDFs / everything, as three buttons; `everything` shut where it cannot be, `noEverything` saying why;
   // with `locked`, every one but the setting shut, `locked` saying why (a work folder of another server).
-  const FAR_PUSH = 'A vault of another server pushes PDFs at most: a work folder there is made from an empty folder';
-  const FAR_WORK = 'A work folder of another server pushes everything and pulls: remove the vault to stop';
+  const FAR_PUSH = 'A vault of another server pushes PDFs at most: a synced folder there is made from an empty folder';
+  const FAR_WORK = 'A synced folder of another server pushes everything and pulls: detach it to stop';
   const WHOLE_PUSH = 'A vault of the whole library cannot push everything: make one of a folder';
   function pushSeg(value, onPick, noEverything, locked) {
     const seg = document.createElement('span');
@@ -809,7 +809,7 @@
   // first round does for them as they stand, Sync and Cancel. Closing the
   // panel cancels it too.
   function renderVaultAsk(panel, a) {
-    panel.appendChild(label(a.newFolder ? 'Add a synced vault' : `Sync “${a.folder}” with this computer`));
+    panel.appendChild(label(a.newFolder ? 'Add a synced folder' : `Sync “${a.folder}” with this computer`));
     const box = document.createElement('div');
     box.className = 'vaultBox';
     box.id = 'vaultAsk';
@@ -862,7 +862,9 @@
   // on… for a vault its guard held, Locate… for one whose directory or file
   // is not where it was, Force pull… and Force push…, Show this computer
   // there or Stop showing for a vault of another server (under its State,
-  // whether this computer is shown there), Remove the vault….
+  // whether this computer is shown there), Remove the synced folder… (Remove
+  // the vault… for a file's, Detach… for a work folder, which asks what
+  // becomes of its files: main.js removeVault).
   function renderVault(panel, i) {
     backRow(panel, () => { vaultView = null; renderSync(); });
     panel.appendChild(label(i.name));
@@ -953,7 +955,7 @@
       ['force-push', ICONS.force, 'Force push…', rounds && folder],
       // this computer shown on a vault of another server's server, or no longer
       i.computer ? [i.computer.action, i.computer.action === 'show-computer' ? ICONS.remote : ICONS.pause, i.computer.button, true] : null,
-      ['remove', ICONS.stop, 'Remove the vault…', !i.seen, false, true],
+      ['remove', ICONS.stop, i.work ? 'Detach…' : folder ? 'Remove the synced folder…' : 'Remove the vault…', !i.seen, false, true],
     ].filter(Boolean);
     for (const [act, icon, text, shown, off, danger] of acts) {
       if (!shown) continue;

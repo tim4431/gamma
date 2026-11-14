@@ -346,6 +346,27 @@ def test_the_page_shows_its_makers_computers_and_nobody_elses(owner, stranger, a
     assert anon.get(f"/api/pages/{loose['id']}/computer").status_code == 403
 
 
+def test_a_synced_folder_names_the_makers_computer_that_keeps_it(owner, stranger, anon):
+    lab = make_folder(owner, "CM kept lab")
+    other = make_folder(owner, "CM kept other")
+    page = make_page(owner, "CM kept file")
+    pc, laptop = _mint(owner), _mint(owner, "Gamma desktop: LAPTOP")
+    _announce(_as(pc["token"]), _body({"kind": "folder", "folder_id": lab, "paused": True},
+                                      {"kind": "folder", "folder_id": ROOT}, {"kind": "file", "page_id": page["id"]}))
+    registry.reset()                                        # TIM-PC offline, LAPTOP online: the online one
+    _announce(_as(laptop["token"]), _body({"kind": "folder", "folder_id": lab}, {"kind": "folder", "folder_id": other},
+                                          name="LAPTOP", computer_id="cm-laptop"))
+    folders = owner.get("/api/folders/computers").json()["folders"]
+    assert set(folders) == {lab, other}                     # a folder's vaults only, never the whole library's
+    assert folders[lab] == {"name": "LAPTOP", "online": True, "since": None, "paused": False}
+    assert folders[other]["name"] == "LAPTOP"
+
+    assert stranger.get("/api/folders/computers", headers={"X-Gamma-Workspace": workspace_of("cptr_owner")}).status_code == 403
+    assert stranger.get("/api/folders/computers").json() == {"folders": {}}
+    assert owner.get("/api/folders/computers", params={"share": "x"}).status_code == 404
+    assert anon.get("/api/folders/computers").status_code == 401
+
+
 def test_an_expired_token_s_computer_goes_when_the_page_is_read(owner):
     page = make_page(owner, "CM expired paper")
     item = _mint(owner)

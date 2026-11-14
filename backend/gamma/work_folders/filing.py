@@ -47,13 +47,13 @@ WRITERS = ("person", "vault", "mirror")
 # The words a person reads, by kind: the routes, the AI tools and the
 # client's twin say these.
 WORDS = {
-    "filed": "A work folder's file is filed by its directory: add it to the library to file it in library "
+    "filed": "A synced folder's file is filed by its directory: add it to the library to file it in library "
              "folders as well.",
-    "named": "A work folder's file is named by its file: rename it on disk.",
-    "trash": "A work folder's file leaves when its file is deleted or untracked: use Choose files….",
+    "named": "A synced folder's file is named by its file: rename it on disk.",
+    "trash": "A synced folder's file leaves when its file is deleted or untracked: use Choose files….",
     "restore": "It comes back when its file is tracked again.",
-    "directories": "A work folder's directories follow the disk.",
-    "remove": "Remove the synced vault to delete its folder.",
+    "directories": "A synced folder's directories follow the disk.",
+    "remove": "Detach the synced folder to delete its folder.",
     "document": "That file's PDF is read where it is: it cannot be changed in Gamma.",
 }
 

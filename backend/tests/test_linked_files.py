@@ -2317,7 +2317,7 @@ def test_the_routes_of_a_server_that_keeps_no_links_say_where_they_are(owner, mo
     for r in (owner.post("/api/folder-links/open", json={"path": "/x.pdf"}), owner.get("/api/folder-links/page/p"),
               owner.post("/api/folder-links/opened/p/add", json={}), owner.post("/api/folder-links/opened/p/locate", json={"path": "/x"}),
               owner.get("/api/folder-links")):
-        assert r.status_code == 404 and "Synced vaults are kept by the Gamma desktop app" in r.json()["detail"]
+        assert r.status_code == 404 and "Synced folders are kept by the Gamma desktop app" in r.json()["detail"]
 
 
 def test_the_desktop_server_keeps_vaults_db_with_the_other_databases(data_dir, monkeypatch):
@@ -2394,7 +2394,7 @@ def test_no_older_shell_is_spoken_to(owner, disk):
     assert owner.post("/api/folder-links", json={"folder": folder, "path": str(disk / "bool"), "push": True}).status_code == 422
     assert owner.patch(url, json={"push": True}).status_code == 422
     assert owner.post(f"{url}/sync", params={"wait": 1, "force": 1}).status_code == 422
-    assert owner.delete(url, params={"files": "yes"}).status_code == 422
+    assert owner.delete(url, params={"pages": "yes"}).status_code == 422
 
     assert _sync(owner, link["id"], force="pull")["last_error"] == ""
-    assert owner.delete(url, params={"files": "keep"}).status_code == 200
+    assert owner.delete(url, params={"pages": "keep"}).status_code == 200

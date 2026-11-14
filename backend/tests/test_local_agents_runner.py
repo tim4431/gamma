@@ -437,6 +437,35 @@ def test_a_pause_stops_the_run_and_an_unpause_takes_what_waits(lab, disk, monkey
     assert _request(lab, waiting["id"])["state"] == "done"
 
 
+def test_a_detach_stops_the_run_and_forgets_the_grants_there(lab, disk, monkeypatch):
+    """Detach of the synced folder (its vault removed here): one refused
+    leaves the run going; one done stops it with why, whenever it ends
+    against the vault's removal, and the grants of its conversations go with
+    the vault's rows."""
+    script_agent(monkeypatch, disk.log, delay=30)
+    f = _folder(lab, disk)
+    sent = _send(lab.owner, f)
+    run = _turn_started(lab, sent["id"])
+    store.ran_conversation("rr-conversation", link_id=f.id, agent="codex", session="s1", cwd=str(f.root))
+    store.grant("rr-conversation", "latexmk", agent="codex", dir=str(f.root))
+
+    def unstored(*_args, **_kwargs):
+        raise folder_links.LinkError("draft.pdf could not be stored, so the vault was not removed.")
+
+    with monkeypatch.context() as m:
+        m.setattr(folder_links, "_store_in_place", unstored)
+        r = lab.owner.post(f"/api/folders/{f.w}/detach", json={"pages": "keep"})
+    assert r.status_code == 409, r.text
+    assert _request(lab, sent["id"])["state"] == "running" and not gone(run["pid"])
+    r = lab.owner.post(f"/api/folders/{f.w}/detach", json={"pages": "keep"})
+    assert r.status_code == 200, r.text
+    assert runner.wait_idle(30) and gone(run["pid"])
+    got = _request(lab, sent["id"])
+    assert (got["state"], got["detail"]) == ("failed", "Stopped: the synced folder is no longer kept on this computer.")
+    assert store.conversation_of("rr-conversation") is None
+    assert not store.granted("rr-conversation", "latexmk", dir=str(f.root))
+
+
 def test_turning_the_agent_off_stops_the_run(lab, disk, monkeypatch):
     script_agent(monkeypatch, disk.log, delay=30)
     f = _folder(lab, disk)

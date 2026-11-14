@@ -27,12 +27,14 @@ what a window shows. A poll is answered ``{announce: true}`` when the
 computer is unknown here (a restart) or announced another version; held
 polls are woken by ``wake``: to announce again, ``sends`` when its
 maker's Send in a work folder it keeps with an agent is made or withdrawn
-(``heard``, step 4c), or ``chat`` when a turn of its maker's chat on a page
-there is begun or asked to stop (step 4d), a wake while no poll is held
-answering the next.
+(``heard``, step 4c), ``chat`` when a turn of its maker's chat on a page
+there is begun or asked to stop (step 4d), or ``let_go`` when a work folder
+it keeps is detached here (gamma/work_folders/detach.py, ``keepers``), a
+wake while no poll is held answering the next.
 
-Only the token's account sees its computer (``of_page``); a revoked or
-expired token's row goes (``forget``, and when the rows are read).
+Only the token's account sees its computer (``of_page``, ``of_folders``,
+``of_account``); a revoked or expired token's row goes (``forget``, and
+when the rows are read).
 """
 
 import asyncio
@@ -333,9 +335,10 @@ def answer(reasons: list) -> dict:
 
 def wake(token_id: str, reason: str) -> None:
     """Answer the computer's held polls now, with ``reason``: ``announce``
-    to have it announce again, ``sends`` for its Sends (``heard``), or
-    ``chat`` for its chat turns; while none is held, its next poll is answered at once.
-    Safe from any thread."""
+    to have it announce again, ``sends`` for its Sends (``heard``),
+    ``chat`` for its chat turns, or ``let_go`` for a work folder it keeps
+    that was detached; while none is held, its next poll is answered at
+    once. Safe from any thread."""
     with _lock:
         live = _live.get(token_id)
         waiters = list(live.waiters) if live else []
@@ -598,6 +601,51 @@ def _may_send(ws: str, user_id: str) -> bool:
     """Whether the account ``user_id`` may edit ``ws``: only such an
     account's computer keeps a work folder of it with an agent."""
     return workspaces.at_least(workspaces.role_of(ws, user_id), "editor")
+
+
+def keepers(ws: str, folder_id: str) -> list[dict]:
+    """The computers that announced a folder vault of ``folder_id`` of the
+    workspace ``ws``, whosever they are, as a valid token's: ``[{token_id,
+    user_id, name, online}]``, online ones first, then the most recently
+    seen. Who may detach a work folder and whom its detach wakes
+    (gamma/work_folders/detach.py)."""
+    with connect_users_db() as conn:
+        rows = _valid_rows(conn, "c.workspace_id = ? AND c.vaults LIKE ?", (ws, f'%"{folder_id}"%'))
+    found = []
+    for token_id, user_id, name, vaults, _assistants, seen_at in rows:
+        if not any(isinstance(v, dict) and v.get("kind") == "folder" and v.get("folder_id") == folder_id
+                   for v in _loads(vaults)):
+            continue
+        with _lock:
+            now = online(_live.get(token_id))
+        found.append(({"token_id": token_id, "user_id": user_id, "name": name, "online": now}, seen_at or ""))
+    found.sort(key=lambda pair: pair[1], reverse=True)
+    found.sort(key=lambda pair: not pair[0]["online"])
+    return [computer for computer, _seen in found]
+
+
+def of_folders(user_id: str, ws: str) -> dict[str, dict]:
+    """The account's computers that keep a folder vault of the workspace
+    ``ws``, by its folder: ``{folder_id: {name, online, since, paused}}``,
+    each folder's first computer (online ones first, then the most recently
+    seen), ``since`` when it went offline (null while online), ``paused``
+    whether its vault is paused there. What a synced folder's card, row and
+    Files window row say of the computer that keeps it. A row whose token
+    was revoked or expired goes here (``_account_rows``)."""
+    kept: dict[str, tuple[dict, str]] = {}
+    for token_id, _computer, name, vaults, _assistants, seen_at in _account_rows(user_id, ws):
+        with _lock:
+            now = online(_live.get(token_id))
+        for vault in _loads(vaults):
+            folder = vault.get("folder_id") if isinstance(vault, dict) and vault.get("kind") == "folder" else None
+            if not isinstance(folder, str) or folder == ROOT:
+                continue
+            entry = ({"name": name, "online": now, "since": None if now else seen_at, "paused": bool(vault.get("paused"))},
+                     seen_at or "")
+            held = kept.get(folder)
+            if held is None or (now, entry[1]) > (held[0]["online"], held[1]):
+                kept[folder] = entry
+    return {folder: computer for folder, (computer, _seen) in kept.items()}
 
 
 def computer_name(token_id: str) -> str:

@@ -33,6 +33,8 @@ from gamma.blocks_store import create_page
 from gamma.computers import registry
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.local_agents import chats
+from gamma.ops import STALE, OpError
+from gamma.work_folders import takeover
 
 MAKER, EDITOR, STRANGER = "ccx_maker", "ccx_editor", "ccx_stranger"
 MODELS = [{"id": "gpt-5", "label": "GPT-5", "efforts": ["low", "medium", "high"], "effort": "medium", "default": True},
@@ -512,6 +514,41 @@ def test_a_token_taken_back_fails_what_its_runs_hold(lab, pc):
     reply = _reply_of(lab, turn)
     assert (reply["state"], reply["error"]) == (
         "failed", "The computer's channel was taken back before Codex finished.")
+
+
+def test_a_detach_fails_the_turns_queued_and_leaves_a_running_one_to_its_computer(lab, pc, monkeypatch):
+    """Detach of a work folder the computer keeps (gamma/work_folders/
+    detach.py): the turn queued in its page fails at once, since no
+    computer is given it once it is no work folder, but not when the let go
+    is refused; the one running there ends as that computer writes it,
+    stopped when its round finds the folder detached."""
+    w = make_folder(lab.maker, "ccx-detached")
+    mark_work_folder(lab.maker, w)
+    with connect_pages_db(lab.ws) as conn:
+        draft, notes = (create_page(conn, name, work_props(w, f"{name}.tex"), actor=account_of(MAKER),
+                                    client=DISK_CLIENT)["id"] for name in ("draft", "notes"))
+    _announce(pc.c, _kept(lab), {"kind": "folder", "folder_id": w})
+    running = _say(lab, page=draft)["turn"]["id"]
+    _claim(pc, running)
+    queued = _say(lab, "Again.", page=notes)["turn"]["id"]
+    elsewhere = _say(lab, "And here.")["turn"]["id"]                              # another work folder's
+
+    def refused(*_args, **_kwargs):
+        raise OpError(409, "Someone else changed the folder meanwhile.", conflict=STALE)
+
+    with monkeypatch.context() as m:
+        m.setattr(takeover, "let_go", refused)
+        r = lab.maker.post(f"/api/folders/{w}/detach", json={"pages": "keep"})
+    assert r.status_code == 409, r.text
+    assert _row(lab, queued)["state"] == "queued"
+    r = lab.maker.post(f"/api/folders/{w}/detach", json={"pages": "keep"})
+    assert r.status_code == 200, r.text
+    reply = _reply_of(lab, queued)
+    assert (reply["state"], reply["error"]) == ("failed", chats.DETACHED) and _row(lab, queued)["state"] == "failed"
+    assert _row(lab, running)["state"] == "running" and _row(lab, elsewhere)["state"] == "queued"
+    assert [t["id"] for t in _chats(pc)["turns"]] == [elsewhere]
+    assert _write(pc, running, 1, state="failed", error="Stopped: the synced folder was detached.") == {"ok": True}
+    assert _reply_of(lab, running)["error"] == "Stopped: the synced folder was detached."
 
 
 def _reply_of(lab, turn_id) -> dict:

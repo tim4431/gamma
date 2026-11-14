@@ -8,7 +8,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { CheckIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, MoreIcon, PinIcon, XIcon } from "./Icons";
+import FileIcon from "./FileIcon.jsx";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, FileTextIcon, MoreIcon, PinIcon, XIcon } from "./Icons";
 import { ContextMenu, MenuItem, MenuLabel, SubMenuItem, useMenuTrigger } from "./Menus";
 import { useWheelPan } from "./wheelPan";
 import { tabDrag, useTabDrag } from "./tabDrag.js";
@@ -656,7 +657,8 @@ function PopoverAnchor({ name, children, className = "" }) {
 }
 
 // The topbar's tab strip (Chrome-style). Each tab leads with its page's kind
-// icon (`kindOf(id)` → its document's format, "" for none); pinned tabs come
+// icon (`kindOf(id)` → {format, file}: its document's format, "" for none,
+// and a synced folder's file's name, whose theme icon it is); pinned tabs come
 // first, keep their title and carry a pin (click to unpin) where the close
 // button would be.
 // The strip keeps the active tab in view, pans with a plain mouse wheel, and
@@ -768,7 +770,10 @@ function OpenTabs({
     onMenuOpenChange?.(false);
     if (tab.id !== activeId) onOpen(tab.id);
   };
-  const kindIcon = (tab, size) => <FileGlyph format={kindOf?.(tab.id) || ""} size={size} />;
+  const kindIcon = (tab, size) => {
+    const kind = kindOf?.(tab.id);
+    return <FileIcon path={kind?.file} format={kind?.format || ""} size={size} />;
+  };
 
   return (
     <>
