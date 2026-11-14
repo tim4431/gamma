@@ -126,6 +126,78 @@ thing below. None changes the repository.
 | C4 | A session started in a terminal is listed for its directory (Codex `thread/list` with `cwd`; Claude Code's session files of the project), its turns are readable, and a headless resume continues it | all of step 5 |
 | C5 | `material-icon-theme` 5.40.0 (MIT, 1.7 MB unpacked, 1,393 files by the registry): its manifest function, how many icons the manifest names, the light variants | 1.1: every icon, or a chosen subset |
 
+### What they found (run 2026-11-14, Codex CLI 0.167.0, Claude Code 2.1.318, Windows)
+
+All five hold, three of them with changes to this plan.
+
+- **C1, Codex: works, with two changes.** A thread's `config` takes
+  Gamma's endpoint beside `_quiet`'s rule: `mcp_servers.gamma = {url,
+  bearer_token_env_var: "GAMMA_AGENT_MCP_TOKEN"}`, every other server of
+  `config/read` `{enabled: false}`, the variable set in the app-server's
+  environment only. Exactly that server starts, a call arrives as an
+  `mcpToolCall` item (`server`, `tool`, `arguments`, `readOnlyHint`,
+  `result`, `status`), `networkAccess: false` does not block it, and a
+  revoked token fails the next call with *Authentication required* while
+  the turn completes. Changes: `_dispatch` accepts `mcpServer/startupStatus`
+  for the one name Gamma added (and fails a turn on `failed`, or on any
+  other name), and the thread's config adds
+  `shell_environment_policy.exclude: ["GAMMA_AGENT_MCP_TOKEN"]`, without
+  which the agent's own shell commands printed the token. No approval was
+  asked before an MCP call, read-only or not.
+- **C2, Claude Code: works.** `--mcp-config` with `{"mcpServers":
+  {"gamma": {"type": "http", "url": …, "headers": {"Authorization":
+  "Bearer ${GAMMA_AGENT_MCP_TOKEN}"}}}}` (the variable expanded from the
+  process's environment), then `--allowedTools mcp__gamma`, under
+  `claude.py`'s flags as they are; `--tools` limits the built-ins only.
+  `system/init`'s `mcp_servers` must read `[{name: "gamma", status:
+  "connected"}]`. In an ask turn, where Bash is allowed, Bash can read
+  the variable: an ask turn's token is the same short-lived one, and the
+  plan accepts that (2.7).
+- **A token's reach.** A read token opens the REST API's reads as well
+  as MCP. The token of a turn is therefore deleted at the turn's end,
+  never outlives the run's timeout, and is refused by every route that is
+  not `/mcp` (a scope of its own, as `computer` tokens have
+  `auth.CHANNEL_PREFIX`).
+- **C3: works.** A Gamma-made Codex thread is stored as any other
+  (`source: "vscode"`, `originator: "gamma"`) and is listed for its `cwd`
+  by `thread/list`'s default, so `codex resume` in the folder lists it.
+  It has no name, so the picker shows Gamma's long first prompt:
+  `thread/name/set` gives it the conversation's title. A `claude -p`
+  session is a file of the project like any other (`entrypoint:
+  "sdk-cli"`), and `claude --continue` there took it up. Neither
+  interactive picker could be driven here, so their lists are inferred.
+- **C4: works.** Codex: `thread/list {cwd, sourceKinds: ["cli", "vscode",
+  "exec"]}` lists a directory's threads (an exact directory, separators
+  and case normalized), `thread/turns/list {itemsView: "full"}` reads
+  their items, and `thread/resume` continues one. A thread another
+  process holds is refused with -32600 *already has an active writer*:
+  `codex.py` today takes any resume error for a gone thread and starts a
+  new one, which would fork it silently, so step 5 tells the two apart
+  (`~/.codex/thread-writer-locks/<id>.lock` says it ahead). Claude Code:
+  `~/.claude/projects/<slug>/`, the slug the path with every character
+  outside `A-Za-z0-9` made `-` (cut at 200 with a hash after); `user` and
+  `assistant` records chained by `parentUuid`; `--resume <id>` continues
+  it. Claude Code has no lock: two resumes forked one file.
+  `~/.claude/sessions/<pid>.json` names each live process's session.
+- **C5: works, with one change.** The package's `generateManifest()` runs
+  in plain Node and equals its `dist/material-icons.json`: 1,256 icons
+  (1.03 MB of SVG), 1,391 extensions, 2,156 file names, 4,674 folder
+  names, a light overlay. VS Code's rule, which Gamma implements: case
+  ignored; a whole file name, then the longest dotted extension (`d.ts`
+  before `ts`), a key `parent/name` only under that parent, then a
+  language id, then the default; folders by name, the root folder always
+  `folder-root`. Language ids reach nine icons nothing else does, all of
+  third-party languages, so thirteen of VS Code's built-in associations
+  (`.gitignore` → ignore, `tsconfig.*.json` → jsonc, `Dockerfile.*`, …)
+  are the whole table needed. The change: a dev dependency and a Vite
+  plugin (`frontend/tools/fileIcons.mjs`) that emits the SVGs into
+  `dist/assets/file-icons/<version>/`, which the server already caches as
+  immutable, and the map as a lazy chunk; not `public/`, which is served
+  `no-cache`. The theme's licence ships beside the icons.
+
+The full results, with the commands and the JSON each one saw, were kept
+with the session that ran them; what an implementation needs is above.
+
 ## 1. The explorer and Detach
 
 Independent of the other steps.
