@@ -67,22 +67,37 @@ test('Store: the folder verb is the class of native/open-with/, on a folder and 
   assert.ok(!config.files.some((f) => f.startsWith('native')));
 });
 
-test('Store: the manifest template is electron-builder\'s, with the verb\'s namespaces declared', () => {
+// The Store manifest template (assets/appxmanifest.xml) and its <Package …> start tag.
+function storeManifest() {
   const config = require('../electron-builder.cjs');
-  const ours = fs.readFileSync(path.join(DESKTOP, config.directories.buildResources, config.appx.customManifestPath), 'utf8');
-  const theirs = fs.readFileSync(path.join(DESKTOP, 'node_modules', 'app-builder-lib', 'templates', 'appx', 'appxmanifest.xml'), 'utf8');
-  // Everything after the <Package …> start tag is upstream's, macros included.
-  const body = (t) => t.slice(t.indexOf('>', t.indexOf('<Package')) + 1);
-  assert.strictEqual(body(ours), body(theirs), 'electron-builder\'s template changed: carry the change into assets/appxmanifest.xml');
-  const start = ours.slice(ours.indexOf('<Package'), ours.indexOf('>', ours.indexOf('<Package')));
-  for (const decl of theirs.slice(theirs.indexOf('<Package'), theirs.indexOf('>', theirs.indexOf('<Package'))).match(/xmlns(:\w+)?="[^"]+"/g)) {
-    assert.ok(start.includes(decl), decl);
-  }
+  const text = fs.readFileSync(path.join(DESKTOP, config.directories.buildResources, config.appx.customManifestPath), 'utf8');
+  return { text, start: text.slice(text.indexOf('<Package'), text.indexOf('>', text.indexOf('<Package'))) };
+}
+
+test('Store: the manifest template declares the verb\'s namespaces', () => {
+  const { start } = storeManifest();
   // Every prefix the extensions use is declared; the folder verb's newer ones are ignorable.
   for (const prefix of new Set([...openwith.appx().matchAll(/<(\w+):/g)].map((m) => m[1]))) {
     assert.match(start, new RegExp(`xmlns:${prefix}="http://schemas\\.microsoft\\.com/appx/manifest/`), prefix);
   }
   assert.match(start, /IgnorableNamespaces="desktop4 desktop5"/);
+});
+
+// electron-builder's own template, where desktop/ is installed (npm ci); the
+// PR's check runs this suite with Node's built-ins alone, no install.
+const UPSTREAM_MANIFEST = path.join(DESKTOP, 'node_modules', 'app-builder-lib', 'templates', 'appx', 'appxmanifest.xml');
+
+test('Store: the manifest template is electron-builder\'s', {
+  skip: !fs.existsSync(UPSTREAM_MANIFEST) && 'electron-builder is not installed (npm ci in desktop/)',
+}, () => {
+  const { text: ours, start } = storeManifest();
+  const theirs = fs.readFileSync(UPSTREAM_MANIFEST, 'utf8');
+  // Everything after the <Package …> start tag is upstream's, macros included.
+  const body = (t) => t.slice(t.indexOf('>', t.indexOf('<Package')) + 1);
+  assert.strictEqual(body(ours), body(theirs), 'electron-builder\'s template changed: carry the change into assets/appxmanifest.xml');
+  for (const decl of theirs.slice(theirs.indexOf('<Package'), theirs.indexOf('>', theirs.indexOf('<Package'))).match(/xmlns(:\w+)?="[^"]+"/g)) {
+    assert.ok(start.includes(decl), decl);
+  }
 });
 
 test('NSIS: per kind a ProgID, per extension Open with, the folder verbs, and their quoting', () => {
