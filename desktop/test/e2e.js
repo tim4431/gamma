@@ -1169,7 +1169,8 @@ async function main() {
       await hook(app, (s, w) => s.openGammaWorkspace(w), ws); // the panel's chooser lists the open workspace's folders
       await waitLoggedIn(content);
       const tokensOf = async () => (await serverCall(app, '/api/integrations/tokens', { ws })).tokens;
-      const before = (await tokensOf()).length;
+      // The tokens of earlier steps (an offline copy's) stay; this step's are told apart by id.
+      const before = new Set((await tokensOf()).map((t) => t.id));
       const far = path.join(profile, 'kept-far');
       fs.mkdirSync(far, { recursive: true });
       await hook(app, (s, dir) => { process.env.GAMMA_SHELL_PICK_DIR = dir; }, far); // the picker's answer, this time
@@ -1190,9 +1191,12 @@ async function main() {
       assert(links[0].token_id && !links[0].token, 'with a token minted there, never shown');
       assert.equal((await hook(app, (s) => s.registry.load().mirrors)).length, mirrorsBefore, 'no clone was made');
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), ids.alpha, 'the host is remembered for launch');
-      const tokens = await tokensOf();
-      assert.equal(tokens.length, before + 1, `one token minted: ${JSON.stringify(tokens.map((t) => [t.name, t.scope]))}`);
-      assert(tokens.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), 'read scope, named after the folder');
+      // Two tokens minted there: the vault's, and the one that shows this computer
+      // on that server (showComputer, docs/dev/computers.md), never the vault's.
+      const minted = (await tokensOf()).filter((t) => !before.has(t.id));
+      const said = JSON.stringify(minted.map((t) => [t.name, t.scope]));
+      assert.deepEqual(minted.map((t) => t.scope).sort(), ['computer', 'read'], `the vault's token and the computer's minted: ${said}`);
+      assert(minted.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), `the vault's: read scope, named after the folder: ${said}`);
       // The chooser shows it synced; the vault's "Remove the vault…" drops it and revokes the token; the files stay.
       const shown = await chooserRow(bar, 'Far lab');
       assert((await shown.textContent()).includes('synced'), 'shown as synced');
@@ -1207,7 +1211,9 @@ async function main() {
       // which the vault's going does not wait for.
       await waitFor(async () => /is no longer synced; its files stay/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 15_000);
       assert(fs.existsSync(md), 'the files stay');
-      assert.equal((await tokensOf()).length, before, 'the token was revoked');
+      // its last vault there gone, this computer is no longer shown there either (releaseRemote)
+      const left = (await tokensOf()).filter((t) => !before.has(t.id));
+      assert.deepEqual(left.map((t) => [t.name, t.scope]), [], 'the vault\'s token and the computer\'s revoked');
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), '', 'the host no longer starts at launch for it');
       return `${links[0].dest} from ${links[0].remote_url}, then removed`;
     });
@@ -1307,14 +1313,15 @@ async function main() {
       assert.equal(await bar.locator('#syncPanel #vaultAsk').count(), 0, 'the bar asks nothing: the tracking dialog does');
       // The window is known by the dialog it shows, not by its address: the
       // page reads ?track= as it boots and takes it out of the address
-      // (frontend/src/vault/useVault.js), often before the waits above end.
+      // (frontend/src/vault/useVault.js), often before the waits above end. The
+      // page speaks this computer's language, so the dialog is named in either catalog.
       content = await waitFor(async () => {
         for (const p of app.windows()) {
-          if (p.url().startsWith('http://127.0.0.1') && await p.getByRole('dialog', { name: 'Choose files' }).isVisible()) return p;
+          if (p.url().startsWith('http://127.0.0.1') && await trackDialog(p).isVisible()) return p;
         }
         return null;
       }, 'the window at the vault\'s tracking dialog', 30_000);
-      const dialog = content.getByRole('dialog', { name: 'Choose files' });
+      const dialog = trackDialog(content);
       assert.equal(await dialog.locator('.importReviewHeader strong').innerText(), 'Reading', 'the dialog is the vault\'s directory');
       assert(!new URL(content.url()).searchParams.has('track'), 'the hand-over leaves the address');
       assert(!fs.existsSync(path.join(dir, '.gammaignore')), 'nothing chosen yet');
