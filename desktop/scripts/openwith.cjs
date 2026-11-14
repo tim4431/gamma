@@ -2,10 +2,11 @@
 // the one table, tests/shared/openwith.json (docs/architecture.md "Opening
 // files and folders"). Read by electron-builder.cjs (macOS's file types and
 // folder type, the .deb's folder entries) and by test/openWith.test.js; run
-// as a script (`npm run openwith`) it writes the four generated files:
+// as a script (`npm run openwith`) it writes the five generated files:
 //
 //   assets/installer.nsh             the NSIS installer's file types and folder verbs
-//   assets/appx-extensions.xml       the Store package's file types
+//   assets/appx-extensions.xml       the Store package's file types and folder verb
+//   native/open-with/verb.h          what the Store package's folder verb shares with it
 //   assets/linux/gamma-open.desktop  Dolphin's service menu (the .deb)
 //   assets/linux/gamma.nemo_action   Nemo's action (the .deb)
 //
@@ -28,8 +29,24 @@ const dropped = [];
 const FILES = {
   nsis: 'assets/installer.nsh',
   appx: 'assets/appx-extensions.xml',
+  verb: 'native/open-with/verb.h',
   kde: 'assets/linux/gamma-open.desktop',
   nemo: 'assets/linux/gamma.nemo_action',
+};
+
+// The Store package's "Open with Gamma": a packaged app reaches Explorer's
+// context menu only through a COM class it declares, so the package carries
+// one (native/open-with/, an IExplorerCommand built by
+// scripts/build-open-with.cjs) as a surrogate server and names it as the verb
+// of a folder and of an open folder's background. The class id is where the
+// manifest and the DLL meet; `app` and `exe` are electron-builder.cjs's
+// appx.applicationId and productName's executable, which the DLL activates.
+const OPEN_WITH = {
+  clsid: 'a5ac2231-021b-477c-846c-b5a2a3ef67c2',
+  dll: 'GammaOpenWith.dll',
+  verbId: 'OpenWithGamma',
+  app: 'Gamma',
+  exe: 'Gamma.exe',
 };
 
 function fixture() {
@@ -158,14 +175,18 @@ const xml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
 
 /** The Store manifest's extensions (assets/appx-extensions.xml), appended inside <Extensions>. */
 function appx() {
+  const verb = (type) => [
+    `            <desktop5:ItemType Type="${xml(type)}">`,
+    `              <desktop5:Verb Id="${OPEN_WITH.verbId}" Clsid="${OPEN_WITH.clsid}" />`,
+    '            </desktop5:ItemType>',
+  ];
   return [
     `        <!-- ${HEADER}`,
     '             The Store package\'s file types (electron-builder.cjs,',
     '             appx.customExtensionsPath, appended inside <Extensions>): Gamma in',
     '             "Open with" and Default apps, the default only when the user',
     '             chooses it; the file\'s path arrives on the command line. No',
-    '             ContentType: Windows types a file by its extension. No folder',
-    '             verb: a packaged app has none without a COM extension. -->',
+    '             ContentType: Windows types a file by its extension. -->',
     ...table().flatMap((k) => [
       '        <uap:Extension Category="windows.fileTypeAssociation">',
       `          <uap:FileTypeAssociation Name="${xml(k.kind)}">`,
@@ -176,6 +197,55 @@ function appx() {
       '          </uap:FileTypeAssociation>',
       '        </uap:Extension>',
     ]),
+    '        <!-- "Open with Gamma" on a folder and on an open folder\'s background:',
+    '             Explorer runs the COM class of native/open-with/ in a surrogate',
+    '             process of this package, and the class hands the folders to the',
+    '             app as its arguments. Not on a drive: a drive root is refused. The',
+    '             com, desktop4 and desktop5 namespaces are declared, desktop4 and',
+    '             desktop5 as ignorable, in assets/appxmanifest.xml. -->',
+    '        <com:Extension Category="windows.comServer">',
+    '          <com:ComServer>',
+    '            <com:SurrogateServer DisplayName="Open with Gamma">',
+    `              <com:Class Id="${OPEN_WITH.clsid}" Path="app\\${OPEN_WITH.dll}" ThreadingModel="STA" />`,
+    '            </com:SurrogateServer>',
+    '          </com:ComServer>',
+    '        </com:Extension>',
+    '        <desktop4:Extension Category="windows.fileExplorerContextMenus">',
+    '          <desktop4:FileExplorerContextMenus>',
+    ...verb('Directory'),
+    ...verb('Directory\\Background'),
+    '          </desktop4:FileExplorerContextMenus>',
+    '        </desktop4:Extension>',
+    '',
+  ].join('\n');
+}
+
+// A GUID's C initializer: {0xa5ac2231, 0x021b, 0x477c, {0x84, 0x6c, …}}.
+function guidInit(id) {
+  const hex = id.replace(/-/g, '');
+  const h = (from, to) => `0x${hex.slice(from, to)}`;
+  const bytes = Array.from({ length: 8 }, (_, i) => h(16 + 2 * i, 18 + 2 * i));
+  return `{${h(0, 8)}, ${h(8, 12)}, ${h(12, 16)}, {${bytes.join(', ')}}}`;
+}
+
+const cString = (s) => `L"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+/** native/open-with/verb.h: the class id, the verb's title and the app it activates. */
+function verbHeader() {
+  return [
+    `// ${HEADER}`,
+    '// What the Store package\'s folder verb (open_with.cpp) shares with the',
+    '// package\'s manifest (assets/appx-extensions.xml) and electron-builder.cjs.',
+    '#pragma once',
+    '',
+    `// {${OPEN_WITH.clsid}}: the class the manifest's surrogate server and verbs name.`,
+    `static const GUID CLSID_OpenWithGamma = ${guidInit(OPEN_WITH.clsid)};`,
+    '',
+    '// The verb\'s words (& marks the accelerator), the package\'s application id',
+    '// and its executable, beside this DLL in the package\'s app\\ directory.',
+    `#define GAMMA_VERB_TITLE ${cString(folderVerb())}`,
+    `#define GAMMA_APP_ID ${cString(OPEN_WITH.app)}`,
+    `#define GAMMA_EXE ${cString(OPEN_WITH.exe)}`,
     '',
   ].join('\n');
 }
@@ -248,19 +318,20 @@ const MAC_FOLDER_TYPE = {
   LSItemContentTypes: ['public.folder'],
 };
 
-/** The four generated files' text, by their path under desktop/. */
+/** The five generated files' text, by their path under desktop/. */
 function generated() {
   return {
     [FILES.nsis]: nsis(),
     [FILES.appx]: appx(),
+    [FILES.verb]: verbHeader(),
     [FILES.kde]: kdeMenu(),
     [FILES.nemo]: nemoAction(),
   };
 }
 
 module.exports = {
-  table, nsis, appx, kdeMenu, nemoAction, debFpm, macFileAssociations, MAC_FOLDER_TYPE, dropped,
-  macEntry, generated, FILES, DESKTOP,
+  table, nsis, appx, verbHeader, kdeMenu, nemoAction, debFpm, macFileAssociations, MAC_FOLDER_TYPE, dropped,
+  macEntry, generated, guidInit, FILES, DESKTOP, OPEN_WITH,
 };
 
 if (require.main === module) {

@@ -33,9 +33,11 @@ makes its repository (or its directory) a work folder with the file ticked,
 so it becomes a note whose edits are written back; *Just view it* reads it
 in the code view. Gamma is listed for the paper's sources (PDF, Markdown, LaTeX,
 BibTeX, Typst), derived from the format registry, and never takes a double
-click from an app that opens the type. The Windows 11 first menu, a folder
-verb in the Store package, a Finder entry and a GNOME Files entry need
-native code or a script each user installs, and are left for later.
+click from an app that opens the type. The Store package's folder verb
+needed native code, a COM class the package carries; it was built after
+(see "The Store package's folder verb"). The installer's verb in Windows
+11's first menu, a Finder entry and a GNOME Files entry need native code
+or a script each user installs, and are left for later.
 
 ## What other apps do
 
@@ -173,8 +175,10 @@ a tracking dialog by ids, and *Opened files* reads a PDF in place.
 
 ## Still open
 
-- The Windows 11 first-menu entry and a Store folder verb (the DLL from
-  VS Code's approach, its build and signing in the release workflow).
+- The installer's verb in Windows 11's first menu: the Store package's DLL
+  would serve it, with a signed sparse package that the installer
+  registers (VS Code's approach), which local and fork builds cannot.
+- Store packages for ARM64 Windows: the folder verb's DLL is x64 only.
 - A Finder Quick Action or Finder Sync extension; a GNOME Files entry (a
   nautilus-python extension, or a script the user installs).
 - Markdown and LaTeX on Linux, once checked that listing them moves no
@@ -234,6 +238,47 @@ remote's synced vault and the background window, fail the same way on
 `dev`). Not run: the manual rows of
 [desktop/docs/checklist.md](../../desktop/docs/checklist.md) on installed
 builds (4.11, 4.12, 4.17, 4.18), which no test can stand in for.
+
+## The Store package's folder verb
+
+Decision 6 left the Store package without a folder verb, and the owner, who
+runs the Store build, found none in Explorer. Built after, as the one piece
+of native code: the package declares a COM class as a surrogate server and
+as the verb of `Directory` and `Directory\Background`
+(`windows.fileExplorerContextMenus`, the way Windows Terminal's *Open in
+Terminal* is made), and the class, an `IExplorerCommand` DLL in plain COM
+(`desktop/native/open-with/`), starts the app with the folders through
+`IApplicationActivationManager`. The Store signs the package, so the DLL
+needs no certificate of its own, unlike a sparse package for the
+installer. What was checked, and what decided the details:
+
+- **The app must start as the package.** Started by its path, `Gamma.exe`
+  would have no package identity and read the real `%APPDATA%`, not the
+  package's virtualized copy: another registry, other servers, an empty
+  library. Activating the package's application user model id keeps it the
+  package's; the DLL finds the family name from its own identity in the
+  surrogate, or from the install directory's name, and under `WindowsApps`
+  never starts the executable directly. A package registered under another
+  identity with a stand-in `Gamma.exe`, activated through COM out of
+  process as Explorer does, started the stand-in as that package with three
+  folders (a space, a non-ASCII name, `C:\`) intact.
+- **The namespaces.** electron-builder's template declares only `uap`,
+  `desktop` and `rescap`; the package's MinVersion, Windows 10 1809, the
+  submission API's floor, has no packaged context menus. So the manifest
+  template is electron-builder's own with `com`, `desktop4` and `desktop5`
+  declared and the last two ignorable, rather than a raised MinVersion.
+  MaxVersionTested stays as it was, since it also governs how Windows
+  treats the app's files.
+- **Two compilers.** No Visual Studio on the development machine, MSVC on
+  the release runner: the DLL is plain COM without ATL, WRL or WIL, built
+  by either, MinGW-w64 linked statically, so it imports only system DLLs.
+- **The shell's scripting API** (`Shell.Application`'s `Verbs()`) lists no
+  packaged verb, Terminal's included, so whether Explorer draws the entry
+  is a manual check (checklist 4.12).
+
+The mechanics: [desktop/docs/architecture.md](../../desktop/docs/architecture.md)
+"Opening files and folders", the build and the way to try it:
+[desktop/docs/release.md](../../desktop/docs/release.md) "Microsoft Store".
 
 ## Relation to earlier notes
 
