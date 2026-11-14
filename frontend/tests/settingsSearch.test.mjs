@@ -28,6 +28,7 @@ const PANE_FILES = {
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx"],
   server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsGuests.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx"],
+  proxy: ["SettingsProxy.jsx"],
   diagnostics: ["SettingsDialog.jsx"],
 };
 // Rows a pane draws from a table (label={label}): the table holds the t()
@@ -90,8 +91,16 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
 test("an admin-only section is found only by admins (the Server pane is theirs alone)", () => {
   const all = Object.keys(PANE_FILES);
   assert.equal(searchSettings("bucket", all)[0]?.label, "Off-site copies");
-  const member = all.filter((pane) => pane !== "server" && pane !== "users");
+  const member = all.filter((pane) => !["server", "users", "proxy"].includes(pane));
   assert.ok(!searchSettings("bucket", member).some((r) => r.label === "Off-site copies"));
+});
+
+test("Network proxy is found where its pane is offered (admins), and a row shown only under Manual lands on the Proxy row", () => {
+  const all = Object.keys(PANE_FILES);
+  const found = searchSettings("socks5", all);
+  assert.equal(found[0]?.label, "Network proxy");
+  assert.equal(found.find((r) => r.label === "Proxy server")?.target, "Proxy");
+  assert.deepEqual(searchSettings("socks5", all.filter((pane) => pane !== "proxy")), [], "no pane, no match");
 });
 
 test("an Apple Pencil setting is found only under a native host with its flag (the iPad app)", () => {

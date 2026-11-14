@@ -132,7 +132,10 @@ All state is SQLite + files on disk under a data directory (env
     keys of the cloud sign-in (below) and the off-site copies (`offsite`:
     `{enabled, bucket, endpoint, region, access_key, secret_key, prefix,
     interval_s, keep}` as JSON, the secret key encrypted like the AI keys;
-    [debugging.md](debugging.md#off-site-copies-in-a-bucket));
+    [debugging.md](debugging.md#off-site-copies-in-a-bucket)) and the
+    network proxy (`proxy`: `{mode, server, username, password, bypass,
+    proxy_dns}` as JSON, the password encrypted the same way;
+    [network_proxy.md](network_proxy.md));
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));

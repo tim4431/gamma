@@ -13,11 +13,11 @@
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
-import { DialogButtons, Field, PasswordInput, Row, Section, SubDialog, Toggle, UnitInput } from "./SettingsKit";
+import { DialogButtons, Field, PasswordInput, Row, Section, SubDialog, TestResult, Toggle, UnitInput } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
 import { useSettingsRead } from "./settingsReads.js";
 import { offsiteProgressText } from "./offsiteRound.js";
-import { CheckIcon, CloudIcon, CloudUploadIcon, RefreshIcon, XIcon } from "../shared/ui/Icons";
+import { CloudIcon, CloudUploadIcon, RefreshIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
@@ -64,18 +64,6 @@ async function tryBucket(body) {
     const value = await apiJson(`${ENDPOINT}/test`, json("POST", body));
     return { ok: !!value.ok, message: value.message || (value.ok ? t("Connected") : t("Could not connect")) };
   } catch (err) { return { ok: false, message: err.message }; }
-}
-
-// A test's answer, the AI editor's key check: testing, ✓ what the bucket
-// holds, or ✗ why it could not be reached.
-function TestResult({ test }) {
-  if (!test) return null;
-  return (
-    <span className={`aiKeyCheck ${test.busy ? "" : test.ok ? "aiTestOk" : "aiKeysError"}`} role="status">
-      {test.busy ? <><span className="transferSpin inline" /> {t("Testing…")}</>
-        : <>{test.ok ? <CheckIcon size={14} /> : <XIcon size={14} />} {test.message}</>}
-    </span>
-  );
 }
 
 // The status line: the round running and how far it is, how the last round

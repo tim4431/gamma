@@ -197,7 +197,10 @@ comes from the environment and the pane shows them read-only:
 `GAMMA_OFFSITE_KEEP` (default 7).
 
 **The bucket.** Only the server talks to it, so it needs no CORS rule and
-no public access. The key must be allowed to list, read, write and delete
+no public access. It is reached on the server's network route: through
+the HTTP proxy when one applies, else directly, since boto3 cannot use a
+SOCKS5 proxy ([network_proxy.md](network_proxy.md)). The key must be
+allowed to list, read, write and delete
 under the prefix (pruning deletes). Two servers that share a bucket need a
 prefix each.
 
@@ -246,9 +249,10 @@ prefix each.
   in the data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied.
   It encrypts the shared AI entries' keys and sign-ins (an account's own
   are stored unencrypted), the Gamma Cloud grants, the mirrors' tokens, the
-  publisher sessions and the off-site secret key in users.db, so keep it
+  publisher sessions, the off-site secret key and the network proxy's
+  password ([network_proxy.md](network_proxy.md)) in users.db, so keep it
   somewhere else, or a restored server cannot read those (the secret key
-  can be typed in again).
+  and the proxy's password can be typed in again).
 
 **Restore**, with the server stopped. The command uses the bucket the
 settings name. After a lost disk the saved settings went with users.db, so

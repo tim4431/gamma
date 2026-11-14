@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 
+from .. import net_proxy
 from ..logbuf import log
 
 STDERR_TAIL = 8 * 1024   # characters of a child's stderr kept for the run's record
@@ -57,8 +58,9 @@ def child_env() -> dict:
     """The environment an agent runs in: this server's minus every GAMMA_*
     variable (the shell secret, the data directory: the server's, never the
     agent's) and minus the parent's agent-session variables, with
-    ``NO_COLOR=1``. A frozen Linux build gives back the library path its
-    bootloader replaced (or none), so the CLI loads the system's."""
+    ``NO_COLOR=1`` and the proxy variables of the server's network proxy
+    (``net_proxy.agent_env``). A frozen Linux build gives back the library
+    path its bootloader replaced (or none), so the CLI loads the system's."""
     env = {name: value for name, value in os.environ.items()
            if name.upper() not in _DROP and not name.upper().startswith(_DROP_PREFIXES)}
     env["NO_COLOR"] = "1"
@@ -68,7 +70,7 @@ def child_env() -> dict:
             env["LD_LIBRARY_PATH"] = original
         else:
             env.pop("LD_LIBRARY_PATH", None)
-    return env
+    return net_proxy.agent_env(env)
 
 
 # --- Windows: no window, a Job object ---------------------------------------------

@@ -3,8 +3,9 @@ through (docs/dev/zotero_sync.md).
 
 ``ZoteroClient`` speaks to ``config.zotero_api_base()`` with one person's
 API key (gamma/zotero_account.py keeps it). Every call goes through
-``_request``, plain urllib that never follows a redirect: a file download
-is a 302 to a pre-signed storage address, which the client fetches itself
+``_request``, plain urllib on the server's network route
+(gamma/net_proxy.py) that never follows a redirect: a file download is a
+302 to a pre-signed storage address, which the client fetches itself
 without Zotero's headers (so the key never travels there), after
 ``net_guard.validate_public_url`` unless it is on the API's own origin (a
 test or e2e stand-in). The API base is trusted configuration.
@@ -38,7 +39,7 @@ from dataclasses import dataclass, field
 from http.client import HTTPException
 from typing import Any
 
-from . import config, net_guard
+from . import config, net_guard, net_proxy
 from .logbuf import log
 
 API_VERSION = "3"
@@ -196,7 +197,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_opener = urllib.request.build_opener(_NoRedirect)
+_opener = net_proxy.build_opener(_NoRedirect)
 
 
 def _lower(headers) -> dict[str, str]:

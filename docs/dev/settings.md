@@ -14,7 +14,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -802,6 +802,47 @@ Administration (admins only):
   a `db-check` job, [tasks.md](tasks.md), the damaged ones listed under
   the row), server backups and the log with its
   level filter ([user_db.md](user_db.md)).
+- **Network proxy** (pane id `proxy`,
+  [SettingsProxy.jsx](../../frontend/src/settings/SettingsProxy.jsx)): how
+  this server reaches the internet ([network_proxy.md](network_proxy.md)).
+  It is shown where the Server pane is. The Connection section's Proxy row
+  is a `Segmented` of Use system settings, No proxy and Manual, its hint
+  saying what the mode does: under the system's settings, the proxy found
+  and where ("Uses http://127.0.0.1:7897, from the server's environment",
+  "… from this computer's network settings"; for `system.proxy`, the
+  proxy https takes), "Uses … for http:// addresses only; https connects
+  directly" when the system sets a proxy for http alone (`system.http`),
+  or "No system proxy found: connects directly", or that the proxy found
+  can't be used. Manual adds the Proxy server address, the Sign-in (a
+  user name and a write-only `PasswordInput` that reads "password set —
+  type to replace" only while the server would keep the stored one: a
+  user name is typed and it and the proxy's host, read as the server
+  reads it, are the saved ones; else "Password", the server then asking
+  for it again) and "Don't use the proxy for", a textarea with Reset to
+  defaults while it differs from `default_bypass`. "Let the proxy look up
+  names" shows wherever a proxy is in use (Manual, or the system's
+  settings with a proxy found, an http-only one too). Save sits on the section's rule while the
+  draft differs. What Save and Test send is worked out once
+  (`payload`): the mode, the name lookups while their switch shows, and
+  the address, sign-in and list only under Manual, the password only when
+  typed. So a half-typed address left under Manual is neither refused nor
+  saved by another mode, and the stored manual proxy stays for next time
+  (a PUT keeps the fields it leaves out). A refusal shows the server's
+  reason under the rows until the next edit. The Test section takes an
+  optional address beside its Test button and tries the draft, saved or
+  not: one `TestResult` line per site, ✓ or ✗, the name (the host, for
+  the typed address), a Proxy or Direct tag (its hover the proxy, or why
+  direct), then the status and time or the error. The lines sit in one
+  `role="status"` region mounted before any Test (`aria-busy` while one
+  runs, the lines `live={false}`), so the outcome is read out as it
+  replaces Testing…. An edit, or discarding the draft, drops the lines. On the
+  desktop the intro adds that the app's windows and updates follow the
+  system's proxy settings. On a hosted container (`managed`) every
+  setting is disabled, the Proxy row's hint is "Gamma Cloud manages this
+  server's network." (the mode's hint moves to its hover), and Test tries
+  the setting in force. The search rows shown only under Manual, and the
+  name-lookup switch, land on the Proxy row, which is always on screen.
+  `GET/PUT /api/admin/proxy`, `POST /api/admin/proxy/test`.
 
 At the bottom of the rail:
 
@@ -1405,7 +1446,11 @@ text appears on hover, without a Details toggle.
 Use the existing shared controls: `PictureChoices` for illustrated choices,
 `IconChoices` for a small exclusive set pictured as icon tiles (the share
 popover's audience, handwriting's "Draws with"), `Segmented` for two or three
-short words, `ToggleGroup` for independent chips.
+short words, `ToggleGroup` for independent chips, `TestResult` for a
+Test button's answer (testing, ✓ what was found or ✗ why it failed; the
+message may be an element, as Network proxy's lines with their route tag
+are; `live={false}` drops its own `role` for lines inside a status region
+of the pane's).
 An irreversible action sits in the pane's or dialog's Danger zone
 (`Section tone="danger"`; the rules are in [ui-design.md](ui-design.md)
 "Dialogs"). Editor dialogs share one layout. A `SubDialog`'s title row
@@ -1434,7 +1479,15 @@ Backups › Off-site copies: an admin's alone, set up in its dialog and read
 back there with its write-only secret, the unsaved-edit question on Cancel,
 Test against an unreachable endpoint, Copy now against a stand-in bucket
 that refuses, and the read-only summary of a second server started with
-`GAMMA_S3_BUCKET`.
+`GAMMA_S3_BUCKET`; and Administration › Network proxy: no pane or search
+match for a member, an admin's search landing on it, an `https://` proxy
+refused with nothing saved and the refusal gone once the address is
+corrected, a Test of the unreachable proxy
+`http://127.0.0.1:1` failing every site through it while a typed loopback
+address goes direct, an edit clearing the lines, Manual saved and read
+back after a reload with the password never shown (an emptied user name
+turning its placeholder to "Password"), Reset to defaults, and
+the system's settings saved again with the manual proxy kept.
 Use `--keep` to retain desktop/mobile screenshots. For concurrent development,
 build into a private directory and set `GAMMA_E2E_DIST` to that directory so
 another build cannot replace the assets while the suite runs.

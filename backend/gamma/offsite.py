@@ -84,7 +84,7 @@ from .backups import snapshot_db
 from .db_maintenance import truncate_wal
 from .logbuf import log
 from .publisher_sessions import cipher
-from .server_settings import _set_raw
+from .server_settings import _peek_raw, _set_raw
 
 SETTINGS_KEY = "offsite"                 # users.db ``settings``: the saved settings, as JSON
 FIELDS = ("enabled", "bucket", "endpoint", "region", "access_key", "secret_key", "prefix", "interval_s", "keep")
@@ -142,16 +142,12 @@ def _number(raw, default: int, least: int, most: int) -> int:
 
 def _kv(key: str) -> dict:
     """A JSON object in the users.db ``settings`` KV, {} when there is none.
-    Read on a connection of its own that never creates users.db, so it
-    works before the schema guard (manage.py) and on an empty data
-    directory, and holds nothing a restore's in-use check would see."""
-    path = Path(db.USERS_DB)
-    if not path.is_file():
-        return {}
+    Read with ``server_settings._peek_raw``, so it works before the schema
+    guard (manage.py) and on an empty data directory, and holds nothing a
+    restore's in-use check would see."""
     try:
-        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, timeout=5)) as conn:
-            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-        value = json.loads(row[0]) if row and row[0] else {}
+        raw = _peek_raw(key)
+        value = json.loads(raw) if raw else {}
     except (sqlite3.Error, ValueError, TypeError):
         return {}
     return value if isinstance(value, dict) else {}

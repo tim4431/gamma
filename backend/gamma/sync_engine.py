@@ -85,7 +85,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import migrations, pdf_meta, storage, sync_clock, textmerge, workspaces
+from . import migrations, net_proxy, pdf_meta, storage, sync_clock, textmerge, workspaces
 from . import ink as inkmod
 from cryptography.fernet import InvalidToken
 from fractional_indexing import generate_key_between
@@ -192,7 +192,7 @@ class _OffOriginRedirect(urllib.request.HTTPRedirectHandler):
         return new
 
 
-_file_opener = urllib.request.build_opener(_OffOriginRedirect)
+_file_opener = net_proxy.build_opener(_OffOriginRedirect)  # routed like every urlopen (gamma/net_proxy.py)
 
 
 class Remote:

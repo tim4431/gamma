@@ -55,6 +55,14 @@ shell's release; the change feed's `format` (`GET
 a target of an older one; and the `data-theme` attribute on `<html>` (the shell
 mirrors it into its own chrome).
 
+The shell sets no proxy. Its own traffic (the windows, the remote
+servers' health probes, the updater) is Chromium's and follows the OS
+proxy settings, PAC included. A local server's outbound connections follow
+that server's own Network proxy setting ([network_proxy.md](network_proxy.md));
+it starts with the shell's whole environment, so its "Use system
+settings" reads the `*_proxy` variables, else the Windows or macOS proxy
+settings, and never PAC. The pane says so on the desktop.
+
 The iPad and Android apps run the same sidecar model: the same backend
 inside the app, started with these variables except `GAMMA_FOLDER_LINKS`
 and `GAMMA_SHELL_SECRET` ([ipad.md](ipad.md#the-local-server), [android.md](android.md)). They

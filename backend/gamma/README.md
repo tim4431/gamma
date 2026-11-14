@@ -12,6 +12,7 @@ migrations.py      versioned data-directory upgrades (snapshot, numbered steps)
 backups.py         server backups: snapshots under backups/ (create, zip, delete, restore)
 backup_schedule.py named backup tasks: UTC cron, per-task retention, OS locking
 offsite.py         off-site copies of the databases and uploads in an S3-compatible bucket (s3.py)
+proxy_settings.py  the server's network proxy setting: stored, checked, the admin API's view, the Test (docs/dev/network_proxy.md)
 ws_backup.py       one workspace's backup zip: export, restore, stored snapshots, a deleted workspace's final copy
 integrity.py       PRAGMA quick_check of a database; the latest failure per file (the db-damage notice)
 normalize.py       content normalization of a workspace's files (migration + restore)
@@ -162,6 +163,7 @@ pdf_typeset.py     the typesetting engine both PDF writers draw with (+ pdf_glyp
 note_markup.py     the span shape the writers draw, LaTeX approximated as text when it cannot be typeset, and image sizes
 
 # HTTP plumbing and assembly
+net_proxy.py       every outbound connection's route: direct or through the proxy (HTTP CONNECT, SOCKS5), the urllib handlers
 net_guard.py       outbound-fetch safety: no internal, loopback or metadata hosts, no non-HTTP schemes
 ratelimit.py       in-process fixed-window limits per key (bounded; the client address is the peer)
 compression.py     gzip for whole JSON answers only (never streams, files or ranges)

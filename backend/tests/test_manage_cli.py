@@ -286,3 +286,19 @@ def test_offsite_and_litestream_config_run_before_the_schema_guard(tmp_path):
                GAMMA_S3_SECRET_KEY="SK1", GAMMA_S3_PREFIX="tenant-1")
     assert text.returncode == 0, text.stderr
     assert "tenant-1/litestream/users.db" in text.stdout and "AK1" not in text.stdout and "SK1" not in text.stdout
+
+
+def test_the_commands_take_the_network_proxy(monkeypatch, capsys):
+    """manage.py installs the routed opener first, so a command's bare
+    urlopen (Gamma Cloud, from unlink-identity or delete-user) routes by
+    the network proxy setting as the server's do."""
+    import urllib.request
+
+    import manage
+    from gamma import net_proxy
+
+    monkeypatch.setattr(urllib.request, "_opener", None)
+    monkeypatch.setattr(sys, "argv", ["manage.py"])
+    with pytest.raises(SystemExit):
+        manage.main()
+    assert any(isinstance(h, net_proxy.RoutedHTTPSHandler) for h in urllib.request._opener.handlers)
