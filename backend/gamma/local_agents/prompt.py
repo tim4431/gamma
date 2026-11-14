@@ -235,10 +235,11 @@ def _where(place: dict, owner: str, tools: bool) -> list[str]:
 
 
 def _tools(about: dict, owner: str) -> list[str]:
-    """What the agent reads with Gamma's tools (the MCP server
-    ``events.MCP_NAME``, gamma/mcp_server.py's read tools in the turn's
-    workspace, the turn's token): the tools that answer for what the
-    conversation is about, by its id, then the rest of the library's."""
+    """What the agent reads and writes with Gamma's tools (the MCP server
+    ``events.MCP_NAME``, gamma/mcp_server.py's read tools and writing tools
+    in the turn's workspace, the turn's token): the tools that answer for
+    what the conversation is about, by its id, then the rest of the
+    library's, then the three that write as the agent."""
     lines = [
         "",
         "## Gamma's tools",
@@ -269,6 +270,10 @@ def _tools(about: dict, owner: str) -> list[str]:
     lines.append("- `search_library` searches the rest of the library (notes, highlights, PDF text, files); `cite` "
                  "gives a page's paper metadata and BibTeX; `read_chats` reads what Gamma AI answered in a page's "
                  "chat, an AI's words and not the page's.")
+    lines.append(f"- `comment` writes under your own name, for {owner}: a reply in a thread (`thread_id`), or a new "
+                 "thread on a place (a PDF passage's verbatim `quote` with its `pdf_page`, a text file's `line` and "
+                 "`end_line`, a note's `block_id`, or none of them for the page itself); `resolve` resolves a thread "
+                 "once what it asks is done, and `highlight` marks a passage. Quote a passage as `read_page` gives it.")
     return lines
 
 

@@ -19,7 +19,8 @@ import { PersonAvatar } from "../collaboration/Presence";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { formatRelativeTime } from "../library/libraryUtils";
-import { anchorSnippet, authorLabel, authorTitle, sentChip, threadsIn } from "./comments.js";
+import { anchorSnippet, authorLabel, sentChip, threadsIn } from "./comments.js";
+import { CommentAvatar } from "./Thread";
 
 const notifyUrl = (page) => `${API}/pages/${encodeURIComponent(page)}/notify`;
 
@@ -99,7 +100,7 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
                 data-motion-key={th.id} data-thread-id={th.id} onClick={() => onOpen(th)}>
                 <span className="commentsPanelAnchor">{anchor}</span>
                 <span className="commentsPanelFirst">
-                  <PersonAvatar name={who || "?"} title={first ? authorTitle(first) : undefined} />
+                  {first ? <CommentAvatar comment={first} /> : <PersonAvatar name="?" />}
                   <span className="commentsPanelText">
                     <span className="commentAuthor">{who}</span>{" "}
                     {first?.deleted ? <em>{t("Comment deleted")}</em> : anchorSnippet(first?.body, 140, labelOf)}

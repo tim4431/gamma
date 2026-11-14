@@ -102,10 +102,10 @@ set. MCP passes `mcp_tools`: every reading tool that stays inside the
 library, without the web tools, the change tools or `list_deleted`. Its
 scope is read-only, and its `link_base` makes results carry absolute links
 to pages, PDF pages, blocks and comment threads (`gamma_link`; the chat's
-results carry none, [mcp.md](mcp.md) "Links in results"). The two tools
-that answer feedback are the adapter's own, not the registry's
-([mcp.md](mcp.md) "Answering feedback"): the chat reads threads and never
-answers them.
+results carry none, [mcp.md](mcp.md) "Links in results"). The three
+writing tools (`comment`, `resolve`, `highlight`) reach MCP at a
+connection's Comment level, the four note tools at its Edit level
+([mcp.md](mcp.md) "The Comment level", "Editing notes").
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
@@ -142,6 +142,9 @@ answers them.
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
 | `delete_block` | Edit note blocks | folder + page | Delete a note block with everything under it; the user can revert |
 | `clip_region` | Edit note blocks | folder + page | Store a picture of a PDF region (with the handwriting on it, if asked) or of a handwriting block as an upload the notes can embed, and return its URL |
+| `comment` | Comments and highlights | folder + page | Write a comment as the chat's agent, for its account: a reply in a thread, or a new thread on a PDF quote with its page, a text file's lines, a note or the page itself |
+| `resolve` | Comments and highlights | folder + page | Resolve a comment thread once it is done; never a reopen |
+| `highlight` | Comments and highlights | folder + page | Highlight a PDF quote or a text file's lines as the chat's agent, with a note, a colour and a style |
 
 ### list_pages (folder only)
 
@@ -1621,6 +1624,64 @@ had are not checked), and their approval cards show the pictures a change
 adds (`pictures` on the preview). The prompt says which URLs the model may
 embed: the ones in a picture's label line, `clip_region`'s result, and
 `read_block`'s text.
+
+### comment / resolve / highlight (both scopes, one permission)
+
+The writing tools: what the agent writes in the library under its own name,
+for the account it acts for ([annotations.md](annotations.md) "The writing
+tools"; `gamma/annotations/hand.py` writes, `places.py` finds the place). One
+permission, **Comments and highlights** (`comment`, Ask by default as every
+change is, in the "Make changes" group of Settings → AI → Tool usage), arms
+all three. They are `mutating` and `commenting` (`WRITING_TOOLS`): armed
+where the scope may comment (`can_comment`, `auth.can_comment`: any member,
+a viewer's chat too, and a token that comments there), not only where it
+edits (`can_write`), and `run_agent_tool` refuses them without it ("you
+cannot comment in this workspace"). Who writes is the scope's `agent`, the
+stamp a block it makes keeps (`agents.stamp`; the chat's is Gamma AI's for
+the person, `agents.gamma()`, or the connection's of a token that drives
+the chat, `agents.of_request`), read back as `agents.of_stamp`, and its
+`actor`, the account that authors the comment and the op. A new highlight
+is a block, an edit: a viewer's chat comments on the page or a note, and
+its `highlight` or `comment` on a passage or lines is refused before it
+asks (`hand.may_mark`, in `_plan_write`).
+
+- **`comment`**: `body`, and `thread_id` for a reply, else a place of a page
+  (by `page_id`, a work folder's file by `path`, a `block_id`'s page, else a
+  page chat's): `quote` with `pdf_page` on a PDF, `line` and `end_line` (and
+  their `quote`) in a text file, `block_id` a note, or none of them for the
+  page's own thread. A new thread on a passage or a range is on a new
+  highlight of it, drawn in the wash as a person's commented passage is.
+- **`resolve`**: `thread_id`; a resolved thread answers "resolved already"
+  and is no change (`noop`); never a reopen, which is the person's.
+- **`highlight`**: a passage or a range, as `comment`'s, with `note` (the
+  block's text), `color` (`yellow`, `green`, `blue`, `purple`: the palette's
+  first four washes, `hand.COLORS`) and `style` (`highlight`, `underline`,
+  `squiggly`, `strikeout`, as the viewer's styles); a place the agent
+  highlighted already is refused with that highlight's id.
+
+A quote is found exactly, as the relocation folds text, or not at all: one
+not on the page is refused with the closest passage the finder saw, never
+placed by guess ([annotations.md](annotations.md) "The writing tools"). The
+plan of a call (`_plan_write`) checks the thread or the page is in the chat's
+reach as any change's does (a page chat writes on its page alone; the
+context's pages are read-only), and the approval card shows the page's
+title, the place (`preview.place`: `{kind, page?, lines?, quote?}`, which the
+card words, `approvals.placeText`) and the comment's text as a diff; a call
+whose place is not found asks nobody. Each answers with the ids it made (the
+thread and the comment, the new highlight) and the link `list_annotations`
+gives the entry (`entries.link_of`, `?ws=&page=&block=` and `&thread=` for a
+thread; absolute on MCP), and its action (kind `comment`, `resolve` or
+`highlight`, with `page_id`, `block_id`, `thread_id`, `comment_id`, `link`,
+`title`, a reply's `reply`) lists it under the reply as a note change:
+"Commented in …", "Replied in a comment thread in …", "Resolved a comment
+thread in …", "Highlighted a passage in …" (`chat/agentSteps.js`); a
+highlight reloads the open page's tree as a block tool does (`BLOCK_TOOLS`).
+None has a revert row: a comment and a highlight are the person's to delete.
+The same words on the same place by the same agent within `hand.REPEAT_S`
+are refused with what the first call wrote, so a call made again never
+doubles a comment. The prompt names them once any is armed: reply where a
+comment asks, say what changed, resolve once done, ask on a passage, quote
+verbatim, comment or highlight only when asked.
 
 ## Guardrails
 

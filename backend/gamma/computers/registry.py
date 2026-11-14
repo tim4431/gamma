@@ -655,6 +655,32 @@ def computer_name(token_id: str) -> str:
     return row[0] if row else ""
 
 
+def computer_of(token_id: str) -> tuple[str, str] | None:
+    """``(id, name)`` of the computer behind ``token_id`` as it announced
+    them, None for none."""
+    with connect_users_db() as conn:
+        row = conn.execute("SELECT computer, name FROM computers WHERE token_id = ?", (token_id,)).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def names_of(pairs) -> dict[tuple[str, str], str]:
+    """``{(account id, computer id): name}`` of the computers ``pairs``
+    (``(account id, computer id)``) as each last announced its name here
+    for that account (a computer shown to several workspaces has a row
+    each: the most recently seen names it); pairs none announced left out.
+    What an agent's comment says of its computer (gamma/agents.py): a
+    computer's id is what its channel says, so only the account's own rows
+    name it."""
+    pairs = sorted(set(pairs))
+    if not pairs:
+        return {}
+    with connect_users_db() as conn:
+        rows = conn.execute("SELECT user_id, computer, name FROM computers WHERE (user_id, computer) IN "
+                            "(SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) "
+                            "ORDER BY seen_at", (json.dumps(pairs),)).fetchall()
+    return {(user, computer): name for user, computer, name in rows}
+
+
 def is_online(token_id: str) -> bool:
     """Whether the computer behind ``token_id`` is online now."""
     with _lock:

@@ -240,7 +240,9 @@ def step_text(step: dict) -> str:
     if kind == "run":
         return f"Ran {program}" if program else "Ran a command"
     if kind == "gamma":
-        return f"Read Gamma: {step['tool']}" if step.get("tool") else "Read Gamma"
+        from .local_agents.events import gamma_words  # local: the agents' package loads where its steps are read
+
+        return gamma_words(str(step.get("tool") or ""))
     return "Searched the sources" if kind == "search" else "Worked"
 
 

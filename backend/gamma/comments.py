@@ -5,8 +5,9 @@ A thread hangs on one block: a note, a highlight (its block), an ink group
 or the page itself (its root block). It is its root comment, whose
 ``thread_id`` is its own id, and the replies that name it; the root keeps
 the place it was opened on (``anchor``, gamma/annotations/anchors.py). A
-comment an integration token wrote carries the token's display name and id
-(``agent``, ``agent_id``), and a thread one resolved its name
+comment an agent wrote (gamma/agents.py: Gamma AI, a computer's agent, an
+integration token) is its account's and carries the agent's name and id
+(``agent``, ``agent_id``), and a thread one resolved its label
 (``resolved_agent``). The rows live in the workspace's
 pages.db, table ``comments`` (``db.COMMENTS_SCHEMA``), beside the blocks and
 never inside them, so no block reader (exports, the AI context, search,
@@ -32,7 +33,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
-from . import collab, inbox
+from . import agents, collab, inbox
+from .agents import Agent
 from .blocks_store import follow_page, new_block_id, valid_block_id, write_lock
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now, parse_stamp, workspace_ids
 from .annotations import anchors
@@ -42,7 +44,6 @@ MAX_BODY = 20_000          # characters of one comment
 ORPHAN_KEEP_DAYS = 7       # a comment whose block went is deleted this long after
 SWEEP_INTERVAL_S = 3600    # the app lifespan runs ``sweep`` at startup and this often
 STATES = ("open", "resolved", "all")
-LOCAL_AGENT = "local:"     # the ``agent_id`` prefix of a comment an agent on this computer wrote (``local:codex``)
 
 # The stored columns, in the table's order.
 COLUMNS = ("id, thread_id, block_id, page_id, author, author_name, body, created_at, updated_at, "
@@ -66,15 +67,18 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     page roots included), oldest first, each ``{id, block_id, page_id,
     resolved_at, resolved_by, resolved_agent, made_on, sent, created_at,
     last_at, comments: [{id, thread_id, author, agent, body, created_at,
-    updated_at, deleted}]}`` with its comments oldest first. ``state``:
+    updated_at, deleted, agent_kind?, agent_on?}]}`` with its comments
+    oldest first. ``state``:
     ``open`` (not resolved), ``resolved``, or ``all`` / None. A comment
     whose block was deleted (orphaned) is left out; a tombstone (a root
     deleted while it has replies) comes with ``deleted`` true and no body.
     People are named by username: ``author`` falls back to the name stored
     with the comment once the account is gone, ``resolved_by`` to "";
-    ``agent`` / ``resolved_agent`` are the display names of the tokens that
-    wrote or resolved them ("" for a person), and a comment an agent on
-    this computer wrote carries ``agent_kind: "local"``. ``made_on`` is the file the
+    ``agent`` is the name of the agent that wrote a comment ("" for a
+    person), which then carries its ``agent_kind`` (gamma/agents.py
+    ``KINDS``) and, for a computer's agent, ``agent_on``, its computer as it
+    is called now (left out when it is not known); ``resolved_agent`` is the
+    label of the agent that resolved the thread. ``made_on`` is the file the
     thread was opened on (its anchor's ``doc_id``, "" for none), ``sent``
     the Send waiting on it (``_sent``) or None. The API and the annotations
     reader (gamma/annotations/entries.py, which names a scope's pages) are
@@ -150,6 +154,7 @@ def _sent(conn, thread_ids) -> dict[str, dict]:
 def _threads(conn, rows, state: str | None) -> list[dict]:
     """``(*COLUMNS, live page id)`` rows, oldest first, folded into threads."""
     names = _names({r[4] for r in rows} | {r[10] for r in rows if r[10]})
+    writers = agents.read_all({(r[4], r[_AGENT_ID]): r[_AGENT] for r in rows if r[_AGENT_ID]})
     threads: dict[str, dict] = {}
     for r in rows:
         if r[0] == r[1]:
@@ -165,18 +170,24 @@ def _threads(conn, rows, state: str | None) -> list[dict]:
         thread = threads.get(r[1])
         if thread is None:
             continue  # a reply without its root: never written so, passed by
-        thread["comments"].append(_comment(r, names))
+        thread["comments"].append(_comment(r, names, writers))
         thread["last_at"] = max(thread["last_at"], r[7], r[8])
     return [t for t in threads.values()
             if state in (None, "all") or (state == "resolved") == bool(t["resolved_at"])]
 
 
-def _comment(row, names: dict) -> dict:
+def _comment(row, names: dict, writers: dict[tuple[str, str], Agent]) -> dict:
+    """A comment's row as the API gives it, its agent read from ``writers``
+    (``agents.read_all``)."""
     deleted = bool(row[11])
-    out = {"id": row[0], "thread_id": row[1], "author": names.get(row[4]) or row[5], "agent": row[_AGENT],
-           "body": "" if deleted else row[6], "created_at": row[7], "updated_at": row[8], "deleted": deleted}
-    if (row[_AGENT_ID] or "").startswith(LOCAL_AGENT):
-        out["agent_kind"] = "local"  # an agent on the vault's computer wrote it (gamma/local_agents), not a token
+    writer = writers.get((row[4], row[_AGENT_ID] or ""))
+    out = {"id": row[0], "thread_id": row[1], "author": names.get(row[4]) or row[5],
+           "agent": writer.name if writer else "", "body": "" if deleted else row[6], "created_at": row[7],
+           "updated_at": row[8], "deleted": deleted}
+    if writer:
+        out["agent_kind"] = writer.kind
+        if writer.on:
+            out["agent_on"] = writer.on
     return out
 
 
@@ -219,7 +230,7 @@ def reported(conn, comment_id: str) -> dict:
     (gamma/reports.py): its page now, its author's name and its text; 404
     as for a hidden comment, and for one deleted."""
     row = _located(conn, comment_id)
-    comment = _comment(row, _names([row[4]]))
+    comment = _comment(row, _names([row[4]]), {})
     if comment["deleted"]:
         raise HTTPException(status_code=404, detail="comment not found")
     return {"page_id": row[_PAGE], "author": comment["author"], "body": comment["body"]}
@@ -227,7 +238,10 @@ def reported(conn, comment_id: str) -> dict:
 
 # --- writing -----------------------------------------------------------------------
 
-def _clean_body(body) -> str:
+def clean_body(body) -> str:
+    """A comment's text as the writers take it: 400 for none or only
+    spaces, 413 past ``MAX_BODY`` (an agent's hand checks it before it
+    makes the highlight a new thread goes on)."""
     if not isinstance(body, str) or not body.strip():
         raise HTTPException(status_code=400, detail="a comment needs text")
     if len(body) > MAX_BODY:
@@ -236,18 +250,18 @@ def _clean_body(body) -> str:
 
 
 def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_name: str,
-           comment_id: str = "", thread_id: str = "", agent: str = "", agent_id: str = "") -> dict:
+           comment_id: str = "", thread_id: str = "", agent: Agent | None = None) -> dict:
     """A new thread on ``block_id`` (a block of the page, or the page
     itself), or with ``thread_id`` a reply in that thread (its root's id;
     the block must be the thread's). A new thread keeps where it was opened
-    (``anchors.anchor_of``). ``agent`` / ``agent_id``: the display name and
-    id of the integration token writing it ("" for a session).
+    (``anchors.anchor_of``). ``agent``: the agent writing it as ``author``
+    (gamma/agents.py), None for the person's own session.
     ``comment_id``: the client's id for the comment (a block id's shape),
     minted here when absent; a comment of that id by the same author and
     writer on this page is answered as stored, so a retry writes nothing
     twice. A session's author follows the page from then on
-    (``blocks_store.follow_page``), unless they chose otherwise for it; a
-    token's comment makes no one follow it. Returns ``{comment, thread,
+    (``blocks_store.follow_page``), unless they chose otherwise for it; an
+    agent's comment makes no one follow it. Returns ``{comment, thread,
     created, event}`` — ``created`` false for such a retry, ``event`` for
     ``after_write``. Commits. 404 unless the page is a page of the library,
     and for a retry of a comment hidden since; 400 for a block outside it,
@@ -255,7 +269,8 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
     text; 413 past ``MAX_BODY``; 409 for an id another author's or another
     writer's comment has, or one of a comment on another page (the caller
     authorized this page only)."""
-    body = _clean_body(body)
+    body = clean_body(body)
+    agent_id = agent.id if agent else ""
     if comment_id and not valid_block_id(comment_id):
         raise HTTPException(status_code=400, detail=f"invalid comment id: {comment_id!r}")
     write_lock(conn)
@@ -290,7 +305,7 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
         conn.execute(f"INSERT INTO comments ({COLUMNS}) "
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '', ?)",
                      (comment_id, thread_id, block_id, page_id, author, author_name or "", body, now, now,
-                      agent, agent_id, anchor))
+                      agent.name if agent else "", agent_id, anchor))
         if not agent_id:
             follow_page(conn, page_id, author, now=now)
         thread = thread_of(conn, thread_id)  # under the lock: no batch can hide its block before the answer
@@ -301,30 +316,29 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
     comment = next(c for c in thread["comments"] if c["id"] == comment_id)
     kind = "reply" if thread_id != comment_id else "create"
     return {"comment": comment, "thread": thread, "created": True,
-            "event": _event(kind, author, page_id, block_id, thread_id, comment_id, body=body, agent=agent,
-                            agent_id=agent_id)}
+            "event": _event(kind, author, page_id, block_id, thread_id, comment_id, body=body, agent=agent)}
 
 
-def edit(conn, comment_id: str, *, page_id: str, body: str, author: str, agent_id: str = "") -> dict:
+def edit(conn, comment_id: str, *, page_id: str, body: str, author: str, agent: Agent | None = None) -> dict:
     """Change a comment's text, its author only and through the writer that
-    wrote it: a session a session's comment, the token ``agent_id`` its own
+    wrote it: a session a session's comment, the agent ``agent`` its own
     (403 otherwise; 404 for a hidden comment, a tombstone or a comment no
     longer on ``page_id``, the page the caller authorized). ``updated_at``
     moves only when the text changed. Returns ``{comment, thread, event}``
     (``event`` None when nothing changed). Commits."""
-    body = _clean_body(body)
+    body = clean_body(body)
     write_lock(conn)
     try:
         row = _on_page(conn, comment_id, page_id)
         if row[11]:
             raise HTTPException(status_code=404, detail="comment not found")
-        if row[4] != author or row[_AGENT_ID] != agent_id:
+        if row[4] != author or row[_AGENT_ID] != (agent.id if agent else ""):
             raise HTTPException(status_code=403, detail="only its author can edit a comment")
         event = None
         if body != row[6]:
             conn.execute("UPDATE comments SET body = ?, updated_at = ? WHERE id = ?", (body, page_now(), comment_id))
             event = _event("edit", author, row[_PAGE], row[2], row[1], comment_id, body=body, before=row[6],
-                           agent=row[_AGENT] if agent_id else "", agent_id=agent_id)
+                           agent=agent)
         thread = thread_of(conn, row[1])  # under the lock, as in ``create``
         conn.commit()
     except BaseException:
@@ -334,10 +348,10 @@ def edit(conn, comment_id: str, *, page_id: str, body: str, author: str, agent_i
             "event": event}
 
 
-def delete(conn, comment_id: str, *, page_id: str, user: str, owner: bool = False, agent_id: str = "") -> dict:
+def delete(conn, comment_id: str, *, page_id: str, user: str, owner: bool = False, agent: Agent | None = None) -> dict:
     """Delete a comment on ``page_id`` (the page the caller authorized; 404
     for a hidden comment or one that moved off it): its author's, by a
-    session or by the token ``agent_id`` that wrote it, or any one for the
+    session or by the agent ``agent`` that wrote it, or any one for the
     workspace's owner (``owner``; 403 otherwise). A root that still has replies becomes a
     tombstone (its text goes, the thread stays); a reply that was the last
     one under a tombstone takes the tombstone with it. Returns
@@ -348,7 +362,7 @@ def delete(conn, comment_id: str, *, page_id: str, user: str, owner: bool = Fals
         row = _on_page(conn, comment_id, page_id)
         if row[11]:
             raise HTTPException(status_code=404, detail="comment not found")
-        if not owner and (row[4] != user or (agent_id and row[_AGENT_ID] != agent_id)):
+        if not owner and (row[4] != user or (agent and row[_AGENT_ID] != agent.id)):
             raise HTTPException(status_code=403, detail="only its author can delete a comment")
         thread_id = row[1]
         replies = conn.execute("SELECT COUNT(*) FROM comments WHERE thread_id = ? AND id != thread_id",
@@ -370,15 +384,15 @@ def delete(conn, comment_id: str, *, page_id: str, user: str, owner: bool = Fals
     return {"thread_id": thread_id, "block_id": row[2], "page_id": row[_PAGE], "removed": removed,
             "thread": thread_of(conn, thread_id),
             "event": _event("delete", user, row[_PAGE], row[2], thread_id, comment_id, comment_ids=[comment_id],
-                            agent=row[_AGENT] if agent_id else "", agent_id=agent_id)}
+                            agent=agent)}
 
 
-def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str, agent: str = "") -> dict:
+def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str, agent: Agent | None = None) -> dict:
     """Resolve a thread (``resolved``) or reopen it; ``comment_id`` is its
     root (400 for a reply), on ``page_id`` (the page the caller authorized;
-    404 for a hidden thread or one that moved off it). ``agent``: the
-    display name of the token resolving it, kept as ``resolved_agent``
-    until a reopen. Resolving a resolved thread keeps who and when.
+    404 for a hidden thread or one that moved off it). ``agent``: the agent
+    resolving it as ``by``, its label kept as ``resolved_agent`` until a
+    reopen. Resolving a resolved thread keeps who and when.
     Returns ``{thread, event}`` (``event`` None when nothing changed).
     Commits."""
     write_lock(conn)
@@ -390,7 +404,7 @@ def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str, age
         if resolved != bool(row[9]):
             if resolved:
                 conn.execute("UPDATE comments SET resolved_at = ?, resolved_by = ?, resolved_agent = ? WHERE id = ?",
-                             (page_now(), by, agent, comment_id))
+                             (page_now(), by, agent.label if agent else "", comment_id))
             else:
                 conn.execute("UPDATE comments SET resolved_at = NULL, resolved_by = NULL, resolved_agent = '' "
                              "WHERE id = ?", (comment_id,))
@@ -405,9 +419,10 @@ def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str, age
 
 
 def _event(kind: str, actor: str, page_id: str, block_id: str, thread_id: str, comment_id: str, *,
-           agent: str = "", agent_id: str = "", **more) -> dict:
+           agent: Agent | None = None, **more) -> dict:
     return {"kind": kind, "actor": actor, "page_id": page_id, "block_id": block_id,
-            "thread_id": thread_id, "comment_id": comment_id, **more, "agent": agent, "agent_id": agent_id}
+            "thread_id": thread_id, "comment_id": comment_id, **more,
+            "agent": agent.label if agent else "", "agent_id": agent.id if agent else ""}
 
 
 def written(ws: str, page_id: str, block_id: str, thread_id: str, event: dict | None, *, client: str = "",
@@ -428,8 +443,8 @@ def after_write(ws: str, event: dict | None) -> None:
     on either, the thread's author on a resolve; a deleted comment's items
     go), then each of the ``write_listeners``. ``event`` is ``{kind,
     actor, page_id, block_id, thread_id, comment_id, agent, agent_id,
-    ...}`` (``agent`` / ``agent_id`` the token that wrote it, "" for a
-    session), ``kind`` one of ``create`` (a new thread; ``body``),
+    ...}`` (``agent`` / ``agent_id`` the label and id of the agent that
+    wrote it, "" for a session), ``kind`` one of ``create`` (a new thread; ``body``),
     ``reply`` (``body``), ``edit`` (``body``, ``before``), ``delete``
     (``comment_ids``), ``resolve`` / ``reopen`` (``thread_author``) and
     ``sweep`` (``comment_ids``, the orphans ``sweep`` deleted; no page or

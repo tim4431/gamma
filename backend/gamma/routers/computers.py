@@ -22,9 +22,9 @@ computer minted for it (a retry is told it holds it; another taker 409),
 and gets its entries, its threads' last speakers and ``seen``, this
 server's clock at the read; it writes ``/progress`` and, at its end,
 ``/answers``, which this server writes itself as the agent's
-(``annotations.agent.answer_run``: signed ``local:<agent>`` with its label, as
-an agent on this computer's are, each reply under the id the computer
-minted for it), only while that run holds the request running, so a
+(``annotations.hand.answer_run``: signed as that computer's agent,
+``agents.of_channel``, each reply under the id the computer minted for
+it), only while that run holds the request running, so a
 withdraw is never overwritten. ``GET /threads/{id}/picture`` is a region's
 picture for a thread of a request it holds. Every route answers only for
 the token's own account's requests; none ever names a path of the
@@ -52,12 +52,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import comments, workspaces
+from ..agents import of_channel
 from ..auth import _api_bearer, _off_loop, is_token, read_body, require_personal_user_id, require_ws
 from ..computers import registry
 from ..db import connect_pages_db, page_now
 from ..annotations import requests
 from ..annotations.entries import AnnotationError
-from ..integrations import Connection, resolve_token_scope
+from ..integrations import resolve_token_scope
 
 router = APIRouter(prefix="/api", tags=["computers"])
 
@@ -362,7 +363,7 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     """``{run, replies: [{id, thread_id, text, resolve}], state: "done" |
     "failed", summary, changed, error?}`` → ``{ok, written}``: the run's
     answers, written here as its agent's while that run holds the request
-    running (``annotations.agent.answer_run``: each reply under its id, so a
+    running (``annotations.hand.answer_run``: each reply under its id, so a
     retry writes none twice; a thread asked resolved unless a person said
     in it what the run did not read; the text made inert as the computer
     made it, ``prompt.inert``), then the request's end (``_end``).
@@ -373,7 +374,7 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     the folder; 404 for no request this computer holds or held; 409 when
     another run holds it or it is no longer running (withdrawn: nothing is
     written, the run stops)."""
-    from ..annotations import agent as feedback_agent
+    from ..annotations import hand
     from ..local_agents import prompt  # local: the agents' package is loaded where an agent's words are stored
 
     user_id, username, ws, token_id = _computer(request)
@@ -401,10 +402,8 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
         if record["state"] != "running" or held["ended"]:   # withdrawn: refused, the run stopped from then on
             requests.run_state(ws, conn, request_id, holder=token_id, run=run, state=payload.state, by_name="")
     label = _label(held["agent"])
-    connection = Connection(user_id=user_id, workspaces=[ws], scope="feedback",
-                            token_id=f"{comments.LOCAL_AGENT}{held['agent']}", name=label, username=username)
-    written, refusal = feedback_agent.answer_run(connection, ws, list(replies.values()), seen=held["seen_at"],
-                                                 read=held["read"])
+    writer = hand.Writer(user_id, username, of_channel(token_id, held["agent"]))
+    written, refusal = hand.answer_run(writer, ws, list(replies.values()), seen=held["seen_at"], read=held["read"])
     state, detail = _end(payload, changed, label, len(written), len(replies), refusal)
     with connect_pages_db(ws) as conn, _refusals():
         requests.run_state(ws, conn, request_id, holder=token_id, run=run, state=state, detail=detail, by_name=label)

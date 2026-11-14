@@ -127,8 +127,7 @@ def _pictures(entry: dict, mode: str) -> list[str]:
 
 def _comment(comment: dict) -> list[str]:
     by = comment.get("by") or "someone"
-    where = f"on {by}'s computer" if comment.get("agent_kind") == "local" else f"{by}'s connection"
-    who = f"**{comment['agent']}** ({where})" if comment.get("agent") else f"**{by}**"
+    who = f"**{comment['agent']}**, for {by}" if comment.get("agent") else f"**{by}**"
     body = "*(deleted)*" if comment.get("deleted") else comment.get("body", "")
     return [f"> {who} · {_when(comment.get('at'))}",
             *(f"> {line}" if line else ">" for line in body.replace("\r\n", "\n").split("\n"))]
@@ -150,10 +149,12 @@ def _how_to_answer(doc: dict, mode: str) -> list[str]:
             "urls": f"- The JSON form with every id is `GET /api/annotations?scope={doc['scope']['id']}"
                     f"&state={doc.get('state', 'open')}`.",
             "tool": "- `read_annotation(id)` reads one item with its pictures and its JSON form."}[mode]
-    reply, resolve = (", or `reply_feedback`", ", or `resolve_feedback`") if doc.get("work_folder") else ("", "")
     return ["---", "", "## How to answer", "",
-            f"- Reply: `POST /api/pages/{{page_id}}/comments` with `{{\"block_id\", \"thread_id\", \"body\"}}`{reply}.",
-            f"- Resolve: `POST /api/comments/{{id}}/resolve` with `{{\"resolved\": true}}`{resolve}.",
+            "- Reply: `POST /api/pages/{page_id}/comments` with `{\"block_id\", \"thread_id\", \"body\"}`, or the "
+            "`comment` tool with `thread_id`.",
+            "- Resolve: `POST /api/comments/{id}/resolve` with `{\"resolved\": true}`, or the `resolve` tool.",
+            "- Ask or point something out: the `comment` tool on a place (a PDF quote with its page, a file's lines, "
+            "a note), and `highlight` to mark a passage.",
             last]
 
 

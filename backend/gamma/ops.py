@@ -930,6 +930,27 @@ def _document_patch(props: dict, *, patch: bool = True) -> dict:
         raise OpError(400, str(e))
 
 
+SERVER_KEYS = ("agent",)  # properties only the server's own writers set (agents.stamp)
+
+
+def client_ops(ops: list[dict], client: str) -> list[dict]:
+    """A request's ops with the server's keys (``SERVER_KEYS``) taken out of
+    each insert's and set's props: a block's ``agent`` stamp is written by
+    the server's writers (an agent's create_block, the hand's highlight),
+    never by a client's batch; its removal (None in a set) passes. The
+    mirror's batch (``sync``, from an integration token only:
+    ``auth.writer_client``) keeps them, as it keeps every property."""
+    if work_filing.writer_of(client) == "mirror":
+        return ops
+    for op in ops:
+        props = op.get("props")
+        if op.get("op") in ("insert", "set") and isinstance(props, dict):
+            for key in SERVER_KEYS:
+                if props.get(key) is not None:
+                    props.pop(key)
+    return ops
+
+
 def _log(conn, page_id: str, actor: str, client: str, now: str, applied: list, after: int = 0, *,
          batch_id: str = "", cursor: dict | None = None) -> int:
     """One row of the page's log. ``batch_id`` and ``cursor`` (the caret as

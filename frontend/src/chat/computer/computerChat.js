@@ -210,6 +210,10 @@ function askedStep(step, path) {
 }
 
 const ASKED = new Set(["asked", "allowed", "declined"]);
+// Gamma's tools that write as the agent (gamma/ai_tools.py WRITING_TOOLS,
+// gamma/local_agents/events.py GAMMA_WRITES): a call of one is worded as a
+// write.
+const GAMMA_WRITES = new Set(["comment", "resolve", "highlight"]);
 
 // A step in words, done: "Read sections/intro.tex", "Edited …", "Ran
 // latexmk", "Searched the sources", "Read Gamma: read_page" (a call of
@@ -222,7 +226,9 @@ export function stepText(step) {
     case "edit": return path ? t("Edited {path}", { path }) : t("Edited a file");
     case "run": return step.program ? t("Ran {program}", { program: step.program }) : t("Ran a command");
     case "search": return t("Searched the sources");
-    case "gamma": return step.tool ? t("Read Gamma: {tool}", { tool: step.tool }) : t("Read Gamma");
+    case "gamma":
+      if (!step.tool) return t("Read Gamma");
+      return GAMMA_WRITES.has(step.tool) ? t("Wrote in Gamma: {tool}", { tool: step.tool }) : t("Read Gamma: {tool}", { tool: step.tool });
     default: return t("Worked");
   }
 }
@@ -237,7 +243,10 @@ export function stepNow(step) {
     case "edit": return path ? t("Editing {path}", { path }) : t("Editing a file");
     case "run": return step.program ? t("Running {program}", { program: step.program }) : t("Running a command");
     case "search": return t("Searching the sources");
-    case "gamma": return step.tool ? t("Reading Gamma: {tool}", { tool: step.tool }) : t("Reading Gamma");
+    case "gamma":
+      if (!step.tool) return t("Reading Gamma");
+      return GAMMA_WRITES.has(step.tool) ? t("Writing in Gamma: {tool}", { tool: step.tool })
+        : t("Reading Gamma: {tool}", { tool: step.tool });
     default: return "";
   }
 }
@@ -490,9 +499,13 @@ export function canSend(info, conversation, text) {
 // stepsSummary), none of which is a change of the library or the notes
 // (chat/agentSteps.js isChange), and whether it failed or was not allowed.
 const STEP_KINDS = { read: "file", edit: "fileEdit", run: "run", search: "search" };
+// A writing tool's call is a step of its own kind, "write": what it wrote is
+// the agent's own, listed in the thread or on the page, never under the
+// reply's changes (agentSteps.js CHANGE_KINDS has no such kind).
 const GAMMA_KINDS = {
   list_pages: "list", list_folders: "list", list_annotations: "list", list_workspaces: "list",
   search_library: "search", view_pdf_page: "view", view_ink: "ink", view_image: "image", cite: "cite",
+  comment: "write", resolve: "write", highlight: "write",
 };
 const chipKind = (step) => (step?.kind === "gamma" ? GAMMA_KINDS[step.tool] || "read" : STEP_KINDS[step?.kind] || "work");
 export function stepChip(step) {

@@ -350,7 +350,8 @@ export const RULES = [
   // (remote-sends: a Send of a work folder a computer keeps, its claim, its run's state and the
   // computer woken; the replies it posts, the source line found on the computer)
   ["backend/gamma/annotations/requests.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
-  ["backend/gamma/annotations/agent.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
+  ["backend/gamma/annotations/hand.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends", "comments", "mcp"]],
+  ["backend/gamma/annotations/places.py", ["feedback", "comments", "mcp"]],
   ["backend/gamma/annotations/sources.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
   // (work-folders: a highlight in a synced folder's file reaching its .gamma/annotations/open.md)
   ["backend/gamma/annotations/files.py", ["feedback", "viewers", "local-agents", "text-anchors", "work-folders", "remote-sends"]],
@@ -494,8 +495,10 @@ export const RULES = [
   // (orphan, place and purge on deletes, moves and page purges; the copies
   // of a backup merge and an import; after_write feeds the inbox)
   // feedback: an agent's writes, the anchors and the listeners that keep the feedback files current
-  // local-agents: a local agent's comment (agent_kind) and a Send's state_by on its threads
+  // local-agents: a computer agent's comment (agent_kind, agent_on) and a Send's state_by on its threads
   ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers", "feedback", "local-agents"]],
+  // who an agent is: the comments it signs, here and on another server, the Inbox's items and the blocks it stamps
+  ["backend/gamma/agents.py", ["comments", "inbox", "local-agents", "remote-sends", "mcp"]],
   // (remote-sends: a mention of the agent of the computer that keeps the folder)
   ["backend/gamma/routers/comments.py", ["comments", "inbox", "feedback", "remote-sends"]],
   // the Inbox: its producers' items, the listing and its settle, the marks; feedback: an agent's items

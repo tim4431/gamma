@@ -361,8 +361,9 @@ test("a range of a text file: a block placed by text_position that no other kind
   assert.equal(anchorOf(t), null);
   assert.equal(anchorOf(t, "image_position"), null);
   assert.equal(anchorOf(N("h", "", [], { pdf_position: pos }), "text_position"), null);
-  // Duplicate leaves the range with the original
-  const copy = freshCopy({ ...t, children: [] });
+  // Duplicate leaves the range with the original, and the agent that made it: the copy is the person's
+  const copy = freshCopy({ ...t, properties: { ...t.properties, agent: { id: "gamma", name: "Gamma AI", for: "tim" } },
+    children: [] });
   assert.deepEqual(copy.properties, { quote: "Weight decay is the oldest remedy", color: "#ffe066aa", style: "underline" });
 });
 

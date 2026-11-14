@@ -152,7 +152,7 @@ def test_the_loop(owner, disk):
     assert chips[tp["id"]]["state"] == "sent" and chips[ta["id"]]["request_id"] == request["id"]
 
     # the agent: a script holding a feedback token takes the request and rebuilds
-    agent = _bearer(token_for(owner, "feedback", "Claude Code"))
+    agent = _bearer(token_for(owner, "read", "Claude Code", comments=True))
     polled = agent.get("/api/feedback/requests", params={"after": 0}).json()
     assert [q["id"] for q in polled["requests"]] == [request["id"]] and polled["cursor"] == request["rev"]
     r = agent.post(f"/api/feedback/requests/{request['id']}/state", json={"state": "running"})
@@ -173,11 +173,9 @@ def test_the_loop(owner, disk):
     assert seen[tp["id"]]["source"] == {"file": "sections/method.tex", "line": 6, "end": 8, "version": "current"}
     assert seen[tp["id"]]["where"]["placed"] == "exact" and seen[tp["id"]]["picture_url"]
     assert (seen[ta["id"]]["source"]["file"], seen[ta["id"]]["source"]["line"]) == ("main.tex", v2["figure"]["line"])
-    # what the token may not do
-    assert agent.post(f"/api/pages/{page}/comments", json={"block_id": page, "body": "a new thread"}).status_code == 403
+    # what the token may not do: it comments as the Comment level lets it, and changes no note nor another's comment
     assert agent.put(f"/api/blocks/{passage}", json={"properties": {"color": "#000000"}}).status_code == 403
     assert agent.patch(f"/api/comments/{tp['id']}", json={"body": "edited"}).status_code == 403
-    assert agent.post(f"/api/comments/{tp['id']}/resolve", json={"resolved": False}).status_code == 403
     # it answers each thread, resolves them, and the request is done
     for thread, body in ((tp, "Defined in 3.1 (sections/method.tex:6)."), (ta, "Legend moved inside the axes (main.tex:22).")):
         r = agent.post(f"/api/pages/{page}/comments", json={"block_id": thread["block_id"], "thread_id": thread["id"],

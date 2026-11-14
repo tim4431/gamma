@@ -1497,7 +1497,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const clone = (list) => (list || []).map((b) => {
       const id = makeId();
       ids.set(b.id, id);
-      const { zotero_readonly: _readonly, zotero_author: _author, ...properties } = b.properties || {};
+      // a block an agent made is the copier's in the copy (blockModel.js freshCopy)
+      const { zotero_readonly: _readonly, zotero_author: _author, agent: _agent, ...properties } = b.properties || {};
       return { ...b, id, properties, children: clone(b.children) };
     });
     const remap = (list) => {
@@ -5894,7 +5895,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // survives the swap). Over the op-log poll (me.via "poll") it would land
     // only with the next read, after reveal() looked for the block.
     setAiLive((live) => (live && (live.tool === "create_block" || live.blockId === a.block_id) ? null : live));
-    if (a.block_id) markAiBlock(a.block_id, a.kind === "create" ? "create" : a.kind === "move" ? "move" : "edit", 6000);
+    const made = a.kind === "create" || a.kind === "highlight";
+    if (a.block_id) markAiBlock(a.block_id, made ? "create" : a.kind === "move" ? "move" : "edit", 6000);
     const reveal = () => {
       if (!a.block_id) return;
       requestAnimationFrame(() => {

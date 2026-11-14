@@ -147,6 +147,8 @@
 .commentMeta .commentResolve:hover { color: var(--accent); }
 .commentMetaSpacer { flex: 1; }
 .commentAuthor { font-weight: 600; color: var(--text-primary); }
+/* an agent's computer and the person it wrote for, after its name */
+.commentFor { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commentEdited { font-style: italic; }
 .commentBody.blockRendered {
   font-size: var(--fs-md);

@@ -38,7 +38,7 @@ sent to an agent is a turn of its own (step 3.5).
 | `requests.py` | Send: the requests and their states ("Requests and their states"; goes in step 3.7) |
 | `files.py` | the files below a work folder's `.gamma/annotations/` and beside a followed file ("The files") |
 | `listeners.py` | the hooks on comment writes and op commits ("What keeps it current") |
-| `agent.py` | `reply_feedback` and `resolve_feedback` ([mcp.md](mcp.md) "Answering feedback") |
+| `hand.py`, `places.py` | the agent's hand: what the writing tools write as the agent, and the places they find ("The writing tools") |
 
 The words: **W** is a work folder's root folder
 ([work_folders.md](work_folders.md)); **a file** a page with
@@ -58,12 +58,12 @@ commented version and `comments.has_open_thread` agree.
 Every page has annotations, a library page as a work folder's file, and a
 page a vault of one file follows has its files on the disk as a work folder
 has ("The files"); what stays a work folder's alone is the repository's
-side: SyncTeX's source lines, Send and the answering tools
-(`agent.py`, until step 3.3 of the plan). Threads by other members, and by
+side: SyncTeX's source lines and Send. An agent answers and asks on any
+page with the writing tools ("The writing tools"). Threads by other members, and by
 signed-in accounts a folder share admits, are entries too: the entries say
 who wrote each comment (`by`) and the document whose account it is written
 for (`owner`), and the agent's skill acts on the owner's comments and asks
-about anyone else's ([mcp.md](mcp.md) "Answering feedback").
+about anyone else's ([mcp.md](mcp.md) "The Comment level").
 
 ## The anchor
 
@@ -143,7 +143,7 @@ before step 3 has no `ext` and holds a PDF, one whose `ext` is no
 extension holds nothing, nor does a `lines` anchor), `top(anchor)` (the
 place's top: the highest rectangle's, else the box's, else 0: the order of
 a page's threads) and `place_words(anchor)`, the place in words the
-feedback tools' answers and the chat's thread lines use: `the whole file`,
+writing tools' answers and the chat's thread lines use: `the whole file`,
 `a region of the picture`, `page 3, “…”`, `page 5, an area`, `page 2,
 handwriting`, `lines 118–120, “…”` / `line 118` (`line_words`), `a note`.
 A range's anchor keeps the lines it was opened on; `following(conn,
@@ -330,13 +330,12 @@ empty, there is no `before` (nothing kept it) and its link has no
   (without `&thread=` for a highlight), the address the Inbox opens, prefixed by `link_base` (MCP's absolute base;
   "" in the files and over HTTP, where the link is the query alone).
 - **`comments`**: oldest first; `by` the author's username (the stored name
-  once the account is gone), `agent` the token's display name or "", `at`
-  the comment's `created_at`, `body` ("" with `deleted: true` for a
-  tombstone). A comment an agent on this computer wrote
-  ([local_agents.md](local_agents.md): its `agent_id` starts with
-  `local:`, `comments.LOCAL_AGENT`) adds `agent_kind: "local"`, as the
-  comment API's comment does; no other comment has the key, so every other
-  entry and file stays byte-identical.
+  once the account is gone), the person an agent wrote for; `agent` the
+  label of the agent that wrote it ("Codex on TIM-PC", "Claude Code";
+  [comments.md](comments.md) "Who wrote a comment") or "", `at` the
+  comment's `created_at`, `body` ("" with `deleted: true` for a tombstone).
+  An agent's comment adds its `agent_kind` (`gamma`, `computer`,
+  `connection`); a person's has no such key.
 
 ### The order
 
@@ -374,15 +373,13 @@ live page.
  "answer": {"reply": "POST /api/pages/{page_id}/comments {block_id, thread_id, body}",
             "resolve": "POST /api/comments/{id}/resolve {resolved: true}",
             "request_state": "POST /api/feedback/requests/{request_id}/state {state, detail}",
-            "mcp": ["reply_feedback", "resolve_feedback"]},
+            "mcp": ["comment", "resolve", "highlight"]},
  "entries": [...]}
 ```
 
 `work_folder` is null outside a work folder (a library page or folder,
-the library), and so is `answer.mcp` (`entries.ANSWER_OUTSIDE`; the
-Markdown's "How to answer" names no tool there either): until step 3.3
-`reply_feedback` and `resolve_feedback` answer a work folder's threads
-alone. `owner` is the username of the account the document is written for (the
+the library); `answer` is the same in every document (`entries.ANSWER`),
+the writing tools answering any page's threads. `owner` is the username of the account the document is written for (the
 vault's maker in the files; the requester's own account over HTTP and
 MCP): how an agent tells the person's comments from other members'. Past
 `MAX_ENTRIES` (500) the document is cut: the threads fill the cap first,
@@ -478,8 +475,9 @@ with the note written on it: read it as context.
 
 ## How to answer
 
-- Reply: `POST /api/pages/{page_id}/comments` with `{"block_id", "thread_id", "body"}`, or `reply_feedback`.
-- Resolve: `POST /api/comments/{id}/resolve` with `{"resolved": true}`, or `resolve_feedback`.
+- Reply: `POST /api/pages/{page_id}/comments` with `{"block_id", "thread_id", "body"}`, or the `comment` tool with `thread_id`.
+- Resolve: `POST /api/comments/{id}/resolve` with `{"resolved": true}`, or the `resolve` tool.
+- Ask or point something out: the `comment` tool on a place (a PDF quote with its page, a file's lines, a note), and `highlight` to mark a passage.
 - The JSON form with every id is `open.json` beside this file.
 ```
 
@@ -516,9 +514,9 @@ request's detail. The picture lines read `Page {n}, the comment's region`
 commented on`, without the page for a region of a picture, and `The
 picture` / `The picture as it was commented on` for a thread on a picture's
 page. Bodies are quoted line by line with `> `, a body's own Markdown left
-as it is; a tombstone reads `*(deleted)*`. A token's comment is signed
-`**Claude Code** (tim's connection)`, one with `agent_kind: "local"`
-`**Codex** (on tim's computer)`. The last line of "How to answer"
+as it is; a tombstone reads `*(deleted)*`. An agent's comment is signed
+with its label and the person it wrote for, `**Claude Code**, for tim`,
+`**Codex on TIM-PC**, for tim`. The last line of "How to answer"
 names the JSON form the reader can reach (`open.json`, the `GET
 /api/annotations` query, or `read_annotation`). With no entries: the
 heading, `No open comments and no highlights.` (or `No resolved comments
@@ -753,8 +751,8 @@ detail, threads: [{id, answered}]}`, `by` the username.
   is the last `rev` given, else `after`. So a new request and a state change
   alike show past a cursor. `get(conn, id)` is one.
 - **`set_state(ws, conn, id, state, *, detail, by_name, writer,
-  only_from=())`**: `writer` is `agent` (an integration token of the
-  `feedback` or `write` scope, or an agent on this computer) or
+  only_from=())`**: `writer` is `agent` (an integration token that
+  comments in the workspace, `auth.token_comments`, or an agent on this computer) or
   `requester` (the session of `by`), and `TRANSITIONS` says who may make
   which change:
 
@@ -1015,10 +1013,10 @@ loop. `AnnotationError` becomes the `HTTPException` of its status.
 | GET | `/api/annotations?scope=<id>&state=open\|resolved\|all&format=json\|md` | the document of a page, a folder or the library (`scope` a page's or a folder's id, or `home`; `entries.document`, `owner` the reader's username, the entries with `picture_url` / `before_url`), or with `format=md` its Markdown (`text/markdown; charset=utf-8`, the pictures as their routes). For a work folder's scope the JSON adds what the Feedback dialog sends to (`agent`, `agents_found`: below the table), until the dialog goes; never the files' document. 400 for another state or format; 404 for no such folder or live page |
 | GET | `/api/annotations/{id}?format=json\|md` | `{entry}`: a thread's in any state, or a bare highlight's by its block id; or its Markdown (the file's heading, then the item); 404 for one hidden, gone, a reply's id, a highlight that has a thread, or on no live page |
 | GET | `/api/annotations/{id}/picture?at=now\|before&v=<key>` | `image/jpeg`, `Cache-Control: private, max-age=86400`; 404 when the entry has no such picture or it cannot be drawn now; 400 for another `at`. `v`, the picture's key, only busts a browser's cache |
-| POST | `/api/feedback/requests` | `{id?, scope, note?, threads?}` → 201 `{request}` (200 for a repeated `id` of the same account, answered as stored). `require_ws(write=True)`: a member who may edit, or a `write` token; never a `feedback` or `read` token, a viewer or a share visitor (a Send starts work on the owner's computer). 400 for a scope outside a work folder, nothing to send, a thread that is no open one in the scope or a malformed id; 403 for a token's Send to a work folder whose vault here has an agent on this computer ("An agent on this computer takes Sends made in Gamma, not with a token."); 404 for no such scope; 409 for another account's id; 413 past the note's length |
+| POST | `/api/feedback/requests` | `{id?, scope, note?, threads?}` → 201 `{request}` (200 for a repeated `id` of the same account, answered as stored). `require_ws(write=True)`: a member who may edit, or a `write` token; never a `read` token, a viewer or a share visitor (a Send starts work on the owner's computer). 400 for a scope outside a work folder, nothing to send, a thread that is no open one in the scope or a malformed id; 403 for a token's Send to a work folder whose vault here has an agent on this computer ("An agent on this computer takes Sends made in Gamma, not with a token."); 404 for no such scope; 409 for another account's id; 413 past the note's length |
 | GET | `/api/feedback/requests?after=<rev>&scope=<id>&state=<s>&limit=<n>` | `{requests, cursor}` ("Requests and their states"); on a server that runs agents each record adds `local`, whether an agent on this computer holds it now; 400 for another state |
 | GET | `/api/feedback/requests/{id}` | `{request, entries}`, the entries of its threads as they are now (with their picture routes): what its file holds; the record's `local` as in the listing; 404 |
-| POST | `/api/feedback/requests/{id}/state` | `{state, detail?}` → `{request}`: an agent (a `feedback` or `write` token, in its own workspace) any change `TRANSITIONS` lets it make, the requester's session a withdraw (`failed`); 403 for a read token ("this token is read-only"), another member, a viewer or a share visitor; 404; 409 for a change refused, and for a token's change while an agent on this computer answers the request ("Codex on this computer is answering this request."); 413 past the detail's length; 423 while a delete holds the workspace |
+| POST | `/api/feedback/requests/{id}/state` | `{state, detail?}` → `{request}`: an agent (a token that comments in its own workspace, `auth.token_comments`) any change `TRANSITIONS` lets it make, the requester's session a withdraw (`failed`); 403 for a read token ("this token is read-only"), another member, a viewer or a share visitor; 404; 409 for a change refused, and for a token's change while an agent on this computer answers the request ("Codex on this computer is answering this request."); 413 past the detail's length; 423 while a delete holds the workspace |
 
 `picture_url` is `/api/annotations/{id}/picture?at=now&v=<key>`,
 `before_url` the same with `at=before`.
@@ -1040,19 +1038,94 @@ either agent. Both are on this route alone: `open.json`, the request files
 and MCP's `read_annotation` stay as they are
 ([local_agents.md](local_agents.md#the-routes)).
 
+## The writing tools
+
+What an agent writes on a page, as itself for its account: `comment` (a
+reply in a thread, or a new thread on a place), `resolve` and `highlight`,
+three tools of the chat registry ([ai_tools.md](ai_tools.md) "comment /
+resolve / highlight") that Gamma AI has under its Comments and highlights
+permission, an MCP connection at the Comment level ([mcp.md](mcp.md) "The
+Comment level") and a computer agent's turn through its token. They work on
+every page of the library, a work folder's file as a library page.
+
+**The places** (`places.find`): a PDF passage by its quote and its 1-based
+page, a range of a text file by its first and last line (with the quote of
+those lines when it comes, else the lines whole), a note by its block, the
+page itself by nothing. A PDF quote is looked for on its page and the ones
+either side (`highlight_relocate.place_quote`: `find_passage` over those
+pages, the named one first among equals, the text folded as a relocation
+folds it) and drawn over the glyphs it covers (`rects_for_span`, the page's
+display frame, `highlights.position`); a range's quote near its lines
+(`text_anchors.find_range`, its fold), its context written as a selection
+writes it (`highlights.span_text`). The agent copied the quote from the
+text, so an exact copy (as the fold reads it) places it and nothing less: a
+rough match, however alike, is the closest passage, and the call is refused
+saying it ("that quote is not on PDF page 3 or beside it; the closest
+passage reads “…” (92% alike)", a range's with its lines), or with no closest
+at all, never placed by guess. A secrets file's text is never said back
+(`anchors.text_kept`), and a quote on one is refused before any match, the
+same words whether the text is there or not, so no answer tells what the
+file holds: its lines are named with `line` and `end_line` and marked
+whole. An exact copy with no glyph drawn over it (a scan's hidden text
+layer) is refused too. The quote is stored as the file spells it.
+
+**The writes** (`hand.py`, a `Writer`: the account, its username, the
+agent). A passage or a range becomes a highlight block like a person's: the
+page's last top-level block, `{color, quote, pdf_position | text_position,
+style?, agent}` (`agents.stamp`), written through `ops.apply_ops` as the
+account with client `ai` — so the reader lists it back as any highlight,
+the files on a vault's disk carry it, and the PDF and the code view draw it.
+A comment's passage is drawn in the wash, as a person's commented passage
+is; a highlight takes a colour of the default washes (`hand.COLORS`) and a
+style of the viewer's (`hand.STYLES`). A thread is written through
+`comments.create` on that block, the note or the page root (its anchor
+computed as the API's), a reply on the thread's block, a resolve through
+`comments.resolve` (never a reopen); `comments.written` and
+`ops.after_commit` follow as for a person's write. Before each write the
+hand checks the server takes writes (`hosted.read_only`), no delete holds
+the workspace, and the account may comment there (any role); a new
+highlight, a `highlight` or a comment on a passage or a range, is a block
+of the page, an edit, so the account must also edit there (`hand.may_mark`,
+checked in the approval's preview too): a viewer's agent comments on the
+page or a note, as a viewer does. A thread the op path or the comments
+refuse after its passage was marked takes the new highlight away again. A
+thread is any live root on a page of the library (`hand.thread`).
+
+**Made again.** The same agent's same words for the same account on the
+same place within
+`hand.REPEAT_S` (five minutes) are one call made again: the same thread's
+reply, a new thread on the same block or on the same passage (its page and
+quote) or range (its lines). It writes nothing and answers with what the
+first wrote (the tools say so as a refusal, with its ids and link), so a
+retried call never doubles a comment. A place keeps one highlight of each
+agent per account (the stamp's `id` and `for`): a second is refused with
+the first's id. Gamma AI's id is the same for every account, so another
+account's Gamma AI highlights that place too.
+
+**The answers** name the file and the place, the ids made (the thread, the
+comment, a new highlight) and the entry's link as `list_annotations` gives
+it (`entries.link_of`).
+
+A Send's run writes its answers through the same hand until step 3.7
+(`hand.answer_run`, `reply` and `resolve` with the run's `seen`), the
+local home's and the channel's alike.
+
 ## Tokens and MCP
 
-- **The `feedback` scope** (`integrations.SCOPES`): everything `read` may,
-  plus a reply in and the resolve of a thread on a work folder's file, and
-  setting a request's state. On the HTTP API it answers in its own
-  `workspace_id` alone (every token's rule); on MCP in every workspace it was
-  granted, like a read token ([mcp.md](mcp.md) "Permissions and
-  credentials"). `auth.require_commenter(request, page_id, answer=)` lets
-  it reply and resolve on a live file and refuses it a new thread, an edit,
-  a delete and a reopen ([comments.md](comments.md) "Who may comment"). A
-  `write` token answers through the comment API as before; a viewer may
-  make `read` and `feedback` tokens (viewers comment), `write` stays the
-  editors'. The pane's words: **Read and answer feedback**.
+- **The Comment level** (`integration_tokens.comments`,
+  `integrations.comment_grant`): a `read` token comments, replies and
+  resolves in the workspaces it names, a viewer's too, and highlights or
+  comments on a passage or a range only where the account edits
+  (`hand.may_mark`); on the HTTP API it comments in its own
+  `workspace_id` (`auth.token_comments`); a `write` token
+  comments in its workspace, a turn's token in its own; a viewer may make a
+  `read` token at any level but Edit (viewers comment), `write` stays the
+  editors'. `auth.require_commenter(request, page_id)` lets such a token
+  write any comment the account may, and refuses a token that may not
+  ([comments.md](comments.md) "Who may comment"). Before migration step 61
+  it was the `feedback` scope, a reply and a resolve on a work folder's
+  files alone; the step made those tokens `read` ones at the Comment level in
+  every workspace they read.
 - **The stamp.** A comment written through any token stores the token's
   display name and id (`agent`, `agent_id`; `resolved_agent` on a resolve),
   shown as the comment's author with the person's account; a token edits
@@ -1065,20 +1138,22 @@ and MCP's `read_annotation` stay as they are
 - **MCP**: `list_annotations` and `read_annotation` are reading tools of
   the chat registry (`ai_tools.TOOLS`; [ai_tools.md](ai_tools.md)), on
   every scope the chat and MCP have, reached on any connection and in the
-  chat; `reply_feedback` and `resolve_feedback`
-  (`gamma/annotations/agent.py`) are the adapter's own, listed for a `feedback`
-  connection only and checked per call ([mcp.md](mcp.md) "Answering
-  feedback"). `gamma_link(..., thread_id=)` writes the address the Inbox
-  opens. A browser sign-in asks for the scope through the consent page's
-  checkbox (`gamma:feedback`, [mcp.md](mcp.md) "Browser sign-in protocol").
-- **The plugin skill** (`plugins/gamma/skills/gamma/SKILL.md` "Feedback on
-  a work folder") tells the agent the loop: find the items (`.gamma/annotations/open.md`
-  in the repository, or `list_annotations`), read each with its source line,
-  change the sources and rebuild (Gamma builds nothing: it shows the new PDF
-  and finds the comments again), reply with what changed and where and
-  resolve what is done, leave what needs the person's decision open with a
-  question, act on the owner's comments and ask about anyone else's, never
-  answer its own replies, and never edit anything under `.gamma/`.
+  chat; the writing tools too, listed for a connection at the Comment level
+  only and checked per call ([mcp.md](mcp.md) "The Comment level").
+  `gamma_link(..., thread_id=)` writes the address the Inbox opens. A
+  browser sign-in of a client that asks for `gamma:feedback`, the level's
+  name, starts at Comment on the consent page ([mcp.md](mcp.md) "Browser
+  sign-in protocol").
+- **The plugin skill** (`plugins/gamma/skills/gamma/SKILL.md` "Highlights
+  and comments") tells the agent the loop: find the items (`list_annotations`,
+  or `.gamma/annotations/open.md` in a repository), read each with its source
+  line, change what it asks for (the sources, then the project's build:
+  Gamma builds nothing, it shows the new PDF and finds the comments again),
+  reply with what changed and where and resolve what is done, leave what
+  needs the person's decision open with a question, ask about a passage with
+  a comment on it, highlight only on request, act on the owner's comments
+  and ask about anyone else's, never answer its own replies, and never edit
+  anything under `.gamma/`.
 
 ## The seam
 
@@ -1116,7 +1191,7 @@ watcher, a timer, a shell hook), and what it finds here is:
    change of the request rewrites the same file with its `rev` moved, so a
    watcher sees a create, then modifications, and a `rev` it has seen is
    nothing new. On any server, `GET /api/feedback/requests?after=<cursor>`
-   with a `feedback` token: the requests made or changed since the cursor,
+   with a token that comments there: the requests made or changed since the cursor,
    oldest first, with the `cursor` to pass back next time (`state=sent`
    keeps the new ones); the HTTP API reads the token's own workspace, so
    one token per workspace polled.
@@ -1132,15 +1207,16 @@ watcher, a timer, a shell hook), and what it finds here is:
    document's `owner` says whose comments are the requests, and its
    `answer` names the routes below.
 3. **Saying it started.** `POST /api/feedback/requests/{id}/state
-   {state: "running"}` as the agent: an integration token of the
-   `feedback` or `write` scope, in its own workspace; again with a
+   {state: "running"}` as the agent: an integration token that comments
+   in its own workspace (a `write` one, or a `read` one at the Comment
+   level); again with a
    `detail` line as it goes. Gamma shows it beside the request ("The agent
    is working…").
 4. **Answering.** Through the comment API with the same token, each entry
    carrying its `page_id` and `block_id`: a reply is
    `POST /api/pages/{page_id}/comments {block_id, thread_id, body}`, a
    resolve `POST /api/comments/{id}/resolve {resolved: true}`; or over MCP
-   with `reply_feedback` / `resolve_feedback` on a `feedback` connection.
+   with `comment` (its `thread_id`) and `resolve` at the Comment level.
    Each answer is signed with the token's name, reaches the person's
    Inbox, and marks the thread answered in every request waiting on it
    (`threads[].answered`, the entry's `sent` gone), which rewrites the
@@ -1261,6 +1337,11 @@ guide's "Comments and inbox" says it for people.
   another server, read there with the vault's token, a server before the
   reader the files' error alone),
   `test_annotations_tools.py`, and the gate `test_annotations_loop.py` (a work
-  folder with a paper, two comments, a Send, a feedback token's state and
+  folder with a paper, two comments, a Send, a commenting token's state and
   answers, a rebuild, the Inbox, `open.json` empty at the end).
+- `tests/test_annotations_hand.py`: the writing tools (each place, a quote
+  not there refused with the closest, a reply, a resolve, a highlight in a
+  colour and a style, a call made again, Gamma AI's permission and a
+  viewer's chat, the Comment level of a read, a commenting, a write and a
+  turn token).
 - The browser group `feedback` (`frontend/tests/e2e/scenarios/feedback.mjs`).

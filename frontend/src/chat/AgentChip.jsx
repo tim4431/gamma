@@ -6,13 +6,19 @@
 // the chat's to answer (`onAgent`, which may ask first: a conversation keeps
 // its agent).
 import { MenuSelect } from "../shared/ui/Menus";
-import { BotIcon, SparklesIcon } from "../shared/ui/Icons";
+import { BotIcon, LinkIcon, SparklesIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 import { GAMMA, agentChoice } from "./agents.js";
 
 // An agent's icon by its name, in the chip's menu and History's rows: Gamma
 // AI's sparkles, a computer agent's bot.
 export const agentIcon = (name) => (name === GAMMA ? SparklesIcon : BotIcon);
+
+// The same by an agent's kind (agents.js agentKind), for what an agent
+// wrote or made (a comment's avatar, a highlight's row): a connection's is
+// the link Settings → Integrations draws it with.
+const KIND_ICONS = { gamma: SparklesIcon, computer: BotIcon, connection: LinkIcon };
+export const agentKindIcon = (kind) => KIND_ICONS[kind] || BotIcon;
 
 // `agents` the chat's, `agent` the one shown; `models` [[id, label]] the
 // picked agent's, `model` the one chosen, `onModel(id)`; `label` the

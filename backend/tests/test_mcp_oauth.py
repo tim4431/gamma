@@ -380,11 +380,12 @@ def _tool_names(c, token):
 
 
 @pytest.mark.parametrize("ticked", [True, False])
-def test_signin_may_allow_answering_feedback(browser, ticked):
-    """A client asking for gamma:feedback has the consent page's "answer my
-    comments" ticked; the person decides, and the token's scope follows
-    what they approved: a feedback token with the two answering tools, or
-    a read one."""
+def test_signin_may_give_the_comment_level(browser, ticked):
+    """gamma:feedback is the Comment level's name: a client asking for it
+    has the consent page start at Comment (``comments_asked``); the person
+    decides per workspace, and the token, a read one either way, comments
+    where they chose (the three writing tools), its scopes naming the level
+    when it has it."""
     from gamma.integrations import resolve_connection
 
     c, ws = browser
@@ -393,27 +394,36 @@ def test_signin_may_allow_answering_feedback(browser, ticked):
     assert c.get("/.well-known/oauth-authorization-server").json()["scopes_supported"] == [
         "gamma:read", "gamma:feedback"]
     assert 'scope="gamma:read"' in c.get("/mcp").headers["www-authenticate"]  # the challenge still asks to read
-    assert asked(c)[2]["feedback_asked"] is False
+    assert asked(c)[2]["comments_asked"] is False
     client_id, value, shown = asked(c, scope="gamma:feedback gamma:read")
-    assert shown["feedback_asked"] is True
+    assert shown["comments_asked"] is True
     result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [ws],
-                                                             "feedback": ticked})
+                                                             "comment_workspaces": [ws] if ticked else []})
     assert result.status_code == 200, result.text
     tokens = exchange(c, client_id, parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0])
     assert tokens.status_code == 200, tokens.text
     assert tokens.json()["scope"] == ("gamma:read gamma:feedback" if ticked else "gamma:read")
     token = tokens.json()["access_token"]
-    assert resolve_connection(token, BASE + "/mcp").scope == ("feedback" if ticked else "read")
+    connection = resolve_connection(token, BASE + "/mcp")
+    assert (connection.scope, connection.commentable) == ("read", (ws,) if ticked else ())
     names = _tool_names(c, token)
-    assert ({"reply_feedback", "resolve_feedback"} <= names) is ticked and "list_annotations" in names
-    # a read sign-in may be given the answering too
+    assert ({"comment", "resolve", "highlight"} <= names) is ticked and "list_annotations" in names
+    # a read sign-in may be given the level too, for every workspace
     if ticked:
         client_id, value = pending(c)
-        result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [ws],
-                                                                 "feedback": True})
+        result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "all_workspaces": True,
+                                                                 "comment_all": True})
         tokens = exchange(c, client_id, parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0])
         assert tokens.json()["scope"] == "gamma:read gamma:feedback"
-        assert "reply_feedback" in _tool_names(c, tokens.json()["access_token"])
+        assert "comment" in _tool_names(c, tokens.json()["access_token"])
+        row = next(t for t in c.get("/api/integrations/tokens").json()["tokens"] if t["comment_all"])
+        assert row["scope"] == "read" and row["all_workspaces"]
+    else:  # the Edit level comments too, so its token's scopes name the Comment level
+        client_id, value = pending(c)
+        result = c.post("/api/integrations/oauth/consent", json={**value, "approve": True, "workspaces": [ws],
+                                                                 "edit_workspaces": [ws]})
+        tokens = exchange(c, client_id, parse_qs(urlsplit(result.json()["redirect_url"]).query)["code"][0])
+        assert tokens.json()["scope"] == "gamma:read gamma:feedback"
     for t in c.get("/api/integrations/tokens").json()["tokens"]:
         c.delete("/api/integrations/tokens/" + t["id"])
 

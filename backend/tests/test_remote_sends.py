@@ -412,9 +412,10 @@ def test_the_makers_send_runs_here_and_is_answered_there(lab, nas, monkeypatch):
     threads = _threads(lab, f)
     for thread_id in f.threads:
         reply = threads[thread_id]["comments"][-1]
-        assert (reply["agent"], reply.get("agent_kind"), reply["author"]) == ("Codex", "local", OWNER)
+        assert (reply["agent"], reply.get("agent_kind"), reply["author"]) == ("Codex", "computer", OWNER)
         assert (reply["body"], reply["id"]) == (f"Done for {thread_id}.", home.reply_id(run["id"], thread_id))
-        assert threads[thread_id]["resolved_at"] and threads[thread_id]["resolved_agent"] == "Codex"
+        assert reply["agent_on"] and threads[thread_id]["resolved_at"]
+        assert threads[thread_id]["resolved_agent"] == f"Codex on {reply['agent_on']}"
     assert set(store.threads_of(f.id, f.threads)) == set(f.threads)     # their sessions, for a follow-up
 
     # the source lines computed here, the regions' pictures fetched into the folder and handed to the agent
@@ -540,7 +541,7 @@ def test_a_mention_made_there_runs_here(lab, nas):
     f.turn.once()
     assert runner.wait_idle(60)
     reply = _threads(lab, f)[thread_id]["comments"][-1]
-    assert (reply["agent"], reply.get("agent_kind")) == ("Codex", "local")
+    assert (reply["agent"], reply.get("agent_kind")) == ("Codex", "computer")
 
 
 def test_recovery_fails_an_open_run_there(lab, nas):

@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .. import local_agents, workspaces
-from ..auth import is_token
+from ..auth import is_token, token_comments
 from ..db import connect_pages_db
 from ..annotations import entries, requests
 from ..annotations.entries import AnnotationError
@@ -228,14 +228,15 @@ def _not_answering_here(ws: str, request_id: str) -> None:
 @router.post("/requests/{request_id}/state")
 def set_request_state(request_id: str, payload: RequestState, request: Request):
     """Set a request's state → ``{request}``: an agent (an integration token
-    of the feedback or write scope) any change ``requests.TRANSITIONS``
-    lets it make, the requester's session a withdraw (``failed``). 403 for
+    that comments in the workspace, ``auth.token_comments``) any change
+    ``requests.TRANSITIONS`` lets it make, the requester's session a
+    withdraw (``failed``). 403 for
     anyone else, 404 for no such request, 409 for a change refused or a
     token's while an agent on this computer answers the request, 413 for a
     longer detail; 423 while a delete holds the workspace."""
     ws = _member(request)
     if is_token(request):
-        if request.state.token_scope not in ("feedback", "write"):
+        if not token_comments(request):
             raise HTTPException(status_code=403, detail="this token is read-only")
         _not_answering_here(ws, request_id)
         writer, by_name = "agent", display_name(request.state.token_name)

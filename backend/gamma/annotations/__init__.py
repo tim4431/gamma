@@ -14,7 +14,7 @@ folder's threads (``requests``, until step 3.7 of
 docs/research/agents-as-participants-plan.md); the files below a work
 folder's ``.gamma/annotations/``, and beside a file a vault follows, carry
 it all to the agent on the disk (``files``), kept current by the vaults'
-rounds and the comment and op hooks (``listeners``); and
-an MCP connection allowed to answer feedback replies and resolves
-(``agent``).
+rounds and the comment and op hooks (``listeners``); and an agent's hand
+writes comments, replies, resolves and highlights as the agent (``hand``)
+on the places it names (``places``).
 """

@@ -160,8 +160,12 @@ test("blocksToHighlights lists positioned highlight blocks, by block id, and whe
     N("pageonly", [], { properties: { quote: "q", pdf_position: { pageNumber: 4 } } }),
     N("ink", [], { properties: { ink_url: "/api/uploads/a.ink", pdf_position: POS } })]);
   assert.deepEqual(out.map((h) => [h.id, h.hasNote]), [["h1", false], ["h2", true], ["h3", true]]);
-  assert.deepEqual(out[0], { id: "h1", quote: "q", note: "", hasNote: false, color: GREEN, style: "highlight", position: POS });
+  assert.deepEqual(out[0], { id: "h1", quote: "q", note: "", hasNote: false, color: GREEN, style: "highlight", position: POS, agent: null });
   assert.deepEqual([out[1].quote, out[1].note], ["q", "a comment"], "the note is the block's own text");
+  // a highlight an agent made names it, its stamp as stored; a stamp without a name is no agent's
+  const stamp = { id: "gamma", name: "Gamma AI", for: "tim" };
+  const made = (id, agent) => N(id, [], { properties: { quote: "q", pdf_position: POS, agent } });
+  assert.deepEqual(blocksToHighlights([made("a", stamp), made("b", { id: "gamma" }), made("c", "Gamma AI")]).map((h) => h.agent), [stamp, null, null]);
 });
 
 test("a highlight's colour comes out stored; an older rgba string is respelled, an unreadable one is the default", () => {
@@ -285,7 +289,7 @@ test("a highlight made in the viewer is a block whose id is the highlight's, its
   assert.deepEqual(block, { id: "hx", children: [], content: "c",
     properties: { t0: 1700000000000, color: GREEN, quote: "q", pdf_position: POS } });
   // the viewer reads it back as it was made
-  assert.deepEqual(blocksToHighlights([block]), [{ id: "hx", quote: "q", note: "c", hasNote: true, color: GREEN, style: "highlight", position: POS }]);
+  assert.deepEqual(blocksToHighlights([block]), [{ id: "hx", quote: "q", note: "c", hasNote: true, color: GREEN, style: "highlight", position: POS, agent: null }]);
 });
 
 test("a new highlight's colour is stored #rrggbbaa whatever its spelling; an area has no quote; a missing id is made", () => {

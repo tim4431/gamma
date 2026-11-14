@@ -389,7 +389,7 @@ def answered(ws: str, event: dict) -> None:
     was made before it, unless it is its requester's own (a session's: a
     token's write answers whoever it belongs to). An event that says when
     its writer read the thread (``seen``: an agent on this computer's run,
-    gamma/annotations/agent.py) answers only the requests made by then: one
+    gamma/annotations/hand.py) answers only the requests made by then: one
     made while the run worked is still the next run's. A reopen answers
     nothing."""
     if event.get("kind") not in ("reply", "resolve") or not event.get("thread_id"):

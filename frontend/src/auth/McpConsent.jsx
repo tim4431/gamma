@@ -3,7 +3,8 @@ import { MorphText } from "../shared/ui/MotionWidgets";
 import { API, apiJson, setExpectedUser } from "../shared/lib/utils";
 import { AuthShell, LoginError, LoginNotice, LoginPage, SessionConflictPage } from "./LoginPage";
 import { Section, Toggle } from "../settings/SettingsKit";
-import { WorkspacePicker, accessBody, edits } from "../settings/WorkspacePicker";
+import { WorkspacePicker } from "../settings/WorkspacePicker";
+import { accessBody, comments, edits } from "../settings/workspaceAccess.js";
 import { Splash } from "../shared/ui/BrandMark";
 import { CheckIcon, EyeIcon, LockIcon, MessageSquareIcon, PenIcon, ShieldIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
@@ -72,17 +73,17 @@ export function McpAuthorization({ requestId, userCode }) {
   return <McpConsent key={`${requestId || userCode}:${user}`} requestId={requestId} userCode={userCode} />;
 }
 
-// The consent page: the workspaces the connection may read, which of them it
-// may also edit the notes of (View or Edit, as a share's people are given),
-// and whether it may also answer the user's comments on work-folder files (reply and
-// resolve: the `feedback` scope, docs/dev/annotations.md "Tokens and MCP"),
-// ticked when the client asked for gamma:feedback. A setup command's
-// sign-in (`userCode`) shows its code to check against the terminal's and
-// ends on this page, where an MCP client's returns to the client.
+// The consent page: the workspaces the connection may read, and its level in
+// each (View, Comment or Edit, as a share's people are given: Comment writes
+// comments, replies, resolves and highlights under its own name, Edit also
+// changes notes; docs/dev/mcp.md "The Comment level"), the workspace it
+// starts with at Comment when the client asked for gamma:feedback, the
+// level's name. A setup command's sign-in (`userCode`) shows its code to
+// check against the terminal's and ends on this page, where an MCP client's
+// returns to the client.
 export default function McpConsent({ requestId, userCode }) {
   const [details, setDetails] = React.useState(null);
   const [access, setAccess] = React.useState({ all: false, ids: [] });
-  const [feedback, setFeedback] = React.useState(false);
   const [asks, setAsks] = React.useState(true);  // where it edits, whether each change asks first
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -95,14 +96,14 @@ export default function McpConsent({ requestId, userCode }) {
       .then((data) => {
         if (!active) return;
         setDetails(data);
-        setAccess({ all: false, ids: [data.default_workspace || data.workspaces[0]?.id].filter(Boolean) });
-        setFeedback(!!data.feedback_asked);
+        const ids = [data.default_workspace || data.workspaces[0]?.id].filter(Boolean);
+        setAccess({ all: false, ids, comments: data.comments_asked ? ids : [] });
       }).catch((err) => { if (active) setError(err.message); });
     return () => { active = false; };
   }, [device, requestId, userCode]);
   const decide = async (approve) => {
     setBusy(true); setError("");
-    const body = { csrf: details.csrf, ...accessBody(access), feedback, asks, approve };
+    const body = { csrf: details.csrf, ...accessBody(access), asks, approve };
     try {
       const result = await apiJson(`${API}/integrations/${device ? "device" : "oauth"}/consent`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -120,6 +121,7 @@ export default function McpConsent({ requestId, userCode }) {
     } catch (err) { setError(err.message); setBusy(false); }
   };
   const editing = edits(access);
+  const commenting = comments(access);
   // The splash stays until the request is read: the card shows whole.
   if (!details && !error) return <Splash />;
   const name = details?.client_name || t("An assistant");
@@ -129,8 +131,8 @@ export default function McpConsent({ requestId, userCode }) {
     editing ? [PenIcon, t("Create, edit and move notes in the workspaces marked Edit. Never deletes anything, or changes pages, folders or settings.")] : null,
     editing ? [ShieldIcon, asks ? t("Asks you before each change, in the assistant's own window; one that cannot ask changes nothing.")
       : t("Changes notes without asking you first.")] : null,
-    feedback ? [MessageSquareIcon, t("Answer comments on your synced folders' files: reply and resolve.")] : null,
-    editing || feedback ? null : [LockIcon, t("Cannot edit or delete your library.")],
+    commenting ? [MessageSquareIcon, t("Comment, reply, resolve and highlight in the workspaces marked Comment or Edit, under its own name.")] : null,
+    commenting ? null : [LockIcon, t("Cannot edit or delete your library.")],
   ].filter(Boolean);
   return <AuthShell headline={details ? t("Connect {name}", { name }) : t("Connect your library")} className="mcpConsent">
     {details ? <p className="mcpWho">
@@ -151,11 +153,10 @@ export default function McpConsent({ requestId, userCode }) {
       </Section>
       <Section title={t("Permissions")}>
         {editing ? <Toggle icon={ShieldIcon} label={t("Ask me before each change it makes")} checked={asks} onChange={setAsks}
-          disabled={busy} hint={t("Gamma's question shows in the assistant's own window.")} /> : null}
-        <Toggle icon={MessageSquareIcon} label={t("Answer my comments on synced folders' files")} checked={feedback}
-          onChange={setFeedback} disabled={busy} hint={t("Reply to and resolve them")} />
+          disabled={busy} hint={t("Gamma's question shows in the assistant's own window.")} />
+          : <p className="settingDesc">{t("Mark a workspace Comment to let it comment there, or Edit to let it change notes too.")}</p>}
       </Section>
-      <Section title={editing ? t("Read and edit notes") : feedback ? t("Read and answer feedback") : t("Read-only access")}>
+      <Section title={editing ? t("Read and edit notes") : commenting ? t("Read and comment") : t("Read-only access")}>
         <ul className="mcpCan">{can.map(([Icon, text]) => <li key={text}><Icon size={14} aria-hidden="true" />{text}</li>)}</ul>
       </Section>
       <p className="settingDesc mcpFoot">{t("Content the assistant reads is shared with its provider.")}{" "}
@@ -171,7 +172,7 @@ export default function McpConsent({ requestId, userCode }) {
       <div className="mcpConsentActions">
         <button className="uiBtn primary loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
           <MorphText>{busy ? t("Connecting…") : editing ? t("Allow reading and editing")
-            : feedback ? t("Allow reading and answering") : t("Allow read-only access")}</MorphText>
+            : commenting ? t("Allow reading and commenting") : t("Allow read-only access")}</MorphText>
         </button>
         <button className="uiBtn loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>

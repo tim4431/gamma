@@ -4,10 +4,11 @@ docs/dev/comments.md "The API").
 Every handler is a sync ``def``: it opens the workspace's pages.db and a
 write waits on its write lock, which must never happen on the event loop.
 Who may write is ``auth.require_commenter`` (any member, viewers included,
-or a signed-in account a share admits, a write token, a feedback token's
-reply and resolve on a work folder's file); reads are ``resolve_ws`` and
-the share's scope, as for the page itself. A token's comment is signed with
-its display name and id (``integrations.display_name``). After each write
+or a signed-in account a share admits, a write token, a read token given the
+Comment level in its workspace); reads are ``resolve_ws`` and
+the share's scope, as for the page itself. A token's comment is signed as
+its agent (``agents.of_request``: a connection by its display name and id).
+After each write
 ``comments.written``: the page's room hears ``{t: "comments", block_id,
 thread_id}``, every peer but the writer's tab (``client``), and the write's
 event goes to ``comments.after_write``. A new comment or an edit that
@@ -24,7 +25,7 @@ from pydantic import BaseModel
 from .. import comments, inbox
 from ..auth import is_token, require_commenter, resolve_ws, share_scope, share_via, ws_role
 from ..db import connect_pages_db
-from ..integrations import display_name
+from ..agents import of_request
 from ..ops import StorableBody
 
 router = APIRouter(prefix="/api", tags=["comments"])
@@ -50,14 +51,6 @@ class CommentResolve(StorableBody):
 
 class NotifyLevel(BaseModel):
     level: str  # inbox.LEVELS
-
-
-def _writer(request: Request) -> tuple[str, str]:
-    """``(agent, agent_id)``: the display name and id of the integration
-    token the request came with, ``("", "")`` for a session."""
-    if not is_token(request):
-        return "", ""
-    return display_name(request.state.token_name), request.state.token_id
 
 
 def _page_of(request: Request, comment_id: str) -> str:
@@ -114,12 +107,11 @@ def create_comment(page_id: str, payload: CommentCreate, request: Request):
     mentions the work folder's agent on this computer (``_written``:
     ``{agent, request_id, scope, threads}`` or ``{agent, refused, why}``).
     A repeated ``id`` answers the stored comment and writes nothing."""
-    ws = require_commenter(request, page_id, answer=bool(payload.thread_id))
-    agent, agent_id = _writer(request)
+    ws = require_commenter(request, page_id)
     with connect_pages_db(ws) as conn:
         out = comments.create(conn, page_id, block_id=payload.block_id, body=payload.body,
                               author=request.state.user_id, author_name=request.state.user or "",
-                              comment_id=payload.id, thread_id=payload.thread_id, agent=agent, agent_id=agent_id)
+                              comment_id=payload.id, thread_id=payload.thread_id, agent=of_request(request))
     answer = {"comment": out["comment"], "thread": out["thread"]}
     if out["created"]:
         send = _written(request, ws, out["thread"], out["event"], payload.client)
@@ -138,7 +130,7 @@ def edit_comment(comment_id: str, payload: CommentEdit, request: Request):
     ws = require_commenter(request, page_id)
     with connect_pages_db(ws) as conn:
         out = comments.edit(conn, comment_id, page_id=page_id, body=payload.body, author=request.state.user_id,
-                            agent_id=_writer(request)[1])
+                            agent=of_request(request))
     answer = {"comment": out["comment"]}
     if out["event"]:
         send = _written(request, ws, out["thread"], out["event"], payload.client)
@@ -158,7 +150,7 @@ def delete_comment(comment_id: str, request: Request, client: str = ""):
     owner = ws_role(request) == "owner" and not is_token(request)  # a token deletes its own only
     with connect_pages_db(ws) as conn:
         out = comments.delete(conn, comment_id, page_id=page_id, user=request.state.user_id, owner=owner,
-                              agent_id=_writer(request)[1])
+                              agent=of_request(request))
     comments.written(ws, out["page_id"], out["block_id"], out["thread_id"], out["event"], client=client,
                      via=share_via(request))
     return {"deleted": True}
@@ -167,13 +159,12 @@ def delete_comment(comment_id: str, request: Request, client: str = ""):
 @router.post("/comments/{comment_id}/resolve")
 def resolve_comment(comment_id: str, payload: CommentResolve, request: Request):
     """Resolve (``resolved: true``) or reopen a thread, named by its first
-    comment → ``{thread}``. Anyone who may comment on the page; a feedback
-    token resolves and never reopens."""
+    comment → ``{thread}``. Anyone who may comment on the page."""
     page_id = _page_of(request, comment_id)
-    ws = require_commenter(request, page_id, answer=payload.resolved)
+    ws = require_commenter(request, page_id)
     with connect_pages_db(ws) as conn:
         out = comments.resolve(conn, comment_id, page_id=page_id, resolved=payload.resolved,
-                               by=request.state.user_id, agent=_writer(request)[0])
+                               by=request.state.user_id, agent=of_request(request))
     thread = out["thread"]
     if out["event"]:
         comments.written(ws, thread["page_id"], thread["block_id"], thread["id"], out["event"], client=payload.client,

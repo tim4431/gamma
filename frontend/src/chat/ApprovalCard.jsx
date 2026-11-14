@@ -13,7 +13,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { ActivityIcon, PencilIcon, TerminalIcon } from "../shared/ui/Icons";
-import { approvalTitle, batchNotes, deletionNotes, toolAnswers } from "./approvals.js";
+import { approvalTitle, batchNotes, deletionNotes, placeText, toolAnswers } from "./approvals.js";
 import ApprovalShell from "./ApprovalShell";
 import { pictureSrc } from "./pictureSrc.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
@@ -39,8 +39,11 @@ function ApprovalPreview({ tool, preview = {}, args = {} }) {
       {pictures.map((url) => <img key={url} src={pictureSrc(url)} alt="" loading="lazy" />)}
     </div>
   ) : null;
+  // Where a comment, a resolve or a highlight writes.
+  const place = preview.place ? <div className="chatApprovalNote">{placeText(preview.place)}</div> : null;
   if (preview.diff?.length) {
     return <>
+      {place}
       {preview.children ? <div className="chatApprovalNote">
         {tn("{n} nested block goes with it.", "{n} nested blocks go with it.", preview.children)}
       </div> : null}
@@ -50,6 +53,7 @@ function ApprovalPreview({ tool, preview = {}, args = {} }) {
     </>;
   }
   if (gallery) return gallery;
+  if (place) return place;
   if ("to" in preview) {
     return <div className="chatApprovalDiff">
       {preview.from ? <del>{preview.from}</del> : null}

@@ -101,7 +101,7 @@ def test_a_mention_in_a_thread_sends_that_thread(lab, disk, monkeypatch):
     assert (got["state"], got["note"], [t["id"] for t in got["threads"]]) == (
         "done", "please fix the `@codex` typo", ["lamThread1"])
     thread = _thread(lab, f, "lamThread1")
-    assert [c.get("agent_kind") for c in thread["comments"]] == [None, "local"] and thread["resolved_at"]
+    assert [c.get("agent_kind") for c in thread["comments"]] == [None, "computer"] and thread["resolved_at"]
     assert len(_thread(lab, f, f.threads[0])["comments"]) == 1  # the file's other thread is not sent
     row = store.threads_of(f.id, ["lamThread1"])["lamThread1"]
     assert (row["agent"], row["cwd"], row["request_id"], row["comment_id"]) == (
@@ -247,7 +247,7 @@ def test_a_member_named_codex_hears_nothing_of_the_makers_mention(lab, disk, mon
     told = _told(lab, "reply")
     assert in_mine["comment"]["id"] not in told and in_theirs["comment"]["id"] in told
     agent_reply = _thread(lab, f, mine["thread"]["id"])["comments"][1]
-    assert agent_reply["agent_kind"] == "local" and agent_reply["id"] not in told
+    assert agent_reply["agent_kind"] == "computer" and agent_reply["id"] not in told
     # the maker's comment through a token names the member, and so do the thread's later replies
     script = fresh_client()
     script.headers["Authorization"] = f"Bearer {token_for(lab.owner, 'write', 'Script')}"
@@ -278,7 +278,7 @@ def test_a_mention_while_a_run_works_on_the_thread_is_the_next_runs(lab, disk, m
     got = _request(lab, second["send"]["request_id"])
     assert got["state"] == "done" and got["detail"] != "Nothing new since the last answers."
     thread = _thread(lab, f, thread_id)
-    assert [c.get("agent_kind") for c in thread["comments"]] == [None, None, "local", "local"]
+    assert [c.get("agent_kind") for c in thread["comments"]] == [None, None, "computer", "computer"]
     assert thread["resolved_at"]  # by the second run: the first left it open for the word it never saw
     turns = [m["params"] for m in requests_in(disk.log) if m.get("method") == "turn/start"]
     assert "and the title too" not in turns[0]["input"][0]["text"] and "and the title too" in turns[1]["input"][0]["text"]
@@ -297,7 +297,7 @@ def test_another_members_reply_does_not_cancel_a_waiting_mention(lab, disk, monk
     assert runner.wait_idle(60)
     got = _request(lab, waiting["send"]["request_id"])
     assert got["state"] == "done" and got["detail"] != "Nothing new since the last answers."
-    assert [c.get("agent_kind") for c in _thread(lab, f, waiting["thread"]["id"])["comments"]] == [None, None, "local"]
+    assert [c.get("agent_kind") for c in _thread(lab, f, waiting["thread"]["id"])["comments"]] == [None, None, "computer"]
 
 
 def test_a_word_the_run_did_not_read_is_unread_whatever_its_time(lab, disk):
