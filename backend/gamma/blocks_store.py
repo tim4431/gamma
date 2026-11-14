@@ -12,7 +12,7 @@ from .db import page_now
 from .documents.model import (SQL_IN_PLACE, check_document, copy_document, document, document_props,
                               document_title, page_document, parse_upload_url, upload_url)
 from .highlights import is_ink, is_link
-from .storage import upload_refs
+from .storage import path_leaf, upload_refs
 from .work_folders import filing as work_filing, marks  # as modules: marks imports this one
 from .work_folders.library import SQL_LIBRARY_DOC, SQL_LIBRARY_PDF, SQL_LISTED, STAMPS, work_folder_of
 
@@ -1252,10 +1252,12 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
     this opportunistically backfills its document (one ``doc`` patch, an op
     batch on the page, like every other write to an existing page — ``ws``
     names the workspace, ``actor`` the account): the file name when it has
-    none, and the address when it is stored and one came, but never on a
-    work folder's file, whose document is its vault's; auto_title is
-    only set when the page still carries the exact title this call considers
-    automatic, so a re-upload can never mark a user's custom title as
+    none, or when it is what an older upload cut of this one at its "/"
+    (``storage.path_leaf``: "DC.pdf" of "AC/DC.pdf"), the title following
+    while it is still that name; and the address when it is stored and one
+    came; but never on a work folder's file, whose document is its vault's.
+    auto_title is only set when the page still carries the exact title this
+    call considers automatic, so a re-upload can never mark a user's custom title as
     replaceable by the metadata worker. Lookup and creation run under the
     write lock (``write_lock``): one page per stored file, however many
     requests ask at once. Commits."""
@@ -1267,27 +1269,34 @@ def get_or_create_doc_page(conn, doc_id: str, default_title: str = "",
     row = page_for_file(conn, doc_id, stored["ext"], BLOCK_COLUMNS)
     if row:
         props = json.loads(row[4] or "{}")
+        content = row[3]
         changed = False
         if page_document(props) is not None and not work_folder_of(props):  # a file's document is its vault's
             had = check_document(props["doc"])
             doc = dict(had)
-            if stored["name"] and not doc["name"]:
+            cut = had["name"] != stored["name"] and path_leaf(stored["name"]) == had["name"]
+            if stored["name"] and (not doc["name"] or cut):
                 doc["name"] = stored["name"]
+            if cut and content == had["name"]:  # the title the cut name gave follows it
+                content = stored["name"]
+                if props.get("auto_title") == had["name"]:
+                    props["auto_title"] = content
             if doc["at"] == "store" and stored["at"] == "url":
                 doc.update(at="url", url=stored["url"])
             doc = check_document(doc)
             if doc != had:
                 props["doc"] = doc
                 changed = True
-        if automatic and not props.get("auto_title") and row[3] == title:
-            props["auto_title"] = row[3]
+        if automatic and not props.get("auto_title") and content == title:
+            props["auto_title"] = content
             changed = True
         if changed:
             from .ops import after_commit, apply_ops, props_patch  # ops imports this module
-            patch = props_patch(json.loads(row[4] or "{}"), props)
-            after_commit(ws, conn, apply_ops(conn, row[0], [{"op": "set", "id": row[0], "props": patch}],
-                                             actor=actor))
-            row = (*row[:4], json.dumps(props), *row[5:])
+            op = {"op": "set", "id": row[0], "props": props_patch(json.loads(row[4] or "{}"), props)}
+            if content != row[3]:
+                op["content"] = content
+            after_commit(ws, conn, apply_ops(conn, row[0], [op], actor=actor))
+            row = (*row[:3], content, json.dumps(props), *row[5:])
         else:
             conn.commit()  # nothing to write: let go of the lock
         return block_to_dict(row)

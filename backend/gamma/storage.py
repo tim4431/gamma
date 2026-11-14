@@ -157,15 +157,26 @@ DIGEST_CHARS = 24
 
 
 def display_filename(name: str, fallback: str = "") -> str:
-    """A browser-supplied upload name reduced to one display-only leaf.
+    """A client-supplied file name as one name to show: whole, NUL dropped,
+    trimmed, at most 500 characters. A "/" or "\\" in it is part of the
+    name ("AC/DC.pdf", "I/O notes.md"), never a directory: a directory
+    upload's folders travel apart from the name, and the web app sends each
+    file's own name (frontend/src/transfers/fileRouting.js uploadName)."""
+    raw = str(name or "").replace("\x00", "").strip()
+    return (raw or fallback)[:500]
 
-    Directory pickers may put a relative path in the multipart filename on
-    some browsers. Folder placement is carried separately, so neither POSIX
-    nor Windows separators belong in a page title or a document's name.
-    """
-    raw = str(name or "").replace("\x00", "").strip().replace("\\", "/")
-    leaf = raw.rsplit("/", 1)[-1].strip()
-    return (leaf or fallback)[:500]
+
+def path_leaf(name: str) -> str:
+    """The part of ``name`` after its last "/" or "\\": what an older
+    upload kept of a name it took for a path ("DC.pdf" of "AC/DC.pdf")."""
+    return str(name or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+
+
+def name_segment(name: str) -> str:
+    """``name`` as one segment of a path (an archive member, a notebook's
+    path in an upload): each "/" and "\\" written "-", as the Markdown
+    export writes one inside a name."""
+    return re.sub(r"[\\/]", "-", str(name or ""))
 
 
 def attachment_disposition(filename: str) -> str:

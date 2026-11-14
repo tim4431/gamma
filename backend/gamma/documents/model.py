@@ -3,7 +3,7 @@
     doc = {format, name, hash, ext, at, url?, size?, copy?}
 
 in that key order. ``format`` is one of formats.FORMATS, stored and never
-re-derived; ``name`` the file's shown name (a display leaf, may be "");
+re-derived; ``name`` the file's shown name (whole, a "/" kept; may be "");
 ``hash`` the stem its bytes are, or would be, stored under in the
 workspace's uploads (a content hash, the hash of the address a PDF was
 opened from, or the name a stripped PDF kept); ``ext`` the stored file's
@@ -91,7 +91,7 @@ def document(hash: str = "", url: str = "", name: str = "", *, at: str | None = 
     ``store``. A file stored or read in place has a hash and no address; one
     at an address has one; a listed one has neither, names its ``size`` and
     is no PDF or Markdown file; only a stored one is a copy. ``name`` is
-    reduced to its display leaf (``storage.display_filename``)."""
+    trimmed, a "/" in it kept (``storage.display_filename``)."""
     from ..storage import display_filename  # local: storage imports this module
 
     if format not in formats.FORMATS:

@@ -14,7 +14,7 @@ import { uploadAnyFile } from "../shared/lib/uploadParts.js";
 import { formatOf } from "../documents/formats.js";
 import { parseUploadUrl, storedName, uploadUrl } from "../documents/pageDocument.js";
 
-export { ASK_PAST_FILES, dropFilter, routeFile } from "./fileRouting.js";
+export { ASK_PAST_FILES, dropFilter, routeFile, uploadName } from "./fileRouting.js";
 
 const post = (path, body, method = "POST") => apiJson(`${API}${path}`, {
   method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),

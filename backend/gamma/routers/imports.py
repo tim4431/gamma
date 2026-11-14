@@ -54,9 +54,9 @@ from ..pdf_export import (GAMMA_ALPHA, GAMMA_COLOR, GAMMA_STYLE, LOCKED, TEXT_BO
                           pdf_point_to_viewer, reply_parent)
 from ..pdf_image import DecodeBudget, image_file, stream_data
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (content_digest, display_filename, exists as stored_exists, find_upload_file, put_upload,
-                       store_file, store_file_stream, store_pdf_stream, size as stored_size, stat as stored_stat,
-                       touch as stored_touch, upload_refs)
+from ..storage import (content_digest, display_filename, exists as stored_exists, find_upload_file, name_segment,
+                       put_upload, store_file, store_file_stream, store_pdf_stream, size as stored_size,
+                       stat as stored_stat, touch as stored_touch, upload_refs)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -520,13 +520,14 @@ def _commit_markdown_zip(ws, actor, data, meta, selection, progress=jobs.no_prog
 
 
 def _markdown_file(ws, data, meta, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
-    """The review flow treats a single note as a one-entry archive."""
+    """The review flow treats a single note as a one-entry archive, its
+    member the file's name as one segment (a "/" in the name no folder)."""
     raw = data.read(MAX_MARKDOWN_BYTES + 1)
     if len(raw) > MAX_MARKDOWN_BYTES:
         raise HTTPException(status_code=413, detail="Markdown file exceeds 5 MB")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr(display_filename(meta.get("filename"), "note.md"), raw)
+        zf.writestr(name_segment(display_filename(meta.get("filename"), "note.md")), raw)
     buf.seek(0)
     return _markdown_zip(buf, ws, meta.get("folder", ""), actor=actor, preview=preview, selection=selection,
                          progress=progress)

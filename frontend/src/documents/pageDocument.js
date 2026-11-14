@@ -31,10 +31,10 @@ export function parseUploadUrl(url) {
   return m ? { stem: m[1], ext: m[2] } : null;
 }
 
-// A name reduced to one display leaf (storage.display_filename).
+// A file's name to show, whole: a "/" in it is part of the name, never a
+// directory (storage.display_filename).
 function displayName(name) {
-  const raw = strip(String(name || "").replaceAll("\x00", "")).replaceAll("\\", "/");
-  return [...strip(raw.split("/").pop())].slice(0, 500).join("");
+  return [...strip(String(name || "").replaceAll("\x00", ""))].slice(0, 500).join("");
 }
 
 // The stored doc a writer's fields make, in canonical key order, or null

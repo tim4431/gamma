@@ -75,7 +75,7 @@ from .ops import after_commit, apply_batches
 from .pdf_export import copyable, display_size, page_frame
 from .picture import image_size, picture_type
 from .recording import mp4_duration_ms
-from .storage import display_filename, is_pdf, store_file, store_file_stream
+from .storage import display_filename, is_pdf, name_segment, store_file, store_file_stream
 
 MAX_DIRECTORY_BYTES = 16 << 20   # a zip's central directory (the upload's, each note's): about 100,000 files
 MAX_HELD_BYTES = 256 << 20       # a note's PDF or picture: read whole into memory, parsed and composed
@@ -187,7 +187,7 @@ def import_note_apps(ws: str, data, conn, folder: str = "", *, name: str = "", a
     "goodnotes"), which the import job's params carry for the setup guide."""
     from . import goodnotes_import, notability_import  # they import this module
 
-    name = display_filename(name)
+    name = name_segment(display_filename(name))  # a note's path when it is the upload's top
     notes = notability_import.Import(ws, conn, folder, actor, preview, progress)
     books = goodnotes_import.Import(ws, conn, folder, actor, preview, progress)
     report = notes.run_upload(data, selected, refused=NO_NOTES_REASON, refuse=notability_import.supernote,
