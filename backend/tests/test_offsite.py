@@ -1,12 +1,14 @@
 """The off-site copies (gamma/offsite.py, gamma/s3.py, docs/dev/debugging.md
-"Off-site copies in a bucket") against moto's in-process bucket (skipped
+"Snapshots and copies in a bucket") against moto's in-process bucket (skipped
 without moto): a round copying the databases that changed and the uploads
 the bucket lacks, a second round copying nothing, the pruning to the keep
 count (never past the data directory's first round), a copy or an upload
 that fails, the restore of databases and uploads and its refusals, the
-status and Copy now, the settings saved with the secret key encrypted and
-the environment's override, the admin endpoints, and the Litestream
-configuration. manage.py's ``offsite`` command is in test_manage_cli.py."""
+status and Copy now, the bucket saved with the secret key encrypted (and no
+rounds of its own) and the environment's override, the admin endpoints, and
+the Litestream configuration. manage.py's ``offsite`` command is in
+test_manage_cli.py; the backup tasks' copies in the bucket are
+test_bucket_snapshots.py."""
 
 import calendar
 import itertools
@@ -179,7 +181,8 @@ def test_the_copies_off_do_nothing(data, monkeypatch):
     assert offsite.tick() == {"copied": [], "uploads_copied": 0, "failed": {}, "unchanged": 0, "pruned": 0}
     assert data.keys() == [] and not (data.root / "backups").exists()
     assert offsite.status(offsite.settings())["enabled"] is False and offsite.run_now() == {
-        "started": False, "message": "off-site copies are off"}
+        "started": False, "message": "the rounds are off: they run only when the server's environment sets them "
+                                   "(GAMMA_S3_BUCKET, GAMMA_OFFSITE)"}
 
 
 def test_copies_are_pruned_to_the_keep_count_never_past_the_first_round(data, monkeypatch):
@@ -456,37 +459,42 @@ def users_db(data_dir):
     db.close_connections()
 
 
-def test_the_settings_round_trip_with_the_secret_encrypted(users_db):
+def test_the_bucket_round_trip_with_the_secret_encrypted(users_db):
     assert offsite.settings() == {"enabled": False, "bucket": "", "endpoint": "", "region": "", "access_key": "",
                                   "secret_key": "", "prefix": "", "interval_s": 3600, "keep": 7, "from_env": False}
-    conf = offsite.save({"enabled": True, "bucket": "gamma-backups", "endpoint": "https://acct.r2.example.com/",
-                         "region": "auto", "access_key": "AK1", "secret_key": "the-secret-1", "prefix": "/tenant-1/",
-                         "interval_s": 900, "keep": 3})
-    assert conf == {"enabled": True, "bucket": "gamma-backups", "endpoint": "https://acct.r2.example.com",
+    conf = offsite.save({"bucket": "gamma-backups", "endpoint": "https://acct.r2.example.com/",
+                         "region": "auto", "access_key": "AK1", "secret_key": "the-secret-1", "prefix": "/tenant-1/"})
+    # a saved bucket runs no rounds: the backup tasks copy to it
+    assert conf == {"enabled": False, "bucket": "gamma-backups", "endpoint": "https://acct.r2.example.com",
                     "region": "auto", "access_key": "AK1", "secret_key": "the-secret-1", "prefix": "tenant-1",
-                    "interval_s": 900, "keep": 3, "from_env": False}
+                    "interval_s": 3600, "keep": 7, "from_env": False}
     stored = _stored(users_db)
     assert stored["secret_key"] and "the-secret-1" not in json.dumps(stored)  # encrypted at rest
-    assert "secret_key" not in offsite.public(conf) and offsite.public(conf)["secret_set"] is True
+    assert set(stored) == {"bucket", "endpoint", "region", "access_key", "secret_key", "prefix"}
+    assert offsite.public(conf) == {"bucket": "gamma-backups", "endpoint": "https://acct.r2.example.com",
+                                    "region": "auto", "access_key": "AK1", "prefix": "tenant-1", "secret_set": True}
 
     # a save without the secret (or with "") keeps it; one field changes alone
-    assert offsite.save({"keep": 5, "secret_key": ""})["secret_key"] == "the-secret-1"
-    assert offsite.settings()["keep"] == 5 and offsite.settings()["interval_s"] == 900
+    assert offsite.save({"prefix": "t2", "secret_key": ""})["secret_key"] == "the-secret-1"
+    assert offsite.settings()["prefix"] == "t2" and offsite.settings()["region"] == "auto"
     assert offsite.save({"secret_key": "the-secret-2"})["secret_key"] == "the-secret-2"
+    # R2's dashboard shows its S3 API with the bucket's name on it: the name comes off
+    conf = offsite.save({"endpoint": "https://acct.r2.example.com/gamma-backups/"})
+    assert conf["endpoint"] == "https://acct.r2.example.com"
+    assert offsite.save({"endpoint": "https://minio.example/s3"})["endpoint"] == "https://minio.example/s3"
     # the access key cleared: the secret goes with it (boto3's own credentials)
     conf = offsite.save({"access_key": ""})
     assert conf["access_key"] == "" and conf["secret_key"] == "" and _stored(users_db)["secret_key"] == ""
 
-    for fields, reason in (({"interval_s": 59}, "interval"), ({"keep": 0}, "copies kept"),
-                           ({"interval_s": True}, "interval"), ({"bucket": "a"}, "bucket's name"),
-                           ({"bucket": "has space"}, "bucket"), ({"bucket": "", "enabled": True}, "Set a bucket"),
+    for fields, reason in (({"bucket": "a"}, "bucket's name"), ({"bucket": "has space"}, "bucket"),
                            ({"endpoint": "ftp://x"}, "endpoint"), ({"endpoint": "https://h/?q=1"}, "endpoint"),
                            ({"region": "us east"}, "region"), ({"access_key": "AK2"}, "secret key that goes"),
                            ({"secret_key": "lonely"}, "access key that goes"), ({"prefix": "a/../b"}, "prefix"),
+                           ({"enabled": True}, "Unknown setting"), ({"interval_s": 900}, "Unknown setting"),
                            ({"colour": "red"}, "Unknown setting")):
         with pytest.raises(ValueError, match=reason):
             offsite.save(fields)
-    assert offsite.settings()["keep"] == 5  # nothing of a refused save was kept
+    assert offsite.settings()["prefix"] == "t2"  # nothing of a refused save was kept
 
 
 def test_a_secret_that_no_longer_decrypts_reads_as_none(users_db, monkeypatch):
@@ -498,7 +506,7 @@ def test_a_secret_that_no_longer_decrypts_reads_as_none(users_db, monkeypatch):
 
 
 def test_the_environment_overrides_the_saved_settings(users_db, monkeypatch):
-    offsite.save({"enabled": True, "bucket": "saved-bucket", "keep": 3})
+    offsite.save({"bucket": "saved-bucket"})
     monkeypatch.setenv("GAMMA_S3_BUCKET", "env-bucket")
     monkeypatch.setenv("GAMMA_S3_ENDPOINT", "https://minio.example:9000/")
     monkeypatch.setenv("GAMMA_S3_ACCESS_KEY", "AKE")
@@ -509,29 +517,29 @@ def test_the_environment_overrides_the_saved_settings(users_db, monkeypatch):
                     "access_key": "AKE", "secret_key": "SKE", "prefix": "prod", "interval_s": 3600, "keep": 7,
                     "from_env": True}
     with pytest.raises(offsite.FromEnvError, match="GAMMA_S3_BUCKET"):
-        offsite.save({"keep": 4})
+        offsite.save({"prefix": "p"})
     monkeypatch.setenv("GAMMA_OFFSITE", "off")
     monkeypatch.setenv("GAMMA_OFFSITE_INTERVAL", "5")      # at least 60
     monkeypatch.setenv("GAMMA_OFFSITE_KEEP", "several")    # does not parse: the default
     conf = offsite.settings()
     assert conf["enabled"] is False and conf["interval_s"] == 60 and conf["keep"] == 7
     monkeypatch.delenv("GAMMA_S3_BUCKET")
-    assert offsite.settings()["bucket"] == "saved-bucket" and offsite.settings()["keep"] == 3
+    assert offsite.settings()["bucket"] == "saved-bucket" and offsite.settings()["enabled"] is False
 
 
-def test_a_round_with_the_saved_settings(users_db, s3_bucket, monkeypatch):
-    """The settings as an admin saves them in the pane, no environment."""
-    monkeypatch.setattr(offsite, "_stamp", lambda: "20261003T120000Z")
-    offsite.save({"enabled": True, "bucket": BUCKET, "region": "us-east-1", "access_key": "testing",
-                  "secret_key": "testing", "prefix": "gui"})
-    done = offsite.tick()
-    assert done["copied"] == ["users.db"] and done["failed"] == {}
-    listed = s3_bucket.list_objects_v2(Bucket=BUCKET, Prefix="gui/")
-    assert [o["Key"] for o in listed["Contents"]] == ["gui/offsite/users/20261003T120000Z.db"]
+def test_a_saved_bucket_runs_no_round_and_tests(users_db, s3_bucket):
+    """The bucket as an admin saves it in the pane, no environment: no
+    round copies anything to it, and its Test lists it."""
+    offsite.save({"bucket": BUCKET, "region": "us-east-1", "access_key": "testing", "secret_key": "testing",
+                  "prefix": "gui"})
+    assert offsite.tick() == {"copied": [], "uploads_copied": 0, "failed": {}, "unchanged": 0, "pruned": 0}
+    assert offsite.run_now()["started"] is False
+    assert "Contents" not in s3_bucket.list_objects_v2(Bucket=BUCKET, Prefix="gui/")
+    s3_bucket.put_object(Bucket=BUCKET, Key="gui/one", Body=b"1")
     assert offsite.test() == {"ok": True, "message": f"{BUCKET}: 1 object under gui/"}
     assert offsite.test({"prefix": "", "secret_key": ""}) == {"ok": True, "message": f"{BUCKET}: 1 object in the bucket"}
     assert offsite.test({"bucket": "missing-bucket"})["message"].startswith("there is no bucket 'missing-bucket'")
-    assert offsite.test({"keep": 0}) == {"ok": False, "message": "The copies kept must be a whole number from 1 to 1000."}
+    assert offsite.test({"keep": 0}) == {"ok": False, "message": "Unknown setting: keep."}
 
 
 def test_the_bucket_client_says_why_it_cannot_work(s3_bucket, tmp_path):
@@ -616,7 +624,9 @@ def admin(admins):
 def test_the_endpoints_are_admin_only(admins, anon):
     _, user = admins
     for method, path in (("GET", "/api/admin/offsite"), ("PUT", "/api/admin/offsite"),
-                         ("POST", "/api/admin/offsite/test"), ("POST", "/api/admin/offsite/run")):
+                         ("POST", "/api/admin/offsite/test"), ("POST", "/api/admin/offsite/run"),
+                         ("GET", "/api/admin/offsite/snapshots"),
+                         ("DELETE", "/api/admin/offsite/snapshots/ws-a/20261003-100000-task-0123456789ab")):
         assert user.request(method, path, json={}).status_code == 403
         assert anon.request(method, path, json={}).status_code == 401
 
@@ -626,30 +636,29 @@ def test_the_settings_through_the_api(admin, monkeypatch):
     assert r.status_code == 200, r.text
     view = r.json()
     assert view["from_env"] is False and view["settings"] == {
-        "enabled": False, "bucket": "", "endpoint": "", "region": "", "access_key": "", "secret_set": False,
-        "prefix": "", "interval_s": 3600, "keep": 7}
+        "bucket": "", "endpoint": "", "region": "", "access_key": "", "secret_set": False, "prefix": ""}
     assert set(view["status"]) == {"enabled", "running", "progress", "interval_s", "keep", "last_round_at", "copied",
                                    "uploads_copied", "failed", "error", "next_round_at"}
 
+    # an old client's switch, interval and keep are no fields of the bucket: left out
     r = admin.put("/api/admin/offsite", json={"enabled": True, "bucket": "gamma-backups", "region": "auto",
                                               "access_key": "AK1", "secret_key": "api-secret-1", "interval_s": 600,
                                               "keep": 4})
     assert r.status_code == 200, r.text
     assert "api-secret-1" not in r.text and "secret_key" not in r.json()["settings"]
-    assert r.json()["settings"] == {"enabled": True, "bucket": "gamma-backups", "endpoint": "", "region": "auto",
-                                    "access_key": "AK1", "secret_set": True, "prefix": "", "interval_s": 600,
-                                    "keep": 4}
-    assert r.json()["status"]["enabled"] is True and r.json()["status"]["interval_s"] == 600
+    assert r.json()["settings"] == {"bucket": "gamma-backups", "endpoint": "", "region": "auto",
+                                    "access_key": "AK1", "secret_set": True, "prefix": ""}
+    assert r.json()["status"]["enabled"] is False
     # the secret left out (or empty) stays
-    r = admin.put("/api/admin/offsite", json={"enabled": False, "bucket": "gamma-backups", "secret_key": ""})
+    r = admin.put("/api/admin/offsite", json={"bucket": "gamma-backups", "secret_key": ""})
     assert r.json()["settings"]["secret_set"] is True and offsite.settings()["secret_key"] == "api-secret-1"
     assert "api-secret-1" not in admin.get("/api/admin/offsite").text
 
-    for body in ({"interval_s": 30}, {"keep": 0}, {"bucket": "x"}):
+    for body in ({"endpoint": "ftp://x"}, {"bucket": "x"}):
         r = admin.put("/api/admin/offsite", json=body)
         assert r.status_code == 400 and r.json()["detail"], body
     monkeypatch.setenv("GAMMA_S3_BUCKET", "env-bucket")
-    r = admin.put("/api/admin/offsite", json={"keep": 3})
+    r = admin.put("/api/admin/offsite", json={"prefix": "p"})
     assert r.status_code == 409 and "GAMMA_S3_BUCKET" in r.json()["detail"]
     view = admin.get("/api/admin/offsite").json()
     assert view["from_env"] is True and view["settings"]["bucket"] == "env-bucket"
@@ -679,8 +688,11 @@ def test_the_test_button(admin, s3_bucket):
 
 
 def test_copy_now_through_the_api(admin, monkeypatch):
-    assert admin.post("/api/admin/offsite/run").json() == {"started": False, "message": "off-site copies are off"}
-    admin.put("/api/admin/offsite", json={"enabled": True, "bucket": "gamma-backups"})
+    """Copy now is the environment's rounds': a saved bucket has none."""
+    admin.put("/api/admin/offsite", json={"bucket": "gamma-backups"})
+    r = admin.post("/api/admin/offsite/run").json()
+    assert r["started"] is False and "GAMMA_S3_BUCKET" in r["message"]
+    monkeypatch.setenv("GAMMA_S3_BUCKET", "gamma-backups")
     entered, release = threading.Event(), threading.Event()
     monkeypatch.setattr(offsite, "_round", lambda: (entered.set(), release.wait(10)))
     try:

@@ -467,7 +467,7 @@ The password is stored sealed and is write-only over the API. A
 last `@` before the host) and a Basic `Authorization` or
 `Proxy-Authorization` value. Console output is not scrubbed, as before.
 `publisher-sessions.key`, which seals the password, is not in an off-site
-copy ([debugging.md](debugging.md#off-site-copies-in-a-bucket)); a server
+copy ([debugging.md](debugging.md#snapshots-and-copies-in-a-bucket)); a server
 restored without it reads the password as none.
 
 ## Tests

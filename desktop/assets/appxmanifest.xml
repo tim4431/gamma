@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--suppress XmlUnusedNamespaceDeclaration -->
+<!-- The Store package's manifest template (electron-builder.cjs,
+     appx.customManifestPath): electron-builder's own
+     (app-builder-lib/templates/appx/appxmanifest.xml, which
+     test/openWith.test.js holds this to macro for macro) with the namespaces
+     of the folder verb in assets/appx-extensions.xml declared: com for its
+     surrogate server, desktop4 and desktop5 for Explorer's context menu.
+     desktop4 and desktop5 are ignorable, so Windows 10 1809, which the
+     package's MinVersion still admits and which has no packaged context
+     menus, installs the package without the verb. -->
+<Package
+   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+   xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+   xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+   IgnorableNamespaces="desktop4 desktop5">
+  <!-- use single quotes to avoid double quotes escaping in the publisher value  -->
+  <Identity Name="${identityName}"
+    ProcessorArchitecture="${arch}"
+    Publisher='${publisher}'
+    Version="${version}" />
+  <Properties>
+    <DisplayName>${displayName}</DisplayName>
+    <PublisherDisplayName>${publisherDisplayName}</PublisherDisplayName>
+    <Description>${description}</Description>
+    <Logo>${logo}</Logo>
+  </Properties>
+  <Resources>
+    ${resourceLanguages}
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="${minVersion}" MaxVersionTested="${maxVersionTested}" />
+  </Dependencies>
+  ${capabilities}
+  <Applications>
+    <Application Id="${applicationId}" Executable="${executable}" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+       BackgroundColor="${backgroundColor}"
+       DisplayName="${displayName}"
+       Square150x150Logo="${square150x150Logo}"
+       Square44x44Logo="${square44x44Logo}"
+       Description="${description}">
+        ${lockScreen}
+        ${defaultTile}
+        ${splashScreen}
+      </uap:VisualElements>
+      ${extensions}
+    </Application>
+  </Applications>
+</Package>

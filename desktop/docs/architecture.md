@@ -995,7 +995,7 @@ says how to change it and what each target registers):
 | Target | Files | Folders | Cannot |
 |---|---|---|---|
 | NSIS installer (`assets/installer.nsh`) | every type of the table, in *Open with* and Default apps | *Open with Gamma* on `Directory` and `Directory\Background` | the verb in Windows 11's first menu (under *Show more options*); several folders selected run it once each |
-| Store package (`assets/appx-extensions.xml`) | every type | none | a folder verb (it needs a COM extension) |
+| Store package (`assets/appx-extensions.xml`) | every type | *Open with Gamma* on `Directory` and `Directory\Background`, a COM class the package carries (`native/open-with/`), in Windows 11's first menu too | x64 only |
 | macOS dmg/zip (`mac`) | every type, rank *Alternate* | `public.folder`: a folder dropped on the Dock icon, `open -a Gamma <dir>` | an entry in Finder |
 | Mac App Store | PDFs only | none | anything else (the sandbox) |
 | `.deb` | PDFs only (`linux.mimeTypes`) | a Dolphin service menu and a Nemo action | a GNOME Files entry |
@@ -1024,6 +1024,35 @@ alone (`linux.mimeTypes`; a `fileAssociations` entry with a MIME type
 would also install its own definition of it): listing `text/markdown`
 could take the double click from the text editor.
 
+**The Store package's folder verb.** A packaged app cannot write
+Explorer's keys (its registry writes are virtualized) or give a verb a
+command line; it declares a COM class instead. `assets/appx-extensions.xml`
+names one as a surrogate server (`windows.comServer`) and as the verb of
+`Directory` and `Directory\Background` (`windows.fileExplorerContextMenus`),
+in namespaces that `assets/appxmanifest.xml`, electron-builder's template
+(`appx.customManifestPath`), declares: `com`, and `desktop4` and `desktop5`
+as ignorable, so Windows 10 1809, which the package's MinVersion admits and
+which has no packaged context menus, installs it without the verb. The
+class is `native/open-with/open_with.cpp`, an `IExplorerCommand` in plain
+COM, so MSVC and MinGW-w64 both build it (`scripts/build-open-with.cjs`);
+`scripts/after-pack.cjs` builds it and puts it beside `Gamma.exe` for the
+`appx` target only, x64 as the package is. Its class id, words and the app
+it starts come from the generator (`native/open-with/verb.h`). Explorer
+runs it in a surrogate process with the package's identity and shows the
+table's `folder_verb` with the app's icon, in Windows 11's first menu and
+under *Show more options*. `Invoke` takes the selected folders' paths, or
+on an open folder's background the folder its view shows, and starts the
+app with them as its arguments through
+`IApplicationActivationManager::ActivateApplication("<family>!Gamma")`, so
+the app runs as the package: its virtualized AppData, its one instance,
+which takes the paths as any second start's. Every selected folder goes in
+one start, quoted as `CommandLineToArgvW` reads them back (a drive's root
+arrives as `D:\`). Outside a package (the test harness) it starts the
+`Gamma.exe` beside it; under `WindowsApps` without the package's identity it
+starts nothing, rather than the app without its data.
+`test/openWithDll.test.js` builds the DLL and drives it as Explorer does;
+that Explorer shows it is checked by hand (checklist 4.12).
+
 **How a path arrives.** On the command line (Windows, Linux) or as an
 `open-file` event (macOS, before `ready` at a launch too).
 `lib/openFiles.js` reads the arguments: `launchArgs` leaves out the
@@ -1049,9 +1078,10 @@ the boot the paths wait (`early`); after, each hand-over is one run on
 window comes forward (`surfaceWindow`, an open in flight awaited), then a
 directory goes to `openFolderWithGamma`, a file to `openFileWithGamma`. A
 failure is an error box, "Could not open <name> in Gamma." with the
-reason, and the next path goes on. Explorer runs the folder verb once per
-selected item, each a second start, so twelve folders are twelve runs and
-the window ends on the last. Each run answers `[{path, workspace, page |
+reason, and the next path goes on. Explorer runs the installer's folder
+verb once per selected item, each a second start, so twelve folders are
+twelve runs; the Store package's verb hands them over in one start, one
+run. Either way the window ends on the last. Each run answers `[{path, workspace, page |
 folder, track?, tick?, error?}]` (the e2e reads it).
 
 **What a path is: `whereIs`.** The shell asks the servers, never guesses:
@@ -1620,11 +1650,22 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   `tests/shared/openwith.json` and writes the registration the targets
   take: `assets/installer.nsh` (the NSIS installer's file types and
   folder verb), `assets/appx-extensions.xml` (the Store package's file
-  types) and `assets/linux/` (the `.deb`'s Dolphin and Nemo folder
+  types and folder verb), `native/open-with/verb.h` (what that verb's DLL
+  shares with it) and `assets/linux/` (the `.deb`'s Dolphin and Nemo folder
   entries); `npm run openwith`, checked by `test/openWith.test.js`
-  ("Opening files and folders").
-  `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS
-  build made without a certificate ([release.md](release.md)).
+  ("Opening files and folders"). `assets/appxmanifest.xml` — the Store
+  manifest's template, electron-builder's with the folder verb's
+  namespaces.
+  `scripts/after-pack.cjs` — its `afterPack` hook: `scripts/adhoc-sign.cjs`
+  ad-hoc signs a macOS build made without a certificate
+  ([release.md](release.md)), and the Store package gets the folder verb's
+  DLL.
+- `native/open-with/` — the Store package's folder verb: `open_with.cpp`
+  (the `IExplorerCommand` DLL, "Opening files and folders"), `verb.h`
+  (generated), and `test/`, the harness that drives it (`invoke.cpp`) and
+  the stand-in `Gamma.exe` it starts (`record.cpp`).
+  `scripts/build-open-with.cjs` builds them into `native/build/` (ignored)
+  with MSVC or MinGW-w64; tested by `test/openWithDll.test.js`.
 - `electron-builder.mas.cjs` — the Mac App Store build, extending the
   config above (bundle id, versions from the environment, the sandbox
   entitlements `assets/entitlements.mas.plist` and

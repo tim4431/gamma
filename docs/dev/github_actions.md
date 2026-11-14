@@ -162,7 +162,10 @@ own build step, and the signature check sees only whether they exist, so
 no other step (`npm ci`'s install scripts, a third-party action) can read
 them. Windows also builds the unsigned Microsoft Store MSIX
 (`store-windows` artifact); that step has none of the signing env, so
-electron-builder leaves it unsigned for the Store to sign. macOS is
+electron-builder leaves it unsigned for the Store to sign. It first builds
+and tests the package's folder verb, a DLL compiled with the runner's MSVC
+(`desktop/test/openWithDll.test.js`), which the packaging builds again and
+puts in. macOS is
 ad-hoc signed by `desktop/scripts/adhoc-sign.cjs` when no Developer ID is
 available (see
 [release.md](../../desktop/docs/release.md#code-signing-optional-secret-gated)).

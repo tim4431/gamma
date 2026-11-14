@@ -208,7 +208,7 @@ that served it. Item 12's copies became the off-site copies
 (`gamma/offsite.py` over `gamma/s3.py`): they send the uploaded files
 too, an admin sets them in Settings → Backups or the environment does,
 and `manage.py offsite` restores them
-([debugging.md](../dev/debugging.md#off-site-copies-in-a-bucket)).
+([debugging.md](../dev/debugging.md#snapshots-and-copies-in-a-bucket)).
 
 What stays as it is: the block table and its hot columns, the per-page op
 log and `seq`, the external-content FTS5 index maintained by triggers, the
