@@ -20,15 +20,40 @@
 // reason, at}], `cwd` and `paths` relative to the folder, "outside" or
 // "~", `diff` a unified diff; a step asked about reads "asked", then
 // "allowed" or "declined".
+//
+// On a page of another server's work folder (docs/dev/local_agents.md "A
+// work folder of another server") the agent runs on the computer that
+// keeps the folder, not on the page's server: the server's `computer` then
+// says `remote: true` with the computer's name (`computer`), whether it is
+// connected (`online`) and since when it is not (`since`). The words name
+// that computer, a message waits for it while it is away, and what needs
+// the window to be that computer (the strip's menu, the passages' source
+// lines) is left out.
 import { t, tn } from "../../shared/i18n/i18n.js";
+import { sinceText } from "../../vault/vaultState.js";
 
 // How long a message may be (the server's cap).
 export const TEXT_MAX = 20000;
 // How long the note of a decline may be (the server's cap).
 export const NOTE_MAX = 2000;
 // How often the side reads the conversation again while a turn is queued
-// or running, ms.
+// or running, ms; while it waits for another computer that is away, less
+// often (it may stay away for hours).
 export const POLL_MS = 1500;
+export const AWAY_POLL_MS = 10_000;
+
+// Whether the agent is another computer's (the server's `computer.remote`,
+// or the page's computers until it is read: vaultState keeperComputer).
+export const isRemote = (info) => info?.remote === true;
+
+// The other computer's name while it is away ("" while it is connected, or
+// the agent is this computer's): a message waits for it.
+export const awayFrom = (info) => (isRemote(info) && info.online === false ? String(info.computer || "") : "");
+
+// Whether the strip offers its menu (Continue in a terminal, Show in
+// folder): only for the agent on this computer, as both need the window to
+// be the computer the folder is on.
+export const offersMenu = (info) => !!info && !isRemote(info);
 
 // The path of /api/local-agents/chat for the page, with the version of the
 // conversation the side holds (the server then answers `same` while it
@@ -191,10 +216,13 @@ export function currentStep(message) {
 
 // What a turn's pill says: while it is queued or running the agent at work
 // ("Codex is working: Editing sections/intro.tex", or "Codex is working…"
-// before its first step), once it ended how many steps it took.
-export function turnLabel(message, label) {
+// before its first step), or while it is queued for another computer that
+// is away (`away`, its name: awayFrom) "Waiting for TIM-PC"; once it ended
+// how many steps it took.
+export function turnLabel(message, label, away = "") {
   const agent = message?.label || label;
   if (isLive(message) && message.asks?.length) return t("{agent} is waiting for you", { agent });
+  if (away && message?.role === "agent" && message.state === "queued") return t("Waiting for {computer}", { computer: away });
   if (isLive(message)) {
     const now = stepNow(currentStep(message));
     return now ? t("{agent} is working: {detail}", { agent, detail: now }) : t("{agent} is working…", { agent });
@@ -268,33 +296,63 @@ export function diffRows(diff) {
 }
 
 // The strip under the header: {text, kind}, `kind` its look ("ready",
-// "working", "waiting", "asking", "problem", "paused"). `info` is the
-// server's `computer` ({label, ready, problem, folder, paused, turn:
-// {turn_id, state, ahead} | null}) or, until it is read, the page's
-// (vaultState computerAgent); `live` the conversation's turn still to end,
-// whose step, or what it asks, the strip names.
-export function stripLine(info, live = null) {
+// "working", "waiting", "asking", "problem", "paused", "away"). `info` is
+// the server's `computer` ({label, ready, problem, folder, paused, turn:
+// {turn_id, state, ahead} | null}, and for another computer's agent
+// {computer, online, since, remote: true}) or, until it is read, the
+// page's (vaultState computerAgent or keeperComputer); `live` the
+// conversation's turn still to end, whose step, or what it asks, the strip
+// names. Another computer is named ("Codex on TIM-PC · paper"), and while
+// it is away the strip says so and that a message waits for it ("TIM-PC is
+// offline since 2:02 PM: a message waits and runs when it connects").
+export function stripLine(info, live = null, now = new Date()) {
   const agent = info?.label || "";
-  if (info?.paused) return { text: t("The work folder is paused on this computer: {agent} starts once it syncs again.", { agent }), kind: "paused" };
+  const remote = isRemote(info);
+  const computer = remote ? String(info.computer || "") : "";
+  if (info?.paused) {
+    return {
+      text: remote ? t("The work folder is paused on {computer}: {agent} starts once it syncs again.", { computer, agent })
+        : t("The work folder is paused on this computer: {agent} starts once it syncs again.", { agent }),
+      kind: "paused",
+    };
+  }
   if (live?.asks?.length) return { text: t("Waiting for you: {ask}", { ask: askTitle(live.asks[0], live.label || agent) }), kind: "asking" };
   const turn = info?.turn || (live ? { state: live.state, ahead: false } : null);
+  const away = awayFrom(info);
+  const when = away ? sinceText(info.since, now) : "";
+  if (away && turn?.state === "queued") {
+    return {
+      text: when ? t("Waiting for {computer}, offline since {when}: the message runs when it connects", { computer: away, when })
+        : t("Waiting for {computer}, which is offline: the message runs when it connects", { computer: away }),
+      kind: "away",
+    };
+  }
   if (turn?.state === "queued") {
     return turn.ahead ? { text: t("Waiting for {agent} to finish its other work in this folder", { agent }), kind: "waiting" }
       : { text: t("Starting {agent}…", { agent }), kind: "working" };
   }
   if (turn?.state === "running") {
-    const now = stepNow(currentStep(live));
-    return { text: now ? t("{agent} is working: {detail}", { agent, detail: now }) : t("{agent} is working…", { agent }), kind: "working" };
+    const doing = stepNow(currentStep(live));
+    return { text: doing ? t("{agent} is working: {detail}", { agent, detail: doing }) : t("{agent} is working…", { agent }), kind: "working" };
+  }
+  if (away) {
+    return {
+      text: when ? t("{computer} is offline since {when}: a message waits and runs when it connects", { computer: away, when })
+        : t("{computer} is offline: a message waits and runs when it connects", { computer: away }),
+      kind: "away",
+    };
   }
   if (info?.ready === false) return { text: String(info.problem || ""), kind: "problem" };
   if (info?.ready == null) return { text: t("Checking {agent}…", { agent }), kind: "ready" };
-  const here = t("{agent} on this computer", { agent });
+  const here = remote ? t("{agent} on {computer}", { agent, computer }) : t("{agent} on this computer", { agent });
   return { text: info.folder ? `${here} · ${info.folder}` : here, kind: "ready" };
 }
 
 // Whether a message can go now: something written, no turn of the
 // conversation still to end, and an agent that is not known to be unable
-// to run (the server refuses the rest, with its reason).
+// to run (the server refuses the rest, with its reason). Another computer
+// that is away takes one: it waits there and runs when it connects.
 export function canSend(info, conversation, text) {
-  return !!String(text || "").trim() && !liveTurn(conversation) && !info?.turn && !info?.paused && info?.ready !== false;
+  return !!String(text || "").trim() && !liveTurn(conversation) && !info?.turn && !info?.paused
+    && (info?.ready !== false || !!awayFrom(info));
 }

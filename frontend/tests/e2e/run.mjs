@@ -84,6 +84,7 @@ import { localAgentScenarios } from "./scenarios/localAgents.mjs";
 import { computerScenarios } from "./scenarios/computers.mjs";
 import { remoteWorkScenarios } from "./scenarios/remoteWork.mjs";
 import { remoteSendScenarios } from "./scenarios/remoteSends.mjs";
+import { remoteChatScenarios } from "./scenarios/remoteChat.mjs";
 import { viewerScenarios } from "./scenarios/viewers.mjs";
 import { textSearchScenarios } from "./scenarios/textSearch.mjs";
 import { textAnchorScenarios } from "./scenarios/textAnchors.mjs";
@@ -129,6 +130,7 @@ const RUNNERS = {
   "computers": computerScenarios,
   "remote-work": remoteWorkScenarios,
   "remote-sends": remoteSendScenarios,
+  "remote-chat": remoteChatScenarios,
   "viewers": viewerScenarios,
   "text-search": textSearchScenarios,
   "text-anchors": textAnchorScenarios,

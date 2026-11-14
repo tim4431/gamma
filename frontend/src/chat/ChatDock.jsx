@@ -528,7 +528,9 @@ export default function ChatDock({
   askSignal = null,
   // The work folder's agent on this computer the open page's chat can talk
   // to instead (vaultState computerAgent: the vault's maker, in the desktop
-  // app), else null: the header's switch and the side chat/computer/ draws.
+  // app), or in any window of the maker the agent of the computer that keeps
+  // the page's work folder (keeperComputer, `remote`), else null: the
+  // header's switch and the side chat/computer/ draws.
   computer = null,
   onGrip, onFold, collapsed, onClose,
 }) {
@@ -1911,7 +1913,8 @@ export default function ChatDock({
   const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
   // The switch between the two sides leads the header, whether Gamma AI is
   // set up or not: an account with an agent here and no AI still has a chat.
-  const sides = computer && !readOnly ? <ChatSides side={side} onSide={setSide} label={computer.label} /> : null;
+  const sides = computer && !readOnly
+    ? <ChatSides side={side} onSide={setSide} label={computer.label} where={computer.remote ? computer.computer : ""} /> : null;
   if (onComputer) {
     return (
       <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}

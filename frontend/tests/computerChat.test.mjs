@@ -2,10 +2,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  NOTE_MAX, SOURCES_MAX, answerBody, askPath, askPlace, askRisk, askTitle, canContinue, canSend, changesLine, chatPath, currentStep,
-  diffRows, endText, freshLine, isLive, lastEnded, liveTurn, modelChoice, modelDisplay, sourceNote, sourcesBody, stepNow, stepText, stripLine,
-  turnBody, turnLabel,
+  NOTE_MAX, SOURCES_MAX, answerBody, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, changesLine, chatPath, currentStep,
+  diffRows, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, modelChoice, modelDisplay, offersMenu, sourceNote, sourcesBody, stepNow,
+  stepText, stripLine, turnBody, turnLabel,
 } from "../src/chat/computer/computerChat.js";
+import { keeperComputer } from "../src/vault/vaultState.js";
 
 const agent = (over = {}) => ({
   id: "m2", role: "agent", agent: "codex", label: "Codex", turn_id: "t1", state: "done", text: "Fixed.", steps: [],
@@ -224,4 +225,73 @@ test("the strip's menu offers the terminal when the server says there is a sessi
   assert.equal(canContinue(sessioned, { messages: [person, agent(), person, agent({ id: "m4", state: "running" })] }), false);
   assert.equal(canContinue({ ...sessioned, turn: { state: "queued" } }, { messages: [person, agent()] }), false);
   assert.equal(canContinue(null, { messages: [person, agent()] }), false);
+});
+
+// Another server's work folder (step 4d): the server's `computer` for a seat the computer that keeps it runs.
+const remote = { ...ready, folder: "paper", session: false, computer: "TIM-PC", online: true, since: null, remote: true };
+const offline = (since) => ({ ...remote, ready: null, online: false, since });
+
+test("another computer's agent: the strip names that computer, and says when it is away and a message waits", () => {
+  const now = new Date(2026, 10, 13, 18, 0);
+  const since = new Date(2026, 10, 13, 14, 2).toISOString();
+  assert.deepEqual(stripLine(remote), { text: "Codex on TIM-PC · paper", kind: "ready" });
+  assert.equal(stripLine({ ...remote, folder: "" }).text, "Codex on TIM-PC");
+  assert.match(stripLine(offline(since), null, now).text, /^TIM-PC is offline since 2:02.*: a message waits and runs when it connects$/);
+  assert.equal(stripLine(offline(since), null, now).kind, "away");
+  assert.equal(stripLine(offline(null), null, now).text, "TIM-PC is offline: a message waits and runs when it connects", "no time known");
+  const queued = agent({ state: "queued", text: "" });
+  assert.match(stripLine({ ...offline(since), turn: { turn_id: "t1", state: "queued", ahead: false } }, queued, now).text,
+    /^Waiting for TIM-PC, offline since 2:02.*: the message runs when it connects$/);
+  assert.equal(stripLine(offline(null), queued, now).text, "Waiting for TIM-PC, which is offline: the message runs when it connects",
+    "the conversation's own turn, before the server's read says it");
+  assert.equal(stripLine({ ...remote, turn: { turn_id: "t1", state: "queued", ahead: false } }).text, "Starting Codex…", "connected: it starts");
+  const running = agent({ state: "running", steps: [{ kind: "edit", path: "main.tex", status: "started" }] });
+  assert.equal(stripLine({ ...remote, turn: { turn_id: "t1", state: "running", ahead: false } }, running).text, "Codex is working: Editing main.tex");
+  assert.deepEqual(stripLine({ ...remote, paused: true }),
+    { text: "The work folder is paused on TIM-PC: Codex starts once it syncs again.", kind: "paused" });
+  assert.equal(stripLine({ ...remote, ready: false, problem: "Codex is not signed in on TIM-PC." }).text, "Codex is not signed in on TIM-PC.");
+  assert.equal(stripLine({ ...remote, ready: null }).text, "Checking Codex…");
+});
+
+test("another computer's agent: a message goes while it is away, and its turn waits for it", () => {
+  const conversation = { messages: [person, agent()] };
+  assert.equal(canSend(offline(null), conversation, "next"), true);
+  assert.equal(canSend({ ...offline(null), ready: false }, conversation, "next"), true, "away: what it last said does not hold the message");
+  assert.equal(canSend({ ...remote, ready: false }, conversation, "next"), false, "connected and unable to run");
+  assert.equal(canSend({ ...offline(null), paused: true }, conversation, "next"), false);
+  assert.equal(canSend({ ...offline(null), turn: { state: "queued" } }, conversation, "next"), false, "one turn at a time");
+  assert.equal(awayFrom(offline(null)), "TIM-PC");
+  assert.equal(awayFrom(remote), "");
+  assert.equal(awayFrom({ ...ready, online: false }), "", "this computer's agent is never away");
+  assert.equal(turnLabel(agent({ state: "queued" }), "Codex", "TIM-PC"), "Waiting for TIM-PC");
+  assert.equal(turnLabel(agent({ state: "running" }), "Codex", "TIM-PC"), "Codex is working…", "running: it came back");
+  assert.equal(turnLabel(agent({ state: "queued" }), "Codex", ""), "Codex is working…");
+});
+
+test("another computer's agent: no menu on the strip, no terminal", () => {
+  assert.equal(isRemote(remote), true);
+  assert.equal(isRemote(ready), false);
+  assert.equal(offersMenu(ready), true);
+  assert.equal(offersMenu(remote), false, "Show in folder and Continue in a terminal need the window to be that computer");
+  assert.equal(offersMenu(null), false);
+  assert.equal(canContinue(remote, { messages: [person, agent()] }), false, "the server says no session");
+});
+
+test("the side drawn from the page's computers where this computer has no agent for it", () => {
+  const vault = { kind: "folder", name: "paper", paused: false, agent: { name: "codex", label: "Codex" } };
+  const pc = (over = {}) => ({ id: "c1", name: "TIM-PC", online: true, since: null, vault,
+    assistants: [{ name: "codex", label: "Codex", found: true, ready: true, version: "0.167.0", code: "" }], ...over });
+  const seat = keeperComputer([pc()]);
+  assert.deepEqual(seat, {
+    name: "codex", label: "Codex", ready: true, problem: "", computer: "TIM-PC", online: true,
+    running: null, folder: "paper", paused: false, since: null, remote: true,
+  });
+  assert.deepEqual(stripLine(seat), { text: "Codex on TIM-PC · paper", kind: "ready" }, "the strip before the side's read");
+  const since = "2026-11-13T14:02:00Z";
+  const away = keeperComputer([pc({ online: false, since })]);
+  assert.deepEqual([away.online, away.since, away.ready, awayFrom(away)], [false, since, null, "TIM-PC"]);
+  assert.equal(keeperComputer([pc({ online: true, since })]).since, null, "connected: no time it went away");
+  assert.equal(keeperComputer([pc({ vault: { ...vault, paused: true } })]).paused, true);
+  assert.equal(keeperComputer([pc({ vault: { ...vault, agent: null } })]), null, "no agent on");
+  assert.equal(keeperComputer([]), null, "another account's: the server names no computer");
 });

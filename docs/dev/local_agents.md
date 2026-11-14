@@ -526,6 +526,73 @@ the research note; the chat's computer side stays local (4d).
   claim's key and what the run read survive a restart; the sweep removes
   rows whose request is gone.
 
+### The chat on another server's page
+
+On a page of such a work folder the chat's computer side works too, in
+any window of the maker on the NAS (step 4d): the header's switch reads
+*Gamma AI | Codex*, and a message is a turn that runs on the computer,
+its reply, steps and changed files coming back into the conversation,
+which the NAS keeps (pages.db `computer_chats`, the maker's alone), so it
+reads while the computer is off.
+
+- **The seat.** The chat routes (`routers/local_agents.py`, registered on
+  every server) take the host's own vault first, where this server runs
+  agents, else the binding of the page's work folder for the session's
+  account (`chats.remote_of` → `registry.agent_of`); neither: 404, a token
+  or the guest 403, as locally.
+- **The strip** (`GET /api/local-agents/chat`, `computer.remote: true`)
+  names the computer and its presence (`computer`, `online`, `since`),
+  offers the models the computer announced with its assistants (`models`,
+  at most 32), and says why an online computer's agent is not ready. The
+  composer stays open while the computer is off: a message waits
+  (*Waiting for TIM-PC*) and runs when it connects; the window reads the
+  conversation every 10 s while it waits.
+- **A turn.** `POST /chat/turns` checks the folder is not paused there,
+  the agent ready while the computer is online, the model and effort
+  among the announced ones, then writes the person's message and the
+  queued agent message (`chats.begin(remote=True)`) with a pages.db
+  `computer_chat_runs` row (additive: the turn, its conversation and page,
+  the account, the turn's agent and the computer last known to take it,
+  the holder and run once claimed, a `seq`, a `stop` flag, its state, when
+  queued and started), and wakes the computer (`{wake: ["chat"]}`). A
+  computer is offered only the turns of its own agent for that folder; a
+  claim for another agent leaves the turn queued.
+- **On the computer** the channel thread asks `GET /api/computers/chats`
+  as it asks for Sends (after an announce, on a wake, at least every
+  180 s while a vault there has an agent), queues each turn for its link
+  under `(link_id, "chat", turn_id)`, claims it for a run it names (the
+  message, the selections with their places, the last 6 messages, the
+  model and effort, the page's path), computes the selections' source
+  lines from its disk, resumes the conversation's session from its own
+  vaults.db as locally, runs the agent confined as a Send (no asking),
+  and writes the agent message back at most every second, each write with
+  the next `seq` (an older one changes nothing: `stale`), the last always
+  sent, retried while the NAS cannot be reached; a 409 stops the turn.
+- **Stop**: a queued turn ends at once; a running one is flagged and its
+  computer woken (it stops it and writes its end, or, for a turn it no
+  longer runs, ends it there under its run); a running one whose computer
+  is offline, or a second Stop, ends it at once, its run's next write
+  refused. Stop is the account's on its own turn's row, with no seat
+  needed, so a turn stays stoppable after the agent is turned off, the
+  token goes or the page is deleted.
+- **Not on another server's page**: asking (409 "Asking is for a work
+  folder of this computer's server."), *Continue in a terminal* and *Show
+  in folder* (the strip's ⋯ menu is hidden; `/chat/terminal` 404), and the
+  passage chips' source lines (`/chat/sources` answers nulls; the turn's
+  prompt still gets them, computed on the computer).
+- **Background tasks** lists the account's queued and running remote
+  turns from `computer_chat_runs`, named with the computer that holds or
+  keeps them (*Codex on TIM-PC: main*), Stop the same route.
+- **Recovery** as for Sends: an open remote turn is failed through its
+  home at start and whenever its channel's announce succeeds again; a
+  computer's token taken back fails the turns its runs hold and the
+  queued ones no other computer of the account would take; an announce
+  that drops or changes a folder's agent fails that folder's queued turns
+  ("Codex was turned off for this folder."), and so does the computer
+  when one waiting there finds its agent off, so none runs later
+  unasked. The watcher of a remote turn never waits on a network write
+  (a writer thread flushes), so Stop and the deadline stay prompt.
+
 ## The chat's computer side
 
 On a page that is a file of a work folder whose vault the account made,
@@ -1352,8 +1419,9 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
   came from several starts a new one.
 - Comments on a clone never reach this computer's agent, as they never
   reach its files (feedback.md "Known gaps"). A work folder of another
-  server does ("A work folder of another server"); its chat over the
-  channel is the next step (4d), and asking stays local.
+  server does ("A work folder of another server"), its chat too ("The
+  chat on another server's page"); asking, the terminal and Show in
+  folder stay on this computer's own pages.
 - A remote run's region pictures stay in the directory's
   `.gamma/feedback/img/` (the cleanup runs for local work folders only).
 - On the NAS, another member's waiting Send in the maker's work folder

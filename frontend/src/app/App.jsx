@@ -245,7 +245,7 @@ import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
-import { addsToLibrary, carriesToServer, computerAgent, isOpenedPdf, keeperAgent, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
+import { addsToLibrary, carriesToServer, computerAgent, isOpenedPdf, keeperAgent, keeperComputer, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -4901,8 +4901,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pageComputers = pageComputer.computers;
   const commentAgent = useMemo(() => (IS_DESKTOP ? mentionAgent(vaultState) : null) || keeperAgent(pageComputers),
     [vaultState, pageComputers]);
-  // The same agent for the chat's computer side (vaultState.js computerAgent).
-  const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null), [vaultState]);
+  // The same agent for the chat's computer side (vaultState.js computerAgent,
+  // else keeperComputer: the maker's messages on the page's server run on
+  // the computer that keeps the work folder).
+  const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null) || keeperComputer(pageComputers),
+    [vaultState, pageComputers]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept

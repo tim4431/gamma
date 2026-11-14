@@ -6,11 +6,19 @@ page's conversation with the work folder's agent, its turns, the answers to
 what they ask, Stop, New chat and History, the command line the desktop
 shell opens the conversation with in a terminal, and the source lines of
 the composer's selections. Only a server that runs agents answers
-(``local_agents.enabled``); any other answers 404. A signed-in account's
-session only: an integration token and the guest are refused, as on the
-folder-links routes. The chat answers only the maker of the vault of the
-work folder the page is a live file of; anyone else gets 404, so nobody
-else learns it exists."""
+(``local_agents.enabled``) for its own vaults; any other answers 404. A
+signed-in account's session only: an integration token and the guest are
+refused, as on the folder-links routes. The chat answers only the maker of
+the vault of the work folder the page is a live file of; anyone else gets
+404, so nobody else learns it exists.
+
+Every server's chat also answers for a page whose work folder a computer
+of the session's account keeps with an agent there (step 4d,
+``chats.remote_of``, gamma/computers/registry.py ``agent_of``): the same
+routes and answers, the conversation kept here and its turns run on that
+computer, which takes them over its channel (gamma/routers/computers.py);
+such a turn never asks (409), and the terminal and the selections' source
+lines are the computer's own (404, nulls)."""
 
 import threading
 import time
@@ -25,6 +33,7 @@ router = APIRouter(prefix="/api/local-agents", tags=["local-agents"])
 
 SESSION_ONLY = "Sign in with an account to talk to the agent on this computer."
 NOT_HERE = "no such page of a work folder of yours on this computer"
+FAR_ASKS = "Asking is for a work folder of this computer's server."
 
 FRESH_EVERY_S = 10   # a re-probe asked for runs at most this often on this server; else the kept answers
 
@@ -104,38 +113,64 @@ class AnswerBody(BaseModel):
 MAX_NOTE = 2000   # characters of what a decline tells the agent
 
 
-def _maker(request: Request, page: str) -> tuple[str, str, dict]:
-    """``(ws, the account, the vault's link)`` of the page for its vault's
-    maker (``chats.vault_of``). 404 on a server that runs no agents and for
-    any other page or account; 403 for a token or the guest."""
+def _maker(request: Request, page: str) -> tuple[str, str, dict | None, dict | None]:
+    """``(ws, the account, the vault's link, the far seat)`` of the page for
+    its maker, one of the last two None: the vault here (``chats.vault_of``,
+    on a server that runs agents), else the computer of the account's that
+    keeps its work folder with an agent (``chats.remote_of``). 404 for any
+    other page or account; 403 for a token or the guest."""
     from ..local_agents import chats
 
-    if not local_agents.enabled():
-        raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
     user_id = require_personal_user_id(request, SESSION_ONLY)
     ws = require_ws(request)
-    link = chats.vault_of(ws, page, user_id)
-    if link is None:
+    link = chats.vault_of(ws, page, user_id) if local_agents.enabled() else None
+    far = chats.remote_of(ws, page, user_id) if link is None else None
+    if link is None and far is None:
         raise HTTPException(status_code=404, detail=NOT_HERE)
-    return ws, user_id, link
+    return ws, user_id, link, far
 
 
-def _conversation_of(request: Request, conversation_id: str) -> tuple[str, dict]:
-    """``(ws, the conversation)`` for the maker of its page's vault; 404
-    otherwise."""
+def _conversation_of(request: Request, conversation_id: str) -> tuple[str, dict, dict | None]:
+    """``(ws, the conversation, the far seat)`` for the maker of its page
+    (``_maker``); 404 otherwise."""
     from ..db import connect_pages_db
     from ..local_agents import chats
 
-    if not local_agents.enabled():
-        raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
     user_id = require_personal_user_id(request, SESSION_ONLY)
     ws = require_ws(request)
     with connect_pages_db(ws) as conn:
         conversation = chats.get(conn, conversation_id)
     if conversation is None or conversation["user_id"] != user_id:
         raise HTTPException(status_code=404, detail="No conversation has that id.")
-    _maker(request, conversation["page_id"])
-    return ws, conversation
+    _, _, _, far = _maker(request, conversation["page_id"])
+    return ws, conversation, far
+
+
+def _far_turn(request: Request, turn_id: str) -> tuple[str, dict, dict]:
+    """``(ws, the conversation, the turn's row)`` of a turn that runs on
+    another computer (``chats.run_of``), for the account whose turn and
+    conversation it is, whatever became of the page's seat since (the
+    agent turned off, the computer gone, the page deleted): such a turn
+    stays stoppable. 404 otherwise."""
+    from ..db import connect_pages_db
+    from ..local_agents import chats
+
+    user_id = require_personal_user_id(request, SESSION_ONLY)
+    ws = require_ws(request)
+    with connect_pages_db(ws) as conn:
+        row = chats.run_of(conn, turn_id)
+        conversation = chats.get(conn, row["conversation_id"]) if row is not None else None
+    if row is None or row["user_id"] != user_id or conversation is None or conversation["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail=chats.NO_TURN)
+    return ws, conversation, row
+
+
+def _local_turn(turn_id: str) -> dict | None:
+    """The turn this computer recorded (``store.get_turn``), on a server
+    that runs agents; None otherwise."""
+    from ..local_agents import store
+
+    return store.get_turn(turn_id) if local_agents.enabled() else None
 
 
 def _refused(e) -> HTTPException:
@@ -171,19 +206,49 @@ def _computer(ws: str, link: dict, conversation: dict | None) -> dict:
             "session": bool(_session_of(link, name, conversation))}
 
 
+def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
+    """What the strip says for a page whose agent runs on another computer
+    (``far``, ``chats.remote_of``): ``_computer``'s fields as that computer
+    last announced them (``ready``, the ``models`` it offers; ``problem``
+    while it is online and its agent is not ready, in the words the @ menu
+    says it), ``turn`` where the conversation's turn stands here
+    (``{turn_id, state, ahead: false}``, ``computer_chat_runs``), no
+    ``session``, and ``computer`` its name, ``online``, ``since`` when it
+    went offline (null while online), ``remote: true``."""
+    from ..computers import registry
+    from ..db import connect_pages_db
+    from ..local_agents import chats
+    from .feedback import _problem  # local: the feedback routes reach the agents' package
+
+    assistants, seen_at = registry.said_of(far["token_id"])
+    said = next((a for a in assistants if isinstance(a, dict) and a.get("name") == far["agent"]), {})
+    reply = chats.busy(conversation)
+    with connect_pages_db(ws) as conn:
+        named = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (far["folder_id"],)).fetchone()
+        row = chats.run_of(conn, reply["turn_id"]) if reply else None
+    return {"agent": far["agent"], "label": far["label"], "ready": far["ready"],
+            "problem": _problem(far) if far["online"] else "", "models": said.get("models") or [],
+            "folder": (named[0] if named else "") or "", "paused": far["paused"],
+            "turn": {"turn_id": row["turn_id"], "state": row["state"], "ahead": False}
+            if row and row["state"] in chats.BUSY else None,
+            "session": False, "computer": far["computer"], "online": far["online"],
+            "since": None if far["online"] else (seen_at or None), "remote": True}
+
+
 @router.get("/chat")
 def read_chat(request: Request, page: str = "", version: str = ""):
-    """``{computer, conversation}``: the strip (``_computer``) and the page's
+    """``{computer, conversation}``: the strip (``_computer``, or
+    ``_far_computer`` for an agent on another computer) and the page's
     active conversation of the account (``{id, title, agent, messages,
     version}``, null for none); with ``version`` the one stored,
     ``{computer, same: true}``, so a poll reads little."""
     from ..db import connect_pages_db
     from ..local_agents import chats
 
-    ws, user_id, link = _maker(request, page)
+    ws, user_id, link, far = _maker(request, page)
     with connect_pages_db(ws) as conn:
         conversation = chats.active(conn, page, user_id)
-    computer = _computer(ws, link, conversation)
+    computer = _computer(ws, link, conversation) if link is not None else _far_computer(ws, far, conversation)
     if version and conversation is not None and str(conversation["version"]) == version:
         return {"computer": computer, "same": True}
     return {"computer": computer, "conversation": chats.shown(conversation)}
@@ -201,11 +266,12 @@ def start_turn(body: TurnBody, request: Request):
     not list (``catalog.refused_choice``); 409 while a turn of the conversation is queued
     or running, while the folder has no agent, is paused or chooses its
     files, or the agent is not ready (its problem); 403 when the maker is
-    no editor or the server or the workspace takes no writes."""
-    from .. import folder_links, hosted, workspaces
+    no editor or the server or the workspace takes no writes. For an agent
+    on another computer (``_far_turn_started``) the turn waits here for it."""
+    from .. import folder_links
     from ..local_agents import catalog, chats, runner, store
 
-    ws, user_id, link = _maker(request, body.page)
+    ws, user_id, link, far = _maker(request, body.page)
     text = body.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Write a message first.")
@@ -213,6 +279,8 @@ def start_turn(body: TurnBody, request: Request):
         raise HTTPException(status_code=400, detail=f"A message is at most {chats.MAX_TEXT} characters.")
     if body.id and not chats.MESSAGE_ID.match(body.id):
         raise HTTPException(status_code=400, detail="That message id is not one Gamma makes.")
+    if far is not None:
+        return _far_turn_started(ws, user_id, far, body, text)
     row = store.agent_of(link["id"])
     if row is None or row["agent"] not in catalog.AGENTS:
         raise HTTPException(status_code=409, detail="No agent is on for this work folder on this computer.")
@@ -227,16 +295,7 @@ def start_turn(body: TurnBody, request: Request):
     refusal = catalog.refused_choice(name, found.get("models") or [], model, effort)
     if refusal:
         raise HTTPException(status_code=400, detail=refusal)
-    if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):
-        raise HTTPException(status_code=403, detail=f"Only an owner or an editor of this workspace can talk to {label}.")
-    refused = hosted.read_only()
-    if not refused:
-        try:
-            workspaces.refuse_writes(ws)
-        except HTTPException as e:
-            refused = str(e.detail)
-    if refused:
-        raise HTTPException(status_code=403, detail=refused)
+    _may_write(ws, user_id, label)
     try:
         conversation, reply, new = chats.begin(ws, page_id=body.page, user_id=user_id, link_id=link["id"],
                                                agent=name, label=label, text=text,
@@ -250,17 +309,79 @@ def start_turn(body: TurnBody, request: Request):
     return {"conversation": chats.shown(conversation), "turn": {"id": reply["turn_id"], "state": reply["state"]}}
 
 
+def _may_write(ws: str, user_id: str, label: str) -> None:
+    """403 when the account is no editor of the workspace, or the server or
+    the workspace takes no writes."""
+    from .. import hosted, workspaces
+
+    if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):
+        raise HTTPException(status_code=403, detail=f"Only an owner or an editor of this workspace can talk to {label}.")
+    refused = hosted.read_only()
+    if not refused:
+        try:
+            workspaces.refuse_writes(ws)
+        except HTTPException as e:
+            refused = str(e.detail)
+    if refused:
+        raise HTTPException(status_code=403, detail=refused)
+
+
+def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: str) -> dict:
+    """``start_turn`` for an agent on another computer (``far``): the same
+    checks against what it last announced (paused there; its agent known
+    not ready while it is online; the model and the effort among the ones
+    it offers), the turn written here to wait for it (``chats.begin``
+    ``remote``) and the computer woken (``chat``): it takes the turn over
+    its channel, now or when it connects."""
+    from ..computers import registry
+    from ..local_agents import catalog, chats
+    from .feedback import _problem  # local: the feedback routes reach the agents' package
+
+    name, label, computer = far["agent"], far["label"], far["computer"]
+    if far["paused"]:
+        raise HTTPException(status_code=409,
+                            detail=f"The work folder is paused on {computer}: {label} starts once it syncs again.")
+    if far["online"] and far["ready"] is False:
+        raise HTTPException(status_code=409, detail=_problem(far))
+    assistants, _seen = registry.said_of(far["token_id"])
+    said = next((a for a in assistants if isinstance(a, dict) and a.get("name") == name), {})
+    model, effort = body.model.strip(), body.effort.strip()
+    refusal = catalog.refused_choice(name, said.get("models") or [], model, effort)
+    if refusal:
+        raise HTTPException(status_code=400, detail=refusal.replace("on this computer", f"on {computer}"))
+    _may_write(ws, user_id, label)
+    try:
+        conversation, reply, new = chats.begin(ws, page_id=body.page, user_id=user_id, link_id="", agent=name,
+                                               label=label, text=text, selections=chats.selections_of(body.selections),
+                                               message_id=body.id, model=model, effort=effort, remote=True,
+                                               computer=far["computer"])
+    except chats.ChatError as e:
+        raise _refused(e) from None
+    if new:
+        registry.wake(far["token_id"], "chat")
+    return {"conversation": chats.shown(conversation), "turn": {"id": reply["turn_id"], "state": reply["state"]}}
+
+
 @router.post("/chat/turns/{turn_id}/stop")
 def stop_turn(turn_id: str, request: Request):
     """``{stopped}``: the turn's stop set (``runner.stop_chat``: a queued
     one leaves the queue and reads stopped); false for a turn that ended.
-    404 for a turn of no conversation of the account's."""
-    from ..local_agents import runner, store
+    For a turn that runs on another computer (``chats.stop_run``): a queued
+    one, a running one while that computer is away, or one Stopped again,
+    reads stopped now; a running one's stop is set and the computer woken
+    to hear it. It is the account's to stop though its page's seat is gone
+    (``_far_turn``). 404 for a turn of no conversation of the account's."""
+    from ..computers import registry
+    from ..local_agents import chats, runner
 
-    turn = store.get_turn(turn_id)
+    turn = _local_turn(turn_id)
     if turn is None:
-        raise HTTPException(status_code=404, detail="No turn has that id.")
-    ws, conversation = _conversation_of(request, turn["conversation_id"])
+        ws, _, row = _far_turn(request, turn_id)
+        stopped = chats.stop_run(ws, turn_id, online=registry.is_online)
+        if stopped and row["holder"]:
+            registry.wake(row["holder"], "chat")
+        return {"stopped": stopped}
+    ws, conversation, _ = _conversation_of(request, turn["conversation_id"])
     if turn["ws"] != ws:
         raise HTTPException(status_code=404, detail="No turn has that id.")
     return {"stopped": runner.stop_chat(ws, turn_id, conversation["id"])}
@@ -274,14 +395,16 @@ def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
     ``note`` (at most ``MAX_NOTE`` characters) is what a decline tells the
     agent (``runner.answer_chat``). 404 for a turn of no conversation of
     the account's or no such ask; 409 for one answered already or no longer
-    waited for, and a turn that ended; 400 for another decision, too long a
-    note, or ``chat`` on what is not a command."""
-    from ..local_agents import chats, events, runner, store
+    waited for, and a turn that ended, and for a turn that runs on another
+    computer (it never asks); 400 for another decision, too long a note, or
+    ``chat`` on what is not a command."""
+    from ..local_agents import chats, events, runner
 
-    turn = store.get_turn(turn_id)
+    turn = _local_turn(turn_id)
     if turn is None:
-        raise HTTPException(status_code=404, detail="No turn has that id.")
-    ws, _ = _conversation_of(request, turn["conversation_id"])
+        _far_turn(request, turn_id)
+        raise HTTPException(status_code=409, detail=FAR_ASKS)
+    ws, _, _ = _conversation_of(request, turn["conversation_id"])
     if turn["ws"] != ws:
         raise HTTPException(status_code=404, detail="No turn has that id.")
     if body.decision not in events.DECISIONS:
@@ -305,14 +428,17 @@ def terminal(request: Request, page: str = ""):
     conversation's session (Codex's ``resume <thread>``, Claude Code's
     ``--resume <session>``), the session the conversation's agent ran in
     last, in the vault's directory as it is now, and of the form a session
-    has (``events.SESSION``). 404 for a conversation with no such session;
+    has (``events.SESSION``). 404 for a conversation with no such session,
+    and for one whose agent runs on another computer;
     409 while a turn of it is queued or running (two writers on one session
     are unsafe), and when the folder has no agent or it is not on this
     computer."""
     from ..db import connect_pages_db
     from ..local_agents import catalog, chats, events, store
 
-    ws, user_id, link = _maker(request, page)
+    ws, user_id, link, _ = _maker(request, page)
+    if link is None:
+        raise HTTPException(status_code=404, detail="This conversation's agent runs on another computer.")
     row = store.agent_of(link["id"])
     if row is None or row["agent"] not in catalog.AGENTS:
         raise HTTPException(status_code=409, detail="No agent is on for this work folder on this computer.")
@@ -350,13 +476,16 @@ def selection_sources(body: SourcesBody, request: Request):
     folder's sources each of the page's ``selections`` (``[{text, page,
     box}]``, at most ``chats.MAX_SELECTIONS``) maps to, in their order
     (``chats.sources_of``; null where nothing answers), for the composer's
-    chips. Runs no process. 400 for more selections."""
+    chips. Runs no process. Nulls for an agent on another computer. 400 for
+    more selections."""
     from ..db import connect_pages_db
     from ..local_agents import chats
 
-    ws, _, _ = _maker(request, body.page)
+    ws, _, link, _ = _maker(request, body.page)
     if len(body.selections) > chats.MAX_SELECTIONS:
         raise HTTPException(status_code=400, detail=f"At most {chats.MAX_SELECTIONS} selections at a time.")
+    if link is None:
+        return {"sources": [None] * len(body.selections)}   # the sources are on the other computer's disk
     kept = [(chats.selections_of([item]) or [None])[0] for item in body.selections]
     with connect_pages_db(ws) as conn:
         return {"sources": chats.sources_of(ws, conn, body.page, kept)}
@@ -368,10 +497,11 @@ def new_chat(body: PageBody, request: Request):
     null}``. 409 while its turn is queued or running."""
     from ..local_agents import catalog, chats, store
 
-    ws, user_id, link = _maker(request, body.page)
-    row = store.agent_of(link["id"])
+    ws, user_id, link, far = _maker(request, body.page)
+    row = store.agent_of(link["id"]) if link is not None else None
+    label = far["label"] if far is not None else catalog.label(row["agent"]) if row else "The agent"
     try:
-        chats.new(ws, body.page, user_id, catalog.label(row["agent"]) if row else "The agent")
+        chats.new(ws, body.page, user_id, label)
     except chats.ChatError as e:
         raise _refused(e) from None
     return {"conversation": None}
@@ -383,7 +513,7 @@ def chat_history(request: Request, page: str = ""):
     page's archived conversations of the account, newest first."""
     from ..local_agents import chats
 
-    ws, user_id, _ = _maker(request, page)
+    ws, user_id, _, _ = _maker(request, page)
     return {"conversations": chats.history(ws, page, user_id)}
 
 
@@ -394,7 +524,7 @@ def open_conversation(conversation_id: str, request: Request):
     queued or running."""
     from ..local_agents import catalog, chats
 
-    ws, conversation = _conversation_of(request, conversation_id)
+    ws, conversation, _ = _conversation_of(request, conversation_id)
     try:
         opened = chats.open_one(ws, conversation, catalog.label(conversation["agent"]))
     except chats.ChatError as e:
@@ -408,9 +538,9 @@ def delete_conversation(conversation_id: str, request: Request):
     page's active one."""
     from ..local_agents import chats
 
-    ws, conversation = _conversation_of(request, conversation_id)
+    ws, conversation, far = _conversation_of(request, conversation_id)
     try:
-        chats.delete(ws, conversation)
+        chats.delete(ws, conversation, here=far is None)
     except chats.ChatError as e:
         raise _refused(e) from None
     return {"deleted": True}

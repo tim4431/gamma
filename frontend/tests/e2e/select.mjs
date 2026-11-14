@@ -65,6 +65,7 @@ export const GROUPS = [
   { id: "computers", files: ["computers.mjs"], s: 45 },
   { id: "remote-work", files: ["remoteWork.mjs"], s: 30 },
   { id: "remote-sends", files: ["remoteSends.mjs"], s: 75 },
+  { id: "remote-chat", files: ["remoteChat.mjs"], s: 90 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
   { id: "text-search", files: ["textSearch.mjs"], s: 26 },
   { id: "text-anchors", files: ["textAnchors.mjs"], s: 45 },
@@ -195,12 +196,13 @@ export const RULES = [
   // (text-search: a note's line link is a pill; text-anchors: a text range's row, its dot and its title)
   ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"]],
   // the chat's computer side: the switch, the strip, a turn of the agent on this computer, Stop, New chat and History
-  ["frontend/src/chat/computer/**", ["local-agents"]],
+  // (remote-chat: the same on another server's page, run on the computer that keeps the work folder)
+  ["frontend/src/chat/computer/**", ["local-agents", "remote-chat"]],
   // the switch to that side; text-anchors: a selection of lines as the chat's chip
-  ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "text-anchors", "local-agents"]],
+  ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "text-anchors", "local-agents", "remote-chat"]],
   // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link;
   // text-anchors: a selection of lines as the chat's chip
-  ["frontend/src/chat/**", [...CHAT, "ink-zoom", "text-search", "text-anchors"]],
+  ["frontend/src/chat/**", [...CHAT, "ink-zoom", "text-search", "text-anchors", "remote-chat"]],
   // the Inbox notifications row
   ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox", "zotero-link"]],
   // the Zotero link's dialog, opened from Workspaces › Clones and Zotero links only (the Account row is SettingsZotero.jsx, below)
@@ -222,10 +224,11 @@ export const RULES = [
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
   // (local-agents: the agent the maker's comments name and the chat's computer side talks to)
   // (computers: on any other server, the chip of the computer that keeps the page, read by usePageComputer.js)
-  // (remote-sends: the agent of the computer that keeps the page, keeperAgent, for the maker in any window)
-  ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents", "computers", "remote-sends"]],
-  ["frontend/src/vault/usePageComputer.js", ["computers", "remote-sends"]],
-  ["frontend/src/vault/**", ["vaults", "work-folders", "computers", "remote-sends"]],
+  // (remote-sends: the agent of the computer that keeps the page, keeperAgent, for the maker in any window;
+  // remote-chat: the chat's computer side from it, keeperComputer)
+  ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents", "computers", "remote-sends", "remote-chat"]],
+  ["frontend/src/vault/usePageComputer.js", ["computers", "remote-sends", "remote-chat"]],
+  ["frontend/src/vault/**", ["vaults", "work-folders", "computers", "remote-sends", "remote-chat"]],
   // the pages the listing does not carry, merged into every page list the app has
   ["frontend/src/explorer/knownPages.js", ALL],
   // the work-folder rules every page and folder menu, drop and the open page's title ask
@@ -265,7 +268,7 @@ export const RULES = [
   ["frontend/src/transfers/importReview.js", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/ImportTree.jsx", [...EXPORTS, "sub-pages"]],
   ["frontend/src/transfers/**", EXPORTS],
-  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android"]], // the Background tasks tray and its store; android: a job's file saved through the app
+  ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad", "android", "remote-chat"]], // the Background tasks tray and its store; android: a job's file saved through the app; remote-chat: a turn on another computer
   ["frontend/src/support/**", ["settings"]],
   ["frontend/src/auth/**", ["auth", "cloud-sign-in", "publish", "ipad"]], // ipad: the sign-in page's Server link
   ["frontend/public/**", ["ipad"]],
@@ -282,7 +285,7 @@ export const RULES = [
   // the 20,000 files the explorer group's quick open searches
   ["backend/tests/seed_work_folder.py", ["explorer"]],
   // the stand-ins for Codex and Claude Code the local agents scenario's server starts
-  ["backend/tests/fake_agents/**", ["local-agents", "remote-sends"]],
+  ["backend/tests/fake_agents/**", ["local-agents", "remote-sends", "remote-chat"]],
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
@@ -328,16 +331,18 @@ export const RULES = [
   // an agent on this computer answering a Send (docs/dev/local_agents.md): finding the CLIs, the
   // drivers, the runner, what this computer keeps, and GET /api/local-agents
   // (remote-sends: the runner's home of another server's work folder, home.py, and a mention made there)
-  ["backend/gamma/local_agents/home.py", ["local-agents", "remote-sends"]],
+  // (remote-chat: the chat's computer side there: the seat, the turn run on the computer, its chat home)
+  ["backend/gamma/local_agents/home.py", ["local-agents", "remote-sends", "remote-chat"]],
   ["backend/gamma/local_agents/mention.py", ["local-agents", "remote-sends"]],
-  ["backend/gamma/local_agents/runner.py", ["local-agents", "remote-sends"]],
-  ["backend/gamma/local_agents/**", ["local-agents"]],
-  ["backend/gamma/routers/local_agents.py", ["local-agents"]],
+  ["backend/gamma/local_agents/runner.py", ["local-agents", "remote-sends", "remote-chat"]],
+  ["backend/gamma/local_agents/**", ["local-agents", "remote-chat"]],
+  ["backend/gamma/routers/local_agents.py", ["local-agents", "remote-chat"]],
   // a computer's channel and presence (docs/dev/computers.md): the server's registry and routes, the
   // computer's links and their threads
-  // (remote-sends: the binding of a work folder to its computer's agent, the channel's Sends)
-  ["backend/gamma/computers/**", ["computers", "remote-sends"]],
-  ["backend/gamma/routers/computers.py", ["computers", "remote-sends"]],
+  // (remote-sends: the binding of a work folder to its computer's agent, the channel's Sends;
+  // remote-chat: the channel's chat turns, the models announced)
+  ["backend/gamma/computers/**", ["computers", "remote-sends", "remote-chat"]],
+  ["backend/gamma/routers/computers.py", ["computers", "remote-sends", "remote-chat"]],
   ["backend/gamma/routers/computer_links.py", ["computers"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
   // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…),
@@ -427,7 +432,7 @@ export const RULES = [
   ["backend/gamma/routers/export.py", [...EXPORTS, "sub-pages"]], // a page's export with the pages inside it
   ["backend/gamma/routers/imports.py", EXPORTS],
   ["backend/gamma/jobs.py", [...EXPORTS, "settings", "notes-pdf-share"]], // exports, backups, the search indexer
-  ["backend/gamma/routers/jobs.py", [...EXPORTS, "settings"]],
+  ["backend/gamma/routers/jobs.py", [...EXPORTS, "settings", "remote-chat"]], // remote-chat: a chat turn on another computer
   ["backend/gamma/backup_schedule.py", ["settings"]],
   ["backend/gamma/backups.py", ["settings"]],
   ["backend/gamma/ws_backup.py", ["settings"]],
