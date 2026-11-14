@@ -167,8 +167,10 @@ def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(own
     assert row["vaults"] == [{"kind": "folder", "folder_id": folder, "paused": True},
                              {"kind": "file", "page_id": page["id"], "paused": False}]
     assert row["assistants"] == [
-        {"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "9" * 64, "code": ""},
-        {"name": "claude", "label": "Claude Code", "found": True, "ready": False, "version": "", "code": "not_ready"}]
+        {"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "9" * 64, "code": "",
+         "models": []},
+        {"name": "claude", "label": "Claude Code", "found": True, "ready": False, "version": "", "code": "not_ready",
+         "models": []}]
     assert told == [(me, {"t": "computer"})]                      # online now: the maker's windows alone
     _announce(computer, {**_body(), "computer": {"id": "cm_PC-1", "name": "TIM-PC"},
                          "vaults": [{"kind": "folder", "folder_id": folder, "paused": True},
@@ -183,7 +185,7 @@ def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(own
                 {"computer": {"id": "x", "name": "PC"}, "vaults": [{"kind": "file", "page_id": "p"}] * 501}, []):
         assert computer.post("/api/computers/announce", json=bad).status_code == 400, bad
     assert computer.post("/api/computers/announce", content=b"not json").status_code == 400
-    r = computer.post("/api/computers/announce", content=b"{" + b" " * (65 * 1024) + b"}")
+    r = computer.post("/api/computers/announce", content=b"{" + b" " * (129 * 1024) + b"}")
     assert r.status_code == 413
 
 
@@ -306,7 +308,7 @@ def test_the_page_shows_its_makers_computers_and_nobody_elses(owner, stranger, a
     assert shown == [{"id": "cm-laptop", "name": "LAPTOP", "online": True, "since": None,
                       "vault": {"kind": "file", "name": "CM loose paper", "paused": False, "agent": None},
                       "assistants": [{"name": "codex", "label": "Codex", "found": True, "ready": True,
-                                      "version": "0.167.0", "code": ""}]}]
+                                      "version": "0.167.0", "code": "", "models": []}]}]
     assert _shown(owner, elsewhere["id"]) == [] and _shown(owner, "no-such-page") == []
 
     # a restart forgets who is online, never when each was last seen

@@ -969,6 +969,37 @@ COMPUTER_CHATS_SCHEMA = [
         archived_at TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS idx_computer_chats_page ON computer_chats(page_id, user_id, archived_at)",
+    # computer_chat_runs = a turn of such a conversation that runs on another
+    # computer (step 4d: a page of a work folder of this server kept on a
+    # computer of its maker's with an agent there, gamma/computers/registry.py
+    # ``agent_of``; local_agents/chats.py, routers/computers.py): `state`
+    # queued until a run of a computer of `user_id`'s claims it (`holder` its
+    # token id, `run` the id it minted, `started_at`), running, then done,
+    # failed or stopped; `seq` the last write taken from that run, so a retry
+    # or a late one never goes back; `stop` set by the person's Stop of a
+    # running turn, which the computer is told; `agent` the turn's own (its
+    # reply's: only a computer keeping the folder with that agent takes it);
+    # `computer` the name of the computer last known to take it (the one
+    # keeping the folder at its begin, then the one that claimed it), so
+    # its row names one after that computer is gone. Goes with its
+    # conversation deleted. Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS computer_chat_runs (
+        turn_id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        page_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        agent TEXT NOT NULL DEFAULT '',
+        computer TEXT NOT NULL DEFAULT '',
+        holder TEXT NOT NULL DEFAULT '',
+        run TEXT NOT NULL DEFAULT '',
+        seq INTEGER NOT NULL DEFAULT 0,
+        stop INTEGER NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT 'queued',
+        queued_at TEXT NOT NULL,
+        started_at TEXT NOT NULL DEFAULT ''
+    ) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chat_runs_user ON computer_chat_runs(user_id, state)",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chat_runs_holder ON computer_chat_runs(holder, state)",
 ]
 # comments = the threads people leave on a note, a page (its root block) or
 # a highlight (its block) — gamma/comments.py, docs/dev/comments.md. A
@@ -2008,7 +2039,8 @@ def restamp_pref(user_id: str, key: str, old: str, new: str, ws: str = "") -> bo
 def delete_workspace_prefs(ws: str, user_id: str) -> int:
     """Delete the account's prefs kept in the workspace (``workspace_prefs``),
     the pages it follows there (``page_follows``) and its conversations with
-    the agent on this computer (``computer_chats``, its alone): its
+    the agent on this computer (``computer_chats``, its alone, and their
+    turns run on another, ``computer_chat_runs``): its
     membership ended, or the account is deleted. Returns how many prefs
     went; a workspace without a pages.db has none (none is created)."""
     if not os.path.isfile(ws_db_path(ws, "pages.db")):
@@ -2016,6 +2048,7 @@ def delete_workspace_prefs(ws: str, user_id: str) -> int:
     with connect_pages_db(ws) as db:
         db.execute("DELETE FROM page_follows WHERE user_id = ?", (user_id,))
         db.execute("DELETE FROM computer_chats WHERE user_id = ?", (user_id,))
+        db.execute("DELETE FROM computer_chat_runs WHERE user_id = ?", (user_id,))
         return db.execute("DELETE FROM workspace_prefs WHERE user_id = ?", (user_id,)).rowcount
 
 

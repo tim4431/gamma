@@ -70,9 +70,10 @@ from .zotero_sync_rows import CONFLICT_KINDS
 FORMAT = "gamma-backup-1"
 # pages.db tables that hold each account's own state, not the library's
 # (db.WORKSPACE_PREFS_SCHEMA, the pages it follows: page_follows, its chats
-# with the agent on its computer: computer_chats): empty in every zip, never
-# replaced by a restore.
-PRIVATE_TABLES = ("workspace_prefs", "page_follows", "computer_chats")
+# with the agent on its computer: computer_chats, and their turns run on
+# another computer: computer_chat_runs): empty in every zip, never replaced
+# by a restore.
+PRIVATE_TABLES = ("workspace_prefs", "page_follows", "computer_chats", "computer_chat_runs")
 SCRUB_CHUNK = 64 << 20             # bytes of zeros per row when a copy's free pages are overwritten
 MAX_PER_WORKSPACE = 20             # manual snapshots per workspace
 MAX_SCHEDULED_PER_WORKSPACE = 100  # scheduled ones per workspace, every task together

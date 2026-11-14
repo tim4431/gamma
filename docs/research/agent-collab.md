@@ -658,7 +658,7 @@ agent), and a token cannot move them.
 | 4a. The channel and presence | the computer announced to the servers its vaults name over a channel of its own (a `computer` token, an announce and a held poll), presence kept by the server and shown to the vault's maker in any window, the sync panel's line | built: [dev/computers.md](../dev/computers.md), "As built (step 4a)" below |
 | 4b. Work folders of another server | a vault of another server that pushes everything into an empty folder it marks there, the tracking dialog on the host, that server's rules for the mark and its owner's *Let go* | built: [dev/work_folders.md](../dev/work_folders.md) "Work folders of another server", "As built (step 4b)" below |
 | 4c. Their Sends and mentions | run on the computer over the channel: the server's claim, the entries, the answers written by the server | built: [dev/local_agents.md](../dev/local_agents.md) "A work folder of another server", [dev/computers.md](../dev/computers.md) "The Sends", "As built (step 4c)" below |
-| 4d. The chat relayed | the chat's computer side on another server's page, its asks answered on the computer, *Show in folder* and *Continue in a terminal* from the desktop window there | plan |
+| 4d. The chat relayed | the chat's computer side on another server's page, in any window of the maker there | built: [dev/local_agents.md](../dev/local_agents.md) "The chat on another server's page", "As built (step 4d)" below; later: *Ask on this computer* (asks answered on the computer itself), *Show in folder* and *Continue in a terminal* from the desktop window there |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
 
 ### As built (step 1)
@@ -916,6 +916,25 @@ reference. Where it went otherwise than "How the server sees a vault":
   made then waits for it.
 - **Asking stays local**: a server the app did not start gets Sends and
   mentions, which never ask; the chat (4d) is next.
+
+### As built (step 4d)
+
+[dev/local_agents.md](../dev/local_agents.md) "The chat on another
+server's page" is the reference. As for Sends (4c): the NAS keeps the
+conversation and the turn's row, the computer claims the turn for a run it
+names and writes the agent's message back, each write newer than the last
+(`seq`), so a retry or a late write never goes backwards. Where it went
+otherwise than "The chat window gets a second side":
+
+- **No asking there yet.** A remote turn runs confined as a Send does;
+  *Ask on this computer* (a card answered on the computer itself, never
+  from that server's sessions) is a later step, so the trust question of a
+  server the app did not start stays where "Still open" left it.
+- **What needs the window to be the computer** (*Continue in a
+  terminal*, *Show in folder*, the passage chip's source line) is not
+  offered there; the turn's prompt still gets the source lines.
+- **The composer stays open while the computer is off**: a message waits
+  and runs when it connects, as a Send does.
 
 ### Declined
 

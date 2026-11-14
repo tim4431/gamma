@@ -402,6 +402,18 @@ All state is SQLite + files on disk under a data directory (env
     its membership ends or the account is deleted
     (`db.delete_workspace_prefs`). From `db.PAGES_SCHEMA` as the file opens
     (no workspace step);
+  - `computer_chat_runs` — a turn of such a conversation run on another
+    computer (step 4d, [local_agents.md](local_agents.md) "The chat on
+    another server's page"): the turn, its conversation, page and account,
+    the turn's agent and the computer last known to take it, the computer
+    token holding it and its run once claimed, the last
+    write's `seq`, a stop flag, its state, when it was queued and started.
+    Private like `computer_chats` (`ws_backup.PRIVATE_TABLES`), gone with
+    its page (`ops._purge`) and with its account's rows; additive;
+  - `feedback_request_runs` — the run of a computer that holds a Send of
+    this server's (step 4c, [computers.md](computers.md) "The Sends"): the
+    request, the holding token, the run, the agent, the `seen` time, the
+    comment ids it read, its end; swept with its request; additive;
   - `chats` / `chat_history` — the AI chat
     ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version

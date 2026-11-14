@@ -39,6 +39,14 @@ whose request was withdrawn there; each run speaks to that server with this
 channel's token (``of_vault``, gamma/local_agents/home.py). Each announce
 that succeeds fails there the runs of its vaults left open while that server
 was not reached (``_settle``); a channel deleted turns their agents off.
+
+The chat's computer side on a page of such a work folder (step 4d) runs here
+too: after each announce, on a poll answered ``{wake: ["chat"]}`` and at
+least every ``CHATS_EVERY_S``, the thread asks that server for the turns
+that wait (``_chats``), queues each for its vault
+(``runner.queue_remote_chat``) and stops the ones stopped there; the
+announce's assistants name the models each offers (``models``), which that
+server offers the chat's model chip and checks a turn's against.
 """
 
 import base64
@@ -67,6 +75,9 @@ RETRY_FIRST_S = 5        # an unreachable server is tried again after this, doub
 RETRY_MAX_S = 300        # up to this
 QUICK_S = 1.0            # a poll answered at once with nothing: the next waits this long
 SENDS_EVERY_S = 180      # the Sends that wait there are asked for at least this often (a wake lost)
+CHATS_EVERY_S = 180      # and the chat turns that wait there
+MAX_MODELS = 32          # models an assistant's announce names
+_TURN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a chat turn's id there (``blocks_store.new_block_id``'s)
 STATES = ("connecting", "connected", "refused", "older", "unreachable")
 
 _COLS = "id, remote_url, workspace_id, created_by, token, token_id, account, username, created_at, status"
@@ -218,8 +229,10 @@ def _code(name: str, found: dict) -> str:
 def assistants() -> list[dict]:
     """The agents on this computer as the catalog last found them
     (``catalog.known``: one probe when none was ever made, never one to
-    refresh it, so a channel keeps no agent probed), ``[]`` where agents do not run
-    (``local_agents.enabled``)."""
+    refresh it, so a channel keeps no agent probed), each with the models
+    it offers (``[{id, label, efforts, effort, default}]``, at most
+    ``MAX_MODELS``: what a chat turn there may ask for), ``[]`` where agents
+    do not run (``local_agents.enabled``)."""
     from .. import local_agents
     from ..local_agents import catalog
 
@@ -229,7 +242,8 @@ def assistants() -> list[dict]:
     for name in catalog.AGENTS:
         found = catalog.known(name)
         there.append({"name": name, "label": found["label"], "found": found["found"], "ready": found["ready"],
-                      "version": (found["version"] or "")[:64], "code": _code(name, found)})
+                      "version": (found["version"] or "")[:64], "code": _code(name, found),
+                      "models": list(found.get("models") or [])[:MAX_MODELS]})
     return there
 
 
@@ -311,6 +325,8 @@ class _Channel:
         self.backoff = RETRY_FIRST_S
         self.sends_due = True       # the Sends that wait there are asked for at the next turn (``_sends``)
         self.sends_at = 0.0         # time.monotonic() when they were last asked for
+        self.chats_due = True       # the chat turns that wait there are asked for at the next turn (``_chats``)
+        self.chats_at = 0.0
         self.thread: threading.Thread | None = None
 
     def run(self) -> None:
@@ -339,10 +355,12 @@ class _Channel:
                 self.announced, self.version = state, str(answer.get("version") or "")
                 self._account(link, answer.get("account") or {})
                 self._said(link, "connected", "", 0)   # shown there now, before the poll's hold
-                self.sends_due = True                  # what waited for this computer while it was away
+                self.sends_due = self.chats_due = True  # what waited for this computer while it was away
                 self._settle(link)
             if self.sends_due or time.monotonic() - self.sends_at >= SENDS_EVERY_S:
                 self._sends(server, link)
+            if self.chats_due or time.monotonic() - self.chats_at >= CHATS_EVERY_S:
+                self._chats(server, link)
             started = time.monotonic()
             got = _call(server, "GET", "/api/computers/poll?" + urlencode({"v": self.version, "wait": POLL_S}))
         except gamma_sync.Denied as e:
@@ -359,8 +377,11 @@ class _Channel:
         self._said(link, "connected", "", 0)
         if got.get("announce"):
             self.announced = None
-        elif isinstance(got.get("wake"), list) and "sends" in got["wake"]:
-            self._sends(server, link)
+        elif isinstance(got.get("wake"), list):
+            if "sends" in got["wake"]:
+                self._sends(server, link)
+            if "chat" in got["wake"]:
+                self._chats(server, link)
         # A poll answered at once (nothing, or announce again: a server that always asks so) rests a moment.
         return max(0.0, QUICK_S - (time.monotonic() - started))
 
@@ -404,6 +425,51 @@ class _Channel:
                     runner.withdraw_remote(ids, gone["id"], str(gone.get("run") or ""))
         except Exception:  # noqa: BLE001 — a Send never stops the channel
             log.exception(f"[computers] queueing the Sends of channel {link['id']}")
+
+    def _chats(self, server: gamma_sync.Server, link: dict) -> None:
+        """The chat turns that wait there for this computer's agents (``GET
+        /api/computers/chats``: that server decides whose they are), each
+        queued for the vault of its work folder (``runner.queue_remote_chat``:
+        the turn finds the vault as it is when it runs, and fails with why
+        when it is paused, as a turn here does), and the turns stopped there
+        meanwhile, or no longer queued or running there, stopped
+        (``runner.stop_remote_chat``); one stopped there that no vault here
+        queues or runs (left open: its claim or its end never answered)
+        ends stopped there and here (``runner.end_stopped_remote``), so its
+        Stop never waits for the next announce. Asked only where a vault of that
+        server has an agent; a server without the route (older), or one not
+        reached, is asked again at a later turn. Never raises."""
+        from ..local_agents import runner
+
+        self.chats_due, self.chats_at = False, time.monotonic()
+        folders = agent_folders(link)
+        if not folders:
+            return
+        try:
+            got = _call(server, "GET", "/api/computers/chats")
+        except (Older, gamma_sync.Denied):
+            return   # a server from before the chat ran there: asked again after CHATS_EVERY_S
+        except gamma_sync.SyncError as e:
+            self.chats_due = True
+            log.info(f"[computers] the chat turns of channel {link['id']}: {e}")
+            return
+        try:
+            for turn in got.get("turns") if isinstance(got.get("turns"), list) else []:
+                kept = folders.get(turn.get("folder_id")) if isinstance(turn, dict) else None
+                if kept is None or not isinstance(turn.get("id"), str) or not _TURN_ID.match(turn["id"]):
+                    continue
+                runner.queue_remote_chat(kept[0]["id"], turn["id"], agent=kept[1],
+                                         conversation_id=str(turn.get("conversation_id") or ""),
+                                         page_id=str(turn.get("page_id") or ""))
+            ids = [vault["id"] for vault, _agent in folders.values()]
+            everywhere = [vault["id"] for vault in _vaults_of(link)]
+            for gone in got.get("stops") if isinstance(got.get("stops"), list) else []:
+                if isinstance(gone, dict) and isinstance(gone.get("id"), str) and _TURN_ID.match(gone["id"]):
+                    run = str(gone.get("run") or "")
+                    if not runner.stop_remote_chat(ids, gone["id"], run):
+                        runner.end_stopped_remote(everywhere, gone["id"], run)
+        except Exception:  # noqa: BLE001 — a chat turn never stops the channel
+            log.exception(f"[computers] queueing the chat turns of channel {link['id']}")
 
     def _settle(self, link: dict) -> None:
         """That server reached again: the runs of its vaults left open while

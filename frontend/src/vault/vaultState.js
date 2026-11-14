@@ -14,7 +14,8 @@
 // "" for a member who cannot act on the vault: where its files lie is the
 // reading of whoever made it. On any other server the page's chip names
 // the computer that keeps it instead (computerChip, read by
-// usePageComputer.js), and a work folder's agent there (keeperAgent).
+// usePageComputer.js), and a work folder's agent there (keeperAgent, and
+// for the chat's computer side keeperComputer).
 // Pure: tests/vaultState.test.mjs.
 import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { inPlace, isPdf } from "../documents/pageDocument.js";
@@ -232,14 +233,37 @@ function assistantState(computer, agent) {
 // and `problem` as its announced assistant says while it is online, null
 // and "" while it is away (the Send waits for it). Null for none.
 export function keeperAgent(computers) {
-  for (const computer of readComputers({ computers })) {
-    const agent = vaultAgent(computer);
-    if (!agent) continue;
-    const online = computer.online === true;
-    const { ready, problem } = online ? assistantState(computer, agent) : { ready: null, problem: "" };
-    return { ...agent, ready, problem, computer: computer.name, online };
-  }
-  return null;
+  const computer = keeperOf(computers);
+  if (!computer) return null;
+  const agent = vaultAgent(computer);
+  const online = computer.online === true;
+  const { ready, problem } = online ? assistantState(computer, agent) : { ready: null, problem: "" };
+  return { ...agent, ready, problem, computer: computer.name, online };
+}
+
+// The first of the page's computers whose work folder of the page's
+// server has an agent on, or null.
+function keeperOf(computers) {
+  return readComputers({ computers }).find((computer) => vaultAgent(computer)) || null;
+}
+
+// The chat's computer side where this computer has none for the page
+// (computerAgent null: any window but the desktop app's own server's):
+// keeperAgent's agent, the maker's alone, which the side's messages run on
+// in the work folder's directory there, as computerAgent's shape until the
+// side's own read lands (GET /api/local-agents/chat's `computer`, which
+// says the same): `folder` the work folder's name, `paused` whether it is
+// paused there, `since` when the computer went away (null while online),
+// `remote` true (chat/computer/computerChat.js words it by the computer's
+// name). Null for none.
+export function keeperComputer(computers) {
+  const agent = keeperAgent(computers);
+  if (!agent) return null;
+  const { vault, since } = keeperOf(computers);
+  return {
+    ...agent, running: null, folder: String(vault.name || ""), paused: !!vault.paused,
+    since: agent.online ? null : since || null, remote: true,
+  };
 }
 
 // The banner over the page, in the missing-page notice's slot: a note the

@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson, makeId } from "../../shared/lib/utils";
 import { t } from "../../shared/i18n/i18n.js";
 import {
-  POLL_MS, SOURCES_MAX, answerBody, askPath, chatPath, liveTurn, sourcesBody, turnBody,
+  AWAY_POLL_MS, POLL_MS, SOURCES_MAX, answerBody, askPath, awayFrom, chatPath, liveTurn, sourcesBody, turnBody,
 } from "./computerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -52,9 +52,10 @@ export function useChatSide(pageId, available) {
 // nothing is read). `{computer, conversation, read, busy, send, answer,
 // stop, newChat, history, readHistory, openHistory, deleteHistory}`:
 //   computer      the strip's facts as the server read them ({agent, label,
-//                 ready, problem, folder, paused, turn, models}), null
-//                 until read; `models` the agent's [{id, label, efforts,
-//                 effort, default}]
+//                 ready, problem, folder, paused, turn, models}, and for
+//                 another computer's agent {computer, online, since,
+//                 remote: true}), null until read; `models` the agent's
+//                 [{id, label, efforts, effort, default}]
 //   conversation  the page's active conversation ({id, title, agent,
 //                 messages, version}) or null; both are kept with the page
 //                 they are of, so a page switched to never shows the last
@@ -122,11 +123,13 @@ export function useComputerChat(pageId, setStatus, known = "") {
 
   const state = held.pageId === pageId ? held : { computer: null, conversation: null, read: false };
   const live = !!pageId && (!!state.computer?.turn || !!liveTurn(state.conversation));
+  // A turn waiting for another computer that is away is read less often.
+  const every = awayFrom(state.computer) ? AWAY_POLL_MS : POLL_MS;
   useEffect(() => {
     if (!live) return undefined;
-    const timer = setInterval(load, POLL_MS);
+    const timer = setInterval(load, every);
     return () => clearInterval(timer);
-  }, [live, load]);
+  }, [live, every, load]);
   useEffect(() => {
     const again = () => { if (document.visibilityState !== "hidden") load(); };
     window.addEventListener("focus", again);

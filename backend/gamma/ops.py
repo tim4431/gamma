@@ -1384,6 +1384,7 @@ def _purge(conn, page_id: str, actor: str) -> list:
     conn.execute("DELETE FROM chats WHERE bucket = ?", (page_id,))
     conn.execute("DELETE FROM chat_history WHERE bucket = ?", (page_id,))
     conn.execute("DELETE FROM computer_chats WHERE page_id = ?", (page_id,))
+    conn.execute("DELETE FROM computer_chat_runs WHERE page_id = ?", (page_id,))
     if not trashed:
         touch_page(conn, page_id, actor, "deleted")
     return rows

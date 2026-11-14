@@ -1,8 +1,10 @@
 // The chat's computer side (docs/dev/local_agents.md "The chat's computer
 // side"): on a work folder's file whose vault this account made, with an
 // agent on, the chat window talks to that agent on this computer instead
-// of Gamma AI. ChatDock draws the switch between the two first in its
-// header (ChatSides) and, on this side, the side's History and New chat
+// of Gamma AI (on a work folder of another server, in any window of its
+// maker, to the agent on the computer that keeps it). ChatDock draws the
+// switch between the two first in its header (ChatSides) and, on this
+// side, the side's History and New chat
 // (ComputerHeader) and its body (ComputerChat): the strip naming the agent
 // and what it is at, the transcript, and a composer that sends the message
 // with the PDF passages selected, their source lines noted, and the agent's
@@ -29,8 +31,8 @@ import {
 } from "../../shared/ui/Icons";
 import { T, t } from "../../shared/i18n/i18n.js";
 import {
-  TEXT_MAX, canContinue, canSend, changesLine, endText, freshLine, isLive, lastEnded, liveTurn, modelChoice, modelDisplay, sourceNote,
-  stepText, stripLine, turnLabel,
+  TEXT_MAX, awayFrom, canContinue, canSend, changesLine, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, modelChoice, modelDisplay,
+  offersMenu, sourceNote, stepText, stripLine, turnLabel,
 } from "./computerChat.js";
 import "./computer.css";
 
@@ -104,12 +106,15 @@ function ModelChip({ label, models, choice, onPick }) {
 }
 
 // The switch first in the chat's header: Gamma AI or the agent on this
-// computer (`label`, "Codex").
-export function ChatSides({ side, onSide, label }) {
+// computer (`label`, "Codex"), or on the computer that keeps the work
+// folder (`where`, its name, "" for this one).
+export function ChatSides({ side, onSide, label, where = "" }) {
   return (
     <Segmented value={side} onChange={onSide} options={[
       ["ai", t("Gamma AI"), null, t("Chat with Gamma AI")],
-      ["computer", label, null, t("Chat with {agent} on this computer, in this work folder's directory", { agent: label })],
+      ["computer", label, null, where
+        ? t("Chat with {agent} on {computer}, in this work folder's directory there", { agent: label, computer: where })
+        : t("Chat with {agent} on this computer, in this work folder's directory", { agent: label })],
     ]} />
   );
 }
@@ -209,7 +214,7 @@ function PersonMessage({ message }) {
 // The agent's message: the turn's steps in one pill that unfolds to each,
 // a card for each thing it asks and waits on, the reply, what changed, and
 // how the turn ended when it did not answer.
-function AgentMessage({ message, label, copied, onCopy, onAnswer }) {
+function AgentMessage({ message, label, away, copied, onCopy, onAnswer }) {
   const [open, setOpen] = useState(false);
   const live = isLive(message);
   const steps = message.steps || [];
@@ -228,7 +233,7 @@ function AgentMessage({ message, label, copied, onCopy, onAnswer }) {
                 title={!steps.length ? undefined : open ? t("Hide the steps") : t("Show every step")}>
                 {live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
                 <span className={`chatPillText${live ? " shimmerText" : ""}`} aria-live="polite" aria-atomic="true">
-                  {turnLabel(message, label)}
+                  {turnLabel(message, label, away)}
                 </span>
                 {failedSteps && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failedSteps })}</span> : null}
                 {steps.length ? <Chevron open={open} dir="down" size={14} /> : null}
@@ -277,11 +282,17 @@ function AgentMessage({ message, label, copied, onCopy, onAnswer }) {
 
 // The side's body for the page `pageId` (ChatDock keys it by the page):
 // `computer` the page's agent as the vault says (vaultState
-// computerAgent), until the side's own read names it; the PDF passages
-// selected are App's, the Gamma AI side's too, and go with the next message.
+// computerAgent), or as the page's computers say (keeperComputer), until
+// the side's own read names it; the PDF passages selected are App's, the
+// Gamma AI side's too, and go with the next message. Another computer's
+// agent (`remote`) is named by that computer, and the strip offers no menu
+// and the passages no source lines: they need the window to be it.
 export default function ComputerChat({ chat, computer, pageId, pdfSelections, setPdfSelections }) {
   const info = chat.computer || computer;
   const label = info?.label || computer?.label || "";
+  const remote = isRemote(info);
+  const where = remote ? String(info.computer || "") : "";
+  const away = awayFrom(info);
   const conversation = chat.conversation;
   const messages = conversation?.messages || [];
   const live = liveTurn(conversation);
@@ -297,7 +308,7 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
     picks.set(pickKey(pageId, conversation), next);
     redrawPick((n) => n + 1);
   };
-  const sources = usePassageSources(pageId, pdfSelections, lastEnded(conversation));
+  const sources = usePassageSources(remote ? "" : pageId, pdfSelections, lastEnded(conversation));
   // The turn Stop stops: the conversation's own, or the one the server
   // says is queued for it before the conversation shows it.
   const stopId = live?.turn_id || chat.computer?.turn?.turn_id || "";
@@ -329,19 +340,21 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
         <div className={`chatHealthStrip computerStrip ${strip.kind}`} role="status">
           {strip.kind === "working" || strip.kind === "waiting" ? <span className="transferSpin inline" aria-hidden="true" /> : null}
           <span className="chatHealthText">{strip.text}</span>
-          <StripMenu pageId={pageId} label={label} session={canContinue(info, conversation)} />
+          {offersMenu(info) ? <StripMenu pageId={pageId} label={label} session={canContinue(info, conversation)} /> : null}
         </div>
       ) : null}
       <div className="chatMessages" ref={scrollRef}
         onScroll={(e) => { const el = e.currentTarget; stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
         {!messages.length && chat.read ? (
           <div className="chatEmpty">
-            {t("Ask {agent} about this file or to change it: it works in the work folder's directory on this computer.", { agent: label })}
+            {where
+              ? t("Ask {agent} about this file or to change it: it works in the work folder's directory on {computer}.", { agent: label, computer: where })
+              : t("Ask {agent} about this file or to change it: it works in the work folder's directory on this computer.", { agent: label })}
           </div>
         ) : null}
         {messages.map((m, i) => (m.role === "user"
           ? <PersonMessage key={m.id || i} message={m} />
-          : <AgentMessage key={m.id || i} message={m} label={label} copied={copied === i} onAnswer={chat.answer}
+          : <AgentMessage key={m.id || i} message={m} label={label} away={away} copied={copied === i} onAnswer={chat.answer}
               onCopy={async () => { if (await copyText(m.text || "")) flashCopied(i); }} />))}
       </div>
       <form className="chatComposer" onSubmit={(e) => { e.preventDefault(); send(); }}
@@ -360,7 +373,7 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
         ) : null}
         <AutoGrowTextarea className="chatInput chatInputArea" rows={1} value={draft} maxLength={TEXT_MAX}
           aria-label={t("Message {agent}", { agent: label })}
-          placeholder={t("Message {agent} on this computer…", { agent: label })}
+          placeholder={where ? t("Message {agent} on {computer}…", { agent: label, computer: where }) : t("Message {agent} on this computer…", { agent: label })}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (sendsOnEnter(e)) { e.preventDefault(); send(); } }} />
         <div className="chatComposerBar">

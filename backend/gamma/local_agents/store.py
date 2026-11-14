@@ -10,7 +10,9 @@ when the run read the thread, the reply it wrote and the request, so that a
 follow-up in the thread resumes that session. For the chat's computer side
 (gamma/local_agents/chats.py): one row a conversation (``agent_conversations``),
 the session its agent ran in last and the directory, what its next turn
-resumes, and one row a turn (``agent_turns``), its state and process. What
+resumes, and one row a turn (``agent_turns``), its state and process (a
+turn of a page of another server, claimed there, keyed by its vault in
+place of the workspace: ``claimed_turn``). What
 a vault's agent may run (``agent_policies``, one row a link; none for
 ``never``): ``ask``, its chat's turns may ask the person; and the commands
 a person allowed in a conversation (``agent_grants``), each exactly as it
@@ -345,6 +347,21 @@ def add_turn(turn_id: str, *, ws: str, link_id: str, conversation_id: str, page_
                      (turn_id, ws, link_id, conversation_id, page_id, agent, page_now()))
 
 
+def claimed_turn(turn_id: str, *, link_id: str, conversation_id: str, page_id: str, agent: str) -> None:
+    """A turn of a page of another server that this computer claimed there
+    for the vault ``link_id`` (gamma/local_agents/home.py ``HttpChatHome``),
+    its row keyed by the vault in place of the workspace (as the runner
+    keys it), queued again when it had one: a claim taken once more after
+    its first was settled."""
+    with connect_vaults_db() as conn:
+        conn.execute("INSERT INTO agent_turns (id, ws, link_id, conversation_id, page_id, agent, state, started_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?, 'queued', ?) ON CONFLICT(id) DO UPDATE SET ws = excluded.ws, "
+                     "link_id = excluded.link_id, conversation_id = excluded.conversation_id, "
+                     "page_id = excluded.page_id, agent = excluded.agent, state = 'queued', "
+                     "started_at = excluded.started_at, ended_at = NULL, error = '', pid = NULL",
+                     (turn_id, link_id, link_id, conversation_id, page_id, agent, page_now()))
+
+
 def turn_running(turn_id: str, pid: int = 0) -> None:
     """The turn runs (its process ``pid`` once known)."""
     with connect_vaults_db() as conn:
@@ -364,8 +381,11 @@ def end_turn(turn_id: str, *, state: str, error: str = "") -> None:
 
 
 def get_turn(turn_id: str) -> dict | None:
+    """The turn of a page of this server, None for none: a turn of another
+    server's page (``claimed_turn``'s row) is that server's to answer for,
+    this computer's record alone (``open_turns``)."""
     with connect_vaults_db() as conn:
-        row = conn.execute(f"{_TURN_SELECT} WHERE id = ?", (turn_id,)).fetchone()
+        row = conn.execute(f"{_TURN_SELECT} WHERE id = ? AND ws != link_id", (turn_id,)).fetchone()
     return dict(zip(_TURN_COLUMNS, row)) if row else None
 
 

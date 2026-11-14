@@ -23,9 +23,11 @@ told (``{t: "computer"}``, content-free, to that account's sockets alone:
 ``collab.publish_account``). The same nudge goes when an announce changes
 what a window shows. A poll is answered ``{announce: true}`` when the
 computer is unknown here (a restart) or announced another version; held
-polls are woken by ``wake``: to announce again, or ``sends`` when its
+polls are woken by ``wake``: to announce again, ``sends`` when its
 maker's Send in a work folder it keeps with an agent is made or withdrawn
-(``heard``, step 4c), a wake while no poll is held answering the next.
+(``heard``, step 4c), or ``chat`` when a turn of its maker's chat on a page
+there is begun or asked to stop (step 4d), a wake while no poll is held
+answering the next.
 
 Only the token's account sees its computer (``of_page``); a revoked or
 expired token's row goes (``forget``, and when the rows are read).
@@ -52,6 +54,8 @@ SEEN_EVERY_S = 600     # while online, ``seen_at`` is written at most this often
 MAX_VAULTS = 500       # folders and pages one announce names
 MAX_TEXT = 64          # a name, a label, a version, the app's version
 MAX_ID = 128           # a folder's or a page's id
+MAX_MODELS = 32        # models one assistant announces
+MAX_EFFORTS = 8        # efforts one model announces
 AGENTS = ("codex", "claude")
 CODES = ("", "missing", "signed_out", "not_ready", "checking")   # an assistant's problem, as a code
 NUDGE = {"t": "computer"}
@@ -101,14 +105,38 @@ def _flag(value, field: str) -> bool | None:
     return value
 
 
+def _models(value) -> list[dict]:
+    """An assistant's ``models`` as kept (step 4d, the chat's model chip):
+    ``[{id, label, efforts, effort, default}]`` (``events.model``), at most
+    ``MAX_MODELS`` with ``MAX_EFFORTS`` efforts each, one without an id
+    left out. ValueError for another shape."""
+    from ..local_agents import events  # local: the agents' package is loaded where an agent is named
+
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_MODELS:
+        raise ValueError(f"An assistant's models are a list of at most {MAX_MODELS}.")
+    kept = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("A model is an object.")
+        efforts = item.get("efforts")
+        found = events.model(item.get("id"), item.get("label"), efforts[:MAX_EFFORTS] if isinstance(efforts, list)
+                             else [], item.get("effort"), item.get("default"))
+        if found is not None and all(m["id"] != found["id"] for m in kept):
+            kept.append(found)
+    return kept
+
+
 def normalise(body) -> dict:
     """The announce ``body`` as kept: ``{computer: {id, name}, app, vaults,
     assistants}``, each string capped, the vaults deduplicated (a folder
     vault's ``agent``, ``codex`` or ``claude``, kept when it has one: a work
     folder of this server whose Sends run on the computer; another name, or
     on a file vault, is none), an assistant this server does not know of
-    dropped, an unknown problem code read as ``not_ready``. ValueError for
-    a body of another shape."""
+    dropped, an unknown problem code read as ``not_ready``, each with the
+    ``models`` it offers there (``_models``). ValueError for a body of
+    another shape."""
     if not isinstance(body, dict) or not isinstance(body.get("computer"), dict):
         raise ValueError("The announce names its computer.")
     computer_id, name = body["computer"].get("id"), body["computer"].get("name")
@@ -144,7 +172,7 @@ def normalise(body) -> dict:
         there.append({"name": agent["name"], "label": _text(agent.get("label"), "label") or agent["name"],
                       "found": _flag(agent.get("found"), "found"), "ready": _flag(agent.get("ready"), "ready"),
                       "version": _text(agent.get("version"), "version"),
-                      "code": code if code in CODES else "not_ready"})
+                      "code": code if code in CODES else "not_ready", "models": _models(agent.get("models"))})
     return {"computer": {"id": computer_id, "name": name.strip()}, "app": _text(body.get("app"), "app"),
             "vaults": kept, "assistants": there}
 
@@ -217,7 +245,10 @@ def announce(user_id: str, username: str, ws: str, token_id: str, body) -> dict:
     they show changed (online now, the name, the vaults, the assistants).
     ``{account: {id, username}, computer: {id, name}, workspace: {id},
     version, wait}``: ``version`` what its polls name, ``wait`` the
-    longest hold. ValueError for a malformed body."""
+    longest hold. A work folder it kept with an agent and no longer does
+    (turned off, another agent, gone) has the account's chat turns
+    queued there that no computer of it would take fail
+    (``_end_orphaned``). ValueError for a malformed body."""
     found = normalise(body)
     found["vaults"] = _kept_here(ws, user_id, found["vaults"])
     shown = (found["computer"]["name"], json.dumps(found["vaults"]), json.dumps(found["assistants"]))
@@ -241,6 +272,10 @@ def announce(user_id: str, username: str, ws: str, token_id: str, body) -> dict:
         came = _beat(token_id, live)
     if came or before is None or tuple(before) != shown:
         collab.publish_account(user_id, NUDGE)
+    if before is not None:
+        now_kept = _agent_vaults(found["vaults"])
+        _end_orphaned(ws, user_id, [w for w, agent in _agent_vaults(_loads(before[1])).items()
+                                    if now_kept.get(w) != agent], _turned_off)
     return {"account": {"id": user_id, "username": username}, "computer": found["computer"], "workspace": {"id": ws},
             "version": version, "wait": POLL_S}
 
@@ -297,8 +332,8 @@ def answer(reasons: list) -> dict:
 
 def wake(token_id: str, reason: str) -> None:
     """Answer the computer's held polls now, with ``reason``: ``announce``
-    to have it announce again, ``sends`` for its Sends (``heard``), or a
-    step of 4d; while none is held, its next poll is answered at once.
+    to have it announce again, ``sends`` for its Sends (``heard``), or
+    ``chat`` for its chat turns; while none is held, its next poll is answered at once.
     Safe from any thread."""
     with _lock:
         live = _live.get(token_id)
@@ -317,26 +352,32 @@ def forget(token_id: str) -> None:
     """The computer behind ``token_id`` goes: its row, its presence; its
     held polls end (and are refused, the token being gone), the Sends its
     runs still hold fail (``_fail_held``: no run of it can write them any
-    more) and the account's windows are told."""
+    more), the chat turns queued in its work folders that no other
+    computer of the account would take fail (``_end_orphaned``), and the
+    account's windows are told."""
     wake(token_id, "gone")
     with _lock:
         live = _live.pop(token_id, None)
         if live is not None and live.timer is not None:
             live.timer.cancel()
     with connect_users_db() as conn:
-        row = conn.execute("SELECT user_id, workspace_id FROM computers WHERE token_id = ?", (token_id,)).fetchone()
+        row = conn.execute("SELECT user_id, workspace_id, vaults FROM computers WHERE token_id = ?",
+                           (token_id,)).fetchone()
         conn.execute("DELETE FROM computers WHERE token_id = ?", (token_id,))
     if row:
         _fail_held(row[1], token_id)
+        _end_orphaned(row[1], row[0], list(_agent_vaults(_loads(row[2]))), _taken_back)
     if row or live is not None:
         collab.publish_account(row[0] if row else live.user_id, NUDGE)
 
 
 def _fail_held(ws: str, token_id: str) -> None:
     """The requests of ``ws`` the runs of the computer behind ``token_id``
-    hold fail, those runs stopped (``requests.fail_runs``): its channel was
+    hold fail, those runs stopped (``requests.fail_runs``), and so do the
+    chat turns they hold running (``chats.fail_held``): its channel was
     taken back (the token revoked, replaced or expired). Never raises."""
     from ..feedback import requests  # local: the requests' listeners reach this module
+    from ..local_agents import chats
 
     def words(agent: str) -> tuple[str, str]:
         label = _label(agent) if agent in AGENTS else "the agent"
@@ -347,6 +388,49 @@ def _fail_held(ws: str, token_id: str) -> None:
             requests.fail_runs(ws, conn, token_id, words=words)
     except Exception as e:  # noqa: BLE001 — the computer goes all the same
         log.warning(f"[computers] the Sends held by computer token {token_id} in workspace {ws}: {e}")
+    try:
+        chats.fail_held(ws, token_id, lambda agent: words(agent)[1])
+    except Exception as e:  # noqa: BLE001 — the computer goes all the same
+        log.warning(f"[computers] the chat turns held by computer token {token_id} in workspace {ws}: {e}")
+
+
+def _agent_vaults(vaults: list) -> dict[str, str]:
+    """``{folder id: agent}`` of the folder vaults of ``vaults`` kept with an agent."""
+    return {v["folder_id"]: v["agent"] for v in vaults
+            if isinstance(v, dict) and v.get("kind") == "folder" and v.get("agent") in AGENTS}
+
+
+def _turned_off(agent: str, agents) -> str:
+    label = _label(agent) if agent in AGENTS else "The agent"
+    return f"{label} is no longer this folder's agent." if agents else f"{label} was turned off for this folder."
+
+
+def _taken_back(agent: str, _agents) -> str:
+    label = _label(agent) if agent in AGENTS else "the agent"
+    return f"The computer's channel was taken back before {label} finished."
+
+
+def _end_orphaned(ws: str, user_id: str, folders: list[str], words) -> None:
+    """The account's chat turns queued in pages of ``folders`` whose agent
+    no computer of the account keeps the folder with now (as announced, a
+    valid token's) fail, ``words(agent, the agents it is kept with)`` their
+    error (``chats.fail_queued``): none would take them, and an agent
+    turned on there again later must not run them unasked. Never raises."""
+    from ..local_agents import chats
+
+    if not folders:
+        return
+    try:
+        with connect_users_db() as conn:
+            rows = _valid_rows(conn, "c.workspace_id = ? AND c.user_id = ?", (ws, user_id))
+        kept = {w: set() for w in folders}
+        for row in rows:
+            for w, agent in _agent_vaults(_loads(row[3])).items():
+                if w in kept:
+                    kept[w].add(agent)
+        chats.fail_queued(ws, user_id, kept, words)
+    except Exception as e:  # noqa: BLE001 — the announce and the computer's end go on all the same
+        log.warning(f"[computers] the chat turns queued in workspace {ws} for {user_id}: {e}")
 
 
 def drop(token_ids) -> None:
@@ -479,6 +563,29 @@ def computer_name(token_id: str) -> str:
     with connect_users_db() as conn:
         row = conn.execute("SELECT name FROM computers WHERE token_id = ?", (token_id,)).fetchone()
     return row[0] if row else ""
+
+
+def is_online(token_id: str) -> bool:
+    """Whether the computer behind ``token_id`` is online now."""
+    with _lock:
+        return online(_live.get(token_id))
+
+
+def said_of(token_id: str) -> tuple[list, str]:
+    """``(the assistants, seen_at)`` the computer behind ``token_id`` last
+    announced (``normalise``'s, each with its ``models``) and when it was
+    last seen; ``([], "")`` for none."""
+    with connect_users_db() as conn:
+        row = conn.execute("SELECT assistants, seen_at FROM computers WHERE token_id = ?", (token_id,)).fetchone()
+    return (_loads(row[0]), row[1] or "") if row else ([], "")
+
+
+def workspaces_of(user_id: str) -> list[str]:
+    """The workspaces a computer of the account ``user_id`` keeps a work
+    folder of with an agent, as announced."""
+    with connect_users_db() as conn:
+        return [r[0] for r in conn.execute("SELECT DISTINCT workspace_id FROM computers WHERE user_id = ? "
+                                           "AND vaults LIKE '%\"agent\"%' ORDER BY workspace_id", (user_id,))]
 
 
 def agent_folders(token_id: str, ws: str) -> dict[str, dict]:

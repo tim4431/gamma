@@ -263,6 +263,8 @@ test("a computer turn's row: the agent and the page, waiting for the person whil
   assert.equal(taskTitle(turn({ params: { ...params, title: "" } })), "Codex on this computer: Untitled");
   assert.equal(taskTitle(turn({ params: { ...params, title: undefined }, title: "Thesis" })), "Codex on this computer: Thesis",
     "an older server's row: its title");
+  assert.equal(taskTitle(turn({ params: { ...params, computer: "TIM-PC" } })), "Codex on TIM-PC: Thesis · draft",
+    "a turn the computer that keeps another server's work folder runs");
   assert.equal(taskInfo(turn({ progress: { phase: "asking" } })), "Waiting for you");
   assert.equal(taskInfo(turn()), "Working…");
   assert.equal(taskInfo(turn({ state: "queued" })), "Waiting for its turn…");

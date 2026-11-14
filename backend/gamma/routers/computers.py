@@ -27,7 +27,16 @@ withdraw is never overwritten. ``GET /threads/{id}/picture`` is a region's
 picture for a thread of a request it holds. Every route answers only for
 the token's own account's requests; none ever names a path of the
 computer but the relative ones a run's answer names. Each is a sync
-``def``: it reads the pages.db off the event loop."""
+``def``: it reads the pages.db off the event loop.
+
+The chat turns (step 4d): a page of such a work folder has its maker's
+chat with that agent here (gamma/routers/local_agents.py), its turns run
+on the computer. ``GET /chats`` lists the turns waiting and the runs asked
+to stop; a run takes one with ``/chats/{turn}/claim``, keyed by its id as a
+Send's is, and gets the message, the earlier ones and the page's path; it
+writes the agent's message with ``/chats/{turn}/write``, each write
+numbered (``seq``), so this server takes only the newest one of the run
+that holds the turn running (gamma/local_agents/chats.py)."""
 
 import asyncio
 import json
@@ -49,7 +58,7 @@ from ..integrations import Connection, resolve_token_scope
 router = APIRouter(prefix="/api", tags=["computers"])
 
 CHANNEL_ONLY = "Only a computer's token opens its channel."
-MAX_ANNOUNCE = 64 * 1024   # bytes of one announce
+MAX_ANNOUNCE = 128 * 1024  # bytes of one announce: the vaults and the models each assistant offers
 MAX_PROGRESS = 300         # characters of a run's progress
 MAX_PATH = 1024            # characters of a changed file's relative path
 MAX_CHANGED = 10_000       # changed files one answer names
@@ -69,13 +78,15 @@ def _computer(request: Request) -> tuple[str, str, str, str]:
 @router.post("/computers/announce")
 async def announce(request: Request):
     """``{computer: {id, name}, app, vaults: [{kind: "folder", folder_id,
-    paused} | {kind: "file", page_id, paused}], assistants: [{name, label,
-    found, ready, version, code}]}`` → ``{account: {id, username},
+    paused, agent?} | {kind: "file", page_id, paused}], assistants: [{name,
+    label, found, ready, version, code, models?: [{id, label, efforts,
+    effort, default}]}]}`` → ``{account: {id, username},
     computer: {id, name}, workspace: {id}, version, wait}``
     (``registry.announce``): what its polls name as ``v``, and the longest
-    hold. 400 for a malformed body, 413 past ``MAX_ANNOUNCE``."""
+    hold. 400 for a malformed body (more than ``registry.MAX_MODELS`` models
+    an assistant), 413 past ``MAX_ANNOUNCE``."""
     user_id, username, ws, token_id = _computer(request)
-    raw = await read_body(request, MAX_ANNOUNCE, "An announce is at most 64 KiB.")
+    raw = await read_body(request, MAX_ANNOUNCE, "An announce is at most 128 KiB.")
     try:
         body = json.loads(raw or b"null")
     except ValueError:
@@ -287,6 +298,14 @@ def _relative(path: str) -> str:
     return path
 
 
+def _is_relative(path: str) -> bool:
+    try:
+        _relative(path)
+    except HTTPException:
+        return False
+    return True
+
+
 def _sentence(text: str) -> str:
     text = " ".join((text or "").split())
     return text if not text or text.endswith((".", "!", "?")) else text + "."
@@ -362,3 +381,191 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     with connect_pages_db(ws) as conn, _refusals():
         requests.run_state(ws, conn, request_id, holder=token_id, run=run, state=state, detail=detail, by_name=label)
     return {"ok": True, "written": written}
+
+
+# --- the chat turns a computer runs (step 4d) -------------------------------------------------------
+
+MAX_STEP_TEXT = 200    # characters of a step's path, program or status
+MAX_ERROR = 2000       # characters of a turn's failure
+TURN_STATES = ("running", "done", "failed", "stopped")
+
+
+class ChatClaim(BaseModel):
+    run: str      # the id the computer minted for its run: a retry names it again
+    agent: str    # the folder's agent there (``codex``, ``claude``)
+
+
+class ChatWrite(BaseModel):
+    run: str
+    seq: int      # above the last write taken from that run, else nothing is written
+    fields: dict
+
+
+@contextmanager
+def _chat_refusals():
+    from ..local_agents import chats  # local: the agents' package is loaded where an agent is named
+
+    try:
+        yield
+    except chats.ChatError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail) from None
+
+
+@router.get("/computers/chats")
+def waiting_chats(request: Request):
+    """``{turns: [{id, conversation_id, page_id, folder_id, at}], stops:
+    [{id, run}]}``: the turns of the token's account's chat that wait in
+    pages of the work folders this computer keeps with an agent (not paused
+    there; each a turn of that agent's; oldest first, at most
+    ``chats.MAX_WAITING``; none while the account may not edit,
+    ``registry.agent_folders``), and the runs of it
+    whose turns were asked to stop (listed until the run writes its end)."""
+    from ..local_agents import chats
+
+    user_id, _username, ws, token_id = _computer(request)
+    folders = registry.agent_folders(token_id, ws)
+    taking = {w: folder["agent"] for w, folder in folders.items() if not folder["paused"]}
+    with connect_pages_db(ws) as conn:
+        turns = chats.waiting_turns(conn, user_id, taking) if taking else []
+        stops = chats.stops_of(conn, token_id)
+    return {"turns": turns, "stops": stops}
+
+
+@router.post("/computers/chats/{turn_id}/claim")
+def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
+    """``{run, agent}`` → ``{turn: {id, conversation_id, page_id, text,
+    selections, model, effort}, history, page: {path, title}, seen}``
+    (``chats.claim``): the turn taken for the run ``run`` (it and its
+    message ``running``) in one write, or held by that run already (a
+    retry: answered again). 400 for a run's id of another shape; 403 while
+    the account may not edit; 404 for no turn of the token's account's in a
+    page of a work folder this computer keeps with an agent; 409 when
+    another run holds it, it is no longer queued, the folder's agent there
+    is another, the turn is another agent's (left queued) or the folder is
+    paused there; 423 while a delete holds the workspace."""
+    from ..local_agents import chats
+
+    user_id, _username, ws, token_id = _computer(request)
+    run = _run_id(payload.run)
+    folders = registry.agent_folders(token_id, ws)
+    workspaces.refuse_writes(ws)
+    with _chat_refusals():
+        with connect_pages_db(ws) as conn:
+            row = chats.run_of(conn, turn_id)
+            page = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
+                                (row["page_id"],)).fetchone() if row else None
+        if row is None or row["user_id"] != user_id:
+            raise chats.ChatError(404, chats.NO_TURN)
+        if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):   # agent_folders then has none
+            raise chats.ChatError(403, f"Only an owner or an editor of this workspace can talk to "
+                                       f"{_label(payload.agent) if payload.agent in registry.AGENTS else 'an agent'}.")
+        if not page or page[0] not in folders:
+            raise chats.ChatError(404, chats.NO_TURN)
+        folder = folders[page[0]]
+        label = _label(folder["agent"])
+        if payload.agent != folder["agent"]:
+            raise chats.ChatError(409, f"This work folder's agent is {label}.")
+        if folder["paused"]:
+            raise chats.ChatError(409, f"The work folder is paused: {label} starts once it syncs again.")
+        return chats.claim(ws, turn_id, user_id=user_id, holder=token_id, run=run, agent=folder["agent"],
+                           computer=registry.computer_name(token_id))
+
+
+def _step(raw) -> dict:
+    """A step of the agent's message as a run writes it, kept as the
+    chat's messages keep one (runner._step): ``{id, kind, status}``, with
+    ``path`` (its path in the folder, else "outside") for a read or an
+    edit, ``program`` for a command. 400 for another shape."""
+    from ..local_agents import events
+
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="A step is an object.")
+    kind = raw.get("kind") if raw.get("kind") in events.KINDS else "other"
+    step = {"id": events.one_line(str(raw.get("id") or ""), 64), "kind": kind,
+            "status": events.one_line(str(raw.get("status") or ""), MAX_STEP_TEXT)}
+    if kind in ("read", "edit"):
+        path = str(raw.get("path") or "")
+        try:
+            step["path"] = events.one_line(_relative(path), MAX_STEP_TEXT) if path != "outside" else "outside"
+        except HTTPException:
+            step["path"] = "outside"
+    elif kind == "run":
+        step["program"] = events.one_line(str(raw.get("program") or ""), MAX_STEP_TEXT)
+    return step
+
+
+def _turn_fields(raw: dict) -> dict:
+    """The agent message's fields a run writes, as kept: ``text`` (made
+    inert again, ``prompt.inert``, at most ``chats.MAX_TEXT``), ``steps``,
+    ``changes`` (paths in the folder: one named otherwise, which the
+    computer's own file system may allow, left out), ``changed``, ``built``, ``error``,
+    ``fresh``, ``state`` (running or an end), ``model``, ``effort``;
+    ``ended_at`` is this server's clock (``chats.write_run``), any other
+    field left out. 400 for one of another shape."""
+    from ..local_agents import chats, prompt, store
+
+    out: dict = {}
+
+    def text(key: str, limit: int) -> None:
+        if key in raw:
+            if not isinstance(raw[key], str):
+                raise HTTPException(status_code=400, detail=f"{key} is text.")
+            out[key] = prompt.inert(raw[key].strip())[:limit]
+
+    def flag(key: str) -> None:
+        if key in raw:
+            if not isinstance(raw[key], bool):
+                raise HTTPException(status_code=400, detail=f"{key} is true or false.")
+            out[key] = raw[key]
+
+    def choice(key: str, limit: int) -> None:
+        if key in raw:
+            if raw[key] is not None and not isinstance(raw[key], str):
+                raise HTTPException(status_code=400, detail=f"{key} is text or null.")
+            out[key] = (raw[key] or "").strip()[:limit] or None
+
+    text("text", chats.MAX_TEXT)
+    text("error", MAX_ERROR)
+    flag("built")
+    flag("fresh")
+    choice("model", 100)
+    choice("effort", 40)
+    if "steps" in raw:
+        if not isinstance(raw["steps"], list):
+            raise HTTPException(status_code=400, detail="steps is a list.")
+        out["steps"] = [_step(step) for step in raw["steps"][:store.MAX_STEPS]]
+    if "changes" in raw:
+        if not isinstance(raw["changes"], list) or not all(isinstance(p, str) for p in raw["changes"]):
+            raise HTTPException(status_code=400, detail="changes is a list of paths.")
+        out["changes"] = [path for path in raw["changes"][:store.MAX_CHANGES] if _is_relative(path)]
+    if "changed" in raw:
+        if not isinstance(raw["changed"], int) or isinstance(raw["changed"], bool) or raw["changed"] < 0:
+            raise HTTPException(status_code=400, detail="changed is a count.")
+        out["changed"] = raw["changed"]
+    if "state" in raw:
+        if raw["state"] not in TURN_STATES:
+            raise HTTPException(status_code=400, detail="state is running, done, failed or stopped")
+        out["state"] = raw["state"]
+    return out
+
+
+@router.post("/computers/chats/{turn_id}/write")
+def write_chat(turn_id: str, payload: ChatWrite, request: Request):
+    """``{run, seq, fields}`` → ``{ok}``: the agent message's fields
+    (``_turn_fields``) written by the run ``run`` that holds the turn
+    running, when ``seq`` is above the last one written for that run (else
+    ``{ok, stale: true}``, nothing written: a retry or a late write); an
+    end (``state`` done, failed or stopped) ends the turn. 400 for a
+    field of another shape; 404 for no turn this computer holds or held; 409 when
+    another run holds it, it was stopped here or its conversation is gone
+    (the run stops)."""
+    from ..local_agents import chats
+
+    user_id, _username, ws, token_id = _computer(request)
+    run = _run_id(payload.run)
+    fields = _turn_fields(payload.fields)
+    workspaces.refuse_writes(ws)
+    with _chat_refusals():
+        written = chats.write_run(ws, turn_id, user_id=user_id, holder=token_id, run=run, seq=payload.seq,
+                                  fields=fields)
+    return {"ok": True} if written else {"ok": True, "stale": True}

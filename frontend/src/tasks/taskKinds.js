@@ -135,14 +135,17 @@ export const TASK_KINDS = {
   // or running on this computer (docs/dev/local_agents.md "The chat's
   // computer side"), read-only: a click opens the page's chat on that side,
   // and Stop is the turn's own. The server's title is "<agent> · <page
-  // title>".
+  // title>". A turn of a work folder another computer keeps (step 4d) names
+  // that computer (`params.computer`).
   "computer-turn": {
     icon: "terminal", open: "computer",
     title: ({ title, params }) => {
       const agent = params?.label || "";
       // the page's own title (params.title, "" for an untitled page); the row's title from an older server
       const page = typeof params?.title === "string" ? params.title : title;
-      return t("{agent} on this computer: {title}", { agent, title: named(page) });
+      const computer = typeof params?.computer === "string" ? params.computer : "";
+      return computer ? t("{agent} on {computer}: {title}", { agent, computer, title: named(page) })
+        : t("{agent} on this computer: {title}", { agent, title: named(page) });
     },
     stop: ({ workspace, params }) => `/local-agents/chat/turns/${encodeURIComponent(params?.turn || "")}/stop${
       workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
