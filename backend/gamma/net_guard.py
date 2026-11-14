@@ -234,9 +234,11 @@ def guarded_urlopen(req, timeout=30, policy=None):
     url = req.full_url if hasattr(req, "full_url") else req
     validate_public_url(url, policy)
     jar, agents = _session.get() or browser_profile()
+    # cert_pins=False: a certificate the desktop app's shell was told to trust
+    # is the person's trust in their own server, never in a link (gamma/tls_trust.py)
     opener = net_proxy.build_opener(
         _GuardedRedirectHandler(policy), HTTPCookieProcessor(jar), _BrowserAgent(agents),
-        policy=policy, direct=_public_connection, pin=_target,
+        policy=policy, direct=_public_connection, pin=_target, cert_pins=False,
     )
     try:
         return opener.open(req, timeout=timeout)

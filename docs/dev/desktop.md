@@ -62,8 +62,66 @@ hash for its annotations, a carried page's own PDF and its stored name in
 the export), read of the app's own local server only, which is always the
 shell's release; the change feed's `format` (`GET
 /api/sync/changes?limit=1`) of both servers before a carry, which refuses
-a target of an older one; and the `data-theme` attribute on `<html>` (the shell
-mirrors it into its own chrome).
+a target of an older one; the routes of `/api/remote-servers` on its own
+local servers ([https.md](https.md)): `POST /check` before each token it
+mints for another server, `POST /move` (with `dry_run` first) when a
+server's address changes, `PUT /pins` with every certificate the person
+trusted by its fingerprint; the status fields of the folder-links,
+computer-links and mirrors items (`error_kind`, `move_to`, `upgrade`,
+`cert`, `blocked`) and the folder-links and computer-links items' `plain`;
+and the `data-theme` attribute on `<html>` (the shell mirrors it into its
+own chrome).
+
+## Addresses and certificates
+
+The shell's half of [https.md](https.md), in full in
+[architecture.md "A remote's address and certificate"](../../desktop/docs/architecture.md#a-remotes-address-and-certificate):
+
+- **No redirects.** `serverApi` passes `redirect: 'error'` for every call
+  it makes (mints, revokes, `move`, `pins`, `check`).
+- **Exact identity.** A view is a given server only when its origin equals
+  the link's stored origin; every mint site and every `remote_url` it sends
+  takes the origin from `remoteOf`, which refuses an address the links moved
+  away from, and a load of such an address is rerouted to the current one
+  (`registry.currentOrigin`). **The rule for step 5b:** a page-originated ask
+  (a terminal, Show in folder, Ask on this computer) is honoured only from a
+  view whose origin equals the link's origin exactly and whose load was
+  https that verified or is pinned, or loopback.
+- **Moves.** `moveServer`: the host's dry run; for an `https://` address
+  its certificate as the window sees it (`trustMoveTarget`: a pin of the
+  same host name carried, one a pin may answer asked with its fingerprint
+  and pinned for the new origin, dropped again should nothing move); the
+  question naming the tokens (and the unencrypted line for `http://`,
+  `plain_ok`), the move, the replaced tokens revoked at the new address,
+  then the registry (`moved`; the old address's pin carried on the same
+  host name, dropped for another). A redirect to the same host name over
+  https moves by itself once a session (its links alone when that address
+  is listed already); a failed one offers *Use <https address>*. An http
+  address that sends the window to https on its host (HSTS, a redirect) is
+  followed nowhere, and its launcher card offers *Use <that address>*. Only the
+  host's links move: an offline copy of the old address that a local
+  server other than the host keeps stays there (no form changes a copy's
+  address; [https.md](https.md) "Moving a server's address").
+- **Plain http.** `beforeMint` asks the host's `check`: refused for a
+  public host on a new link, asked each time for an existing one, asked
+  once per origin of this network (`settings.plainAccepted`).
+- **Pins.** `setCertificateVerifyProc` answers with `certs.decide` (only
+  `ERR_CERT_AUTHORITY_INVALID`, `_COMMON_NAME_INVALID`, `_DATE_INVALID`,
+  never under the Gamma Cloud's domain, the leaf's SHA-256 pinned for any
+  port of the host; the network service keeps its answers for the session,
+  so `certificate-error` accepts a refusal from before the pin by the same
+  rule, and a forgotten pin's certificate stays accepted until the next
+  start); a `certificate-error` record with a nonce backs the
+  launcher's card, whose button pins only that record; `PUT
+  /api/remote-servers/pins` hands the list to each running local server and
+  each one that starts, and again when a pin is forgotten or its server
+  removed; *Trust it for syncing too* pins what the window
+  already accepted. The registry keeps `pins`, `moved`, a remote's
+  `httpsSeen` and `settings.plainAccepted`; `withScheme` follows the shared
+  host table (`lib/hostScope.js`).
+- **Text only.** What a server or a certificate says of itself (subject,
+  issuer, fingerprint, `last_error`, `move_to`) is set with `textContent`
+  or `title` in `launcher.html` and `bar.html`, capped where it is read.
 
 The shell sets no proxy. Its own traffic (the windows, the remote
 servers' health probes, the updater) is Chromium's and follows the OS

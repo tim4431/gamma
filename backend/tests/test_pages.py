@@ -61,9 +61,9 @@ def test_create_page_keeps_a_document_in_its_doc_only(guest):
     assert r.status_code == 400
     # a removal of an old key is no document (an older client's stale base)
     assert guest.post("/api/pages", json={"title": "x", "properties": {"doc_id": None}}).status_code == 200
-    doc = {"at": "store", "hash": "d" * 24, "name": "dir/a.pdf", "format": "pdf"}
+    doc = {"at": "store", "hash": "d" * 24, "name": " AC/DC.pdf ", "format": "pdf"}
     page = guest.post("/api/pages", json={"title": "New shape", "properties": {"doc": doc}}).json()
-    assert page["properties"]["doc"] == {"format": "pdf", "name": "a.pdf", "hash": "d" * 24, "ext": ".pdf",
+    assert page["properties"]["doc"] == {"format": "pdf", "name": "AC/DC.pdf", "hash": "d" * 24, "ext": ".pdf",
                                          "at": "store"}
     assert list(page["properties"]["doc"]) == ["format", "name", "hash", "ext", "at"]
 
@@ -79,19 +79,62 @@ def test_attach_stored_pdf_sets_attachment_and_automatic_title(guest):
     doc_id = _upload_pdf(guest, PDF_BYTES + b"a")
     page = guest.post("/api/pages", json={}).json()
     r = guest.post(f"/api/pages/{page['id']}/attachment",
-                   json={"doc_id": doc_id, "original_filename": "dir/My Paper.pdf"})
+                   json={"doc_id": doc_id, "original_filename": "I/O Paper.pdf"})
     assert r.status_code == 200, r.text
     body = r.json()
     props = body["properties"]
-    # the stored copy's address is derived from its hash, the name is a leaf, the size the stored file's
-    assert props["doc"] == {"format": "pdf", "name": "My Paper.pdf", "hash": doc_id, "ext": ".pdf", "at": "store",
+    # the stored copy's address is derived from its hash, the name is whole (its "/" no directory),
+    # the size the stored file's
+    assert props["doc"] == {"format": "pdf", "name": "I/O Paper.pdf", "hash": doc_id, "ext": ".pdf", "at": "store",
                             "size": len(PDF_BYTES + b"a")}
     assert not any(k in props for k in ("doc_id", "source_url", "original_filename"))
     # "Untitled" was automatic → the file name, marked for the metadata worker
-    assert body["content"] == "My Paper.pdf" and props["auto_title"] == "My Paper.pdf"
-    assert guest.get(f"/api/blocks/{page['id']}").json()["content"] == "My Paper.pdf"
+    assert body["content"] == "I/O Paper.pdf" and props["auto_title"] == "I/O Paper.pdf"
+    assert guest.get(f"/api/blocks/{page['id']}").json()["content"] == "I/O Paper.pdf"
     # the by-attachment lookup now finds this page
     assert guest.get(f"/api/blocks/by-doc/{doc_id}").json()["id"] == page["id"]
+
+
+def test_a_slash_in_an_uploaded_name_is_kept_and_a_reupload_mends_a_name_cut_at_it(guest):
+    """A "/" in a file's name is the name's, never a directory: the upload's
+    answer, the page's document and its title keep it whole. The same bytes
+    uploaded again land on their page (one page per stored file); one an
+    older upload left with the part after the "/" gets the whole name back,
+    and its title with it while that is still the cut name."""
+    data = PDF_BYTES + b"slash"
+    r = guest.post("/api/uploads", files={"file": ("AC/DC live.pdf", io.BytesIO(data), "application/pdf")})
+    assert r.status_code == 200, r.text
+    doc_id = r.json()["doc_id"]
+
+    def by_doc(name="AC/DC live.pdf"):
+        return guest.post(f"/api/blocks/by-doc/{doc_id}", json={"default_title": "", "original_filename": name}).json()
+
+    page = by_doc()
+    assert page["content"] == "AC/DC live.pdf" and page["properties"]["auto_title"] == "AC/DC live.pdf"
+    assert page["properties"]["doc"]["name"] == "AC/DC live.pdf"
+    other = guest.post("/api/upload-file", files={"file": ("In/Out.txt", io.BytesIO(b"words\n"), "text/plain")})
+    assert other.status_code == 200 and other.json()["name"] == "In/Out.txt"
+
+    def cut(title):
+        props = {**page["properties"], "doc": {**page["properties"]["doc"], "name": "DC live.pdf"},
+                 "auto_title": "DC live.pdf"}
+        with _pages_conn() as conn:
+            conn.execute("UPDATE unified_blocks SET content = ?, properties = ? WHERE id = ?",
+                         (title, json.dumps(props), page["id"]))
+            conn.commit()
+
+    cut("DC live.pdf")
+    again = by_doc()
+    assert again["id"] == page["id"] and again["content"] == "AC/DC live.pdf"
+    assert again["properties"]["doc"]["name"] == "AC/DC live.pdf"
+    assert again["properties"]["auto_title"] == "AC/DC live.pdf"
+    assert guest.get(f"/api/blocks/{page['id']}").json()["content"] == "AC/DC live.pdf"
+    # a title of the person's own stays; the name is mended alone
+    cut("Reading list")
+    again = by_doc()
+    assert again["content"] == "Reading list" and again["properties"]["doc"]["name"] == "AC/DC live.pdf"
+    # a name that is no cut of the new one stays as it is
+    assert by_doc("renamed.pdf")["properties"]["doc"]["name"] == "AC/DC live.pdf"
 
 
 def test_attach_keeps_a_user_title(guest):
@@ -662,7 +705,7 @@ def test_attach_a_stored_file_of_any_format(guest):
         stored = _stored(guest, name, data, ctype)
         assert stored.endswith(ext), (name, stored)
         page = guest.post("/api/pages", json={}).json()
-        r = _attach(guest, page["id"], {"file": stored, "original_filename": f"dir/{name}"})
+        r = _attach(guest, page["id"], {"file": stored, "original_filename": name})
         assert r.status_code == 200, (name, r.text)
         props = r.json()["properties"]
         assert props["doc"] == {"format": format, "name": name, "hash": stored[:-len(ext)], "ext": ext,
@@ -747,13 +790,13 @@ def test_by_file_makes_one_library_page_per_stored_file(guest):
     data = PNG + b"byfile"
     stored = _stored(guest, "fig.png", data, "image/png")
     folder = make_folder(guest, "Figures/2026")
-    r = guest.post("/api/pages/by-file", json={"file": stored, "name": "dir/fig.png", "folder": folder})
+    r = guest.post("/api/pages/by-file", json={"file": stored, "name": "In/Out fig.png", "folder": folder})
     assert r.status_code == 200, r.text
     body = r.json()
     page = body["page"]
-    assert body["created"] is True and page["parent_id"] == "root" and page["content"] == "fig.png"
-    assert page["properties"]["doc"] == {"format": "image", "name": "fig.png", "hash": stored[:-4], "ext": ".png",
-                                         "at": "store", "size": len(data)}
+    assert body["created"] is True and page["parent_id"] == "root" and page["content"] == "In/Out fig.png"
+    assert page["properties"]["doc"] == {"format": "image", "name": "In/Out fig.png", "hash": stored[:-4],
+                                         "ext": ".png", "at": "store", "size": len(data)}
     assert page["properties"]["folders"] == [folder] and "auto_title" not in page["properties"]
     again = guest.post("/api/pages/by-file", json={"file": stored, "name": "fig.png",
                                                    "folder": make_folder(guest, "Elsewhere")}).json()
@@ -766,7 +809,7 @@ def test_by_file_makes_one_library_page_per_stored_file(guest):
     assert other["created"] is True and other["page"]["id"] != page["id"]
     assert other["page"]["properties"]["doc"]["format"] == "text"
     r = guest.post("/api/pages/by-docs", json={"files": [stored, txt, "nope", f"{stored[:-4]}.gif"]})
-    assert r.json() == {"pages": {}, "files": {stored: {"id": page["id"], "title": "fig.png"},
+    assert r.json() == {"pages": {}, "files": {stored: {"id": page["id"], "title": "In/Out fig.png"},
                                               txt: {"id": other["page"]["id"], "title": "fig.txt"}}}
     md = _stored(guest, "notes.md", b"# hi\n", "text/markdown")
     r = guest.post("/api/pages/by-file", json={"file": md, "name": "notes.md"})
@@ -863,22 +906,26 @@ def _pages_conn(user=None):
     return connect_pages_db(workspace_of(user or guest_name()))
 
 
-def test_root_listing_is_a_pure_read(guest):
+def test_root_listing_is_a_pure_read():
     """A leaked upload path is repaired by the migration/restore normalizer
-    (gamma/normalize.py), never by a listing: reads write nothing."""
+    (gamma/normalize.py), never by a listing: reads write nothing. An
+    account of its own: the normalizer reads the whole workspace, where
+    other tests' names hold a "/" of their own."""
     from gamma.blocks_store import touch_page
     from gamma.normalize import normalize_pages_db
 
+    make_user("pure-read", "pw-pure-read")
+    guest = login("pure-read", "pw-pure-read")
     page = make_page(guest, "dir/leaked.pdf")
     leaked = {"format": "pdf", "name": "dir/leaked.pdf", "hash": "l" * 24, "ext": ".pdf", "at": "store"}
-    with _pages_conn() as conn:
+    with _pages_conn("pure-read") as conn:
         conn.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?",
                      (json.dumps({"doc": leaked, "auto_title": "dir/leaked.pdf"}), page["id"]))
         conn.commit()
     listed = {b["id"]: b for b in guest.get("/api/blocks/root/children").json()["children"]}
     assert listed[page["id"]]["content"] == "dir/leaked.pdf"
     assert listed[page["id"]]["properties"]["doc"] == leaked
-    with _pages_conn() as conn:
+    with _pages_conn("pure-read") as conn:
         assert normalize_pages_db(conn)["upload_path_titles"] == 1
         touch_page(conn, page["id"], "")  # as the restore that runs it touches what it puts back
         conn.commit()

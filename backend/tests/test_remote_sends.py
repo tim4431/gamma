@@ -316,6 +316,8 @@ def test_the_channel_queues_the_sends_that_server_gives_and_stops_the_withdrawn(
                         {"id": 5}], "withdrawn": [{"id": "r0", "run": "run-0"}]}
 
     class Server:
+        last_headers = {}   # what the channel reads a refusal's headers from (gamma_sync.Server.last_headers)
+
         def ask(self, method, path, obj=None):
             assert (method, path) == ("GET", "/api/computers/sends")
             return 200, json.dumps(answer).encode()
@@ -343,6 +345,8 @@ def test_the_channel_queues_the_sends_that_server_gives_and_stops_the_withdrawn(
 
     # a server from before the Sends: its channel opens the announce and the poll alone (403), asked again later
     class Older:
+        last_headers = {}
+
         def ask(self, method, path, obj=None):
             return 403, b'{"detail": "A computer token opens only the channel."}'
 

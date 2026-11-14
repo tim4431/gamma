@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { chromium, firefox, webkit } from "playwright";
+import { Agent, fetch as fetchThrough } from "undici";
 import headed from "../../../tools/headed.cjs";
 import { WEBKIT_TOUCH_NOTE, cancelledLoad, clickAfterCancelledTap, touchPoints } from "./webkit.mjs";
 import { chordLabel, chordParts } from "../../src/shared/lib/hotkeys.js";
@@ -79,10 +80,15 @@ const baseEnv = () => Object.fromEntries(Object.entries(process.env).filter(([ke
 
 // uvicorn on a port, gone with this process however that ends: stdin is a pipe
 // only this process holds, so the backend of a killed run reads its end and
-// exits rather than stay up for good, holding its port and its folder.
+// exits rather than stay up for good, holding its port and its folder. With a
+// certificate and its key after the port, over https. The app stays a string
+// import: uvicorn builds its TLS server context before it imports the app,
+// whose start injects the system's trust store into ssl (gamma/tls_trust.py),
+// and a server context made from that class refuses every handshake.
 const SERVE = "import os, sys, threading, uvicorn; "
   + "threading.Thread(target=lambda: (sys.stdin.read(), os._exit(0)), daemon=True).start(); "
-  + "uvicorn.run('app:app', host='127.0.0.1', port=int(sys.argv[1]))";
+  + "uvicorn.run('app:app', host='127.0.0.1', port=int(sys.argv[1]), "
+  + "**({'ssl_certfile': sys.argv[2], 'ssl_keyfile': sys.argv[3]} if len(sys.argv) > 3 else {}))";
 
 // A failed run's folder is kept to be read; a killed run could not remove its own.
 const KEPT_FOR = 3 * 24 * 60 * 60 * 1000;
@@ -98,12 +104,17 @@ export function sweepRuns() {
 // `env` adds to the backend's environment (a second Gamma started as another
 // kind of server, e.g. the publish scenario's share host). `static: false`
 // serves the API alone, without a copy of frontend/dist (a script that
-// drives no browser, tests/e2e/collabSoak.mjs, needs no build).
+// drives no browser, tests/e2e/collabSoak.mjs, needs no build). `tls: {cert,
+// key}` (PEM files) serves it over https with that certificate, which
+// `fetch` takes as its one authority (a NAS's self-signed certificate,
+// scenarios/https.mjs); a scenario may change it between two starts.
 export class Server {
-  constructor({ env = {}, static: serveApp = true } = {}) {
+  constructor({ env = {}, static: serveApp = true, tls = null } = {}) {
     servers.push(this);
     this.env = env;
     this.serveApp = serveApp;
+    this.tls = tls;
+    this.agent = null;
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-"));
     this.dataDir = path.join(this.dir, "data");
     this.logPath = path.join(this.dir, "server.log");
@@ -114,7 +125,15 @@ export class Server {
     this.port = 0;
     this.proc = null;
   }
-  get base() { return `http://127.0.0.1:${this.port}`; }
+  get base() { return `${this.tls ? "https" : "http"}://127.0.0.1:${this.port}`; }
+  // Node's fetch, or for a server over https undici's (never an npm Agent
+  // handed to Node's own fetch: two copies of undici), trusting its
+  // certificate alone.
+  fetch(url, init = {}) {
+    if (!this.tls) return fetch(url, init);
+    this.agent ||= new Agent({ connect: { ca: fs.readFileSync(this.tls.cert) } });
+    return fetchThrough(url, { ...init, dispatcher: this.agent });
+  }
   // manage.py on this server's data dir; its output. Not synchronous: a run
   // of them (a second each) would block the event loop past the backend's
   // 5 s keep-alive, and the next request would go down a socket it had closed.
@@ -129,7 +148,9 @@ export class Server {
     });
     return stdout;
   }
-  async start() {
+  // `port`: the one it had (a server started again at its address, with
+  // another certificate); a free one otherwise.
+  async start({ port = 0 } = {}) {
     if (this.serveApp && !fs.existsSync(path.join(DIST, "index.html"))) throw new Error("frontend/dist is missing: run `npm run build` first");
     if (path.isAbsolute(PYTHON) && !fs.existsSync(PYTHON)) throw new Error(`backend venv python not found at ${PYTHON}`);
     fs.mkdirSync(this.dataDir, { recursive: true });
@@ -138,15 +159,16 @@ export class Server {
     const dist = path.join(this.dir, "dist");
     if (this.serveApp) fs.cpSync(DIST, dist, { recursive: true });
     await this.manage("setup");
-    this.port = await freePort();
+    this.port = port || await freePort();
+    this.agent = null;
     const log = fs.openSync(this.logPath, "a");
-    this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port)], {
+    this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port), ...(this.tls ? [this.tls.cert, this.tls.key] : [])], {
       cwd: BACKEND, stdio: ["pipe", log, log],
       env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...(this.serveApp ? { GAMMA_STATIC_DIR: dist } : {}), TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {
-      try { const r = await fetch(`${this.base}/api/session`); if (r.status < 500) return; } catch {}
+      try { const r = await this.fetch(`${this.base}/api/session`); if (r.status < 500) return; } catch {}
       if (this.proc.exitCode != null) break;
       await sleep(200);
     }
@@ -193,13 +215,13 @@ export class Account {
     this.session = ""; this.ws = ""; this.defaultWs = "";
   }
   async login() {
-    const r = await fetch(`${this.server.base}/api/login`, {
+    const r = await this.server.fetch(`${this.server.base}/api/login`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: this.name, password: this.password }),
     });
     if (!r.ok) throw new Error(`login ${this.name}: ${r.status} ${await r.text()}`);
     this.session = r.headers.getSetCookie().find((c) => c.startsWith("session=")).split(";")[0].slice("session=".length);
-    const s = await (await fetch(`${this.server.base}/api/session`, { headers: { Cookie: `session=${this.session}` } })).json();
+    const s = await (await this.server.fetch(`${this.server.base}/api/session`, { headers: { Cookie: `session=${this.session}` } })).json();
     this.defaultWs = s.default_workspace;
     if (!this.ws) this.ws = this.defaultWs;
     return this;
@@ -207,11 +229,12 @@ export class Account {
   headers(extra = {}) {
     return { Cookie: `session=${this.session}`, "X-Gamma-Workspace": this.ws, ...extra };
   }
-  async api(pathname, { method = "GET", body, form, raw = false } = {}) {
-    const init = { method, headers: this.headers() };
+  // `headers` beside the account's own (the desktop shell's X-Gamma-Shell).
+  async api(pathname, { method = "GET", body, form, raw = false, headers = {} } = {}) {
+    const init = { method, headers: this.headers(headers) };
     if (form) init.body = form;
     else if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
-    const r = await fetch(`${this.server.base}${pathname}`, init);
+    const r = await this.server.fetch(`${this.server.base}${pathname}`, init);
     if (raw) return r;
     const text = await r.text();
     let data; try { data = JSON.parse(text); } catch { data = text; }

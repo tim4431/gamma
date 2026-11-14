@@ -431,8 +431,8 @@ def test_a_failed_round_is_reported_and_retried_later(owner, disk, monkeypatch):
 def over_http(monkeypatch):
     """The HTTP requests of the CLI and of a vault of another server routed
     through a TestClient of their own, so this server stands in for the
-    "other" one a link reads."""
-    http = fresh_client()
+    "other" one a link reads, which follows no redirect, as no client does."""
+    http = fresh_client(follow_redirects=False)
 
     def open_(method, path, headers, body=None):
         content = body if body is None or isinstance(body, bytes) else b"".join(body)
@@ -505,6 +505,62 @@ def test_a_vault_of_another_server_pulls_with_its_token(owner, disk, over_http, 
     owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
     assert not (far / "FL far paper.md").exists() and not (far / vault_disk.MARKER).exists()
     assert [p.name for p in (far / ".gamma" / "trash").rglob("*.md")] == ["FL far paper.md"]   # moved, never deleted
+
+
+def test_a_vault_of_another_server_says_what_is_in_its_way(owner, disk, over_http, monkeypatch):
+    """A redirect, a sign-in or proxy page: the status names it
+    (``error_kind`` and its fields, ``gamma_sync.status_fields``) beside its
+    words, from a round and from the change feed's question alike, and a
+    later failure of another kind leaves none of it; a proxy's page is never
+    the token's refusal."""
+    folder = make_folder(owner, "FL in the way")
+    make_page(owner, "FL in the way paper", {"folders": [folder]})
+    ws = workspace_of("fl_owner")
+    token = create_token(account_of("fl_owner"), ws, "fl-way", 1)
+    body = {"folder": folder, "path": str(disk / "In the way"), "remote_url": over_http, "token": token["token"],
+            "token_id": token["id"]}
+    link = _create(owner, **body)
+    real, way = gamma_sync.default_open, []
+    monkeypatch.setattr(gamma_sync, "default_open", lambda *a, **kw: (way[0] if way else real)(*a, **kw))
+
+    def redirected(*_a, **_kw):
+        raise gamma_sync.Redirected(over_http, "https://testserver/api/sync/changes?limit=1")
+
+    def signin_page(*_a, **_kw):
+        return 403, {"Content-Type": "text/html"}, io.BytesIO(b"<html>Sign in</html>")
+
+    way.append(redirected)
+    status = _sync(owner, link["id"])
+    assert status["last_error"].endswith("http://testserver now redirects to https://testserver")
+    assert (status["error_kind"], status["move_to"], status["upgrade"]) == ("redirected", "https://testserver", True)
+
+    # the change feed's question, which fails first between rounds, says the same
+    monkeypatch.setattr(folder_links, "REMOTE_POLL_S", 0)
+    folder_links._write_status(link["id"], {}, cursor="0")
+    assert folder_links._remote_moved(folder_links.get_link(link["id"])) is None
+    status = folder_links.get_link(link["id"])["status"]
+    assert (status["error_kind"], status["move_to"]) == ("redirected", "https://testserver")
+    way[0] = signin_page
+    assert folder_links._remote_moved(folder_links.get_link(link["id"])) is None
+    status = folder_links.get_link(link["id"])["status"]
+    assert (status["error_kind"], status["blocked"]) == ("blocked", "proxy") and "move_to" not in status
+    assert "refused the link's token" not in status["last_error"]
+
+    # a round that runs clean has none of it
+    way.clear()
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and not set(gamma_sync.STATUS_KEYS) & set(status)
+
+    # a sign-in page in the way of a new vault: refused with what was in the way
+    way.append(signin_page)
+    r = owner.post("/api/folder-links", json={**body, "path": str(disk / "In the way 2")})
+    assert r.status_code == 502 and (r.json()["error_kind"], r.json()["blocked"]) == ("blocked", "proxy"), r.text
+    way[0] = redirected
+    r = owner.post("/api/folder-links", json={**body, "path": str(disk / "In the way 2")})
+    assert r.status_code == 409 and r.json()["move_to"] == "https://testserver", r.text
+    assert r.json()["detail"].endswith(": open https://testserver in Gamma and make the vault from there.")
+    way.clear()
+    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
 
 
 def test_who_may_use_it(owner, guest, disk):

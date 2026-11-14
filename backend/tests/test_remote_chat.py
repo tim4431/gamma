@@ -222,6 +222,8 @@ class _Server:
     ``answers`` (``(status, body)``; a None status cannot reach it), each
     one sent kept in ``sent``."""
 
+    last_headers = {}   # what the channel reads a refusal's headers from (gamma_sync.Server.last_headers)
+
     def __init__(self, answers=None):
         self.answers, self.sent = list(answers or []), []
 

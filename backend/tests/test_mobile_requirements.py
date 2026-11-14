@@ -17,10 +17,10 @@ REPO = Path(__file__).resolve().parents[2]
 SERVER = REPO / "backend" / "requirements.txt"
 MOBILE = REPO / "backend" / "requirements-mobile.txt"
 
-# Package → why the apps go without it, for one with no mobile wheel; the
-# server in the apps must then run without it. Empty: every package the
-# server names has iOS and Android builds.
-EXCLUDED = {}
+# Package → why the apps go without it, for one with no mobile wheel or no
+# use there; the server in the apps must then run without it.
+EXCLUDED = {"truststore": "the apps verify HTTPS with certifi's bundle; truststore does not run on iOS or Android "
+                          "(tls_trust.use_system_store skips it there)"}
 
 
 def _names(path):

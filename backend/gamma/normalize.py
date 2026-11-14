@@ -56,7 +56,7 @@ from .documents.model import stored_name, upload_url
 from .highlights import from_scaled
 from .note_markup import obsidian_image_sizes
 from .picture import is_picture
-from .storage import display_filename
+from .storage import display_filename, path_leaf
 from .text_box import is_text_box
 
 # The automatic title prefix Gamma used to give uploaded PDFs. Migrated pages
@@ -644,7 +644,7 @@ def normalize_pages_db(conn: sqlite3.Connection) -> dict:
         named = doc if doc is not None else props
         key = "name" if doc is not None else "original_filename"
         original = str(named.get(key) or "").replace("\\", "/").strip()
-        leaf = display_filename(original)
+        leaf = display_filename(path_leaf(original))
         if not leaf or leaf == original:
             continue
         next_content = content
@@ -652,7 +652,7 @@ def normalize_pages_db(conn: sqlite3.Connection) -> dict:
             old_stem = re.sub(r"\.(?:md|markdown)$", "", original, flags=re.I)
             if content == old_stem:
                 next_content = re.sub(r"\.(?:md|markdown)$", "", leaf, flags=re.I)
-        elif props.get("auto_title") == content and display_filename(content) == leaf:
+        elif props.get("auto_title") == content and display_filename(path_leaf(content)) == leaf:
             next_content = leaf
             props["auto_title"] = leaf
         named[key] = leaf

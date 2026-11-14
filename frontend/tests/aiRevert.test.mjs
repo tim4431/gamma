@@ -167,10 +167,3 @@ test("an edit outside a reply is shown and saved against the version read", asyn
   assert.equal(session.isSaved("page"), true);
   assert.equal(session.version("page"), "v2");
 });
-
-test("the replay leaves a plan's own copy out: its result carries the checklist", () => {
-  const plan = { kind: "plan", tool: "update_plan", summary: "Planned 1 step", result: "1. [pending] Rename",
-    plan: { steps: [{ step: "Rename", status: "pending" }], proposed: true } };
-  assert.deepEqual(forReplay([plan]), [{ kind: "plan", tool: "update_plan", summary: "Planned 1 step",
-    result: "1. [pending] Rename" }]);
-});

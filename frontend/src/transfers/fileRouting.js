@@ -1,8 +1,9 @@
-// What a file becomes on its way into the library, and what a dropped
-// directory leaves out: the pure rules of transfers/documentUploads.js, a
-// module of their own so the node test (tests/documentUploads.test.mjs)
-// imports them without the browser (documentUploads.js reaches the server
-// through shared/lib/utils.js, which wraps window.fetch as it loads).
+// What a file becomes on its way into the library, the name it goes by, and
+// what a dropped directory leaves out: the pure rules of
+// transfers/documentUploads.js, a module of their own so the node test
+// (tests/documentUploads.test.mjs) imports them without the browser
+// (documentUploads.js reaches the server through shared/lib/utils.js, which
+// wraps window.fetch as it loads).
 import { formatOf, storedExtension } from "../documents/formats.js";
 
 // A directory drop past this many files asks first (App's confirm): the
@@ -25,6 +26,20 @@ export function routeFile(file) {
   if (isPdfFile(file)) return "pdf";
   if (isMarkdown(file)) return "markdown";
   return storedExtension(file?.name || "") === null ? "" : "file";
+}
+
+// The name an upload gives the server (titles, a document's name): the
+// file's own, whole, since a "/" in it is part of the name ("AC/DC.pdf"),
+// never a directory (storage.display_filename keeps it too). Only a File
+// of the directory picker that carries its path in its name as well as in
+// `webkitRelativePath` has those directories dropped: they are its folders,
+// filed apart (App's folderFromRelPath). `fallback` for a file with none.
+export function uploadName(file, fallback = "") {
+  const name = String(file?.name || "").trim();
+  const path = String(file?.webkitRelativePath || "");
+  const dirs = path.slice(0, path.lastIndexOf("/") + 1);
+  const own = !name ? path.slice(dirs.length) : dirs && name.startsWith(dirs) ? name.slice(dirs.length) : name;
+  return own.trim() || fallback;
 }
 
 // The path of an upload item as the drop or the picker gave it: a {file,

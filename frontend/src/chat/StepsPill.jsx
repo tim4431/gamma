@@ -5,7 +5,7 @@
 // through every step: while `live` a spinner leads it and its words
 // shimmer, while the turn is `waiting` for the person (an approval, a paper
 // from their browser, an ask) a shield stands there and nothing spins, and
-// once done a check, with `counts` ({failed, declined, held}) of how its
+// once done a check, with `counts` ({failed, declined}) of how its
 // steps went. `steps`: how many it unfolds to; until one lands it opens
 // nothing and takes no focus, and a turn that ends without one folds the
 // pill away (`chatStepsFold`). `title` what opening it shows; `meter`
@@ -21,7 +21,7 @@ export default function StepsPill({
   label, live = false, waiting = false, still = false, steps = 0, counts = {}, title = "", meter = null, under = null, open, onToggle,
   children,
 }) {
-  const { failed = 0, declined = 0, held = 0 } = counts;
+  const { failed = 0, declined = 0 } = counts;
   const done = !live && steps > 0;
   return (
     <Collapse open={live || steps > 0} className="chatStepsFold" still={still}>
@@ -39,7 +39,6 @@ export default function StepsPill({
           {live && meter ? <span aria-hidden="true">{meter}</span> : null}
           {failed && done ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
           {declined && done ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
-          {held && done ? <span className="chatStepsDeclined">{t("{n} kept for the plan", { n: held })}</span> : null}
           {steps ? <Chevron open={open} dir="down" size={14} /> : null}
         </button>
         {under}

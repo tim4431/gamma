@@ -72,6 +72,7 @@ from .routers import (
     zotero_sync as zotero_sync_router)
 from . import folder_links
 from .routers import computer_links as computer_links_api, computers as computers_api
+from .routers import remote_servers as remote_servers_api
 from .routers import folder_links as folder_links_api
 from .routers import local_agents as local_agents_api
 from .seed import ensure_admin_seed
@@ -508,6 +509,7 @@ def create_app() -> FastAPI:
     app.include_router(folder_links_api.router)
     app.include_router(computers_api.router)        # a computer's channel to this server, every server
     app.include_router(computer_links_api.router)   # this computer's channels to others, the desktop app's
+    app.include_router(remote_servers_api.router)   # the other servers' addresses and certificates, the desktop app's
     app.include_router(publish.router)
     app.include_router(zotero_router.router)
     app.include_router(zotero_sync_router.router)  # importing it registers the Zotero link's clock

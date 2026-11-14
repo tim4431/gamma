@@ -141,6 +141,13 @@ such a folder's Sends are its next steps.
   quiet push round makes no listing request; a 403 `locked` is that file's
   problem (`OpError`), never re-planned. Every remote path reads the link
   with its token.
+- **In its way.** A redirect, a sign-in or proxy page, a certificate not
+  trusted here: the vault's status says which beside its words
+  (`error_kind` and its fields, [synced_vaults.md](synced_vaults.md) "A
+  vault on another server"), and making one there is refused the same way.
+  When that server moves (another address, http:// to https://), the
+  desktop app moves the vault with it (`POST /api/remote-servers/move`,
+  [https.md](https.md)): the link, its state and its mark stay as they are.
 - **Locked switches.** Push stays everything and pull on (`REMOTE_LOWERED`:
   "A work folder of another server pushes everything and pulls: remove the
   vault to stop it."); raising a remote kept folder to everything is still

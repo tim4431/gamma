@@ -196,7 +196,7 @@ export function ProxySettings({ setStatus }) {
     </Section>
     <Section title={t("Test")}>
       <Row icon={ActivityIcon} label={t("Test the connection")} hint={t("Tries the settings above before you save them")}
-        title={t("Reaches OpenAI, Anthropic, Zotero and arXiv, and Gamma Cloud once it is set up, with these settings, and the address typed here. Any answer from a site, an error page too, means the way there works.")}>
+        title={t("Reaches OpenAI, ChatGPT, Anthropic, Zotero and arXiv, and Gamma Cloud once it is set up, with these settings, and the address typed here. Any answer from a site, an error page too, means the way there works, unless the site refuses this network (a region it doesn't serve, a Cloudflare block).")}>
         <span className="setRowControls">
           <input className="aiKeyInput" type="url" aria-label={t("Address to test")} value={address} spellCheck={false}
             autoComplete="off" name="gamma-proxy-test-url" disabled={!saved} placeholder="https://api.deepseek.com"

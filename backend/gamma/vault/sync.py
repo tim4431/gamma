@@ -598,8 +598,8 @@ class Round:
             self.status.update(stopped=str(e), last_error=str(e))
         except disk.Offline as e:
             self.status.update(offline=True, last_error=str(e))
-        except Refused as e:
-            self.status["last_error"] = str(e)
+        except Refused as e:   # with what was in the way of another server (a redirect, its certificate)
+            self.status.update(last_error=str(e), **gamma_sync.status_fields(e))
         finally:
             self.remote.tell()
         return self._done(started)

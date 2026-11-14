@@ -123,9 +123,17 @@ the frontend changes: editing a mirror is editing a workspace.
   also have arrived whole: a body shorter than the `Content-Length` the
   remote announced (the link dropped mid-file, where a streaming read just
   stops) is an error of the page, never bytes to store (`Remote.get_bytes`).
-  A redirect is followed, but one to another origin goes without the
+  A file's download alone follows a redirect (a file may be served from
+  another origin), and one to another origin goes without the
   write token, the workspace header or a cookie
-  (`sync_engine._OffOriginRedirect`): they are for the remote alone. What
+  (`sync_engine._OffOriginRedirect`): they are for the remote alone. Every
+  other request to the remote, its JSON and its uploads (`post_file`, the
+  parts), follows none (`gamma_sync.opener`, [https.md](https.md)): a
+  redirect is a `RemoteError` (status 0) with gamma_sync's words, raised
+  from `gamma_sync.Redirected` or `Blocked` (a redirect to another path:
+  a sign-in page), and a TLS failure from `CertificateRefused` or
+  `NotHttps`, so the token never reaches the address it points at and a
+  write never turns into a read. What
   is stored goes through the store, written whole
   (`storage.put_upload`, [user_db.md](user_db.md) "Stored files"), and so
   do the presence checks, the missing-file sweep and a push's reads.
@@ -772,7 +780,12 @@ The status the Settings row and the header pill show is the mirror's
 `status` JSON: `last_sync`, `last_error`, `pages_pulled`, `pages_pushed`,
 `pages_deleted`, `files_pulled`, `files_pushed`, `blocks_added` /
 `blocks_removed` / `blocks_changed` (the round's git-style totals), `mode`, `remote_role`,
-`remote_user`, `retry`, `interrupted`, and while a round runs `running`
+`remote_user`, `retry`, `interrupted`, what was in the way of the remote
+when the round failed on it (`error_kind`, `move_to`, `upgrade`, `cert`,
+`blocked`: `gamma_sync.status_fields` of the error, the keys a synced
+vault's status has, [synced_vaults.md](synced_vaults.md) "A vault on
+another server"; a round that ends without one drops them, and so does a
+re-link), and while a round runs `running`
 with `progress` (`done`, `total`, `page` — the title being worked —,
 `first` for the first fill, `at`, and `file` `{name, done, total, dir}`
 while a file travels, updated a few times a second from the streaming
@@ -1048,6 +1061,26 @@ that manages tokens or accounts (`auth.py`, `require_ws`). The token is
 stored Fernet-encrypted in the copy's `users.db` with the data directory's
 key (`publisher_sessions.cipher`). Pushed batches land in the remote's op
 log under that account with client `sync`.
+
+**Plain http.** A new copy over http:// to a host on the internet is
+refused before any request (`sync_engine._check_remote`,
+`remote_servers.refuse_plain_far`: "… Gamma sends its tokens there only
+over https://."); one on the local network is made. Reattaching at the
+address the copy has keeps working, whatever that address is: a copy made
+before this rule keeps its upkeep.
+
+**The remote's address moves** (`POST /api/remote-servers/move`, the
+desktop app's own server, the shell's word; [https.md](https.md)): the
+account's copies of that server take the new address in the same
+transaction as its synced vaults and channels, once the new address
+answered `/api/health` with no credential and each token there
+(`whoami` naming the copy's `remote_ws`). The bases, cursors and
+`remote_ws` stay, as a re-link to the same remote workspace keeps them,
+and the status drops what the old address's failure left. Only the copies
+of the server that moves them: the shell runs the move on its host alone,
+so a copy another local server keeps stays at the old address, its status
+saying why its rounds fail ([https.md](https.md) "Moving a server's
+address").
 
 ## Making one
 

@@ -14,7 +14,7 @@ from contextlib import contextmanager
 
 from fastapi import HTTPException
 
-from . import ai_protocols, ai_usage
+from . import ai_protocols, ai_usage, net_proxy
 from .ai_protocols.base import NotAnAIStream
 from .logbuf import log
 
@@ -32,11 +32,14 @@ def wire_protocol(runtime, entry, tools=None) -> str:
 
 
 class UpstreamError(RuntimeError):
-    """Provider HTTP error with the status attached for fallback decisions."""
+    """Provider HTTP error with the status attached for fallback decisions,
+    and ``refused``: why the answer refuses this server's network
+    (net_proxy.refused_network), "" when it doesn't."""
 
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, refused: str = ""):
         super().__init__(message)
         self.status = status
+        self.refused = refused
 
 
 class CallRefused(HTTPException):
@@ -187,11 +190,13 @@ def failure_kind(error: Exception) -> str:
     the action that fixes it instead of the provider's raw text:
     ``not_configured`` (no usable connection), ``allowance`` (the server's
     shared allowance is used up), ``auth`` (401/403: key or sign-in
-    rejected), ``rate`` (429, quota), ``overloaded`` (5xx, 529),
-    ``unreachable`` (no connection, a timeout, a stream cut off),
-    ``bad_endpoint`` (an answer that isn't an AI API's), ``too_long`` (the
-    prompt exceeds the model's context) or ``other``. Too many calls of the
-    account's own open at once (TooManyCalls) is ``rate`` too."""
+    rejected), ``blocked`` (a 403 that refuses this server's network, not
+    the credential: net_proxy.refused_network), ``rate`` (429, quota),
+    ``overloaded`` (5xx, 529), ``unreachable`` (no connection, a timeout,
+    a stream cut off), ``bad_endpoint`` (an answer that isn't an AI API's),
+    ``too_long`` (the prompt exceeds the model's context) or ``other``. Too
+    many calls of the account's own open at once (TooManyCalls) is ``rate``
+    too."""
     if isinstance(error, AllowanceExhausted):
         return "allowance"
     if isinstance(error, TooManyCalls):
@@ -202,6 +207,9 @@ def failure_kind(error: Exception) -> str:
         error.code if isinstance(error, urllib.error.HTTPError) else 0)
     text = str(error)
     if status:
+        refused = error.refused if isinstance(error, UpstreamError) else net_proxy.refused_network(error)
+        if refused:
+            return "blocked"
         if status in (401, 403):
             return "auth"
         if status == 413 or (status == 400 and _TOO_LONG.search(text)):
@@ -264,11 +272,7 @@ def _summarize_error_body(body: str) -> str:
 
 def upstream_detail(error: urllib.error.HTTPError, cap: int = 500) -> str:
     """Return an actionable provider failure including its response body."""
-    body = ""
-    try:
-        body = _summarize_error_body(error.read().decode("utf-8", "replace")[:8192])
-    except Exception:
-        pass
+    body = _summarize_error_body(net_proxy.error_body(error).decode("utf-8", "replace"))
     return f"upstream {error.code}: {body[:cap] or error.reason}"
 
 
@@ -378,7 +382,7 @@ def open_ai(
                 # A sign-in due for renewal whose identity provider couldn't
                 # be reached (ai_settings.ai_runtime): unreachable, not dead.
                 raise urllib.error.URLError(f"couldn't reach the sign-in service to renew the token ({detail})")
-            raise UpstreamError(error.code, detail)
+            raise UpstreamError(error.code, detail, net_proxy.refused_network(error))
         raise
     return _OpenCall(response, user_id)
 

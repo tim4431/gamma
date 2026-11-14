@@ -458,7 +458,12 @@ the research note; the chat's computer side stays local (4d).
   chat is for a work folder of this computer's server."). The shell's
   confirm says what a server someone else runs can then do, and that a
   server reached over plain `http://` outside this computer is reached
-  without encryption ([desktop architecture](../../desktop/docs/architecture.md)).
+  without encryption: the link's `plain`, as the host lists it, says so
+  ([desktop architecture](../../desktop/docs/architecture.md)). The first
+  token minted for such an origin is asked about already (the shell's
+  `beforeMint`, once per origin of the local network, each time for a
+  public host an existing link keeps; a new link to a public host over
+  plain http is refused, [https.md](https.md#plain-http)).
 - **The binding.** The channel's announce names each folder vault's agent
   (`agent`: `codex`, `claude` or null); the NAS keeps it with the
   computer's row, so it knows the folder has an agent while the computer

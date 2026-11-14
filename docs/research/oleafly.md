@@ -152,15 +152,19 @@ answers as a plain chat and says so. Left out: making such models
 unselectable, since Gamma degrades and says why, as it does for pictures.
 Built: [dev/ai.md](../dev/ai.md#models-that-cant-call-tools).
 
-**Plan mode.** Oleafly's agent can plan read-only before it changes
-anything. Gamma's agent began changing things within the reply. With Plan
-on, changing calls are held at dispatch, the model proposes a checklist with
-`update_plan`, and Approve plan runs it under the chat's usual approvals and
-revert. Changing calls are refused at dispatch rather than filtered from the
-offered tools, so the tool specs and the system prompt stay byte-identical
-and the prompt cache holds. Left out: Oleafly's PLAN/STEP/REVIEW pill and
-its changed-files panel, which Gamma's steps pill and changes list already
-cover. Built: [dev/ai.md](../dev/ai.md#planning-first-plan-mode).
+**Plan mode, built and then removed.** Oleafly's agent can plan read-only
+before it changes anything. Gamma built the same on 7 November: with Plan
+on, changing calls were held at dispatch, the model proposed a checklist
+with `update_plan`, and Approve plan ran it under the chat's usual approvals.
+It was removed on 13 November. Ask already holds each change on a card that
+shows its exact diff, and every change can be reverted, so a plan step only
+described an edit that the card shows whole. Splitting a change over two
+turns also lost what belongs to one message. The note selection and the
+attached passages went with the planning message, and an `edit_block`
+replace needs a read in its own turn, so revising selected text failed after
+Approve or rewrote the whole block. The text the model worked out while
+planning was thrown away and written again. Asking in a plain message to
+describe the change first does the same job.
 
 **A page without a WebSocket.** Oleafly falls back to a held HTTP request
 when sockets are blocked. Gamma already posted every edit over HTTP and had
@@ -205,7 +209,6 @@ left out, since every function on the keystroke path bails out. Details:
   first summaries, before the budgets could block.
 - Qualifiers for highlights, ink, comments and shares, which the listing
   does not carry yet.
-- Real-provider rates of refused calls and prose-only plans in plan mode.
 - A WebKit run of the zoom change on an iPad.
 - The highlight review's quote length, which has the same UTF-16 against
   code-point mismatch.

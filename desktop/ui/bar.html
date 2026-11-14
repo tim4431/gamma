@@ -415,6 +415,7 @@
   // "choose" in place of its pause: its tracking dialog, in Gamma.
   const TONE = { ok: 'on', error: 'off', conflicts: 'warn', held: 'warn', pending: 'warn', waiting: 'warn', queued: 'busy', busy: 'busy' };
   const KEPT_ICON = { clone: 'local', zotero: 'library' };
+  const FIX_ICON = { 'open-server': 'open', 'use-https': 'sync', 'trust-sync': 'check' };
   function keptRow(i) {
     const b = document.createElement('button');
     b.className = 'item keepItem';
@@ -451,6 +452,20 @@
       `<span class="acts">${acts.map(([act, icon, title, off]) =>
         `<span class="keepAct" role="button" tabindex="${off ? -1 : 0}" data-act="${act}" title="${esc(title)}" aria-label="${esc(title)}"` +
         `${off ? ' aria-disabled="true"' : ''}>${icon}</span>`).join('')}</span>`;
+    // What a row of another server that failed on the way there offers
+    // (lib/keeping.js failureOf): its words may name an address, so they are
+    // the button's title and label, never markup.
+    if (i.fix) {
+      const fix = document.createElement('span');
+      fix.className = 'keepAct';
+      fix.setAttribute('role', 'button');
+      fix.tabIndex = 0;
+      fix.dataset.act = i.fix.action;
+      fix.title = i.fix.button;
+      fix.setAttribute('aria-label', i.fix.button);
+      fix.innerHTML = ICONS[FIX_ICON[i.fix.action]] || ICONS.alert;
+      b.querySelector('.acts').prepend(fix);
+    }
     b.querySelector('.label').textContent = i.name;
     b.querySelector('.state').textContent = i.kind === 'vault' ? i.text : `${i.text} · ${i.where}`;
     b.onclick = () => (i.kind === 'vault' && i.seen ? openVault(i) : runKept(i, 'open'));
@@ -847,6 +862,8 @@
     if (bar.children.length) panel.appendChild(bar);
     const rows = document.createDocumentFragment();
     const acts = [ // [action, icon, label, shown, disabled, danger]
+      // what a vault of another server that failed on the way there offers (keeping.js failureOf)
+      i.fix ? [i.fix.action, ICONS[FIX_ICON[i.fix.action]] || ICONS.alert, i.fix.button, !i.seen] : null,
       ['choose', ICONS.open, 'Choose files…', !shut && i.work],
       ['go-on', ICONS.play, 'Go on…', rounds && Boolean(i.held)],
       ['locate', ICONS.locate, folder ? 'Locate…' : 'Locate the file…', !i.seen && (!folder || Boolean(i.stopped) || i.offline)],

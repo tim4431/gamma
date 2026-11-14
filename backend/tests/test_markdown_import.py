@@ -2,7 +2,7 @@
 
 import io
 import json
-from conftest import make_folder, workspace_of, guest_name
+from conftest import login, make_folder, make_user, workspace_of
 import sqlite3
 import time
 import zipfile
@@ -66,37 +66,42 @@ def test_markdown_upload_uses_filename_without_extension(guest):
     assert [child["content"] for child in page["children"]] == ["One paragraph"]
 
 
-def test_markdown_upload_strips_directory_from_multipart_filename(guest):
+def test_markdown_upload_keeps_a_slash_in_its_name(guest):
+    """A "/" in the multipart filename is the name's, never a directory:
+    a directory upload's folders come apart, and the web app sends each
+    file's own name (fileRouting.js uploadName drops a picker's leaked
+    path)."""
+    folder = make_folder(guest, "spectrum_analyzer_data")
     r = guest.post(
         "/api/import/markdown",
-        files={"file": (
-            "spectrum_analyzer_data/CODE_INDEX.md",
-            b"Index body",
-            "text/markdown",
-        )},
-        data={"folder": make_folder(guest, "spectrum_analyzer_data")},
+        files={"file": ("I/O notes.md", b"Index body", "text/markdown")},
+        data={"folder": folder},
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["title"] == "CODE_INDEX"
-    assert body["original_filename"] == "CODE_INDEX.md"
+    assert body["title"] == "I/O notes"
+    assert body["original_filename"] == "I/O notes.md"
     page = guest.get(f"/api/blocks/{body['block_id']}").json()
-    assert page["content"] == "CODE_INDEX"
-    assert page["properties"]["folders"] == [make_folder(guest, "spectrum_analyzer_data")]
+    assert page["content"] == "I/O notes"
+    assert page["properties"]["folders"] == [folder]
 
 
-def test_normalizer_repairs_old_automatic_path_title(guest):
+def test_normalizer_repairs_old_automatic_path_title():
     """An old markdown import whose title kept the leaked directory path is
     repaired by the content normalizer (a migration step / backup restore,
-    gamma/normalize.py) — a library listing is a pure read."""
+    gamma/normalize.py) — a library listing is a pure read. An account of
+    its own: the normalizer reads the whole workspace, where other tests'
+    names hold a "/" of their own."""
     from gamma.blocks_store import touch_page
     from gamma.normalize import normalize_pages_db
 
+    make_user("md-normalize", "pw-md-normalize")
+    guest = login("md-normalize", "pw-md-normalize")
     created = guest.post(
         "/api/import/markdown",
         files={"file": ("CODE_INDEX.md", b"Index body", "text/markdown")},
     ).json()
-    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+    with sqlite3.connect(ws_db_path(workspace_of("md-normalize"), "pages.db")) as conn:
         register_functions(conn)  # the notes index's triggers call textnorm
         row = conn.execute(
             "SELECT properties FROM unified_blocks WHERE id=?", (created["block_id"],)
@@ -113,7 +118,7 @@ def test_normalizer_repairs_old_automatic_path_title(guest):
     listed = next(page for page in children if page["id"] == created["block_id"])
     assert listed["content"] == "spectrum_analyzer_data/CODE_INDEX"
 
-    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+    with sqlite3.connect(ws_db_path(workspace_of("md-normalize"), "pages.db")) as conn:
         register_functions(conn)  # the notes index's triggers call textnorm
         assert normalize_pages_db(conn)["upload_path_titles"] == 1
         touch_page(conn, created["block_id"], "")  # as the restore that runs it touches what it puts back
@@ -143,7 +148,7 @@ def test_markdown_blocks_endpoint_parses_without_storing(guest):
     assert [b["content"] for b in items] == ["- pasted-first", "- pasted-second"]
     assert items[0]["children"][0]["content"] == "- pasted-nested"
 
-    with sqlite3.connect(ws_db_path(workspace_of(guest_name()), "pages.db")) as conn:
+    with sqlite3.connect(ws_db_path(workspace_of("md-normalize"), "pages.db")) as conn:
         n = conn.execute("SELECT COUNT(*) FROM unified_blocks "
                          "WHERE content LIKE 'pasted-%'").fetchone()[0]
     assert n == 0
