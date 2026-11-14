@@ -16,6 +16,7 @@ import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
 import { CheckIcon, FlagIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
 import ListMotion from "../shared/ui/ListMotion";
 import { IconSwap } from "../shared/ui/MotionWidgets";
+import { StateTag } from "../shared/ui/StateTag";
 import { PersonAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { MentionContext } from "../editor/MentionMenu";
@@ -99,7 +100,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
             {formatRelativeTime(comment.created_at)}
           </span>
           {isEdited(comment) ? <span className="commentEdited">{t("edited")}</span> : null}
-          {chip ? <span className={`uiTag ${chip.tone}`} data-sent={chip.state} title={chip.title}>{chip.label}</span> : null}
+          {chip ? <StateTag state={chip} data-sent={chip.kind} /> : null}
           <span className="commentMetaSpacer" />
           {resolve && actions ? (
             <button type="button" className="ctlBtn commentResolve" onClick={resolve.onClick}

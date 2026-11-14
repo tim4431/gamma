@@ -283,6 +283,13 @@ export async function textAnchorScenarios(env) {
           }), [CODE, first.block]);
           return Math.abs(look.card - look.line) <= 30;
         }, { what: "the card level with line 17" });
+        // The scroller ends where the column begins: a long line scrolls
+        // inside the text's box, never under the cards.
+        const sides = await page.evaluate((id) => ({
+          card: document.querySelector(`.docTextView .commentCard[data-card-for="${id}"]`).getBoundingClientRect().left,
+          text: document.querySelector(".docTextView .cm-scroller").getBoundingClientRect().right,
+        }), first.block);
+        assert(sides.card >= sides.text, `the card stands beside the text's box: ${JSON.stringify(sides)}`);
         await page.keyboard.press("Escape");
 
         const doc = await openJsonWhen((d) => d.entries?.some((e) => e.id === first.thread), "open.json with the thread");

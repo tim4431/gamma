@@ -14,7 +14,7 @@
 // before, state, sent, link, comments}. A request is a Send:
 // {id, rev, work_folder, scope, by, at, note, state ("sent" | "running" |
 // "done" | "failed"), state_at, state_by, detail, threads: [{id, answered}]}.
-import { anchorSnippet, isWithdrawn } from "../comments/comments.js";
+import { anchorSnippet, sendState } from "../comments/comments.js";
 import { agentAway } from "../editor/mentions.js";
 import { formatRelativeTime } from "../library/libraryUtils.js";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -93,28 +93,15 @@ export function sourceText(source) {
   return source.version === "commented" ? `${text} ${t("(as commented)")}` : text;
 }
 
-// A Send as the view lists it: {line, state, detail, kind}. `line` is "Sent
-// 5m ago · 3 comments"; `state` what became of it, short: waiting for the
-// agent, the agent working (named by the request's `state_by` when it
-// says), done by the agent, failed, or withdrawn by its requester; `detail`
-// the agent's own words beside it, its line of progress, its summary or
-// the reason it failed ("" for none), shown on a line of its own; `kind`
-// the state's name ("sent", "running", "done", "failed", "withdrawn").
-// `computer`, the computer that keeps the folder and runs the reader's
-// Sends (sendAgent's), names what a Send of theirs waits for.
-export function requestLine(request, now = Date.now(), computer = "") {
+// A Send as the view lists it: `line`, "Sent 5m ago · 3 comments", with
+// what became of it (comments.js sendState: its `label`, the tag beside
+// the line, and the agent's own words, `detail`, shown on a line of their
+// own). `answers`, the agent that runs the reader's Sends (sendAgent's
+// plan, for a Send of theirs), names what it waits for.
+export function requestLine(request, now = Date.now(), answers = null) {
   const n = request.threads?.length || 0;
   const line = tn("Sent {when} · {n} comment", "Sent {when} · {n} comments", n, { when: formatRelativeTime(request.at, now) });
-  const { state, state_by: agent } = request;
-  const detail = request.detail || "";
-  if (isWithdrawn(request)) return { line, state: t("Withdrawn"), detail: "", kind: "withdrawn" };
-  if (state === "running") {
-    return { line, state: agent ? t("{agent} is working", { agent }) : t("The agent is working"), detail, kind: state };
-  }
-  if (state === "done") return { line, state: agent ? t("Done by {agent}", { agent }) : t("Done"), detail, kind: state };
-  if (state === "failed") return { line, state: t("Failed"), detail, kind: state };
-  const waiting = computer ? t("Waiting for {computer}", { computer }) : t("Waiting for the agent");
-  return { line, state: waiting, detail: "", kind: "sent" };
+  return { line, ...sendState(request, answers) };
 }
 
 // The Withdraw button's title: on a request an agent on this computer is

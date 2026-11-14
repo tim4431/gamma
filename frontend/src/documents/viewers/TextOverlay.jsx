@@ -8,20 +8,23 @@
 // end of a range's last line (a lost range's beside its tag) for a range
 // with a note, or with threads no card shows (a phone, no room).
 //
-// The comment column (`.docTextMarginHost`) stands outside the scroller, at
-// the view's right edge however far the text is scrolled sideways: a track
-// moved with the text vertically alone (translateY of the scroller's
-// scrollTop, written on its scroll event, no render), holding the one
-// CommentMarginSlot, whose cards stand level with their ranges' first lines
-// (`topOf`, in the content's px, as the badges are). It stands while a range
+// The comment column (`.docTextMarginHost`) stands outside the scroller, in
+// the band at the view's right edge the scroller leaves it while it stands
+// (`onBeside`: the viewer ends the scroller where the column begins), so a
+// long line scrolls sideways inside the text's own box and never under the
+// cards: a track moved with the text vertically alone (translateY of the
+// scroller's scrollTop, written on its scroll event, no render), holding the
+// one CommentMarginSlot, whose cards stand level with their ranges' first
+// lines (`topOf`, in the content's px, as the badges are). A wheel over the
+// band scrolls the text, as over the PDF's column. It stands while a range
 // has an open thread or a new comment's card and the view has room for it
-// beside the text; the content then keeps that room at its right
-// (`onBeside`). Every place is read in CodeMirror's measure phase, again as
-// its geometry, viewport or text changes.
+// beside the text. Every place is read in CodeMirror's measure phase, again
+// as its geometry, viewport or text changes.
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../../comments/marginSlot";
 import NoteBadge from "../../comments/NoteBadge.jsx";
+import { LINE_PX, innerScrolls } from "../../shared/lib/smoothWheel.js";
 import { hasRoom, standingLine } from "./textMarks.js";
 
 const EMPTY = Object.freeze([]);
@@ -30,7 +33,7 @@ const sameMap = (a, b) => a.size === b.size && [...a].every(([k, v]) => {
   const w = b.get(k);
   return typeof v === "object" ? !!w && v.x === w.x && v.y === w.y : v === w;
 });
-const sameLayout = (a, b) => !!a && !!b && ["left", "top", "width", "height", "gutterW", "scrollerW", "scrollerTop", "scrollerH"]
+const sameLayout = (a, b) => !!a && !!b && ["left", "top", "width", "height", "gutterW", "viewW", "scrollerTop", "scrollerH"]
   .every((k) => a[k] === b[k]) && sameMap(a.tops, b.tops) && sameMap(a.badges, b.badges);
 
 // `view` the EditorView; `updates` the viewer's set of update listeners;
@@ -41,7 +44,9 @@ const sameLayout = (a, b) => !!a && !!b && ["left", "top", "width", "height", "g
 export default function TextOverlay({ view, updates, phone = false, regions = EMPTY, anchors = EMPTY, commentMargin = null, marginRef = null,
   onMarginLost = null, onRegionJump = null, onRegionContext = null, onRegionThread = null, onBeside = null }) {
   const [layout, setLayout] = useState(null);
-  const room = !!layout && !phone && hasRoom(layout.scrollerW, layout.gutterW);
+  // The room is the view's, which the column standing does not change (the
+  // scroller narrows beside it).
+  const room = !!layout && !phone && hasRoom(layout.viewW, layout.gutterW);
   const target = commentMargin?.target || null;
   const composing = target?.compose ? target.blockId : "";
   const beside = !!commentMargin && room && anchors.some((a) => a.threadCount > 0 || a.id === composing);
@@ -72,7 +77,7 @@ export default function TextOverlay({ view, updates, phone = false, regions = EM
       }
       return {
         left: content.offsetLeft, top: content.offsetTop, width: Math.max(content.offsetWidth, content.scrollWidth), height: content.offsetHeight,
-        gutterW: content.offsetLeft, scrollerW: scroller.clientWidth, scrollerTop: scroller.offsetTop, scrollerH: scroller.clientHeight, tops, badges,
+        gutterW: content.offsetLeft, viewW: v.dom.clientWidth, scrollerTop: scroller.offsetTop, scrollerH: scroller.clientHeight, tops, badges,
       };
     },
     write(next) { if (next) setLayout((prev) => (sameLayout(prev, next) ? prev : next)); },
@@ -100,15 +105,29 @@ export default function TextOverlay({ view, updates, phone = false, regions = EM
   useLayoutEffect(() => { besideRef.current?.(beside); }, [beside]);
   useEffect(() => () => besideRef.current?.(false), []);
 
-  // The track follows the text's vertical scroll alone.
+  // The track follows the text's vertical scroll alone. A wheel over the
+  // band scrolls the text (Firefox counts lines and pages), unless a card's
+  // own field can scroll that way; Ctrl's wheel is the text size's
+  // (TextViewer's useTextScale, on the whole editor).
+  const hostRef = useRef(null);
   const trackRef = useRef(null);
   useLayoutEffect(() => {
-    const track = trackRef.current, scroller = view.scrollDOM;
-    if (!track) return undefined;
+    const host = hostRef.current, track = trackRef.current, scroller = view.scrollDOM;
+    if (!host || !track) return undefined;
     const follow = () => { track.style.transform = `translateY(${-scroller.scrollTop}px)`; };   // i18n-ignore: a CSS value
+    const wheel = (e) => {
+      if (e.ctrlKey || e.metaKey || innerScrolls(e.target, host, e.deltaY)) return;
+      const unit = e.deltaMode === 1 ? LINE_PX : e.deltaMode === 2 ? scroller.clientHeight : 1;
+      e.preventDefault();
+      scroller.scrollBy(e.deltaX * unit, e.deltaY * unit);
+    };
     follow();
     scroller.addEventListener("scroll", follow, { passive: true });
-    return () => scroller.removeEventListener("scroll", follow);
+    host.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      scroller.removeEventListener("scroll", follow);
+      host.removeEventListener("wheel", wheel);
+    };
   }, [view, beside]);
   const [stack] = useState(createMarginStack);
 
@@ -134,7 +153,7 @@ export default function TextOverlay({ view, updates, phone = false, regions = EM
         view.scrollDOM,
       )}
       {beside ? createPortal(
-        <div className="docTextMarginHost" style={{ top: layout.scrollerTop, height: layout.scrollerH }}>
+        <div ref={hostRef} className="docTextMarginHost" style={{ top: layout.scrollerTop, height: layout.scrollerH }}>
           <div ref={trackRef} className="docTextMarginTrack">
             <CommentMarginContext.Provider value={commentMargin}>
               <MarginStackContext.Provider value={stack}>

@@ -131,13 +131,18 @@
   .vaultBox .k { color: var(--text-muted); width: 56px; flex-shrink: 0; }
   .vaultBox .v { min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); }
   .vaultBox .v.path { font-family: var(--font-mono); font-size: var(--fs-2xs); }
-  .vaultBox .switches { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* A vault's switches (switchRow), one row each as Gamma's settings Toggle:
+     the name at the left, its switch or choice at the right edge; the 56 px
+     key column is the facts' (Local, Remote, State). */
+  .vaultBox .switches { display: flex; flex-direction: column; gap: 7px; }
+  .vaultBox .switchLine { display: flex; align-items: center; gap: 12px; }
+  .vaultBox .switchName { flex: 1; min-width: 0; color: var(--text-primary); }
+  .vaultBox .switchLine > :last-child { flex-shrink: 0; }
   .vaultBox .switch input:disabled { cursor: default; }
   .vaultBox .switch input:disabled + .switchTrack { opacity: 0.45; }
   .vaultBox .say { color: var(--text-secondary); line-height: 1.45; }
   .vaultBox .say.no { color: var(--danger); }
   .vaultBox .agentRow { display: flex; flex-direction: column; gap: 5px; }
-  .vaultBox .agentRow .k { width: auto; }
   .vaultBox .btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
   .seg button { border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--fs-2xs); padding: 3px 8px; cursor: pointer; }
@@ -697,14 +702,17 @@
     return box;
   }
 
-  // A vault's switches in one row, each after its name: `[name, control]`
-  // pairs, Pull then Push, or a work folder's library switch.
+  // A vault's switches, a row each, its name at the left and its control at
+  // the right edge: `[name, control]` pairs, Pull then Push, a work folder's
+  // library switch, its agent and what that may run.
   function switchRow(pairs) {
     const sw = document.createElement('div');
     sw.className = 'switches';
     for (const [name, control] of pairs) {
-      const k = document.createElement('span'); k.className = 'k'; k.textContent = name;
-      sw.append(k, control);
+      const line = document.createElement('div'); line.className = 'switchLine';
+      const k = document.createElement('span'); k.className = 'switchName'; k.textContent = name;
+      line.append(k, control);
+      sw.appendChild(line);
     }
     return sw;
   }

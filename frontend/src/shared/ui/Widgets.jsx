@@ -8,7 +8,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { CheckIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, XIcon } from "./Icons";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, MoreIcon, PinIcon, XIcon } from "./Icons";
+import { ContextMenu, MenuItem, MenuLabel, SubMenuItem, useMenuTrigger } from "./Menus";
 import { useWheelPan } from "./wheelPan";
 import { tabDrag, useTabDrag } from "./tabDrag.js";
 import { useMenuAim } from "./menuAim";
@@ -46,7 +47,86 @@ let foldedAt = -Infinity;
 const UNFOLD_ECHO_MS = 800;
 const FOLD_ECHO_MS = 350;
 
-function DockHeader({ title, guide, onGrip, onFold, onClose, headerContent, collapsed }) {
+// The window's actions (`actions`), its icon buttons after its own controls
+// (`headerContent`): each {id, icon, label, title, onClick, disabled,
+// danger, guide, props (more of the button's props)}, with `glyph` for
+// something drawn in the header in place of the icon (the chat's context
+// ring). A toggle has `on`. One with `popover` ({name, content}) opens the
+// popover App's openPopover names, and is `open` while it is; `items`
+// ([{icon, label, title, onClick, disabled}]) make it a menu and `choice`
+// ({value, options: [[value, label]], onChange}) a choice of one, either
+// opened from the button. The header keeps them inside the window: the
+// grip's title gives way first, and the actions that still do not fit fold
+// from the end (one with a `keep` rank after those with a lower one) into
+// a "⋯" whose menu holds them, a toggle as a checkbox row, a menu or a
+// choice as a flyout. A popover drops from the header's right edge whether
+// its button shows or is folded.
+
+// How many of the header's `n` actions fold (useHeaderFold): all of them
+// fit, or as many as fit beside the "⋯". The room is the header's less
+// what else stands in it at its narrowest (the grip's min-width), so it is
+// the same however many are folded, and a fold never undoes itself.
+function useHeaderFold(n) {
+  const headerRef = useRef(null);
+  const rowRef = useRef(null);
+  const [folded, setFolded] = useState(0);
+  const fit = useCallback(() => {
+    const header = headerRef.current, row = rowRef.current;
+    const button = row?.firstElementChild;
+    if (!n || !header || !button) return;
+    const grip = header.querySelector(".dockGrip");
+    const spacer = header.querySelector(".dockHeaderSpacer");
+    const end = header.getBoundingClientRect().right - parseFloat(getComputedStyle(header).paddingRight);
+    const box = row.getBoundingClientRect();
+    const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+    const room = box.width + spacer.getBoundingClientRect().width - Math.max(0, box.right - end)
+      + Math.max(0, grip.getBoundingClientRect().width - parseFloat(getComputedStyle(grip).minWidth));
+    const fits = Math.floor((room + gap + 0.5) / (button.getBoundingClientRect().width + gap));
+    setFolded(fits >= n ? 0 : n - Math.max(0, fits - 1));
+  }, [n]);
+  // Again after each render (what else the header holds may have changed)
+  // and whenever the header, its title or its free room changes size.
+  useLayoutEffect(fit);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!n || !header || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(fit);
+    for (const el of [header, header.querySelector(".dockGrip"), header.querySelector(".dockHeaderSpacer")]) observer.observe(el);
+    return () => observer.disconnect();
+  }, [n, fit]);
+  return [n ? folded : 0, headerRef, rowRef];
+}
+
+// An action's name: a choice's says what is chosen ("All comments — Notify me").
+function actionName(a) {
+  if (!a.choice) return a.label;
+  const current = a.choice.options.find(([value]) => value === a.choice.value);
+  return current ? `${current[1]} — ${a.label}` : a.label;
+}
+
+// A choice's rows: one of a set, the chosen one checked.
+function choiceRows(choice, done) {
+  return choice.options.map(([value, label]) => (
+    <MenuItem key={value} role="menuitemradio" aria-checked={value === choice.value}
+      trailing={value === choice.value ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
+      onClick={() => { done(); choice.onChange(value); }}>{label}</MenuItem>
+  ));
+}
+
+function itemRows(items, done) {
+  return items.map((it) => (
+    <MenuItem key={it.label} icon={it.icon} title={it.title} disabled={it.disabled}
+      onClick={() => { done(); it.onClick(); }}>{it.label}</MenuItem>
+  ));
+}
+
+function DockHeader({ title, guide, onGrip, onFold, onClose, headerContent, actions = [], collapsed }) {
+  const shown = collapsed ? [] : actions;
+  const [folded, headerRef, rowRef] = useHeaderFold(shown.length);
+  const { kind, trigger, menu, close } = useMenuTrigger();
+  // The fold takes from the end, a higher `keep` later.
+  const order = [...shown].reverse().sort((a, b) => (a.keep || 0) - (b.keep || 0));
+  const away = new Set(order.slice(0, folded));
   const unfold = collapsed && onFold ? (e) => {
     if (e.target.closest("button") || e.timeStamp - foldedAt < FOLD_ECHO_MS) return;
     unfoldedAt = e.timeStamp;
@@ -57,20 +137,71 @@ function DockHeader({ title, guide, onGrip, onFold, onClose, headerContent, coll
     foldedAt = e.timeStamp;
     onFold();
   });
+  const button = (a) => {
+    const name = actionName(a);
+    return (
+      <button key={a.id} type="button" className={`ctlBtn${a.on || a.open || kind === a.id ? " modeActive" : ""}${a.danger ? " danger" : ""}`}
+        data-guide={a.guide} data-popover={a.popover?.name} disabled={a.disabled} title={a.title || name} aria-label={name}
+        aria-pressed={a.on} aria-expanded={a.open} {...a.props}
+        {...(a.items || a.choice ? trigger(a.id) : { onClick: a.onClick })}>
+        {a.glyph || <a.icon size={16} />}
+      </button>
+    );
+  };
+  const foldRow = (a) => {
+    if (a.items || a.choice) {
+      return (
+        <SubMenuItem key={a.id} id={a.id} icon={a.icon} label={a.label} title={a.title} disabled={a.disabled}>
+          {a.items ? itemRows(a.items, close) : choiceRows(a.choice, close)}
+        </SubMenuItem>
+      );
+    }
+    const toggle = a.on === undefined ? {} : { role: "menuitemcheckbox", "aria-checked": a.on };
+    return (
+      <MenuItem key={a.id} icon={a.icon} title={a.title} danger={a.danger} disabled={a.disabled} {...toggle}
+        trailing={a.on ? <CheckIcon size={14} className="ctxMenuCheck" /> : undefined}
+        onClick={(e) => { close(); a.onClick(e); }}>{a.label}</MenuItem>
+    );
+  };
+  const open = shown.find((a) => a.id === kind);
   return (
-    <div className="dockWindowHeader" onClick={unfold}>
+    <div className="dockWindowHeader" ref={headerRef} onClick={unfold}>
       <span
         className="dockGrip"
         data-guide={guide}
         onPointerDown={onGrip}
         {...doublePress(fold)}
         title={onGrip ? (collapsed ? t("Click to expand · drag to move this window") : t("Drag to move this window · double-click to collapse")) : undefined}
-      >{onGrip ? "⠿ " : null}{title}</span>
+      ><span className="dockGripTitle">{onGrip ? "⠿ " : null}{title}</span></span>
       {onClose ? (
         <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the View menu)")} aria-label={t("Close {title}", { title: title })}><XIcon size={14} /></button>
       ) : null}
       <span className="dockHeaderSpacer" />
       {collapsed ? null : headerContent}
+      {shown.length ? (
+        <div className="ctlBtnRow dockHeaderActions" ref={rowRef}>
+          {shown.filter((a) => !away.has(a)).map(button)}
+          {away.size ? (
+            <button type="button" className={`ctlBtn${kind === "fold" || order.some((a) => away.has(a) && a.open) ? " modeActive" : ""}`}
+              title={t("More")} aria-label={t("More")} {...trigger("fold")}>
+              <MoreIcon size={16} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {menu && kind === "fold" ? (
+        <ContextMenu {...menu}>{shown.filter((a) => away.has(a)).map(foldRow)}</ContextMenu>
+      ) : menu && open ? (
+        <ContextMenu {...menu}>
+          {open.items ? itemRows(open.items, close) : <>
+            <MenuLabel>{open.label}</MenuLabel>
+            {choiceRows(open.choice, close)}
+          </>}
+        </ContextMenu>
+      ) : null}
+      {shown.filter((a) => a.popover).map((a) => (
+        <span key={a.id} className="dockHeaderPop" data-popover={a.popover.name}>{a.popover.content}</span>
+      ))}
     </div>
   );
 }
@@ -82,11 +213,11 @@ function DockHeader({ title, guide, onGrip, onFold, onClose, headerContent, coll
 const DockFolded = createContext(false);
 const useDockFolded = () => useContext(DockFolded);
 
-function DockWindow({ title, guide, onGrip, onFold, onClose, headerContent, collapsed, children }) {
+function DockWindow({ title, guide, onGrip, onFold, onClose, headerContent, actions, collapsed, children }) {
   return (
     <div className={`dockWindow${collapsed ? " dockWindowFolded" : ""}`} inert={!!collapsed}>
       {collapsed ? null : (
-        <DockHeader title={title} guide={guide} onGrip={onGrip} onFold={onFold} onClose={onClose} headerContent={headerContent} />
+        <DockHeader title={title} guide={guide} onGrip={onGrip} onFold={onFold} onClose={onClose} headerContent={headerContent} actions={actions} />
       )}
       <div className="dockWindowBody"><DockFolded.Provider value={!!collapsed}>{children}</DockFolded.Provider></div>
     </div>

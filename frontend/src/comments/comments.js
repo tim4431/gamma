@@ -245,33 +245,48 @@ export function authorTitle(comment) {
 // A Send its requester withdrew: the server's `failed` with "withdrawn".
 export const isWithdrawn = (request) => request?.state === "failed" && request.detail === "withdrawn";
 
-// The chip of a thread a Send waits on (`thread.sent`, {request_id, state,
-// at, detail, state_by}), {state, label, title, tone} (`tone` the uiTag's):
-// Sent while the request waits for the agent, the agent working (named by
-// `state_by` when it says) with what it is at in the title, Failed with its
-// reason in the title. null for none, and for a Send withdrawn: the thread
-// is open, the person's to send again. `answers`, the agent that answers
-// the reader's Sends (vaultState.js mentionAgent or keeperAgent, null for
-// none), names the computer a Send waits for when another computer keeps
-// the folder: "Waiting for TIM-PC", the chip's own label while that
-// computer is offline.
-export function sentChip(thread, answers = null) {
-  const sent = thread?.sent;
-  if (!sent || isWithdrawn(sent)) return null;
-  const { state, detail, state_by: agent } = sent;
+// What became of a Send, in the one wording every place that shows it
+// uses (a thread's chip, the Comments window's row, the feedback view's
+// entries and request rows, all drawn by shared/ui/StateTag.jsx), from a
+// request or a thread's `sent` ({state, detail, state_by}): {kind, label,
+// detail, title, tone, live}. `kind` the state's name ("sent", "running",
+// "done", "failed", "withdrawn"); `label` short: waiting for the agent
+// (for the computer that keeps the folder while another one does, else
+// for the agent by its name), the agent working (named by `state_by` when
+// it says), done by it, failed, or withdrawn by its requester; `detail`
+// the agent's own words (its progress, its summary, the reason it
+// failed), "" for none; `title` the tag's: the words behind the label,
+// and while the computer it waits for is offline, that it runs when that
+// one connects; `tone` the uiTag's; `live` while the agent works.
+// `answers`, the agent that answers the reader's Sends (vaultState.js
+// mentionAgent or keeperAgent, feedbackView.js sendAgent's plan; null
+// for none), names what a Send waits for.
+export function sendState(send, answers = null) {
+  const { state, state_by: agent } = send;
+  const detail = send.detail || "";
+  if (isWithdrawn(send)) return { kind: "withdrawn", label: t("Withdrawn"), detail: "", title: t("Withdrawn"), tone: "", live: false };
   if (state === "failed") {
-    return { state, label: t("Failed"), title: detail ? t("Failed: {reason}", { reason: detail }) : t("Failed"), tone: "failed" };
+    return { kind: state, label: t("Failed"), detail, title: detail ? t("Failed: {reason}", { reason: detail }) : t("Failed"), tone: "failed", live: false };
   }
   if (state === "running") {
-    const label = agent ? t("{agent} is working", { agent }) : t("The agent is working");
-    return { state, label, title: detail || label, tone: "pending" };
+    const label = agent ? t("{agent} is working…", { agent }) : t("The agent is working…");
+    return { kind: state, label, detail, title: detail || label, tone: "pending", live: true };
   }
-  if (answers?.computer) {
-    const waiting = t("Waiting for {computer}", { computer: answers.computer });
-    const away = agentAway(answers);
-    return { state, label: away ? waiting : t("Sent"), title: away || waiting, tone: "pending" };
+  if (state === "done") {
+    const label = agent ? t("Done by {agent}", { agent }) : t("Done");
+    return { kind: state, label, detail, title: detail || label, tone: "ok", live: false };
   }
-  return { state, label: t("Sent"), title: t("Waiting for the agent"), tone: "pending" };
+  const label = answers?.computer ? t("Waiting for {computer}", { computer: answers.computer })
+    : answers?.label ? t("Waiting for {agent}", { agent: answers.label }) : t("Waiting for the agent");
+  return { kind: "sent", label, detail: "", title: agentAway(answers) || label, tone: "pending", live: false };
+}
+
+// The chip of a thread a Send waits on (`thread.sent`, {request_id, state,
+// at, detail, state_by}): its sendState, null for none, and for a Send
+// withdrawn: the thread is open, the person's to send again.
+export function sentChip(thread, answers = null) {
+  const sent = thread?.sent;
+  return sent && !isWithdrawn(sent) ? sendState(sent, answers) : null;
 }
 
 // What a comment field says under the text while it names the work

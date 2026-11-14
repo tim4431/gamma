@@ -86,9 +86,12 @@ the library.
   (`dir 3/file-012`), any other query's words match the file's name alone;
   the palette draws its rows in that order and marks its spans
   (`explorer/fileSearch.js` `fileParts`, by code points, drawn by search's
-  `MarkedText`), never ranking a file itself. A row shows the file's name,
-  its work folder and directory (the row's `dir`) under it, and its time
-  (hidden under 480 px wide); the rows of the query before stay while a
+  `MarkedText`), never ranking a file itself. A row is the palette's one
+  file row (`PageOption.jsx` `FileOption`, which a recent, a tab or a
+  title hit that is a work folder's file is drawn by too): the file's
+  name, its place under it ("W / a / b", `explorer/workPaths.js`
+  `filePlace`, from the row's `dir`), its library folders and labels, and
+  its time (hidden under 480 px wide); the rows of the query before stay while a
   longer one is asked, and the selection stays on its row when the files
   land above it; a file a page row
   already lists (a library file found by its title, an open tab) is one
@@ -786,10 +789,17 @@ folder from those, summed down its subtree, in place of the library pages.
   (`explorer/workPaths.js` `fileCrumbs` over the open page's `pageFolders`,
   so they are there on the first frame); a crumb opens that folder in the
   library, Back returning to the file. The page's directory chip leaves the
-  label field (library folders and labels stay). A relative link in a work
+  label field (library folders and labels stay): `filingChips` leaves a
+  work folder's file's directory out wherever it is given the file's
+  properties (the label field, the pickers' rows, the search panel's title
+  rows), and every list names the place as the crumbs do, "W / a / b"
+  (`filePlace`: under the name in quick open and the chat's @ picker,
+  before the title in the search panel). A relative link in a work
   folder's note that the vault left as written opens the file it names
   (`editor/PathLink.jsx`: `GET /api/folders/{W}/at` with the note's
-  directory as the base); one that names none says "No tracked file at …".
+  directory as the base), drawn as a `[[ref]]` chip behind its file's
+  glyph and muted while it is asked; one that names none says "No tracked
+  file at …".
 - **Drops and filing.** A file not in the library is filed by its
   directory alone: Move to folder and a drop on a library folder leave it
   out with the rule's words; a note that follows may be dropped on another

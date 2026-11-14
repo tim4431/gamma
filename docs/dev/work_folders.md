@@ -344,8 +344,10 @@ the rule could not tell several apart. A block embedded from another
 note keeps its links plain (`PathLinkScope`): they are relative to that
 note.
 
-The crumbs (`fileCrumbs`, W first down to the directory) and the link
-predicate are pinned with these by one fixture,
+The crumbs (`fileCrumbs`, W first down to the directory), the place line
+every list draws from them (`filePlace`, "W / a / b"; a row the server
+answered with its `dir` is placed by that) and the link predicate are
+pinned with these by one fixture,
 `tests/shared/workpaths.json`: its `cases` give a page's path, its
 directory (the server's) and its crumbs' chain (the client's: a note with
 no file yet, a file in the library too, a `folders[0]` outside its W), its

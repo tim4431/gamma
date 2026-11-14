@@ -1239,8 +1239,13 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   font-style: italic;
 }
 
+/* A note's plain link (an address no chip draws: a path link outside a
+   work folder, an odd href) in the theme's accent, never the browser's
+   blue or visited purple; any chip's own rule wins over it. */
+:where(.blockRendered) a { color: var(--accent); }
 /* [[ref]] chip: a quiet Notion-style page mention — accent text on a faint
-   tint, sized like the surrounding text, theme-aware. */
+   tint, sized like the surrounding text, theme-aware. A path link
+   (editor/PathLink.jsx InternalLinkChip) is one too, its file's glyph first. */
 .blockRefChip {
   display: inline-block;
   background: var(--accent-bg-light);
@@ -1264,6 +1269,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--accent-bright);
   text-decoration: none;
 }
+.blockRefChip .kindGlyph { vertical-align: -2px; margin-right: 3px; }
+/* While the click is being answered (a path link asks the server). */
+.blockRefChip[aria-busy="true"] { color: var(--text-muted); cursor: progress; }
 /* A hand-typed [[title]] no page answered: the chip's shape, dashed and
    muted, with a tooltip on how to link it. */
 .unlinkedRef {
@@ -1546,32 +1554,19 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .markFoldRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .markFoldLabel { min-width: 72px; color: var(--text-dim); font-size: var(--fs-xs); }
 .markFoldActions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The colour group rows (GroupRows, MenuItems): a group's first six
+   swatches are the row's icon, in a slot that holds six so the names line
+   up; in the fold, outside a menu, the rows sit close to its edge. */
 .markGroups { display: grid; gap: 1px; }
-.markGroup {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 4px 6px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-primary);
-  font-size: var(--fs-sm);
-  text-align: left;
-  cursor: pointer;
-}
-.markGroup:hover { background: var(--bg-hover); }
-.markGroup.selected { background: var(--bg-active); }
-.markGroupDots { display: inline-flex; gap: 3px; flex: none; }
+.markGroups .ctxMenuIcon { width: 70px; justify-content: flex-start; }
+.markFold .markGroups .ctxMenuItem { padding: 6px; border-radius: var(--radius-sm); }
+.markGroupDots { display: inline-flex; gap: 2px; flex: none; }
 .markGroupDots > span {
   width: 10px;
   height: 10px;
   border: 1px solid var(--border-hover);
   border-radius: var(--radius-full);
 }
-.markGroupName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.markGroupMore { color: var(--text-dim); font-size: var(--fs-2xs); }
 /* A menu's marking rows (a highlight's, a strip highlighter's): wide enough
    for four highlighters and four colours on a line. */
 .markMenu {
@@ -1722,6 +1717,14 @@ ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); 
 }
 .noteReviewLabel { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
 .noteReviewLabel svg { flex: none; color: var(--accent); }
+/* The approval card's answers (chat/ApprovalShell.jsx) in the bar's row:
+   the buttons after the label, Don't allow at the row's end; its line of
+   what to do instead beside them; a refusal on a line of its own. */
+.noteReviewBar > .chatApprovalActions { flex: 1 1 auto; margin-top: 0; }
+.noteReviewBar > .chatApprovalDecline { display: flex; flex: 1 1 18rem; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.noteReviewBar .chatApprovalDecline .aiKeyInput { flex: 1 1 14rem; width: auto; min-width: 0; margin: 0; }
+.noteReviewBar .chatApprovalDecline .chatApprovalActions { margin-top: 0; }
+.noteReviewBar > :is(.chatApprovalStatus, .chatApprovalError) { flex-basis: 100%; margin-top: 0; }
 /* Whole-page read (read_page / read_block on the page id): the outline's
    left edge breathes once. */
 .blockList.aiPageRead { animation: aiPageReadPulse 1.6s ease-in-out 2; }
@@ -2140,6 +2143,12 @@ ins.mdDiff img { outline-color: color-mix(in srgb, var(--ok) 60%, transparent); 
 .statusPill.error { color: #e07a6a; border-color: rgba(224, 122, 106, 0.5); border-radius: var(--radius-lg); }
 .statusPill.error .pillText { white-space: normal; overflow-wrap: anywhere; text-align: center; }
 .statusPill.interactive { pointer-events: auto; } /* has an action button: Retry, Undo… */
+/* A pill raised from inside a dialog (Settings' Remove, Reset…) shows over
+   it, at the window's top, so its Undo can be pressed before it fades. */
+body:has(.reportOverlay) .statusPill {
+  position: fixed;
+  z-index: var(--z-modal-pill);
+}
 /* Keep feedback away from the handwriting strip, including expanded options,
    and clear of the control boxes on either side (each 14 px in, a control
    box wide, then 14 px of air), as the strip is. */
@@ -3263,6 +3272,7 @@ mark.searchMark {
   border-left: 1px solid var(--border-subtle);
 }
 .dockWindowHeader {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3271,9 +3281,21 @@ mark.searchMark {
   flex-shrink: 0;
   min-width: 0;
 }
+/* An open window's header is the container its controls ask how wide it
+   is (a folded window's bar takes its width from its header, so it is
+   none). Narrow, a Segmented there shows each choice's icon alone, the
+   word kept as the button's name and tooltip (SettingsKit). In rem, so it
+   turns on at the same place for every interface size. */
+.dockWindow:not(.collapsed) > .dockWindowHeader { container: dockHeader / inline-size; }
+@container dockHeader (max-width: 34rem) {
+  .dockWindowHeader > .segGroup > .uiBtn > .segLabel { display: none; }
+  .dockWindowHeader > .segGroup > .uiBtn:has(> .segLabel) { padding-inline: 8px; }
+}
 /* The grip spans the header's full height (through its padding) and is
    padded past its text: a target for a finger as for a mouse. The close
-   button keeps a clear gap from it. */
+   button keeps a clear gap from it. Its title is the first thing in the
+   header to give way: it ellipsizes, down to about a word's start, before
+   an action folds (DockHeader in Widgets.jsx). */
 .dockGrip {
   align-self: stretch;
   display: flex;
@@ -3285,9 +3307,16 @@ mark.searchMark {
   user-select: none;
   font-size: var(--fs-sm);
   white-space: nowrap;
-  flex-shrink: 0;
+  min-width: 4em;
 }
+.dockGripTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .dockGrip:hover { color: var(--text-primary); }
+/* The header's actions, and the popovers they open: those drop from the
+   header's right edge and stay inside the window, whether the action's
+   button shows or is folded into the "⋯". */
+.dockHeaderActions { flex-shrink: 0; }
+.dockHeaderPop { display: contents; }
+.dockHeaderPop > .popover { right: 8px; max-width: calc(100% - 16px); }
 /* Folded, the whole header opens it. */
 .dockWindow.collapsed .dockWindowHeader { cursor: pointer; }
 .dockHeaderSpacer { flex: 1; min-width: 0; }
@@ -3314,8 +3343,6 @@ mark.searchMark {
 .dockPanelFolded > .dockWindow { flex: none; width: var(--fold-w, 100%); height: var(--fold-h, 100%); visibility: hidden; }
 .dockWindowFolded .dockWindowBody { overflow: clip; }
 .sashFolded { display: none; }
-/* Header controls use the shared uiBtn sizes; keep only layout here. */
-.dockWindowHeader .chatPanelHeaderBtns { flex-shrink: 0; }
 .dockWindowBody {
   flex: 1;
   min-height: 0;
@@ -3777,11 +3804,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   flex-direction: column;
   overflow: hidden;
 }
-/* Chat settings popover (header ⚙): model, effort, context slider, tools */
-/* Anchor to the whole header so a narrow chat dock cannot clip the controls. */
-.dockWindowHeader:has(.chatPanelHeaderBtns) { position: relative; }
-.chatPanelHeaderBtns [data-popover="chatsettings"] { position: static; }
-.chatSettingsPop { right: 8px; width: min(340px, calc(100% - 16px)); min-width: 0; max-height: min(640px, calc(100dvh - 100px)); overflow-y: auto; overscroll-behavior: contain; }
+/* Chat settings popover (header ⚙): model, effort, context slider, tools.
+   Like every dock header action's popover it hangs from the whole header
+   (.dockHeaderPop), so a narrow chat dock cannot clip it. */
+.chatSettingsPop { width: min(340px, calc(100% - 16px)); min-width: 0; max-height: min(640px, calc(100dvh - 100px)); overflow-y: auto; overscroll-behavior: contain; }
 .chatSettingsPop .setSlider { padding: 0 4px; width: 100%; }
 .chatSettingsPop .setRange { flex: 1; min-width: 0; }
 .chatToolPicker { padding: 2px 4px; }
@@ -4009,9 +4035,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
    declining an approval. */
 .chatHandoffInstead { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffInstead .aiKeyInput { flex: 1 1 14rem; min-width: 0; }
-/* A tool call waiting for the user's decision (ApprovalCard.jsx): what it
-   would do, the change as a word diff, the four answers. It looks like a
-   fetch handoff's card, the other place the chat waits for the user. */
+/* A call waiting for the user's decision (ApprovalShell.jsx: Gamma AI's
+   ApprovalCard.jsx, the computer side's ComputerAsk.jsx): what it would do,
+   the change as a word diff, the answers. It looks like a fetch handoff's
+   card, the other place the chat waits for the user. */
 .chatApproval {
   margin-top: 8px;
   padding: 10px 12px;
@@ -4427,6 +4454,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   vertical-align: 1px;
 }
 .uiTag.admin { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+/* A tag whose state changes in place (StateTag): its spinner beside the words while work is under way. */
+.uiTag.stateTag { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.uiTag.stateTag .transferSpin.inline { flex: none; }
 /* Text for screen readers only: the sentence behind an icon, a table header without a visible word. */
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* The share view's "as <name>" tag (an editing visitor without an account) and
@@ -4837,43 +4867,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .loginNotice { border-color: var(--border); background: var(--accent-bg); color: var(--text-primary); }
 .loginError > svg, .loginNotice > svg { flex: none; margin-top: 1px; }
 .loginNotice > svg { color: var(--accent); }
-.loginBtn {
-  display: block;
-  width: 100%;
-  padding: 10px;
-  margin-bottom: 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: var(--fs-md);
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.loginBtn:disabled { opacity: 0.5; cursor: default; }
-.loginBtn:hover:not(:disabled) { filter: brightness(1.1); }
-/* Gamma Cloud: an outlined secondary, so Log in stays the one primary */
-.loginCloudBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 9px 10px;
-  margin-bottom: 14px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font-size: var(--fs-md);
-  font-weight: 600;
-  text-decoration: none;
-}
-.loginCloudBtn:hover { background: var(--bg-hover); }
-/* a Gamma Cloud server's login page: this is the one way in, so it is the primary */
-.loginCloudBtn.lead { padding: 10px; border-color: transparent; background: var(--accent); color: var(--on-accent); }
-.loginCloudBtn.lead:hover { background: var(--accent); filter: brightness(1.1); }
+/* The page's actions are the app's buttons, `uiBtn primary` (Log in, Try
+   the demo, Allow) and `uiBtn` (Continue as guest, Cancel); these classes
+   only lay them out: full width, one under the other, a label that wraps. */
+.loginBtn, .loginGuestBtn, .loginCloudBtn { display: flex; width: 100%; white-space: normal; }
+.loginBtn { margin-bottom: 8px; }
+/* Continue as guest: how long the workspace lasts, under its label */
+.loginGuestBtn { flex-direction: column; gap: 0; }
+/* Gamma Cloud: a secondary, so Log in stays the one primary; on a Gamma
+   Cloud server's login page it is the one way in, so the primary */
+.loginCloudBtn { margin-bottom: 14px; text-decoration: none; }
 .loginCloudBtn > img { flex: none; }
 .loginOr {
   display: flex;
@@ -4884,19 +4887,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-xs);
 }
 .loginOr::before, .loginOr::after { content: ""; flex: 1; height: 1px; background: var(--border); }
-.loginGuestBtn {
-  display: block;
-  width: 100%;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--fs-md);
-  cursor: pointer;
-  font-family: inherit;
-}
-.loginGuestBtn:hover { background: var(--bg-hover); }
 .loginGuestNote {
   display: block;
   margin-top: 2px;
@@ -5905,21 +5895,26 @@ a.shareBrand:hover { background: var(--bg-hover); }
   --hl-line: var(--hl-dark-line);
   --hl-mark: var(--hl-dark-line) !important;
 }
-/* A passage marked by a line (a highlight's style, shared/model/markStyle.js;
-   PdfViewer sets data-hl-style and the line's colour in --hl-mark,
-   palette.js lineColor, the dark-page line tone above): no wash, the line
-   at the foot of each of its line boxes (underline), wavy there
+/* A passage marked by a line (a highlight's style, shared/model/markStyle.js),
+   on a PDF page and in the code view, one look for both: PdfViewer and the
+   code view's marks (documents/viewers/textAnchors.js markSpec) set
+   data-hl-style and the line's colour in --hl-mark (palette.js lineColor;
+   the dark-page line tone above, viewers.css's in a dark scheme). No wash,
+   the line at the foot of each of its line boxes (underline), wavy there
    (squiggly) or across their middle (strikeout), about a tenth of the
    line's height and 1.5 px at the least, so it scales with the text and
-   the zoom. Under the pointer a faint wash shows the passage it marks;
-   the active card's draws it a little stronger (inline). */
-.pdfPageWrap [data-hl-style="underline"] {
+   the zoom. The line is the background's image: a state's wash sets
+   background-color alone, so the line stays over it. The line wins over a
+   comment's look; under the pointer a faint wash shows the passage it
+   marks, and the active card's draws it a little stronger (inline on the
+   PDF, viewers.css in the code view). */
+:is(.pdfPageWrap [data-hl-id], .docTextView .docHl)[data-hl-style="underline"] {
   background: linear-gradient(var(--hl-mark), var(--hl-mark)) left bottom / 100% max(1.5px, 9%) no-repeat;
 }
-.pdfPageWrap [data-hl-style="strikeout"] {
+:is(.pdfPageWrap [data-hl-id], .docTextView .docHl)[data-hl-style="strikeout"] {
   background: linear-gradient(var(--hl-mark), var(--hl-mark)) left 56% / 100% max(1.5px, 8%) no-repeat;
 }
-.pdfPageWrap [data-hl-style="squiggly"]::after {
+:is(.pdfPageWrap [data-hl-id], .docTextView .docHl)[data-hl-style="squiggly"]::after {
   content: "";
   position: absolute;
   inset: auto 0 0;
@@ -5930,7 +5925,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 4'%3E%3Cpath d='M0 2Q2 .4 4 2T8 2' fill='none' stroke='black' stroke-width='1.3'/%3E%3C/svg%3E") left bottom / auto 100% repeat-x;
   pointer-events: none;
 }
-.pdfPageWrap [data-hl-style]:hover { background-color: color-mix(in srgb, var(--hl) 35%, transparent); }
+:is(.pdfPageWrap [data-hl-id], .docTextView .docHl)[data-hl-style]:hover { background-color: color-mix(in srgb, var(--hl) 35%, transparent); }
 /* A lost highlight's closest match while its review card shows it
    (pdf/HighlightReview.jsx Show): a dotted line in its colour's line tone
    over a faint wash, taking no pointer; the dark-tuned colour on a flipped

@@ -143,9 +143,12 @@ export function Section({ title, scope, prefs, action, guide, tone, children }) 
 // Keep the row compact: icon, label, short hint, and a shared control.
 // Longer explanations use the native hover tooltip. `scope="browser"` tags
 // the one row of an account section whose value stays with this browser.
-export function Row({ icon: Icon, label, hint, title, scope, className = "", children }) {
+// `wide`: the control goes on a second line under the text, spanning to the
+// row's end — a list to type (a textarea) or a pair of fields
+// (.setFieldPair); a lone field and its button stay in the control slot.
+export function Row({ icon: Icon, label, hint, title, scope, wide = false, className = "", children }) {
   return (
-    <div className={`settingRow setRow ${className}`} data-setting={label} title={title}>
+    <div className={`settingRow setRow${wide ? " wide" : ""} ${className}`} data-setting={label} title={title}>
       <span className="setIcon">{Icon ? <Icon size={16} /> : null}</span>
       <div className="settingText">
         <span className="settingLabel">{label}{scope ? <ScopeTag scope={scope} /> : null}</span>
@@ -197,7 +200,10 @@ export function Toggle({ checked, onChange, disabled, label, ...row }) {
 
 // Joined pill buttons for a single mutually-exclusive choice; the chosen
 // one's frame slides to the next one chosen (useSlidingPill).
-// `options` are [value, label, Icon, tooltip].
+// `options` are [value, label, Icon, tooltip]. An option with an icon has
+// a compact form, the icon alone with its word kept as the button's name
+// (and tooltip, without one of its own): a narrow dock window's header
+// turns it on (app.css .dockWindowHeader).
 export function Segmented({ value, onChange, options, disabled }) {
   // In a menu (the table column menu's alignment) its choices are the
   // menu's radio items; anywhere else, pressed buttons.
@@ -210,13 +216,14 @@ export function Segmented({ value, onChange, options, disabled }) {
       {options.map(([val, label, Icon, tip]) => (
         <button
           key={val} type="button" title={t(tip || label)} disabled={disabled}
+          aria-label={Icon ? t(label) : undefined}
           role={inMenu ? "menuitemradio" : undefined}
           aria-checked={inMenu ? value === val : undefined}
           aria-pressed={inMenu ? undefined : value === val}
           className={`uiBtn sm ${value === val ? "on" : ""}`}
           onClick={() => onChange(val)}
         >
-          {Icon ? <Icon size={14} /> : null}{t(label)}
+          {Icon ? <><Icon size={14} /><span className="segLabel">{t(label)}</span></> : t(label)}
         </button>
       ))}
     </span>
@@ -288,7 +295,10 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
 // `closeButton={false}` drops the × (while a step must not be interrupted).
 // A close by the backdrop, Escape or × asks first while the draft is edited,
 // or while `guard` ({question, keep, leave}) names other work it would lose
-// (an upload under way); the footer's Cancel asks only for a draft.
+// (an upload under way); the footer's Cancel asks only for a draft, or when
+// the guard says the Cancel itself destroys something (`cancel: true`: a
+// work folder still being made, which it removes). The question takes the
+// footer's place.
 export function SubDialog({ title, onClose, children, draft, guard = null, className = "", closeButton = true, guide }) {
   const key = React.useId();
   const [initial] = React.useState(() => JSON.stringify(draft));
@@ -319,7 +329,7 @@ export function SubDialog({ title, onClose, children, draft, guard = null, class
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title} data-guide={guide}
         ref={ref} tabIndex={-1} onClick={(event) => event.stopPropagation()}
         onClickCapture={(event) => {
-          if (dirty && event.target.closest("button")?.textContent.trim() === t("Cancel")) {
+          if ((dirty || guard?.cancel) && event.target.closest("button")?.textContent.trim() === t("Cancel")) {
             event.preventDefault(); event.stopPropagation(); close();
           }
         }}

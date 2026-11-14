@@ -162,7 +162,8 @@ export async function remoteChatScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
-        assertEq(await dock.locator(".segGroup button").allInnerTexts().then((b) => b.map((s) => s.trim()).join("|")), "Gamma AI|Codex",
+        // Their names: a narrow window shows the sides' icons alone.
+        assertEq(await dock.locator(".segGroup button").evaluateAll((b) => b.map((x) => x.getAttribute("aria-label")).join("|")), "Gamma AI|Codex",
           "the switch names Gamma AI and the folder's agent");
         await codexSide(page);
         const ready = `Codex on ${name}${folder ? ` · ${folder}` : ""}`;

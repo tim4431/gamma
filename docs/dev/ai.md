@@ -1642,7 +1642,8 @@ system prompt reads the same before and after a grant and the cached
 prefix holds. An asking `edit_block` or `create_block`
 streams no `progress`, so the note is not typed in before the user decides.
 
-In the client (`chat/ApprovalCard.jsx`, its rules in `chat/approvals.js`),
+In the client (`chat/ApprovalCard.jsx` on the shared card shell
+`chat/ApprovalShell.jsx`, its rules in `chat/approvals.js`),
 the card stands under the streaming reply's pill, which reads "Waiting for
 your approval" until the user answers. The card
 carries the `chat.approval` guide anchor and emits `approval.shown` while it
@@ -1661,8 +1662,9 @@ A note edit's card (`edit_block` with the preview's `text`) is drawn in
 its note too, wherever the note shows, as tracked changes
 ([Watching the agent work](#watching-the-agent-work-live-footprint)): the
 text the card would write against what the note says now, with the card's
-four answers on the bar under it (Don't allow without the card's line for
-what to do instead). An answer there is the card's own, through the latest
+four answers on the bar under it (the shell's `ApprovalAnswers`: Don't
+allow opens the card's line for what to do instead, and a refusal is said
+on the bar). An answer there is the card's own, through the latest
 render's `decideApproval` (so Allow in this chat files its grant under the
 conversation as it is now), which the card then shows as answered
 (`answered`); an answer on the card, the call's action or the end of the
