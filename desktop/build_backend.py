@@ -82,6 +82,10 @@ def main():
         # The system trust store (gamma/tls_trust.py): truststore's _api.py
         # imports _windows, _macos or _openssl by platform when it loads.
         "--collect-submodules", "truststore",
+        # The off-site copies' bucket (gamma/s3.py): botocore reads its service
+        # models and endpoint rules from package data, boto3 its resource models.
+        "--collect-data", "botocore",
+        "--collect-data", "boto3",
         str(DESKTOP / "backend_entry.py"),
     ]
     env = os.environ.copy()
