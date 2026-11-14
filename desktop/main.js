@@ -21,7 +21,7 @@
 // attribute the preload mirrors so the chrome paints in the same theme, and
 // `/api/session` (public HTTP API) for the workspace list.
 
-const { app, BaseWindow, WebContentsView, Menu, Tray, clipboard, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog, systemPreferences } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, Tray, Notification, clipboard, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -56,6 +56,8 @@ const { loadPage } = require('./lib/loadPage');
 const { hostPath } = require('./lib/hostPath');
 const folderAccessFor = require('./lib/folderAccess');
 const microphone = require('./lib/microphone');
+const permissions = require('./lib/permissions');
+const agentAsks = require('./lib/agentAsks');
 const { pages: shellPages, isShellPage, trustedShellSender } = require('./lib/shellSecurity');
 const windowControls = require('./lib/windowControls');
 const terminal = require('./lib/terminal');
@@ -211,10 +213,13 @@ function layout() {
   if (win.isMinimized()) ({ width: w, height: h } = win.getNormalBounds());
   // The bar's dropdown needs room below the strip: while a menu is open the
   // bar view grows over the content (its page is transparent outside the
-  // strip and the menu, and a click there closes the menu).
-  const barH = barExpanded ? Math.min(h, BAR_H + 420) : BAR_H;
+  // strip and the menu, and a click there closes the menu). While an
+  // agent's question is up (shownKey) the bar takes the whole window and
+  // the content view is hidden: its page is neither seen nor clicked.
+  const barH = shownKey ? h : barExpanded ? Math.min(h, BAR_H + 420) : BAR_H;
   bar.setBounds({ x: 0, y: 0, width: w, height: barH });
   content.setBounds({ x: 0, y: BAR_H, width: w, height: Math.max(0, h - BAR_H) });
+  content.setVisible(!shownKey);
   if (TEST_MINIMIZED) for (const v of [bar, content]) emulateViewSize(v);
 }
 
@@ -263,11 +268,17 @@ function readWindowControls() {
   }, () => {});
 }
 
-function createWindow() {
+// `inactive`: made for an agent's question (surfaceForAsk), shown without
+// taking the focus, so a key or a click meant for another app reaches no
+// button of it.
+function createWindow({ inactive = false } = {}) {
   const saved = registry.getWindowBounds();
   const p = palette();
+  // a card the window shows again is armed afresh, once the new bar drew it
+  disarm();
+  drawnKey = '';
   win = new BaseWindow({
-    show: !TEST_MINIMIZED,
+    show: !TEST_MINIMIZED && !inactive,
     width: 1360,
     height: 900,
     minWidth: 720,
@@ -291,6 +302,7 @@ function createWindow() {
     if (process.platform === 'win32') win.setFocusable(false);
     win.minimize();
   } else if (saved && saved.maximized) win.maximize();
+  if (inactive && !TEST_MINIMIZED) win.showInactive();
 
   const webPreferences = {
     preload: path.join(__dirname, 'preload.js'),
@@ -317,6 +329,21 @@ function createWindow() {
     win.on('focus', readWindowControls);
   }
   win.on('focus', hintServers);
+  // An agent's question (startArming): the buttons arm after a quiet,
+  // focused second, counted again on a focus, a resize or a move; a blur
+  // disarms them. The focus also ends the flashing that asked for it.
+  win.on('focus', () => {
+    focusedSince = true;
+    try { win.flashFrame(false); } catch {}
+    if (shownKey) startArming();
+  });
+  win.on('resize', () => { if (shownKey) startArming(); });
+  win.on('move', () => { if (shownKey) startArming(); });
+  win.on('blur', () => {
+    if (!armed && !armTimer) return;
+    disarm();
+    pushState();
+  });
   if (TEST_MINIMIZED) {
     for (const v of [bar, content]) v.webContents.on('did-navigate', () => { sizedViews.add(v); emulateViewSize(v); });
   }
@@ -327,8 +354,17 @@ function createWindow() {
   bar.webContents.on('will-navigate', guardBar);
   bar.webContents.on('will-redirect', guardBar);
   bar.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Each press, key and wheel the bar is given, before the page sees it: one
+  // before the buttons are armed counts the quiet second again, one after
+  // is the press an answer needs (answerAgentAsk).
+  bar.webContents.on('input-event', (_e, input) => barInput(input && input.type));
 
   const cwc = content.webContents;
+  // The address the main frame's navigation is at now (its start, then each
+  // redirect): where a redirect comes from.
+  let navHop = '';
+  cwc.on('did-start-navigation', (_e, url, inPlace, mainFrame) => { if (mainFrame && !inPlace) navHop = url; });
+  cwc.on('did-redirect-navigation', (_e, url, _inPlace, mainFrame) => { if (mainFrame) navHop = url; });
   const guard = (event, url, redirect = false) => {
     let origin = null;
     try {
@@ -339,6 +375,19 @@ function createWindow() {
     if (moved) {
       event.preventDefault();
       cwc.loadURL(moved).catch(() => {});
+      return;
+    }
+    // A page that is not this computer's (a NAS's, any remote server's)
+    // never takes the window to one of this computer's servers: a host page
+    // it placed under the cursor would answer as the host's signed-in
+    // window. Nothing is opened for it. The shell's own loads emit no
+    // will-navigate, so opening a local server is not this; a redirect is
+    // judged by the address it comes from, not by the page shown or who
+    // started the load: a local server's redirect within itself passes, a
+    // remote server's to a local one (opened from the launcher, or a
+    // Reload) never does.
+    if (origin && isLocalOrigin(origin) && !isLocalPage(redirect ? navHop : cwc.getURL())) {
+      event.preventDefault();
       return;
     }
     // The page's Gamma Cloud sign-in runs in the system browser and comes
@@ -363,8 +412,23 @@ function createWindow() {
     if (/^https?:/.test(url) || url === STORE_UPDATES_URL) openExternal(url);
     return { action: 'deny' };
   });
+  // The frames below the page (lib/permissions.js frameAllowed): under a
+  // remote page, web schemes only, never this computer's servers.
+  cwc.on('will-frame-navigate', (details) => {
+    if (!details.isMainFrame && !permissions.frameAllowed(details.url, cwc.getURL(), isLocalPage)) details.preventDefault();
+  });
+  // A remote page's Bluetooth chooser is cancelled (Electron otherwise picks
+  // the first device); a page of this computer's keeps what it had.
+  cwc.on('select-bluetooth-device', (event, _devices, callback) => {
+    if (isLocalPage(cwc.getURL())) return;
+    event.preventDefault();
+    callback('');
+  });
+  // The window's title is the page's, but 'Gamma' while an agent's question
+  // hides the page; the page's comes back after.
   cwc.on('page-title-updated', (_e, title) => {
-    if (win) win.setTitle(title || 'Gamma');
+    contentTitle = title || '';
+    if (win && !shownKey) win.setTitle(title || 'Gamma');
   });
   cwc.on('did-navigate', (_e, url) => {
     // a page that landed at a moved-away address all the same (a history step) is replaced
@@ -386,7 +450,12 @@ function createWindow() {
 
   // Downloads (backup zips, exports) go through the normal save dialog;
   // tests get them saved straight into a folder.
+  // A download a page starts while an agent's question hides it is cancelled.
   cwc.session.on('will-download', (_e, item) => {
+    if (shownKey) {
+      item.cancel();
+      return;
+    }
     const dir = process.env.GAMMA_SHELL_DOWNLOAD_DIR;
     if (dir) item.setSavePath(path.join(dir, item.getFilename()));
   });
@@ -412,6 +481,9 @@ function createWindow() {
     current = null;
     gamma = null;
     barExpanded = false;
+    barAsked = false;
+    disarm(); // a card still waiting is drawn again in the next window, armed afresh
+    drawnKey = '';
     if (vaultAsk) answerVault(vaultAsk.id, null); // its panel went with the window
   });
 }
@@ -451,9 +523,14 @@ function copyText(text) {
 // The bar view over the content while a dropdown is open. The vault dialog
 // (askVault) keeps it expanded until it is answered: a click in the page
 // meanwhile (a look at the folder) must not hide a dialog that still waits,
-// so only its answer or its cancel (answerVault) shrinks the bar.
+// so only its answer or its cancel (answerVault) shrinks the bar. An
+// agent's question (shownKey) keeps it so too, over the whole window, and
+// once it goes the bar is as the bar last asked (`barAsked`: a dropdown
+// open under the card stays open).
+let barAsked = false;
 function setBarExpanded(on) {
-  barExpanded = Boolean(on) || Boolean(vaultAsk);
+  barAsked = Boolean(on);
+  barExpanded = barAsked || Boolean(vaultAsk) || Boolean(shownKey);
   layout();
 }
 
@@ -739,6 +816,9 @@ async function startLocalNow(srv) {
   registry.setPort(srv.id, entry.port);
   // its trusted certificates as the registry has them, before its first round reads one
   await pushPins(srv.id);
+  // the host started again: its asks are followed again when the last reading wanted them
+  if (keepingState.items.some((i) => i.kind === 'vault' && i.server === srv.id && i.agentRuns === 'computer')
+    && (state.servers.find((s) => s.type === 'local') || {}).id === srv.id) followAsks(srv.id);
   return entry;
 }
 
@@ -1381,12 +1461,30 @@ const JSON_TYPE = { 'Content-Type': 'application/json' };
 // the request goes to, so neither the word nor a path ever reaches a remote
 // server, whatever the window opened while a picker was up.
 function shellWord(origin) {
-  const local = registry.load().servers.some((s) => {
+  if (!isLocalOrigin(origin)) throw new Error('A path on this computer goes only to a server on this computer.');
+  return { 'X-Gamma-Shell': SHELL_SECRET };
+}
+
+// Whether `origin` is a running local server's of this app.
+function isLocalOrigin(origin) {
+  return registry.load().servers.some((s) => {
     const entry = s.type === 'local' && sidecar.status(s.id);
     return entry && new URL(entry.url).origin === origin;
   });
-  if (!local) throw new Error('A path on this computer goes only to a server on this computer.');
-  return { 'X-Gamma-Shell': SHELL_SECRET };
+}
+
+// Whether the page at `url` is this computer's: a running local server's,
+// or one of the two bundled shell pages. Any other is a remote page, a
+// NAS's included (lib/permissions.js, the content guard).
+function isLocalPage(url) {
+  if (isShellPage(url, 'bar') || isShellPage(url, 'launcher')) return true;
+  let origin = '';
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return false;
+  }
+  return /^https?:/.test(origin) && isLocalOrigin(origin);
 }
 
 function openOrigin() {
@@ -2274,23 +2372,32 @@ async function setAgent(serverId, linkId, name, confirmed) {
 // Letting it ask is the computer's decision, as turning the agent on is:
 // asked first (`confirmed` answers in tests, where the question takes
 // Cancel), and the PATCH carries the shell's word. Back to 'never' asks
-// nothing. A work folder of another server never lets it ask (the server
-// refuses it too).
+// nothing. A work folder of another server never lets it ask in the chat
+// (the server refuses it too), but may let it ask on this computer
+// ('computer'), in the bar of this window alone (below, "An agent's ask on
+// this computer"): refused for a local work folder and for a server the
+// host says is reached over plain http (`item.secure`), asked first with
+// who writes what the agent is asked (keeping.runsComputerAsk, Cancel the
+// default), and a server whose whoami does not say it shows that a turn
+// waits (the PATCH's `older`) is said in the bar.
 async function setAgentRuns(serverId, linkId, runs, confirmed) {
-  if (runs !== 'never' && runs !== 'ask') throw new Error(`What an agent may run is never or ask, not ${runs}`);
+  if (!['never', 'ask', 'computer'].includes(runs)) throw new Error(`What an agent may run is never, ask or computer, not ${runs}`);
   const { origin, api, link, item, headers } = await vaultOn(serverId, linkId);
   if (!item.agentHere || !item.agent) throw new Error('Turn an agent on first.');
   if (runs === item.agentRuns) return false;
   if (runs === 'ask' && link.remote_url) throw new Error(keeping.FAR_RUNS_RULE);
-  if (runs === 'ask' && !confirmed) {
-    const q = keeping.runsAsk(item);
-    if (await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: 1 }, 1) !== 0) return null;
+  if (runs === 'computer' && !link.remote_url) throw new Error(keeping.NEAR_COMPUTER_RULE);
+  if (runs === 'computer' && !item.secure) throw new Error(keeping.plainRule(item));
+  if (runs !== 'never' && !confirmed) {
+    const q = runs === 'computer' ? keeping.runsComputerAsk(item) : { ...keeping.runsAsk(item), defaultId: 0, cancelId: 1 };
+    if (await ask({ type: runs === 'computer' ? 'warning' : 'question', message: q.message, detail: q.detail, buttons: q.buttons,
+      defaultId: q.defaultId, cancelId: q.cancelId }, 1) !== 0) return null;
   }
-  await api(origin, `/api/folder-links/${link.id}`, {
-    method: 'PATCH', headers: { ...headers, ...JSON_TYPE, ...(runs === 'ask' ? shellWord(origin) : {}) },
+  const after = await api(origin, `/api/folder-links/${link.id}`, {
+    method: 'PATCH', headers: { ...headers, ...JSON_TYPE, ...(runs !== 'never' ? shellWord(origin) : {}) },
     body: JSON.stringify({ agent_runs: runs }),
   });
-  showNotice(keeping.runsSaid(item, runs));
+  showNotice(`${keeping.runsSaid(item, runs)}${runs === 'computer' && after && after.older ? ` ${keeping.olderServer(item)}` : ''}`);
   refreshKeeping().catch(() => {});
   return true;
 }
@@ -2774,6 +2881,8 @@ function refreshKeeping() {
     const zoteroHosts = new Map(); // server id -> holds a link that is not detached
     const moves = new Map(); // a redirected address -> the same server over https (autoUpgrade)
     const net = netState();
+    const host = servers.find((s) => s.type === 'local');
+    let asksHere = null; // whether the host keeps a work folder whose agent may ask on this computer; null: not read
     for (const srv of servers) {
       if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
       try {
@@ -2800,6 +2909,7 @@ function refreshKeeping() {
         // whose links all went or were detached no longer does. A list that
         // did not come leaves that as it was.
         if (z) zoteroHosts.set(srv.id, kept.some((i) => i.kind === 'zotero' && !i.paused));
+        if (host && srv.id === host.id) asksHere = kept.some((i) => i.kind === 'vault' && i.agentRuns === 'computer');
         items.push(...kept);
       } catch {
         // a server that does not answer now is left out of this reading
@@ -2808,6 +2918,11 @@ function refreshKeeping() {
     if (keepingNext) return;
     for (const [id, on] of zoteroHosts) registry.setZoteroHost(id, on);
     for (const [from, to] of moves) autoUpgrade(from, to);
+    // The asks are followed while the host keeps a folder that may ask here,
+    // and stop once a reading of it says none does; a reading that did not
+    // come leaves the follower as it is.
+    if (asksHere === true) followAsks(host.id);
+    else if (asksHere === false) stopAsks();
     keepingState = { items, summary: keeping.summarize(items) };
     pushState();
   })().finally(() => {
@@ -2819,8 +2934,8 @@ function refreshKeeping() {
 
 // What a vault's row and its view in the panel do (VAULT_ACTIONS), `value`
 // the switch's new setting for `pull` and `library` (a bool), `push` (a
-// word), `agent` (an agent's name, "" for none) and `agent-runs` ('never'
-// or 'ask'); `choose` opens a work folder's tracking dialog in Gamma, and
+// word), `agent` (an agent's name, "" for none) and `agent-runs` ('never',
+// 'ask' or 'computer'); `choose` opens a work folder's tracking dialog in Gamma, and
 // `check-agents` looks for the agents on this computer again as a work
 // folder's view opens; `show-computer` and `hide-computer` show this
 // computer on a vault of another server's server, or stop showing it.
@@ -2902,6 +3017,297 @@ function showNotice(text) {
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => { notice = null; pushState(); }, 8000);
   pushState();
+}
+
+// ------------------------------------------ an agent's ask on this computer -----
+// A turn of a chat on another server's page, which the host runs for a
+// work folder whose agent may ask on this computer (setAgentRuns
+// 'computer'), asks to run a command or to change files outside its
+// sandbox (docs/architecture.md "An agent's ask on this computer";
+// docs/dev/local_agents.md "Asking on this computer"). The question is the
+// host's and is drawn here alone, in the bar, over the whole window with
+// the content view hidden: the page that started the turn is neither seen
+// nor clicked, and nothing that server sends draws, words or answers it.
+// One follower holds `GET /api/local-agents/asks` on the host, with the
+// shell's word, while the host keeps such a folder (refreshKeeping); the
+// queue (lib/agentAsks.js take) keeps the card shown until it is answered
+// or goes, the asks that come meanwhile behind it. A new card disarms the
+// buttons, which arm after a quiet, focused second (startArming), and an
+// answer counts only for a press made after that (barInput); it goes to
+// the host's `POST /api/local-agents/asks/<id>` with the shell's word, and
+// the bar says only what that answered. A window hidden, minimized or
+// closed comes back without the focus, flashed, with a notification in the
+// shell's words (surfaceForAsk); the tray's first line says what waits.
+
+const ASK_HOLD_S = 20; // how long the host holds a read that has nothing new
+const ASK_RETRY_MS = 2_000;
+const ARM_MS = 1_000;
+const SURFACE_MS = 60_000;
+let askQueue = []; // the asks waiting, the shown one first (each with `hostId`, the local server it came from)
+const askTombstones = new Set(); // the ids answered here, kept out of a list read before the answer
+const unsureAsks = new Set(); // the ids of the asks an answer went to without word of whether it was taken (one each per 30 s timeout, until answered again)
+let askVersion = -1; // the host's version of its list, the next read's `after` (-1: none yet, answered at once)
+let askFollower = null; // { server, ctrl } while one follows the host
+let shownKey = ''; // the id of the ask the bar shows, '' for none
+let replacedKey = ''; // the shown ask, when it took the place of one that went away unanswered here
+let answeredKey = ''; // the last ask answered here
+let drawnKey = ''; // the ask the bar said it drew (shell:agent-ask-drawn)
+let armed = false;
+let armTimer = null;
+let arming = 0; // counts the armings; `pressedIn`, the arming a press after it came in
+let pressedIn = -1;
+let contentTitle = ''; // the page's title, back once the card goes
+let surfacedAt = 0; // when a card last brought the window
+let focusedSince = true; // the window had the focus since then
+const toasts = new Set(); // the notifications up, kept from the collector until they close
+// under GAMMA_SHELL_TEST: what was surfaced, the notifications and the answers sent
+const surfaced = [];
+const notifications = [];
+const askAnswers = [];
+
+const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+
+// The card the bar draws, or null.
+function askCard() {
+  return agentAsks.cardOf(askQueue, registry.load().servers, replacedKey);
+}
+
+// The card as the shell state carries it, with whether its buttons are armed.
+function agentAskState() {
+  const card = askCard();
+  return card && { ...card, armed };
+}
+
+// The asks of local server `serverId` followed (a no-op while they are):
+// each read held by the host until its list changes, up to ASK_HOLD_S. A
+// failure empties the queue, so nothing shown can be answered: another try
+// after ASK_RETRY_MS while the server runs, none for a 404 (a server that
+// runs no agents) or a 403 (the word refused: a bug, logged), which the
+// next keeping reading starts again.
+function followAsks(serverId) {
+  if (askFollower && askFollower.server === serverId) return;
+  stopAsks();
+  const follower = { server: serverId, ctrl: new AbortController() };
+  askFollower = follower;
+  (async () => {
+    while (askFollower === follower) {
+      const after = askVersion;
+      const t0 = Date.now();
+      let answer;
+      try {
+        const { origin, api } = await localServer(serverId);
+        answer = await api(origin, `/api/local-agents/asks?after=${after}&wait=${ASK_HOLD_S}`, {
+          headers: shellWord(origin), signal: AbortSignal.any([follower.ctrl.signal, AbortSignal.timeout((ASK_HOLD_S + 10) * 1000)]),
+        });
+      } catch (e) {
+        if (askFollower !== follower) return;
+        dropAsks();
+        if (e.status === 403) console.error(`[shell] the host refused the shell's word for its asks: ${e.message}`);
+        if (e.status === 404 || e.status === 403 || !sidecar.status(serverId)) {
+          askFollower = null;
+          return;
+        }
+        await pause(ASK_RETRY_MS);
+        continue;
+      }
+      if (askFollower !== follower) return;
+      // (every list is taken: the tombstones keep an answered ask out of one
+      // read before the answer, and a host started again counts from 0)
+      askVersion = Number.isInteger(answer.version) ? answer.version : 0;
+      askQueue = agentAsks.take(askQueue, (Array.isArray(answer.asks) ? answer.asks : []).map((a) => ({ ...a, hostId: serverId })), askTombstones);
+      asksChanged();
+      // a host that answered at once with nothing new does not hold the read
+      if (askVersion === after && Date.now() - t0 < 1000) await pause(ASK_RETRY_MS);
+    }
+  })().catch((e) => console.error(`[shell] following the asks: ${(e && e.message) || e}`));
+}
+
+function stopAsks() {
+  if (askFollower) {
+    askFollower.ctrl.abort();
+    askFollower = null;
+  }
+  dropAsks();
+}
+
+function dropAsks() {
+  askVersion = -1;
+  askTombstones.clear();
+  if (!askQueue.length && !shownKey) return;
+  askQueue = [];
+  asksChanged();
+}
+
+// The queue changed: a card whose ask is new is disarmed (a replacement of
+// one that went away unanswered here says so) and brings the window; no
+// card, the bar goes back to its strip and the page shows again.
+function asksChanged() {
+  const first = askQueue[0];
+  if (first && first.id !== shownKey) {
+    replacedKey = shownKey && shownKey !== answeredKey ? first.id : '';
+    shownKey = first.id;
+    drawnKey = '';
+    disarm();
+    surfaceForAsk(askCard());
+  } else if (!first && shownKey) {
+    shownKey = '';
+    replacedKey = '';
+    drawnKey = '';
+    disarm();
+    if (win && !win.isDestroyed()) win.setTitle(contentTitle || 'Gamma');
+  }
+  if (shownKey && win && !win.isDestroyed()) win.setTitle('Gamma');
+  setBarExpanded(barAsked);
+  pushState();
+  if (tray) {
+    tray.setContextMenu(trayMenu());
+    tray.setToolTip(agentAsks.trayTip(askQueue));
+  }
+}
+
+function disarm() {
+  armed = false;
+  clearTimeout(armTimer);
+  armTimer = null;
+}
+
+// The buttons of the card shown armed after ARM_MS, once the bar drew it
+// and while the window has the focus (the test scripts' minimized window
+// never has it: taken as given there); counted again from now.
+function startArming() {
+  disarm();
+  if (!shownKey || drawnKey !== shownKey || !win || win.isDestroyed()) return;
+  if (!TEST_MINIMIZED && !win.isFocused()) return;
+  armTimer = setTimeout(() => {
+    armTimer = null;
+    armed = true;
+    arming += 1;
+    pushState();
+  }, ARM_MS);
+}
+
+// The bar drew the card `key`: its quiet second starts.
+function agentAskDrawn(key) {
+  if (!key || key !== shownKey) return false;
+  if (drawnKey === key) return true;
+  drawnKey = key;
+  startArming();
+  return true;
+}
+
+// A press, a key, a wheel or a touch in the bar while a card is up (Chromium
+// names a key pressed `rawKeyDown`, its repeat as typed `keyDown`; a tap
+// reaches it as `touchStart`, the mouse events and the click for it are
+// made in the page).
+const PRESSES = ['mouseDown', 'rawKeyDown', 'keyDown', 'mouseWheel', 'touchStart'];
+function barInput(type) {
+  if (!shownKey || !PRESSES.includes(type)) return;
+  if (armed) pressedIn = arming;
+  else startArming();
+}
+
+// The bar's Allow once, Decline or Stop asking (`decision` once, deny or
+// stop) on the card `key`: only the card shown, armed, after a press made
+// since. Every button goes inactive at once; then the host's answer route
+// with the shell's word (stop declines), and for stop, once the decline is
+// written, the folder's policy back to never. The bar says what the route
+// answered: taken, gone meanwhile (404, 409; unknown still after an earlier
+// answer left unknown, which may be the one taken), not reached (the card
+// stays, armed again), or unknown after the request left (a timeout, a
+// reset).
+async function answerAgentAsk(key, decision) {
+  const ask = askQueue[0];
+  if (!ask || key !== shownKey || ask.id !== key || !armed || pressedIn !== arming || !['once', 'deny', 'stop'].includes(decision)) return false;
+  const card = askCard();
+  disarm();
+  pushState();
+  if (process.env.GAMMA_SHELL_TEST) askAnswers.push({ id: ask.id, decision });
+  let left = false;
+  let said = '';
+  let taken = false;
+  try {
+    const { origin, api } = await localServer(ask.hostId);
+    const headers = { ...JSON_TYPE, ...shellWord(origin) };
+    left = true;
+    const r = await api(origin, `/api/local-agents/asks/${encodeURIComponent(ask.id)}`, {
+      method: 'POST', headers, body: JSON.stringify({ decision: decision === 'stop' ? 'deny' : decision }), signal: AbortSignal.timeout(30_000),
+    });
+    if (Number.isInteger(r && r.version)) askVersion = r.version;
+    taken = true;
+    said = agentAsks.notice(card, decision);
+  } catch (e) {
+    const why = `${(e && e.message) || ''} ${(e && e.cause && e.cause.message) || ''}`;
+    if (e && (e.status === 404 || e.status === 409)) {
+      taken = true;
+      // an earlier answer to it may be the one taken: "nothing was allowed" is said only when none may be
+      said = unsureAsks.has(ask.id) ? agentAsks.unsure(card) : agentAsks.stale(card);
+    } else if (!left || (e && e.status) || /ERR_CONNECTION_REFUSED|ECONNREFUSED/.test(why)) {
+      said = agentAsks.couldNot(card, (e && e.message) || String(e));
+    } else {
+      said = agentAsks.unsure(card);
+      unsureAsks.add(ask.id);
+    }
+  }
+  if (taken) {
+    unsureAsks.delete(ask.id);
+    askTombstones.add(ask.id);
+    askQueue = askQueue.filter((a) => a.id !== ask.id);
+    answeredKey = ask.id;
+    asksChanged();
+    // Stop asking: the folder no longer asks on this computer, the safe way, whatever became of the ask
+    if (decision === 'stop' && ask.link_id) {
+      try {
+        const { origin, api } = await localServer(ask.hostId);
+        await api(origin, `/api/folder-links/${encodeURIComponent(ask.link_id)}`, {
+          method: 'PATCH', headers: { ...JSON_TYPE, ...shellWord(origin) }, body: JSON.stringify({ agent_runs: 'never' }),
+        });
+      } catch (e) {
+        said += ` Could not stop ${card.label} asking: ${String((e && e.message) || e).replace(/\.$/, '')}.`;
+      }
+      refreshKeeping().catch(() => {});
+    }
+  } else {
+    startArming();
+    pushState();
+  }
+  showNotice(said);
+  return true;
+}
+
+// A new card brings the window: made on the launcher when there is none
+// (bundled, no network), shown when hidden or minimized, never focused, so
+// that every card can be answered; when it has not the focus, flashed, the
+// Dock bouncing on macOS, and a notification in the shell's words (its
+// click shows the window), these at most once a minute while the window
+// has not had the focus since.
+function surfaceForAsk(card) {
+  if (!card) return;
+  if (process.env.GAMMA_SHELL_TEST) surfaced.push(card.key);
+  if (TEST_MINIMIZED) return;
+  if (!win || win.isDestroyed()) {
+    createWindow({ inactive: true });
+    loadLauncher();
+  } else if (!win.isVisible() || win.isMinimized()) {
+    win.showInactive();
+  }
+  if (win.isFocused()) return;
+  const now = Date.now();
+  if (surfacedAt && now - surfacedAt < SURFACE_MS && !focusedSince) return;
+  surfacedAt = now;
+  focusedSince = false;
+  try { win.flashFrame(true); } catch {}
+  if (process.platform === 'darwin' && app.dock && app.dock.bounce) app.dock.bounce('informational');
+  const words = agentAsks.notification(card);
+  if (process.env.GAMMA_SHELL_TEST) {
+    notifications.push(words);
+    return;
+  }
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title: words.title, body: words.body });
+  toasts.add(n);
+  n.on('click', () => showWindow());
+  n.on('close', () => toasts.delete(n));
+  n.show();
 }
 
 // Gamma Cloud sign-in, taken over from the page (lib/cloudSignIn.js): the
@@ -3891,8 +4297,12 @@ function backgroundItems(keepLabel, loginLabel) {
   ];
 }
 
+// The tray's menu: first, while an agent's question waits, a line that
+// brings the window to it.
 function trayMenu() {
+  const waits = agentAsks.trayLabel(askQueue);
   return Menu.buildFromTemplate([
+    ...(waits ? [{ label: waits, click: () => showWindow() }, { type: 'separator' }] : []),
     { label: 'Open Gamma', click: () => showWindow() },
     { type: 'separator' },
     ...backgroundItems('Keep running in the background', 'Start at login'),
@@ -3907,7 +4317,7 @@ function ensureTray() {
     return;
   }
   tray = new Tray(trayIcon());
-  tray.setToolTip('Gamma');
+  tray.setToolTip(agentAsks.trayTip(askQueue));
   tray.setContextMenu(trayMenu());
   tray.on('click', () => showWindow());
 }
@@ -4047,6 +4457,9 @@ function barState() {
     keeping: keepingState,
     // the vault dialog the sync panel shows (askVault), or null
     vaultAsk: vaultAskState(),
+    // an agent's question on this computer, the card the bar draws over the
+    // whole window with whether its buttons are armed, or null
+    agentAsk: agentAskState(),
     update: updater.state(),
     // Gamma's workspaces on the open server (null until known / signed in),
     // with the one the content view shows and the offline-copy cross-links.
@@ -4327,6 +4740,15 @@ function shellOnly(handler) {
   };
 }
 
+// The bar's main frame alone, never the launcher: what answers an agent's
+// question on this computer.
+function barOnly(handler) {
+  return (event, ...args) => {
+    if (!trustedShellSender(event, bar, content) || !bar || event.sender !== bar.webContents) throw new Error('Not allowed');
+    return handler(...args);
+  };
+}
+
 function registerIpc() {
   ipcMain.handle('shell:state', shellOnly(() => { probeRemotes(); refreshGamma(); return barState(); }));
   ipcMain.handle('shell:list', shellOnly(() => { probeRemotes(); return fullState(); }));
@@ -4433,7 +4855,13 @@ function registerIpc() {
   const PAGE_ASK_MS = 1000;
   let pageAskAt = 0;
   const fromPage = (event, ...ids) => {
-    if (!content || event.sender !== content.webContents || busy || vaultAsk || asking || !current) return false;
+    if (!content || event.sender !== content.webContents) return false;
+    // (while an agent's question hides the page, it is answered first)
+    if (shownKey) {
+      showNotice(agentAsks.answerFirst(askCard()));
+      return false;
+    }
+    if (busy || vaultAsk || asking || !current) return false;
     let from = '';
     try { from = new URL(event.senderFrame.url).origin; } catch {}
     if (from !== openOrigin() || !ids.every((id) => /^[\w-]{1,64}$/.test(id))) return false;
@@ -4520,6 +4948,10 @@ function registerIpc() {
     }
   }));
   ipcMain.handle('shell:bar-expand', shellOnly((on) => setBarExpanded(on)));
+  // An agent's question on this computer: the bar drew the card `key` (its
+  // buttons arm a quiet second after), and its answer.
+  ipcMain.handle('shell:agent-ask-drawn', barOnly((key) => agentAskDrawn(String(key || ''))));
+  ipcMain.handle('shell:answer-agent-ask', barOnly((key, decision) => answerAgentAsk(String(key || ''), String(decision || ''))));
 
   // Theme mirror: the preload on http(s) pages reports data-theme changes.
   ipcMain.on('shell:theme', (event, t) => {
@@ -4620,10 +5052,19 @@ app.whenReady().then(async () => {
   applyVerifyProc();
   app.on('certificate-error', (event, _wc, url, error, certificate, callback, isMainFrame) =>
     certificateError(event, url, error, certificate, callback, isMainFrame));
-  session.defaultSession.setPermissionRequestHandler(microphone.create({
-    prefs: systemPreferences,
-    onDenied: () => microphoneRefused().catch(() => {}),
-  }));
+  // What a page may use (lib/permissions.js): a page of this computer as
+  // before, through lib/microphone.js; a remote page's own table.
+  const allow = permissions.create({
+    isLocal: isLocalPage,
+    ask: (opts) => ask(opts, 1),
+    microphone: microphone.create({ prefs: systemPreferences, onDenied: () => microphoneRefused().catch(() => {}) }),
+    hidden: () => Boolean(shownKey),
+  });
+  session.defaultSession.setPermissionRequestHandler(allow.request);
+  session.defaultSession.setPermissionCheckHandler(allow.check);
+  // The notifications of an agent's question carry the installer's id, so
+  // Windows shows them (the Store's package has its own).
+  if (process.platform === 'win32' && !process.windowsStore) app.setAppUserModelId('io.github.tim4431.gamma');
   updater.init({ onChange: () => pushState(), openExternal });
   buildMenu();
   const settings = registry.getSettings();
@@ -4735,12 +5176,33 @@ if (process.env.GAMMA_SHELL_TEST) {
     accepted,
     launcherUrl: () => (content ? content.webContents.getURL() : ''),
     // main.test.js: the window shows server `srv`, `view` standing in for its
-    // content view and `window` (none by default) for the window itself.
-    pretendShown: (srv, view, window = null) => {
+    // content view, `window` (none by default) for the window itself and
+    // `barView` (none) for the bar's.
+    pretendShown: (srv, view, window = null, barView = null) => {
       current = srv && { id: srv.id, name: srv.name, type: srv.type, url: srv.type === 'local' ? sidecar.status(srv.id).url : srv.url };
       content = view;
       win = window;
+      bar = barView;
     },
+    // an agent's ask on this computer: main.test.js and e2e.js
+    agentAsk: agentAskState,
+    answerAgentAsk,
+    agentAskDrawn,
+    // a list as the follower would read it from local server `serverId` (the host by default)
+    pretendAsks: (list, serverId = (registry.load().servers.find((s) => s.type === 'local') || {}).id || '') => {
+      askQueue = agentAsks.take(askQueue, list.map((a) => ({ ...a, hostId: serverId })), askTombstones);
+      asksChanged();
+      return agentAskState();
+    },
+    pressed: (type) => barInput(type),
+    following: () => (askFollower ? askFollower.server : ''),
+    stopAsks,
+    surfaced,
+    forgetSurfaced: () => { surfacedAt = 0; focusedSince = true; },
+    notifications,
+    askAnswers,
+    isLocalPage,
+    trayMenu,
     // main.test.js: the app up (`on`) or not yet, as the boot sets it; → what was handed over meanwhile.
     pretendBooted: (on = true) => {
       booted = on;
@@ -4785,6 +5247,7 @@ if (process.env.GAMMA_SHELL_TEST) {
     update: () => updater.state(),
     remoteHealth,
     probeRemotes,
-    bounds: () => ({ bar: bar && bar.getBounds(), content: content && content.getBounds() }),
+    bounds: () => ({ bar: bar && bar.getBounds(), content: content && content.getBounds(),
+      contentVisible: content && typeof content.getVisible === 'function' ? content.getVisible() : null }),
   };
 }

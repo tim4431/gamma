@@ -78,21 +78,32 @@ export function vaultChip(state) {
   return { kind: missing ? "alert" : "disk", label: missing ? t("File missing") : t("On this computer"), title };
 }
 
+// An agent at work, in the one wording every place that shows it uses (the
+// chip's card, the chat's strip and pill, a Send's tag; the desktop sync
+// panel copies it): "Codex is working…", with what it is at "Codex is
+// working: Editing sections/intro.tex"; "The agent is working…" unnamed.
+export function agentWorking(agent, detail = "") {
+  if (!agent) return t("The agent is working…");
+  return detail ? t("{agent} is working: {detail}", { agent, detail }) : t("{agent} is working…", { agent });
+}
+
 // What the card says of the agent on this computer that answers the work
 // folder's Sends (`vault.agent`, {name, label, ready, problem, running:
 // {kind, request_id, detail} | null, `kind` "send" or "chat"};
 // docs/dev/local_agents.md): {line, problem,
 // working}, `line` naming it, `problem` why it cannot run (the server's
-// English sentence, "" while ready or not known yet), `working` what it is
-// at during a run ("" otherwise; the detail is "" for a member who cannot
-// act on the vault). Null for a vault with no agent.
+// English sentence, "" while ready or not known yet), `working` during a
+// run the StateTag's state of it at work ({label, detail, title, tone,
+// live}, as comments.js sendState's running: `detail` what it is at, "" for
+// a member who cannot act on the vault), null otherwise. Null for a vault
+// with no agent.
 export function agentLine(state) {
   const agent = state?.vault?.agent;
   if (!agent || typeof agent !== "object") return null;
   const name = agent.label || agent.name || "";
   const detail = agent.running?.detail || "";
-  const working = !agent.running ? ""
-    : detail ? t("{agent} is working: {detail}", { agent: name, detail }) : t("{agent} is working", { agent: name });
+  const label = agentWorking(name);
+  const working = agent.running ? { label, detail, title: detail || label, tone: "pending", live: true } : null;
   return {
     line: t("Agent: {agent} on this computer", { agent: name }),
     problem: agent.ready === false ? String(agent.problem || "") : "",

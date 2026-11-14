@@ -27,6 +27,17 @@ async function run() {
   // A server that sends everything to another origin: the guard refuses the
   // redirect in the content view, so the load is cancelled, with no did-fail-load.
   const redirector = http.createServer((req, res) => { res.writeHead(302, { Location: 'https://example.org/signin' }); res.end(); });
+  // What stands in for a local server of this computer.
+  const localHits = [];
+  const local = http.createServer((req, res) => { localHits.push(req.url); res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><p>Local</p>'); });
+  // A remote server whose pages send the window to that local server (set
+  // once it listens); its API answers as the fixture's.
+  let toLocal = '';
+  const sender = http.createServer((req, res) => {
+    if (req.url.startsWith('/api/')) return server.emit('request', req, res);
+    res.writeHead(302, { Location: toLocal });
+    res.end();
+  });
   let app;
   try {
     // The OS's pick, again if it is below 9100: those ports are the developer's,
@@ -68,6 +79,51 @@ async function run() {
     assert.equal(await bar.locator('.wsItem img').count(), 0);
     assert.equal(await bar.evaluate(() => window.__shellProbe), undefined);
 
+    // This computer's servers are out of a remote page's reach: a local
+    // server stands in (its sidecar's status, as the shell reads it, is
+    // the fixture's), and the remote page's navigations to it, by script,
+    // by a link and in a frame, go nowhere and open nothing.
+    do {
+      if (local.listening) await new Promise((resolve) => local.close(resolve));
+      await new Promise((resolve) => local.listen(0, '127.0.0.1', resolve));
+    } while (local.address().port < 9100);
+    const localOrigin = `http://127.0.0.1:${local.address().port}`;
+    await app.evaluate((_, url) => {
+      const shell = global.__gammaShell;
+      const srv = shell.registry.addLocal('Pretend host');
+      const real = shell.sidecar.status;
+      shell.sidecar.status = (id) => (id === srv.id ? { url, port: Number(new URL(url).port) } : real(id));
+    }, localOrigin);
+    const opensBefore = await app.evaluate(() => global.__gammaShell.externalOpens.length);
+    assert.equal(await app.evaluate((_, url) => global.__gammaShell.isLocalPage(url), `${localOrigin}/`), true);
+    assert.equal(await app.evaluate((_, url) => global.__gammaShell.isLocalPage(url), `${origin}/`), false, 'the fixture is a remote page');
+    await content.evaluate((url) => { window.location.href = `${url}/`; }, localOrigin);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.ok(content.url().startsWith(origin), 'a remote page cannot navigate to a local server');
+    await content.evaluate((url) => {
+      const a = document.createElement('a');
+      a.href = `${url}/?ws=mine`;
+      a.id = 'toLocal';
+      a.textContent = 'local';
+      document.body.appendChild(a);
+    }, localOrigin);
+    await content.evaluate(() => document.getElementById('toLocal').click());
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.ok(content.url().startsWith(origin), 'nor by a link');
+    await content.evaluate((url) => {
+      const f = document.createElement('iframe');
+      f.src = `${url}/api/session`;
+      document.body.appendChild(f);
+    }, localOrigin);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.ok(!content.frames().some((f) => f.url().startsWith(localOrigin)), 'nor in a frame');
+    assert.equal(await app.evaluate(() => global.__gammaShell.externalOpens.length), opensBefore, 'and nothing opened for it');
+    // What a remote page may use: notifications, not the location
+    assert.equal(await content.evaluate(() => Notification.requestPermission()), 'granted');
+    assert.equal(await content.evaluate(() => navigator.permissions.query({ name: 'geolocation' }).then((p) => p.state)), 'denied');
+    assert.equal(await content.evaluate(() => new Promise((resolve) => navigator.geolocation.getCurrentPosition(() => resolve('allowed'),
+      (e) => resolve(e.code === 1 ? 'denied' : `error ${e.code}`)))), 'denied');
+
     const file = path.join(profile, 'untrusted.html');
     fs.writeFileSync(file, '<!doctype html><p>Untrusted local file</p>');
     const fileUrl = pathToFileURL(file).href;
@@ -104,13 +160,41 @@ async function run() {
       assert.ok(open.ms < 10_000, `the open fails at once, not after a wait: ${open.ms} ms`);
     }
     assert.ok(refused.opened.includes('https://example.org/signin'), 'the redirect went to the system browser');
-    console.log('PASS: bundled chrome bridge works, remote/local untrusted documents have no bridge, role HTML is inert, remote file navigation is blocked, a refused redirect fails the open at once.');
+
+    // A remote server's redirect to a local server, on the shell's own load
+    // (no frame started it), the local origin allowed as one opened before:
+    // the window never lands there, and nothing is opened for it.
+    toLocal = `${localOrigin}/?ws=mine`;
+    await new Promise((resolve) => sender.listen(0, '127.0.0.1', resolve));
+    const hitsBefore = localHits.length;
+    const sent = await app.evaluate(async ({ webContents }, { url, localOrigin }) => {
+      const shell = global.__gammaShell;
+      shell.allowedOrigins.add(localOrigin);
+      // opened from the launcher: the page shown is this computer's
+      const view = webContents.getAllWebContents().find((wc) => !wc.getURL().endsWith('/ui/bar.html'));
+      await shell.loadLauncher();
+      for (let i = 0; i < 50 && !view.getURL().includes('/ui/launcher.html'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+      const before = shell.externalOpens.length;
+      const error = await shell.openServer(shell.registry.addRemote('Sends to the host', url).id).then(() => '', (e) => e.message);
+      return { error, opened: shell.externalOpens.slice(before) };
+    }, { url: `http://localhost:${sender.address().port}`, localOrigin });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.match(sent.error, /ERR_FAILED/, 'the open fails');
+    assert.ok(!content.url().startsWith(localOrigin), `the window is not on the local server: ${content.url()}`);
+    // (the shell's own readings of it, /api/…, go on meanwhile)
+    assert.deepEqual(localHits.slice(hitsBefore).filter((u) => !u.startsWith('/api/')), [], `the local server was never asked for a page: ${localHits.slice(hitsBefore)}`);
+    assert.deepEqual(sent.opened, [], 'and nothing was opened for it');
+    console.log('PASS: bundled chrome bridge works, remote/local untrusted documents have no bridge, role HTML is inert, remote file navigation is blocked, a remote page reaches no local server, nor a remote server\'s redirect, and gets notifications but not the location, a refused redirect fails the open at once.');
   } finally {
     if (app) await app.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     redirector.closeAllConnections();
     if (redirector.listening) await new Promise((resolve) => redirector.close(resolve));
+    sender.closeAllConnections();
+    if (sender.listening) await new Promise((resolve) => sender.close(resolve));
+    local.closeAllConnections();
+    if (local.listening) await new Promise((resolve) => local.close(resolve));
     fs.rmSync(profile, { recursive: true, force: true });
   }
 }

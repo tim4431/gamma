@@ -1,11 +1,11 @@
 import React from "react";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { API, apiJson, setExpectedUser } from "../shared/lib/utils";
-import { AuthShell, LoginPage, SessionConflictPage } from "./LoginPage";
+import { AuthShell, LoginError, LoginNotice, LoginPage, SessionConflictPage } from "./LoginPage";
 import { Section, Toggle } from "../settings/SettingsKit";
 import { WorkspacePicker, accessBody, edits } from "../settings/WorkspacePicker";
 import { Splash } from "../shared/ui/BrandMark";
-import { AlertCircleIcon, CheckIcon, EyeIcon, LockIcon, MessageSquareIcon, PenIcon, ShieldIcon } from "../shared/ui/Icons";
+import { CheckIcon, EyeIcon, LockIcon, MessageSquareIcon, PenIcon, ShieldIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 // A standalone sign-in gate: no workspace/session restoration runs while the
@@ -137,9 +137,9 @@ export default function McpConsent({ requestId, userCode }) {
       <span>{t("Signed in as {username}", { username: <strong>{details.username}</strong> })}</span>
       {done ? null : <button type="button" className="uiBtn ghost sm" disabled={busy} onClick={switchAccount}>{t("Use another account")}</button>}
     </p> : null}
-    {done ? <div className="loginNotice" role="status"><CheckIcon size={16} aria-hidden="true" /><span>{done === "allowed"
+    {done ? <LoginNotice icon={CheckIcon}>{done === "allowed"
       ? t("{name} is connected. Go back to your terminal: the setup finishes there.", { name })
-      : t("{name} was not connected. You can close this page.", { name })}</span></div>
+      : t("{name} was not connected. You can close this page.", { name })}</LoginNotice>
     : details ? <>
       {device ? <div className="mcpCode">
         <span className="settingDesc">{t("Check that your terminal shows this code:")}</span>
@@ -165,14 +165,16 @@ export default function McpConsent({ requestId, userCode }) {
           <p className="settingDesc">{t("The assistant provided its name. Only approve if you started this connection.")}</p>
           <p className="settingDesc mcpCallback">{t("Returns to: {redirect_uri}", { redirect_uri: details.redirect_uri })}</p>
         </details>}
+      {/* An answer's failure (an expired request, a session ended) shows
+          above Allow, where the eye is, as the login form's above Log in. */}
+      {error ? <LoginError>{error}</LoginError> : null}
       <div className="mcpConsentActions">
-        <button className="loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
+        <button className="uiBtn primary loginBtn" disabled={busy || !(access.all || access.ids.length)} onClick={() => decide(true)}>
           <MorphText>{busy ? t("Connecting…") : editing ? t("Allow reading and editing")
             : feedback ? t("Allow reading and answering") : t("Allow read-only access")}</MorphText>
         </button>
-        <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
+        <button className="uiBtn loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>
-    </> : null}
-    {error ? <div className="loginError" role="alert"><AlertCircleIcon size={16} aria-hidden="true" /><span>{error}</span></div> : null}
+    </> : error ? <LoginError>{error}</LoginError> : null}
   </AuthShell>;
 }

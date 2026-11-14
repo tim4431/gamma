@@ -246,6 +246,7 @@ import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
 import { addsToLibrary, baseName, carriesToServer, computerAgent, isOpenedFile, keeperAgent, keeperComputer, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
+import { sideMark } from "../chat/computer/computerChat.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -4909,6 +4910,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the computer that keeps the work folder).
   const chatComputer = useMemo(() => (IS_DESKTOP ? computerAgent(vaultState) : null) || keeperComputer(pageComputers),
     [vaultState, pageComputers]);
+  // Whether that agent works or waits for the person, for the chat's side switch (sideMark).
+  const chatComputerMark = useMemo(() => sideMark(chatComputer, tasks.jobs, focusedBlockId),
+    [chatComputer, tasks.jobs, focusedBlockId]);
 
   // Merges an offline copy's sync decided on this page's blocks
   // (docs/dev/mirror.md), the differences a Zotero link kept
@@ -9701,9 +9705,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     open: (id) => fileChipActionsRef.current.openBlock(id, { pushNav: true, link: true }),
     say: setStatus,
   } : null), [focusedFile, focusedBlockId, shareMode, sharedFolder, pageFolders, setStatus]);
-  // A file's directory is its crumbs' (PageCrumbs): its folder chips are the
-  // library's folders and its labels only.
-  const chipFolders = (ids) => (focusedFile ? ids.filter((id) => !workOf(workTree, id)) : ids);
   // Who a note can mention (editor/MentionMenu.jsx MentionContext,
   // docs/dev/mentions.md): the workspace's members, read once per
   // workspace, and the signed-in account. A share view mentions no one.
@@ -10842,7 +10843,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {labelEditing ? (() => {
                     const filed = openPageFiling();
                     // a page inside another is filed by labels only
-                    const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : { ...filed, folders: chipFolders(filed.folders) });
+                    // a file's directory is its crumbs', no chip (filingChips)
+                    const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : { ...filed, work_folder: focusedFile });
                     const q = labelInput.trim();
                     const ql = q.toLowerCase();
                     // A path ending in "/" is a folder opened, not a name
@@ -10945,7 +10947,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     );
                   })() : (() => {
-                    const chips = filingChips(libTree, { folders: openSubPage ? [] : chipFolders(pageFolders), labels: pageLabels });
+                    const chips = filingChips(libTree, { folders: openSubPage ? [] : pageFolders, labels: pageLabels, work_folder: focusedFile });
                     return (
                     <span
                       className={`categoryFrontmatterValue ${chips.folders.length || chips.labels.length ? "" : "empty"}`}
@@ -12570,6 +12572,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
           computer={chatComputer}
+          computerMark={chatComputerMark}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
           onNotesChange={(pageIds) => {
@@ -14678,9 +14681,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           palette,
           setPalette,
           highlightPresets,
-          setHighlightPresets: textHighlighter.setPresets,
-          highlighterColor,
-          firstSwatch: textHighlighter.firstSwatch,
+          textHighlighter, // the editor's commands: the strip's, with their pills
           suggestTours,
           setSuggestTours,
           recentThumbs,
@@ -14818,7 +14819,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         } : null}
         backups={authUser?.user && !authUser.is_guest ? {
           workspace,
-          isAdmin: !!authUser?.is_admin, // Off-site copies
+          isAdmin: !!authUser?.is_admin, // the Bucket
           tasks,
           setStatus,
           confirm: setConfirmBox,

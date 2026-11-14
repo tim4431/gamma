@@ -112,8 +112,9 @@ export const noteReview = {
     for (const step of steps) changes = withChange(changes, step);
     set({ ...snapshot, changes });
   },
-  // A note edit waits on its approval card; `decide(decision)` answers it
-  // ("once", "chat", "always" or "deny") as the card does, and `labels` are
+  // A note edit waits on its approval card; `decide(decision, note)` answers
+  // it ("once", "chat", "always" or "deny", with the line of what to do
+  // instead) as the card does, and `labels` are
   // the card's words for the answers' titles: {permission, kind}.
   ask(approval, decide, labels = {}) {
     const p = approval?.preview;

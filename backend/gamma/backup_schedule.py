@@ -4,7 +4,16 @@ A task is a file under ``backups/tasks/``; its ``owner`` is the id of the
 account it belongs to (``users.id``), so a rename never touches it. Its run
 state: ``last_run`` (when the latest run started), ``state``, ``last_success``,
 ``last_error``, and ``last_result`` (what the latest successful run made:
-``{snapshots, bytes, seconds}``; absent until a run succeeds).
+``{snapshots, bytes, seconds}``, and ``bucket``: the copies sent, for a
+task that copies to the bucket; absent until a run succeeds).
+
+A task with ``bucket`` on also uploads each snapshot it takes to the bucket
+set up in Settings → Backups (gamma/bucket_snapshots.py), and its retention
+prunes the copies there as it prunes the snapshots here. Only an admin's
+task may: the bucket is the server's. A copy that fails leaves the
+snapshots in place and fails the run (``last_error``, the
+``backup-failed`` notice); the task keeps its schedule, rather than
+retrying in an hour, since the snapshots were taken.
 
 Every run is a full copy, so the limits below bound what an account can
 make the server keep: a task runs at most hourly, keeps at most
@@ -25,7 +34,7 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 
-from . import config, workspaces, ws_backup
+from . import bucket_snapshots, config, workspaces, ws_backup
 from .db import connect_users_db
 from .logbuf import log
 
@@ -114,6 +123,17 @@ def check_limits(task):
     if not 1 <= int(task['retention_value']) <= MAX_RETENTION:
         unit = "snapshots" if task['retention_mode'] == 'count' else "days"
         raise TaskError(f"A backup task keeps at most {MAX_RETENTION} {unit}.")
+
+
+def check_bucket(task):
+    """A task that copies to the bucket: its owner a server admin (the
+    bucket is the server's) and a bucket set up."""
+    if not task.get('bucket'):
+        return
+    if not _account(task['owner']):
+        raise TaskError("Only a server admin's backup tasks can copy to the bucket.")
+    if not bucket_snapshots.ready():
+        raise TaskError("No bucket is set up. An admin sets one up in Settings → Backups.")
 
 
 def root():
@@ -245,6 +265,7 @@ def save(owner, data, task_id=None):
         if updated['enabled'] or not task_id:
             check_limits(updated)
             targets(updated)  # Recheck permissions again at execution.
+            check_bucket(updated)
         changed = not task_id or any(task.get(k) != updated[k] for k in ('cron', 'enabled'))
         updated['next_run'] = (next_time if changed else task.get('next_run')) if updated['enabled'] else None
         if not updated['enabled']:
@@ -292,6 +313,19 @@ def _prune(task, ws, at):
         ws_backup.delete(ws, snapshot['name'])
 
 
+def _to_bucket(task, ids, made, at):
+    """Upload the run's snapshots (``made``, one per workspace of ``ids``)
+    and prune the task's copies there; how many were sent."""
+    check_bucket(task)
+    bucket = bucket_snapshots.client()
+    sent = [(ws, snapshot['name']) for ws, snapshot in zip(ids, made) if snapshot]
+    for ws, name in sent:
+        bucket_snapshots.upload(bucket, ws, name)
+    for ws in ids:
+        bucket_snapshots.prune(bucket, ws, task, at)
+    return len(sent)
+
+
 def run_due(at=None):
     at = at or now()
     for path in root().glob('*.json'):
@@ -315,10 +349,22 @@ def run_due(at=None):
                             for ws in ids]
                     for ws in ids:
                         _prune(task, ws, max(at, now()))
+                    sent, copy_error = None, None
+                    if task.get('bucket'):
+                        try:
+                            sent = _to_bucket(task, ids, made, max(at, now()))
+                        except (OSError, ValueError) as exc:  # the bucket's S3Error, S3ConfigError, a TaskError
+                            log.warning('[backups] Task %s could not copy to the bucket: %s', task['id'], exc)
+                            copy_error = f"The snapshots were taken, but copying them to the bucket failed: {exc}"
                     # What the run made, for the Settings table's Last run cell.
                     result = dict(snapshots=len(made), bytes=sum(m['size_bytes'] for m in made if m),
                                   seconds=round(time.monotonic() - started, 1))
-                    task.update(last_success=at.isoformat(), last_error=None, state='finished', last_result=result)
+                    if sent is not None:
+                        result['bucket'] = sent
+                    if copy_error:
+                        task.update(last_error=copy_error, state='failed')
+                    else:
+                        task.update(last_success=at.isoformat(), last_error=None, state='finished', last_result=result)
                     if due:
                         task['next_run'] = next_run(task['cron'], max(at, now()))
                 except Exception as exc:

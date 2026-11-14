@@ -16,11 +16,7 @@ export default function FilesWindow({ onClose, files, tree, libTree, workTree, f
   folderMenu, menuPress, onDragStart, onDrop, dragOver, setDragOver, ...common }) {
   return (
     <DockWindow title={t("Files")} guide="files.grip" {...common} onClose={onClose}
-      headerContent={(
-        <button type="button" className="ctlBtn" onClick={files.collapseAll} aria-label={t("Collapse all")} title={t("Collapse all")}>
-          <ChevronUpIcon size={16} />
-        </button>
-      )}>
+      actions={[{ id: "collapse", icon: ChevronUpIcon, label: t("Collapse all"), onClick: files.collapseAll }]}>
       <div className="filesPanel">
         <FileTree files={files} tree={tree} libTree={libTree} workTree={workTree} folderMeta={folderMeta} libraryPages={libraryPages}
           lib={lib} onOpen={onOpen} pageMenu={pageMenu} folderMenu={folderMenu} menuPress={menuPress} onDragStart={onDragStart}

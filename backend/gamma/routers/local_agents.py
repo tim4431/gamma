@@ -17,9 +17,19 @@ of the session's account keeps with an agent there (step 4d,
 ``chats.remote_of``, gamma/computers/registry.py ``agent_of``): the same
 routes and answers, the conversation kept here and its turns run on that
 computer, which takes them over its channel (gamma/routers/computers.py);
-such a turn never asks (409), and the terminal and the selections' source
-lines are the computer's own (404, nulls)."""
+what such a turn asks is answered on that computer, never here (409), and
+the terminal and the selections' source lines are the computer's own (404,
+nulls).
 
+The asks on this computer (``/asks``, step 5b of
+docs/research/agent-collab.md): what the turns of other servers' work
+folders that run here wait for, read and answered by the desktop app
+alone: a server that runs agents (404 elsewhere), the shell's word, never
+unchecked (``_shell_strict``: 403, a server started without a secret too),
+and a session of the account that made the vaults, which the shell's own
+partition holds. No page can read or answer them."""
+
+import asyncio
 import threading
 import time
 
@@ -33,7 +43,8 @@ router = APIRouter(prefix="/api/local-agents", tags=["local-agents"])
 
 SESSION_ONLY = "Sign in with an account to talk to the agent on this computer."
 NOT_HERE = "no such page of a work folder of yours on this computer"
-FAR_ASKS = "Asking is for a work folder of this computer's server."
+FAR_ASKS = "This is answered on the computer that runs the agent."   # runner.FAR_ASKS
+NO_AGENTS = "Agents run on the desktop app's own server."
 
 FRESH_EVERY_S = 10   # a re-probe asked for runs at most this often on this server; else the kept answers
 
@@ -54,7 +65,7 @@ def list_agents(request: Request, fresh: int = 0):
     from ..local_agents import catalog
 
     if not local_agents.enabled():
-        raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
+        raise HTTPException(status_code=404, detail=NO_AGENTS)
     require_personal_user_id(request, "Sign in with an account to see the agents on this computer.")
     if fresh:
         with _fresh_lock:
@@ -77,7 +88,7 @@ def waiting_sends(request: Request, link: str):
     from ..local_agents import runner
 
     if not local_agents.enabled():
-        raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
+        raise HTTPException(status_code=404, detail=NO_AGENTS)
     user_id = require_personal_user_id(request, "Sign in with an account to see the agents on this computer.")
     found = folder_links.get_link(link)
     if found is None or found["created_by"] != user_id or not folder_links.work_folder_link(found):
@@ -173,13 +184,29 @@ def _local_turn(turn_id: str) -> dict | None:
     return store.get_turn(turn_id) if local_agents.enabled() else None
 
 
+def _claimed_here(request: Request, turn_id: str) -> bool:
+    """Whether the turn is one of another server's page that this computer
+    claimed for a vault the account made (``store.claimed_of``): what it
+    asks is answered in the desktop app's window (``/asks``), never on this
+    server's chat route."""
+    from .. import folder_links
+    from ..local_agents import store
+
+    row = store.claimed_of(turn_id) if local_agents.enabled() else None
+    if row is None:
+        return False
+    link = folder_links.get_link(row["link_id"])
+    return link is not None and link["created_by"] == require_personal_user_id(request, SESSION_ONLY)
+
+
 def _refused(e) -> HTTPException:
     return HTTPException(status_code=e.status, detail=e.detail)
 
 
 def _computer(ws: str, link: dict, conversation: dict | None) -> dict:
     """What the strip says: ``{agent, label, ready, problem, models, folder,
-    paused, turn, session}``, ``agent`` the work folder's agent here (null for none),
+    paused, turn, session, folder_id, grants}``, ``agent`` the work
+    folder's agent here (null for none),
     ``ready``, ``problem`` and ``models`` (what it offers, ``[{id, label,
     efforts, effort, default}]``) as last asked (``catalog.cached``: nothing
     runs; ``ready`` null while it is asked), ``folder`` the work folder's
@@ -187,7 +214,9 @@ def _computer(ws: str, link: dict, conversation: dict | None) -> dict:
     ``turn`` where the conversation's turn stands in the runner
     (``runner.chat_state``) or null, ``session`` whether a terminal can
     continue the conversation (``_session_of``; the id itself goes only to
-    the shell, ``terminal``)."""
+    the shell, ``terminal``), ``folder_id`` the work folder's (W, what the
+    changed files' paths are relative to), ``grants`` the commands allowed
+    in the conversation (``store.grants_of``: ``[{command, cwd, host}]``)."""
     from .. import folder_links
     from ..db import connect_pages_db
     from ..local_agents import catalog, chats, runner, store
@@ -203,7 +232,9 @@ def _computer(ws: str, link: dict, conversation: dict | None) -> dict:
             "folder": (named[0] if named else "") or folder_links.dest_of(link).name,
             "paused": bool(link["status"].get(folder_links.PAUSED)) or folder_links.choosing(link),
             "turn": runner.chat_state(ws, reply["turn_id"]) if reply else None,
-            "session": bool(_session_of(link, name, conversation))}
+            "session": bool(_session_of(link, name, conversation)),
+            "folder_id": link["folder_id"],
+            "grants": store.grants_of(conversation["id"], link_id=link["id"]) if conversation else []}
 
 
 def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
@@ -213,7 +244,8 @@ def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
     while it is online and its agent is not ready, in the words the @ menu
     says it), ``turn`` where the conversation's turn stands here
     (``{turn_id, state, ahead: false}``, ``computer_chat_runs``), no
-    ``session``, and ``computer`` its name, ``online``, ``since`` when it
+    ``session``, no ``grants`` (it never asks), ``folder_id`` the work
+    folder's, and ``computer`` its name, ``online``, ``since`` when it
     went offline (null while online), ``remote: true``."""
     from ..computers import registry
     from ..db import connect_pages_db
@@ -231,7 +263,8 @@ def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
             "folder": (named[0] if named else "") or "", "paused": far["paused"],
             "turn": {"turn_id": row["turn_id"], "state": row["state"], "ahead": False}
             if row and row["state"] in chats.BUSY else None,
-            "session": False, "computer": far["computer"], "online": far["online"],
+            "session": False, "folder_id": far["folder_id"], "grants": [],
+            "computer": far["computer"], "online": far["online"],
             "since": None if far["online"] else (seen_at or None), "remote": True}
 
 
@@ -396,13 +429,15 @@ def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
     agent (``runner.answer_chat``). 404 for a turn of no conversation of
     the account's or no such ask; 409 for one answered already or no longer
     waited for, and a turn that ended, and for a turn that runs on another
-    computer (it never asks); 400 for another decision, too long a note, or
-    ``chat`` on what is not a command."""
+    computer (``FAR_ASKS``: what it asks is answered there, in its desktop
+    app's window); 400 for another decision, too long a note, or ``chat``
+    on what is not a command."""
     from ..local_agents import chats, events, runner
 
     turn = _local_turn(turn_id)
     if turn is None:
-        _far_turn(request, turn_id)
+        if not _claimed_here(request, turn_id):
+            _far_turn(request, turn_id)
         raise HTTPException(status_code=409, detail=FAR_ASKS)
     ws, _, _ = _conversation_of(request, turn["conversation_id"])
     if turn["ws"] != ws:
@@ -417,6 +452,73 @@ def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
     except chats.ChatError as e:
         raise _refused(e) from None
     return {"answered": True}
+
+
+@router.delete("/chat/grants/{conversation_id}")
+def forget_grants(conversation_id: str, request: Request):
+    """Allowed in this chat taken back: the conversation's commands ask
+    again (``store.forget_grants``) → ``{forgotten: true}``. A conversation
+    whose agent runs on another computer has none here."""
+    from ..local_agents import store
+
+    _, conversation, far = _conversation_of(request, conversation_id)
+    if far is None:
+        store.forget_grants(conversation["id"])
+    return {"forgotten": True}
+
+
+MAX_ASKS_WAIT = 20   # seconds the desktop app's read of the asks is held at most
+
+
+def _shell(request: Request, refused: str) -> str:
+    """The account of the desktop app's request: a server that runs agents
+    (404), the shell's word, a server without a secret refusing it too
+    (403, ``_shell_strict``), a session."""
+    from .folder_links import _shell_strict
+
+    if not local_agents.enabled():
+        raise HTTPException(status_code=404, detail=NO_AGENTS)
+    return _shell_strict(request, refused)
+
+
+@router.get("/asks")
+async def computer_asks(request: Request, after: int = -1, wait: float = 0):
+    """``{version, asks: [...]}``: what the turns of other servers' work
+    folders running here wait for, of the vaults the account made, oldest
+    first (``runner.computer_asks``: ``{id, turn_id, link_id, agent, label,
+    kind, command?, lines?, inner?, shell?, marked?, background?, dir,
+    folder, file, host?, paths?, diff?, reason?, server: {origin, account},
+    at, expires_at}``, every string marked where it would not show), the
+    desktop app's alone. Held up to ``wait`` seconds (at most
+    ``MAX_ASKS_WAIT``) while ``version`` is ``after``; a read is what tells
+    the runner the app is there to answer (``runner.wait_asks``). 404 on a
+    server that runs no agents; 403 without the shell's word."""
+    from ..local_agents import runner
+
+    user_id = await asyncio.to_thread(
+        _shell, request, "Only the desktop app reads what waits for an answer on this computer.")
+    version = await asyncio.to_thread(runner.wait_asks, after, max(0.0, min(wait, MAX_ASKS_WAIT)))
+    asks = await asyncio.to_thread(runner.computer_asks, user_id)
+    return {"version": version, "asks": asks}
+
+
+@router.post("/asks/{ask_id}")
+def answer_computer_ask(ask_id: str, body: AnswerBody, request: Request):
+    """``{decision: once | deny}``: the desktop app's answer to an ask on
+    this computer (``runner.answer_computer``), given to the agent before
+    this returns, never waiting on the other server → ``{answered: true,
+    version}``, the asks' version with it gone. 404 on a server that runs no
+    agents, and for no such ask of the account's vaults; 403 without the
+    shell's word; 400 for another decision; 409 for one answered,
+    withdrawn or declined meanwhile, or a turn that ended."""
+    from ..local_agents import chats, runner
+
+    user_id = _shell(request, "Only the desktop app answers on this computer.")
+    try:
+        version = runner.answer_computer(ask_id, body.decision, user_id)
+    except chats.ChatError as e:
+        raise _refused(e) from None
+    return {"answered": True, "version": version}
 
 
 @router.get("/chat/terminal")

@@ -72,7 +72,11 @@ conversation that server keeps and writes:
 - **Source lines** of the selections are computed here, as a Send's
   entries' (``feedback.sources.source_in_vault``).
 
-A turn there never asks (the driver starts without ``ask``).
+A turn there asks only on this computer (the vault's policy ``computer``,
+runner.py ``ask_refusal``): what it asks is drawn and answered in the
+desktop app's window, never written there; the message says ``waiting``
+while an ask waits, and a write that did not reach that server is said
+(``missed``), so the flush tries it again.
 """
 
 import base64
@@ -98,9 +102,10 @@ TIMEOUT_S = 60         # one request's
 WRITE_EVERY_S = 1.0    # a chat turn's message is written to the other server at most this often
 _KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a picture's key (``feedback.pictures.key``)
 _MAX_PICTURE = 16 * 1024 * 1024               # bytes of one picture fetched
-# The agent message's fields a chat turn writes to the other server: never ``asks`` (a turn there never asks).
+# The agent message's fields a chat turn writes to the other server: never ``asks``, what a turn there asks
+# stays on this computer; ``waiting`` says that one waits (runner.py ``_progress``).
 CHAT_FIELDS = ("text", "steps", "changes", "changed", "built", "error", "fresh", "state", "ended_at", "model",
-               "effort")
+               "effort", "waiting")
 
 
 def home_for(ws: str, link_id: str):
@@ -592,6 +597,7 @@ class LocalChatHome:
     remote = False
     run_id = ""         # a local turn is this server's own
     unsure = False      # a turn not found is never this turn's
+    missed = False      # a write here is written or raises
 
     def __init__(self, ws: str):
         self.ws = ws
@@ -657,10 +663,23 @@ class LocalChatHome:
         file = entries.paths_of(vault_store.files(link["id"])).get(turning.page_id) or scope.name
         return file, tree.names.get(scope.work_folder, "") or Path(link["path"]).name, selections
 
+    def vault_file(self, turning, link: dict) -> str:
+        return _vault_file(turning, link)
+
     def write(self, turning, fields: dict, *, last: bool = False) -> bool:
         """The turn's agent message takes ``fields`` → whether it was
         written (False: the conversation or the message is gone)."""
         return chats.write_reply(self.ws, turning.conversation_id, turning.turn_id, fields)
+
+
+def _vault_file(turning, link: dict) -> str:
+    """The page's path in the vault as this computer's rows of it name it,
+    "" when they name none: what an ask on this computer names, never a
+    word the other server gave."""
+    from ..feedback import entries
+    from ..vault import store as vault_store
+
+    return entries.paths_of(vault_store.files(link["id"])).get(turning.page_id) or ""
 
 
 class HttpChatHome(_Remote):
@@ -675,6 +694,7 @@ class HttpChatHome(_Remote):
         self.lost = False                # that server no longer gives the turn to this run
         self.gave_up = False             # the last write could not reach it
         self.unsure = False              # the claim was sent but never answered: that server may hold it
+        self.missed = False              # the last write did not reach that server: the next one carries it
         self.page: dict = {}             # the claim's page: {path, title}
 
     def _chats(self, what: str) -> str:
@@ -838,15 +858,23 @@ class HttpChatHome(_Remote):
             turning._fail("This page is no longer a file of the work folder.")
         return file, str(self.page.get("folder") or "") or root.name, selections
 
+    def vault_file(self, turning, link: dict) -> str:
+        """The page's path from this computer's vault rows alone, "" for
+        none (``where``'s fallback to the claim's path or title is the
+        prompt's): what an ask on this computer names."""
+        return _vault_file(turning, link)
+
     def write(self, turning, fields: dict, *, last: bool = False) -> bool:
         """The turn's agent message takes ``fields`` there (``CHAT_FIELDS``
         only), under the next ``seq`` → whether that server still gives the
         turn to this run (False: stopped there, taken, its conversation
         gone: the turn stops). A write that cannot reach that server is
-        lost (the next one carries the whole message), unless it is the
-        ``last``: tried again for ``RETRY_S``, then ``gamma_sync.Unreachable``
-        (the turn stays open, failed there later); ``Refused`` for another
-        refusal of the last."""
+        lost (the next one carries the whole message; ``missed`` says so,
+        until one is written; one refused there is not, nor tried again
+        but by the next change), unless it is the ``last``: tried again for
+        ``RETRY_S``, then ``gamma_sync.Unreachable`` (the turn stays open,
+        failed there later); ``Refused`` for another refusal of the
+        last."""
         if self.lost:
             return False
         if last and self.gave_up:
@@ -861,12 +889,17 @@ class HttpChatHome(_Remote):
                 return False
             if last:
                 raise
+            self.missed = False          # refused, not lost: tried again it is refused again
             log.warning(f"[agents] a write of chat turn {self.turn_id} refused there: {e}")
+            return True
         except gamma_sync.SyncError as e:
             if last:
                 self.gave_up = True
                 raise
+            self.missed = True
             log.info(f"[agents] a write of chat turn {self.turn_id}: {e}")
+            return True
+        self.missed = False
         return True
 
     def fail_left_open(self, turn: dict, *, state: str = "failed") -> bool:
@@ -884,7 +917,7 @@ class HttpChatHome(_Remote):
         link = folder_links.get_link(self.link_id)
         if link is None or not link["remote_url"] or not self._connect(link):
             return True
-        fields = {"state": state, "ended_at": page_now()}
+        fields = {"state": state, "ended_at": page_now(), "waiting": False}
         if state == "failed":
             fields["error"] = f"Gamma stopped before {catalog.label(turn['agent'])} finished."
         try:

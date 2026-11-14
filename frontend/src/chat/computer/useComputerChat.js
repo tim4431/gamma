@@ -17,18 +17,23 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 const post = (body) => ({ method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
 
 // The side's state for the page `pageId` ("" while the side is not shown:
-// nothing is read). `{computer, conversation, read, busy, send, answer,
-// stop, newChat, history, readHistory, openHistory, deleteHistory}`:
+// nothing is read). `{computer, conversation, read, error, busy, reload,
+// say, send, answer, stop, newChat, history, readHistory, openHistory,
+// deleteHistory, revokeGrants}`:
 //   computer      the strip's facts as the server read them ({agent, label,
-//                 ready, problem, folder, paused, turn, models}, and for
-//                 another computer's agent {computer, online, since,
-//                 remote: true}), null until read; `models` the agent's
-//                 [{id, label, efforts, effort, default}]
+//                 ready, problem, folder, folder_id, paused, turn, models,
+//                 grants}, and for another computer's agent {computer,
+//                 online, since, remote: true}), null until read; `models`
+//                 the agent's [{id, label, efforts, effort, default}],
+//                 `grants` the commands allowed in the conversation
+//                 [{command, cwd, host}]
 //   conversation  the page's active conversation ({id, title, agent,
 //                 messages, version}) or null; both are kept with the page
 //                 they are of, so a page switched to never shows the last
 //                 page's
 //   read          whether the page's conversation has been read (or failed)
+//   error         why the page's conversation could not be read, "" once
+//                 it was; reload() reads it again
 //   busy          an action is on its way
 //   send(text, selections, choice) → whether the turn was made, `choice`
 //   the conversation's {model, effort} (computerChat.modelChoice); answer(turnId,
@@ -36,11 +41,13 @@ const post = (body) => ({ method: "POST", headers: JSON_HEADERS, body: JSON.stri
 //   refusal for the card to say; stop(turnId),
 //   newChat(), openHistory(id), deleteHistory(id) do what they say and read
 //   the conversation again; `history` the archived conversations
-//   ([{id, title, agent, updated_at, turns}], null until readHistory())
+//   ([{id, title, agent, updated_at, turns}], null until readHistory());
+//   revokeGrants() takes back what was allowed in the conversation;
+//   say(text) is the status pill
 // `setStatus` says what failed, naming the agent as the server read it, or
 // before a read has `known` (the vault's label, "Codex").
 export function useComputerChat(pageId, setStatus, known = "") {
-  const [held, setHeld] = useState({ pageId: "", computer: null, conversation: null, read: false });
+  const [held, setHeld] = useState({ pageId: "", computer: null, conversation: null, read: false, error: "" });
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState(null);
   const heldRef = useRef(held);
@@ -66,21 +73,23 @@ export function useComputerChat(pageId, setStatus, known = "") {
       const answer = await apiJson(`${API}${chatPath(page, mine ? mine.version : null)}`);
       if (n !== asked.current) return;
       setHeld((prev) => ({
-        pageId: page, computer: answer.computer || null, read: true,
+        pageId: page, computer: answer.computer || null, read: true, error: "",
         conversation: answer.same && prev.pageId === page ? prev.conversation : answer.conversation || null,
       }));
     } catch (err) {
       if (n !== asked.current) return;
-      setHeld((prev) => (prev.pageId === page ? { ...prev, read: true } : { pageId: page, computer: null, conversation: null, read: true }));
-      // Said once, as the page's chat opens: a poll that fails is tried again.
-      if (!now?.read) status.current?.(t("Could not load chat: {message}", { message: err.message }));
+      // A poll that fails keeps what was read, and is tried again; a page
+      // never read says why where its conversation would be.
+      const error = t("Could not load chat: {message}", { message: err.message });
+      setHeld((prev) => (prev.pageId === page && prev.read && !prev.error ? prev
+        : { pageId: page, computer: prev.pageId === page ? prev.computer : null, conversation: null, read: true, error }));
     }
   }, []);
 
   // What an action's answer says of the conversation, kept at once.
   const keep = useCallback((page, conversation) => {
     asked.current++;
-    setHeld((prev) => ({ ...(prev.pageId === page ? prev : { computer: null }), pageId: page, conversation, read: true }));
+    setHeld((prev) => ({ ...(prev.pageId === page ? prev : { computer: null }), pageId: page, conversation, read: true, error: "" }));
   }, []);
 
   useEffect(() => {
@@ -89,7 +98,7 @@ export function useComputerChat(pageId, setStatus, known = "") {
     load();
   }, [pageId, load]);
 
-  const state = held.pageId === pageId ? held : { computer: null, conversation: null, read: false };
+  const state = held.pageId === pageId ? held : { computer: null, conversation: null, read: false, error: "" };
   const live = !!pageId && (!!state.computer?.turn || !!liveTurn(state.conversation));
   // A turn waiting for another computer that is away is read less often.
   const every = awayFrom(state.computer) ? AWAY_POLL_MS : POLL_MS;
@@ -134,14 +143,16 @@ export function useComputerChat(pageId, setStatus, known = "") {
     keep(page, answer.conversation || null);
   }, (message) => t("Couldn't send to {agent}: {message}", { agent: label, message })), [act, keep, label]);
 
-  // The person's answer to what the turn asks: the card says a refusal
-  // itself (an ask answered already, or a turn that ended), and the
-  // conversation is read again either way, the ask leaving it.
+  // The person's answer to what the turn asks. One taken is left to the
+  // next poll, which drops the ask: the card says what was answered until
+  // then. A refusal (an ask answered already, or a turn that ended) the
+  // card says itself, and the conversation is read again at once.
   const answer = useCallback(async (id, askId, decision, note = "") => {
     try {
       await apiJson(`${API}${askPath(id, askId)}`, post(answerBody(decision, note)));
-    } finally {
+    } catch (err) {
       load();
+      throw err;
     }
   }, [load]);
 
@@ -184,9 +195,19 @@ export function useComputerChat(pageId, setStatus, known = "") {
     }
   }, (message) => t("Couldn't delete the conversation: {message}", { message })), [act]);
 
+  // Allowed in this chat taken back: the conversation's commands ask again.
+  const revokeGrants = useCallback(() => act(async () => {
+    const id = heldRef.current.conversation?.id;
+    if (id) await apiJson(`${API}/local-agents/chat/grants/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }, (message) => t("Couldn't take back what was allowed: {message}", { message })), [act]);
+
+  // What the side's own pieces say in the status pill (a link to a file
+  // that names none).
+  const say = useCallback((text) => status.current?.(text), []);
+
   return {
-    computer: state.computer, conversation: state.conversation, read: state.read, busy,
-    send, answer, stop, newChat, history, readHistory, openHistory, deleteHistory,
+    computer: state.computer, conversation: state.conversation, read: state.read, error: state.error, busy,
+    reload: load, say, send, answer, stop, newChat, history, readHistory, openHistory, deleteHistory, revokeGrants,
   };
 }
 

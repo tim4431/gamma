@@ -157,7 +157,15 @@ jobs".
   running for the account ([local_agents.md](local_agents.md) "Its model,
   its typing, a terminal…"): a click opens the page's chat on the computer
   side (a turn of another workspace, only its page), and its Stop goes to
-  the turn's own stop route, not `cancelJob`.
+  the turn's own stop route, not `cancelJob`. While one asks the person
+  (`progress.phase` `asking`, taskModel `waitsForYou`) its row has a still
+  shield and no bar, and the tray button the accent dot instead of the
+  spinner. A fourth, `feedback-run`, is a Send an agent on this computer
+  answers in a work folder the account made: titled "Codex on this
+  computer: main.tex · 2 comments", the agent's words as its progress; a
+  click opens the Feedback dialog on the Send's file or folder, and its
+  Stop is the requester's withdraw (a kind's `stopBody` is what the Stop
+  posts), the requester's alone.
 - `GET /api/jobs/{id}` is one job with its `result`.
 - `POST /api/jobs/{id}/cancel`, `DELETE /api/jobs/{id}` and
   `POST /api/jobs/clear` stop, remove and clear jobs.
@@ -176,7 +184,8 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `import` | `import` (`routers/imports.py`) | the import review's Import to library | the import report |
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
-| `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page or folder imported by link | the restore report |
+| `restore` | `restore` (an uploaded zip), `restore-snapshot`, `bucket-restore` (`params.source` `bucket`; `into: "new"` makes the workspace) | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore (Restore as new… for a copy in the bucket), a shared page or folder imported by link | the restore report |
+| `bucket-download` | `bucket-download` (`routers/ws_backups.py`, admins) | Settings → Backups → a copy only the bucket holds → Download | the zip |
 | `metadata` | `metadata` (`routers/metadata.py`) | Settings → Maintenance → Fetch needed / Fetch selected / Refetch; an upload of several PDFs | `{papers, fetched, failed}` |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
 | `indexing` | — (`gamma/search/indexer.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{documents}`; progress in documents, written in batches, a stopped run storing what it read |

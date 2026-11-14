@@ -87,6 +87,7 @@
   --z-overlay: 1000;       /* banners and hover previews over the app */
   --z-popover: 1100;       /* topbar popovers, drop indicators */
   --z-modal: 1200;         /* dialogs (.reportOverlay) */
+  --z-modal-pill: 1250;    /* the status pill while a dialog is open */
   --z-subdialog: 1290;     /* an editor dialog over the settings modal */
   --z-confirm: 1300;       /* a confirm over any dialog */
   --z-lightbox: 1500;      /* a zoomed picture */

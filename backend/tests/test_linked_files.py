@@ -2142,7 +2142,7 @@ def test_a_route_that_takes_a_path_wants_the_shell_s_secret(owner, disk, monkeyp
         assert owner.post("/api/folder-links/opened/p/locate", json={"path": str(f)}, headers=headers).status_code == 403
     else:
         page = r.json()["page"]
-        monkeypatch.delenv("GAMMA_SHELL_SECRET")                         # unset: no check at all
+        monkeypatch.setenv("GAMMA_SHELL_SECRET", "")                     # none: no check at all
         assert _opened(owner, f)["page"] == page
         monkeypatch.setenv("GAMMA_SHELL_SECRET", "s3cret")
         assert owner.get(f"/api/folder-links/page/{page}").status_code == 200   # it takes no path: no secret

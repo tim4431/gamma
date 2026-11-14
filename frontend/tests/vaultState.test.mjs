@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, isOpenedFile,
+  addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, isOpenedFile,
   keeperAgent, libraryWorkspaces, mentionAgent, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultBanner,
   vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
@@ -221,11 +221,16 @@ test("App's page list (libraryUtils.pageBlocksOf) carries what isOpenedFile read
 
 test("a work folder's agent on this computer: named, its problem while it cannot run, what it is at while it works", () => {
   const agent = (extra) => folder({ agent: { name: "codex", label: "Codex", ready: true, problem: "", running: null, ...extra } });
-  assert.deepEqual(agentLine(agent()), { line: "Agent: Codex on this computer", problem: "", working: "" });
+  assert.deepEqual(agentLine(agent()), { line: "Agent: Codex on this computer", problem: "", working: null });
   assert.equal(agentLine(agent({ ready: false, problem: "Codex is not on this computer." })).problem, "Codex is not on this computer.");
   assert.equal(agentLine(agent({ ready: null, problem: "" })).problem, "", "still checking");
-  assert.equal(agentLine(agent({ running: { request_id: "r1", detail: "Editing main.tex" } })).working, "Codex is working: Editing main.tex");
-  assert.equal(agentLine(agent({ running: { request_id: "r1", detail: "" } })).working, "Codex is working", "a member who cannot act on it");
+  assert.deepEqual(agentLine(agent({ running: { request_id: "r1", detail: "Editing main.tex" } })).working,
+    { label: "Codex is working…", detail: "Editing main.tex", title: "Editing main.tex", tone: "pending", live: true });
+  assert.deepEqual(agentLine(agent({ running: { request_id: "r1", detail: "" } })).working,
+    { label: "Codex is working…", detail: "", title: "Codex is working…", tone: "pending", live: true }, "a member who cannot act on it");
+  assert.equal(agentWorking("Codex", "Editing main.tex"), "Codex is working: Editing main.tex");
+  assert.equal(agentWorking("Codex"), "Codex is working…");
+  assert.equal(agentWorking(""), "The agent is working…");
   assert.equal(agentLine(folder({ agent: null })), null);
   assert.equal(agentLine(folder()), null);
   assert.equal(agentLine(opened()), null);

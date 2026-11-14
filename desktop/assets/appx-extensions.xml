@@ -3,8 +3,7 @@
              appx.customExtensionsPath, appended inside <Extensions>): Gamma in
              "Open with" and Default apps, the default only when the user
              chooses it; the file's path arrives on the command line. No
-             ContentType: Windows types a file by its extension. No folder
-             verb: a packaged app has none without a COM extension. -->
+             ContentType: Windows types a file by its extension. -->
         <uap:Extension Category="windows.fileTypeAssociation">
           <uap:FileTypeAssociation Name="pdf">
             <uap:DisplayName>PDF document</uap:DisplayName>
@@ -46,3 +45,26 @@
             </uap:SupportedFileTypes>
           </uap:FileTypeAssociation>
         </uap:Extension>
+        <!-- "Open with Gamma" on a folder and on an open folder's background:
+             Explorer runs the COM class of native/open-with/ in a surrogate
+             process of this package, and the class hands the folders to the
+             app as its arguments. Not on a drive: a drive root is refused. The
+             com, desktop4 and desktop5 namespaces are declared, desktop4 and
+             desktop5 as ignorable, in assets/appxmanifest.xml. -->
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="Open with Gamma">
+              <com:Class Id="a5ac2231-021b-477c-846c-b5a2a3ef67c2" Path="app\GammaOpenWith.dll" ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="OpenWithGamma" Clsid="a5ac2231-021b-477c-846c-b5a2a3ef67c2" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory\Background">
+              <desktop5:Verb Id="OpenWithGamma" Clsid="a5ac2231-021b-477c-846c-b5a2a3ef67c2" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>

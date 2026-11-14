@@ -11,9 +11,9 @@
 // feedback view (docs/dev/feedback.md).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ListMotion from "../shared/ui/ListMotion";
+import { StateTag } from "../shared/ui/StateTag";
 import { DockWindow } from "../shared/ui/Widgets";
 import { Empty, Segmented } from "../settings/SettingsKit";
-import { MenuSelect } from "../shared/ui/Menus";
 import { BellIcon, BotIcon, CheckIcon, MessageSquareIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -69,24 +69,23 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
   // The page's threads coming in fill the list from none: they come in still.
   const had = useRef(0);
   useLayoutEffect(() => { had.current = list.length; });
-  // The tabs carry their counts ("Open" alone is the verb's key in the catalog).
+  // The tabs carry their counts ("Open" alone is the verb's key in the
+  // catalog); in a narrow window their icons alone, the counts in their names.
   const filters = [
-    ["open", t("Open ({n})", { n: threadsIn(threads || [], "open").length })],
-    ["resolved", t("Resolved ({n})", { n: threadsIn(threads || [], "resolved").length })],
+    ["open", t("Open ({n})", { n: threadsIn(threads || [], "open").length }), MessageSquareIcon],
+    ["resolved", t("Resolved ({n})", { n: threadsIn(threads || [], "resolved").length }), CheckIcon],
   ];
+  // The header's actions (DockWindow), folded into its "⋯" when the window
+  // is too narrow for them.
+  const actions = [
+    notify && { id: "notify", icon: BellIcon, label: t("Notify me"), disabled: !level,
+      choice: { value: level, onChange: setLevel, options: [["all", t("All comments")], ["replies", t("Replies and @mentions")]] } },
+    onFeedback && { id: "feedback", icon: BotIcon, label: t("Feedback"), onClick: onFeedback,
+      title: t("Feedback: this file's open comments, to send to an agent") },
+  ].filter(Boolean);
   return (
     <DockWindow title={t("Comments")} guide="comments.grip" {...common} onClose={onClose}
-      headerContent={<>
-        <Segmented value={filter} onChange={setFilter} options={filters} />
-        {notify ? (
-          <MenuSelect icon={BellIcon} label={t("Notify me")} heading={t("Notify me")} value={level} onChange={setLevel}
-            disabled={!level} options={[["all", t("All comments")], ["replies", t("Replies and @mentions")]]} />
-        ) : null}
-        {onFeedback ? (
-          <button type="button" className="ctlBtn" onClick={onFeedback} aria-label={t("Feedback")}
-            title={t("Feedback: this file's open comments, to send to an agent")}><BotIcon size={16} /></button>
-        ) : null}
-      </>}>
+      headerContent={<Segmented value={filter} onChange={setFilter} options={filters} />} actions={actions}>
       <div className="commentsPanel">
         <ListMotion keys={list.map((th) => th.id)} scope={`${pageId}:${filter}`} enter="rise" still={!had.current}>
           {list.length ? list.map((th) => {
@@ -107,7 +106,7 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
                   </span>
                 </span>
                 <span className="commentsPanelMeta">
-                  {chip ? <span className={`uiTag ${chip.tone}`} data-sent={chip.state} title={chip.title}>{chip.label}</span> : null}
+                  {chip ? <StateTag state={chip} data-sent={chip.kind} /> : null}
                   {replies ? <span>{tn("{n} reply", "{n} replies", replies)}</span> : null}
                   <span>{formatRelativeTime(th.last_at)}</span>
                 </span>

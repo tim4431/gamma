@@ -44,9 +44,10 @@ the user may choose, without taking a type over from the app that opens it
 ([architecture.md](architecture.md) "Opening files and folders"). The file
 types are one table, `tests/shared/openwith.json`: PDF, Markdown (`.md`,
 `.markdown`), LaTeX (`.tex`), BibTeX (`.bib`) and Typst (`.typ`).
-`scripts/openwith.cjs` reads it and writes four files that are committed:
+`scripts/openwith.cjs` reads it and writes five files that are committed:
 `assets/installer.nsh`, `assets/appx-extensions.xml`,
-`assets/linux/gamma-open.desktop` and `assets/linux/gamma.nemo_action`.
+`native/open-with/verb.h`, `assets/linux/gamma-open.desktop` and
+`assets/linux/gamma.nemo_action`.
 Change the table, then run `npm run openwith`; `test/openWith.test.js`
 fails while a committed file differs from what it writes, and
 `backend/tests/test_openwith_fixture.py` fails while the table and the
@@ -59,7 +60,10 @@ an earlier version wrote. What each target registers:
   (on Windows 11 under *Show more options*). The uninstaller removes
   exactly what the installer wrote; an update keeps every entry.
 - **Store package** (`assets/appx-extensions.xml`): every type of the
-  table, no folder verb (a packaged app needs a COM extension for one).
+  table, and *Open with Gamma* on a folder and on an open folder's
+  background, in Windows 11's first menu too. A packaged app's verb is a
+  COM class it carries: `native/open-with/`, a DLL built at packaging time
+  (*Microsoft Store* below).
 - **macOS dmg/zip** (`mac` in the config): every type of the table as an
   alternate viewer, and folders (`public.folder`): a folder dropped on the
   Dock icon or `open -a Gamma <dir>` opens it. Finder has no entry.
@@ -199,14 +203,22 @@ certification fails policy 10.1.1.11 ("tile icons include a default
 image").
 
 **Build.** Windows only (electron-builder fetches `makeappx`/`signtool`
-itself, no Windows SDK needed):
+itself, no Windows SDK needed), with a C++ compiler for the folder verb:
+Visual Studio's C++ build tools (found through `vswhere`; the release
+workflow's runner has them) or MSYS2's MinGW-w64 `g++` on PATH:
 
 ```powershell
 cd desktop
 npx electron-builder --win appx --config.directories.output=dist-store
 ```
 
-It logs *AppX is not signed (Windows Store only build)* and writes
+`scripts/after-pack.cjs` builds the verb's DLL (`scripts/build-open-with.cjs`)
+and puts it beside `Gamma.exe`; without a compiler the build fails there.
+The manifest's template is `assets/appxmanifest.xml`, electron-builder's
+own with the verb's namespaces declared; `test/openWith.test.js` fails when
+electron-builder's template changes, so the change is carried over.
+`node --test test/openWithDll.test.js` builds the DLL and drives it as
+Explorer does. It logs *AppX is not signed (Windows Store only build)* and writes
 `dist-store/Gamma-<version>-win-x64.appx`. Unsigned is correct: the Store
 signs the package, and signing it locally would also change the manifest
 publisher to the certificate's subject. Never build it with the `AZURE_*`
@@ -298,6 +310,21 @@ Get-AppxPackage *GammaPDF* | Remove-AppxPackage   # before re-installing the sam
 
 Do not point `CSC_LINK` at the dev pfx instead: electron-builder would
 then sign the NSIS build with the throwaway certificate too.
+
+**Trying the folder verb without a certificate.** With Developer Mode on, a
+package's unpacked files register as they are, and under another identity
+they never meet the Store install. Unpack the build (`makeappx unpack /p
+dist-store\Gamma-<version>-win-x64.appx /d layout`, `makeappx` beside
+`signtool` above), change `Name` and `Publisher` of `<Identity>` in
+`layout\AppxManifest.xml` (`Gamma.OpenWithTest`, `CN=GammaOpenWithTest`),
+copy `native\build\test\Gamma.exe` (from `node
+scripts\build-open-with.cjs --test`) over `layout\app\Gamma.exe`, and
+`Add-AppxPackage -Register layout\AppxManifest.xml`. Right-click a folder:
+*Open with Gamma* starts that stand-in, which writes the package it runs as
+and its arguments to `layout\app\record.txt`;
+`native\build\test\invoke.exe --packaged <dir>` does the same through COM,
+as Explorer does. `Get-AppxPackage Gamma.OpenWithTest | Remove-AppxPackage`
+takes it away.
 
 **Automatic submission.** The desktop workflow's `store` job submits the
 MSIX itself when four repository secrets exist, once the release and its

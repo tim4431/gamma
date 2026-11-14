@@ -10,7 +10,7 @@
     "store-art": "node ../tools/branding/build.mjs",
     "openwith": "node scripts/openwith.cjs",
     "start": "electron .",
-    "test": "node --test test/keeping.test.js test/cloudSignIn.test.js test/sidecar.test.js test/startup.test.js test/openFiles.test.js test/openWith.test.js test/zipNames.test.js test/hostPath.test.js test/folderAccess.test.js test/microphone.test.js test/registry.test.js test/main.test.js test/headed.test.js test/loadPage.test.js test/windowControls.test.js test/terminal.test.js test/certs.test.js test/hostScope.test.js",
+    "test": "node --test test/keeping.test.js test/cloudSignIn.test.js test/sidecar.test.js test/startup.test.js test/openFiles.test.js test/openWith.test.js test/openWithDll.test.js test/zipNames.test.js test/hostPath.test.js test/folderAccess.test.js test/microphone.test.js test/permissions.test.js test/agentAsks.test.js test/registry.test.js test/main.test.js test/headed.test.js test/loadPage.test.js test/windowControls.test.js test/terminal.test.js test/certs.test.js test/hostScope.test.js",
     "smoke": "node test/smoke.js",
     "smoke:packaged": "node test/smoke.js --packaged",
     "e2e": "node test/e2e.js",

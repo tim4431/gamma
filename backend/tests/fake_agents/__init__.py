@@ -35,9 +35,17 @@ def script_agent(monkeypatch, log: Path | None = None, **script) -> None:
 
 
 def read_log(log: Path) -> list[dict]:
+    """The log's entries, a line the stand-in is writing (or was killed
+    while writing) left out."""
     if not log.exists():
         return []
-    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    out = []
+    for line in log.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
 
 
 def requests_in(log: Path) -> list[dict]:

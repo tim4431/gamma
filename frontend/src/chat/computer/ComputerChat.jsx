@@ -5,34 +5,38 @@
 // maker, to the agent on the computer that keeps it). ChatDock draws the
 // switch between the two first in its header (ChatSides) and, on this
 // side, the side's History and New chat
-// (ComputerHeader) and its body (ComputerChat): the strip naming the agent
+// (computerActions) and its body (ComputerChat): the strip naming the agent
 // and what it is at, the transcript, and a composer that sends the message
 // with the PDF passages selected, their source lines noted, and the agent's
 // model chip. The strip's menu asks the desktop shell to continue the
 // conversation in a terminal or to show the file in its folder. The state
 // is useComputerChat's, the words computerChat.js's.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AutoGrowTextarea, ChatMarkdown, useCopied } from "../../shared/ui/Widgets";
-import { Chevron, Collapse, IconSwap } from "../../shared/ui/MotionWidgets";
-import { ContextMenu, MenuButton, MenuItem, MenuSelect, useMenuTrigger } from "../../shared/ui/Menus";
-import { Popover } from "../../shared/ui/Surfaces";
-import { menuPress } from "../../shared/ui/press.js";
-import { copyText } from "../../shared/lib/utils";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { API, apiJson, copyText } from "../../shared/lib/utils";
+import { AutoGrowTextarea, ChatMarkdown, GammaNavContext, useCopied } from "../../shared/ui/Widgets";
+import { IconSwap } from "../../shared/ui/MotionWidgets";
+import { ContextMenu, MenuItem, MenuSelect, useMenuTrigger } from "../../shared/ui/Menus";
 import { Segmented } from "../../settings/SettingsKit";
-import { formatRelativeTime } from "../../library/libraryUtils.js";
+import { PathLink } from "../../editor/PathLink.jsx";
+import { PathLinkContext } from "../../editor/pathLinkContext.js";
 import { sendsOnEnter } from "../enterKey.js";
 import { SelChip } from "../ChatDock";
+import StepsPill from "../StepsPill";
+import ChatErrorCard from "../ChatErrorCard";
+import ChatHistoryPop, { deleteQuestion, matchRows } from "../ChatHistoryPop";
+import GrantChip from "../GrantChip";
+import { ChangesCard } from "../AgentChanges";
 import { askShell } from "../../vault/useVault.js";
 import ComputerAsk from "./ComputerAsk.jsx";
 import { usePassageSources } from "./useComputerChat.js";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowUpIcon, CheckIcon, CopyIcon, FileTextIcon, FolderOpenIcon, HistoryIcon, MoreIcon, PencilIcon,
-  PlusIcon, QuoteIcon, SearchIcon, StopIcon, TerminalIcon, TrashIcon,
+  ActivityIcon, ArrowUpIcon, BotIcon, CheckIcon, CopyIcon, FileTextIcon, FolderOpenIcon, HistoryIcon, MoreIcon, PencilIcon,
+  PlusIcon, QuoteIcon, SearchIcon, SparklesIcon, StopIcon, TerminalIcon, TrashIcon,
 } from "../../shared/ui/Icons";
-import { T, t } from "../../shared/i18n/i18n.js";
+import { t, tn } from "../../shared/i18n/i18n.js";
 import {
-  TEXT_MAX, awayFrom, canContinue, canSend, changesLine, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, modelChoice, modelDisplay,
-  offersMenu, sourceNote, stepText, stripLine, turnLabel,
+  TEXT_MAX, awayFrom, canContinue, canSend, drawsAsks, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, modelChoice, modelDisplay,
+  offersMenu, retryOf, sourceNote, stepText, stripLine, turnChanges, turnLabel,
 } from "./computerChat.js";
 import "./computer.css";
 
@@ -107,84 +111,64 @@ function ModelChip({ label, models, choice, onPick }) {
 
 // The switch first in the chat's header: Gamma AI or the agent on this
 // computer (`label`, "Codex"), or on the computer that keeps the work
-// folder (`where`, its name, "" for this one).
-export function ChatSides({ side, onSide, label, where = "" }) {
+// folder (`where`, its name, "" for this one). In a narrow window each side
+// is its icon alone (Segmented). `mark` (computerChat.js sideMark): the
+// agent's side spins while it works and has the accent dot while it waits
+// for the person, said in its title, so either side shows it.
+export function ChatSides({ side, onSide, label, where = "", mark = null }) {
+  const tip = where
+    ? t("Chat with {agent} on {computer}, in this work folder's directory there", { agent: label, computer: where })
+    : t("Chat with {agent} on this computer, in this work folder's directory", { agent: label });
+  const sign = mark?.kind === "working" ? <span className="transferSpin inline" aria-hidden="true" />
+    : mark?.kind === "waiting" ? <span className="noticeDot info inline" aria-hidden="true" /> : null;
   return (
     <Segmented value={side} onChange={onSide} options={[
-      ["ai", t("Gamma AI"), null, t("Chat with Gamma AI")],
-      ["computer", label, null, where
-        ? t("Chat with {agent} on {computer}, in this work folder's directory there", { agent: label, computer: where })
-        : t("Chat with {agent} on this computer, in this work folder's directory", { agent: label })],
+      ["ai", t("Gamma AI"), SparklesIcon, t("Chat with Gamma AI")],
+      ["computer", label, BotIcon, mark?.text ? `${tip}\n${mark.text}` : tip, sign],
     ]} />
   );
 }
 
-// The header's buttons on this side: History (the page's earlier
-// conversations with the agent, opened or deleted) and New chat, which
-// keeps the conversation in History. Neither while a turn is still to end:
-// the server refuses them then.
-export function ComputerHeader({ chat, label, openPopover, setOpenPopover, askConfirm }) {
+// The header's actions on this side (DockWindow's `actions`): History (the
+// page's earlier conversations with the agent, opened or deleted) and New
+// chat, which keeps the conversation in History. Neither while a turn is
+// still to end: the server refuses them then, and their titles say why.
+export function computerActions({ chat, label, openPopover, setOpenPopover, askConfirm }) {
   const historyOpen = openPopover === "computerhistory";
-  const [rowMenu, setRowMenu] = useState(null); // {x, y, row}: a history row's menu
   const working = !!liveTurn(chat.conversation) || !!chat.computer?.turn;
+  return [
+    { id: "history", icon: HistoryIcon, label: t("Chat history"), open: historyOpen,
+      title: t("Chat history — earlier conversations with {agent} on this page", { agent: label }),
+      onClick: () => setOpenPopover((p) => (p === "computerhistory" ? null : "computerhistory")),
+      popover: { name: "computerhistory", content: historyOpen ? (
+        <ComputerHistory chat={chat} onClose={() => setOpenPopover(null)} askConfirm={askConfirm}
+          disabledReason={working ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: label }) : ""} />
+      ) : null } },
+    { id: "new", icon: PlusIcon, label: t("New chat"), onClick: () => chat.newChat(),
+      disabled: working || chat.busy || !chat.conversation,
+      title: working ? t("Stop {agent} or wait for it to finish to start a new chat", { agent: label })
+        : t("New chat — keeps this conversation in history and starts a fresh one") },
+  ];
+}
+
+// History's popover (the chat's own, ChatHistoryPop): the conversation
+// shown now, then the earlier ones, read as it opens; a row's menu deletes
+// it.
+function ComputerHistory({ chat, onClose, askConfirm, disabledReason }) {
+  const [query, setQuery] = useState("");
   const { history, readHistory } = chat;
-  useEffect(() => { if (historyOpen && history == null) readHistory(); }, [historyOpen, history, readHistory]);
-  useEffect(() => { if (!historyOpen) setRowMenu(null); }, [historyOpen]);
+  useEffect(() => { if (history == null) readHistory(); }, [history, readHistory]);
   const active = chat.conversation ? [{ id: "", title: chat.conversation.title, active: true }] : [];
-  const rows = [...active, ...(history || [])];
-  const openRow = (row) => {
-    if (row.active || working) return;
-    setOpenPopover(null);
-    chat.openHistory(row.id);
-  };
-  const deleteRow = (row) => askConfirm({
-    title: T("Delete conversation"),
-    message: t("Delete “{title}” from this chat's history? This can't be undone.", { title: row.title || t("Untitled") }),
-    confirmLabel: t("Delete"), danger: true, onConfirm: () => chat.deleteHistory(row.id),
-  });
-  const openRowMenu = (row) => (e) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, row }); };
   return (
-    <div className="ctlBtnRow chatPanelHeaderBtns">
-      <span data-popover="computerhistory" className="popoverAnchor">
-        <button type="button" className={`ctlBtn ${historyOpen ? "modeActive" : ""}`}
-          onClick={() => setOpenPopover((p) => (p === "computerhistory" ? null : "computerhistory"))}
-          title={t("Chat history — earlier conversations with {agent} on this page", { agent: label })}
-          aria-label={t("Chat history")} aria-expanded={historyOpen}>
-          <HistoryIcon size={16} />
-        </button>
-        {historyOpen ? (
-          <Popover className="chatHistoryPop">
-            <div className="chatHistList">
-              {rows.map((row) => (
-                <div key={row.id} className={`chatHistRow rowMenuHost${row.active ? " active" : ""}`}
-                  role="button" tabIndex={0} aria-disabled={!row.active && working ? true : undefined}
-                  title={row.active ? t("The conversation shown now") : row.title}
-                  onClick={() => openRow(row)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) openRow(row); }}
-                  {...(row.active ? {} : menuPress(openRowMenu(row)))}>
-                  <span className="chatHistTitle">{row.title || t("Untitled")}</span>
-                  <span className="chatHistAge">{row.active ? t("now") : formatRelativeTime(row.updated_at)}</span>
-                  {row.active ? null : <MenuButton open={openRowMenu(row)} />}
-                </div>
-              ))}
-              {rowMenu ? (
-                <ContextMenu x={rowMenu.x} y={rowMenu.y} onClose={() => setRowMenu(null)}>
-                  <MenuItem icon={TrashIcon} danger onClick={() => { setRowMenu(null); deleteRow(rowMenu.row); }}>{t("Delete")}</MenuItem>
-                </ContextMenu>
-              ) : null}
-              {history == null ? <div className="popoverHint loadingHint">{t("Loading…")}</div>
-                : !history.length ? <div className="popoverHint">{t("No earlier conversations — New chat keeps the current one here.")}</div>
-                : null}
-            </div>
-          </Popover>
-        ) : null}
-      </span>
-      <button type="button" className="ctlBtn" onClick={() => chat.newChat()}
-        disabled={working || chat.busy || !chat.conversation}
-        title={t("New chat — keeps this conversation in history and starts a fresh one")} aria-label={t("New chat")}>
-        <PlusIcon size={16} />
-      </button>
-    </div>
+    <ChatHistoryPop query={query} onQuery={setQuery} onClose={onClose} loading={history == null}
+      rows={matchRows([...active, ...(history || [])], query)} disabledReason={disabledReason}
+      onOpen={(row) => { onClose(); chat.openHistory(row.id); }}
+      menuItems={(row, close) => (row.active ? null : (
+        <MenuItem icon={TrashIcon} danger onClick={() => {
+          close();
+          askConfirm(deleteQuestion(row, () => chat.deleteHistory(row.id)));
+        }}>{t("Delete")}</MenuItem>
+      ))} />
   );
 }
 
@@ -211,59 +195,84 @@ function PersonMessage({ message }) {
   );
 }
 
-// The agent's message: the turn's steps in one pill that unfolds to each,
-// a card for each thing it asks and waits on, the reply, what changed, and
-// how the turn ended when it did not answer.
-function AgentMessage({ message, label, away, copied, onCopy, onAnswer }) {
+// What a turn changed, in the card Gamma AI lists a reply's changes in
+// (AgentChanges' ChangesCard): a row a file, each its path as the link that
+// opens it (PathLink), the first few and then "and N more" unfolding to the
+// rest, and "The PDF was rebuilt" last.
+function TurnChanges({ changes }) {
+  const { shown, rest, more, n, built } = changes;
+  const file = (path) => <PathLink href={path}>{path}</PathLink>;
+  const row = (key, icon, body) => (
+    <div key={key} className="chatChange">{icon}<span className="chatChangeText">{body}</span></div>
+  );
+  const edited = <PencilIcon size={14} />;
+  return (
+    <ChangesCard className="computerChanges" head={n ? t("Changed in the work folder · {n}", { n }) : t("Changed in the work folder")}>
+      {shown.length ? shown.map((path) => row(path, edited, file(path)))
+        : n ? row("n", edited, tn("Changed {n} file", "Changed {n} files", n)) : null}
+      {shown.length && more > 0 ? row("more", edited, rest.length ? (
+        <details className="chatChangeItems">
+          <summary>{t("and {n} more", { n: more })}</summary>
+          {rest.map((path) => <div key={path}>{file(path)}</div>)}
+        </details>
+      ) : t("and {n} more", { n: more })) : null}
+      {built ? row("built", <FileTextIcon size={14} />, t("The PDF was rebuilt")) : null}
+    </ChangesCard>
+  );
+}
+
+// The agent's message: the turn's steps in one pill that unfolds to each
+// (StepsPill, as Gamma AI's replies), a card for each thing it asks and
+// waits on (`asks`: for the agent on this computer only; another
+// computer's, `computer` its name, are answered there), the reply, what
+// changed, and how the turn ended when it did not answer: a failed turn
+// the chat's error card, with Retry while it is
+// the newest (`onRetry`), a stopped one a quiet line. A turn that had
+// ended when it was first shown (a conversation opened from History, read
+// again) is `still`: its pill is not read out.
+function AgentMessage({ message, label, away, computer, asks, copied, onCopy, onAnswer, onRetry }) {
   const [open, setOpen] = useState(false);
   const live = isLive(message);
+  const [still] = useState(!live);
   const steps = message.steps || [];
-  const failedSteps = steps.filter((s) => s.status === "failed").length;
-  const changes = changesLine(message);
+  const counts = {
+    failed: steps.filter((s) => s.status === "failed").length,
+    declined: steps.filter((s) => s.status === "declined").length,
+  };
+  const changes = turnChanges(message);
   const ended = endText(message);
   return (
     <div className="chatBubbleRow ai">
       <div className="chatMsgCol">
         <div className="chatBubble ai">
           {message.fresh ? <div className="computerFresh">{freshLine(message.label || label)}</div> : null}
-          {live || steps.length ? (
-            <div className="chatStepsWrap">
-              <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} disabled={!steps.length}
-                onClick={steps.length ? () => setOpen((v) => !v) : undefined} aria-expanded={steps.length ? open : undefined}
-                title={!steps.length ? undefined : open ? t("Hide the steps") : t("Show every step")}>
-                {live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
-                <span className={`chatPillText${live ? " shimmerText" : ""}`} aria-live="polite" aria-atomic="true">
-                  {turnLabel(message, label, away)}
-                </span>
-                {failedSteps && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failedSteps })}</span> : null}
-                {steps.length ? <Chevron open={open} dir="down" size={14} /> : null}
-              </button>
-              <Collapse open={open}>
-                <div className="chatToolActions">
-                  {steps.map((step, j) => {
-                    const Icon = STEP_ICONS[step.kind] || ActivityIcon;
-                    return (
-                      <div key={step.id || j} className={`chatToolActionHead plain${step.status === "failed" ? " err" : ""}`} title={stepText(step)}>
-                        {step.status === "started" && live ? <span className="transferSpin inline" aria-hidden="true" /> : <Icon size={14} />}
-                        <span>{stepText(step)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </Collapse>
+          <StepsPill label={turnLabel(message, label, away, computer)} live={live}
+            waiting={live && (!!message.asks?.length || message.waiting === true)} still={still}
+            steps={steps.length} counts={counts} title={t("Show every step")} open={open} onToggle={() => setOpen((v) => !v)}>
+            <div className="chatToolActions">
+              {steps.map((step, j) => {
+                const Icon = STEP_ICONS[step.kind] || ActivityIcon;
+                return (
+                  <div key={step.id || j} className={`chatToolActionHead plain${step.status === "failed" ? " err" : ""}`} title={stepText(step)}>
+                    {step.status === "started" && live ? <span className="transferSpin inline" aria-hidden="true" /> : <Icon size={14} />}
+                    <span>{stepText(step)}</span>
+                  </div>
+                );
+              })}
             </div>
-          ) : null}
-          {live ? (message.asks || []).map((ask) => (
+          </StepsPill>
+          {live && asks ? (message.asks || []).map((ask) => (
             <ComputerAsk key={ask.id} ask={ask} label={message.label || label}
               onAnswer={(decision, note) => onAnswer(message.turn_id, ask.id, decision, note)} />
           )) : null}
           {message.text ? <ChatMarkdown text={message.text} copyBlocks /> : null}
-          {changes ? <div className="computerChanges">{changes}</div> : null}
-          {ended ? (
-            <div className={`computerEnded${message.state === "failed" ? " err" : ""}`}>
-              {message.state === "failed" ? <AlertCircleIcon size={14} /> : <StopIcon size={14} />}
-              <span>{ended}</span>
-            </div>
+          {changes ? <TurnChanges changes={changes} /> : null}
+          {ended && message.state === "failed" ? (
+            <ChatErrorCard headline={ended} actions={onRetry ? [
+              <button key="retry" type="button" className="uiBtn sm" onClick={onRetry}>{t("Retry")}</button>,
+            ] : []} />
+          ) : ended ? (
+            <div className="computerEnded"><StopIcon size={14} /><span>{ended}</span></div>
           ) : null}
         </div>
         {!live && message.text ? (
@@ -300,7 +309,9 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
   const [draft, setDraft] = useState(() => drafts.get(pageId) || "");
   useEffect(() => { drafts.set(pageId, draft); }, [pageId, draft]);
   const [copied, flashCopied] = useCopied(1200);
-  const ready = canSend(info, conversation, draft) && !chat.busy;
+  // Off until the conversation was read: one that failed may hold a turn.
+  const landed = chat.read && !chat.error;
+  const ready = landed && canSend(info, conversation, draft) && !chat.busy;
   const models = chat.computer?.models || [];
   const [, redrawPick] = useState(0); // `picks` keeps the choice
   const choice = modelChoice(models, conversation, picks.get(pickKey(pageId, conversation)) || null);
@@ -326,6 +337,34 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
     }
   }
 
+  // Retry on a failed turn, the newest: the person's message again, with
+  // its passages, while a message could go.
+  const retry = (message) => {
+    const again = retryOf(conversation, message);
+    if (!again || !landed || chat.busy || !canSend(info, conversation, again.text)) return null;
+    return () => chat.send(again.text, again.selections, choice);
+  };
+  const grants = chat.computer?.grants || [];
+
+  // A changed file's link opens it (PathLink): its path is the work
+  // folder's (the server's `folder_id`), resolved from the folder's top.
+  const nav = useContext(GammaNavContext);
+  const folderId = chat.computer?.folder_id || "";
+  const { say } = chat;
+  const pathLinks = useMemo(() => (folderId && nav?.openPage ? {
+    pageId,
+    resolve: async (href) => {
+      try {
+        const d = await apiJson(`${API}/folders/${encodeURIComponent(folderId)}/at?${new URLSearchParams({ path: href })}`);
+        return d.pages || [];
+      } catch {
+        return [];
+      }
+    },
+    open: (id) => nav.openPage(id),
+    say,
+  } : null), [folderId, nav, pageId, say]);
+
   // Follow the newest message while the transcript is scrolled to its end.
   const scrollRef = useRef(null);
   const stuck = useRef(true);
@@ -336,8 +375,10 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
 
   return (
     <div className="chatPanel chatWindow">
+      {/* A plain line, not a live region: the turn's pill in the transcript
+          is the one read out as the agent works. */}
       {strip.text ? (
-        <div className={`chatHealthStrip computerStrip ${strip.kind}`} role="status">
+        <div className={`chatHealthStrip computerStrip ${strip.kind}`}>
           {strip.kind === "working" || strip.kind === "waiting" ? <span className="transferSpin inline" aria-hidden="true" /> : null}
           <span className="chatHealthText">{strip.text}</span>
           {offersMenu(info) ? <StripMenu pageId={pageId} label={label} session={canContinue(info, conversation)} /> : null}
@@ -345,17 +386,25 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
       ) : null}
       <div className="chatMessages" ref={scrollRef}
         onScroll={(e) => { const el = e.currentTarget; stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
-        {!messages.length && chat.read ? (
+        {!messages.length && chat.error ? (
+          <div className="chatEmpty">
+            {chat.error}
+            <div className="computerAgain"><button type="button" className="uiBtn sm" disabled={chat.busy} onClick={chat.reload}>{t("Try again")}</button></div>
+          </div>
+        ) : !messages.length && chat.read ? (
           <div className="chatEmpty">
             {where
               ? t("Ask {agent} about this file or to change it: it works in the work folder's directory on {computer}.", { agent: label, computer: where })
               : t("Ask {agent} about this file or to change it: it works in the work folder's directory on this computer.", { agent: label })}
           </div>
         ) : null}
-        {messages.map((m, i) => (m.role === "user"
-          ? <PersonMessage key={m.id || i} message={m} />
-          : <AgentMessage key={m.id || i} message={m} label={label} away={away} copied={copied === i} onAnswer={chat.answer}
-              onCopy={async () => { if (await copyText(m.text || "")) flashCopied(i); }} />))}
+        <PathLinkContext.Provider value={pathLinks}>
+          {messages.map((m, i) => (m.role === "user"
+            ? <PersonMessage key={m.id || i} message={m} />
+            : <AgentMessage key={m.id || i} message={m} label={label} away={away} computer={where} asks={drawsAsks(info)}
+                copied={copied === i} onAnswer={chat.answer}
+                onRetry={retry(m)} onCopy={async () => { if (await copyText(m.text || "")) flashCopied(i); }} />))}
+        </PathLinkContext.Provider>
       </div>
       <form className="chatComposer" onSubmit={(e) => { e.preventDefault(); send(); }}
         onMouseDown={(e) => { if (e.target.closest("button")) e.preventDefault(); }}>
@@ -378,6 +427,11 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
           onKeyDown={(e) => { if (sendsOnEnter(e)) { e.preventDefault(); send(); } }} />
         <div className="chatComposerBar">
           <span className="chatComposerSpacer" />
+          {grants.length ? (
+            <GrantChip list={grants.map((g) => g.command).join(", ")} onRevoke={chat.revokeGrants} disabled={chat.busy}
+              title={t("{agent} runs these commands without asking in this chat: {list}. Click to make it ask again.",
+                { agent: label, list: grants.map((g) => g.command).join(", ") })} />
+          ) : null}
           {models.length ? <ModelChip label={label} models={models} choice={choice} onPick={pick} /> : null}
           {stopId ? (
             <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={() => chat.stop(stopId)}

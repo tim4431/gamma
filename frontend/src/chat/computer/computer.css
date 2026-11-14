@@ -20,15 +20,20 @@
   color: inherit;
 }
 
-/* Under a reply: what the turn changed, a turn that could not resume the
-   agent's session, and how a turn ended when it did not answer. */
-.computerChanges, .computerFresh {
-  margin: 4px 0 2px;
+/* Under a reply: what the turn changed (AgentChanges' card, after the
+   reply's text rather than before it), a turn that could not resume the
+   agent's session, and how a stopped turn ended (a failed one is the
+   chat's error card). */
+.chatChanges.computerChanges { margin: 6px 0 2px; }
+.computerFresh {
+  margin: 0 0 6px;
   color: var(--text-muted);
   font-size: calc(var(--fs-xs) * var(--text-scale, 1));
   line-height: var(--lh-ui);
+  font-style: italic;
 }
-.computerFresh { margin: 0 0 6px; font-style: italic; }
+/* A conversation that could not be read: Try again under the reason. */
+.chatEmpty .computerAgain { margin-top: 6px; font-style: normal; }
 .computerEnded {
   display: flex;
   align-items: flex-start;
@@ -38,15 +43,26 @@
   font-size: calc(var(--fs-sm) * var(--text-scale, 1));
   line-height: 1.5;
 }
-.computerEnded.err { color: var(--danger); }
 .computerEnded svg { flex: none; margin-top: 0.25em; }
 
-/* What the agent asks (ComputerAsk.jsx), in the approval card's look: the
+/* What the agent asks (ComputerAsk.jsx), on the approval card's shell: the
    command on a code line, the files it would change, and their diff one
-   row a line, the lines taken out struck and the ones put in tinted. */
-.computerAskCommand code { font-family: var(--font-mono); color: var(--text-primary); overflow-wrap: anywhere; }
+   row a line, the lines taken out struck and the ones put in tinted. Each
+   line keeps its spaces and reads in its own direction, so a right-to-left
+   character cannot reorder what is around it; a character the server
+   marked because it would not show is drawn in the warning colour. */
+.computerAskCommand code {
+  display: block;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  direction: ltr;
+}
+.computerAskMark { color: var(--warn); }
 .computerAskPaths { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 6px; }
 .computerAskPaths code { font-family: var(--font-mono); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); overflow-wrap: anywhere; }
 .computerAskDiff { font-family: var(--font-mono); }
-.computerAskDiff > * { display: block; }
+.computerAskDiff > * { display: block; white-space: break-spaces; unicode-bidi: plaintext; direction: ltr; }
 .computerAskDiffHead { color: var(--text-muted); }

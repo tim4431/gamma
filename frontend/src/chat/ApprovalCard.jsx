@@ -1,19 +1,18 @@
 // The card a tool call waits on while the user decides (chat/approvals.js
-// has the rules, gamma/ai_permissions.py the server's side). It says what
-// the call would do, shows the change as a word diff (or the folder a page
-// moves to), and offers four answers. A call naming several pages shows one
-// line per page in the same box (it scrolls), and notes the pages it leaves
-// out. Allow once runs it. Allow in this chat
-// also stops asking for this permission in this conversation. Always allow
-// also sets the permission to Allow for this kind of chat in Settings.
-// Don't allow opens a line for what to do instead (optional) and leaves the
-// call unmade; the assistant gets that line with the decline. A deletion's
-// Allow once is the red one. The buttons never take the focus by
-// themselves, so a keystroke meant for the message box can't answer.
-import React, { useEffect, useState } from "react";
+// has the rules, gamma/ai_permissions.py the server's side), on the shell
+// every such card shares (ApprovalShell.jsx). It says what the call would
+// do, shows the change as a word diff (or the folder a page moves to), and
+// offers four answers. A call naming several pages shows one line per page
+// in the same box (it scrolls), and notes the pages it leaves out. Allow
+// once runs it. Allow in this chat also stops asking for this permission in
+// this conversation. Always allow also sets the permission to Allow for
+// this kind of chat in Settings. Don't allow opens a line for what to do
+// instead (optional) and leaves the call unmade; the assistant gets that
+// line with the decline. A deletion's Allow once is the red one.
+import React, { useEffect } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { ShieldIcon } from "../shared/ui/Icons";
-import { ALLOWING, approvalTitle, batchNotes, deletionNotes, isDeletion } from "./approvals.js";
+import { approvalTitle, batchNotes, deletionNotes, toolAnswers } from "./approvals.js";
+import ApprovalShell from "./ApprovalShell";
 import { pictureSrc } from "./pictureSrc.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
 import { guideEvents } from "../guide/events.js";
@@ -65,63 +64,16 @@ function ApprovalPreview({ tool, preview = {}, args = {} }) {
 // card's edit is drawn in (editor/NoteReviewBar.jsx): the card says it as
 // if given here.
 export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide, answered = "" }) {
-  const [sent, setSent] = useState(""); // the decision on its way, then taken
-  const taken = sent || answered;
-  const [error, setError] = useState("");
-  const [declining, setDeclining] = useState(false); // the "what to do instead" line is open
-  const [note, setNote] = useState("");
   const permission = permissionLabel(approval.perm);
-  const Icon = permissionIcon(approval.perm);
   // The card is up: the hint that explains the four answers may show
   // beside it (guide/tours/hints.js). It goes again with the card.
   useEffect(() => { guideEvents.emit("approval.shown", { tool: approval.tool }); }, [approval.id, approval.tool]);
-  const decide = async (decision, said = "") => {
-    if (taken) return;
-    setSent(decision);
-    setError("");
-    try {
-      await onDecide(approval, decision, said.trim());
-    } catch (err) {
-      setSent("");
-      setError(err?.message || String(err));
-    }
-  };
-  const instead = t("What should the assistant do instead? (optional)");
   return (
-    <div className={`chatApproval${taken ? " sent" : ""}`} role="group" data-guide="chat.approval" aria-label={t("Approval needed")}>
-      <div className="chatApprovalCaption"><ShieldIcon size={14} />{t("Approval needed")} · {permission}</div>
-      <div className="chatApprovalHead"><Icon size={16} /><span>{approvalTitle(approval, { titleOf, permission })}</span></div>
+    <ApprovalShell permission={permission} icon={permissionIcon(approval.perm)} guide="chat.approval"
+      title={approvalTitle(approval, { titleOf, permission })}
+      answers={toolAnswers({ tool: approval.tool, permission, kind: kindLabel })}
+      onDecide={(decision, note) => onDecide(approval, decision, note)} answered={answered}>
       <ApprovalPreview tool={approval.tool} preview={approval.preview} args={approval.args} />
-      {error ? <div className="chatApprovalError" role="alert">{error}</div> : null}
-      {taken ? (
-        <div className="chatApprovalStatus" role="status">
-          {ALLOWING.has(taken) ? t("Allowed. The assistant goes on…") : t("Not allowed. The assistant goes on without it…")}
-        </div>
-      ) : declining ? (
-        <form className="chatApprovalDecline" onSubmit={(e) => { e.preventDefault(); decide("deny", note); }}>
-          <input className="aiKeyInput" value={note} maxLength={2000} autoFocus
-            placeholder={instead} aria-label={instead} onChange={(e) => setNote(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setDeclining(false); } }} />
-          <div className="chatApprovalActions">
-            <button type="submit" className="uiBtn sm">{t("Don't allow")}</button>
-            <button type="button" className="uiBtn sm ghost" onClick={() => setDeclining(false)}>{t("Back")}</button>
-          </div>
-        </form>
-      ) : (
-        <div className="chatApprovalActions">
-          <button type="button" className={`uiBtn sm primary${isDeletion(approval.tool) ? " danger" : ""}`} onClick={() => decide("once")}>{t("Allow once")}</button>
-          <button type="button" className="uiBtn sm" onClick={() => decide("chat")}
-            title={t("Don't ask again for “{permission}” in this conversation", { permission })}>
-            {t("Allow in this chat")}
-          </button>
-          <button type="button" className="uiBtn sm" onClick={() => decide("always")}
-            title={t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind: kindLabel })}>
-            {t("Always allow")}
-          </button>
-          <span className="chatApprovalSpacer" />
-          <button type="button" className="uiBtn sm ghost" onClick={() => setDeclining(true)}>{t("Don't allow")}</button>
-        </div>
-      )}
-    </div>
+    </ApprovalShell>
   );
 }

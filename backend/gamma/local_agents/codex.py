@@ -27,12 +27,14 @@ sandbox: Codex then asks to step outside it. A command's approval and a
 file change's become ``ask`` events, keyed by the request's JSON-RPC id (a
 file change's paths and diff are its item's, kept from ``item/started`` and
 ``item/fileChange/patchUpdated``, its diff a unified one with a header a
-change, ``_diff``), a command's network host its own field. Gamma declines
-at once, never asking, a command approval of another kind than a command
-(input to a running terminal, a managed checkpoint) and a file change to a
-protected part of the folder (``events.protected``). The answer is ``accept``,
-``acceptForSession`` or ``decline`` (a note follows as a ``turn/steer``),
-and a stop answers ``cancel``. ``serverRequest/resolved`` for one Gamma did
+change, ``_diff``), a command's network host its own field, a file change's
+``grantRoot`` too. Gamma declines at once, never asking, a command approval
+of another kind than a command (input to a running terminal, a managed
+checkpoint) and a file change to a protected part of the folder
+(``events.protected``). The answer is ``accept``, ``acceptForSession`` or
+``decline`` (a note follows as a ``turn/steer``, "The owner declined that:
+…", or "Gamma declined that: …" for Gamma's own), and a stop answers
+``cancel``. ``serverRequest/resolved`` for one Gamma did
 not answer withdraws it. Every other request is refused as without.
 
 No MCP server and no web search, whatever the user's config.toml says (a
@@ -447,34 +449,35 @@ class CodexTurn(events.Turn):
     def _relay(self, message: dict) -> dict:
         """A command's or a file change's approval, held by its JSON-RPC id
         (its exact type, which the answer echoes) → its ask event. A
-        command's network host is a field of its own, and named in its
-        reason."""
+        command's network host is a field of its own, its reason as Codex
+        gave it; a file change's ``grantRoot`` (a root to write below for
+        the rest of the session) is carried for the runner to decline."""
         params = message.get("params") or {}
         ask_id, item_id = str(message["id"]), str(params.get("itemId") or "")
         self._asked(ask_id, message["id"])
         reason = str(params.get("reason") or "").strip()
         if _ASKED[message["method"]] == "command":
             host = str((params.get("networkApprovalContext") or {}).get("host") or "").strip()
-            if host:
-                reason = f"{reason} (network: {host})" if reason else f"Network: {host}"
             return events.ask(ask_id, "command", step=item_id, command=str(params.get("command") or ""),
                               cwd=events.rel_path(str(params.get("cwd") or self.cwd), self.cwd), host=host,
                               reason=reason)
         changes = [c for c in self._changes.get(item_id) or [] if isinstance(c, dict)]
         paths = [events.rel_path(str(c.get("path") or ""), self.cwd) for c in changes]
         return events.ask(ask_id, "files", step=f"{item_id}:0" if changes else "", paths=[p for p in paths if p],
-                          diff=_diff(changes, self.cwd), reason=reason)
+                          diff=_diff(changes, self.cwd), reason=reason,
+                          grant_root=str(params.get("grantRoot") or params.get("grant_root") or ""))
 
-    def _reply(self, held, decision: str, note: str) -> None:
+    def _reply(self, held, decision: str, note: str, by: str) -> None:
         answer = {"id": held, "result": {"decision": _DECISIONS[decision]}}
         if decision == "deny" and note and self._turn_id:
             # Codex's decline carries no words: they follow as input to the
             # turn, in the same write, so a turn that ends on hearing the
             # decline has them read all the same, and the decline is never
             # taken for unwritten because the words came too late.
+            who = "Gamma" if by == "gamma" else "The owner"
             self._send(answer, self._message("turn/steer", {
                 "threadId": self._thread, "expectedTurnId": self._turn_id,
-                "input": [{"type": "text", "text": f"The owner declined that: {note}"}]}))
+                "input": [{"type": "text", "text": f"{who} declined that: {note}"}]}))
         else:
             self._send(answer)
 

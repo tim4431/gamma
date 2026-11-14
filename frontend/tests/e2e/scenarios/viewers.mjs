@@ -231,7 +231,7 @@ export async function viewerScenarios(env) {
         await content.waitFor({ timeout: 20000 });
         await content.click({ position: { x: 40, y: 10 } });
         await page.keyboard.press("ControlOrMeta+f");
-        const panel = page.locator(".docTextView .cm-panels-top .cm-search");
+        const panel = page.locator(".docTextView .cm-panels-top .docFindRow");
         await panel.waitFor();
         assertEq(await page.locator(".searchPopover").count(), 0, "Gamma's search stays shut");
         await page.keyboard.type("section{Energy}");

@@ -24,8 +24,10 @@ key optional):
   "cwd"?}`` a command's approval (``kind`` the approval's, ``command`` by
   default; ``writeStdin`` asks of the command's item started already;
   ``cwd`` relative to the working directory), ``{"path", "diff"?,
-  "change"?}`` a file change's (its item started first, with the change,
-  ``change`` its kind's type, ``update`` by default); each waits for its answer as long as the
+  "change"?, "grant_root"?}`` a file change's (its item started first, with
+  the change, ``change`` its kind's type, ``update`` by default,
+  ``repeat`` how many times its ``diff`` is written, ``grant_root`` its
+  ``grantRoot``); each waits for its answer as long as the
   turn lives (``withdraw``: that many seconds, then serverRequest/resolved
   without one), is logged, then runs (accepted) or is declined (its item
   ``declined``); a ``cancel`` ends the turn interrupted. The final message
@@ -265,11 +267,11 @@ def ask_one(thread: str, n: int, asked: dict, cwd: str) -> str | None:
         change_kind = asked.get("change", "update")
         change = {"path": os.path.join(cwd, asked["path"]),
                   "kind": {"type": "update", "move_path": None} if change_kind == "update" else {"type": change_kind},
-                  "diff": asked.get("diff", "")}
+                  "diff": asked.get("diff", "") * int(asked.get("repeat") or 1)}
         body = {"type": "fileChange", "id": item_id, "changes": [change], "status": "inProgress"}
         item("item/started", thread, body)
         params = {"threadId": thread, "turnId": TURN, "itemId": item_id, "startedAtMs": 0,
-                  "reason": asked.get("reason")}
+                  "reason": asked.get("reason"), "grantRoot": asked.get("grant_root")}
     send({"id": request_id, "method": method, "params": params})
     answer = wait_for(lambda m: (m.get("id") == request_id and "method" not in m)
                       or m.get("method") == "turn/interrupt", asked.get("withdraw"))

@@ -5,9 +5,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { fileCrumbs, fileNameOf, isRelativeHref } from "../src/explorer/workPaths.js";
+import { fileCrumbs, fileNameOf, filePlace, isRelativeHref } from "../src/explorer/workPaths.js";
 import { treeOf } from "../src/explorer/workFolders.js";
-import { libraryTree } from "../src/library/libraryUtils.js";
+import { filingChips, libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
 const FIXTURE = JSON.parse(readFileSync(new URL("../../tests/shared/workpaths.json", import.meta.url), "utf8"));
 
@@ -41,6 +41,30 @@ test("a file row's name: its file's, else a note's title", () => {
 test("the crumbs name their folders, W first", () => {
   const raw = FIXTURE.cases.find((c) => c.crumbs.length === 3);
   assert.deepEqual(fileCrumbs(LIB, WORK, filedOf(raw)).map((f) => f.name), ["Paper", "figures", "raw"]);
+});
+
+test("a file's place: its name over W and its directories, from the tree or the server's dir", () => {
+  for (const c of FIXTURE.cases) {
+    const page = { content: c.title, properties: c.props };
+    const place = filePlace(LIB, WORK, page);
+    if (!c.props.work_folder) { assert.equal(place, null, `${c.name}: no place`); continue; }
+    const dirs = c.crumbs.length ? c.dir.split("/").filter(Boolean) : [];
+    assert.deepEqual(place, { name: fileNameOf(page), work: "Paper", dirs, text: ["Paper", ...dirs].join(" / ") }, c.name);
+    // a row the server answered is placed by its own directory
+    assert.deepEqual(filePlace(LIB, WORK, { ...page, dir: c.dir }).text, ["Paper", ...c.dir.split("/").filter(Boolean)].join(" / "),
+      `${c.name}: the server's dir`);
+  }
+  assert.equal(filePlace(LIB, WORK, undefined), null);
+});
+
+test("a file's chips leave out its directory, its place; a page's and a bare list keep every folder", () => {
+  const both = FIXTURE.cases.find((c) => c.name === "in the library too").props;
+  assert.deepEqual(filingChips(LIB, both).folders.map((f) => f.id), ["shelf"], "the library folder alone");
+  assert.deepEqual(filingChips(LIB, { folders: both.folders }).folders.map((f) => f.id), ["figures", "shelf"], "no work_folder: every one");
+  assert.deepEqual(filingChips(LIB, { folders: ["shelf"] }).folders.map((f) => f.name), ["Shelf"]);
+  // App's page rows keep the directory: the rules and the crumbs read it
+  const [row] = pageBlocksOf([{ id: "f", content: "fig1", _parentPage: "", properties: both }], LIB);
+  assert.deepEqual(row._folders, ["figures", "shelf"]);
 });
 
 test("a link's address is relative where page_at_href would resolve it", () => {

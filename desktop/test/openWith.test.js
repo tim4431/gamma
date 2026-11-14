@@ -47,6 +47,44 @@ test('the table is the fixture; ProgIDs start with Gamma.; the manifest names no
   assert.deepStrictEqual(openwith.dropped, []);
 });
 
+test('Store: the folder verb is the class of native/open-with/, on a folder and an open folder\'s background', () => {
+  const x = openwith.appx();
+  const { clsid, dll, verbId } = openwith.OPEN_WITH;
+  assert.ok(x.includes(`<com:Class Id="${clsid}" Path="app\\${dll}" ThreadingModel="STA" />`));
+  const verbs = [...x.matchAll(/<desktop5:ItemType Type="([^"]+)">\s*<desktop5:Verb Id="([^"]+)" Clsid="([^"]+)" \/>/g)].map((m) => m.slice(1));
+  assert.deepStrictEqual(verbs, [['Directory', verbId, clsid], ['Directory\\Background', verbId, clsid]]);
+  // The header gives the DLL the same class, the table's words and the app it starts.
+  assert.strictEqual(openwith.guidInit('a5ac2231-021b-477c-846c-b5a2a3ef67c2'),
+    '{0xa5ac2231, 0x021b, 0x477c, {0x84, 0x6c, 0xb5, 0xa2, 0xa3, 0xef, 0x67, 0xc2}}');
+  const h = openwith.verbHeader();
+  assert.ok(h.includes(`CLSID_OpenWithGamma = ${openwith.guidInit(clsid)};`));
+  assert.ok(h.includes(`#define GAMMA_VERB_TITLE L"${FIXTURE.folder_verb}"`));
+  const config = require('../electron-builder.cjs');
+  assert.ok(h.includes(`#define GAMMA_APP_ID L"${config.appx.applicationId}"`));
+  assert.ok(h.includes(`#define GAMMA_EXE L"${config.productName}.exe"`));
+  // The DLL goes in by the afterPack hook; native/ itself never ships.
+  assert.strictEqual(config.afterPack, 'scripts/after-pack.cjs');
+  assert.ok(!config.files.some((f) => f.startsWith('native')));
+});
+
+test('Store: the manifest template is electron-builder\'s, with the verb\'s namespaces declared', () => {
+  const config = require('../electron-builder.cjs');
+  const ours = fs.readFileSync(path.join(DESKTOP, config.directories.buildResources, config.appx.customManifestPath), 'utf8');
+  const theirs = fs.readFileSync(path.join(DESKTOP, 'node_modules', 'app-builder-lib', 'templates', 'appx', 'appxmanifest.xml'), 'utf8');
+  // Everything after the <Package …> start tag is upstream's, macros included.
+  const body = (t) => t.slice(t.indexOf('>', t.indexOf('<Package')) + 1);
+  assert.strictEqual(body(ours), body(theirs), 'electron-builder\'s template changed: carry the change into assets/appxmanifest.xml');
+  const start = ours.slice(ours.indexOf('<Package'), ours.indexOf('>', ours.indexOf('<Package')));
+  for (const decl of theirs.slice(theirs.indexOf('<Package'), theirs.indexOf('>', theirs.indexOf('<Package'))).match(/xmlns(:\w+)?="[^"]+"/g)) {
+    assert.ok(start.includes(decl), decl);
+  }
+  // Every prefix the extensions use is declared; the folder verb's newer ones are ignorable.
+  for (const prefix of new Set([...openwith.appx().matchAll(/<(\w+):/g)].map((m) => m[1]))) {
+    assert.match(start, new RegExp(`xmlns:${prefix}="http://schemas\\.microsoft\\.com/appx/manifest/`), prefix);
+  }
+  assert.match(start, /IgnorableNamespaces="desktop4 desktop5"/);
+});
+
 test('NSIS: per kind a ProgID, per extension Open with, the folder verbs, and their quoting', () => {
   const text = openwith.nsis();
   const install = macro(text, 'customInstall');

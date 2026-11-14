@@ -14,7 +14,7 @@ import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 // workspace's Manage page or a row's menu — the `target` that is on the pane
 // itself. tests/settingsSearch.test.mjs checks every target against its
 // pane's source. An admin-only section of a pane everyone has (Backups ›
-// Off-site copies) is wrapped in `admin()`, a setting shown only under a
+// Bucket) is wrapped in `admin()`, a setting shown only under a
 // native host with a capability (Reading & editing › the pen section, in
 // the iPad and Android apps) in `hostOnly(flags, entry)`, a flag or the list
 // of flags its row is shown under: the host's own, or those hostCaps
@@ -148,7 +148,7 @@ const entries = [
   e("backups", t("Backups"), null, t("Server-kept snapshots and the tasks that take them."), "snapshot backup"),
   e("backups", t("Periodic backup tasks"), null, t("Hourly, daily, weekly or monthly snapshots"), "automatic scheduled tasks hourly daily weekly monthly cron retention schedule"),
   e("backups", t("Restore a backup"), t("Saved snapshots"), t("A snapshot's Restore menu: replace or merge"), "restore replace merge snapshot roll back download", t("Saved snapshots")),
-  admin(e("backups", t("Off-site copies"), null, t("Databases and uploaded files, every so often; Gamma keeps running on its own disk"), "administration offsite backup bucket S3 R2 Cloudflare AWS MinIO cloud remote storage replicate disaster recovery")),
+  admin(e("backups", t("Bucket"), null, t("AWS S3, Cloudflare R2, MinIO or another S3-compatible store, for backup tasks to copy their snapshots to"), "administration offsite off-site backup bucket S3 R2 Cloudflare AWS MinIO cloud remote storage replicate disaster recovery")),
   e("maintenance", t("Library maintenance"), null, t("Storage, search index and metadata health"), "metadata health text index rebuild papers"),
   e("maintenance", t("Uploaded files"), t("Storage"), t("PDFs and images on the server"), "storage quota uploads space used disk"),
   e("users", t("Users"), null, t("Accounts, passwords and storage limits"), "administration accounts limits personal workspaces"),

@@ -7,6 +7,7 @@
 //   <div {...menuPress(openPageMenu(id))}>      right-click, or a held finger
 //   <span {...doublePress(toggleFold)}>         double-click, or a double tap
 //   <button {...triggerPress(toggleMenu)}>      a press, or Enter / Space
+//   <button {...tipPress(markIt)}>              the same, keeping the selection
 //
 // The browser cannot be left to it: iPadOS Safari sends no `contextmenu` for
 // a long press, and its `dblclick` for a double tap is not dependable.
@@ -137,6 +138,28 @@ export function penLifted(e, pointerId) {
 export function triggerPress(run) {
   return {
     onPointerDown(e) { if (e.button === 0) run(e); },
+    onClick(e) { if (e.detail === 0) run(e); },
+  };
+}
+
+// --- a selection popup's button --------------------------------------------------------
+
+// A press on a selection popup (shared/ui/SelectionTip.jsx) keeps the
+// selection under it: its mousedown takes no focus and moves no selection,
+// and the page's own mousedown listeners do not see it.
+export function keepSelection(e) {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+// A selection popup's button acts as triggerPress's does, on the press with
+// the primary button and on a click no press led to (`detail` 0: Enter or
+// Space on it, an assistive technology's activation), but on the mouse's
+// press (a finger's and a pen's send one too), which is kept from the page
+// whatever its button, so the selection it acts on stays.
+export function tipPress(run) {
+  return {
+    onMouseDown(e) { keepSelection(e); if (e.button === 0) run(e); },
     onClick(e) { if (e.detail === 0) run(e); },
   };
 }

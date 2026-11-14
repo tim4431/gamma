@@ -215,7 +215,7 @@ export async function localAgentScenarios(env) {
         const row = d.locator(".feedbackRequest");
         await row.waitFor({ timeout: 10000 });
         const state = row.locator(".feedbackRequestState");
-        await until(async () => (await state.innerText()).trim() === "Codex is working", { timeout: 20000, what: "the request reads Codex is working" });
+        await until(async () => (await state.innerText()).trim() === "Codex is working…", { timeout: 20000, what: "the request reads Codex is working…" });
         await until(async () => (await state.innerText()).trim() === "Done by Codex", { timeout: 40000, what: "the request reads Done by Codex" });
         // the agent's own words on a line of their own, under the request's
         const done = (await row.locator(".feedbackRequestDetail").innerText()).trim();
@@ -393,7 +393,8 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
-        assertEq(await dock.locator(".segGroup button").allInnerTexts().then((b) => b.map((s) => s.trim()).join("|")), "Gamma AI|Codex",
+        // Their names: a narrow window shows the sides' icons alone.
+        assertEq(await dock.locator(".segGroup button").evaluateAll((b) => b.map((x) => x.getAttribute("aria-label")).join("|")), "Gamma AI|Codex",
           "the switch names Gamma AI and the folder's agent");
         await codexSide(page);
         await until(async () => (await dock.locator(".computerStrip").innerText()).trim() === "Codex on this computer · paper",
@@ -495,7 +496,7 @@ export async function localAgentScenarios(env) {
         const card = dock.locator(".computerAsk");
         await card.waitFor({ timeout: 20000 });
         assertEq((await card.locator(".chatApprovalHead").innerText()).trim(), "Codex wants to run a command");
-        assertEq((await card.locator(".computerAskCommand code").innerText()).trim(), BUILD, "the command, whole");
+        assertEq((await card.locator(".computerAskCommand").innerText()).trim(), BUILD, "the command, whole");
         assert((await card.innerText()).includes("The build fetches a font"), "its reason");
         assert((await card.innerText()).includes("It runs as you, with your files and the network."), "what allowing means");
         await until(async () => (await dock.locator(".computerStrip.asking").innerText().catch(() => "")).trim()
@@ -521,9 +522,9 @@ export async function localAgentScenarios(env) {
     await step("local-agents: declined with a note, Codex hears why; allowed in this chat, the same command runs unasked next time", async () => {
       let before = decisions().length;
       await askAndAnswer("build it again", async (card) => {
-        await card.getByRole("button", { name: "Decline…", exact: true }).click();
+        await card.getByRole("button", { name: "Don't allow", exact: true }).click();
         await card.getByRole("textbox").fill("use make instead");
-        await card.getByRole("button", { name: "Decline", exact: true }).click();
+        await card.getByRole("button", { name: "Don't allow", exact: true }).click();
       });
       assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["decline"]), "Codex heard decline");
       assert(steers().some((s) => s.includes("use make instead")), `the note went with it: ${JSON.stringify(steers())}`);

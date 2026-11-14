@@ -1169,7 +1169,8 @@ async function main() {
       await hook(app, (s, w) => s.openGammaWorkspace(w), ws); // the panel's chooser lists the open workspace's folders
       await waitLoggedIn(content);
       const tokensOf = async () => (await serverCall(app, '/api/integrations/tokens', { ws })).tokens;
-      const before = (await tokensOf()).length;
+      // The tokens of earlier steps (an offline copy's) stay; this step's are told apart by id.
+      const before = new Set((await tokensOf()).map((t) => t.id));
       const far = path.join(profile, 'kept-far');
       fs.mkdirSync(far, { recursive: true });
       await hook(app, (s, dir) => { process.env.GAMMA_SHELL_PICK_DIR = dir; }, far); // the picker's answer, this time
@@ -1190,9 +1191,12 @@ async function main() {
       assert(links[0].token_id && !links[0].token, 'with a token minted there, never shown');
       assert.equal((await hook(app, (s) => s.registry.load().mirrors)).length, mirrorsBefore, 'no clone was made');
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), ids.alpha, 'the host is remembered for launch');
-      const tokens = await tokensOf();
-      assert.equal(tokens.length, before + 1, `one token minted: ${JSON.stringify(tokens.map((t) => [t.name, t.scope]))}`);
-      assert(tokens.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), 'read scope, named after the folder');
+      // Two tokens minted there: the vault's, and the one that shows this computer
+      // on that server (showComputer, docs/dev/computers.md), never the vault's.
+      const minted = (await tokensOf()).filter((t) => !before.has(t.id));
+      const said = JSON.stringify(minted.map((t) => [t.name, t.scope]));
+      assert.deepEqual(minted.map((t) => t.scope).sort(), ['computer', 'read'], `the vault's token and the computer's minted: ${said}`);
+      assert(minted.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), `the vault's: read scope, named after the folder: ${said}`);
       // The chooser shows it synced; the vault's "Remove the vault…" drops it and revokes the token; the files stay.
       const shown = await chooserRow(bar, 'Far lab');
       assert((await shown.textContent()).includes('synced'), 'shown as synced');
@@ -1207,7 +1211,9 @@ async function main() {
       // which the vault's going does not wait for.
       await waitFor(async () => /is no longer synced; its files stay/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 15_000);
       assert(fs.existsSync(md), 'the files stay');
-      assert.equal((await tokensOf()).length, before, 'the token was revoked');
+      // its last vault there gone, this computer is no longer shown there either (releaseRemote)
+      const left = (await tokensOf()).filter((t) => !before.has(t.id));
+      assert.deepEqual(left.map((t) => [t.name, t.scope]), [], 'the vault\'s token and the computer\'s revoked');
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), '', 'the host no longer starts at launch for it');
       return `${links[0].dest} from ${links[0].remote_url}, then removed`;
     });
@@ -1307,14 +1313,15 @@ async function main() {
       assert.equal(await bar.locator('#syncPanel #vaultAsk').count(), 0, 'the bar asks nothing: the tracking dialog does');
       // The window is known by the dialog it shows, not by its address: the
       // page reads ?track= as it boots and takes it out of the address
-      // (frontend/src/vault/useVault.js), often before the waits above end.
+      // (frontend/src/vault/useVault.js), often before the waits above end. The
+      // page speaks this computer's language, so the dialog is named in either catalog.
       content = await waitFor(async () => {
         for (const p of app.windows()) {
-          if (p.url().startsWith('http://127.0.0.1') && await p.getByRole('dialog', { name: 'Choose files' }).isVisible()) return p;
+          if (p.url().startsWith('http://127.0.0.1') && await trackDialog(p).isVisible()) return p;
         }
         return null;
       }, 'the window at the vault\'s tracking dialog', 30_000);
-      const dialog = content.getByRole('dialog', { name: 'Choose files' });
+      const dialog = trackDialog(content);
       assert.equal(await dialog.locator('.importReviewHeader strong').innerText(), 'Reading', 'the dialog is the vault\'s directory');
       assert(!new URL(content.url()).searchParams.has('track'), 'the hand-over leaves the address');
       assert(!fs.existsSync(path.join(dir, '.gammaignore')), 'nothing chosen yet');
@@ -1504,6 +1511,69 @@ async function main() {
       assert(!opened.some((u) => u.startsWith('ms-windows-store://pdp')), 'no other Store link: ' + opened);
       assert(opened.includes('https://example.com/leave'), 'location change went external: ' + opened);
       return opened.join(', ');
+    });
+
+    await step('an agent\'s ask on this computer: the bar\'s card covers the whole window with the page hidden, its buttons inside a small window, Allow once shut until the command is read to its end, Escape and a press on the layer answering nothing, Decline sent once; the launcher cannot answer', async () => {
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      const size = await app.evaluate(({ BaseWindow }) => {
+        const w = BaseWindow.getAllWindows()[0];
+        const before = w.getNormalBounds();
+        w.setBounds({ ...before, width: 720, height: 480 });
+        return before;
+      });
+      const command = Array.from({ length: 40 }, (_, i) => `echo line ${i + 1}`).join('\n');
+      try {
+        await hook(app, (s, c) => {
+          s.askAnswers.length = 0;
+          s.pretendAsks([{ id: 'e2e-ask', turn_id: 't1', link_id: 'v-none', agent: 'codex', label: 'Codex', kind: 'command', command: c, lines: 40,
+            dir: 'C:\\Papers', folder: 'C:\\Papers', file: '', reason: 'Build the paper.', server: { origin: 'https://nas.example', account: 'alice' },
+            at: new Date().toISOString(), expires_at: new Date(Date.now() + 600_000).toISOString() }]);
+        }, command);
+        await bar.waitForSelector('#agentAskLayer:not([hidden]) #agentAsk');
+        const b = await hook(app, (s) => s.bounds());
+        assert.equal(b.bar.height, await app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].getNormalBounds().height), 'the bar over the whole window');
+        assert.equal(b.contentVisible, false, 'the page hidden');
+        assert.equal((await bar.textContent('#askTitle')).trim(), 'Gamma · Approval needed on this computer');
+        assert.equal(await bar.isVisible('#wsBtn'), false, 'the page\'s names leave the strip');
+        // every button inside the window, the footer never scrolled away
+        const inside = await bar.evaluate(() => [...document.querySelectorAll('#agentAsk [data-answer]')].every((el) => {
+          const r = el.getBoundingClientRect();
+          return r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth;
+        }));
+        assert(inside, 'the buttons are inside a 720×480 window');
+        // armed a second after it was drawn (the test window's focus is taken as given); Allow once waits for the box's end
+        await waitFor(() => hook(app, (s) => s.agentAsk().armed), 'armed', 10_000, 100);
+        await waitFor(async () => !(await bar.isDisabled('#agentAsk-deny')), 'Decline enabled', 5_000, 100);
+        assert.equal(await bar.isDisabled('#agentAsk-once'), true, 'Allow once shut until the command was read');
+        await bar.evaluate(() => { const box = document.getElementById('agentAskCommand'); box.scrollTop = box.scrollHeight; });
+        await waitFor(async () => !(await bar.isDisabled('#agentAsk-once')), 'Allow once once read', 5_000, 100);
+        // Escape and a press on the layer answer nothing and close nothing
+        await bar.keyboard.press('Escape');
+        await bar.mouse.click(5, 300);
+        assert.deepEqual(await hook(app, (s) => s.askAnswers.slice()), []);
+        assert.equal(await bar.isVisible('#agentAsk'), true);
+        // the launcher meanwhile keeps the card, and its bridge cannot answer it (the bar's alone)
+        await hook(app, (s) => s.loadLauncher());
+        content = await findPage(app, isLauncher);
+        assert.equal(await hook(app, (s) => s.agentAsk() && s.agentAsk().key), 'e2e-ask');
+        const fromLauncher = await content.evaluate(() => gammaShell.answerAgentAsk('e2e-ask', 'deny').then(() => 'answered', (e) => String(e.message)));
+        assert.match(fromLauncher, /Not allowed/);
+        await waitFor(() => hook(app, (s) => s.agentAsk().armed), 'armed again after the presses', 10_000, 100);
+        await bar.click('#agentAsk-deny');
+        await waitFor(() => hook(app, (s) => s.agentAsk() === null), 'the card goes', 10_000, 100);
+        assert.deepEqual(await hook(app, (s) => s.askAnswers.slice()), [{ id: 'e2e-ask', decision: 'deny' }], 'Decline sent once');
+        // the host knows no such ask: nothing was allowed, said so
+        assert.equal(await hook(app, (s) => s.notice()), 'Codex no longer waits for that: nothing was allowed.');
+        assert.equal((await hook(app, (s) => s.bounds())).contentVisible, true, 'the page back');
+        return 'card drawn, read, declined once';
+      } finally {
+        await hook(app, (s) => { s.stopAsks(); s.pretendAsks([]); });
+        await app.evaluate(({ BaseWindow }, before) => BaseWindow.getAllWindows()[0].setBounds(before), size);
+        await hook(app, (s, id) => s.openServer(id), ids.alpha); // the steps after start from Alpha
+        content = await findPage(app, (u) => u.startsWith(urls.alpha));
+        await waitLoggedIn(content);
+      }
     });
 
     await step('Gamma Cloud sign-in: the system browser signs in, the window gets the session through the loopback return', async () => {

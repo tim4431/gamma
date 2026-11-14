@@ -20,9 +20,10 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { API, apiJson, makeId, withWorkspace } from "../shared/lib/utils";
-import { Segmented, SubDialog } from "../settings/SettingsKit";
+import { FormNotice, Segmented, SubDialog } from "../settings/SettingsKit";
 import { FileTextIcon, HighlightIcon, MessageSquareIcon, PenIcon, RectSelectIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
+import { StateTag } from "../shared/ui/StateTag";
 import { anchorSnippet, sentChip } from "../comments/comments.js";
 import { entryHeading, placedText, requestLine, sendWords, sourceText, withdrawTitle } from "./feedbackText.js";
 import {
@@ -37,8 +38,9 @@ const JSON_POST = (body) => ({ method: "POST", headers: { "Content-Type": "appli
 // One entry's row: a click opens its thread on its page. The picture is an
 // <img> request, which carries no workspace header, so its URL names the
 // workspace (withWorkspace, as every API picture drawn by the browser).
-// `answers`: the agent that takes the reader's Sends, whose computer the
-// chip of one waiting names (sendAgent's plan; null for none).
+// `answers`: the agent that takes the reader's Sends, which the chip of
+// one waiting names, or the computer it runs on (sendAgent's plan; null
+// for none).
 function Entry({ entry, answers, onOpen }) {
   const Icon = KIND_ICONS[entry.kind] || MessageSquareIcon;
   const chip = sentChip(entry, answers);
@@ -51,7 +53,7 @@ function Entry({ entry, answers, onOpen }) {
       <span className="feedbackEntryMain">
         <span className="feedbackEntryHead">
           <span className="feedbackEntryTitle">{entryHeading(entry)}</span>
-          {chip ? <span className={`uiTag ${chip.tone}`} data-sent={chip.state} title={chip.title}>{chip.label}</span> : null}
+          {chip ? <StateTag state={chip} data-sent={chip.kind} /> : null}
         </span>
         {meta ? <span className="feedbackEntryMeta">{meta}</span> : null}
         <span className="feedbackEntryFirst">
@@ -68,22 +70,28 @@ function Entry({ entry, answers, onOpen }) {
 }
 
 // One request's row: when it was sent and how many comments, what became
-// of it with the agent's own words on a line under the note (its progress,
-// summary or reason, at most three lines, whole in its title), and Withdraw
-// on the person's own while it waits or runs, which names the computer
-// that runs them (`computer`, "" for this one) while it waits.
-function RequestRow({ request, me, computer, busy, onWithdraw }) {
-  const { line, state, detail, kind } = requestLine(request, Date.now(), request.by === me ? computer : "");
+// of it, the entries' tag, with the agent's own words on a line under the
+// note (its progress, summary or reason, at most three lines, whole in its
+// title), and Withdraw on the person's own while it waits or runs; one of
+// theirs waiting names the agent that runs them or its computer
+// (`answers`, as the entries').
+function RequestRow({ request, me, answers, busy, onWithdraw }) {
+  const sent = requestLine(request, Date.now(), request.by === me ? answers : null);
+  const { line, detail, kind } = sent;
+  const withdraws = canWithdraw(request, me);
+  // what Withdraw does to a run of this computer's agent, said on a line (a finger has no hover)
+  const stops = withdraws ? withdrawTitle(request) : "";
   return (
     <li className="feedbackRequest" data-request-id={request.id} data-state={kind}>
       <span className="feedbackRequestLine">
         <span>{line}</span>
         {request.note ? <span className="feedbackRequestNote" title={request.note}>{anchorSnippet(request.note, 120)}</span> : null}
         {detail ? <span className="feedbackRequestDetail" title={detail}>{detail}</span> : null}
+        {stops ? <span className="feedbackRequestHint">{stops}</span> : null}
       </span>
-      <span className="feedbackRequestState">{state}</span>
-      {canWithdraw(request, me) ? (
-        <button type="button" className="uiBtn sm" disabled={busy} title={withdrawTitle(request) || undefined}
+      <StateTag state={sent} className="feedbackRequestState" />
+      {withdraws ? (
+        <button type="button" className="uiBtn sm" disabled={busy} title={stops || undefined}
           onClick={() => onWithdraw(request)}>{t("Withdraw")}</button>
       ) : null}
     </li>
@@ -98,7 +106,9 @@ function RequestRow({ request, me, computer, busy, onWithdraw }) {
 // blockId, pageId) opens a thread on its page (App's openThreadAt).
 export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread, onClose }) {
   const [choice, setChoice] = useState("scope");
-  const [read, setRead] = useState(null); // {doc} | {error}
+  // {target, doc, error}: the document of `target` read last, and the
+  // error of the read since that failed, which keeps the document shown.
+  const [read, setRead] = useState(null);
   const [requests, setRequests] = useState([]);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -122,9 +132,12 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
     const load = async () => {
       try {
         const next = await apiJson(`${API}/feedback?scope=${encodeURIComponent(target)}`);
-        if (live) setRead({ doc: next });
+        if (live) setRead({ target, doc: next });
       } catch (err) {
-        if (live) setRead({ error: err.message || String(err) });
+        // A poll that fails says so over the entries, which stay, as the
+        // instruction being typed does; another scope's are not shown.
+        const error = err.message || String(err);
+        if (live) setRead((r) => r?.target === target ? { ...r, error } : { target, error });
       }
       if (!w) return;
       try {
@@ -139,7 +152,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
 
   const reload = async () => {
     try {
-      setRead({ doc: await apiJson(`${API}/feedback?scope=${encodeURIComponent(target)}`) });
+      setRead({ target, doc: await apiJson(`${API}/feedback?scope=${encodeURIComponent(target)}`) });
       if (w) setRequests((await apiJson(`${API}/feedback/requests?scope=${encodeURIComponent(w)}&limit=100`)).requests || []);
     } catch {}
   };
@@ -177,8 +190,8 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
   // person runs (the generic button).
   const plan = sendAgent(doc, !!(w && links?.get(w)));
   const words = sendWords(plan, n, othersCount(entries, me));
-  // Where another computer keeps the folder, what a Send of the person's waits for.
-  const answers = namesAgent(plan) && plan.computer ? plan : null;
+  // What a Send of the person's waits for: the folder's agent, or the computer that keeps the folder.
+  const answers = namesAgent(plan) ? plan : null;
   const choices = hasChoice(scope, workFolder) ? [
     ["scope", scope.kind === "file" ? t("This file") : t("This folder")],
     ["work_folder", workFolder.name || t("Work folder")],
@@ -191,8 +204,8 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
         </div>
       ) : null}
       {paused ? <p className="feedbackNotice" role="status">{t("This work folder is paused: its feedback files wait until it syncs again.")}</p> : null}
-      {read?.error ? <p className="importWarning" role="alert">{read.error}</p> : null}
-      {!read ? <p className="reportModalHint">{t("Reading…")}</p> : null}
+      {read?.error ? <FormNotice>{read.error}</FormNotice> : null}
+      {!read ? <p className="reportModalHint loadingHint">{t("Reading…")}</p> : null}
       {doc ? (
         <div className="feedbackEntries" data-count={n}>
           {n ? groupByFile(entries).map((group) => (
@@ -218,16 +231,16 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
       {doc && canSend ? (
         <div className="feedbackAgent" id={notesId} role="status">
           {words.notes.map((line) => (
-            <p key={line.text} className="feedbackAgentNote" data-tone={line.tone}>{line.text}</p>
+            <p key={line.text} className={`feedbackAgentNote${line.tone === "warn" ? " agentProblem" : ""}`} data-tone={line.tone}>{line.text}</p>
           ))}
         </div>
       ) : null}
-      {problem ? <p className="importWarning" role="alert">{problem}</p> : null}
+      {problem ? <FormNotice>{problem}</FormNotice> : null}
       {requests.length ? (
         <div className="feedbackRequests">
           <h3 className="feedbackFileName">{t("Sent to the agent")}</h3>
           <ul>{newestRequests(requests).map((request) => (
-            <RequestRow key={request.id} request={request} me={me} computer={answers?.computer || ""} busy={busy} onWithdraw={withdraw} />
+            <RequestRow key={request.id} request={request} me={me} answers={answers} busy={busy} onWithdraw={withdraw} />
           ))}</ul>
         </div>
       ) : null}

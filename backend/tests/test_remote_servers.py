@@ -258,7 +258,7 @@ def test_the_moves_and_the_pins_take_the_shells_word(owner, nas, monkeypatch):
     assert owner.post("/api/remote-servers/move", json={"from": NAS, "to": MOVED}, headers={"X-Gamma-Shell": "wrong"}
                       ).status_code == 403
     assert owner.get("/api/remote-servers/pins").status_code == 403
-    monkeypatch.delenv("GAMMA_SHELL_SECRET")                              # no secret: refused, never unchecked
+    monkeypatch.setenv("GAMMA_SHELL_SECRET", "")                          # no secret: refused, never unchecked
     assert _move(owner, dry_run=True).status_code == 403
     assert owner.put("/api/remote-servers/pins", json={"pins": []}, headers=SHELL).status_code == 403
     monkeypatch.setenv("GAMMA_SHELL_SECRET", SECRET)

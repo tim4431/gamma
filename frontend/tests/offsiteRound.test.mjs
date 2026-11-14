@@ -1,5 +1,5 @@
-// node --test tests/  (from frontend/) — what Settings → Backups › Off-site
-// copies says of a round while it runs (src/settings/offsiteRound.js),
+// node --test tests/  (from frontend/) — what Settings → Backups › Bucket
+// says of an environment's off-site round while it runs (src/settings/offsiteRound.js),
 // against the progress gamma/offsite.py's status answers.
 import assert from "node:assert/strict";
 import { test } from "node:test";

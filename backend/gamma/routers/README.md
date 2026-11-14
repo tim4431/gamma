@@ -7,11 +7,11 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `auth.py`     | `/api/login`, `/logout`, `/session`, `/accounts`, `/login-guest` | session cookies, the account directory, guest login |
 | `cloud_auth.py` | `/api/server-config`, `/api/auth/cloud/*` | Sign in with Gamma Cloud (`gamma/cloud_auth.py`): sign-in and linking, connecting this server, the account's profile sync, what the login page needs |
 | `integrations.py` | `/api/integrations/tokens*` | an account's integration tokens (`gamma/integrations.py`); session only |
-| `ws_backups.py` | `/api/workspaces/{id}/backups*`, `/export`, `/export-all`, `/import-data`, `/jobs/workspace-export`, `/jobs/snapshot`, `/jobs/restore*` | workspace backups: snapshots, downloads, restores, and their background jobs |
+| `ws_backups.py` | `/api/workspaces/{id}/backups*`, `/export`, `/export-all`, `/import-data`, `/jobs/workspace-export`, `/jobs/snapshot`, `/jobs/restore*`, `/jobs/bucket-*` | workspace backups: snapshots, downloads, restores, and their background jobs; a backup task's copy in the bucket downloaded or restored (admins) |
 | `backup_tasks.py` | `/api/backup-tasks*`              | an account's scheduled backup tasks (`gamma/backup_schedule.py`): list, preview, create, edit, run, delete |
 | `jobs.py`     | `/api/jobs`, `/jobs/{id}*`          | Background tasks: list, read, stop, remove and download jobs (`gamma/jobs.py`; each kind starts in its own router) |
 | `workspaces.py` | `/api/workspaces/*`               | workspaces: list/create/rename/delete, members and roles, invitations by Gamma Cloud username or by e-mail |
-| `admin.py`    | `/api/admin/*`, `/api/jobs/server-backup` | accounts and invitations to this server by e-mail, server settings, shared AI providers, every workspace, server backups and off-site copies, the network proxy, the database check, the server log |
+| `admin.py`    | `/api/admin/*`, `/api/jobs/server-backup` | accounts and invitations to this server by e-mail, server settings, shared AI providers, every workspace, server backups, the bucket and its copies, the network proxy, the database check, the server log |
 | `blocks.py`   | `/api/blocks/*`, `/block-search`    | the block tree (CRUD, children, subtree, backlinks, by-doc), block search |
 | `pages.py`    | `/api/pages`, `/pages/by-docs`, `/pages/from-file`, `/pages/{id}/attachment` | page-first endpoints: create a page (also from a stored Markdown file), attach/detach its document (`replace_attachment`, which a Zotero link calls too; no person's PDF on a page whose PDF a Zotero link still brings), which pages carry which PDFs |
 | `trash.py`    | `/api/trash`, `/trash/{id}/restore` | Recently deleted: list, restore, delete for good, empty |

@@ -14,7 +14,7 @@
 // error with Retry preview, which uploads the held file again and keeps
 // the choices; so does a review a server restart cut short.
 import React from "react";
-import { Segmented, SubDialog } from "../settings/SettingsKit";
+import { FormNotice, Segmented, SubDialog } from "../settings/SettingsKit";
 import { fmtBytes } from "../shared/lib/format.js";
 import ImportTree from "./ImportTree";
 import { dialogSource, discardImport, fetchReview, importFormat, importJobBody, keepReview, requestImport } from "./importApi";
@@ -320,7 +320,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       {result ? <p ref={reportHeading} tabIndex={-1} role="status">{importSummary(result)}</p>
         : <p>{reviewBusy ? phaseLabel : phase === "review" && plan ? t("Choose what to import and review its destination. Click a name to find its match in the other column.") : ""}</p>}
     </div>
-    {error ? <p role="alert" className="importWarning">{error}</p> : null}
+    {error ? <FormNotice>{error}</FormNotice> : null}
     {previewing ? <>
       <TaskProgress task={preview} label={t("Review progress")} />
       <p className="reportModalHint">{t("You can close this window: the review goes on in Background tasks.")}</p>
@@ -337,7 +337,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     </> : null}
     {phase === "ended" ? (
       job?.state === "failed"
-        ? <p role="alert" className="importWarning">{t("The import failed: {reason}. Choose the file again to try once more.", { reason: t(job.error) })}</p>
+        ? <FormNotice>{t("The import failed: {reason}. Choose the file again to try once more.", { reason: t(job.error) })}</FormNotice>
         : <p className="reportModalHint">{t("The import was stopped. What it imported before stays in your library.")}</p>
     ) : null}
     {phase === "review" && plan ? <>

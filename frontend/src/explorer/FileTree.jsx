@@ -12,6 +12,8 @@ import { FileGlyph, FolderIcon } from "../shared/ui/Icons";
 import { MenuButton } from "../shared/ui/Menus";
 import { Chevron } from "../shared/ui/MotionWidgets";
 import { menuPress as holdPress, pressAt } from "../shared/ui/press.js";
+import { EMPTY_TREE } from "../library/libraryUtils.js";
+import { Empty } from "../settings/SettingsKit";
 import { PAGE_ROWS } from "./directoryRows.js";
 import { focusAfter, keyAction, revealLimits, revealSettled, tabStop, treeRows } from "./fileTree.js";
 
@@ -116,6 +118,11 @@ export default function FileTree({ files, tree, libTree, workTree, folderMeta, l
     if (key && inTree.current && (!document.activeElement || document.activeElement === document.body)) focusRow(key);
   });
 
+  // No folders at all, once the listing is in (EMPTY_TREE until then, when
+  // nothing shows, as the library listing does).
+  if (!rows.length && libTree !== EMPTY_TREE) {
+    return <Empty icon={FolderIcon}>{t("No folders yet. The library's folders and work folders show here.")}</Empty>;
+  }
   return (
     <div className="fileTree" role="tree" aria-label={t("Folders and files")} onKeyDown={onKeyDown}
       onFocus={() => { inTree.current = true; }}

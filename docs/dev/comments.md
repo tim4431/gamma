@@ -798,10 +798,14 @@ cache), not by its id. A click scrolls to the anchor, flashes it
 and opens its popover at the thread. A thread that comes rises into the
 list, and one with a new reply glides to the top as the others make room
 (`ListMotion`); the page's threads loading fill it still. In a thread,
-wherever it is drawn, a new comment rises into place. Beside the tabs, for a
-reader with an Inbox (App's `canFollow`: a commenter who is no guest
-account), a bell `MenuSelect` is the page's Notify me: **All comments** or
-**Replies and @mentions**, under a "Notify me" heading. The window reads
+wherever it is drawn, a new comment rises into place. In a narrow window
+the tabs show their icons alone, the counts in their names. Beside them,
+for a reader with an Inbox (App's `canFollow`: a commenter who is no guest
+account), a bell is the page's Notify me: **All comments** or
+**Replies and @mentions**, under a "Notify me" heading. It and Feedback
+are the window's actions, which fold into the header's "⋯" when it is too
+narrow for them, Notify me as a flyout of the two choices
+([ui-design.md](ui-design.md#dock-windows) "Dock windows"). The window reads
 it (`GET /pages/{id}/notify`) when it opens and for each page it shows; a
 choice shows at once and goes back, said in the status line, when the
 server refuses it.
@@ -983,16 +987,19 @@ draws it in a layer beside CodeMirror's scroller (`.docTextMarginHost`),
 whose track is moved with the text's vertical scroll alone
 (`translateY` of the scroller's `scrollTop`, written on its scroll event),
 so the column stands at the view's right edge however far the text is
-scrolled sideways. The one `CommentMarginSlot` in it is told each card's
+scrolled sideways. A wheel over it scrolls the text, as over the PDF's
+column. The one `CommentMarginSlot` in it is told each card's
 top by the viewer (`topOf(anchor)`: the range's first line's top, read
 from CodeMirror's height map in its measure phase) in place of the
 anchors' rectangles; the stacking, the cards and the active card are the
 PDF's. It stands while a range has an open thread or a new thread's card
 and the view has room for 360 px of text beside the column
 (`marginLayout.marginLeft`'s rule with the gutters and that width as the
-page), never on a phone; while it stands the content keeps the column's
-width at its right, so wrapped text never runs under the cards, and a
-long unwrapped line scrolled sideways passes under the gap. Without the
+page), never on a phone; while it stands the scroller ends where the
+column begins (its width is the view's less the column's), so the column
+stands beside the text as the PDF's stands beside the page: wrapped text
+wraps short of it, and a long unwrapped line scrolls sideways inside the
+text's own box, never under the cards. Without the
 column a range shows the badge (`NoteBadge`, in a layer inside the
 scroller that rides with the text) and its threads open in the popover,
 as on a page without room. `marginRef` answers by that room, and a

@@ -14,8 +14,9 @@
 //
 // For a member (`files`), the work folders' files the query names by name or
 // path follow the pages, under Files: the server's rows and marks
-// (explorer/useFileSearch.js, GET /api/files), each with its work folder and
-// directory under the name; a file a page row already lists is left out.
+// (explorer/useFileSearch.js, GET /api/files), each a FileOption as a page
+// row that is a file is (its name over its place, "W / a / b"); a file a
+// page row already lists is left out.
 //
 // A query starting with ">" is the command palette (Ctrl+Shift+P opens it
 // with the prefix typed): `commands()` — App's list of what applies right
@@ -23,17 +24,15 @@
 // filtered by the same matcher on the label and group, Enter runs the pick.
 
 import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { FileGlyph, FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
+import { FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { MarkedText } from "../search/SearchPanel";
-import PageOption, { recencySections } from "./PageOption";
+import PageOption, { FileOption, recencySections } from "./PageOption";
 import { createLibraryMatcher, rankLibraryPages } from "./librarySearch";
-import { filedIn, folderPath, formatRelativeTime } from "./libraryUtils";
-import { pageDocument } from "../documents/pageDocument.js";
-import { fileParts, fileRows } from "../explorer/fileSearch.js";
+import { filedIn, folderPath } from "./libraryUtils";
+import { fileRows } from "../explorer/fileSearch.js";
 import { useFileSearch } from "../explorer/useFileSearch.js";
-import { fileNameOf } from "../explorer/workPaths.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import Palette from "../shared/ui/Palette";
@@ -167,26 +166,8 @@ export default function QuickOpen({
         </button>
       );
     }
-    if (r.file) {
-      const file = r.file;
-      // the server's spans: a path term's match is its to say
-      const name = fileNameOf(file);
-      const dir = file.dir || "";
-      const wName = tree.folders.get(file.properties?.work_folder)?.name || "";
-      return (
-        <button {...props} data-kind="file" title={`${name}\n${[wName, file.path].filter(Boolean).join(" / ")}`}>
-          <FileGlyph format={pageDocument(file)?.format} size={16} />
-          <span>
-            <strong><MarkedText parts={fileParts(name, file.match?.name)} /></strong>
-            <small className="quickOpenPath">
-              <span>{wName}</span>{dir ? <> / <MarkedText parts={fileParts(dir, file.match?.path)} /></> : null}
-            </small>
-          </span>
-          {file.id === currentPageId ? <em className="quickOpenTag">{t("Current")}</em>
-            : <em className="quickOpenTime">{formatRelativeTime(file.updated_at)}</em>}
-        </button>
-      );
-    }
+    // the server's spans: a path term's match is its to say
+    if (r.file) return <FileOption {...props} page={r.file} tree={tree} time={r.file.updated_at} currentPageId={currentPageId} />;
     if (r.folder) {
       const f = r.folder;
       const parent = folderPath(tree, f.parent);
@@ -216,7 +197,7 @@ export default function QuickOpen({
   return (
     <Palette
       label={commandMode ? t("Command palette") : t("Open a page")}
-      listLabel={commandMode ? t("Commands") : t("Pages")}
+      listLabel={commandMode ? t("Commands") : t("Pages, files, folders and labels")}
       icon={<IconSwap swap={commandMode} from={<SearchIcon size={16} />} to={<TerminalIcon size={16} />} />}
       guide="palette.input"
       placeholder={placeholder}

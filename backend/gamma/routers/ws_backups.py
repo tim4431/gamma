@@ -7,7 +7,9 @@ gamma/ws_backup.py.
   is done, for scripts. The web app starts the same work as background
   jobs (gamma/jobs.py, docs/dev/tasks.md): ``POST /api/jobs/workspace-export``,
   ``/jobs/restore`` (an uploaded zip; ``/jobs/restore/parts`` for one in
-  parts), ``/jobs/restore-snapshot`` and ``/jobs/snapshot``.
+  parts), ``/jobs/restore-snapshot`` and ``/jobs/snapshot``; for admins, a
+  backup task's copy in the bucket downloaded (``/jobs/bucket-download``)
+  or restored (``/jobs/bucket-restore``).
 - ``router`` (``/api/workspaces/{ws}/backups``): the snapshots Settings →
   Backups manages — take one, list, download, restore in place, delete.
 
@@ -26,7 +28,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from .. import import_staging, jobs, upload_parts, workspaces, ws_backup
+from .. import bucket_snapshots, import_staging, jobs, upload_parts, workspaces, ws_backup
 from ..auth import require_user_id, requested_ws
 from ..db import account_id, connect_users_db, page_now, ws_dir
 from ..downloads import TempFileResponse, temp_file
@@ -416,6 +418,101 @@ def start_snapshot_restore(payload: SnapshotRestoreJob, request: Request):
     return jobs.start("restore", owner=me, ws=ws, run=run, title=f"Restore of {_name_of(ws)}", writes=True,
                       params={"ws": ws, "name": _name_of(ws), "mode": mode, "source": "snapshot",
                               "snapshot": payload.name, "snapshot_at": snapshot.get("created_at", "")})
+
+
+# --- the backup tasks' copies in the bucket (admins; gamma/bucket_snapshots.py) ------
+
+class BucketSnapshotJob(BaseModel):
+    ws: str
+    name: str
+    mode: str = "replace"   # a restore's
+    into: str = ""          # a restore's: "" the copy's own workspace, "new" a workspace made for it
+
+
+def _bucket_copy(request: Request, ws: str, name: str) -> str:
+    """The admin asking for a copy in the bucket: 403 for anyone else, 400
+    with no bucket set up, 404 for a workspace id or a name no copy has."""
+    me = require_user_id(request)
+    if not request.state.is_admin:
+        raise HTTPException(status_code=403, detail="only a server admin reads the bucket")
+    if not bucket_snapshots.ready():
+        raise HTTPException(status_code=400, detail="no bucket is set up")
+    try:
+        bucket_snapshots.key(ws, name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return me
+
+
+def _copy_label(ws: str) -> str:
+    return _name_of(ws) if workspaces.get(ws) else ws
+
+
+@transfers.post("/jobs/bucket-download")
+def start_bucket_download(payload: BucketSnapshotJob, request: Request):
+    """A copy in the bucket as a job whose file is the zip, named like a
+    stored snapshot's download."""
+    ws, name = payload.ws, payload.name
+    me = _bucket_copy(request, ws, name)
+    filename = _backup_filename(ws, name) if workspaces.get(ws) else f"gamma-backup-{ws}-{name}.zip"
+
+    def run(job):
+        bucket_snapshots.fetch(ws, name, job.artifact_path)
+        job.set_artifact(filename, "application/zip")
+        return {"size": job.artifact_path.stat().st_size}
+
+    return jobs.start("bucket-download", owner=me, run=run, artifact=True, title=f"Download of {name} from the bucket",
+                      params={"ws": ws, "name": _copy_label(ws), "snapshot": name})
+
+
+def _made_for(ws: str, manifest: dict, me: str) -> str:
+    """A workspace for a copy whose own this server lacks: the copy's id when
+    it is free, its name and kind from the copy's manifest, the admin its
+    owner."""
+    free = not workspaces.get(ws) and not ws_dir(ws).exists()
+    kind = manifest.get("kind") if manifest.get("kind") in ("personal", "shared") else "personal"
+    made = workspaces.create(manifest.get("workspace_name") or "Restored workspace", me, kind=kind,
+                             ws_id=ws if free else None)
+    return made["id"]
+
+
+@transfers.post("/jobs/bucket-restore")
+def start_bucket_restore(payload: BucketSnapshotJob, request: Request):
+    """Restore a copy in the bucket as a job: into its own workspace
+    (``replace`` or ``merge``, as a stored snapshot restores), or with
+    ``into: "new"`` into a workspace made for it (``_made_for``; the way
+    back after a lost disk), which goes again when the restore fails. The
+    copy is downloaded first and restored like an uploaded zip."""
+    ws, name, mode, new = payload.ws, payload.name, _mode(payload.mode), payload.into == "new"
+    me = _bucket_copy(request, ws, name)
+    if not new:
+        if not workspaces.get(ws):
+            raise HTTPException(status_code=404, detail="this server has no such workspace: restore it as a new one")
+        _not_guest(ws)
+
+    def run(job):
+        zpath = jobs.incoming_path()
+        try:
+            bucket_snapshots.fetch(ws, name, zpath)
+            if not new:
+                return ws_backup.restore_zip(ws, zpath, mode, by=me, progress=job.progress)
+            target = _made_for(ws, ws_backup.read_manifest(zpath), me)
+            try:
+                return {**ws_backup.restore_zip(target, zpath, "replace", by=me, progress=job.progress),
+                        "workspace": target}
+            except BaseException:
+                try:
+                    workspaces.delete(target, by=me)
+                except Exception:  # noqa: BLE001 — the restore's own error is the one to report
+                    pass
+                raise
+        finally:
+            zpath.unlink(missing_ok=True)
+
+    return jobs.start("restore", owner=me, ws="" if new else ws, run=run, writes=not new,
+                      title=f"Restore of {_copy_label(ws)} from the bucket",
+                      params={"ws": ws, "name": _copy_label(ws), "mode": "replace" if new else mode, "source": "bucket",
+                              "snapshot": name, "into": "new" if new else ""})
 
 
 # --- stored snapshots ---------------------------------------------------------------

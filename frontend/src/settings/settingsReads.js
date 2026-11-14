@@ -38,6 +38,7 @@ export const PANE_READS = {
   server: () => ["/admin/server-info", "/admin/settings", "/admin/join-requests", "/admin/reports", "/admin/ai-providers",
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
+  integrations: () => ["/integrations/tokens"],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
   tools: () => ["/ai/search-services"],
   maintenance: () => ["/quota", "/metadata/status"],
