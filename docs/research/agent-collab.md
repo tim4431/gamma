@@ -9,7 +9,11 @@ come back? Status: **step 1 is built** ([dev/local_agents.md](../dev/local_agent
 "As built (step 1)" below); steps 2 to 4 are plans. Part 1 is what exists
 (in Gamma, in the two CLIs, in the neutral protocols, in other products),
 part 2 what was run on the development machine, part 3 the design and its
-steps, with what is still undecided at the end.
+steps, with what is still undecided at the end. The owner's corrections of
+2026-11-14 reverse parts of the design (the agent per work folder, the
+chat's second side, the feedback request as the unit of work, an agent
+with no Gamma credential):
+[agents-as-participants.md](agents-as-participants.md), a plan.
 
 Between the first survey and the revision, steps 0 to 3 of
 [file-explorer.md](file-explorer.md) were built: a synced vault that

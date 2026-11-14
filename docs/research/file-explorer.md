@@ -12,7 +12,10 @@ offered a rewrite from the bottom up and asked first whether the idea is
 possible at all.
 
 Status: **a plan; steps 0 to 6 are built** ("As built (step 0)" to
-"As built (step 6)" under "In steps"), the rest is not. This note surveys
+"As built (step 6)" under "In steps"), the rest is not. The owner's
+corrections of 2026-11-14 replace layer 7's Send and the Feedback dialog,
+and ask for the explorer's look and a Detach:
+[agents-as-participants.md](agents-as-participants.md), a plan. This note surveys
 what the stored model and the code assumed before step 0, weighs three shapes a
 file could take, and lays the chosen one out in layers from the bottom,
 with the steps, the decisions still open and the risks. It was revised on
