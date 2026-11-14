@@ -119,7 +119,7 @@ doc: {format, name, hash, ext, at, url?, size?, copy?}
 | Field | Holds |
 |---|---|
 | `format` | One of `FORMATS`: stored, never read again from the name. |
-| `name` | The file's shown name, a display leaf (`storage.display_filename`, at most 500 characters), or `""` on a page that never had one: a clip, a page opened from an address, a Zotero or zip import. |
+| `name` | The file's shown name, whole (`storage.display_filename`: trimmed, at most 500 characters), or `""` on a page that never had one: a clip, a page opened from an address, a Zotero or zip import. A `/` or `\` in it is part of the name ("AC/DC.pdf"), never a directory: a directory upload's folders travel apart, and the web app sends each file's own name (`transfers/fileRouting.js` `uploadName`, which drops the directories only of a directory picker's file that carries its path in its name too). What puts a name into a path writes it as one segment (`storage.name_segment`: each separator `-`): the one-entry archive of an Import review of a Markdown file, a notebook's path in a Notability or GoodNotes upload. |
 | `hash` | The stem the file is, or would be, stored under in the workspace's uploads: the content hash (`sha256[:24]`) of an upload or of a file read in place; the hash of the address (`url_hash`) for a PDF opened or clipped from an address, whether or not a copy was cached; the name a stored PDF kept when its embedded annotations were stripped. The shape `db.safe_doc_id` takes. `""` only at `url`. |
 | `ext` | The stored file's extension, lowercase with the dot (`EXTENSION_RE`); `.pdf` for a PDF. The stored name is `hash + ext` (`stored_name`). |
 | `at` | Where the bytes are read from: `store`, the workspace's uploads; `path`, a file on this computer through a `vaults.db` `linked_files` row ([synced_vaults.md](synced_vaults.md#a-file-read-where-it-is)), with a stored copy perhaps; `url`, an address the PDF proxy fetches, with a copy cached under `hash` perhaps; `listed`, nowhere ("The listed state" below). |
@@ -211,7 +211,7 @@ raises `ValueError`:
 - A hash and its own stored address: the address goes, and `at: "url"`
   becomes `store`.
 - `at` is `url` when an address is left, else `store`, unless given.
-- The five rules hold; `name` is reduced to its display leaf.
+- The five rules hold; `name` is trimmed, its `/` kept.
 
 `check_document(value)` checks a doc a writer supplies (an object of the
 eight fields or some of them, each of its type) and rebuilds it through
@@ -298,7 +298,11 @@ Where a document is written:
   PDFs (`SQL_LIBRARY_PDF`, `is_library_pdf`). `POST /api/pages/by-file`
   is the lookup-or-create by stored file (`get_or_create_doc_page(...,
   format, ext, size)`: no `auto_title` and no manifest for a non-PDF; a
-  `.pdf`, and a sniffed PDF, go the by-doc way) → `{page, created}`; `POST
+  `.pdf`, and a sniffed PDF, go the by-doc way) → `{page, created}`. The
+  same bytes uploaded again land on the page they made; a name it lacks
+  is filled in, and so is the whole of a name an older upload cut at its
+  last `/` ("DC.pdf" of "AC/DC.pdf", `storage.path_leaf`), the title
+  following while it is still that cut name (`auto_title` too); `POST
   /api/pages/by-docs {files: ["<hash><ext>", …]}` answers `files: {name:
   {id, title}}` beside `pages` (`blocks_store.pages_for_files`: a `.md`
   name finds its note by `markdown_import`), which the file chips ask by

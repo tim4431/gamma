@@ -28,7 +28,7 @@ from .documents.model import document
 from .logbuf import log
 from .note_app_import import Skip, Stop, compose_pdf, page_kind
 from .pdf_text import page_raster
-from .storage import display_filename, store_pdf
+from .storage import display_filename, name_segment, store_pdf
 
 MAX_STICKER_SIDE = 1024          # px: a sticker's PDF rendered for its pictures, its longer side at most this
 
@@ -42,7 +42,7 @@ def import_goodnotes(ws: str, data, conn, folder: str = "", *, name: str = "", a
     below the folder ``folder``, made by ``actor``; a ``preview`` writes
     nothing; ``selected`` the notebooks' paths to import (None: all);
     400 for an upload with no notebook."""
-    name = display_filename(name)
+    name = name_segment(display_filename(name))  # the notebook's path when it is the upload's top
     run = Import(ws, conn, folder, actor, preview, progress)
     return run.run_upload(data, selected, refused=gn.NO_NOTEBOOKS_REASON,
                           find=lambda entries: gn.find_notebooks(entries, name), nested=gn.nested_zip)

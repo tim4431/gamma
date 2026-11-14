@@ -105,8 +105,9 @@ def test_document_rule_7_the_size_and_the_name():
     for bad in (-1, -1.0, True, 1.5, float("inf"), float("nan"), "10"):
         with pytest.raises(ValueError):
             document("d1", size=bad)
-    assert document("d1", name="C:\\Users\\me\\paper.pdf")["name"] == "paper.pdf"
-    assert document("d1", name="a/b/" + "x" * 600)["name"] == "x" * 500
+    # a name is whole, its "/" or "\" no directory: trimmed, at most 500 characters
+    assert document("d1", name=" AC/DC\\live.pdf ")["name"] == "AC/DC\\live.pdf"
+    assert document("d1", name="a/b/" + "x" * 600)["name"] == "a/b/" + "x" * 496
     # the canonical key order, whatever the call's
     full = document("d1", name="p.pdf", size=3, copy=True)
     assert list(full) == ["format", "name", "hash", "ext", "at", "size", "copy"]
@@ -208,7 +209,8 @@ def test_names_and_addresses():
         assert parse_upload_url(other) is None, other
     assert url_hash("https://x.test/p.pdf") == storage.digest_id(__import__("hashlib").sha256(b"https://x.test/p.pdf"))
     assert len(url_hash("https://x.test/p.pdf")) == storage.DIGEST_CHARS
-    assert document_title("C:\\a\\paper.pdf", "https://x.test/q.pdf", "d1") == "paper.pdf"
+    assert document_title("AC/DC.pdf", "https://x.test/q.pdf", "d1") == "AC/DC.pdf"
+    assert document_title("", "https://x.test/a%2Fb.pdf", "d1") == "a/b.pdf"
     assert document_title("", "https://x.test/q.pdf", "d1") == "q.pdf"
     assert document_title("", "/api/uploads/d1.pdf", "d1") == "d1.pdf"  # the raw address, as attach always titled
     assert document_title("", "", "d1") == "d1"
@@ -264,7 +266,7 @@ def test_the_op_path_holds_every_block_to_the_doc(owner):
                                  {**nested, "props": {"doc": {"url": "/api/uploads/d2.pdf"}, "doc_id": None}}])
     assert r.status_code == 200, r.text
     got = owner.get(f"/api/blocks/{page['id']}").json()["properties"]
-    assert got["doc"] == {**PDF, "name": "p.pdf", "hash": "d1", "at": "store"}
+    assert got["doc"] == {**PDF, "name": "a/p.pdf", "hash": "d1", "at": "store"}
     assert owner.get("/api/blocks/dmNested").json()["properties"] == {"doc": {**PDF, "hash": "d2", "at": "store",
                                                                               "copy": True}}
     # doc: None removes the document
