@@ -337,6 +337,8 @@ function english(browser) {
     const close = ctx.close.bind(ctx);
     ctx.close = async ({ lastLook: look = true, ...options } = {}) => {
       if (look) for (const page of ctx.pages()) await lastLook(page);
+      for (const page of ctx.pages()) await dropRoutes(page);
+      await dropRoutes(ctx);
       return close(options);
     };
     return ctx;
@@ -356,6 +358,16 @@ async function lastLook(page) {
   let shot = null;
   try { shot = await page.screenshot({ type: "jpeg", quality: 80, timeout: 2000 }); } catch {}
   running.closed.push({ shot, problems: page.problems || [] });
+}
+
+// A route handler still in route.fetch() when its page or context closes
+// throws "Request context disposed" from Playwright's callback, an unhandled
+// rejection that ends the whole worker, every step after it unrun (a page
+// polling /api/jobs through a step's route as the step closes). So a close
+// drops the routes first, ignoring what a handler in flight throws, as
+// Playwright advises for routes in flight at a test's end.
+async function dropRoutes(target) {
+  try { await target.unrouteAll({ behavior: "ignoreErrors" }); } catch {}
 }
 
 // API answers that are a designed "no" rather than a failure.
@@ -378,6 +390,7 @@ export async function openPage(ctx, url) {
   const close = page.close.bind(page);
   page.close = async ({ lastLook: look = true, ...options } = {}) => {
     if (look) await lastLook(page);
+    await dropRoutes(page);
     return close(options);
   };
   page.on("response", (r) => {
