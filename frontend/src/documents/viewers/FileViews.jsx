@@ -21,13 +21,12 @@ import NoteBadge from "../../comments/NoteBadge.jsx";
 import { fitBeside, marginLeft as besideMargin } from "../../comments/marginLayout.js";
 import { TipMarks } from "../../pdf/MarkTools.jsx";
 import { formatLabel } from "../../library/libraryUtils.js";
-import { DownloadIcon, FileGlyph, FolderOpenIcon, MessageSquareIcon, PencilIcon, SparklesIcon } from "../../shared/ui/Icons";
-import { placeFloating, useFloatingPosition } from "../../shared/ui/placement.js";
-import { menuPress } from "../../shared/ui/press.js";
+import { DownloadIcon, FileGlyph, FolderOpenIcon, SparklesIcon } from "../../shared/ui/Icons";
+import { TipFrame } from "../../shared/ui/TipFrame.jsx";
+import { TipComment, TipDivider, TipTool } from "../../shared/ui/SelectionTip.jsx";
+import { menuPress, tipPress } from "../../shared/ui/press.js";
 import { beginRegionDrag } from "../../shared/ui/regionDrag.js";
 import { imageFrame, regionFractions, toImagePosition } from "../../shared/ui/regionGeometry.js";
-import { usePalette } from "../../shared/ui/paletteContext.js";
-import { pickerColors } from "../../shared/model/palette.js";
 import { clampZoom } from "../../shared/model/zoom.js";
 import { SCALE_VAR, installViewerZoom, scaledPx } from "../../shared/lib/viewerZoom.js";
 import { lastPointer } from "../../shared/lib/pointer.js";
@@ -292,7 +291,7 @@ function Picture({ doc, fileUrl, readOnly = false, hidden = false, scale = null,
   // and not at all when read-only. On release the tip asks what the region
   // is for; its box stays drawn meanwhile.
   const [marquee, setMarquee] = useState(null); // the live drag, box px
-  const [pending, setPending] = useState(null); // {position, at: {left, top, above}}
+  const [pending, setPending] = useState(null); // {position, anchor: TipFrame's, the drawn box's in the viewport}
   const onBoxPointerDown = (e) => {
     if (readOnly || !onRegion || !frame) return;
     if (e.target.closest?.(".commentMargin, .pdfNoteAnchor, .imgRegionTip")) return;
@@ -304,7 +303,7 @@ function Picture({ doc, fileUrl, readOnly = false, hidden = false, scale = null,
       onMove: setMarquee,
       onDone: (r, b) => {
         const position = toImagePosition(r, b, frame, fileHash(doc));
-        if (position) setPending({ position, at: { left: b.left + r.x1, top: b.top + r.y2 + 8, above: b.top + r.y1 - 8 } });
+        if (position) setPending({ position, anchor: { top: b.top + r.y1, bottom: b.top + r.y2, left: b.left + r.x1, gap: 8 } });
       },
     });
   };
@@ -371,48 +370,34 @@ function Picture({ doc, fileUrl, readOnly = false, hidden = false, scale = null,
       </MarginStackContext.Provider>
       </CommentMarginContext.Provider>
       {pending ? (
-        <RegionTip at={pending.at} onMark={(color) => finish({ color })} onComment={(color) => finish({ color, comment: true })}
+        <RegionTip anchor={pending.anchor} onMark={(color) => finish({ color })} onComment={(color) => finish({ color, comment: true })}
           onAsk={onAskRegion ? () => { const p = pending; dismiss(); onAskRegion(p.position); } : null} onDismiss={dismiss} />
       ) : null}
     </div>
   );
 }
 
-// The tip after a drag (the PDF's selection popup's look and press): the
-// swatches (TipMarks area: a press makes the region in that colour), then
-// Comment (a region with its thread's field open), Note (a region, its
-// row's editor open) and Ask AI (the chat's picture of it). Placed under the
-// drawn box, over it when the window ends there, kept inside the window.
-function RegionTip({ at, onMark, onComment, onAsk, onDismiss }) {
-  const ref = useRef(null);
-  const palette = usePalette();
-  const colors = pickerColors(palette, "highlight");
-  const pos = useFloatingPosition(ref, (el) => placeFloating(el.getBoundingClientRect(), { x: at.left, y: at.top, flipY: at.above }),
-    [at.left, at.top, at.above]);
-  const keep = (e) => { e.preventDefault(); e.stopPropagation(); };
-  // A button acts on the press, and on a click no press led to (Enter or
-  // Space on it), as the PDF's tip does (shared/ui/press.js triggerPress).
-  const act = (run) => ({ onMouseDown: (e) => { keep(e); run(); }, onClick: (e) => { if (!e.detail) run(); } });
+// The tip after a drag, the PDF's selection popup's frame, marks and tools
+// (shared/ui/TipFrame.jsx, SelectionTip.jsx): the swatches (TipMarks area:
+// a press makes the region in that colour, its row's editor open), then
+// Comment (a region with its thread's field open) and Ask AI (the chat's
+// picture of it). Placed under the drawn box (`anchor`), over it when the
+// window ends there, kept inside the window.
+function RegionTip({ anchor, onMark, onComment, onAsk, onDismiss }) {
   return (
-    <div ref={ref} className="plainTip imgRegionTip" style={pos || { top: at.top, left: at.left, visibility: "hidden" }}>
-      <TipMarks area act={act} onLeave={onDismiss} onMark={({ color }) => onMark(color)} tools={<>
-        <span className="tipDivider" aria-hidden="true" />
-        <button type="button" className="colorBtn linkTipBtn" title={t("Comment on this region")} aria-label={t("Comment on this region")}
-          {...act(() => onComment(colors[0]))}>
-          <MessageSquareIcon size={14} />
-        </button>
-        <button type="button" className="colorBtn linkTipBtn" title={t("Note on this region")} aria-label={t("Note on this region")}
-          {...act(() => onMark(colors[0]))}>
-          <PencilIcon size={14} />
-        </button>
-        {onAsk ? (
-          <button type="button" className="colorBtn linkTipBtn" title={t("Ask AI about this region")} aria-label={t("Ask AI about this region")}
-            {...act(onAsk)}>
-            <SparklesIcon size={14} />
-          </button>
-        ) : null}
-      </>} />
-    </div>
+    <TipFrame anchor={anchor}>
+      <div className="plainTip imgRegionTip">
+        <TipMarks area act={tipPress} onLeave={onDismiss} onMark={({ color }) => onMark(color)} tools={<>
+          <TipDivider />
+          <TipComment label={t("Comment on this region")} onComment={onComment} />
+          {onAsk ? (
+            <TipTool label={t("Ask AI about this region")} onPress={onAsk}>
+              <SparklesIcon size={14} />
+            </TipTool>
+          ) : null}
+        </>} />
+      </div>
+    </TipFrame>
   );
 }
 

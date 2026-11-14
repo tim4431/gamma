@@ -44,8 +44,9 @@ import { Chevron, MorphText } from "../shared/ui/MotionWidgets";
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
-import { PAGE_PATH_SEP, filingChips, pagePathLabel } from "../library/libraryUtils";
+import { PAGE_PATH_SEP, PATH_SEP, filingChips, pagePathLabel } from "../library/libraryUtils";
 import { isPdf, pageDocument } from "../documents/pageDocument.js";
+import { filePlace } from "../explorer/workPaths.js";
 import { markedParts, plainSnippet } from "./snippets";
 import { guideEvents } from "../guide/events.js";
 import { DOC_PAGE, NOTES_PAGE, TITLES_PAGE, appendNew, docHitKey, searchBody } from "./searchPages";
@@ -474,8 +475,8 @@ export default function SearchPanel({
   useLayoutEffect(() => { if (open) setShowDetails(detailsDefault); }, [open]);
 
   // Result rows: the page's kind glyph and title (a sub-page's as "Parent ›
-  // Child", the pages above it muted; a file's after its directory in its
-  // work folder), then one line of text, the query
+  // Child", the pages above it muted; a work folder's file's after its
+  // place, "W / a /"), then one line of text, the query
   // marked in both (search/snippets.js maps each match back
   // through the normalized text, and marks nothing it cannot place). Notes
   // show as plain text, not markdown. The document index ignores the
@@ -489,8 +490,12 @@ export default function SearchPanel({
   );
   const pageTag = (page) => <span className="searchPageTag">{t("p. {page}", { page })}</span>;
   const lineTag = (n) => <span className="searchPageTag">{t("line {n}", { n })}</span>;
-  // What precedes a page's title: the pages a sub-page is in.
-  const pageLead = (pageId) => {
+  // What precedes a page's title: a work folder's file's place, as its
+  // crumbs read it ("W / a /", explorer/workPaths.js filePlace), or the
+  // pages a sub-page is in.
+  const pageLead = (pageId, page = pagesById.get(pageId)) => {
+    const place = filePlace(tree, tree, page);
+    if (place) return place.text ? `${place.text}${PATH_SEP.trimEnd()}` : "";
     const path = pagePathLabel(pagesById, pageId);
     return path ? `${path}${PAGE_PATH_SEP.trimEnd()}` : "";
   };
@@ -516,7 +521,8 @@ export default function SearchPanel({
       </button>
     );
   };
-  // A title row's line under it: the page's labels, then its folders.
+  // A title row's line under it: the page's labels, then its folders (a
+  // work folder's file's library folders: its directory is its lead).
   const filingLine = (b) => {
     const chips = filingChips(tree, b.properties);
     return [...chips.labels, ...chips.folders].map((c) => c.name).join(", ");
@@ -537,14 +543,16 @@ export default function SearchPanel({
       <MorphText>{moreBusy === group ? t("Loading…") : t("Show more")}</MorphText>
     </button>
   );
-  // A file's hit: its directory in its work folder before its name (a
-  // library document has no path: the pages it is in, as any page's), the
-  // line it names, and that line as its text. The open file's is tagged
-  // "this file" in place of its directory.
+  // A file's hit: its place before its name, as a title row's, placed by
+  // the hit's path (a library document has no path: the pages it is in, as
+  // any page's), the line it names, and that line as its text. The open
+  // file's is tagged "this file" in place of its place.
   const fileRow = (r, i) => {
     const here = r.page_id === focusedBlockId;
     const path = r.path || "";
-    const lead = here ? "" : path ? path.slice(0, path.lastIndexOf("/") + 1) : pageLead(r.page_id);
+    const page = { ...(pagesById.get(r.page_id) || { properties: { work_folder: r.work_folder || "" } }),
+      dir: path.slice(0, Math.max(0, path.lastIndexOf("/"))) };
+    const lead = here ? "" : pageLead(r.page_id, page);
     const tags = <>{lineTag(r.line)}{here ? <span className="searchKindBadge">{t("this file")}</span> : null}</>;
     return (
       <button

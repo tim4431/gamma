@@ -159,22 +159,27 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   and a local lookup that refuses private answers outside the fake-IP
   ranges 198.18.0.0/15 and fc00::/18; the proxy then decides which
   addresses such a fetch reaches.
-- Outbound HTTPS is urllib's default context, verified against the CAs
-  OpenSSL was built to find; outside Windows Python reads no system trust
-  store, so the macOS Keychain never counts. Where those paths hold
-  nothing, such as the desktop app's frozen server on a Mac without
-  python.org's Python, `create_app` points `SSL_CERT_FILE` at certifi's
-  bundle (`app._verify_https_with_certifi_when_no_cas`); otherwise every
-  call (the AI, the ChatGPT sign-in, Gamma Cloud) fails with
-  `CERTIFICATE_VERIFY_FAILED`. A proxy that re-signs HTTPS with a root
-  that is only in the Keychain still fails: give the server that root
-  with `SSL_CERT_FILE`.
+- Outbound HTTPS is verified against the operating system's trust store
+  (truststore, injected by `net_proxy.install`, [https.md](https.md) "One
+  trust store"): the macOS Keychain and Windows' store, with its fetching
+  of a missing intermediate, count. The mobile apps verify against
+  certifi's bundle. Where OpenSSL's paths hold nothing, such as the
+  desktop app's frozen server on a Mac without python.org's Python,
+  `create_app` points `SSL_CERT_FILE` at certifi's bundle
+  (`app._verify_https_with_certifi_when_no_cas`). `SSL_CERT_FILE` still
+  matters on Linux and where truststore is off (`GAMMA_TRUSTSTORE=0`); it
+  replaces the bundle, so give it certifi's CAs plus your root.
 - Workspace ids and doc ids are validated (`db.safe_ws_id` / `db.safe_doc_id`,
   used by `ws_db_path` / `ws_uploads_dir`) before they
   become filesystem paths — no traversal.
 - The session cookie is `HttpOnly; SameSite=Lax`, and `Secure` when the request
   is HTTPS (auto via scheme / `X-Forwarded-Proto` — off on plain-HTTP LAN so
-  login still works there). Sessions are enforced server-side against
+  login still works there). HSTS (`max-age=31536000`, never
+  `includeSubDomains`, never `max-age=0`) goes only on an HTTPS response to
+  a public DNS name, not to an IP address, a single label, `localhost` or
+  a `.local`/`.lan`/`.home.arpa`/`.internal` name (`auth._hsts`,
+  [https.md](https.md) "HSTS"): it covers every port of the name, where a
+  NAS often serves plain http beside it. Sessions are enforced server-side against
   `SESSION_MAX_AGE` (expired rows are deleted in the middleware) and are revoked
   when the account's password is changed.
 - A cloud identity (Sign in with Gamma Cloud, [cloud_accounts.md](cloud_accounts.md))
@@ -225,7 +230,7 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   library. Writes keep `json.dumps`, so the stored text does not change.
 - Every response carries baseline hardening headers (`X-Content-Type-Options`,
   `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Content-Security-Policy:
-  frame-ancestors 'self'`, and HSTS on HTTPS). SVG uploads are served
+  frame-ancestors 'self'`, and HSTS on HTTPS to a public name). SVG uploads are served
   `Content-Disposition: attachment` + `CSP: default-src 'none'; style-src
   'unsafe-inline'; sandbox` so they can't run inline as stored XSS
   ([pictures.md](pictures.md#svg-pictures)).
@@ -1199,9 +1204,17 @@ empty list), but `fetch`, which any member may ask for.
 | POST | `/computers/chats/{turn}/write` | `{run, seq, fields}` → `{ok}` or `{ok, stale: true}`: the agent message written, only from the holding run, newer seq only |
 | POST | `/computers/sends/{id}/answers` | `{run, replies: [{id, thread_id, text, resolve}], state, summary, changed, error?}` → `{ok, written}`: the replies written by this server signed `local:<agent>`, idempotent, then the end |
 | GET | `/pages/{id}/computer` | the signed-in account's computers that keep the page: `{computers: [{id, name, online, since, vault: {kind, name, paused, agent}, assistants}]}`; a session only (a token or the guest 403, a share 404) |
-| GET | `/computer-links` | the desktop app's own server: the account's channels to other servers `{links: [{id, remote_url, workspace_id, account, username, status: {state, error, at}, created_at}]}` |
-| POST | `/computer-links` | the shell's word: `{remote_url, workspace, token, token_id}` → 201 `{link, replaced: {token_id} \| null}`; 400 a refused token or one of another workspace, 409 an older server, 502 unreachable |
+| GET | `/computer-links` | the desktop app's own server: the account's channels to other servers `{links: [{id, remote_url, plain, workspace_id, account, username, status: {state, error, at, error_kind?, move_to?, upgrade?, cert?, blocked?}, created_at}]}`, `plain` `""`/`lan`/`name` (no DNS) |
+| POST | `/computer-links` | the shell's word: `{remote_url, workspace, token, token_id}` → 201 `{link, replaced: {token_id} \| null}`; 400 a refused token, one of another workspace or plain http to a public host, 409 an older server or a redirect, 502 unreachable, a certificate not trusted, no HTTPS, or blocked |
 | DELETE | `/computer-links/{id}` | the shell's word: `{ok, token_id}` |
+
+### The other servers' addresses and certificates (`routers/remote_servers.py`, prefix `/api/remote-servers`; the desktop app's own server only, 404 elsewhere) — see [https.md](https.md#routes)
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/remote-servers/check` | a session: `{url, vault?, workspace?}` → `{origin, scope: loopback\|lan\|far, plain, existing, unsure, refused, warning}`, what the shell asks before it mints a token there (`vault` the vault whose token is renewed, `workspace` the channel's there; neither for a new vault or offline copy) |
+| POST | `/remote-servers/move` | the shell's word, required (403 with no secret configured): `{from, to, dry_run?, plain_ok?}` → dry run `{from, to, kind, plain, moved: {vaults, computers, mirrors}}`; move `{from, to, kind, moved, revoke: [{workspace_id, token_id}]}`; 400/409/502 per [https.md](https.md#moving-a-servers-address) |
+| GET | `/remote-servers/pins` | the shell's word, required: `{pins: [{origin, sha256, subject, issuer, not_before, not_after, pinned_at}]}`; 404 on a hosted server |
+| PUT | `/remote-servers/pins` | the shell's word, required: `{pins: [...]}`, the whole list → `{pins}`, and a vault or channel resting after a certificate failure tries again at once; 400 with words for one that does not do; 404 on a hosted server |
 
 ### Synced vaults and files read where they are (`routers/folder_links.py`, prefix `/api/folder-links`; the desktop app's own server only, 404 elsewhere) — see [synced_vaults.md](synced_vaults.md#the-routes)
 

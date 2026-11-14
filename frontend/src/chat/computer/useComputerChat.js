@@ -134,14 +134,16 @@ export function useComputerChat(pageId, setStatus, known = "") {
     keep(page, answer.conversation || null);
   }, (message) => t("Couldn't send to {agent}: {message}", { agent: label, message })), [act, keep, label]);
 
-  // The person's answer to what the turn asks: the card says a refusal
-  // itself (an ask answered already, or a turn that ended), and the
-  // conversation is read again either way, the ask leaving it.
+  // The person's answer to what the turn asks. One taken is left to the
+  // next poll, which drops the ask: the card says what was answered until
+  // then. A refusal (an ask answered already, or a turn that ended) the
+  // card says itself, and the conversation is read again at once.
   const answer = useCallback(async (id, askId, decision, note = "") => {
     try {
       await apiJson(`${API}${askPath(id, askId)}`, post(answerBody(decision, note)));
-    } finally {
+    } catch (err) {
       load();
+      throw err;
     }
   }, [load]);
 

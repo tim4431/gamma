@@ -2,8 +2,9 @@
 // in a read-only CodeMirror view, coloured in the notes' code palette by the
 // registry's language (codeLanguages.js, each grammar fetched on first use
 // from @codemirror/language-data), with line numbers, Find (CodeMirror's
-// panel, at the top), Wrap, Download and Ctrl+wheel text size. The file's
-// head comes first (textLoad.js: one Range request), the rest on Show all;
+// search, its panel the app's find row at the top: FindPanel.jsx), Wrap,
+// Download and Ctrl+wheel text size. The file's head comes first
+// (textLoad.js: one Range request), the rest on Show all;
 // a new version of the file (a new fileUrl) reloads and keeps the top line.
 // A line link opens it at its lines, marked (textMark.js). The page's
 // highlights of the file (text_position) are drawn over its text
@@ -13,16 +14,18 @@
 // ends (TextOverlay.jsx); a new version of the file draws them where the
 // server placed them again, the client never placing one itself. A file
 // that is binary after all, or whose bytes are elsewhere, hands over to the
-// file pane. The CodeMirror packages the view brings are imported here
-// alone, so they come in this chunk, which imports nothing of pdf.js
-// (DocumentPane.jsx).
+// file pane. The CodeMirror packages the view brings are imported here and
+// in its Find row alone, so they come in this chunk, which imports nothing
+// of pdf.js (DocumentPane.jsx).
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Compartment, EditorState } from "@codemirror/state";
 import { Decoration, EditorView, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
 import { selectAll } from "@codemirror/commands";
 import { LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
-import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
+import { gotoLine, openSearchPanel, search, searchKeymap } from "@codemirror/search";
+import FindPanel, { findPanelOf } from "./FindPanel.jsx";
 import { HLJS_CLASSES } from "./hljsTags.js";
 import { cutLinesOf, loadText } from "./textLoad.js";
 import { placeMark } from "./textMark.js";
@@ -40,6 +43,7 @@ import { selectionTint } from "../../shared/model/markStyle.js";
 import { useTextScale } from "../../shared/ui/Widgets";
 import { menuPress } from "../../shared/ui/press.js";
 import { DownloadIcon, SearchIcon } from "../../shared/ui/Icons";
+import { chordLabel } from "../../shared/lib/hotkeys.js";
 import { saveLinkClick } from "../../shared/lib/saveFile.js";
 import { fmtBytes } from "../../shared/lib/format.js";
 import { t, tn } from "../../shared/i18n/i18n.js";
@@ -74,6 +78,9 @@ const showLine = (view, n) => {
   view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "start" }) });
 };
 const LINE_MARK = Decoration.line({ class: "docLineMark" });
+// CodeMirror's search keys but Go to line, whose dialog is CodeMirror's own
+// field and buttons, not the app's.
+const FIND_KEYS = searchKeymap.filter((b) => b.run !== gotoLine);
 const sameSpan = (a, b) => {
   const x = textSpan(a), y = textSpan(b);
   return !!x && !!y && x.line === y.line && x.col === y.col && x.end === y.end && x.end_col === y.end_col;
@@ -143,11 +150,12 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
   };
   const compartments = useMemo(() => ({ lang: new Compartment(), wrap: new Compartment(), mark: new Compartment() }), []);
   const textScale = useTextScale();
+  // What CodeMirror itself still says: a match announced to a screen reader
+  // ("Current match. … on line 4."), a control character's title.
   const phrases = useMemo(() => ({
-    Find: t("Find"), next: t("next"), previous: t("previous"), all: t("all"), "match case": t("match case"), regexp: t("regexp"),
-    "by word": t("by word"), close: t("close"), "current match": t("current match"), "on line": t("on line"), "Go to line": t("Go to line"),
-    go: t("go"), "Control character": t("Control character"),
+    "current match": t("Current match"), "on line": t("on line"), "Control character": t("Control character"),
   }), []);
+  const [findBox, setFindBox] = useState(null); // Find's panel while it is open, FindPanel drawn into it
 
   // The file's head, again for a new version of the file, which keeps the
   // top line; Show all reads the rest. One read at a time: a new one (a new
@@ -210,8 +218,8 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
           compartments.wrap.of([]),
           compartments.mark.of([]),
           syntaxHighlighting(HLJS_CLASSES),
-          search({ top: true }),
-          keymap.of([...searchKeymap, { key: "Mod-a", run: selectAll }]),
+          search({ top: true, createPanel: findPanelOf(setFindBox) }),
+          keymap.of([...FIND_KEYS, { key: "Mod-a", run: selectAll }]),
           EditorState.phrases.of(phrases),
           highlightField,
           rangeEvents(rangeActs),
@@ -221,7 +229,7 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
     });
     viewRef.current = view;
     setCm(view);
-    textScale.ref(view.scrollDOM);
+    textScale.ref(view.dom); // the whole editor: the text, Find's row and the comment column's band
     if (keepLine.current > 1) showLine(view, keepLine.current);
     keepLine.current = 0;
     return () => { textScale.ref(null); view.destroy(); viewRef.current = null; setCm(null); };
@@ -423,7 +431,8 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
         ) : null}
         <span className="docTextSpacer" />
         <button type="button" className={`uiBtn sm ghost${wrap ? " on" : ""}`} aria-pressed={wrap} onClick={() => setWrap(!wrap)}>{t("Wrap")}</button>
-        <button type="button" className="uiBtn sm ghost" disabled={!ready} onClick={() => { const v = viewRef.current; if (v) { openSearchPanel(v); } }}>
+        <button type="button" className="uiBtn sm ghost" disabled={!ready} title={t("{label} ({hint})", { label: t("Find"), hint: chordLabel("Mod-f") })}
+          onClick={() => { const v = viewRef.current; if (v) { openSearchPanel(v); } }}>
           <SearchIcon size={14} /> {t("Find")}
         </button>
         <a className="uiBtn sm ghost" href={fileUrl} download={doc.name} onClick={saveLinkClick(fileUrl, doc.name)}>
@@ -456,6 +465,7 @@ export default function TextViewer({ doc, fileUrl, phone = false, hidden = false
             onRegionThread={onRegionThread} onBeside={setBeside} />
         </>
       ) : null}
+      {cm && findBox ? createPortal(<FindPanel view={cm} updates={updates} />, findBox) : null}
     </div>
   );
 }

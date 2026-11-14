@@ -113,8 +113,6 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
   const [library, setLibrary] = React.useState(fresh ? false : !!link.library);
   const [saving, setSaving] = React.useState(false);
   const [problem, setProblem] = React.useState(null); // {text, again?}
-  // the footer's Cancel of a fresh vault, which removes it, asked about
-  const [asking, setAsking] = React.useState(false);
   const url = `${API}/folder-links/${encodeURIComponent(link.id)}`;
   // The shell's window handed back on leaving: `cancelled` once the vault is gone.
   const handBack = handsBack(link, IS_DESKTOP);
@@ -273,9 +271,10 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
   }
   const leave = handBack ? () => tracked(false) : onClose;
   // A fresh vault's Cancel removes it, so it asks first, from the footer as
-  // from Escape or the ×; Choose files… asks once something changed.
+  // from Escape or the × (SubDialog's guard, `cancel`); Choose files… asks
+  // once something changed.
   const close = fresh ? cancelFresh : leave;
-  const guard = fresh ? { question: t("Cancel making this work folder?"), keep: t("Keep choosing"), leave: t("Cancel it") }
+  const guard = fresh ? { question: t("Cancel making this work folder?"), keep: t("Keep choosing"), leave: t("Cancel it"), cancel: true }
     : changed ? { question: t("Leave without saving?"), keep: t("Keep choosing"), leave: t("Leave") } : null;
   const draft = fresh ? undefined : { changes: state.changes, library };
   const name = link.dest ? leaf(link.dest.replace(/\\/g, "/")) : link.path ? leaf(link.path.replace(/\\/g, "/")) : "";
@@ -361,22 +360,12 @@ export default function TrackDialog({ link, fresh, tick = "", onSaved, onCancell
           {problem.again ? <button type="button" className="uiBtn sm" onClick={readAll}>{t("Read it again")}</button> : null}
         </p>
       ) : null}
-      {asking ? (
-        <div className="settingsUnsaved" role="alertdialog" aria-label={guard.question}>
-          <span>{guard.question}</span>
-          <span className="settingsUnsavedBtns">
-            <button type="button" className="uiBtn" autoFocus onClick={() => setAsking(false)}>{guard.keep}</button>
-            <button type="button" className="uiBtn danger" onClick={cancelFresh}>{guard.leave}</button>
-          </span>
-        </div>
-      ) : (
-        <div className="reportModalBtns importReviewFooter">
-          <button type="button" className="uiBtn" onClick={fresh ? () => setAsking(true) : leave}>{t("Cancel")}</button>
-          <button type="button" className="uiBtn primary" disabled={!read?.entries || !current || saving || !!current.over_cap}
-            title={!current && read?.entries ? t("Save once the summary says what this choice comes to") : undefined}
-            onClick={save}>{t("Save")}</button>
-        </div>
-      )}
+      <div className="reportModalBtns importReviewFooter">
+        <button type="button" className="uiBtn" onClick={close}>{t("Cancel")}</button>
+        <button type="button" className="uiBtn primary" disabled={!read?.entries || !current || saving || !!current.over_cap}
+          title={!current && read?.entries ? t("Save once the summary says what this choice comes to") : undefined}
+          onClick={save}>{t("Save")}</button>
+      </div>
     </SubDialog>
   );
 }

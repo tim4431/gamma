@@ -458,7 +458,12 @@ the research note; the chat's computer side stays local (4d).
   chat is for a work folder of this computer's server."). The shell's
   confirm says what a server someone else runs can then do, and that a
   server reached over plain `http://` outside this computer is reached
-  without encryption ([desktop architecture](../../desktop/docs/architecture.md)).
+  without encryption: the link's `plain`, as the host lists it, says so
+  ([desktop architecture](../../desktop/docs/architecture.md)). The first
+  token minted for such an origin is asked about already (the shell's
+  `beforeMint`, once per origin of the local network, each time for a
+  public host an existing link keeps; a new link to a public host over
+  plain http is refused, [https.md](https.md#plain-http)).
 - **The binding.** The channel's announce names each folder vault's agent
   (`agent`: `codex`, `claude` or null); the NAS keeps it with the
   computer's row, so it knows the folder has an agent while the computer
@@ -1200,9 +1205,11 @@ either agent.
   (`role="status"`, kept mounted while empty) that the Send button names
   as its description, so a change a poll brings is heard, and so is why
   the button is off.
-- **Requests.** `requestLine` gives a short state, naming the agent by the
-  request's `state_by`, whoever set it, a token's agent included (*Codex is
-  working*, *Done by Codex*, *Failed*), and apart from it the agent's own
+- **Requests.** `requestLine` gives a short state in the Sent chip's words
+  (`comments.sendState`, drawn by the same `StateTag`), naming the agent by
+  the request's `state_by`, whoever set it, a token's agent included
+  (*Waiting for Codex*, *Codex is working…*, *Done by Codex*, *Failed*),
+  and apart from it the agent's own
   words (its progress, its summary, the reason it failed), which the row
   shows on a line of their own under the note, at most three lines, whole
   in its title. The Withdraw button's title (`withdrawTitle`) says "Stop
@@ -1211,7 +1218,9 @@ either agent.
   stops an outside agent.
 - **Comments** (`comments/comments.js`): `authorTitle` of a comment with
   `agent_kind: "local"` reads "Written by Codex on tim's computer";
-  `sentChip` of a running Send with `state_by` reads *Codex is working*.
+  `sentChip` of a running Send with `state_by` reads *Codex is working…*
+  with a spinner, and one waiting, *Waiting for Codex* (the agent that
+  answers the reader's Sends) or *Waiting for TIM-PC*.
 - **The mention.** App derives the agent the open page's comments can
   name, `vaultState.mentionAgent(vault.state)`: `{name, label, ready,
   problem}` for the maker of the page's work-folder vault with an agent
@@ -1236,19 +1245,26 @@ either agent.
   the folder's name and whether it is paused or choosing its files; the
   desktop app only, as `vault.state` is) and passes it to ChatDock as
   `computer`. ChatDock draws the switch (`ChatSides`, `Segmented`: *Gamma
-  AI | Codex*) first in its header, outside the Gamma AI gate, so an
+  AI | Codex*, with a sparkle and a bot, the icons alone in a narrow
+  window) first in its header, outside the Gamma AI gate, so an
   account with no AI provider still gets the computer side; the side is
   remembered per page for the tab's life (`useChatSide`, in
   `chatSide.js` beside the Background tasks row's `showComputerSide`, so
   the first screen does not load the side's state). On the computer
   side ChatDock renders the same window with the side's History and New
-  chat (`ComputerHeader`) and its body (`ComputerChat`): the strip in the
-  provider health strip's slot, neutral, amber when the agent cannot run
+  chat (`computerActions`, the window's actions) and its body
+  (`ComputerChat`): the strip in the
+  provider health strip's slot, a plain line (not a live region: the
+  turn's pill is the one read out), neutral, amber when the agent cannot run
   (`computerChat.stripLine`: "Codex on this computer · paper", "Codex is
   working: Editing sections/intro.tex", "Waiting for Codex to finish its
   other work in this folder", "Starting Codex…", the agent's problem, the
   paused folder), the transcript (the person's messages with their
   passages' pages; the agent's with its steps in one pill that unfolds,
+  Gamma AI's `StepsPill` worded by `turnLabel` (its label morphing, a
+  shield and no spinner while it waits for an answer, how many steps
+  failed or were not allowed; still and not read out for a turn that had
+  ended when it was first shown, as in a conversation opened from History),
   its reply through `ChatMarkdown`, "Changed a.tex and 1 more · The PDF
   was rebuilt", how a turn ended, the fresh-session line), and a composer
   with the PDF passages selected (App's `pdfSelections`, Gamma AI's too,
@@ -1260,19 +1276,22 @@ either agent.
   the server sends structured steps. The side's steps never carry a
   `page_id` or `block_id` and never go through `/api/ai/*`, `chatSession`,
   `MentionContext` or Gamma's model list. While a live turn has `asks`,
-  each is a card under the steps (`ComputerAsk`, the approval card's look
-  but not its component: no *Always allow*, no Gamma permission): "Codex
-  wants to run a command" with the command whole on a code line, where it
-  runs and its reason, or "Codex wants to change files outside its
-  sandbox" with the paths and the diff; **Allow once**, **Allow in this
-  chat** (a command only: "Run this exact command without asking for the
-  rest of this conversation") and **Decline…** (a note, then Decline);
-  under them "It runs as you, with your files and the network." or "It
-  changes files outside the work folder."; the strip reads "Waiting for
-  you: Codex wants to run a command" (amber, `asking`), the turn's pill
-  "Codex is waiting for you", and the steps "Asked to run latexmk",
-  "Allowed to…", "Not allowed to…". `useComputerChat.answer` posts the
-  answer and reads the conversation again.
+  each is a card under the steps (`ComputerAsk`, on the approval card's
+  shell `chat/ApprovalShell.jsx` but with no *Always allow* and no Gamma
+  permission): "Codex wants to run a command" with the command whole in
+  its box in monospace, where it runs and its reason, or "Codex wants to
+  change files outside its sandbox" with the paths and the diff; **Allow
+  once**, **Allow in this chat** (a command only: "Run this exact command
+  without asking for the rest of this conversation") and **Don't allow**
+  (a note, then Don't allow); under them "It runs as you, with your files
+  and the network." or "It changes files outside the work folder."; the
+  strip reads "Waiting for you: Codex wants to run a command" (amber,
+  `asking`), the turn's pill "Codex is waiting for you", and the steps
+  "Asked to run latexmk", "Allowed to…", "Not allowed to…".
+  `useComputerChat.answer` posts the answer and leaves the rest to the next
+  poll, so the card says "Allowed. Codex goes on…" or "Not allowed. Codex
+  goes on without it…" until the read that drops the ask; a refusal is
+  said on the card and the conversation read again at once.
 - **The vault chip's card** (`vault/VaultChip.jsx`, `vaultState.agentLine`):
   "Agent: Codex on this computer", the problem when it is not ready, and
   "Codex is working: <detail>" during a run. Opening the card reads the

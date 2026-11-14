@@ -40,7 +40,9 @@ the web's ink layer encodes and saves every stroke.
    device's card names its data folder "App storage › Gamma › local", and
    the launcher's footer reads "Gamma for Android <version>". A server
    may be plain `http`: the app allows cleartext to any address, where
-   the iPad allows it on the local network only.
+   the iPad allows it on the local network only. A server signed by an
+   authority the person installed in Android's settings loads too
+   ([The address](#the-address)).
 2. **Sign in.** On This device the app signs in by itself as `admin`
    ([The account and the silent sign-in](#the-account-and-the-silent-sign-in)).
    On another server the person signs in on its own login page, with a
@@ -916,6 +918,18 @@ dynamic range from a random point, else any the system hands out
 app stores per origin. The address is `http://127.0.0.1:<port>`; the
 network security config allows cleartext, which the WebView, the health
 probes and the shell's own requests all need here.
+
+The same config trusts the certificates the person installed in Android's
+settings beside the system's (`<trust-anchors>` with `system` and `user`):
+a NAS signed by an authority of its own loads, which an app targeting API
+24 or later otherwise refuses ([https.md](https.md)). A `<domain-config>`
+cannot name the person's servers when the app is built, so the trust is
+the whole app's: the Gamma Cloud sign-in in the WebView trusts a
+user-installed or a company's authority too, as a browser on the device
+would. The embedded Python keeps certifi's bundle, which matters only for
+the device's own server reaching another (a clone's rounds). A
+self-signed certificate trusted by its fingerprint, as the desktop does,
+is not built here (the WebView's `onReceivedSslError` would carry it).
 
 ### The account and the silent sign-in
 

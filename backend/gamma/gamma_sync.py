@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """gamma-sync: keep a folder of your Gamma library as a folder on your disk.
 
-One file, Python 3.10 or newer, standard library only: copy it anywhere.
+One file, Python 3.10 or newer, standard library only: copy it anywhere
+(with truststore installed, it verifies HTTPS against the system's trust
+store, as a browser does).
 It reads a Gamma server with an integration token (Settings → Integrations;
 read access is enough unless PDFs go back) and writes the folder's papers
 and notes to a directory of your choice, then keeps them up to date. The
@@ -57,6 +59,7 @@ import hashlib
 import http.client
 import json
 import os
+import ssl
 import sys
 import time
 import urllib.error
@@ -103,19 +106,255 @@ class Changed(SyncError):
     lets it wait for the next pass rather than keep it."""
 
 
+ADDRESS_MAX = 300   # the longest address a redirect's words and fields keep
+
+
+def _host(parts) -> str:
+    """The host of a split URL, lowercase, an IDN in punycode."""
+    host = (parts.hostname or "").rstrip(".")
+    try:
+        return host if host.isascii() else host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return host
+
+
+def _netloc(parts) -> str:
+    """``host[:port]`` of a split URL (``_host``, IPv6 bracketed); no sign-in."""
+    host = _host(parts)
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return (f"[{host}]" if ":" in host else host) + (f":{port}" if port else "")
+
+
+class Redirected(Unreachable):
+    """The server answered a redirect that keeps the request's path (a
+    proxy rewriting scheme, host or port), which this client never follows:
+    a bearer token never goes to an address it was not given, and a write
+    never turns into a read. ``location``: where it pointed (absolute,
+    capped at 300). ``to``: the server's address there, built from the
+    Location's scheme, host and port only (userinfo, query and fragment
+    dropped), plus this server's own path when it has one; no trailing
+    slash, at most 300 characters. ``upgrade``: the same host name
+    (lowercase, IDN punycode), http:// to https:// (any port: Synology's
+    5000 → 5001)."""
+
+    def __init__(self, old: str, location: str):
+        there, here = urllib.parse.urlsplit(location), urllib.parse.urlsplit(old)
+        self.location = location[:ADDRESS_MAX]
+        self.to = f"{there.scheme.lower()}://{_netloc(there)}{here.path.rstrip('/')}"[:ADDRESS_MAX]
+        self.upgrade = (here.scheme.lower() == "http" and there.scheme.lower() == "https"
+                        and _host(here) == _host(there) != "")
+        super().__init__(f"{old} now redirects to {self.to}")
+
+
+class Blocked(Unreachable):
+    """Something in front of the server answered instead of it (``blocked``
+    says how it tells): ``kind`` "signin", a redirect to another path (a
+    sign-in host's ``/login?rd=…``, ``where`` its host), "proxy" (a
+    401/403/407 page that is not Gamma's), "cloudflare" (Cloudflare's own
+    refusal) or "gateway" (a 502/503/504 that is not Gamma's)."""
+
+    def __init__(self, host: str, status: int, kind: str, where: str = ""):
+        self.host, self.status, self.kind, self.where = host, status, kind, where
+        super().__init__({
+            "signin": f"a sign-in or proxy in front of {host} redirected this computer to {where}",
+            "cloudflare": f"Cloudflare in front of {host} refused this computer's requests",
+            "gateway": f"{host} answered {status} with a page that is not Gamma's: the proxy in front of it "
+                       f"could not reach Gamma",
+        }.get(kind, f"{host} answered {status} with a page that is not Gamma's: a proxy or firewall in front of "
+                    f"it refused this computer"))
+
+
+class CertificateRefused(Unreachable):
+    """The server's certificate did not verify (``reason``, the
+    ``ssl.SSLCertVerificationError``). ``changed``: a pinned origin served
+    another certificate (gamma/tls_trust.py ``CertificateChanged``).
+    ``seen``: what the served certificate says of itself, when the desktop
+    app's server looked (``{sha256, subject, issuer, not_before,
+    not_after}``), else None. ``missing_intermediate``: the server sent its
+    certificate alone, without the one linking it to an authority."""
+
+    def __init__(self, host: str, reason):
+        self.host = host
+        self.changed = bool(getattr(reason, "changed", False))
+        self.seen = getattr(reason, "seen", None)
+        unknown_issuer = getattr(reason, "verify_code", None) == 20   # UNABLE_TO_GET_ISSUER_CERT_LOCALLY
+        self.missing_intermediate = unknown_issuer and getattr(reason, "chain_length", None) == 1
+        if self.changed:
+            words = f"The certificate of {host} changed"
+        elif self.missing_intermediate:
+            words = (f"{host} sends its certificate without the intermediate certificate that links it to a "
+                     f"trusted authority: configure the server or its proxy to send the full chain (fullchain.pem)")
+        elif unknown_issuer and getattr(reason, "chain_length", None) is None:
+            words = (f"{host}'s certificate does not lead to an authority this computer trusts: either it is "
+                     f"signed by your own authority (trust it in Gamma, or install that authority on this "
+                     f"computer), or the server does not send its intermediate certificate (send the full "
+                     f"chain, fullchain.pem)")
+        else:
+            why = getattr(reason, "verify_message", None) or getattr(reason, "reason", None) or str(reason)
+            words = f"{host}'s certificate is not trusted on this computer ({why})"
+        super().__init__(words)
+
+
+class NotHttps(Unreachable):
+    """An https:// address whose server answered no TLS (another
+    ``ssl.SSLError``: WRONG_VERSION_NUMBER, plain http there), not a
+    handshake the peer cut (``failure_of``)."""
+
+    def __init__(self, host: str):
+        self.host = host
+        super().__init__(f"{host} does not speak HTTPS at this address")
+
+
+def is_gamma_refusal(data: bytes) -> bool:
+    """Whether an answer's body is Gamma's own refusal: a JSON object with
+    a ``detail`` key (FastAPI's refusal shape)."""
+    try:
+        obj = json.loads(data.decode("utf-8"))
+    except Exception:
+        return False
+    return isinstance(obj, dict) and "detail" in obj
+
+
+def blocked(status: int, headers, data: bytes, *, own=is_gamma_refusal) -> str:
+    """"" | "cloudflare" | "proxy" | "gateway": why an answer is a refusal by
+    something in front of the service rather than the service's own. ``own``
+    says what the service's own refusal looks like. Cloudflare's: a 401 or
+    403 with ``cf-mitigated`` (its challenge), or with its headers
+    (``cf-ray``, ``Server: cloudflare``) and not the service's own; a
+    proxy's: any other 401, 403 or 407 not the service's own; a gateway's:
+    a 502, 503 or 504 not the service's own."""
+    if status not in (401, 403, 407, 502, 503, 504):
+        return ""
+    headers = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    if status in (401, 403) and headers.get("cf-mitigated"):
+        return "cloudflare"
+    if own(data or b""):
+        return ""
+    if status in (502, 503, 504):
+        return "gateway"
+    if status != 407 and ("cf-ray" in headers or "cloudflare" in headers.get("server", "").lower()):
+        return "cloudflare"
+    return "proxy"
+
+
+STATUS_KEYS = ("error_kind", "move_to", "upgrade", "cert", "blocked")   # dropped before a status is written
+
+
+def status_fields(e: BaseException) -> dict:
+    """The fields a status keeps of a failure, beside its words: walks e,
+    its __cause__ and __context__ (5 deep) to the first of the classes above.
+    {"error_kind": "redirected", "move_to": to, "upgrade": bool}
+    | {"error_kind": "certificate" | "certificate_changed", "cert": seen or None}
+    | {"error_kind": "not_https"} | {"error_kind": "blocked", "blocked": kind} | {}"""
+    todo, seen = [(e, 0)], set()
+    while todo:
+        e, depth = todo.pop(0)
+        if e is None or depth > 5 or id(e) in seen:
+            continue
+        seen.add(id(e))
+        if isinstance(e, Redirected):
+            return {"error_kind": "redirected", "move_to": e.to, "upgrade": e.upgrade}
+        if isinstance(e, CertificateRefused):
+            return {"error_kind": "certificate_changed" if e.changed else "certificate", "cert": e.seen}
+        if isinstance(e, NotHttps):
+            return {"error_kind": "not_https"}
+        if isinstance(e, Blocked):
+            return {"error_kind": "blocked", "blocked": e.kind}
+        todo += [(e.__cause__, depth + 1), (e.__context__, depth + 1)]
+    return {}
+
+
+class RedirectRefused(Exception):
+    """A 3xx's Location, out of ``opener()`` to its caller, which names it
+    with ``failure_of``."""
+
+    def __init__(self, status: int, location: str):
+        super().__init__(location)
+        self.status, self.location = status, location
+
+
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        fp.close()
+        raise RedirectRefused(code, newurl)
+
+
+make_opener = urllib.request.build_opener   # the app routes it: net_proxy.install sets net_proxy.build_opener
+_opener = (None, None)                      # (the make_opener it was built with, the opener)
+
+
+def opener():
+    """The opener every Server request goes through: make_opener's, with
+    redirects refused. Built once per make_opener."""
+    global _opener
+    made_with, built = _opener
+    if made_with is not make_opener:
+        built = make_opener(_RefuseRedirects())
+        _opener = (make_opener, built)
+    return built
+
+
+default_open_url = None   # tests: (url, method, path, headers, body) → (status, headers, body stream); tried before default_open
+
+
+def failure_of(url: str, asked: str, error):
+    """What a request ``asked`` (its full URL) of the server at ``url``
+    that ``opener()`` failed with is, as this module names it, or None for
+    any other failure. A refused redirect (``RedirectRefused``) that keeps
+    the request's path is ``Redirected`` (a proxy rewriting scheme, host or
+    port), any other ``Blocked`` (``signin``: a sign-in host's
+    /login?rd=…, a proxy's page); a TLS failure (a URLError's reason, or a
+    raw OSError) is ``CertificateRefused`` or ``NotHttps``, but for a
+    handshake the peer cut (``_cut``), which is no answer at all. Server's
+    requests and sync_engine's mirror requests both read it."""
+    host = _host(urllib.parse.urlsplit(url)) or url
+    if isinstance(error, RedirectRefused):
+        there = urllib.parse.urlsplit(error.location)
+        if there.path == urllib.parse.urlsplit(asked).path:
+            return Redirected(url, error.location)
+        return Blocked(host, error.status, "signin", where=_host(there) or error.location[:ADDRESS_MAX])
+    reason = getattr(error, "reason", error)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return CertificateRefused(host, reason)
+    if isinstance(reason, ssl.SSLError) and not _cut(reason):
+        return NotHttps(host)
+    return None
+
+
+def _cut(e: ssl.SSLError) -> bool:
+    """A handshake the peer cut (an EOF, a reset: a server restarting, a
+    proxy accepting while its upstream is down), which passes by itself:
+    an ordinary failure, never ``NotHttps``."""
+    return isinstance(e, (ssl.SSLEOFError, ssl.SSLZeroReturnError, ssl.SSLSyscallError))         or getattr(e, "reason", None) == "UNEXPECTED_EOF_WHILE_READING"
+
+
 # --- the server --------------------------------------------------------------
 
 class Server:
     """A thin client of one Gamma server: JSON answers, file downloads, and
     the writes a push makes (a JSON body, an upload), with the token as a
-    bearer header."""
+    bearer header. It follows no redirect (``Redirected``, ``Blocked``) and
+    names a TLS failure (``CertificateRefused``, ``NotHttps``);
+    ``last_headers`` are the last answer's, for a caller that reads the
+    status itself (``ask``) and classifies a refusal with ``blocked``."""
 
     def __init__(self, url, token, timeout=120):
         self.url = url.rstrip("/")
         self.token = token
         self.timeout = timeout   # seconds a request may wait on a silent server
-        self.open_ = default_open or self._urllib_open
+        if default_open_url is not None:
+            self.open_ = lambda method, path, headers, body=None: default_open_url(self.url, method, path, headers, body)
+        else:
+            self.open_ = default_open or self._urllib_open
         self.format_checked = False   # ``check_format`` asked once
+        self.last_headers = {}
+
+    @property
+    def host(self) -> str:
+        return _host(urllib.parse.urlsplit(self.url)) or self.url
 
     def _headers(self):
         headers = {"Accept": "application/json", "User-Agent": "gamma-sync/1"}
@@ -127,11 +366,16 @@ class Server:
         # a body is bytes or an iterable of them, with its Content-Length among the headers
         req = urllib.request.Request(self.url + path, data=body, method=method, headers=headers)
         try:
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
+            resp = opener().open(req, timeout=self.timeout)
             return resp.status, resp.headers, resp
+        except RedirectRefused as e:
+            raise failure_of(self.url, req.full_url, e) from None
         except urllib.error.HTTPError as e:
             return e.code, e.headers, e
         except (urllib.error.URLError, OSError, ValueError) as e:
+            failure = failure_of(self.url, req.full_url, e)
+            if failure is not None:
+                raise failure from e
             raise Unreachable(f"cannot reach {self.url}: {e}") from e
 
     def source(self, folder_id):
@@ -155,9 +399,14 @@ class Server:
     def _json(self, method, path, headers, body=None) -> dict:
         """The server's JSON answer. An answer cut short, or one that is no
         JSON (a sign-in or captive portal's page, answered with 200), is a
-        SyncError like a refusal (``Unreachable``), so a round reports it."""
+        SyncError like a refusal (``Unreachable``), so a round reports it;
+        so is a refusal by something in front of the server (``Blocked``):
+        ``Denied`` is a 401 or 403 of Gamma's own."""
         status, data = self._send(method, path, headers, body)
         if not 200 <= status < 300:
+            kind = blocked(status, self.last_headers, data)
+            if kind:
+                raise Blocked(self.host, status, kind)
             raise {404: NotFound, 401: Denied, 403: Denied}.get(status, SyncError)(_refusal(status, data, path, self.token))
         try:
             return json.loads(data.decode("utf-8")) if data else {}
@@ -165,7 +414,7 @@ class Server:
             raise Unreachable(f"{path}: the server did not answer JSON") from e
 
     def _send(self, method, path, headers, body=None) -> tuple[int, bytes]:
-        status, _headers, resp = self.open_(method, path, headers, body)
+        status, self.last_headers, resp = self.open_(method, path, headers, body)
         try:
             return status, resp.read()
         except http.client.HTTPException as e:   # IncompleteRead among others; not an OSError
@@ -224,6 +473,7 @@ class Server:
         place once whole. A body shorter than the announced length is an
         error, never a file."""
         status, headers, body = self.open_("GET", path, self._headers())
+        self.last_headers = headers
         if status != 200:
             raise SyncError(_refusal(status, body.read(), path, self.token))
         length = headers.get("Content-Length")
@@ -1077,6 +1327,9 @@ def main(argv=None) -> int:
     args = parser.parse_args(glued(sys.argv[1:] if argv is None else argv))
     try:
         return args.run(args) or 0
+    except Redirected as e:
+        print(f'gamma-sync: {e}: if the server moved, set "server" to "{e.to}" in {STATE}', file=sys.stderr)
+        return 1
     except SyncError as e:
         print(f"gamma-sync: {e}", file=sys.stderr)
         return 1
@@ -1088,4 +1341,9 @@ if __name__ == "__main__":
     for stream in (sys.stdout, sys.stderr):   # titles are not all Latin; a cp1252 console must not stop the sync
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
+    try:   # the one optional import: HTTPS verified as the browser does (a Keychain root), when installed
+        import truststore
+        truststore.inject_into_ssl()
+    except ImportError:
+        pass
     sys.exit(main())

@@ -3,6 +3,7 @@
 // or a directory cut at the server's spans. The match rule is the server's
 // alone (backend/gamma/work_folders/file_search.py): the client draws its
 // rows in its order and marks its spans, never ranks.
+import { PATH_SEP } from "../library/libraryUtils.js";
 import { partsAt } from "../search/snippets.js";
 
 // `hits` (GET /api/files' rows) as palette rows `{key, section: "files",
@@ -28,3 +29,12 @@ export function spanRanges(text, spans) {
 // `text` cut at the server's `spans` into the {text, mark} pieces search's
 // MarkedText draws (search/snippets.js partsAt).
 export const fileParts = (text, spans) => partsAt(text, spanRanges(text, spans));
+
+// A found file's place line, "W / a / b" (explorer/workPaths.js
+// filePlace's text), in those pieces: W's name `work`, then its directory
+// `dir` ("a/b", the row's) cut at the server's `spans`, each "/" drawn as
+// the line's " / ".
+export function placeParts(work, dir, spans) {
+  const parts = fileParts(dir || "", spans).map((p) => ({ ...p, text: p.text.replaceAll("/", PATH_SEP) }));
+  return work ? [{ text: dir ? `${work}${PATH_SEP}` : work, mark: false }, ...parts] : parts;
+}

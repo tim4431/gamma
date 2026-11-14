@@ -59,6 +59,8 @@ const microphone = require('./lib/microphone');
 const { pages: shellPages, isShellPage, trustedShellSender } = require('./lib/shellSecurity');
 const windowControls = require('./lib/windowControls');
 const terminal = require('./lib/terminal');
+const certs = require('./lib/certs');
+const hostScope = require('./lib/hostScope');
 
 const BAR_H = 38;
 // The shell's word to its local servers on the routes that take a path on
@@ -327,11 +329,18 @@ function createWindow() {
   bar.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   const cwc = content.webContents;
-  const guard = (event, url) => {
+  const guard = (event, url, redirect = false) => {
     let origin = null;
     try {
       origin = new URL(url).origin;
     } catch {}
+    // An address the links moved away from: the same path at the current one.
+    const moved = rerouted(url);
+    if (moved) {
+      event.preventDefault();
+      cwc.loadURL(moved).catch(() => {});
+      return;
+    }
     // The page's Gamma Cloud sign-in runs in the system browser and comes
     // back here (lib/cloudSignIn.js).
     if (origin && allowedOrigins.has(origin) && cloudSignIn.isStart(url)) {
@@ -341,10 +350,12 @@ function createWindow() {
     }
     if (isShellPage(url, 'launcher') || (origin && allowedOrigins.has(origin))) return;
     event.preventDefault();
+    // a remote's http:// address sent to https:// on its host: the launcher's card offers the move
+    if (redirect && event.isMainFrame !== false && sentToHttpsBy(url)) return;
     if (/^https?:/.test(url) || url === STORE_UPDATES_URL) openExternal(url);
   };
   cwc.on('will-navigate', guard);
-  cwc.on('will-redirect', guard);
+  cwc.on('will-redirect', (event, url) => guard(event, url, true));
   // target=_blank (external link chips, share links, papers opened in a new
   // tab) goes to the system browser; the Store's updates page (Settings →
   // Server in a Store install) to the Store.
@@ -355,7 +366,17 @@ function createWindow() {
   cwc.on('page-title-updated', (_e, title) => {
     if (win) win.setTitle(title || 'Gamma');
   });
-  cwc.on('did-navigate', () => { pushState(); refreshGamma(); });
+  cwc.on('did-navigate', (_e, url) => {
+    // a page that landed at a moved-away address all the same (a history step) is replaced
+    const moved = rerouted(url);
+    if (moved) {
+      cwc.loadURL(moved).catch(() => {});
+      return;
+    }
+    sawHttps(url);
+    pushState();
+    refreshGamma();
+  });
   cwc.on('did-navigate-in-page', () => { pushState(); refreshGamma(); });
   cwc.on('did-finish-load', refreshGamma);
   // (not while the vault dialog is up: setBarExpanded keeps it shown)
@@ -438,10 +459,25 @@ function setBarExpanded(on) {
 
 // The launcher's `?error=` payload: a JSON object when the failure came with a
 // diagnosis (lib/startup.js — a local server that would not come up), so the
-// page can explain it and offer the fix; a plain message otherwise.
+// page can explain it and offer the fix; a plain message otherwise. A
+// remote whose certificate the window refused and which may be trusted by
+// its fingerprint gets the card of it (certCard); one that does not speak
+// HTTPS, or whose http:// address sent the window to https:// (sentToHttps,
+// taken once), its wording by what the shell knows of it
+// (startup.diagnoseOpen).
 function launcherError(error, serverId) {
-  const d = (error && error.startup) || startup.diagnoseOpen((error && error.message) || error);
-  return JSON.stringify({ ...d, server: serverId || '' });
+  const message = (error && error.message) || error;
+  const srv = serverId ? registry.get(serverId) : null;
+  let d = error && error.startup;
+  if (!d && srv && srv.type === 'remote') {
+    const origin = registry.originOf(srv.url);
+    const sentTo = sentToHttps.get(origin) || null;
+    sentToHttps.delete(origin);
+    d = (/ERR_CERT_/.test(String(message)) && certCard(origin, String(message)))
+      || startup.diagnoseOpen(message, { url: srv.url, pinned: Boolean(registry.getPins()[origin]), httpsSeen: Boolean(srv.httpsSeen),
+        scope: scopeOf(origin), sentTo });
+  }
+  return JSON.stringify({ ...(d || startup.diagnoseOpen(message)), server: serverId || '' });
 }
 
 function loadLauncher(error, serverId) {
@@ -587,7 +623,7 @@ async function keepOffline(wsId) {
   const g = gamma;
   const ws = g && g.list.find((w) => w.id === wsId);
   if (!ws) throw new Error('Unknown workspace');
-  const remoteOrigin = new URL(current.url).origin;
+  const remoteOrigin = remoteOf();
   const known = registry.findMirror(remoteOrigin, wsId);
   if (known && registry.get(known.server)) return openCopy(wsId); // one copy per workspace: open it
   const ses = content.webContents.session;
@@ -597,12 +633,14 @@ async function keepOffline(wsId) {
   let token = null;
   const dropToken = () => token && revokeToken(api, remoteOrigin, wsId, token.id);
   try {
+    // The host first: it says whether a token may go to that address (beforeMint).
+    const { local, origin: localOrigin } = await ensureHost(api);
+    await beforeMint(api, localOrigin, remoteOrigin);
     token = await api(remoteOrigin, '/api/integrations/tokens', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
       body: JSON.stringify({ name: 'Gamma desktop offline copy', scope: 'write', expires_in_days: 365 }),
     });
-    const { local, origin: localOrigin } = await ensureHost(api);
     let mirror;
     try {
       mirror = await api(localOrigin, '/api/mirrors', {
@@ -639,10 +677,20 @@ async function keepOffline(wsId) {
 
 // Gamma's public API through the content session (its cookies), on the
 // local server or a remote: what keepOffline and the synced vaults use. A
-// refusal throws with its `status` and its `body`.
+// refusal throws with its `status` and its `body`. A redirect is never
+// followed (`redirect: 'error'`): a token minted or revoked here goes only
+// to the address it was asked of (docs/dev/https.md "No redirects between
+// Gamma servers").
 function serverApi(ses) {
   return async (origin, apiPath, init) => {
-    const r = await ses.fetch(origin + apiPath, { credentials: 'include', cache: 'no-store', ...init });
+    let r;
+    try {
+      r = await ses.fetch(origin + apiPath, { credentials: 'include', cache: 'no-store', ...init, redirect: 'error' });
+    } catch (e) {
+      const why = `${(e && e.message) || ''} ${(e && e.cause && e.cause.message) || ''}`;
+      if (/redirect/i.test(why)) throw new Error(`${origin} answered with a redirect: Gamma does not send its tokens on to another address.`);
+      throw e;
+    }
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(body.detail || `${apiPath}: HTTP ${r.status}`), { status: r.status, body });
     return body;
@@ -689,6 +737,8 @@ async function startLocalNow(srv) {
   const avoid = state.servers.filter((s) => s.id !== srv.id && s.port).map((s) => s.port);
   const entry = await sidecar.start(ws, state.settings, appInfo(), { avoid });
   registry.setPort(srv.id, entry.port);
+  // its trusted certificates as the registry has them, before its first round reads one
+  await pushPins(srv.id);
   return entry;
 }
 
@@ -760,6 +810,532 @@ async function localServer(serverId) {
   const api = serverApi(session.fromPartition(`keeping-${serverId}`));
   await signIn(api, srv, origin);
   return { srv, origin, api };
+}
+
+// ---------------------------------------------- addresses and certificates -----
+// A remote server over HTTPS (docs/dev/https.md, docs/dev/desktop.md
+// "Addresses and certificates"). Identity is exact: a view is a given server
+// only when its origin is the link's stored origin, and every place that
+// mints a token or sends a `remote_url` takes the origin from remoteOf,
+// which refuses an address the links moved away from; a load of such an
+// address goes to the current one instead (rerouted). An address changes
+// only with its links (moveServer: a dry run on the host, the person's word,
+// then the move, which the host checks against the new address first). A
+// token goes over plain http:// only once the person agreed to it for that
+// origin (beforeMint). A certificate the window refuses may be trusted by
+// its fingerprint, only the one the launcher's card showed (trustCert) or a
+// move to a new address asked about (trustMoveTarget), and the local
+// servers accept the same pins (pushPins); one the window accepts
+// and a local server does not is trusted for syncing too (trustForSync).
+
+const CLOUD_DOMAIN = certs.cloudDomain();
+
+// The host's scope (lib/hostScope.js) of an origin.
+function scopeOf(origin) {
+  try {
+    return hostScope.literal(new URL(origin).hostname);
+  } catch {
+    return '';
+  }
+}
+
+// An address's host name without its port, as the questions and the card name it.
+function hostOnly(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return String(url || '');
+  }
+}
+
+// The origin the window shows (`origin`: another the caller has, a row's),
+// for a token or a `remote_url`; never an address the links moved away from.
+function remoteOf(origin = openOrigin()) {
+  if (registry.movedAway(origin)) throw new Error(`${origin} is now ${registry.currentOrigin(origin)}: open it there and ask again.`);
+  return origin;
+}
+
+// The same path and query at the address the links of `url`'s origin moved
+// to, or null for an address that did not move.
+function rerouted(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(u.protocol) || !registry.movedAway(u.origin)) return null;
+  const to = registry.currentOrigin(u.origin);
+  allowedOrigins.add(to);
+  return to + u.pathname + u.search + u.hash;
+}
+
+// The window sent from a registered remote's http:// address to https:// on
+// the same host name, by HSTS (Chromium's upgrade, which keeps the port) or
+// by the server's own redirect (Synology's 5000 to 5001): the content guard
+// follows it nowhere, the system browser included (R3: the address is the
+// link's), and records it here for the launcher's card (launcherError,
+// startup.diagnoseOpen), which offers the move. Each such remote allowed in
+// the window -> `{ to, hsts }`, `to` the address offered: the redirect's, or
+// the name's own https:// for HSTS. Cleared as that server opens again.
+const sentToHttps = new Map();
+function sentToHttpsBy(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:') return false;
+  let hit = false;
+  for (const s of registry.load().servers) {
+    if (s.type !== 'remote' || !/^http:/.test(s.url) || !allowedOrigins.has(s.url)) continue;
+    const from = new URL(s.url);
+    if (from.hostname !== u.hostname) continue;
+    const hsts = from.port === u.port; // both '' for 80 → 443
+    sentToHttps.set(s.url, { to: hsts ? `https://${u.hostname}` : u.origin, hsts });
+    hit = true;
+  }
+  return hit;
+}
+
+// A registered remote loaded over https in the window (registry.httpsSeen).
+function sawHttps(url) {
+  let origin = '';
+  try {
+    origin = new URL(url).protocol === 'https:' ? new URL(url).origin : '';
+  } catch {}
+  const srv = origin && remoteAt(origin);
+  if (srv && srv.url === origin) registry.markHttpsSeen(srv.id);
+}
+
+// A plain http:// address asked of the host before a token is minted for it
+// (POST /api/remote-servers/check, which resolves its name): one the host
+// refuses (a public host: a new link there goes over https only) throws its
+// words; a public one an existing link keeps is asked every time; one of
+// this network is asked once per origin (settings.plainAccepted), never for
+// an origin a link of before this release already used. Cancel throws
+// quietly (`quiet`: no error box). A host from before the check (404)
+// asks nothing: it refuses a public plain link itself. `about` names the link
+// the token is for when it exists already (`vault`: the vault whose token is
+// renewed; `workspace`: the computer link's workspace), so the host counts it
+// as that link's upkeep, as the route that takes the token will.
+async function beforeMint(hostApi, hostOrigin, remoteOrigin, about = {}) {
+  let check;
+  try {
+    check = await hostApi(hostOrigin, '/api/remote-servers/check', { method: 'POST', headers: JSON_TYPE, body: JSON.stringify({ url: remoteOrigin, ...about }) });
+  } catch (e) {
+    if (e.status === 404) return;
+    throw e;
+  }
+  if (check.refused) throw new Error(check.refused);
+  if (!check.plain) return;
+  const far = check.scope === 'far';
+  if (!far && check.existing) {
+    registry.setPlainAccepted(remoteOrigin, true);
+    return;
+  }
+  if (!far && registry.plainAccepted(remoteOrigin)) return;
+  const host = hostOnly(remoteOrigin);
+  const q = keeping.plainAsk(host, check.warning || '', Boolean(check.unsure));
+  if (await ask({ type: 'warning', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 1, cancelId: 1 }, 1) !== 0) {
+    throw Object.assign(new Error(`Nothing was sent to ${host} over http://.`), { quiet: true });
+  }
+  if (!far) registry.setPlainAccepted(remoteOrigin, true);
+}
+
+// The links of `from` moved to `to` on the host (POST
+// /api/remote-servers/move, docs/dev/https.md "Moving a server's address"): a dry run
+// that sends nothing anywhere, then, when it found links, an https:// `to`'s
+// certificate trusted there unless it verifies (trustMoveTarget), the person's word
+// (keeping.moveAsk: which tokens go to `to`; a plain http:// `to` says they
+// travel in clear and allows it, `plain_ok`) unless `auto`, then the move,
+// which the host makes only once `to` answered without credentials and each
+// link's token there, one at a time, and the tokens it says a link at `to`
+// held revoked there. A refusal throws with the host's words, nothing moved.
+// Only the host's links move: an offline copy of `from` that a local server
+// other than the host keeps stays there (docs/dev/https.md).
+// → the move's `moved`, or null when the person cancelled.
+async function moveLinks(from, to, { auto = false } = {}) {
+  if (!registry.load().servers.some((s) => s.type === 'local')) return {}; // no host: no links
+  const host = await startHost();
+  const move = (body) => host.api(host.origin, '/api/remote-servers/move', {
+    method: 'POST', headers: { ...JSON_TYPE, ...shellWord(host.origin) }, body: JSON.stringify({ from, to, ...body }),
+  });
+  const plan = await move({ dry_run: true });
+  const moved = plan.moved || {};
+  if (!(moved.vaults || moved.computers || moved.mirrors)) return moved;
+  if (auto && plan.kind !== 'upgrade') throw new Error(`${from} to ${to} is no move to https of the same server.`);
+  // the probe needs `to`'s certificate verified or pinned (R2: never asked in the automatic move)
+  const pinned = auto ? '' : await trustMoveTarget(to);
+  if (pinned === null) return null;
+  let done = null;
+  try {
+    if (!auto) {
+      const q = keeping.moveAsk(from, to, plan);
+      if (await ask({ type: 'warning', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 1, cancelId: 1 }, 1) !== 0) return null;
+    }
+    busy = `Moving the links to ${to}…`;
+    pushState();
+    try {
+      done = await move({ plain_ok: !auto && Boolean(plan.plain) });
+    } finally {
+      busy = null;
+      pushState();
+    }
+  } finally {
+    // a pin made for a move that did not happen is no server's
+    if (!done && pinned && registry.dropPin(pinned)) await pinsChanged();
+  }
+  const remote = serverApi(session.defaultSession);
+  for (const r of done.revoke || []) await revokeToken(remote, to, r.workspace_id, r.token_id);
+  return done.moved || moved;
+}
+
+// A remote server's address changed (the launcher's edit form, its card's
+// *Use http:// instead* and *Use https://…*, the bar's *Use …*), its links
+// moving with it first (moveLinks), and only then the registry: the old
+// address leaves the window's allowed origins, and a load of it goes to the
+// new one. `id` null: a redirected link of a server the registry does not
+// hold, or whose new address it lists already, whose links move alone
+// (entryMoving). `auto`: the same host name over https, a
+// redirect's move (autoUpgrade), asked of nobody. → the server, or null
+// when the person cancelled.
+async function moveServer(id, url, { auto = false, from: fromUrl = '' } = {}) {
+  const srv = id ? registry.get(id) : null;
+  if (id && (!srv || srv.type !== 'remote')) throw new Error('Unknown server');
+  const from = srv ? srv.url : registry.originOf(fromUrl);
+  const to = registry.parseServerUrl(url).origin;
+  if (to === from) return srv;
+  // only an entry renamed can clash: links alone may move to an address listed already
+  if (srv && registry.load().servers.some((s) => s.type === 'remote' && s.url === to && s.id !== id)) throw new Error(`${to} is already listed`);
+  const moved = await moveLinks(from, to, { auto });
+  if (!moved) return null;
+  let after = null;
+  if (srv) {
+    const changed = registry.setRemoteUrl(id, to);
+    after = changed.srv;
+    if (changed.pins) await pinsChanged(); // the old address's pin moved with it, or went
+    allowedOrigins.add(to);
+    allowedOrigins.delete(from);
+    if (current && current.id === id) current = null; // the next open loads the new address
+    buildMenu();
+  }
+  if (moved.vaults || moved.computers || moved.mirrors || auto) showNotice(keeping.moveSaid(from, to, moved));
+  pushState();
+  refreshKeeping().catch(() => {});
+  return after;
+}
+
+// The registry's entry whose address a redirect's move from `from` to `to`
+// changes: the one at `from`, unless another lists `to` already (then the
+// links move alone and both entries stay), or null.
+function entryMoving(from, to) {
+  const srv = remoteAt(from);
+  return srv && srv.url === from && !remoteAt(to) ? srv.id : null;
+}
+
+// Before links move to an https:// `to`, its certificate as the window sees
+// it: the host's probe needs it verified or pinned for exactly `to`
+// (docs/dev/https.md "Moving a server's address"), while the launcher's
+// card pins only a listed server's own address, which changes only after
+// the move. A certificate the window takes by a pin of the same host name
+// (any port, certs.decide) is pinned for `to` too, asking nothing; one a pin
+// may answer (certs.offerable) is shown with its fingerprint, as the card
+// shows it, and pinned for `to` once the person says so. → the origin
+// pinned here (moveLinks drops it again should nothing move), '' for none,
+// null when the person cancelled.
+async function trustMoveTarget(to) {
+  if (!/^https:/.test(to) || registry.getPins()[to]) return '';
+  const host = hostOnly(to);
+  let failed = '';
+  try {
+    await session.defaultSession.fetch(`${to}/api/health`, { cache: 'no-store', redirect: 'manual' });
+  } catch (e) {
+    failed = `${(e && e.message) || ''} ${(e && e.cause && e.cause.message) || ''}`;
+  }
+  const seen = seenCerts.get(certs.bareHost(host)); // what the verify proc saw there, that fetch's or an earlier one
+  if (!seen || !certs.OFFERABLE.has(seen.error) || certs.underCloud(host, CLOUD_DOMAIN)) return '';
+  const same = Object.entries(registry.getPins())
+    .find(([origin, p]) => certs.bareHost(hostOnly(origin)) === certs.bareHost(host) && p.sha256 === seen.cert.sha256);
+  if (same) {
+    registry.setPin(to, same[1]);
+  } else {
+    if (!/ERR_CERT_/.test(failed) || !certs.offerable(seen.error, to, scopeOf(to), CLOUD_DOMAIN)) return '';
+    const words = startup.diagnoseCert(seen.error, host, seen.cert, false);
+    const ok = await ask({
+      type: 'warning', buttons: ['Trust this certificate', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: `Trust the certificate of ${host}?`,
+      detail: `${words.summary} ${words.hint} Fingerprint: ${certs.grouped(seen.cert.sha256)}`,
+    }, 1);
+    if (ok !== 0) return null;
+    registry.setPin(to, seen.cert);
+  }
+  await pinsChanged();
+  return to;
+}
+
+// The redirects to the same server over https that the bar's reading found
+// (keeping.upgradeOf), each moved by itself once a session: `from` -> its
+// state, 'running', 'done' or 'failed' (the row then offers *Use …*).
+const upgrades = new Map();
+function autoUpgrade(from, to) {
+  if (upgrades.has(from)) return;
+  upgrades.set(from, 'running');
+  moveServer(entryMoving(from, to), to, { auto: true, from })
+    .then(() => upgrades.set(from, 'done'), (e) => {
+      upgrades.set(from, 'failed');
+      console.error(`[shell] ${from} redirects to ${to}, and its links could not move there: ${(e && e.message) || e}`);
+      refreshKeeping().catch(() => {});
+    });
+}
+
+// The certificates the window refused, by origin, while the launcher's card
+// may trust them: `{ nonce, error, cert, changed, at }` (certificate-error),
+// kept CERT_RECORD_MS and replaced by the next refusal of that origin. The
+// nonce binds the card's button to the record it showed.
+const certErrors = new Map();
+const CERT_RECORD_MS = 10 * 60_000;
+
+// Per bare host name, the digest of the last certificate Chromium accepted
+// there: what *Trust it for syncing too* compares a local server's refusal
+// with. At most 64 hosts.
+const accepted = new Map();
+
+// Per bare host name, what the verify proc last saw there, `{ error, cert }`
+// (certs.describe): what a move to an address no server has yet trusts
+// (trustMoveTarget). At most 64 hosts.
+const seenCerts = new Map();
+
+function keepLast(map, key, value) {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > 64) map.delete(map.keys().next().value);
+}
+
+// The pins as the verify proc reads them, at every connection (trustPins
+// reads them again after a change).
+let trusted = {};
+function trustPins() {
+  trusted = registry.getPins();
+}
+
+function certRecord(origin) {
+  const r = certErrors.get(origin);
+  if (r && Date.now() - r.at > CERT_RECORD_MS) certErrors.delete(origin);
+  return certErrors.get(origin) || null;
+}
+
+// Chromium's answer for a connection, pins applied (certs.decide).
+function verifyProc(request, callback) {
+  if (request.certificate) {
+    const host = certs.bareHost(request.hostname);
+    keepLast(seenCerts, host, { error: request.verificationResult, cert: certs.describe(request.certificate) });
+    if (request.verificationResult === 'net::OK') keepLast(accepted, host, certs.fingerprintOf(request.certificate.data));
+  }
+  callback(certs.decide(trusted, request, CLOUD_DOMAIN));
+}
+
+// The verify proc on the window's session (the local servers' partitions
+// reach 127.0.0.1 over http only), again after a pin changed, with its
+// connections closed. The network service keeps the proc's answers, and
+// Chromium a certificate accepted in certificate-error, for the session: a
+// pin newly made is answered there (certificateError), and a forgotten one
+// stops answering for a certificate already accepted at the next start.
+function applyVerifyProc() {
+  const ses = session.defaultSession;
+  ses.setCertificateVerifyProc(verifyProc);
+  return Promise.resolve(ses.closeAllConnections && ses.closeAllConnections()).catch(() => {});
+}
+
+// Chromium's `certificate-error`. The network service keeps the verify
+// proc's answers for the session, so a certificate refused before the person
+// trusted it stays refused there: such a load is accepted here, by the
+// verify proc's own rule (certs.decide), and Chromium then keeps that for
+// the page's requests. Any other main-frame refusal of a registered remote
+// is recorded for the launcher's card, and the load fails.
+function certificateError(event, url, error, certificate, callback, isMainFrame) {
+  let hostname = '';
+  try {
+    hostname = new URL(url).hostname;
+  } catch {}
+  if (hostname && certs.decide(trusted, { hostname, verificationResult: error, certificate }, CLOUD_DOMAIN) === 0) {
+    event.preventDefault();
+    callback(true);
+    return;
+  }
+  if (isMainFrame) certificateRefused(url, error, certificate);
+}
+
+// A main-frame certificate refusal of a registered remote, recorded for the
+// launcher's card. The load still fails: nothing is accepted here.
+function certificateRefused(url, error, certificate) {
+  let origin = '';
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return;
+  }
+  if (!remoteAt(origin) || remoteAt(origin).url !== origin) return;
+  const cert = certs.describe(certificate);
+  certErrors.set(origin, { nonce: crypto.randomUUID(), error, cert, changed: certs.verdict(trusted, origin, cert.sha256) === 'changed', at: Date.now() });
+}
+
+// The launcher's card for a remote at `origin` whose load failed with
+// `message`: what its certificate said of itself and the button that trusts
+// it (startup.diagnoseCert), or null when there is no record of it or it is
+// not one a pin may answer (certs.offerable).
+function certCard(origin, message, { stale = false } = {}) {
+  const r = certRecord(origin);
+  if (!r || !certs.offerable(r.error, origin, scopeOf(origin), CLOUD_DOMAIN)) return null;
+  const words = startup.diagnoseCert(r.error, hostOnly(origin), r.cert, r.changed);
+  return { ...words, detail: message || r.error, nonce: r.nonce, cert: { ...r.cert, grouped: certs.grouped(r.cert.sha256) },
+    ...(stale ? { stale: 'The certificate changed while you were looking at it.' } : {}) };
+}
+
+// The launcher's *Trust this certificate* (or *Trust the new certificate*)
+// for server `id`: main's record of its origin, taken once, pinned only when
+// it is the one the card showed (`nonce` and `sha256` its), after a
+// question when it replaces another pin (Cancel puts the record back, so the
+// card's button still works, unless a newer refusal took its place);
+// otherwise the card is shown again with the record there is now. Then the
+// local servers are handed the pins, and the server opens.
+async function trustCert(id, nonce, sha256) {
+  const srv = registry.get(id);
+  if (!srv || srv.type !== 'remote') throw new Error('Unknown server');
+  const origin = srv.url;
+  const r = certRecord(origin);
+  certErrors.delete(origin);
+  if (!r || r.nonce !== nonce || r.cert.sha256 !== sha256 || !certs.offerable(r.error, origin, scopeOf(origin), CLOUD_DOMAIN)) {
+    if (r) certErrors.set(origin, { ...r, nonce: crypto.randomUUID() });
+    const card = certCard(origin, '', { stale: true });
+    loadLauncher(card ? Object.assign(new Error(card.summary), { startup: card }) : new Error('The certificate changed while you were looking at it.'), id);
+    return false;
+  }
+  if (r.changed) {
+    const ok = await ask({
+      type: 'warning', buttons: ['Trust the new certificate', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: `Trust the new certificate of ${hostOnly(origin)}?`,
+      detail: `Only if you replaced it on ${hostOnly(origin)} yourself. Fingerprint: ${certs.grouped(r.cert.sha256)}`,
+    }, 1);
+    if (ok !== 0) {
+      if (!certErrors.has(origin)) certErrors.set(origin, r);
+      return false;
+    }
+  }
+  registry.setPin(origin, r.cert);
+  await pinsChanged();
+  await openServer(id);
+  buildMenu();
+  return true;
+}
+
+// The launcher's *Forget the trusted certificate* of server `id`.
+async function forgetCert(id) {
+  const srv = registry.get(id);
+  if (!srv || srv.type !== 'remote' || !registry.dropPin(srv.url)) return false;
+  await pinsChanged();
+  pushState();
+  return true;
+}
+
+async function pinsChanged() {
+  trustPins();
+  await applyVerifyProc();
+  await pushPins();
+}
+
+// The pins as the local servers keep them (PUT /api/remote-servers/pins:
+// the whole list, snake_case).
+function pinRows() {
+  return Object.entries(registry.getPins()).map(([origin, p]) => ({
+    origin, sha256: p.sha256, subject: p.subject || '', issuer: p.issuer || '', not_before: p.validFrom || '', not_after: p.validTo || '',
+  }));
+}
+
+// The pins handed to each running local server (or to `serverId` alone, as
+// it starts), so their syncing accepts what the window does. Best effort: a
+// server that does not take them keeps the list it had.
+async function pushPins(serverId = '') {
+  const body = JSON.stringify({ pins: pinRows() });
+  for (const srv of registry.load().servers) {
+    if (srv.type !== 'local' || !sidecar.status(srv.id) || (serverId && srv.id !== serverId)) continue;
+    try {
+      const { origin, api } = await localServer(srv.id);
+      await api(origin, '/api/remote-servers/pins', { method: 'PUT', headers: { ...JSON_TYPE, ...shellWord(origin) }, body });
+    } catch (e) {
+      if (e.status !== 404) console.error(`[shell] ${srv.name} did not take the trusted certificates: ${(e && e.message) || e}`);
+    }
+  }
+}
+
+// A row of local server `serverId` as its server lists it now: a clone
+// (`GET /api/mirrors`) or a vault (`GET /api/folder-links`), never what a
+// page said of it.
+async function rowOf(kind, serverId, id) {
+  const { origin, api } = await localServer(serverId);
+  const row = kind === 'clone'
+    ? ((await api(origin, '/api/mirrors')).mirrors || []).find((m) => m.workspace_id === id)
+    : ((await api(origin, '/api/folder-links')).links || []).find((l) => l.id === id);
+  if (!row || !row.remote_url) throw new Error('That no longer syncs with another server.');
+  return { ...row, status: row.status || {} };
+}
+
+// The bar's *Trust it for syncing too*: the certificate a local server
+// refused for a row of another server is the one the window accepted at
+// that host (`accepted`), so it is pinned for its origin after a question,
+// with no fingerprint to compare: the window already took that exact one.
+async function trustForSync(kind, serverId, id) {
+  const row = await rowOf(kind, serverId, id);
+  const origin = registry.originOf(row.remote_url);
+  const host = hostOnly(origin);
+  const cert = row.status.cert || {};
+  const bare = certs.bareHost(new URL(origin).hostname);
+  if (row.status.error_kind !== 'certificate' || !/^https:/.test(origin) || !cert.sha256 || accepted.get(bare) !== cert.sha256
+    || certs.underCloud(bare, CLOUD_DOMAIN)) {
+    throw new Error(`${host}'s certificate is not the one this window trusts: open ${host} in Gamma to check it.`);
+  }
+  const ok = await ask({
+    type: 'question', buttons: ['Trust it for syncing', 'Cancel'], defaultId: 1, cancelId: 1,
+    message: `Trust ${host}'s certificate for syncing too?`,
+    detail: `This window already trusts it; Gamma's server on this computer does not. Fingerprint: ${certs.grouped(cert.sha256)}`,
+  }, 1);
+  if (ok !== 0) return false;
+  registry.setPin(origin, { sha256: cert.sha256, subject: cert.subject, issuer: cert.issuer, validFrom: cert.not_before, validTo: cert.not_after });
+  await pinsChanged();
+  showNotice(`Gamma's server on this computer trusts ${host}'s certificate now.`);
+  return true;
+}
+
+// The bar's fixes of a row of another server (keeping.failureOf), each
+// reading the row again from its server: Open <server> (its card in the
+// launcher, for a certificate), Use <https address> (the move a redirect
+// asks for, after the question), Trust it for syncing too.
+async function fixRow(item, action) {
+  const row = await rowOf(item.kind, item.server, item.id);
+  const nas = remoteAt(row.remote_url);
+  if (action === 'open-server') {
+    if (!nas) throw new Error(`${hostOnly(row.remote_url)} is not one of your servers.`);
+    return openServer(nas.id).then(buildMenu, (e) => loadLauncher(e, nas.id));
+  }
+  if (action === 'use-https') {
+    const to = row.status.error_kind === 'redirected' ? keeping.upgradeOf(row.remote_url, row.status.move_to || '') : '';
+    if (!to) throw new Error(`${hostOnly(row.remote_url)} no longer redirects to its https:// address.`);
+    const from = registry.originOf(row.remote_url);
+    upgrades.delete(from);
+    return moveServer(entryMoving(from, to), to, { from });
+  }
+  return trustForSync(item.kind, item.server, item.id);
+}
+
+// What the bar's rows read beside their status (keeping.failureOf).
+function netState() {
+  const { servers } = registry.load();
+  return {
+    accepted: Object.fromEntries(accepted), pinned: Object.keys(registry.getPins()),
+    httpsSeen: servers.filter((s) => s.type === 'remote' && s.httpsSeen).map((s) => s.url),
+    moveFailed: [...upgrades].filter(([, state]) => state === 'failed').map(([from]) => from),
+  };
 }
 
 // ------------------------------------------------------- synced vaults -----
@@ -1120,6 +1696,7 @@ async function makeRemoteWorkFolder({ host, api, origin, shown, wsId, folderId, 
   let link;
   let unshown = null; // why this computer is not shown on the remote, the vault made all the same
   try {
+    await beforeMint(api, host.origin, origin);
     token = await api(origin, '/api/integrations/tokens', {
       method: 'POST',
       headers: { ...JSON_TYPE, ...wsHeaders },
@@ -1202,9 +1779,9 @@ async function trackedFromPage(_wsId, linkId, cancelled) {
 // library is never one (keeping.WHOLE_RULE): its dialog starts pulling
 // only. A folder that has a vault already opens its directory instead.
 async function addFolderVault(wsId, folderId) {
-  const origin = openOrigin();
   const shown = current; // the server it is asked of, whatever the window opens while the picker is up
-  const remote = shown.type === 'remote';
+  const remote = shown && shown.type === 'remote';
+  const origin = remote ? remoteOf() : openOrigin();
   const serverName = shown.name;
   const api = serverApi(content.webContents.session);
   const g = gamma;
@@ -1264,6 +1841,7 @@ async function addFolderVault(wsId, folderId) {
       // A token on the remote for the host to read the folder with, one that
       // may write when the vault pushes; the vault on the host; then this
       // computer shown there (showComputer).
+      await beforeMint(api, at.origin, origin);
       token = await api(origin, '/api/integrations/tokens', {
         method: 'POST',
         headers: { ...JSON_TYPE, ...wsHeaders },
@@ -1415,9 +1993,9 @@ async function broadOk(dir, work = true) {
 // write. A page that has one already offers to show the file or to remove
 // the vault.
 async function addFileVault(wsId, pageId) {
-  const origin = openOrigin();
   const shown = current; // the server it is asked of, whatever the window opens while the picker is up
-  const remote = shown.type === 'remote';
+  const remote = shown && shown.type === 'remote';
+  const origin = remote ? remoteOf() : openOrigin();
   const api = serverApi(content.webContents.session);
   const wsHeaders = { 'X-Gamma-Workspace': wsId };
   const page = await api(origin, `/api/blocks/${encodeURIComponent(pageId)}`, { headers: wsHeaders });
@@ -1449,15 +2027,16 @@ async function addFileVault(wsId, pageId) {
     let link;
     let unshown = null; // why this computer is not shown on the remote, the vault made all the same
     if (remote) {
-      // A write token on the remote, for the host to replace the page's PDF with; the vault on the host;
-      // then this computer shown there (showComputer).
+      // The host, which says whether a token may go there (beforeMint); a write token on the remote, for the
+      // host to replace the page's PDF with; the vault on the host; then this computer shown there (showComputer).
+      let host = await ensureHost(api);
+      if (await reachFolder(host.local, picked)) host = await ensureHost(api);
+      await beforeMint(api, host.origin, origin);
       token = await api(origin, '/api/integrations/tokens', {
         method: 'POST',
         headers: { ...JSON_TYPE, ...wsHeaders },
         body: JSON.stringify({ name: `Gamma desktop: ${title} from ${file}`.slice(0, 80), scope: 'write', expires_in_days: 365 }),
       });
-      let host = await ensureHost(api);
-      if (await reachFolder(host.local, picked)) host = await ensureHost(api);
       link = await api(host.origin, '/api/folder-links', {
         method: 'POST',
         headers: { ...JSON_TYPE, ...shellWord(host.origin) },
@@ -1798,7 +2377,8 @@ async function changePush(serverId, linkId, word) {
   });
   if (word !== 'off' && link.remote_url && keeping.pushWord(link.push) === 'off') {
     const remote = serverApi(session.defaultSession);
-    const remoteOrigin = new URL(link.remote_url).origin;
+    const remoteOrigin = remoteOf(new URL(link.remote_url).origin);
+    await beforeMint(api, origin, remoteOrigin, { vault: link.id });
     const token = await remote(remoteOrigin, '/api/integrations/tokens', {
       method: 'POST',
       headers: { ...JSON_TYPE, 'X-Gamma-Workspace': link.workspace_id },
@@ -1908,6 +2488,7 @@ async function showComputer({ remote, remoteOrigin, remoteName, wsId, host, alwa
       if (had.username && signedIn && signedIn !== had.username) return keeping.computerOtherAccount(remoteName, COMPUTER_NAME, had.username);
       if ((had.status || {}).state !== 'refused') return null;
     }
+    await beforeMint(host.api, host.origin, remoteOrigin, { workspace: wsId });
     token = await remote(remoteOrigin, '/api/integrations/tokens', {
       method: 'POST',
       headers: { ...JSON_TYPE, 'X-Gamma-Workspace': wsId },
@@ -1953,7 +2534,7 @@ async function showComputerOf(serverId, linkId) {
   busy = `Showing this computer on ${item.remote}…`;
   pushState();
   try {
-    const failed = await showComputer({ remote: serverApi(session.defaultSession), remoteOrigin: registry.originOf(link.remote_url),
+    const failed = await showComputer({ remote: serverApi(session.defaultSession), remoteOrigin: remoteOf(registry.originOf(link.remote_url)),
       remoteName: item.remote, wsId: link.workspace_id, host: { origin, api }, always: true });
     showNotice(failed || keeping.computerSaid(item.remote, COMPUTER_NAME, true));
     return !failed;
@@ -2191,6 +2772,8 @@ function refreshKeeping() {
     const { servers } = registry.load();
     const items = [];
     const zoteroHosts = new Map(); // server id -> holds a link that is not detached
+    const moves = new Map(); // a redirected address -> the same server over https (autoUpgrade)
+    const net = netState();
     for (const srv of servers) {
       if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
       try {
@@ -2206,7 +2789,13 @@ function refreshKeeping() {
         const roles = who && Array.isArray(who.workspaces) ? who.workspaces : null;
         const agents = found && Array.isArray(found.agents) ? found.agents : null;
         const computers = shown && Array.isArray(shown.links) ? { links: shown.links, name: COMPUTER_NAME } : null;
-        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles, agents, computers }, servers);
+        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [], roles, agents, computers }, servers, net);
+        // A clone, a vault or a computer link redirected to the same server over https moves there by itself.
+        for (const row of [...(m.mirrors || []), ...(f.links || []), ...((computers && computers.links) || [])]) {
+          const s = (row && row.status) || {};
+          const to = s.error_kind === 'redirected' ? keeping.upgradeOf(row.remote_url, s.move_to || '') : '';
+          if (to) moves.set(registry.originOf(row.remote_url), to);
+        }
         // A server with a link that is not detached starts at launch; one
         // whose links all went or were detached no longer does. A list that
         // did not come leaves that as it was.
@@ -2218,6 +2807,7 @@ function refreshKeeping() {
     }
     if (keepingNext) return;
     for (const [id, on] of zoteroHosts) registry.setZoteroHost(id, on);
+    for (const [from, to] of moves) autoUpgrade(from, to);
     keepingState = { items, summary: keeping.summarize(items) };
     pushState();
   })().finally(() => {
@@ -2264,7 +2854,9 @@ async function keepingAction(kind, serverId, id, action, value) {
   const item = keepingState.items.find((i) => i.kind === kind && i.server === serverId && i.id === id);
   if (!item) throw new Error('That no longer syncs with this computer');
   const link = `/api/zotero/links/${encodeURIComponent(id)}`;
-  if ((kind === 'clone' || kind === 'zotero') && action === 'open') {
+  if ((kind === 'clone' || kind === 'vault') && ['open-server', 'use-https', 'trust-sync'].includes(action)) {
+    await fixRow(item, action);
+  } else if ((kind === 'clone' || kind === 'zotero') && action === 'open') {
     await openServer(serverId);
     await openGammaWorkspace(id);
     buildMenu();
@@ -3480,6 +4072,8 @@ function dataMoveState() {
 // The launcher's fuller view: credentials, data dirs, sizes, settings.
 function fullState() {
   const state = registry.load();
+  const { pins } = state;
+  const plain = state.settings.plainAccepted || [];
   return {
     ...barState(),
     servers: state.servers.map((ws) => ({
@@ -3488,6 +4082,9 @@ function fullState() {
       url: ws.type === 'remote' ? ws.url : (sidecar.status(ws.id) || {}).url,
       running: ws.type === 'local' ? Boolean(sidecar.status(ws.id)) : undefined,
       reachable: remoteReachable(ws),
+      // A remote's trusted certificate and its plain http:// yes (the edit form's Forget… and Ask again…).
+      pinned: ws.type === 'remote' ? Boolean(pins[ws.url]) : undefined,
+      plainAccepted: ws.type === 'remote' ? plain.includes(ws.url) : undefined,
       // Paths as the file manager can find them (hostPath, a Store install).
       dataDir: hostPath(ws.dataDir),
       sizeBytes: ws.type === 'local' ? registry.dirSize(ws.dataDir) : undefined,
@@ -3575,6 +4172,7 @@ async function openServerNow(id) {
     let creds = null;
     if (ws.type === 'remote') {
       url = ws.url;
+      sentToHttps.delete(registry.originOf(url));
     } else {
       const entry = await startLocal(ws);
       url = entry.url;
@@ -3604,6 +4202,20 @@ async function openServerNow(id) {
     busy = null;
     pushState();
   }
+}
+
+// The launcher's Remove: a local server stopped first; a remote's pinned
+// certificate goes with it (registry.remove), and the verify proc and the
+// local servers stop accepting it at once (pinsChanged).
+async function removeServer(id, opts = {}) {
+  if (current && current.id === id) loadLauncher();
+  await sidecar.stop(id);
+  const srv = registry.get(id);
+  const pinned = Boolean(srv && srv.type === 'remote' && registry.getPins()[srv.url]);
+  registry.remove(id, opts);
+  if (pinned) await pinsChanged();
+  buildMenu();
+  pushState();
 }
 
 // Help → Check for Updates…: the only update flow that answers with a
@@ -3722,13 +4334,16 @@ function registerIpc() {
   ipcMain.handle('shell:update-install', shellOnly(() => updater.install()));
   ipcMain.handle('shell:add-local', shellOnly((name) => { const ws = registry.addLocal(name); buildMenu(); pushState(); return ws; }));
   ipcMain.handle('shell:add-remote', shellOnly((name, url) => { const ws = registry.addRemote(name, url); buildMenu(); pushState(); return ws; }));
-  ipcMain.handle('shell:set-url', shellOnly((id, url) => {
-    const srv = registry.setRemoteUrl(id, url);
-    allowedOrigins.add(srv.url);
-    if (current && current.id === id) current = null; // the next open loads the new address
-    buildMenu();
+  // An address changes with its links (moveServer); null when the person cancelled.
+  ipcMain.handle('shell:set-url', shellOnly((id, url) => moveServer(id, url)));
+  // The launcher's certificate card and the server's edit form.
+  ipcMain.handle('shell:trust-cert', shellOnly((id, nonce, sha256) => trustCert(id, String(nonce || ''), String(sha256 || ''))));
+  ipcMain.handle('shell:forget-cert', shellOnly((id) => forgetCert(id)));
+  ipcMain.handle('shell:forget-plain', shellOnly((id) => {
+    const srv = registry.get(id);
+    if (srv && srv.type === 'remote') registry.setPlainAccepted(srv.url, false);
     pushState();
-    return srv;
+    return true;
   }));
   ipcMain.handle('shell:rename', shellOnly((id, name) => {
     const ws = registry.rename(id, name);
@@ -3737,13 +4352,7 @@ function registerIpc() {
     pushState();
     return ws;
   }));
-  ipcMain.handle('shell:remove', shellOnly(async (id, opts) => {
-    if (current && current.id === id) loadLauncher();
-    await sidecar.stop(id);
-    registry.remove(id, opts || {});
-    buildMenu();
-    pushState();
-  }));
+  ipcMain.handle('shell:remove', shellOnly((id, opts) => removeServer(id, opts || {})));
   ipcMain.handle('shell:open-workspace', shellOnly(async (id) => {
     setBarExpanded(false);
     await openGammaWorkspace(id);
@@ -3755,6 +4364,7 @@ function registerIpc() {
     try {
       return await fn(id);
     } catch (e) {
+      if (e && e.quiet) return null; // a question the person cancelled (beforeMint)
       errorBox({ type: 'error', title: 'Gamma', message, detail: String(e && e.message || e), buttons: ['OK'] });
       throw e;
     }
@@ -4004,6 +4614,12 @@ app.whenReady().then(async () => {
     return;
   }
   registerIpc();
+  // The certificates trusted by their fingerprint (lib/certs.js), in the
+  // window's session; a refusal of a remote's is kept for the launcher's card.
+  trustPins();
+  applyVerifyProc();
+  app.on('certificate-error', (event, _wc, url, error, certificate, callback, isMainFrame) =>
+    certificateError(event, url, error, certificate, callback, isMainFrame));
   session.defaultSession.setPermissionRequestHandler(microphone.create({
     prefs: systemPreferences,
     onDenied: () => microphoneRefused().catch(() => {}),
@@ -4100,6 +4716,24 @@ if (process.env.GAMMA_SHELL_TEST) {
     terminals,
     asked,
     answers,
+    // addresses and certificates: e2e.js's self-signed step and main.test.js
+    moveServer,
+    trustCert,
+    forgetCert,
+    trustForSync,
+    certificateRefused,
+    certificateError,
+    certRecord,
+    verifyProc,
+    pushPins,
+    pinsChanged,
+    removeServer,
+    sentToHttpsBy,
+    allowedOrigins,
+    rerouted,
+    upgrades,
+    accepted,
+    launcherUrl: () => (content ? content.webContents.getURL() : ''),
     // main.test.js: the window shows server `srv`, `view` standing in for its
     // content view and `window` (none by default) for the window itself.
     pretendShown: (srv, view, window = null) => {

@@ -996,7 +996,7 @@ watcher, a timer, a shell hook), and what it finds here is:
    {state: "running"}` as the agent: an integration token of the
    `feedback` or `write` scope, in its own workspace; again with a
    `detail` line as it goes. Gamma shows it beside the request ("The agent
-   is working").
+   is working…").
 4. **Answering.** Through the comment API with the same token, each entry
    carrying its `page_id` and `block_id`: a reply is
    `POST /api/pages/{page_id}/comments {block_id, thread_id, body}`, a

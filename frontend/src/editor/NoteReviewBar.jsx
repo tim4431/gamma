@@ -1,15 +1,37 @@
 // The bar under a note that shows an AI's change as tracked changes
 // (chat/noteReview.js; editor/mdDiff.js draws the change). An edit waiting
-// on its approval card: the card's four answers, which answer the card
-// (Don't allow without the card's line for what to do instead). An edit
-// that ran without asking: a record, nothing waits on it: Revert (taken back
-// as its row in the chat would take it, once the reply ended), Hide (the
-// note keeps its text) and, with others on the page, Hide all. A revert that
-// stops says why, with the button that reverts anyway where it can be forced.
+// on its approval card: the card's four answers (chat/ApprovalShell.jsx),
+// which answer the card; Don't allow opens the card's line for what to do
+// instead, and a refusal is said on the bar. An edit that ran without
+// asking: a record, nothing waits on it: Revert (taken back as its row in
+// the chat would take it, once the reply ended), Hide (the note keeps its
+// text) and, with others on the page, Hide all. A revert that stops says
+// why, with the button that reverts anyway where it can be forced.
 import React, { useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { EyeOffIcon, ShieldIcon, SparklesIcon, UndoIcon } from "../shared/ui/Icons";
 import { noteReview, usePageChanges, useStillReplying } from "../chat/noteReview.js";
+import { toolAnswers } from "../chat/approvals.js";
+import { ApprovalAnswers, useApprovalAnswer } from "../chat/ApprovalShell";
+
+// The bar's own presses are not the row's, which would open the editor.
+const bar = (label, children) => (
+  <div className="noteReviewBar" role="group" aria-label={label} onMouseDown={(e) => e.stopPropagation()}>
+    {children}
+  </div>
+);
+
+// The answers of the card `ask` (noteReview.ask), its own for each card.
+function AskBar({ ask }) {
+  const answer = useApprovalAnswer(async (decision, note) => {
+    await ask.decide(decision, note);
+    noteReview.settle(ask.id);
+  });
+  return bar(t("Approval needed"), <>
+    <span className="noteReviewLabel"><ShieldIcon size={14} />{t("Waiting for your approval")}</span>
+    <ApprovalAnswers answer={answer} answers={toolAnswers({ permission: ask.permission, kind: ask.kind })} />
+  </>);
+}
 
 export function NoteReviewBar({ change, ask, onStatus }) {
   // {working} while a request runs, {refused: {text, force}} once a revert stopped
@@ -18,38 +40,7 @@ export function NoteReviewBar({ change, ask, onStatus }) {
   // The reply that made it still streams: its Revert waits, as its row's does.
   const replying = useStillReplying(change);
   const busy = !!state?.working;
-  // The bar's own presses are not the row's, which would open the editor.
-  const bar = (label, children) => (
-    <div className="noteReviewBar" role="group" aria-label={label} onMouseDown={(e) => e.stopPropagation()}>
-      {children}
-    </div>
-  );
-  if (ask) {
-    const decide = async (decision) => {
-      setState({ working: true });
-      try {
-        await ask.decide(decision);
-        noteReview.settle(ask.id);
-      } catch (err) {
-        setState(null);
-        onStatus?.(err?.message || String(err));
-      }
-    };
-    const { permission, kind } = ask;
-    return bar(t("Approval needed"), <>
-      <span className="noteReviewLabel"><ShieldIcon size={14} />{t("Waiting for your approval")}</span>
-      <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => decide("once")}>{t("Allow once")}</button>
-      <button type="button" className="uiBtn sm" disabled={busy} onClick={() => decide("chat")}
-        title={t("Don't ask again for “{permission}” in this conversation", { permission })}>
-        {t("Allow in this chat")}
-      </button>
-      <button type="button" className="uiBtn sm" disabled={busy} onClick={() => decide("always")}
-        title={t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind })}>
-        {t("Always allow")}
-      </button>
-      <button type="button" className="uiBtn sm ghost" disabled={busy} onClick={() => decide("deny")}>{t("Don't allow")}</button>
-    </>);
-  }
+  if (ask) return <AskBar key={ask.id} ask={ask} />;
   const revert = async (force = false) => {
     setState({ working: true });
     try {

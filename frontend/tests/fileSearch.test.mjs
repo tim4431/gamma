@@ -3,7 +3,7 @@
 // the server's code-point spans cut into marked parts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fileParts, fileRows, spanRanges } from "../src/explorer/fileSearch.js";
+import { fileParts, fileRows, placeParts, spanRanges } from "../src/explorer/fileSearch.js";
 
 const hit = (id, path = `${id}.tex`, more = {}) => ({
   id, content: id, path, properties: { work_folder: "W", file_name: path.split("/").at(-1) }, match: { name: [], path: [] }, ...more,
@@ -43,4 +43,13 @@ test("spans: an astral name counts each character once, as the server does", () 
   assert.deepEqual(fileParts("𝔉ig1.pdf", [[0, 4]]), [{ text: "𝔉ig1", mark: true }, { text: ".pdf", mark: false }]);
   assert.deepEqual(fileParts("图1😀.pdf", [[1, 3]]),
     [{ text: "图", mark: false }, { text: "1😀", mark: true }, { text: ".pdf", mark: false }]);
+});
+
+test("place line: W, then the directory at the server's spans, its \"/\" drawn as \" / \"", () => {
+  const text = (parts) => parts.map((p) => p.text).join("");
+  assert.deepEqual(placeParts("Paper", "sections", [[0, 8]]), [{ text: "Paper / ", mark: false }, { text: "sections", mark: true }]);
+  assert.equal(text(placeParts("Paper", "figures/raw", [])), "Paper / figures / raw");
+  assert.deepEqual(placeParts("Paper", "figures/raw", [[8, 11]]).filter((p) => p.mark).map((p) => p.text), ["raw"]);
+  assert.deepEqual(placeParts("Paper", "", []), [{ text: "Paper", mark: false }], "a file at W's top");
+  assert.equal(text(placeParts("", "a/b", [])), "a / b", "no W the client knows");
 });

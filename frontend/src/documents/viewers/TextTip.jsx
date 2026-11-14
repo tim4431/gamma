@@ -4,7 +4,8 @@
 // ends (view.posAtDOM, textAnchors.js spanOf: the one source of a span),
 // gets the popup: the marks (pdf/MarkTools.jsx TipMarks: swatches,
 // highlighters, the fold, keys 1–9), Copy where the host's own edit menu is
-// off, and Comment on this passage; a press makes the range
+// off, and Comment on this passage (shared/ui/SelectionTip.jsx, the PDF's
+// popup's tools); a press makes the range
 // (`onAnchor(position, quote, extras)`, App's). With a text highlighter
 // armed a release of the mouse or the pen makes it at once, and its bar
 // follows where the host acts on it (`onHighlightAction`); a finger's
@@ -22,15 +23,10 @@ import { highlightOfEvent, inCode } from "./textMarks.js";
 import { TipMarks, useMarkTools } from "../../pdf/MarkTools.jsx";
 import { nearRelease, tipAnchor, tipWaiter } from "../../pdf/selectionTip.js";
 import { TipFrame } from "../../shared/ui/TipFrame.jsx";
-import { CheckIcon, CopyIcon, LocateIcon, MessageSquareIcon } from "../../shared/ui/Icons";
-import { IconSwap } from "../../shared/ui/MotionWidgets";
-import { useCopied } from "../../shared/ui/Widgets";
-import { usePalette } from "../../shared/ui/paletteContext.js";
-import { pickerColors } from "../../shared/model/palette.js";
-import { copyText } from "../../shared/lib/utils";
+import { TipComment, TipCopy, TipDivider, TipMoveHere } from "../../shared/ui/SelectionTip.jsx";
+import { tipPress } from "../../shared/ui/press.js";
 import { lastPointer } from "../../shared/lib/pointer.js";
 import { nativeHost, postToHost } from "../../shared/lib/host.js";
-import { t } from "../../shared/i18n/i18n.js";
 
 // A finger's selection is read once it has been still this long (ms).
 const SETTLE_MS = 350;
@@ -188,48 +184,30 @@ export default function TextTip({ view, hash = "", cutLines = null, file = "", h
 // waiting range here. `onDone(clear)` puts it away, the selection with it
 // when `clear`.
 function TipRow({ tip, highlights, moveMode, onAnchor, onHighlightAction, copy, onDone }) {
-  const palette = usePalette();
-  const colors = pickerColors(palette, "highlight");
-  const [copied, flashCopied] = useCopied(1200);
   const made = tip.kind === "made" ? tip.id : null;
   const own = made ? (highlights || []).find((h) => h.id === made) : null;
   const look = own ? { style: own.style || "highlight", color: own.color } : null;
-  const keep = (e) => { e.preventDefault(); e.stopPropagation(); }; // keep the selection
-  // A button acts on the press, which keeps the selection, and on a click
-  // no press led to (Enter or Space on it), as the PDF's popup does.
-  const act = (run) => ({ onMouseDown: (e) => { keep(e); run(); }, onClick: (e) => { if (!e.detail) run(); } });
   const anchor = (extras) => { onDone(true); onAnchor(tip.position, tip.quote, { commentText: "", ...extras }); };
   const onMade = (action, value) => { onDone(false); onHighlightAction?.(made, action, value); };
   if (moveMode) {
     return (
       <div className="plainTip docTextTip">
-        <div className="colorRow">
-          <button type="button" className="colorBtn linkTipBtn tipMoveBtn" title={t("Move the highlight here")}
-            aria-label={t("Move the highlight here")} {...act(() => { onDone(true); onAnchor(tip.position, tip.quote, {}); })}>
-            <LocateIcon size={14} />
-          </button>
-        </div>
+        <TipMoveHere onMove={() => { onDone(true); onAnchor(tip.position, tip.quote, {}); }} />
       </div>
     );
   }
+  // Every button acts on the press, which keeps the selection, as the PDF's
+  // popup's do (shared/ui/press.js tipPress).
   return (
     <div className="plainTip docTextTip">
-      <TipMarks made={!!made} own={look} act={act} onLeave={() => onDone(!made)}
+      <TipMarks made={!!made} own={look} act={tipPress} onLeave={() => onDone(!made)}
         onMark={({ color, style }) => (made ? onMade("mark", { color, style }) : anchor({ color, style }))}
         onStyle={made ? (style) => onHighlightAction?.(made, "style", style) : null}
         onSave={made && look ? () => onMade("save", look) : null} onRemove={made ? () => onMade("remove") : null}
         tools={<>
-          <span className="tipDivider" aria-hidden="true" />
-          {copy ? (
-            <button type="button" className="colorBtn linkTipBtn" title={t("Copy")} aria-label={t("Copy")} onMouseDown={keep}
-              onClick={async () => { if (await copyText(copy)) flashCopied(); }}>
-              <IconSwap swap={copied} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
-            </button>
-          ) : null}
-          <button type="button" className="colorBtn linkTipBtn" title={t("Comment on this passage")} aria-label={t("Comment on this passage")}
-            {...act(() => (made ? onMade("comment") : anchor({ color: colors[0], comment: true })))}>
-            <MessageSquareIcon size={14} />
-          </button>
+          <TipDivider />
+          {copy ? <TipCopy text={copy} /> : null}
+          <TipComment onComment={(color) => (made ? onMade("comment") : anchor({ color, comment: true }))} />
         </>} />
     </div>
   );

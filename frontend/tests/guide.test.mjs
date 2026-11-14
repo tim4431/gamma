@@ -219,8 +219,9 @@ test("the account's copy keeps well-formed records only, and travels in the prof
 test("every data-guide attribute in the source is registered", () => {
   const used = new Set();
   for (const file of walk(new URL("../src", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))) {
-    // guide="id", or every id in a conditional guide={… ? "id" : …}.
-    for (const m of readFileSync(file, "utf8").matchAll(/\bguide=(?:"([^"]+)"|\{([^}]*)\})/g)) {
+    // guide="id", every id in a conditional guide={… ? "id" : …}, or a dock
+    // header action's guide: "id" (DockWindow's `actions`).
+    for (const m of readFileSync(file, "utf8").matchAll(/\bguide(?:=|: )(?:"([^"]+)"|\{([^}]*)\})/g)) {
       if (m[1]) used.add(m[1]);
       else for (const id of m[2].matchAll(/"([a-z]+\.[A-Za-z]+)"/g)) used.add(id[1]);
     }

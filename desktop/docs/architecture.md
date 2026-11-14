@@ -40,15 +40,18 @@ Servers come in two kinds:
 Servers are fully independent; there is **no synchronization** (move data
 between them with Gamma's own per-workspace *Export* / *Import*).
 
-A remote server is its address. One typed without a scheme gets `http://`
-when it names the local network — `localhost`, a private range, a
-`.local`/`.lan`/`.home`/`.internal` name, or an explicit port, the
-self-hosted Gamma's shape — and `https://` otherwise (`registry.withScheme`).
-The pencil on a remote's card edits the address as well as the name
-(`shell:set-url` → `registry.setRemoteUrl`; the mirrors keyed by the old
-origin follow), and when an `https://` address is refused — a self-signed
-certificate, or a plain-HTTP server answering https — the launcher's
-failure card offers *Use http:// instead* (`lib/startup.js`, action `http`).
+A remote server is its address. One typed without a scheme gets its scheme
+from the host table the server uses too (`lib/hostScope.js`,
+`registry.withScheme`): `https://` for port 443, 5001 (Synology's) or 8443
+whatever the host, and for a public name or address whatever the port;
+`http://` for this computer and the local network (a private range, a
+single-label name, a `.local`/`.lan`/`.home.arpa`/`.internal` name). The
+pencil on a remote's card edits the address as well as the name, and a new
+address moves the server's links with it ("A remote's address and
+certificate" below). When an `https://` address is refused, the launcher's
+failure card says why by what the shell knows of it: a certificate it may
+trust by its fingerprint, or an address that does not speak HTTPS
+(`lib/startup.js`).
 
 ### A local server's address
 
@@ -97,6 +100,118 @@ through `pushState`, so the dot fills in a moment after the page renders.
 Opening a remote server also records the outcome (success → reachable,
 failure → unreachable). Green = reachable, red = unreachable, dim = not
 probed yet.
+
+### A remote's address and certificate
+
+The whole story, the server's side included, is
+[docs/dev/https.md](../../docs/dev/https.md); this is the shell's part
+(`main.js` "Addresses and certificates", `lib/certs.js`,
+`lib/hostScope.js`).
+
+**No redirects.** `serverApi`, through which the shell mints and revokes
+tokens and calls the host's routes, passes `redirect: 'error'`: a
+redirect rejects as "<origin> answered with a redirect: Gamma does not
+send its tokens on to another address." The sidecar refuses them too.
+
+**Identity is exact.** A view is a given server only when its origin
+equals the link's stored origin. Every place that mints a token or sends
+a `remote_url` (`keepOffline`, `addFolderVault`, `makeRemoteWorkFolder`,
+`addFileVault`, `changePush`, `showComputer`) takes the origin from
+`remoteOf`, which refuses an address the links moved away from; the
+comparisons (`computerLinkOf`, `registry.findMirror`, `pageOnDisk`, the
+page's asks) stay exact against the window's origin. Navigation is
+rerouted instead: a load of a moved-away address (`registry.moved`) in
+`will-navigate`, `will-redirect` or `did-navigate` goes to the same path
+and query at `registry.currentOrigin`, so no view sits at an old address.
+The rule for step 5b's page-originated asks (a terminal, Show in folder,
+Ask on this computer): honoured only from a view whose origin equals the
+link's origin exactly and whose load was https that verified or is
+pinned, or loopback.
+
+**An address that moves.** `shell:set-url` runs `moveServer`: a dry run on
+the host (`POST /api/remote-servers/move` with `dry_run`, the shell's
+word), which sends nothing anywhere; with no links the address just
+changes. With links to an `https://` address, the host's probe needs its
+certificate verified or pinned for exactly that origin, while the
+launcher's card pins only a listed server's own address, so the shell
+looks first (`trustMoveTarget`: `/api/health` through the window's
+session, the verify proc recording per host what it saw, `seenCerts`): a
+certificate the window takes by a pin of the same host name is pinned for
+the new origin too, asking nothing; one a pin may answer
+(`certs.offerable`) is shown in a native question with its fingerprint
+and the card's words and pinned for the new origin on *Trust this
+certificate*. Then a native question names the tokens that go to the new
+address (`keeping.moveAsk`; for `http://` it adds that they travel in clear
+and the move carries `plain_ok`), then the move, which the host makes only
+once the new address answered `/api/health` without credentials and each
+link's token there, one at a time; the tokens it says a link already at the
+new address held are revoked there. A refusal leaves the launcher's form
+open on the host's words, with *Try again*, and drops a pin made for it.
+Only then the registry changes (`registry.setRemoteUrl` records `moved[old]
+= { to, at, kind }` and carries the old address's pin to the new one on the
+same host name, dropping it for another), and the old origin leaves the
+allowed origins. The duplicate check applies only to an entry renamed: a
+redirect's links whose https address is listed already move alone
+(`entryMoving`), every entry staying. An address listed again
+(`registry.addRemote`) is no longer a moved one. Only the host's links move: an
+offline copy of the old address that a local server other than the host
+keeps stays there (no form changes a copy's address). A redirect to
+the same host name over https (`keeping.upgradeOf`: http to https, any
+port, no user, no path beyond the row's) that the sync panel's reading
+finds on a vault, a clone or a computer link moves by itself once a
+session (`autoUpgrade`, no question: the host's probe requires a
+certificate that verifies or is pinned), with a notice; one that fails
+leaves the row offering *Use <https address>*, which asks.
+
+**Plain http.** Before each mint, `beforeMint` asks the host (`POST
+/api/remote-servers/check`, which resolves the name): a public host over
+`http://` is refused for a new link; an existing link to one asks every
+time with the warning; one of this network asks once per origin
+(`settings.plainAccepted`; an origin an existing link already used counts
+as agreed), its Cancel quiet. The launcher's edit form offers *Ask again
+before connecting over http://* for an agreed origin. A host from before
+the route (404) asks nothing. The vaults' `plain` (the list's DNS-free
+word) feeds the agent question's warning and a dotted name's tooltip line.
+
+**A certificate trusted by its fingerprint.** `setCertificateVerifyProc` on
+the window's session answers each connection with `certs.decide`: Chromium's
+own result, unless the failure is one a pin may answer
+(`ERR_CERT_AUTHORITY_INVALID`, `_COMMON_NAME_INVALID`, `_DATE_INVALID`; never
+under the Gamma Cloud's domain) and the leaf's SHA-256 is pinned for any port
+of that host name. The proc also keeps, per host, the digest of the last
+certificate Chromium accepted (`accepted`) and what it last saw there
+(`seenCerts`, for a move). A main-frame `certificate-error` of a
+registered remote is recorded (`certErrors`: a random nonce, the error,
+what the certificate says of itself, whether its origin pins another), kept
+10 minutes; the load still fails. The launcher's card for it (`certCard`,
+`startup.diagnoseCert`) shows the fingerprint, issued to, issued by and the
+dates, as text only, with *Trust this certificate* or, for a changed one,
+*Trust the new certificate*; another name is offered only for a host of this
+network. The click carries the card's nonce and fingerprint: main takes its
+record once and pins only when both match, after a question for a changed
+one; otherwise the card comes back with "The certificate changed while you
+were looking at it." A pin is pushed to every running local server (`PUT
+/api/remote-servers/pins`, the whole list, also as each starts), the proc set
+again and the session's connections closed. The network service keeps the
+proc's answers for the session, so a certificate refused before it was
+trusted stays refused there: `certificate-error` accepts it by the proc's
+own rule (`certificateError`, `callback(true)`), and Chromium then keeps
+that for the page's requests. The other way round, a forgotten pin stops
+answering at once in the proc, but a certificate Chromium accepted this
+session stays accepted until the app starts again. A row whose local server refused
+the very certificate the window accepted offers *Trust it for syncing too*
+(the macOS policy gap, Linux NSS), which re-reads the row and asks; a row
+refused for another certificate offers *Open <server>*, which ends on the
+card. The edit form offers *Forget the trusted certificate*; removing the
+server drops its pin the same way, the proc and the local servers told at
+once. A changed certificate's *Cancel* puts the record back, so the card's
+button asks again. Host names are compared without a trailing dot, as the
+sidecar compares them (`certs.bareHost`).
+
+**What a server says is text.** A certificate's subject and issuer, a
+fingerprint, a `last_error`, a `move_to` reach `launcher.html` and `bar.html`
+through `textContent` or `title` only, capped where they are read
+(`certs.describe` at 500 characters).
 
 ### Clones
 
@@ -393,7 +508,7 @@ of another server"): turning it on asks with the local sentence, then
 *Whoever can sign in to NAS as tim, and whoever runs NAS, can send work
 to Codex here. Codex reads your files and its answers are stored on
 NAS.*, and, for a server reached over plain `http:` that is not this
-computer (127.0.0.1, localhost, ::1), *NAS is reached without encryption:
+computer (the link's `plain`, as the host lists it), *NAS is reached without encryption:
 someone on your network could read what is sent and pose as NAS.*; no
 waiting count is asked (those Sends wait on the NAS); *What it may run*
 stays hidden (`FAR_RUNS_RULE`). The vaults of a remote workspace
@@ -623,7 +738,14 @@ change meanwhile); *Paused · 14:02*;
 directory is now); *Held · 12 of 20 files gone* (the guard against many
 files gone at once: nothing was pulled or pushed until *Go on…*);
 *Directory not there* (a disk unplugged, drawn as waiting, never as an
-error); *Sync problem*; *Not synced yet*; then *Up to date · 14:02*, with
+error); for a vault of another server whose round failed on the way there,
+its status's `error_kind` (`keeping.failureOf`, the same for a clone and a
+computer link's line, the server's words first in the tooltip): *Moved to
+https* (a redirect to the same server over https, moved by itself, then
+*Use <https address>* if that failed), *Redirected*, *Sign-in in the way*,
+*Blocked by a proxy*, *Certificate not trusted for syncing* (*Trust it for
+syncing too*), *Certificate not trusted* and *Certificate changed* (*Open
+<server>*), *Not HTTPS*; *Sync problem*; *Not synced yet*; then *Up to date · 14:02*, with
 *n pushed*, *n conflicts*, *n changed here* (files a force pull replaces),
 *n not synced* (the other files its last round kept, and the names its
 scan refused: two that differ only by case, one Windows refuses, a link),
@@ -746,8 +868,17 @@ When a server will not open, the launcher shows a **failure panel** instead
 of a raw message: one sentence naming the cause, with the underlying line
 (the server's log line, or Chromium's `ERR_…`) underneath. Below it sits the
 button that would fix it: *Open data folder* when the files are the problem,
-*Use http:// instead* for a refused `https://` address, *Try again*, and
-*Show log file* for a local server. The run's output is folded away under
+*Trust this certificate* under a certificate's card ("A remote's address
+and certificate"), *Use http:// instead* for an `https://` address of this
+network that does not speak HTTPS and never did here (`ERR_SSL_PROTOCOL_ERROR`,
+`ERR_SSL_VERSION_OR_CIPHER_MISMATCH`; one with a pin, one seen over https
+before, or a public host gets the suspicious wording and *Try again* only),
+*Use https://…* for an `http://` address that sent the window to https://
+on its own host (the content view's `will-redirect` guard cancels it and
+records it, `sentToHttps`: HSTS, which keeps the port, offers the name's
+own `https://<host>`; a server's redirect, Synology's 5000 to 5001, offers
+the address it redirected to), *Try again*, and *Show log file* for a local server. Both
+address buttons move the server's links through `moveServer`. The run's output is folded away under
 *Server output*. `lib/startup.js` does the matching: a sidecar that died
 during startup from the lines it printed, a URL that would not load from
 Chromium's error. Anything else falls back to the plain message. A data
@@ -1345,11 +1476,16 @@ the Mac App Store build's is in its container,
 
 - `servers.json` — the registry: server list (a local server with its
   admin credentials, last `port`, and `zoteroHost` while it holds a Zotero
-  link that is not detached, "The sync panel"), `lastOpened`,
-  `windowBounds`,
+  link that is not detached, "The sync panel"; a remote with `httpsSeen`
+  once it loaded over https), `lastOpened`,
+  `windowBounds`, `pins` (the certificates trusted by their fingerprint,
+  by origin: `{ sha256, subject, issuer, validFrom, validTo, pinnedAt }`),
+  `moved` (the addresses a server's links moved from: `{ to, at, kind }`,
+  "A remote's address and certificate"),
   and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
   and `openAtLogin` (the tray, above), `folderHost` (the local server that
-  keeps the synced vaults of remote servers), the dev-mode
+  keeps the synced vaults of remote servers), `plainAccepted` (the origins
+  a token may go to over plain http without a question), the dev-mode
   `pythonPath`/`backendDir`/`staticDir` overrides, which a packaged build
   ignores). Local admin credentials are stored in plaintext here — same
   trust level as the SQLite files next to it; acceptable for a per-OS-user
@@ -1382,6 +1518,10 @@ failure midway rolls back the copies and leaves the registry untouched. The
 new folder may not be inside the current one or contain it. Removing a
 server offers *keep files* / *delete everything*; deletion is guarded to
 directories under the default or the configured root only.
+
+Anything that can write `servers.json` (the same OS user, a local agent)
+can already read every token in the local servers' `users.db`: the pins
+and `plainAccepted` add no new class of exposure ([docs/dev/https.md](../../docs/dev/https.md)).
 
 `GAMMA_SHELL_USER_DATA=<dir>` relocates all of it (the tests use a temp
 profile); `GAMMA_SHELL_DOWNLOAD_DIR=<dir>` saves downloads there without the
@@ -1427,8 +1567,17 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   well.
 - `lib/registry.js` — `servers.json` load/save, add/rename/remove,
   last-opened, settings, window bounds, data-dir size, the local servers
-  started at launch (`launchHosts`); no Electron, unit tested by
-  `test/registry.test.js`.
+  started at launch (`launchHosts`), a typed address's scheme, the
+  addresses moved from (`moved`, `currentOrigin`), the pins and the plain
+  http yes; no Electron, unit tested by `test/registry.test.js`.
+- `lib/certs.js` — a certificate trusted by its fingerprint: the digest,
+  the verify proc's answer, a pin's verdict, what the card may offer, the
+  Gamma Cloud's domain ("A remote's address and certificate"); no
+  Electron, unit tested by `test/certs.test.js` (with `test/nas.pem` and
+  `test/nas-renewed.pem`, public certificates without their keys).
+- `lib/hostScope.js` — where a host is by its name alone, the server's
+  table (`backend/gamma/host_scope.py`); `test/hostScope.test.js` reads
+  the cases both share, `backend/tests/data/host_scope_cases.json`.
 - `lib/sidecar.js` — local server lifecycle: the port (`pickPort`, "A local
   server's address"; `test/sidecar.test.js`), spawn, health poll
   (`/api/health`, 60 s budget for frozen cold starts), the running server
@@ -1442,7 +1591,8 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   log (the file is appended to across runs) and a rule table turning the
   server's last words into one sentence, the matched line, and the `action`
   the launcher offers as a button; also the wording for a URL that would not
-  load. No Electron, unit tested by `test/startup.test.js`.
+  load, by what the shell knows of its server, and a certificate's card.
+  No Electron, unit tested by `test/startup.test.js`.
 - `lib/updater.js` — the electron-updater wrapper described above.
 - `lib/shellSecurity.js` — which page in which view the `gammaShell` bridge
   and the privileged IPC handlers trust: the bundled bar and launcher in
@@ -1612,5 +1762,10 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   navigate only to its own bundled page. `node test/security.e2e.js` verifies
   this boundary in real Electron against a synthetic remote server and a
   throwaway profile; it starts no Gamma backend.
+- A token goes only to the address it was made for: the shell follows no
+  redirect on its own calls (`serverApi`), takes every origin it mints for
+  or sends from `remoteOf`, and moves an address only with its links
+  ("A remote's address and certificate"). What a server or a certificate
+  says of itself is shown as text, never markup.
 - The updater never installs without the user's click (the pill / button /
   dialog); automatic work is limited to checking and downloading.

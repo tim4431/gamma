@@ -33,9 +33,11 @@ as host:port and never holds its sign-in.
 
 import base64
 import dataclasses
+import hashlib
 import http.client
 import ipaddress
 import socket
+import ssl
 import sys
 import time
 import urllib.error
@@ -444,7 +446,66 @@ class _HTTPConnection(_Connection, http.client.HTTPConnection):
 
 
 class _HTTPSConnection(_Connection, http.client.HTTPSConnection):
-    pass
+    """With ``cert_pin`` (gamma/tls_trust.py), its context is the pinned
+    path's, which verifies nothing: the leaf's SHA-256 must be the pin.
+    Another leaf (or none) closes that connection and connects again with
+    ``verified``, the handler's verifying context; failing that too it is
+    ``tls_trust.CertificateChanged``. http.client connects inside
+    ``send``, before any request byte, so no Authorization leaves on a
+    connection the check refused. Unpinned with ``peek``, a certificate
+    that does not verify is looked at through one more handshake (no
+    request sent) and described on the error (``seen``, and
+    ``chain_length``, the certificates the server sent, where Python
+    tells), for the shell's offer to trust it. Each connection goes
+    through the same ``dial``, a tunnel through a proxy included."""
+
+    def __init__(self, *args, cert_pin: str = "", verified=None, peek: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cert_pin, self._verified, self._peek = cert_pin, verified, peek
+
+    def connect(self):
+        from . import tls_trust  # local: it imports config and db
+
+        try:
+            super().connect()
+        except ssl.SSLCertVerificationError as e:
+            if self._peek:
+                self._peeked(e)
+            raise
+        if not self._cert_pin:
+            return
+        der = self.sock.getpeercert(binary_form=True)
+        if der and hashlib.sha256(der).hexdigest() == self._cert_pin:
+            return
+        self.sock.close()
+        self.sock, self._context = None, self._verified
+        origin = tls_trust.origin_of(self.host, self.port)
+        try:
+            super().connect()
+        except ssl.SSLCertVerificationError as e:
+            raise tls_trust.CertificateChanged(origin, tls_trust.describe(der) if der else None) from e
+        tls_trust.log_replaced(origin)
+
+    def _peeked(self, error) -> None:
+        from . import tls_trust
+
+        try:
+            sock = tls_trust.pin_context().wrap_socket(
+                self._create_connection((self.host, self.port), self.timeout, self.source_address),
+                server_hostname=self.host)
+        except Exception:  # noqa: BLE001 — what the peek cannot see, the error goes without
+            return
+        try:
+            der = sock.getpeercert(binary_form=True)
+            if der:
+                error.seen = tls_trust.describe(der)
+            chain = getattr(sock, "get_unverified_chain", None)
+            if chain is not None:
+                error.chain_length = len(chain() or ())
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            sock.close()
 
 
 class _Routed:
@@ -500,30 +561,48 @@ class RoutedHTTPSHandler(_Routed, urllib.request.HTTPSHandler):
     """Its TLS context, unless one is given, is made at its first https
     request rather than as it is built: an opener built at import
     (zotero_web's, sync_engine's) then loads the CAs app.py's certifi
-    fallback names."""
+    fallback names, and verifies with the system's trust store once
+    ``install`` put it in place. ``cert_pins``: a pinned origin's
+    certificate is taken by its digest (gamma/tls_trust.py, the desktop
+    app's server only); net_guard's fetches pass False."""
 
-    def __init__(self, *args, context=None, **kwargs):
+    def __init__(self, *args, context=None, cert_pins: bool = True, **kwargs):
         super().__init__(*args, context=_NO_CONTEXT if context is None else context, **kwargs)
+        self.cert_pins = cert_pins
 
     def https_open(self, req):
+        from . import tls_trust  # local: it imports config and db
+
         if self._context is _NO_CONTEXT:
             self._context = http.client._create_https_context(http.client.HTTPSConnection._http_vsn)
-        return self._routed_open(_HTTPSConnection, req, context=self._context)
+        url = urllib.parse.urlsplit(req.full_url)
+        cert_pin = tls_trust.pin_for(url.hostname or "", url.port) if self.cert_pins else ""
+        if cert_pin:
+            return self._routed_open(_HTTPSConnection, req, context=tls_trust.pin_context(), cert_pin=cert_pin,
+                                     verified=self._context)
+        return self._routed_open(_HTTPSConnection, req, context=self._context,
+                                 peek=self.cert_pins and tls_trust.enabled())
 
 
-def build_opener(*handlers, policy: Policy | None = None, direct=None, pin=None):
+def build_opener(*handlers, policy: Policy | None = None, direct=None, pin=None, cert_pins: bool = True):
     """urllib's ``build_opener(*handlers)`` with the routed handlers in
     place of its own and of its environment proxies."""
     return urllib.request.build_opener(
         urllib.request.ProxyHandler({}), RoutedHTTPHandler(policy=policy, direct=direct, pin=pin),
-        RoutedHTTPSHandler(policy=policy, direct=direct, pin=pin), *handlers)
+        RoutedHTTPSHandler(policy=policy, direct=direct, pin=pin, cert_pins=cert_pins), *handlers)
 
 
 def install() -> None:
-    """Route every bare ``urlopen`` of this process: they read urllib's
-    global opener when they run, ``from urllib.request import urlopen``
-    ones too."""
+    """Put this process's outbound connections in place: the system trust
+    store (``tls_trust.use_system_store``), the routed global opener, which
+    every bare ``urlopen`` reads when it runs (``from urllib.request import
+    urlopen`` ones too), and gamma_sync's opener (``gamma_sync.make_opener``,
+    the redirect-refusing one every Gamma-to-Gamma request takes)."""
+    from . import gamma_sync, tls_trust  # local: tls_trust imports config and db; gamma_sync imports nothing of gamma
+
+    tls_trust.use_system_store()
     urllib.request.install_opener(build_opener())
+    gamma_sync.make_opener = build_opener
 
 
 # --- other clients -------------------------------------------------------------------
@@ -626,14 +705,15 @@ def refused_network(error) -> str:
     (``unsupported_country_region_territory``), or a 403 of Cloudflare's
     own (``cf-mitigated``, or a page where the service behind it answers
     JSON). Anything but an HTTPError is "": an unreachable service is not
-    refused."""
+    refused. Cloudflare's part is gamma_sync.blocked's, the one rule for a
+    refusal by something in front of a service."""
+    from . import gamma_sync  # local: as install's
+
     if not isinstance(error, urllib.error.HTTPError) or error.code != 403:
         return ""
-    headers = {k.lower(): v for k, v in (error.headers or {}).items()}
-    body = error_body(error).decode("utf-8", "replace").lstrip()
-    if "unsupported_country" in body:
+    body = error_body(error)
+    if b"unsupported_country" in body:
         return "it doesn't serve the country or region this server connects from"
-    cloudflare = "cf-ray" in headers or "cloudflare" in headers.get("server", "").lower()
-    if headers.get("cf-mitigated") or (cloudflare and not body.startswith(("{", "["))):
+    if gamma_sync.blocked(403, error.headers, body, own=lambda b: b.lstrip().startswith((b"{", b"["))) == "cloudflare":
         return "Cloudflare in front of it refused this server's connection"
     return ""

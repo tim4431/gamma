@@ -200,6 +200,22 @@ All state is SQLite + files on disk under a data directory (env
     account: the address, the `computer` token (sealed like a vault's) and
     its id, the account there and the channel's status; additive
     ([computers.md](computers.md#the-host));
+  - `server_addresses` — on the desktop app's own server, the other
+    servers' addresses this computer's links moved from or to
+    (`gamma/remote_servers.py`): the `origin` (`scheme://host[:port]`,
+    lowercase), the origin this computer's id for that server is computed
+    from (`id_origin`: the first address it was shown at, kept across
+    moves, or a generation of its own for a new channel at an address a
+    server left) and `moved_to` (`''` for a current address, else the
+    address its links went to). A server never moved has no row; additive
+    ([computers.md](computers.md#where-the-credential-is-kept));
+  - `tls_pins` — on the desktop app's own server, never a hosted one, the
+    certificates the shell trusts by their fingerprint, a row per https
+    origin: the SHA-256 of the leaf's DER (64 lowercase hex), its subject,
+    issuer and validity as shown when it was trusted, and when. The shell
+    keeps the list and replaces it whole (`PUT /api/remote-servers/pins`,
+    `tls_trust.replace_pins`); kept across restarts, so a round before the
+    shell's push has the last list; additive ([https.md](https.md));
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced
