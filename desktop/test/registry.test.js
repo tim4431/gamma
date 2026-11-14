@@ -2,8 +2,10 @@
 // main.js startBackgroundHosts): the clones' hosts, the folder host and the
 // servers that hold a Zotero link that is not detached (setZoteroHost, as
 // refreshKeeping last read their links), or every local server in
-// background mode; and an old profile's registry file, renamed once at init.
-// `npm test` in desktop/.
+// background mode; an old profile's registry file, renamed once at init;
+// and the remotes' addresses and certificates: a typed address's scheme,
+// the addresses the links moved from, a remote seen over https, its pin
+// and its plain http yes. `npm test` in desktop/.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -82,6 +84,106 @@ test('a removed server no longer starts at launch', () => {
   registry.remove(s.clone.id);
   assert.deepEqual(names(registry.launchHosts()), ['Folder host']);
   assert.deepEqual(registry.load().mirrors, [], 'the removed host\'s clone map goes with it');
+});
+
+test('a typed address gets https:// for the TLS ports and a public host, http:// for this computer and the local network', () => {
+  const cases = {
+    'nas.example.com:5001': 'https://nas.example.com:5001',
+    'nas.example.com': 'https://nas.example.com',
+    'nas.example.com:9001': 'https://nas.example.com:9001',
+    'mynas.synology.me:5000': 'https://mynas.synology.me:5000',
+    'nas:5000': 'http://nas:5000',
+    'nas.lan': 'http://nas.lan',
+    'nas.home:9001': 'https://nas.home:9001', // .home is no name of this network's in the shared table
+    '192.168.1.5:9001': 'http://192.168.1.5:9001',
+    '192.168.1.5:5001': 'https://192.168.1.5:5001',
+    '203.0.113.5:9001': 'https://203.0.113.5:9001',
+    'localhost:9001': 'http://localhost:9001',
+    '[fd00::5]:9001': 'http://[fd00::5]:9001',
+    'nas.local:8443/gamma': 'https://nas.local:8443/gamma',
+    'http://nas.example.com': 'http://nas.example.com',
+  };
+  for (const [typed, url] of Object.entries(cases)) assert.equal(registry.withScheme(typed), url, typed);
+});
+
+test('an address the links moved from is recorded, followed to the current one, and never round a cycle', () => {
+  const s = servers();
+  const { srv, before } = registry.setRemoteUrl(s.remote.id, 'https://nas.lan:5001');
+  assert.deepEqual([srv.url, before], ['https://nas.lan:5001', 'http://nas.lan:9001']);
+  const moved = registry.load().moved['http://nas.lan:9001'];
+  assert.deepEqual([moved.to, moved.kind], ['https://nas.lan:5001', 'upgrade']);
+  assert.equal(registry.load().mirrors[0].remoteUrl, 'https://nas.lan:5001', 'its clones follow');
+  assert.equal(registry.currentOrigin('http://nas.lan:9001'), 'https://nas.lan:5001');
+  assert.equal(registry.movedAway('http://nas.lan:9001'), true);
+  assert.equal(registry.movedAway('https://nas.lan:5001'), false);
+  registry.setRemoteUrl(s.remote.id, 'https://nas.example.com');
+  assert.equal(registry.currentOrigin('http://nas.lan:9001'), 'https://nas.example.com', 'a chain followed');
+  assert.equal(registry.load().moved['https://nas.lan:5001'].kind, 'other');
+  // back where it was: that address is current again, and no step goes round
+  registry.setRemoteUrl(s.remote.id, 'http://nas.lan:9001');
+  assert.equal(registry.movedAway('http://nas.lan:9001'), false);
+  assert.equal(registry.currentOrigin('https://nas.example.com'), 'http://nas.lan:9001');
+  assert.equal(registry.load().moved['https://nas.example.com'].kind, 'downgrade');
+  const state = { moved: { a: { to: 'b' }, b: { to: 'a' } } };
+  assert.equal(registry.currentOrigin('a', state), 'b', 'a cycle stops');
+  assert.equal(registry.currentOrigin('unknown'), 'unknown');
+});
+
+test('an address the links moved from that is added again is in use: no longer moved away', () => {
+  const s = servers();
+  registry.setRemoteUrl(s.remote.id, 'https://nas.lan:5001');
+  registry.remove(s.remote.id);
+  assert.equal(registry.movedAway('http://nas.lan:9001'), true, 'removing the server leaves the record');
+  registry.addRemote('Another', 'http://nas.lan:9001');
+  assert.equal(registry.movedAway('http://nas.lan:9001'), false);
+  assert.equal(registry.currentOrigin('http://nas.lan:9001'), 'http://nas.lan:9001');
+});
+
+test('a pin moves with its address on the same host name and goes with a move to another one', () => {
+  const s = servers();
+  const cert = { sha256: 'a'.repeat(64), subject: 'CN=nas', issuer: 'CN=nas', validFrom: '', validTo: '' };
+  assert.equal(registry.setRemoteUrl(s.remote.id, 'https://nas.lan:5001').pins, false, 'no pin, nothing changed');
+  registry.setPin('https://nas.lan:5001', cert);
+  assert.equal(registry.setRemoteUrl(s.remote.id, 'https://nas.lan').pins, true);
+  assert.deepEqual(Object.keys(registry.getPins()), ['https://nas.lan'], 'carried to the new port');
+  assert.equal(registry.getPins()['https://nas.lan'].sha256, cert.sha256);
+  assert.equal(registry.setRemoteUrl(s.remote.id, 'https://192.168.1.11').pins, true);
+  assert.deepEqual(registry.getPins(), {}, 'another host name: dropped');
+  // a pin the move made for the new address already is kept, the old one dropped
+  registry.setPin('https://192.168.1.11', cert);
+  registry.setPin('https://192.168.1.11:5001', { ...cert, sha256: 'b'.repeat(64) });
+  registry.setRemoteUrl(s.remote.id, 'https://192.168.1.11:5001');
+  assert.deepEqual(Object.entries(registry.getPins()).map(([o, p]) => [o, p.sha256]), [['https://192.168.1.11:5001', 'b'.repeat(64)]]);
+});
+
+test('a remote seen over https is recorded until its host name changes; its pin goes with it, its plain http yes is per origin', () => {
+  const s = servers();
+  registry.markHttpsSeen(s.remote.id);
+  assert.equal(registry.get(s.remote.id).httpsSeen, undefined, 'an http:// address is never seen over https');
+  registry.setRemoteUrl(s.remote.id, 'https://nas.lan:5001');
+  registry.markHttpsSeen(s.remote.id);
+  assert.equal(registry.get(s.remote.id).httpsSeen, true);
+  registry.setRemoteUrl(s.remote.id, 'https://nas.lan');
+  assert.equal(registry.get(s.remote.id).httpsSeen, true, 'the same host name');
+  registry.setRemoteUrl(s.remote.id, 'https://nas.example.com');
+  assert.equal(registry.get(s.remote.id).httpsSeen, undefined, 'another host name');
+
+  const cert = { sha256: 'a'.repeat(64), subject: 'CN=nas', issuer: 'CN=nas', validFrom: '2026-01-01T00:00:00.000Z', validTo: '2027-01-01T00:00:00.000Z' };
+  const kept = registry.setPin('https://nas.example.com', cert);
+  assert.deepEqual({ ...kept, pinnedAt: '' }, { ...cert, pinnedAt: '' });
+  assert.ok(kept.pinnedAt);
+  assert.deepEqual(Object.keys(registry.getPins()), ['https://nas.example.com']);
+  assert.equal(registry.dropPin('https://nas.example.com'), true);
+  assert.equal(registry.dropPin('https://nas.example.com'), false);
+  registry.setPin('https://nas.example.com', cert);
+  registry.remove(s.remote.id);
+  assert.deepEqual(registry.getPins(), {}, 'removed with its server');
+
+  registry.setPlainAccepted('http://nas.lan:9001', true);
+  assert.equal(registry.plainAccepted('http://nas.lan:9001'), true);
+  assert.equal(registry.plainAccepted('http://nas.lan:9002'), false);
+  registry.setPlainAccepted('http://nas.lan:9001', false);
+  assert.equal(registry.plainAccepted('http://nas.lan:9001'), false);
 });
 
 // A profile from before servers had that name keeps its list: init() copies

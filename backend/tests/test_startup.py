@@ -196,8 +196,11 @@ def test_https_is_verified_with_certifi_when_openssl_finds_no_cas(monkeypatch):
     assert os.environ["SSL_CERT_FILE"] == certifi.where()
 
     # OpenSSL takes the variable when a context loads its default CAs, as
-    # urllib's does on every HTTPS connection.
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    # urllib's does on every HTTPS connection where truststore is off. The
+    # plain class: truststore's (injected by the app) keeps no CA store.
+    from gamma import tls_trust
+
+    context = tls_trust._PLAIN_CONTEXT(ssl.PROTOCOL_TLS_CLIENT)
     context.set_default_verify_paths()
     assert context.cert_store_stats()["x509_ca"] > 100
 

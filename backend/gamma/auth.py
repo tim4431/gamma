@@ -29,7 +29,7 @@ from anyio.lowlevel import RunVar
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import guests, publisher_sessions
+from . import guests, host_scope, publisher_sessions
 from .blocks_store import (folder_subtree_ids, page_ancestors, page_descendants, page_in_folder, page_root_id,
                            pages_in_folder)
 from .db import account_names, connect_pages_db, connect_users_db, parse_stamp, share_token_workspace
@@ -68,6 +68,17 @@ def _is_https(request: Request) -> bool:
     return request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
 
 
+def _hsts(request: Request) -> bool:
+    """Whether a response sends HSTS: over https (a forwarded scheme
+    believed from anyone, since HSTS over plain http is ignored) to a
+    public DNS name (host_scope ``name``: not an IP address, a single
+    label, localhost or a local suffix). HSTS covers every port of the
+    name, and a NAS's IP address or ``.lan`` name often serves plain http
+    beside it. Never ``includeSubDomains``, never ``max-age=0``: that
+    would cancel the HSTS a TLS proxy in front adds (docs/dev/https.md)."""
+    return _is_https(request) and host_scope.literal(request.url.hostname or "") == host_scope.NAME
+
+
 def _apply_security_headers(request: Request, response) -> None:
     """Baseline hardening headers on every response. Deliberately conservative:
     a resource-restricting CSP would break the SPA, so we only set
@@ -77,8 +88,8 @@ def _apply_security_headers(request: Request, response) -> None:
     h.setdefault("X-Frame-Options", "SAMEORIGIN")
     h.setdefault("Referrer-Policy", "no-referrer")
     h.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
-    if _is_https(request):
-        h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    if _hsts(request):
+        h.setdefault("Strict-Transport-Security", "max-age=31536000")
     _apply_share_cors(request, response)
 
 

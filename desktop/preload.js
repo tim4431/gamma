@@ -35,6 +35,11 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     addRemote: (name, url) => ipcRenderer.invoke('shell:add-remote', name, url),
     rename: (id, name) => ipcRenderer.invoke('shell:rename', id, name),
     setUrl: (id, url) => ipcRenderer.invoke('shell:set-url', id, url),
+    // The launcher's certificate card: the record it showed (`nonce`) and the
+    // fingerprint it showed; main pins only its own record when both match.
+    trustCert: (id, nonce, sha256) => ipcRenderer.invoke('shell:trust-cert', id, nonce, sha256),
+    forgetCert: (id) => ipcRenderer.invoke('shell:forget-cert', id),
+    forgetPlain: (id) => ipcRenderer.invoke('shell:forget-plain', id),
     remove: (id, opts) => ipcRenderer.invoke('shell:remove', id, opts),
     open: (id) => ipcRenderer.invoke('shell:open', id),
     openWorkspace: (id) => ipcRenderer.invoke('shell:open-workspace', id),

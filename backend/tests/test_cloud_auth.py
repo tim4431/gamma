@@ -1174,6 +1174,9 @@ def test_every_outbound_call_identifies_as_gamma(monkeypatch, tmp_path):
         return _Resp(b'{"issuer": "https://acct.example", "sub": "x", "username": "x"}')
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    # the mirror client goes through gamma_sync's redirect-refusing opener
+    from gamma import gamma_sync
+    monkeypatch.setattr(gamma_sync, "opener", lambda: type("O", (), {"open": staticmethod(fake_urlopen)})())
     cloud_auth._discovery_cache.clear()
     try:
         cloud_auth.discovery("https://acct.example")  # the body is not a full discovery document

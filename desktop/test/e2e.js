@@ -21,6 +21,7 @@ const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const os = require('os');
 const path = require('path');
 const net = require('net');
@@ -117,6 +118,39 @@ function minimalPdf(text, comment) {
   out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(out, 'latin1');
 }
+
+// A self-signed certificate for 127.0.0.1 and localhost, `{ cert, key }` in
+// PEM, made by the backend's Python with `cryptography` (GAMMA_E2E_PYTHON,
+// else backend/venv). The script imports nothing of Gamma's, so no data
+// directory is touched; it is written beside the profile's other files.
+const CERT_SCRIPT = `
+import datetime, ipaddress, json
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+key = ec.generate_private_key(ec.SECP256R1())
+name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Gamma e2e NAS")])
+now = datetime.datetime.now(datetime.timezone.utc)
+cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+        .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=30))
+        .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1")), x509.DNSName("localhost")]), critical=False)
+        .sign(key, hashes.SHA256()))
+print(json.dumps({"cert": cert.public_bytes(serialization.Encoding.PEM).decode(),
+                  "key": key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()}))
+`;
+function selfSigned(profile) {
+  const python = process.env.GAMMA_E2E_PYTHON
+    || path.join(ROOT, '..', 'backend', 'venv', process.platform === 'win32' ? path.join('Scripts', 'python.exe') : path.join('bin', 'python'));
+  const script = path.join(profile, 'selfsigned.py');
+  fs.writeFileSync(script, CERT_SCRIPT);
+  return JSON.parse(execFileSync(python, ['-I', script], { encoding: 'utf8' }));
+}
+
+// A certificate's fingerprint as the pin keeps it, and as the card groups it.
+const digestOf = (pem) => new crypto.X509Certificate(pem).fingerprint256.replace(/:/g, '').toLowerCase();
+const grouped = (hex) => hex.toUpperCase().match(/.{2}/g).join(':');
 
 // A port nothing listens on (bind, read, release) — for the "server down" case.
 function closedPort() {
@@ -883,6 +917,75 @@ async function main() {
       return cur.url;
     });
 
+    await step('a self-signed server is trusted by its fingerprint: the card shows it, only the card\'s record is pinned, a changed one is asked about, a forgotten one is no longer answered for', async () => {
+      const pairs = [selfSigned(profile), selfSigned(profile)];
+      const port = await closedPort();
+      const origin = `https://127.0.0.1:${port}`;
+      let nas = null;
+      const serve = (pair) => new Promise((resolve) => {
+        const s = https.createServer({ cert: pair.cert, key: pair.key }, (_req, res) => {
+          res.writeHead(200, { 'Content-Type': 'text/html', Connection: 'close' });
+          res.end('<!doctype html><title>Self-signed NAS</title><p>A NAS with a certificate of its own</p>');
+        });
+        s.listen(port, '127.0.0.1', () => resolve(s));
+      });
+      const stop = () => new Promise((resolve) => {
+        if (!nas) return resolve();
+        nas.closeAllConnections();
+        nas.close(() => resolve());
+        nas = null;
+      });
+      const title = () => content.textContent('#failTitle').catch(() => '');
+      // From the launcher, as a person opens it: a refusal comes back as its card.
+      const openFromLauncher = async () => {
+        await hook(app, (s) => s.loadLauncher());
+        const card = content.locator('.card', { hasText: 'Self-signed' });
+        await card.waitFor({ timeout: 15_000 });
+        await card.locator('button', { hasText: 'Open' }).click();
+      };
+      nas = await serve(pairs[0]);
+      const id = await hook(app, (s, url) => s.registry.addRemote('Self-signed', url).id, origin);
+      try {
+        await openFromLauncher();
+        await waitFor(async () => (await title()) === '127.0.0.1\'s certificate is not from an authority this computer trusts.', 'the card', 30_000);
+        const shown = await content.textContent('#failCert');
+        assert(shown.includes(grouped(digestOf(pairs[0].cert))), 'the fingerprint Node computed: ' + shown);
+        // a click carrying another record's nonce pins nothing: the card comes back, saying why
+        assert.equal(await hook(app, (s, [i, sha]) => s.trustCert(i, 'stale', sha), [id, digestOf(pairs[0].cert)]), false);
+        await waitFor(async () => (await content.textContent('#failNote').catch(() => '')).includes('The certificate changed while you were looking at it.'),
+          'the card again', 15_000);
+        assert.deepEqual(await hook(app, (s) => s.registry.getPins()), {});
+        await content.locator('#failActs button', { hasText: 'Trust this certificate' }).click();
+        await waitFor(() => content.url().startsWith(origin), 'the page loads', 30_000);
+        assert.equal((await hook(app, (s) => s.registry.getPins()))[origin].sha256, digestOf(pairs[0].cert));
+
+        // the server's certificate renewed: changed, trusted again once asked
+        await stop();
+        nas = await serve(pairs[1]);
+        await openFromLauncher();
+        await waitFor(async () => (await title()) === 'The certificate of 127.0.0.1 changed.', 'the changed card', 30_000);
+        await hook(app, (s) => s.answers.push(0));
+        await content.locator('#failActs button', { hasText: 'Trust the new certificate' }).click();
+        await waitFor(() => content.url().startsWith(origin), 'the page loads with the new certificate', 30_000);
+        const asked = (await hook(app, (s) => s.asked.slice())).find((q) => q.startsWith('Trust the new certificate of 127.0.0.1?'));
+        assert(asked && asked.includes(grouped(digestOf(pairs[1].cert))), 'asked with the new fingerprint: ' + asked);
+
+        // forgotten: no pin, and the verify proc no longer answers for it (Chromium keeps
+        // what it accepted for the session: the card comes back at the next start)
+        await hook(app, (s, i) => s.forgetCert(i), id);
+        assert.deepEqual(await hook(app, (s) => s.registry.getPins()), {});
+        const answer = await hook(app, (s, pem) => new Promise((resolve) => s.verifyProc({ hostname: '127.0.0.1',
+          verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID', certificate: { data: pem } }, resolve)), pairs[1].cert);
+        assert.equal(answer, -3, 'Chromium\'s own refusal');
+        return `${origin} ${digestOf(pairs[1].cert).slice(0, 12)}…`;
+      } finally {
+        await stop();
+        await hook(app, (s, i) => s.forgetCert(i).then(() => s.registry.remove(i)), id).catch(() => {});
+        // the window back on the remote the next step clones from
+        await hook(app, (s, i) => s.openServer(i), ids.remote).catch(() => {});
+      }
+    });
+
     await step('clone: the "clone" chip on a remote row makes the clone; the rows then cross-link', async () => {
       // On the remote (Alpha by URL — same server, so the session is there):
       // the personal workspace row carries the "clone" chip on hover. Named
@@ -1088,7 +1191,7 @@ async function main() {
       assert.equal((await hook(app, (s) => s.registry.load().mirrors)).length, mirrorsBefore, 'no clone was made');
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), ids.alpha, 'the host is remembered for launch');
       const tokens = await tokensOf();
-      assert.equal(tokens.length, before + 1, 'one token minted');
+      assert.equal(tokens.length, before + 1, `one token minted: ${JSON.stringify(tokens.map((t) => [t.name, t.scope]))}`);
       assert(tokens.some((t) => t.id === links[0].token_id && t.scope === 'read' && /Far lab/.test(t.name)), 'read scope, named after the folder');
       // The chooser shows it synced; the vault's "Remove the vault…" drops it and revokes the token; the files stay.
       const shown = await chooserRow(bar, 'Far lab');

@@ -526,7 +526,7 @@ test('the agent of a work folder of another server this computer is shown on: of
   fresh();
   registry.addRemote('NAS', 'http://nas.lan:9001');
   const s = server('Host');
-  const far = (agent) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', token_id: 't1', push: 'everything', work: true, mine: true, agent });
+  const far = (agent) => vaultLink({ workspace_id: 'nas-ws', remote_url: 'http://nas.lan:9001', plain: 'lan', token_id: 't1', push: 'everything', work: true, mine: true, agent });
   const codexOn = { name: 'codex', label: 'Codex', ready: true, problem: '', running: null, runs: 'never' };
   s.fake.vaults = [far(null)];
   s.fake.routes = (p, init) => {
@@ -2282,5 +2282,416 @@ test('a start that names a file or a folder never goes hidden into the tray, a l
   } finally {
     process.argv.pop();
     registry.setSettings({ background: false });
+  }
+});
+
+// ------------------------------------------------ addresses and certificates -----
+
+test('every token minted on another server is asked of the host first, every address sent comes from remoteOf, and the shell follows no redirect', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const fns = new Map(src.split(/\n(?=(?:async )?function \w+\()/).map((f) => [(/function (\w+)/.exec(f) || [])[1], f]));
+  const minting = [...fns].filter(([, f]) => /'\/api\/integrations\/tokens', \{\s*method: 'POST'/.test(f)).map(([name]) => name);
+  assert.deepEqual(minting.sort(), ['addFileVault', 'addFolderVault', 'changePush', 'keepOffline', 'makeRemoteWorkFolder', 'showComputer']);
+  for (const name of minting) {
+    const f = fns.get(name);
+    assert.ok(f.includes('beforeMint(') && f.indexOf('beforeMint(') < f.indexOf('\'/api/integrations/tokens\', {'), `${name} asks the host before it mints`);
+  }
+  // the other two are handed the origin by these
+  for (const name of ['keepOffline', 'addFolderVault', 'addFileVault', 'changePush', 'showComputerOf']) assert.match(fns.get(name), /remoteOf\(/, name);
+  assert.match(fns.get('serverApi'), /redirect: 'error'/);
+});
+
+test('a token for an address over plain http is asked of the host first: refused for the internet, asked once per origin of this network, every time for a link on the internet that exists', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', plain: 'lan', token_id: 'old' })];
+  let check = { origin: 'http://nas.lan:9001', scope: 'lan', plain: true, existing: false, unsure: false, refused: '', warning: 'Clear text.' };
+  computerRoutes(host, nas);
+  const routes = host.fake.routes;
+  host.fake.routes = (p, init) => {
+    if (p === '/api/remote-servers/check') return check;
+    if (p === '/api/folder-links/v1' && init.method === 'PATCH') return vaultLink({ ...host.fake.vaults[0], token_id: JSON.parse(init.body).token_id });
+    return routes(p, init);
+  };
+  electron.session.defaultSession.fetch = async (url, init = {}) => nas.fake.answer(new URL(url).pathname, init, new URL(url));
+  const minted = () => nas.fake.calls.filter((c) => c.path === '/api/integrations/tokens' && c.method === 'POST').length;
+  const push = () => shell.setPush(host.srv.id, 'v1', 'pdfs');
+  try {
+    await assert.rejects(push(), (e) => e.quiet === true && e.message === 'Nothing was sent to nas.lan over http://.');
+    assert.equal(shell.asked.at(-1), 'Connect to nas.lan without encryption? Clear text.');
+    assert.equal(minted(), 0, 'Cancel mints nothing');
+    assert.deepEqual(host.fake.calls.filter((c) => c.path === '/api/remote-servers/check').at(-1).body, { url: 'http://nas.lan:9001', vault: 'v1' }, 'the renewed vault named, as the route that takes the token counts it');
+
+    shell.answers.push(0);
+    await push();
+    assert.equal(minted(), 1);
+    assert.equal(registry.plainAccepted('http://nas.lan:9001'), true);
+    let asks = shell.asked.length;
+    await push();
+    assert.deepEqual([shell.asked.length, minted()], [asks, 2], 'asked once per origin');
+
+    // a new link to the internet over http: the host's refusal, nothing minted
+    check = { ...check, scope: 'far', refused: 'nas.lan is on the internet and this address is http://.' };
+    await assert.rejects(push(), /^Error: nas\.lan is on the internet and this address is http:\/\/\.$/);
+    assert.equal(minted(), 2);
+    // a link to the internet that exists: asked each time
+    check = { ...check, refused: '', existing: true, warning: 'In clear.' };
+    shell.answers.push(0, 0);
+    await push();
+    await push();
+    assert.deepEqual(shell.asked.slice(-2), ['Connect to nas.lan without encryption? In clear.', 'Connect to nas.lan without encryption? In clear.']);
+    // a link of this network made before: nothing asked, the origin taken as agreed
+    registry.setPlainAccepted('http://nas.lan:9001', false);
+    check = { ...check, scope: 'lan', existing: true, unsure: true };
+    asks = shell.asked.length;
+    await push();
+    assert.equal(shell.asked.length, asks);
+    assert.equal(registry.plainAccepted('http://nas.lan:9001'), true);
+    // https: nothing asked
+    check = { ...check, plain: false, existing: false };
+    registry.setPlainAccepted('http://nas.lan:9001', false);
+    await push();
+    assert.equal(shell.asked.length, asks);
+  } finally {
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+// The host's move route (POST /api/remote-servers/move): its dry run `plan`,
+// its `answer` to the move, and its `calls`; the window's session records
+// what is revoked at the new address (`revoked`).
+function moveRoutes(host, plan) {
+  const state = { plan, answer: { moved: plan.moved, revoke: [] }, revoked: [] };
+  const routes = host.fake.routes;
+  host.fake.routes = (p, init) => {
+    if (p !== '/api/remote-servers/move') return routes(p, init);
+    return JSON.parse(init.body).dry_run ? state.plan : state.answer;
+  };
+  electron.session.defaultSession.fetch = async (url, init = {}) => {
+    state.revoked.push(`${init.method} ${url} ${(init.headers || {})['X-Gamma-Workspace']} ${init.redirect}`);
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  state.calls = () => host.fake.calls.filter((c) => c.path === '/api/remote-servers/move');
+  return state;
+}
+
+test('a server\'s address changes with its links: a dry run first, asked when it moves any, then moved on the host with the shell\'s word, the tokens it replaced revoked there; a load of the old address goes to the new one', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = registry.addRemote('NAS', 'http://nas.lan:9001');
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  const moves = moveRoutes(host, { kind: 'upgrade', plain: false, moved: { vaults: 0, computers: 0, mirrors: 0 } });
+  try {
+    // no links: the address changes, nothing asked, nothing sent anywhere
+    await shell.moveServer(nas.id, 'https://nas.lan:5001');
+    const [dry] = moves.calls();
+    assert.deepEqual(dry.body, { from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', dry_run: true });
+    assert.equal(dry.headers['X-Gamma-Shell'], shell.shellSecret, 'the shell\'s word');
+    assert.equal(moves.calls().length, 1);
+    assert.deepEqual(shell.asked, []);
+    assert.equal(registry.get(nas.id).url, 'https://nas.lan:5001');
+    assert.equal(shell.rerouted('http://nas.lan:9001/?ws=w1&page=p1#b'), 'https://nas.lan:5001/?ws=w1&page=p1#b');
+    assert.equal(shell.rerouted('https://nas.lan:5001/?ws=w1'), null);
+
+    // links to move, over plain http: asked, Cancel changes nothing
+    moves.plan = { kind: 'downgrade', plain: true, moved: { vaults: 2, computers: 1, mirrors: 1 } };
+    assert.equal(await shell.moveServer(nas.id, 'http://192.168.1.5:9001'), null);
+    assert.equal(shell.asked.at(-1), 'Move the links of https://nas.lan:5001 to http://192.168.1.5:9001? Gamma will send the tokens of 2 synced vaults, this computer and 1 offline copy to http://192.168.1.5:9001, and use http://192.168.1.5:9001 from now on. Only continue if http://192.168.1.5:9001 is the same server. http://192.168.1.5:9001 is http://: the tokens will travel without encryption, and someone on your network could read them.');
+    assert.equal(moves.calls().length, 2, 'only the dry run');
+    assert.equal(registry.get(nas.id).url, 'https://nas.lan:5001');
+
+    // agreed: moved, plain http allowed, the replaced link's token revoked at the new address
+    moves.answer = { moved: moves.plan.moved, revoke: [{ workspace_id: 'team', token_id: 't9' }] };
+    shell.answers.push(0);
+    await shell.moveServer(nas.id, 'http://192.168.1.5:9001');
+    assert.deepEqual(moves.calls().at(-1).body, { from: 'https://nas.lan:5001', to: 'http://192.168.1.5:9001', plain_ok: true });
+    assert.deepEqual(moves.revoked, ['DELETE http://192.168.1.5:9001/api/integrations/tokens/t9 team error']);
+    assert.equal(registry.get(nas.id).url, 'http://192.168.1.5:9001');
+    assert.equal(shell.notice(), 'https://nas.lan:5001 is now http://192.168.1.5:9001: 2 synced vaults, this computer and 1 offline copy follow it.');
+
+    // refused there: the host's words, nothing changed here
+    moves.answer = { failWith: 409, body: { detail: 'https://nas.example.com refused the token of the synced vault “main”.' } };
+    shell.answers.push(0);
+    await assert.rejects(shell.moveServer(nas.id, 'https://nas.example.com'), /refused the token of the synced vault “main”/);
+    assert.equal(registry.get(nas.id).url, 'http://192.168.1.5:9001');
+    const calls = moves.calls().length;
+    assert.equal((await shell.moveServer(nas.id, 'http://192.168.1.5:9001/')).url, 'http://192.168.1.5:9001');
+    assert.equal(moves.calls().length, calls, 'the same address asks nothing of anyone');
+  } finally {
+    sidecar.start = realStart;
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('a redirect to the same server over https moves its links by itself, once; a move that fails leaves the row offering it', async () => {
+  fresh();
+  shell.upgrades.clear();
+  const host = server('Host');
+  const nas = registry.addRemote('NAS', 'http://nas.lan:9001');
+  const redirected = (url, to) => ({ last_error: `${url} now redirects to ${to}`, error_kind: 'redirected', move_to: to, upgrade: true });
+  host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', status: redirected('http://nas.lan:9001', 'https://nas.lan:5001') })];
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  const moves = moveRoutes(host, { kind: 'upgrade', plain: false, moved: { vaults: 1, computers: 0, mirrors: 0 } });
+  try {
+    await shell.refreshKeeping();
+    assert.deepEqual([shell.keeping().items[0].text.replace(/ · .*$/, ''), shell.keeping().items[0].fix], ['Moved to https', undefined]);
+    await until(() => registry.get(nas.id).url === 'https://nas.lan:5001', 'moved by itself');
+    assert.deepEqual(shell.asked, [], 'nobody asked');
+    assert.deepEqual(moves.calls().map((c) => c.body), [{ from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', dry_run: true },
+      { from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', plain_ok: false }]);
+    await until(() => shell.notice() === 'http://nas.lan:9001 is now https://nas.lan:5001: 1 synced vault follows it.', 'said');
+
+    // another server's redirect whose move the host refuses: its row offers it, asked then
+    const other = registry.addRemote('Lab', 'http://lab.lan');
+    host.fake.vaults = [vaultLink({ id: 'v2', workspace_id: 'lab', remote_url: 'http://lab.lan', status: redirected('http://lab.lan', 'https://lab.lan') })];
+    moves.answer = { failWith: 502, body: { detail: 'https://lab.lan is not trusted' } };
+    await shell.refreshKeeping();
+    await until(() => shell.upgrades.get('http://lab.lan') === 'failed', 'the move failed');
+    await shell.refreshKeeping();
+    const [item] = shell.keeping().items;
+    assert.deepEqual(item.fix, { action: 'use-https', button: 'Use https://lab.lan' });
+    assert.equal(registry.get(other.id).url, 'http://lab.lan');
+    assert.equal(moves.calls().filter((c) => c.body.from === 'http://lab.lan' && !c.body.dry_run).length, 1, 'tried once a session');
+    moves.answer = { moved: { vaults: 1 }, revoke: [] };
+    shell.answers.push(0);
+    await shell.keepingAction('vault', host.srv.id, 'v2', 'use-https');
+    assert.match(shell.asked.at(-1), /^Move the links of http:\/\/lab\.lan to https:\/\/lab\.lan\?/);
+    assert.equal(registry.get(other.id).url, 'https://lab.lan');
+  } finally {
+    sidecar.start = realStart;
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('a certificate is trusted only as the launcher\'s card showed it: its record taken once, a stale card shown again, a new one asked first, and the local servers handed the pins', async () => {
+  fresh();
+  const host = server('Host');
+  const pushed = [];
+  host.fake.routes = (p, init) => (p === '/api/remote-servers/pins' && init.method === 'PUT' ? (pushed.push(JSON.parse(init.body).pins), { pins: [] }) : null);
+  const nas = registry.addRemote('NAS', 'https://nas.lan:5001');
+  const view = windowOn(host.fake);
+  shell.pretendShown(null, view, { ...appWindow, setTitle: noop });
+  const served = (file) => ({ data: fs.readFileSync(path.join(__dirname, file), 'utf8'), subjectName: 'nas.lan', issuerName: 'nas.lan',
+    validStart: 1767225600, validExpiry: 2082758400 });
+  const FAILED = 'ERR_CERT_AUTHORITY_INVALID (-202) loading \'https://nas.lan:5001/\'';
+  const card = () => JSON.parse(new URL(view.loaded.at(-1)).searchParams.get('error'));
+  try {
+    shell.certificateRefused('https://nas.lan:5001/?ws=w1', 'net::ERR_CERT_AUTHORITY_INVALID', served('nas.pem'));
+    shell.certificateRefused('https://elsewhere.lan/', 'net::ERR_CERT_AUTHORITY_INVALID', served('nas.pem'));
+    assert.equal(shell.certRecord('https://elsewhere.lan'), null, 'only a registered server\'s');
+    shell.loadLauncher(new Error(FAILED), nas.id);
+    const first = card();
+    assert.deepEqual([first.action, first.summary, first.cert.sha256, first.server],
+      ['trust', 'nas.lan\'s certificate is not from an authority this computer trusts.', 'ce48e27366a4bb077be700fc1bcf08f81392943ca3767b6a0908ce3f9d73e26c', nas.id]);
+    assert.match(first.cert.grouped, /^CE:48:E2/);
+
+    // another nonce than the card's: nothing pinned, the card again with the record there is now
+    assert.equal(await shell.trustCert(nas.id, 'not-the-card', first.cert.sha256), false);
+    assert.deepEqual(registry.getPins(), {});
+    const again = card();
+    assert.equal(again.stale, 'The certificate changed while you were looking at it.');
+    assert.notEqual(again.nonce, first.nonce);
+    assert.equal(await shell.trustCert(nas.id, again.nonce, 'b'.repeat(64)), false, 'another fingerprint than the card\'s');
+
+    const shown = card();
+    assert.equal(await shell.trustCert(nas.id, shown.nonce, shown.cert.sha256), true);
+    assert.equal(registry.getPins()['https://nas.lan:5001'].sha256, shown.cert.sha256);
+    assert.deepEqual(pushed.at(-1), [{ origin: 'https://nas.lan:5001', sha256: shown.cert.sha256, subject: 'nas.lan', issuer: 'nas.lan',
+      not_before: '2026-01-01T00:00:00.000Z', not_after: '2036-01-01T00:00:00.000Z' }]);
+    assert.equal(view.loaded.at(-1), 'https://nas.lan:5001', 'the server opens');
+    assert.equal(await shell.trustCert(nas.id, shown.nonce, shown.cert.sha256), false, 'a record is taken once');
+
+    // the verify proc accepts the pinned one for any port of its host, and only for a failure a pin answers
+    const proc = (hostname, verificationResult, file = 'nas.pem') => {
+      let answer;
+      shell.verifyProc({ hostname, verificationResult, certificate: served(file) }, (a) => { answer = a; });
+      return answer;
+    };
+    assert.equal(proc('nas.lan', 'net::ERR_CERT_AUTHORITY_INVALID'), 0);
+    assert.equal(proc('nas.lan', 'net::ERR_CERT_REVOKED'), -3);
+    assert.equal(proc('nas.lan', 'net::ERR_CERT_AUTHORITY_INVALID', 'nas-renewed.pem'), -3);
+    assert.equal(proc('other.lan', 'net::OK', 'nas-renewed.pem'), -3);
+    assert.equal(shell.accepted.get('other.lan'), 'd8a7da64d061189b7239c44933b04b99b6dae7b2aeaddc6ccd1fa50d7b22e795', 'what the window accepted, by host');
+    // a refusal the network service kept from before the pin is accepted in certificate-error, by the same rule
+    const refused = (url, error, file) => {
+      const event = { prevented: false, preventDefault() { this.prevented = true; } };
+      let allowed = null;
+      shell.certificateError(event, url, error, served(file), (ok) => { allowed = ok; }, true);
+      return [event.prevented, allowed];
+    };
+    assert.deepEqual(refused('https://nas.lan:9443/x', 'net::ERR_CERT_AUTHORITY_INVALID', 'nas.pem'), [true, true], 'any port of the pinned host');
+    assert.deepEqual(refused('https://nas.lan:5001/', 'net::ERR_CERT_REVOKED', 'nas.pem'), [false, null]);
+    assert.deepEqual(refused('https://nas.lan:5001/', 'net::ERR_CERT_AUTHORITY_INVALID', 'nas-renewed.pem'), [false, null]);
+
+    // a renewed certificate: changed, trusted again only once asked
+    shell.certificateRefused('https://nas.lan:5001/', 'net::ERR_CERT_AUTHORITY_INVALID', served('nas-renewed.pem'));
+    shell.loadLauncher(new Error(FAILED), nas.id);
+    const changed = card();
+    assert.deepEqual([changed.action, changed.summary], ['retrust', 'The certificate of nas.lan changed.']);
+    assert.equal(await shell.trustCert(nas.id, changed.nonce, changed.cert.sha256), false, 'Cancel');
+    assert.match(shell.asked.at(-1), /^Trust the new certificate of nas\.lan\? Only if you replaced it on nas\.lan yourself\. Fingerprint: D8:A7:/);
+    assert.equal(registry.getPins()['https://nas.lan:5001'].sha256, shown.cert.sha256);
+    // the card stays, and its button asks again rather than saying the certificate changed meanwhile
+    const asks = shell.asked.length;
+    const loads = view.loaded.length;
+    assert.equal(await shell.trustCert(nas.id, changed.nonce, changed.cert.sha256), false, 'Cancel again');
+    assert.deepEqual([shell.asked.length, view.loaded.length], [asks + 1, loads], 'asked again, no stale card');
+    assert.equal(registry.getPins()['https://nas.lan:5001'].sha256, shown.cert.sha256);
+
+    // forgotten: no pin, and the servers told
+    assert.equal(await shell.forgetCert(nas.id), true);
+    assert.deepEqual([registry.getPins(), pushed.at(-1)], [{}, []]);
+  } finally {
+    shell.pretendShown(null, null);
+  }
+});
+
+// A certificate as Electron hands it over (test/nas.pem, nas-renewed.pem).
+const servedCert = (file) => ({ data: fs.readFileSync(path.join(__dirname, file), 'utf8'), subjectName: 'nas.lan', issuerName: 'nas.lan',
+  validStart: 1767225600, validExpiry: 2082758400 });
+const NAS_DIGEST = 'ce48e27366a4bb077be700fc1bcf08f81392943ca3767b6a0908ce3f9d73e26c';
+const procSays = (hostname, verificationResult, file = 'nas.pem') => {
+  let answer;
+  shell.verifyProc({ hostname, verificationResult, certificate: servedCert(file) }, (a) => { answer = a; });
+  return answer;
+};
+
+// The pins each local server is handed (PUT /api/remote-servers/pins), recorded beside the routes it had.
+function pinsPushed(host) {
+  const pushed = [];
+  const routes = host.fake.routes;
+  host.fake.routes = (p, init) => (p === '/api/remote-servers/pins' && init.method === 'PUT'
+    ? (pushed.push(JSON.parse(init.body).pins.map((r) => r.origin)), { pins: [] }) : routes(p, init));
+  return pushed;
+}
+
+test('removing a remote drops its pin at once: the verify proc refuses the certificate and the local servers are told', async () => {
+  fresh();
+  const host = server('Host');
+  const pushed = pinsPushed(host);
+  const nas = registry.addRemote('NAS', 'https://nas.lan:5001');
+  registry.setPin('https://nas.lan:5001', { sha256: NAS_DIGEST });
+  await shell.pinsChanged();
+  assert.equal(procSays('nas.lan', 'net::ERR_CERT_AUTHORITY_INVALID'), 0);
+  await shell.removeServer(nas.id);
+  assert.deepEqual(registry.getPins(), {});
+  assert.equal(procSays('nas.lan', 'net::ERR_CERT_AUTHORITY_INVALID'), -3, 'refused at once, not at the next start');
+  assert.deepEqual(pushed.at(-1), []);
+});
+
+test('links move to an https:// address only once its certificate verifies or is pinned there: another host\'s asked with its fingerprint, the same host\'s pin carried, a pin made for a move that did not happen dropped', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = registry.addRemote('NAS', 'https://192.168.1.10:5001');
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  const moves = moveRoutes(host, { kind: 'other', plain: false, moved: { vaults: 1, computers: 0, mirrors: 0 } });
+  const pushed = pinsPushed(host);
+  // the window's session: /api/health at the new address answers as the verify proc does
+  const healthAt = [];
+  electron.session.defaultSession.fetch = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === '/api/health') healthAt.push(u.origin);
+    if (u.pathname === '/api/health' && procSays(u.hostname, 'net::ERR_CERT_AUTHORITY_INVALID') !== 0) {
+      throw new TypeError('fetch failed', { cause: new Error('net::ERR_CERT_AUTHORITY_INVALID') });
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  const moveCalls = () => moves.calls().filter((c) => !c.body.dry_run).length;
+  try {
+    // another address (DHCP gave the NAS .11): its certificate asked first, Cancel moves nothing
+    assert.equal(await shell.moveServer(nas.id, 'https://192.168.1.11:5001'), null);
+    assert.match(shell.asked.at(-1), /^Trust the certificate of 192\.168\.1\.11\? 192\.168\.1\.11's certificate is not from an authority this computer trusts\. .* Fingerprint: CE:48:E2/);
+    assert.deepEqual([registry.getPins(), moveCalls(), registry.get(nas.id).url], [{}, 0, 'https://192.168.1.10:5001']);
+
+    // trusted, then the move agreed: pinned for the new address and handed to the host before the move
+    shell.answers.push(0, 0);
+    await shell.moveServer(nas.id, 'https://192.168.1.11:5001');
+    assert.equal(registry.getPins()['https://192.168.1.11:5001'].sha256, NAS_DIGEST);
+    assert.ok(pushed.some((list) => list.includes('https://192.168.1.11:5001')));
+    assert.deepEqual([moveCalls(), registry.get(nas.id).url], [1, 'https://192.168.1.11:5001']);
+
+    // another port of the same host: the window takes it by that pin, so it is pinned there too, nothing asked of it
+    moves.answer = { failWith: 502, body: { detail: 'https://192.168.1.11 could not be reached.' } };
+    shell.answers.push(0);
+    await assert.rejects(shell.moveServer(nas.id, 'https://192.168.1.11'), /could not be reached/);
+    assert.doesNotMatch(shell.asked.at(-1), /^Trust the certificate/);
+    assert.deepEqual(Object.keys(registry.getPins()), ['https://192.168.1.11:5001'], 'the move failed: its pin dropped again');
+    moves.answer = { moved: moves.plan.moved, revoke: [] };
+    shell.answers.push(0);
+    await shell.moveServer(nas.id, 'https://192.168.1.11');
+    assert.deepEqual(Object.keys(registry.getPins()), ['https://192.168.1.11'], 'the pin moved with the address');
+    assert.deepEqual(pushed.at(-1), ['https://192.168.1.11']);
+
+    // to plain http on another host: nothing fetched, the old address's pin goes, the servers told
+    const fetched = healthAt.length;
+    moves.plan = { kind: 'downgrade', plain: true, moved: { vaults: 1, computers: 0, mirrors: 0 } };
+    shell.answers.push(0);
+    await shell.moveServer(nas.id, 'http://192.168.1.12:9001');
+    assert.deepEqual([healthAt.length, registry.getPins(), pushed.at(-1)], [fetched, {}, []]);
+    assert.equal(procSays('192.168.1.11', 'net::ERR_CERT_AUTHORITY_INVALID'), -3, 'the verify proc no longer takes it');
+  } finally {
+    sidecar.start = realStart;
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('a redirect\'s links move alone when its https:// address is listed already: with or without an entry at the old address', async () => {
+  const redirected = { last_error: 'http://nas.lan:9001 now redirects to https://nas.lan:5001', error_kind: 'redirected', move_to: 'https://nas.lan:5001', upgrade: true };
+  const realStart = sidecar.start;
+  sidecar.start = async () => ({ url: 'http://127.0.0.1:50999', port: 50999 });
+  try {
+    for (const both of [false, true]) {
+      fresh();
+      shell.upgrades.clear();
+      const host = server('Host');
+      const secure = registry.addRemote('NAS', 'https://nas.lan:5001');
+      const old = both ? registry.addRemote('Old NAS', 'http://nas.lan:9001') : null;
+      host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', status: redirected })];
+      const moves = moveRoutes(host, { kind: 'upgrade', plain: false, moved: { vaults: 1, computers: 0, mirrors: 0 } });
+      await shell.refreshKeeping();
+      await until(() => shell.upgrades.get('http://nas.lan:9001') !== 'running', 'the move ran');
+      assert.equal(shell.upgrades.get('http://nas.lan:9001'), 'done', `moved (${both ? 'both entries' : 'no entry at the old address'})`);
+      assert.deepEqual(moves.calls().at(-1).body, { from: 'http://nas.lan:9001', to: 'https://nas.lan:5001', plain_ok: false });
+      assert.equal(registry.get(secure.id).url, 'https://nas.lan:5001');
+      if (old) assert.equal(registry.get(old.id).url, 'http://nas.lan:9001', 'no entry renamed onto another');
+    }
+  } finally {
+    sidecar.start = realStart;
+    delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('an http:// address that sends the window to https:// on its own host is followed nowhere, and the launcher offers that address', () => {
+  fresh();
+  const host = server('Host');
+  const nas = registry.addRemote('NAS', 'http://nas.lan:5000');
+  const view = windowOn(host.fake);
+  shell.pretendShown(null, view, { ...appWindow, setTitle: noop });
+  const card = () => JSON.parse(new URL(view.loaded.at(-1)).searchParams.get('error'));
+  try {
+    assert.equal(shell.sentToHttpsBy('https://nas.lan:5001/'), false, 'only an address the window was let to');
+    shell.allowedOrigins.add('http://nas.lan:5000');
+    assert.equal(shell.sentToHttpsBy('http://nas.lan:5001/'), false, 'not https');
+    assert.equal(shell.sentToHttpsBy('https://elsewhere.lan/'), false, 'another host');
+    assert.equal(shell.sentToHttpsBy('https://nas.lan:5001/?ws=w1'), true);
+    shell.loadLauncher(new Error('No page after loading \'http://nas.lan:5000\''), nas.id);
+    assert.deepEqual([card().action, card().to, card().summary], ['https', 'https://nas.lan:5001', 'nas.lan now redirects to https://nas.lan:5001.']);
+    shell.loadLauncher(new Error('ERR_CONNECTION_REFUSED (-102)'), nas.id);
+    assert.equal(card().action, 'retry', 'taken once');
+    // HSTS keeps the port: the name's own https:// is offered
+    shell.sentToHttpsBy('https://nas.lan:5000/');
+    shell.loadLauncher(new Error('No page'), nas.id);
+    assert.deepEqual([card().summary, card().to], ['This name is HTTPS-only in this window.', 'https://nas.lan']);
+    // the content view's will-redirect guard is what records it, and then opens nothing in the browser
+    const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+    assert.match(src, /cwc\.on\('will-redirect', \(event, url\) => guard\(event, url, true\)\)/);
+    assert.match(src, /if \(redirect && event\.isMainFrame !== false && sentToHttpsBy\(url\)\) return;\r?\n\s+if \(\/\^https\?:\/\.test\(url\)/);
+  } finally {
+    shell.allowedOrigins.delete('http://nas.lan:5000');
+    shell.pretendShown(null, null);
   }
 });

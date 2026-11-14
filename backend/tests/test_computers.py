@@ -392,7 +392,7 @@ def host(owner, tmp_path, monkeypatch):
                    "problem": catalog.NOT_SIGNED_IN["claude"], "models": [], "at": 0}}
     monkeypatch.setattr(catalog, "cached", lambda name: found[name])
     monkeypatch.setattr(catalog, "known", lambda name: found[name])
-    http, answers, down = fresh_client(), {}, []
+    http, answers, down = fresh_client(follow_redirects=False), {}, []   # no redirect followed, as no client does
 
     def open_(method, path, headers, body=None):
         if down:
@@ -545,6 +545,57 @@ def test_the_channel_says_refused_older_and_unreachable(owner, host):
     at = channel.get(link["id"])["status"]["at"]
     turn.once()
     assert channel.get(link["id"])["status"]["at"] == at                 # written only when it changes
+
+
+def test_the_channel_says_what_is_in_the_way_of_that_server(owner, host, monkeypatch):
+    """A sign-in or proxy page is no refusal of the token and no older
+    server; a redirect is kept with where it points, tried again after the
+    longest rest, and making a channel there names the new address only
+    when it is the same host over https."""
+    ws = workspace_of("cptr_owner")
+    link = _link(owner, host, _mint(owner), ws).json()["link"]
+    turn = channel._Channel(link["id"])
+    real, way = gamma_sync.default_open, []
+    monkeypatch.setattr(gamma_sync, "default_open", lambda *a, **kw: (way[0] if way else real)(*a, **kw))
+
+    def page(status):
+        return lambda *_a, **_kw: (status, {"Content-Type": "text/html"}, io.BytesIO(b"<html>Sign in</html>"))
+
+    def redirected(to):
+        def answer(*_a, **_kw):
+            raise gamma_sync.Redirected(host["url"], f"{to}/api/computers/announce")
+        return answer
+
+    way.append(page(403))
+    assert turn.once() == channel.RETRY_FIRST_S
+    status = channel.get(link["id"])["status"]
+    assert (status["state"], status["error_kind"], status["blocked"]) == ("unreachable", "blocked", "proxy")
+    way[0] = page(404)
+    assert turn.once() != channel.OLDER_S
+    status = channel.get(link["id"])["status"]
+    assert status["state"] == "unreachable" and "error_kind" not in status
+    way[0] = redirected("https://testserver")
+    assert turn.once() == channel.RETRY_MAX_S
+    status = channel.get(link["id"])["status"]
+    assert (status["state"], status["error_kind"], status["move_to"], status["upgrade"]) == (
+        "unreachable", "redirected", "https://testserver", True)
+    way.clear()
+    turn.once()
+    status = channel.get(link["id"])["status"]
+    assert status["state"] == "connected" and "error_kind" not in status
+
+    way.append(redirected("https://testserver"))
+    r = _link(owner, host, _mint(owner), ws)
+    assert r.status_code == 409 and r.json()["detail"] == ("http://testserver now redirects to https://testserver: open "
+                                                           "https://testserver in Gamma and show this computer from there.")
+    way[0] = redirected("https://elsewhere.example")
+    r = _link(owner, host, _mint(owner), ws)
+    assert r.status_code == 409 and r.json()["detail"] == ("That server redirects to another address "
+                                                           "(https://elsewhere.example). If you moved it, change its "
+                                                           "address in the launcher.")
+    way[0] = page(403)
+    r = _link(owner, host, _mint(owner), ws)
+    assert r.status_code == 502 and "a proxy or firewall in front of it" in r.json()["detail"]
 
 
 def test_the_channels_thread_runs_until_its_link_goes(owner, host, monkeypatch):

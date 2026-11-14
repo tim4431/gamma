@@ -86,10 +86,14 @@ const OPEN_FAILURES = [
     hint: 'Reconnect and open the server again.',
   },
   {
-    match: /ERR_CERT|ERR_SSL/,
-    summary: 'The server’s HTTPS certificate was rejected, or it does not speak HTTPS.',
-    hint: 'A self-signed certificate will not load here, and a plain-HTTP server answers https:// with an error. Use the http:// address on a local network, or install a certificate the system trusts.',
-    action: 'http',
+    match: /ERR_CERT/,
+    summary: 'The server’s HTTPS certificate was rejected.',
+    hint: 'It is revoked, uses weak cryptography, or is not one Gamma can trust here. Install a certificate the system trusts on the server.',
+  },
+  {
+    match: /ERR_SSL/,
+    summary: 'The secure connection to the server failed.',
+    hint: 'The server, or something between this computer and it, ended the TLS handshake.',
   },
   {
     match: /ERR_CONNECTION_REFUSED|ERR_CONNECTION_TIMED_OUT|ERR_ADDRESS_UNREACHABLE|ERR_CONNECTION_RESET|ERR_EMPTY_RESPONSE/,
@@ -98,12 +102,75 @@ const OPEN_FAILURES = [
   },
 ];
 
-function diagnoseOpen(message) {
+// The answers that mean "this address does not speak HTTPS": a plain-http
+// server reached at https://, or one that an http:// address was upgraded
+// from in this window (HSTS, a redirect).
+const NOT_HTTPS = /ERR_SSL_PROTOCOL_ERROR|ERR_SSL_VERSION_OR_CIPHER_MISMATCH/;
+
+// `server`: what the shell knows of the server that would not load, for the
+// failures whose fix depends on it (docs/dev/https.md): its `url`, whether
+// its origin has a pinned certificate (`pinned`), whether it loaded over
+// https before (`httpsSeen`), its host's scope (lib/hostScope.js), and
+// where the window was sent from its http:// address (`sentTo`, main.js
+// sentToHttps: `{ to, hsts }`). *Use http:// instead* (`http`) is offered
+// only to an https:// address of this network that never spoke TLS here;
+// the others get the suspicious wording with Try again, and an http://
+// address sent to https:// in this window is offered that address
+// (`https`, `to`).
+function diagnoseOpen(message, server = {}) {
   const text = String(message || '');
+  let sent = null;
+  try { sent = server.sentTo && server.url && new URL(server.url).protocol === 'http:' ? server.sentTo : null; } catch {}
+  if (sent) {
+    const host = new URL(server.url).hostname;
+    if (sent.hsts) return httpsOnly(host, text);
+    return { summary: `${host} now redirects to ${sent.to}.`, action: 'https', to: sent.to, detail: text,
+      hint: `Gamma does not follow a server to another address. Use ${sent.to}: this server's synced vaults, computer link and offline copies move there with it.` };
+  }
+  if (NOT_HTTPS.test(text) && server.url) {
+    let u = null;
+    try { u = new URL(server.url); } catch {}
+    const host = u ? u.hostname : '';
+    if (u && u.protocol === 'http:' && /ERR_SSL_PROTOCOL_ERROR/.test(text)) return httpsOnly(host, text);
+    if (u && u.protocol === 'https:') {
+      const local = server.scope === 'lan' || server.scope === 'loopback';
+      if (local && !server.pinned && !server.httpsSeen) {
+        return { summary: `${host} does not speak HTTPS at this address.`, action: 'http', detail: text,
+          hint: 'A Gamma reached without a TLS proxy in front answers plain http://. Use http:// on your own network, or put a TLS proxy in front of it.' };
+      }
+      return { summary: `${host} answered without encryption where it used HTTPS before.`, action: 'retry', detail: text,
+        hint: `Someone between this computer and ${host} may be interfering. Try again on another network before changing anything.` };
+    }
+  }
   for (const rule of OPEN_FAILURES) {
     if (rule.match.test(text)) return { summary: rule.summary, hint: rule.hint, action: rule.action || 'retry', detail: text };
   }
   return { summary: 'Could not open this server.', hint: '', action: 'retry', detail: text };
+}
+
+// An http:// address of a name that told this window to use https:// only (HSTS).
+function httpsOnly(host, text) {
+  return { summary: 'This name is HTTPS-only in this window.', action: 'https', to: `https://${host}`, detail: text,
+    hint: `${host} told this window to use https:// only. Open it at https://${host}, or reach this port by its IP address instead of the name.` };
+}
+
+// A certificate the launcher's card offers to trust (lib/certs.js
+// offerable): `error`, Chromium's; `host`; `cert`, what it says of itself
+// (certs.describe); `changed`, whether its origin pins another. → the
+// card's words, `action` `trust` or `retrust`.
+function diagnoseCert(error, host, cert, changed) {
+  const c = cert || {};
+  const expired = c.validTo && Date.parse(c.validTo) < Date.now() ? `This certificate expired on ${c.validTo.slice(0, 10)}.` : '';
+  if (changed) {
+    return { summary: `The certificate of ${host} changed.`, action: 'retrust', expired,
+      hint: `Gamma trusted another certificate for ${host}. If you did not replace it yourself, someone may be posing as ${host}: don't continue.` };
+  }
+  if (/ERR_CERT_COMMON_NAME_INVALID/.test(error)) {
+    return { summary: `${host}'s certificate is issued to another name (${c.subject || 'unnamed'}).`, action: 'trust', expired,
+      hint: `If ${host} is your own server, check that the fingerprint below is the one it shows, then trust it for this address.` };
+  }
+  return { summary: `${host}'s certificate is not from an authority this computer trusts.`, action: 'trust', expired,
+    hint: `If ${host} is your own server and made this certificate itself, check that the fingerprint below is the one ${host} shows, then trust it. Gamma will accept this certificate, and only this one, from ${host}.` };
 }
 
 // An Error carrying what the launcher needs. The message stays readable on its
@@ -116,4 +183,4 @@ function startupError(reason, logPath, from) {
   return err;
 }
 
-module.exports = { diagnose, diagnoseOpen, startupError };
+module.exports = { diagnose, diagnoseOpen, diagnoseCert, startupError };
