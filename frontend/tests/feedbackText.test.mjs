@@ -1,5 +1,5 @@
 // The feedback view's words (src/feedback/feedbackText.js,
-// docs/dev/feedback.md): an entry's heading as the Markdown form names it,
+// docs/dev/annotations.md): an entry's heading as the Markdown form names it,
 // how its place was found, its source line, and a Send's line and state.
 import test from "node:test";
 import assert from "node:assert/strict";

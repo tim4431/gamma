@@ -1,6 +1,6 @@
 """Where in the sources a place on a work folder's PDF was typeset: a
-feedback entry's ``source`` (docs/dev/feedback.md "SyncTeX"), read from the
-build's SyncTeX file (gamma/feedback/synctex.py) on this computer.
+feedback entry's ``source`` (docs/dev/annotations.md "SyncTeX"), read from the
+build's SyncTeX file (gamma/annotations/synctex.py) on this computer.
 
 ``source_for`` maps a place on the page's current PDF (an anchor, or the
 block's position now: its kind, page and rects as fractions of the page as

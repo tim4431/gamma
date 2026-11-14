@@ -10,7 +10,7 @@
 // `thread_id === id`; `author` is a username, and `agent` the name of the
 // integration token that wrote it through the author's connection ("" for
 // the person's own); `made_on` the file the thread was opened on, `sent`
-// the Send waiting on it (docs/dev/feedback.md).
+// the Send waiting on it (docs/dev/annotations.md).
 import { t } from "../shared/i18n/i18n.js";
 import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlock, pdfAnchorOf, textSpan } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";

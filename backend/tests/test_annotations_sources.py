@@ -1,5 +1,5 @@
-"""Where a place on a work folder's PDF was typeset (gamma/feedback/sources.py,
-docs/dev/feedback.md "SyncTeX"): a position's rects in SyncTeX's frame at
+"""Where a place on a work folder's PDF was typeset (gamma/annotations/sources.py,
+docs/dev/annotations.md "SyncTeX"): a position's rects in SyncTeX's frame at
 every rotation and under a crop; where the build's SyncTeX file is looked
 for and the gates a candidate passes; a tag's path below the work folder and
 the file and lines picked; and ``source_for`` on the paper
@@ -17,7 +17,7 @@ import pytest
 
 from conftest import login, make_user
 from gamma.db import connect_pages_db
-from gamma.feedback import sources, synctex
+from gamma.annotations import sources, synctex
 from test_vault_routes import _page_of, _props, _put, _sync, _vault, disk  # noqa: F401: the disk fixture
 
 SAMPLES = Path(__file__).parent / "samples" / "synctex"

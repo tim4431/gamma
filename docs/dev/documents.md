@@ -426,7 +426,7 @@ with `.pem`, `.key`, `.p12` or `.pfx` is never indexed (it is recorded with
 no text), never put in a chat's context and never read by a tool, nor is
 the quote of a range or a selection of its lines: the chat, `read_page`,
 `read_block`, a thread's place and the feedback entries name its lines
-alone (`feedback.anchors.text_kept`). The
+alone (`annotations.anchors.text_kept`). The
 index is keyed by the bytes and the rule by the name, so a search applies
 it again to every page a hit reaches (`search.hits.docs_of` leaves a
 secrets file's page out of the scope, `hits.build` gives it no hit): a file

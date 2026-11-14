@@ -111,7 +111,7 @@ These describe the implementation unless explicitly marked as plans.
 | Command catalogs, dispatch, and keybindings | [Hotkeys](hotkeys.md) |
 | The note editor's @ menu: dates, people and page links as chips, reminders and their delivery | [Mentions and reminders](mentions.md) |
 | Comment threads on notes, pages, highlights, regions of a picture, ranges of a text file and handwriting: storage, who may comment, the API, following the blocks; each account's Inbox and its live delivery | [Comments](comments.md) |
-| Feedback: the comment threads on a work folder's files as entries an agent acts on, with the place each was opened on, the source line SyncTeX maps it to, a picture of its region, the version kept while it is open, Send and its requests, the files below `.gamma/feedback/`, the routes, the feedback token scope and the MCP tools, the seam for a connector | [Feedback](feedback.md) |
+| Annotations: the highlights and comment threads of a page, a folder or the library as entries an agent acts on, with the place each was opened on, the source line SyncTeX maps it to, a picture of its region, the version kept while it is open; a work folder's Send and its requests (going), the files below a work folder's `.gamma/annotations/` and beside a followed file, the routes, the feedback token scope and the tools, the seam for a connector | [Annotations](annotations.md) |
 | An agent on this computer: Codex CLI or Claude Code turned on for a work folder in the desktop app, which takes the maker's Sends, works in the folder's directory and answers each comment; finding the agents, the claim and the run, the prompt and the answer, the two drivers, the processes, what vaults.db keeps, the routes, trust | [Local agents](local_agents.md) |
 | A computer and the servers its vaults name: the `computer` token and its channel (an announce and a held poll), presence kept by the server and shown to the vault's maker in any window, the sync panel's line, the routes on both sides, trust | [Computers](computers.md) |
 | LaTeX pairing, completion, caret behavior, preview, and pasted `\( \)` / `\[ \]` math | [LaTeX editing](latex_editing.md) |
@@ -142,7 +142,7 @@ These describe the implementation unless explicitly marked as plans.
   [storage](user_db.md) and [home library](home_library.md).
 - [Any file as a page](../research/file-explorer.md): a plan whose steps 0
   to 6 are built ([documents](documents.md),
-  [work folders](work_folders.md), [feedback](feedback.md),
+  [work folders](work_folders.md), [annotations](annotations.md),
   [highlight relocation](highlight_relocation.md#text-files)). A page's
   document of any format with a viewer for each, work folders through
   synced vaults whose tracked files are chosen, comment threads as feedback

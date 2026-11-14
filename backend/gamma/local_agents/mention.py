@@ -26,8 +26,8 @@ from fastapi import HTTPException
 from .. import comments, hosted, mentions, workspaces
 from ..blocks_store import new_block_id
 from ..db import connect_pages_db
-from ..feedback import entries, requests
-from ..feedback.entries import FeedbackError
+from ..annotations import entries, requests
+from ..annotations.entries import AnnotationError
 from ..logbuf import log
 from . import catalog, enabled, runner
 
@@ -99,7 +99,7 @@ def send(ws: str, event: dict, name: str, *, by_name: str) -> dict:
     label = catalog.label(name)
     try:
         return _send(ws, event, name, label, by_name)
-    except FeedbackError as e:
+    except AnnotationError as e:
         return _refused(label, "other", e.detail)
     except Exception as e:  # noqa: BLE001 — the comment is stored; its Send never fails it
         log.warning(f"[agents] the Send of comment {event.get('comment_id')} in workspace {ws}: {e}")
@@ -130,7 +130,7 @@ def _send(ws: str, event: dict, name: str, label: str, by_name: str) -> dict:
     if refused:
         return _refused(label, "writes", refused)
     with connect_pages_db(ws) as conn:
-        scope = entries.resolve_scope(conn, page_id)
+        scope = entries.work_scope(conn, page_id)
         if whole:
             count = len(entries.thread_ids(conn, scope))
             if not count:

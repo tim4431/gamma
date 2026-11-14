@@ -110,14 +110,16 @@ a research repository). Every open comment thread on its files is feedback: a
 request from the user about that file. Act on it when the user asks you to
 (“act on my Gamma comments”, “do the feedback”), or when a Send request names you.
 
-1. Find the items. In the repository, read `.gamma/feedback/open.md` (or
+1. Find the items. In the repository, read `.gamma/annotations/open.md` (or
    `open.json`) when it exists, from the working directory or a parent up to the
    repository's root: Gamma rewrites it within seconds of a change while the work
-   folder syncs. Its pictures are in `.gamma/feedback/img/`. Otherwise, or to be
-   sure it is current, call `list_feedback` (a work folder, a directory or a
-   file), then `read_feedback(thread_id)` for an item and its picture. A request
-   the user sent is `.gamma/feedback/requests/<id>.json` or
-   `list_feedback(request="<id>")`: act on its threads and follow its instruction
+   folder syncs. Its pictures are in `.gamma/annotations/img/`. A PDF a Gamma page
+   follows (a build that is not in a work folder) has its own beside it, in
+   `.gamma/annotations/<file name>/`. Otherwise, or to be
+   sure it is current, call `list_annotations` (a work folder, a directory or a
+   file), then `read_annotation(id)` for an item and its picture. A request
+   the user sent is `.gamma/annotations/requests/<id>.json` or
+   `list_annotations(request="<id>")`: act on its threads and follow its instruction
    line. Leave a request that is `running`, `done` or `failed` alone: its
    `state_by` names who has it, perhaps Gamma's own agent on the user's computer
    (Codex or Claude Code), which answers that work folder's Sends itself.
@@ -153,6 +155,6 @@ request from the user about that file. Act on it when the user asks you to
 7. Do not edit, delete or commit anything under `.gamma/`: Gamma writes it.
 
 A work folder's files are not in `list_pages` at the library root: find them with
-`list_feedback`, or with `list_folders` then `list_pages(folder=…)`, which names
+`list_annotations`, or with `list_folders` then `list_pages(folder=…)`, which names
 each file's `path=` in the work folder; `read_page(path="<work folder>/sections/method.tex")`
 reads one by its path.

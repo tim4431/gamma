@@ -2,7 +2,7 @@
 "Reading a PDF where it is"; docs/research/open-with-plan.md for formats
 other than PDF): a page of a workspace whose document stays at a path,
 nothing copied (but the versions shown while a comment thread on the page
-is open, gamma/feedback/kept.py) and nothing ever written into it or beside
+is open, gamma/annotations/kept.py) and nothing ever written into it or beside
 it. Only the desktop app's own server has them
 (``config.folder_links_enabled``).
 
@@ -72,7 +72,7 @@ from .blocks_store import (BLOCK_COLUMNS, FOLDERS, PARENT_PAGE, TRASH, TREES, bl
 from .db import connect_pages_db, connect_users_db, connect_vaults_db, format_stamp
 from .documents import formats
 from .documents.model import SQL_IN_PLACE, document, document_at, in_place, own_hash, page_document, stored_name
-from .feedback import kept
+from .annotations import kept
 from .logbuf import log
 from .ops import after_commits, apply_batches, commit_ops, delete_page, purge_pages, restore_page, trash_page
 from .work_folders import selection

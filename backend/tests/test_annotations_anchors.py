@@ -1,5 +1,5 @@
-"""The anchor a thread keeps (gamma/feedback/anchors.py,
-docs/dev/feedback.md "The anchor"): read from the rows of a fresh pages.db
+"""The anchor a thread keeps (gamma/annotations/anchors.py,
+docs/dev/annotations.md "The anchor"): read from the rows of a fresh pages.db
 table for each kind — a passage, an area (flagged, and without a quote),
 ink on a PDF page and on a sheet, a region of a picture (and a link block
 drawn as one), a range of a text file (and a link on one, and one whose
@@ -18,7 +18,7 @@ from conftest import doc_props
 from gamma import ink as inkmod
 from gamma.db import PAGES_SCHEMA
 from gamma.documents.model import document
-from gamma.feedback import anchors
+from gamma.annotations import anchors
 from gamma.ink_view import crop_box, grow_box
 
 HASH = "a" * 24

@@ -2,7 +2,7 @@
 MCP connection, the HTTP API's reads), ``write`` tokens (a mirror pushing
 its edits, docs/dev/mirror.md), ``feedback`` tokens (a read token that
 may also reply to and resolve the comment threads on a work folder's files,
-docs/dev/feedback.md), ``computer`` tokens (a computer's channel to this
+docs/dev/annotations.md), ``computer`` tokens (a computer's channel to this
 server, gamma/computers/: they open the channel's routes and nothing else,
 ``auth.CHANNEL_PREFIX``, and no MCP connection) and ``turn`` tokens (the
 token of one turn of an agent on this computer, ``mint_turn``: Gamma's

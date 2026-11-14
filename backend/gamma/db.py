@@ -1083,7 +1083,7 @@ COMPUTER_CHATS_SCHEMA = [
 # for a session), `resolved_agent` the one that resolved a root (cleared
 # on reopen); `anchor` (JSON, the root only, NULL on a reply and on a root
 # from before step 54) is the place the thread was opened on
-# (gamma/feedback/anchors.py). Never part of a block, so no block reader
+# (gamma/annotations/anchors.py). Never part of a block, so no block reader
 # has to skip them; a comment write touches no page.
 COMMENTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS comments (
@@ -1126,7 +1126,7 @@ COMMENTS_SCHEMA = [
     ) WITHOUT ROWID""",
 ]
 # feedback_requests = the Sends of a work folder's feedback
-# (gamma/feedback/requests.py, docs/dev/feedback.md): `id` a block id's
+# (gamma/annotations/requests.py, docs/dev/annotations.md): `id` a block id's
 # shape (the client may mint it), `rev` the listing's cursor (MAX + 1 at
 # the insert and at every state change), `work_folder` and the `scope` the
 # requester sent (`scope_kind` file or folder), `by` / `by_name` the
@@ -1463,11 +1463,15 @@ DATA_SCHEMA = [
     "CREATE TABLE IF NOT EXISTS pdf_translation_briefs (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
     "model TEXT NOT NULL, brief TEXT NOT NULL, at TEXT NOT NULL, "
     "PRIMARY KEY (doc_id, lang, model)) WITHOUT ROWID",
-    # feedback_pictures = the region pictures of a work folder's comment
-    # threads (gamma/feedback/pictures.py): JPEG bytes by their key, at
-    # most 48 MB in all, the oldest `at` going first.
-    "CREATE TABLE IF NOT EXISTS feedback_pictures (key TEXT PRIMARY KEY, data BLOB NOT NULL, "
+    # annotation_pictures = the region pictures of highlights and comment
+    # threads (gamma/annotations/pictures.py): JPEG bytes by their key, at
+    # most 48 MB in all, the oldest `at` going first. Its name until step
+    # 3.1 of docs/research/agents-as-participants-plan.md was
+    # feedback_pictures, dropped here: its pictures are drawn again when
+    # asked for.
+    "CREATE TABLE IF NOT EXISTS annotation_pictures (key TEXT PRIMARY KEY, data BLOB NOT NULL, "
     "bytes INTEGER NOT NULL, at TEXT NOT NULL)",
+    "DROP TABLE IF EXISTS feedback_pictures",
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few

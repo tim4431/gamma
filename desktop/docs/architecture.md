@@ -707,7 +707,7 @@ state (`STAYS_OPEN`, the same list in `main.js` and `bar.html`); the
 others close it, since they ask first or open something.
 
 *Remove the vault…* never touches the directory but for Gamma's own
-`.gamma/` (its marker, its feedback files, then the folder when that leaves
+`.gamma/` (its marker, its annotation files, then the folder when that leaves
 it empty), and a vault whose directory is not there or a stopped one (its
 marker gone or another's) not even that. A kept folder's vault offers
 *Remove the synced folder*, a vault of one file *Remove the vault*: their

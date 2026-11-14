@@ -30,6 +30,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from gamma import comments
+from gamma.annotations import entries
 from gamma.blocks_store import create_page
 from gamma.db import connect_pages_db
 
@@ -676,7 +677,7 @@ def test_a_share_editor_never_brings_back_another_pages_hidden_threads(own, out)
     assert {t["id"] for t in _threads(own, elsewhere)} == {secret, mine}
 
 
-# --- what the feedback reader reads -------------------------------------------------------
+# --- what the annotations reader reads ----------------------------------------------------
 
 def test_a_work_folders_threads_leave_out_trashed_files_and_orphans(own, work):
     from gamma.auth import DISK_CLIENT
@@ -695,14 +696,14 @@ def test_a_work_folders_threads_leave_out_trashed_files_and_orphans(own, work):
     _ops(own, other, [{"op": "delete", "id": note["id"]}])
     assert own.delete(f"/api/blocks/{gone}").status_code == 200
     with connect_pages_db(ws) as conn:
-        found = {t["id"]: t for t in comments.threads_in_work_folder(conn, work.w)}
+        scope = entries.resolve_scope(conn, work.w)
+        found = entries.thread_ids(conn, scope, state="all")
         assert on_file in found and not {orphaned, trashed, library} & set(found)
-        assert found[on_file]["page_id"] == other and found[on_file]["comments"][0]["body"] == "on the figure"
         _ok(own.post(f"/api/comments/{on_file}/resolve", json={"resolved": True}), 200)
-        assert on_file not in {t["id"] for t in comments.threads_in_work_folder(conn, work.w, state="open")}
-        assert on_file in {t["id"] for t in comments.threads_in_work_folder(conn, work.w, state="resolved")}
-        with pytest.raises(HTTPException):
-            comments.threads_in_work_folder(conn, work.w, state="later")
+        assert on_file not in entries.thread_ids(conn, scope, state="open")
+        assert on_file in entries.thread_ids(conn, scope, state="resolved")
+        with pytest.raises(entries.AnnotationError):
+            entries.thread_ids(conn, scope, state="later")
 
 
 def test_the_send_waiting_on_a_thread(own):

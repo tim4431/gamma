@@ -22,7 +22,7 @@ from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
 from .documents import formats, text as doc_text
 from .documents.model import (file_hash, is_listed, is_pdf, page_document, parse_upload_url, pdf_file_hash,
                               source_address, stored_name)
-from .feedback import anchors
+from .annotations import anchors
 from .highlights import is_highlight, is_ink, page_of, text_span
 from .logbuf import log
 from .net_guard import guarded_urlopen
@@ -62,7 +62,8 @@ MIN_PASSAGE_BUDGET = 4000
 # tool calls by name (build_messages), so a chat that ran before a rename
 # must still replay — and a model that copies the old name from that history
 # must still be served (ai_tools.run_agent_tool resolves through this map).
-DEPRECATED_TOOLS = {"search_pdfs": "search_library"}
+DEPRECATED_TOOLS = {"search_pdfs": "search_library", "list_feedback": "list_annotations",
+                    "read_feedback": "read_annotation"}
 
 # What precedes the page context in the user turn. The wording matters: an
 # unlabelled "here is the text" reads as the whole document, and the model
@@ -1519,11 +1520,11 @@ def threads_section(connection, page_id: str, budget: int, *, file_page: bool = 
     """The open comment threads on a page (``comments.threads_for``), each
     with its id, its place — from the thread's stored root anchor, which
     alone carries the ``source`` line a build recorded, else the anchor its
-    block gives now (feedback.entries' rule); a range of a text file by the
+    block gives now (annotations.entries' rule); a range of a text file by the
     lines its block holds now — and its comments; at most
-    MAX_CONTEXT_THREADS, within ``budget`` characters. ``file_page``: a
-    work folder's file, whose threads the feedback tools list (named only
-    with ``tools``). "" for a page without open threads."""
+    MAX_CONTEXT_THREADS, within ``budget`` characters, the rest named to
+    list_annotations with ``tools``. ``file_page``: a work folder's file.
+    "" for a page without open threads."""
     try:
         threads = comments.threads_for(connection, [page_id], state="open")
         if not threads:
@@ -1558,7 +1559,7 @@ def threads_section(connection, page_id: str, budget: int, *, file_page: bool = 
         used += len(line) + 1
     out = "\n".join([head, *kept])
     if more:
-        out += (f"\n… {more} more: " + (f'list_feedback(scope="{page_id}") lists them' if file_page and tools
+        out += (f"\n… {more} more: " + (f'list_annotations(scope="{page_id}") lists them' if tools
                                         else "read them in the Comments window"))
     return out
 
@@ -2217,7 +2218,9 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
             area = area_highlight(child_properties)
             shown_as = None
             if quote:
-                place = range_words(child_properties, current)
+                # a text file's range by its lines, a PDF passage by its 1-based PDF page
+                pdf_page = page_of(child_properties)
+                place = range_words(child_properties, current) or (f"PDF page {pdf_page}" if pdf_page else "")
                 if kept and place:
                     entry = f"- Highlighted ({place}; {SECRET_TEXT[1:-1]})"
                 else:

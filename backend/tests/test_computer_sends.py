@@ -1,6 +1,6 @@
 """Sends of a work folder a computer keeps with an agent, the server's side
 (step 4c of docs/research/agent-collab.md; gamma/routers/computers.py,
-gamma/computers/registry.py, gamma/feedback/requests.py): the agent a
+gamma/computers/registry.py, gamma/annotations/requests.py): the agent a
 computer announces on for the token's account, the agent of the work
 folders it keeps, shown to that account alone; the channel's Send routes
 with a computer token, each answering only for its account's Sends made in
@@ -225,7 +225,7 @@ def test_another_members_computer_never_takes_the_makers_binding(lab, pc):
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments",
                            json={"block_id": _passage(lab), "body": "@codex please tighten the intro"}), 201)
     assert [s["id"] for s in _sends(pc)["sends"]] == [r["send"]["request_id"]]
-    assert _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]["computer"] == "TIM-PC"
+    assert _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]["computer"] == "TIM-PC"
     r = _bearer(token_for(lab.maker, "write")).post("/api/feedback/requests", json={"scope": lab.main})
     assert (r.status_code, r.json()["detail"]) == (403, "Codex on TIM-PC takes Sends made in Gamma, not with a token.")
     # the editor's own @codex is the editor's Send, never listed to the maker's computer
@@ -500,19 +500,19 @@ def test_a_mention_made_here_is_a_send_the_computer_takes(lab, pc):
 
 
 def test_the_feedback_document_names_the_computers_agent_to_its_maker_alone(lab, pc):
-    agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
+    agent = _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]
     assert agent == {"name": "codex", "label": "Codex", "computer": "TIM-PC", "online": True, "ready": True,
                      "problem": "", "takes": True, "why": ""}
-    assert not _ok(lab.editor.get("/api/feedback", params={"scope": lab.W})).get("agent")
-    assert not _ok(lab.maker.get("/api/feedback", params={"scope": lab.W2})).get("agent")
+    assert not _ok(lab.editor.get("/api/annotations", params={"scope": lab.W})).get("agent")
+    assert not _ok(lab.maker.get("/api/annotations", params={"scope": lab.W2})).get("agent")
     _announce(pc.c, _kept(lab, paused=True))
-    agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
+    agent = _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]
     assert (agent["takes"], agent["why"]) == (False, "The synced folder is paused on TIM-PC: Codex starts once it syncs "
                                                      "again.")
     # away: a Send waits for it, and the dialog says so
     _announce(pc.c, _kept(lab))
     registry.reset()
-    agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
+    agent = _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]
     assert (agent["online"], agent["problem"], agent["takes"]) == (False, "TIM-PC is offline: this runs when it "
                                                                          "connects.", True)
     t = thread_on(lab.maker, lab.main, lab.main, "while away")["id"]
@@ -530,5 +530,5 @@ def test_the_feedback_document_says_why_an_online_computers_agent_is_not_ready(l
     _ok(pc.c.post("/api/computers/announce", json={
         "computer": {"id": "cps-pc", "name": "TIM-PC"}, "app": "v9", "vaults": [_kept(lab)],
         "assistants": [{**CODEX[0], "found": found, "ready": False, "code": code}]}))
-    agent = _ok(lab.maker.get("/api/feedback", params={"scope": lab.W}))["agent"]
+    agent = _ok(lab.maker.get("/api/annotations", params={"scope": lab.W}))["agent"]
     assert (agent["online"], agent["ready"], agent["problem"], agent["takes"]) == (True, False, problem, True)

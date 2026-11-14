@@ -1,7 +1,7 @@
 # An agent on this computer
 
 On the desktop app's own server, the one that keeps synced vaults, Gamma
-itself can be the connector that [feedback.md](feedback.md) "The seam"
+itself can be the connector that [annotations.md](annotations.md) "The seam"
 leaves to the owner. An account turns on Codex CLI or Claude Code for this
 computer (Settings → AI, through the desktop shell: "Who turns it on"), and
 owns it from then on. A Send of the feedback of a work folder a vault here
@@ -21,7 +21,7 @@ comment, the chat window's agent side, a remote server seeing the
 computer) are the research note [agent-collab.md](../research/agent-collab.md);
 this is step 1 as built. Backend: the package `gamma/local_agents/` and
 `gamma/routers/local_agents.py`, with small parts in
-`gamma/feedback/requests.py`, `gamma/comments.py`, `gamma/folder_links.py`,
+`gamma/annotations/requests.py`, `gamma/comments.py`, `gamma/folder_links.py`,
 the folder-links and feedback routers and `gamma/routers/shell.py` (the
 shell's word). Step 2.1 of
 [agents-as-participants-plan.md](../research/agents-as-participants-plan.md)
@@ -43,7 +43,7 @@ made the agents the computer's, where they were each vault's.
 
 `__init__.py` imports only `config` and `version`: `folder_links`, the
 feedback modules and the routers import the rest inside their functions,
-and the runner imports `gamma.feedback.agent` and `folder_links` inside
+and the runner imports `gamma.annotations.agent` and `folder_links` inside
 its own, so no cycle forms at import. `tools.py`, which the session
 middleware imports, imports `integrations` inside `mint`.
 
@@ -192,7 +192,7 @@ directory it ran in), and an agent stays on through all of these.
 `runner.register()`, from `app.create_app` beside
 `feedback_listeners.register()`, appends `runner.on_request` to
 `requests.change_listeners` (every committed write of a request calls it,
-feedback.md "Requests and their states") and registers `runner.shutdown`
+annotations.md "Requests and their states") and registers `runner.shutdown`
 at exit.
 
 - **`on_request(ws, request_id)`** is cheap (a few reads, no process),
@@ -202,7 +202,7 @@ at exit.
   `requests._local_link(ws, W)` finds the vault (a work folder of this
   computer, not paused, not choosing its files), the requester has an
   agent on here (`store.agent_for`) and the Send was made in Gamma (`via`
-  `session`, feedback.md "Requests and their states"; never a token's, nor
+  `session`, annotations.md "Requests and their states"; never a token's, nor
   one from before Sends said how they were made: `_ours`). Each request is
   queued once; one already queued or running is left as it is, but one
   whose run was stopped while it waited for a slot (its vault paused and
@@ -304,7 +304,7 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
    folder was detached.", "Stopped: the synced folder changed on this
    computer." or "Stopped: Gamma is closing."
 8. **The answers.** The turn ended well and `prompt.answers` keeps some:
-   each is written by `gamma.feedback.agent.reply` with a connection of
+   each is written by `gamma.annotations.agent.reply` with a connection of
    the requester (`integrations.Connection(user_id=<maker>,
    workspaces=[ws], scope="feedback", token_id="local:<name>",
    name=<label>, username=<maker's username>)`), so the reply is signed
@@ -340,7 +340,7 @@ A run (`runner._Run.go`) never raises and always ends the run it recorded:
 Every write of a run passes `only_from=("running",)` to `requests.set_state`,
 so a withdraw that lands between two of them is never overwritten (the
 write is a 409 and the run stops). `requests.claim` and `only_from` are
-feedback.md's.
+annotations.md's.
 
 ## The prompt and the answer
 
@@ -374,10 +374,10 @@ instruction of Gamma's. Its parts:
 4. **The comments**: per entry `### Comment {i}` and a fenced `json` block
    (the file's name only inside it, since a member can name a file) with `{thread_id, file, place, page, quote, note, was?, source:
    {file, line, end?, as: "current" | "commented"} | null, pictures:
-   [".gamma/feedback/img/<key>.jpg"], comments: [{by, is_owner, agent, at,
+   [".gamma/annotations/img/<key>.jpg"], comments: [{by, is_owner, agent, at,
    text, deleted?}]}` (`json.dumps(..., ensure_ascii=False, indent=1)`;
    `was` only on an entry that has one, a range of a text file placed
-   roughly ([feedback.md](feedback.md) "An entry"); `pictures` the
+   roughly ([annotations.md](annotations.md) "An entry"); `pictures` the
    entry's `picture` and `before` that exist under the vault's directory; a tombstone's `text` ""). Three backticks in a row
    in any string get a zero-width space before the third, so a body cannot
    close the fence.
@@ -435,7 +435,7 @@ is what it was, plain text or a member named codex.
   editor of the workspace now (`viewer`), when the server or the
   workspace takes no writes (`writes`), and for a file-wide mention with
   more than `MAX_THREADS` open threads (`too_many`) or none (`nothing`);
-  a FeedbackError of the create is `other`. Else `requests.create` with
+  a AnnotationError of the create is `other`. Else `requests.create` with
   the file's scope (`entries.resolve_scope`), `threads=[the thread]` or
   none for the file's, `note` the body with the agent's mentions taken
   out of its prose (`mentions.without`) and cut to `requests.MAX_NOTE`,
@@ -459,7 +459,7 @@ working on waits behind it. These rules keep it from being lost:
 
 - The run notes when it reads its entries (`seen_at`) and the ids of the
   comments it read, by thread (`read`). Its replies and resolves pass
-  `seen_at` on (`feedback.agent.reply` and `resolve` take `seen=`, never
+  `seen_at` on (`annotations.agent.reply` and `resolve` take `seen=`, never
   from a tool's arguments, and put it on the event): `requests.answered`
   with an event's `seen` answers only the requests made by then. Without
   it (a token's write) a reply answers every waiting request made before
@@ -474,7 +474,7 @@ working on waits behind it. These rules keep it from being lost:
   (`agent_threads.comment_id`) and the thread has such a word for that
   run (`agent_threads.read_ids`, `prompt.pending`'s `seen`).
 - The runner does not ask a request's `answered` flags: another member's
-  reply sets them ("Answered" in feedback.md), and it answers nothing the
+  reply sets them ("Answered" in annotations.md), and it answers nothing the
   agent was asked. What is new is the newest comment's rule above.
 
 A mention made while an earlier Send of the same thread still waits is
@@ -551,11 +551,13 @@ computer side stays local (4d).
   place's page, box, rects and document), the server's `seen`, the
   threads' last speakers for the resume rule, the progress lines, the
   region pictures (fetched, at most 16 MiB each, into the directory's
-  `.gamma/feedback/img/` as locally), and the end: the replies (each with
+  `.gamma/annotations/img/` as locally, which the work folder's rounds
+  prune as they prune a local one's, reading that server's annotations:
+  [annotations.md](annotations.md) "The files"), and the end: the replies (each with
   an id derived from the run and its thread, so a retry writes nothing
   twice), the summary and the changed files the vault tracks (relative),
   in one `answers` call. The NAS writes the replies itself, signed
-  `local:<agent>` with the agent's label (`feedback.agent.answer_run`,
+  `local:<agent>` with the agent's label (`annotations.agent.answer_run`,
   with the `seen` it stamped at the claim), resolves a thread only when no
   person wrote in it after the run read it, and ends the request (only
   from that run while it holds it, so a withdraw is never overwritten).
@@ -778,7 +780,7 @@ steps").
      (`chats.about`: a page's id, title and format, with its path in the
      work folder it is a file of; a folder, by its path in the work folder
      or its name; the library); the selections as `{page, quote, source}`
-     (`source` from `feedback.sources.source_for` with the selection's box
+     (`source` from `annotations.sources.source_for` with the selection's box
      as one rect, in a work folder kept here only, null without one), all
      inside one JSON block (the selections are the document's text: data);
      where it works and how: in a vault, as for a Send (change the sources
@@ -795,7 +797,8 @@ steps").
      threads, its text) and `read_block`, `view_pdf_page` with its
      `page_id` and a `pdf_page` for a PDF, a
      folder's `list_pages`, the library's `list_folders` and `list_pages`,
-     `list_feedback` and `read_feedback` in a work folder, then
+     `list_annotations` with the page's, the folder's or the library's
+     (`home`) scope and `read_annotation`, then
      `search_library`, `cite` and `read_chats` for the rest; nothing of the
      page is pasted, and outside a vault Gamma's pages are read with them.
      Without them (no address learned, a far turn) the message and the
@@ -907,7 +910,7 @@ steps").
 - **A selection's source line** on its passage chip: `POST
   /api/local-agents/chat/sources` `{bucket, selections}` → `{sources: [{file,
   line, end?} | null]}` (`chats.sources_of`, the lookup the turn's prompt
-  uses: `feedback.sources.source_for` over the selection's box; at most 20,
+  uses: `annotations.sources.source_for` over the selection's box; at most 20,
   no process; nulls for a bucket that is no file of a work folder kept
   here), asked 400 ms after the selections change, kept a minute
   and only until a turn of the conversation ends (the agent may have moved
@@ -1550,7 +1553,7 @@ and nothing of the run's row.
 | POST | `/api/local-agents/asks/{ask}` | the desktop app's alone: `{decision: "once" \| "deny"}` → `{answered: true, version}`, given to the agent before it returns; 403 "Only the desktop app answers on this computer."; 404 "No question on this computer has that id." (another account's too); 400 "On this computer an ask is allowed once or declined."; 409 "{agent} no longer waits for that." or "This turn has ended." |
 | GET | `/api/local-agents/chat/terminal?bucket=` | the desktop shell's alone in practice (Continue in a terminal): `{cwd, argv, agent, label}`, the conversation's session resumed in the directory it works in, with the conversation's agent ("Its model, its typing, a terminal…"); 404 "This conversation has no session to continue.", 409 while a turn runs, when the account no longer has that agent on here or it is not on this computer |
 | POST | `/api/local-agents/chat/sources` | `{bucket, selections: [{text, page, box}]}` → `{sources: [{file, line, end?} \| null]}`, in order, nulls outside a work folder kept here; 400 past 20 selections |
-| GET | `/api/feedback?scope=` | on a server that runs agents the JSON gains `agent` and `agents_found` (feedback.md "The routes"); the files' document never does |
+| GET | `/api/annotations?scope=` | for a work folder's scope, on a server that runs agents, the JSON gains `agent` and `agents_found` for the Feedback dialog (annotations.md "The routes"); the files' document never does |
 | GET | `/api/feedback/requests`, `/api/feedback/requests/{id}` | on a server that runs agents each request record gains `local`: whether a run on this computer holds it now (`runner.running`), so the dialog's Withdraw can say it stops the agent |
 | POST | `/api/feedback/requests` | a token's Send to a work folder a vault here keeps while an agent is on, paused or not, is 403 "An agent on this computer takes Sends made in Gamma, not with a token." A Send is stamped `via` `session` or `token` either way, and a token's is never the agent's, so one made before the folder had an agent waits for an outside agent too |
 | POST | `/api/feedback/requests/{id}/state` | a token's change while a run of the request is active here is 409 "Codex on this computer is answering this request." |
@@ -1994,13 +1997,11 @@ are drawn in the bar over the whole window and answered with `POST
   last in that one session; a Send of a file or a folder whose threads
   came from several starts a new one.
 - Comments on a clone never reach this computer's agent, as they never
-  reach its files (feedback.md "Known gaps"). A work folder of another
+  reach its files (annotations.md "Known gaps"). A work folder of another
   server does ("A work folder of another server"), its chat too ("The
   chat on another server's page"); its asks are answered on this computer
   ("Asking on this computer"), and the terminal and Show in folder stay on
   this computer's own pages.
-- A remote run's region pictures stay in the directory's
-  `.gamma/feedback/img/` (the cleanup runs for local work folders only).
 - On the NAS, another member's waiting Send in the maker's work folder
   reads *Waiting for TIM-PC* on the maker's page too (a thread's `sent`
   does not say who sent it).
@@ -2166,9 +2167,9 @@ are drawn in the bar over the whole window and answered with `POST
   /api/local-agents` (`enabled`, `runs`, `mine`, `dirs`), `doc.agent`, a
   request's `local`, a pause, a relink and a removal stopping the run.
 - `tests/test_migrations.py` (`test_v58_*`): `via`.
-- `tests/test_feedback_requests.py` (`claim`, `only_from`,
+- `tests/test_annotations_requests.py` (`claim`, `only_from`,
   `change_listeners`), `tests/test_comments.py` (`agent_kind`, `state_by`),
-  `tests/test_feedback_entries.py` (the local comment's Markdown, the
+  `tests/test_annotations_entries.py` (the local comment's Markdown, the
   pinned output unchanged).
 - Frontend: `tests/feedbackView.test.mjs`, `tests/feedbackText.test.mjs`,
   `tests/comments.test.mjs` (the hint, the refusal's words),

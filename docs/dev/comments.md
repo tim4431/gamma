@@ -29,7 +29,7 @@ the table `comments` in the workspace's `pages.db` (`db.COMMENTS_SCHEMA`):
 | `orphaned_at` | set when the anchor block is deleted, cleared when it comes back |
 | `agent`, `agent_id` | the display name (`integrations.display_name`) and id of the integration token that wrote it, `''` for a session; the name is copied because a revoked or expired token's row goes |
 | `resolved_agent` | on the root only: the display name of the token that resolved it, cleared on reopen (`resolved_by` stays the account) |
-| `anchor` | on the root only, JSON: the place the thread was opened on ([feedback.md](feedback.md), `gamma/feedback/anchors.py`); NULL on a reply and on a root from before step 54 |
+| `anchor` | on the root only, JSON: the place the thread was opened on ([annotations.md](annotations.md), `gamma/annotations/anchors.py`); NULL on a reply and on a root from before step 54 |
 
 Indexes: `block_id`, `(thread_id, created_at)`, `page_id`, and a partial one
 on `orphaned_at` for the sweep.
@@ -39,7 +39,7 @@ A thread on a range of a text file (a highlight with `text_position`,
 "lines"`, `doc_id` the version its lines were measured on
 (`text_position.hash`), no page, rectangles or box, the block's quote, and
 `lines: [first, last]` as they were when it opened
-(`gamma/feedback/anchors.py`; [feedback.md](feedback.md) "The anchor").
+(`gamma/annotations/anchors.py`; [annotations.md](annotations.md) "The anchor").
 A note under a range takes the range's place. No version of the file is
 kept for it (`kept.KEPT_FORMATS`: the range carries the text around it,
 which is all its run needs), and its feedback entry names the file's own
@@ -66,14 +66,14 @@ the file the thread was opened on (its anchor's `doc_id`, `""` for none),
 and `sent` the Send waiting on it (`comments._sent`: the newest
 `feedback_request_threads` row of the thread not answered whose request is
 `sent`, `running` or `failed`, as `{request_id, state, at, detail}`), else
-null ([feedback.md](feedback.md) "Requests"). A tombstone reads `deleted:
+null ([annotations.md](annotations.md) "Requests"). A tombstone reads `deleted:
 true` with an empty body. `last_at` is the newest of the thread's writes
 and its resolution. `state` is `open`, `resolved` or `all`. The caller
 decides which pages may be read; a page in Recently deleted is no page of
-the library. `comments.threads_in_work_folder(conn, w, *, state=None)` gives
-the threads on a work folder's live files the same way, in one query on the
-pages' `work_folder` column (`idx_ub_work_folder`); it is what the feedback
-reader reads.
+the library. The annotations reader names a scope's live pages (a work
+folder's files, a library folder's pages, the library's) and reads their
+threads with it ([annotations.md](annotations.md) "Which threads and
+highlights").
 
 A thread is **open** when its root is neither resolved nor orphaned, a
 tombstone that still has replies included: what the Comments window lists
@@ -216,7 +216,7 @@ block_id, thread_id, comment_id, agent, agent_id, ...}`, where `kind` is
 `auth.share_via`; `""` for a member and for the MCP answering tools). It is
 the one place where the derived work hangs: the Inbox ("The inbox" below),
 then each of `comments.write_listeners` (`fn(ws, event)`, appended by
-`gamma/feedback/listeners.py`: the feedback files, the requests answered,
+`gamma/annotations/listeners.py`: the annotation files, the requests answered,
 the commented version kept), each called in turn with its error logged. It
 never raises. Create, edit and resolve read the thread they
 answer with before their commit, under the write lock, so a batch that
@@ -255,7 +255,7 @@ paste).
 | a Zotero link | not synced: threads stay in Gamma; a highlight's own note and the notes under it travel as the Zotero annotation's comment, which is no thread ([zotero_sync.md](zotero_sync.md#what-syncs)) |
 
 **The anchor.** A root keeps where its thread was opened (`anchor`, JSON;
-[feedback.md](feedback.md) "The anchor"): its kind (`passage`, `area`,
+[annotations.md](annotations.md) "The anchor"): its kind (`passage`, `area`,
 `ink`, `region`, `lines`, `note` or `file`), the block the place is read
 from (a note under a highlight takes the highlight's), the file the place
 was measured on and its extension, the PDF page (none for a region of a
@@ -263,7 +263,7 @@ picture or a range of a text file), the rectangles and quote as fractions
 of the page or the picture then, the region picture's crop, and a range's
 first and last line (`lines`). `comments.create` computes it from the rows, under
 its lock; the source line SyncTeX maps it to is added after the commit
-(`gamma/feedback/kept.py`). It never changes with the block: it is the
+(`gamma/annotations/kept.py`). It never changes with the block: it is the
 place as commented, which the feedback reader compares with the block now.
 A reply holds none, and nothing is backfilled for a root from before step
 54, whose place is read from its block. While its thread is open, the file
@@ -849,7 +849,7 @@ old first line, where its tag stands), in a column of its own beside the
 text (below, "The code view's column"). A note's threads, the
 page's own and the notes pane's controls keep the popover, and the notes
 pane has no comments section. On the server a thread on a region is a
-`region` anchor and a feedback entry of that kind ([feedback.md](feedback.md)
+`region` anchor and a feedback entry of that kind ([annotations.md](annotations.md)
 "The anchor").
 
 **When it shows.** While the document has a highlight with an open thread,
@@ -937,7 +937,7 @@ and text as comments are drawn, clamped to three lines) and "n replies",
 with neither Resolve nor the "⋯". A comment an agent wrote shows the
 token's name as its author, the account's connection in the title
 (`authorTitle`), and the first comment's line carries the Sent chip while
-a request waits on the thread (`sentChip`, [feedback.md](feedback.md)
+a request waits on the thread (`sentChip`, [annotations.md](annotations.md)
 "Requests and their states") and what became of its place after its file
 changed (a rebuild, a source file rewritten; `threadPlace`, through `threadPlaceContext.js`'s `ThreadPlaceContext`, a
 module of its own so App's provider imports no surface). It is `Thread.jsx`'s `Thread` with
@@ -1107,7 +1107,7 @@ has notifications; the iPad's WKWebView has none, and the row says so.
 - **Comments in the other readers.** The exports other than the Gamma zip
   and the annotated PDF (Markdown, Obsidian, Logseq, Zotero), the AI's
   context and tools and search leave comments out. The feedback reader
-  ([feedback.md](feedback.md)) reads the threads on a work folder's files,
+  ([annotations.md](annotations.md)) reads the threads on a work folder's files,
   for an agent, over HTTP, MCP and the files a vault writes. The
   annotated PDF's Comments switch prints the open threads on a highlight
   and on its notes as cards beside the page, as the margin draws them, a
@@ -1173,7 +1173,7 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   new invitees told. `test_workspaces.py`, `test_pending_memberships.py`:
   the `invited` items. `test_hosted.py`: `/api/inbox/mark` past the
   read-only gate. `test_migrations.py`: steps 40 and 54, re-run.
-  `test_feedback_anchors.py`: the anchor of each kind.
+  `test_annotations_anchors.py`: the anchor of each kind.
   `test_restore_consistency.py`: `_fresh_ids`' remap.
 - Frontend node tests: `comments.test.mjs` (folding, ordering, the changes
   shown before the server answers, who may edit, the snippets and the

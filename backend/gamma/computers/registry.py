@@ -380,7 +380,7 @@ def _fail_held(ws: str, token_id: str) -> None:
     hold fail, those runs stopped (``requests.fail_runs``), and so do the
     chat turns they hold running (``chats.fail_held``): its channel was
     taken back (the token revoked, replaced or expired). Never raises."""
-    from ..feedback import requests  # local: the requests' listeners reach this module
+    from ..annotations import requests  # local: the requests' listeners reach this module
     from ..local_agents import chats
 
     def words(agent: str) -> tuple[str, str]:
@@ -741,7 +741,7 @@ def agent_of(ws: str, folder_id: str, user_id: str) -> dict | None:
 
 
 def heard(ws: str, request_id: str) -> None:
-    """A request's write (``feedback.requests.change_listeners``): a Send
+    """A request's write (``annotations.requests.change_listeners``): a Send
     made, or one withdrawn (``failed``), in a work folder its requester's
     computer keeps with an agent wakes that computer's poll (``sends``).
     Nothing is read while no computer is known here."""

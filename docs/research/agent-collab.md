@@ -20,7 +20,7 @@ Between the first survey and the revision, steps 0 to 3 of
 pushes everything is a *work folder*, every open comment thread on its
 files is *feedback* with its place, quote, SyncTeX source line and
 picture, and *Send* records a request with states an agent sets
-([dev/feedback.md](../dev/feedback.md)). That work left one seam on
+([dev/annotations.md](../dev/annotations.md)). That work left one seam on
 purpose: "Gamma starts no process". This design fills it, so most of
 what the first version proposed to build (anchors, source lines, the
 prompt's material, a run's record in the workspace) already existed.
@@ -82,8 +82,8 @@ through the Gamma plugin: [What works without the host](#what-works-without-the-
 | Piece | What it gives this | Gap |
 |---|---|---|
 | Work folders ([work_folders.md](../dev/work_folders.md)) | the directory the agent works in: a vault of this computer that pushes everything, its picked files pages at their paths, a rebuilt PDF replacing the page's | only the desktop app's own server keeps one; a work folder of another server is "Later" in its plan |
-| Feedback ([feedback.md](../dev/feedback.md)) | the agent's whole context: every open thread on a work folder's files as an entry with its file, place, quote, source line (an in-house SyncTeX reader, recorded at the thread's open), region pictures and comments, in JSON and Markdown, also as `.gamma/feedback/` files in the directory; the version a thread was made on kept until it is resolved | Gamma started no process: "The seam" left the connector to the owner |
-| Send and its requests ([feedback.md](../dev/feedback.md#requests-and-their-states)) | the person's "go": a request naming the threads and a line of instruction, with the states `sent`, `running`, `done`, `failed` and a detail, shown in the Feedback dialog and on each thread's chip; Withdraw | an agent set a state through a token only |
+| Feedback ([annotations.md](../dev/annotations.md)) | the agent's whole context: every open thread on a work folder's files as an entry with its file, place, quote, source line (an in-house SyncTeX reader, recorded at the thread's open), region pictures and comments, in JSON and Markdown, also as `.gamma/feedback/` files in the directory; the version a thread was made on kept until it is resolved | Gamma started no process: "The seam" left the connector to the owner |
+| Send and its requests ([annotations.md](../dev/annotations.md#requests-and-their-states)) | the person's "go": a request naming the threads and a line of instruction, with the states `sent`, `running`, `done`, `failed` and a detail, shown in the Feedback dialog and on each thread's chip; Withdraw | an agent set a state through a token only |
 | Comments written by an agent | a reply and a resolve stamped with the agent's name (`agent`, `agent_id`), reaching the person's Inbox, making no one follow the page; the `feedback` token scope, which answers and does nothing else | written through a token |
 | `@name` in a comment, `comments.after_write` → `inbox.from_comment` | the trigger's place for step 2: the event carries the body and, for an edit, the text before | a name is a chip only when a member has it ([mentions.md](../dev/mentions.md)); an agent is no member |
 | Who may comment | owners, editors, **viewers and signed-in share visitors** | so a comment is not trusted text: see [Whose words run](#whose-words-run-and-what-a-server-can-do) |
@@ -289,7 +289,7 @@ to leave the right seam"):
 | The first version proposed | Now |
 |---|---|
 | a project bound to a page and a directory | the work folder: its vault knows the directory, its pages are the files at their paths |
-| finding a passage's source line with the `synctex` program | `gamma/feedback/sources.py`'s in-house reader, with gates against a stale build, the line recorded when the thread is opened |
+| finding a passage's source line with the `synctex` program | `gamma/annotations/sources.py`'s in-house reader, with gates against a stale build, the line recorded when the thread is opened |
 | a "run" row in `users.db` | the feedback request, its threads and its states |
 | the agent's context packaged by the server | the feedback entries (`requests.entries_of`), with their region pictures written to `.gamma/feedback/img/` |
 | a reply that changes while the agent works | the request's `running` detail, on the dialog and on each thread's chip |
@@ -643,7 +643,7 @@ feedback: the plugin's skill ([plugins/gamma](../../plugins/gamma/README.md),
 "Feedback on a work folder") reads `.gamma/feedback/open.md` or
 `list_feedback`, changes the sources, rebuilds, and answers through
 `reply_feedback` and `resolve_feedback` on a connection allowed to
-answer feedback ([dev/feedback.md](../dev/feedback.md#the-seam)). Step 1
+answer feedback ([dev/annotations.md](../dev/annotations.md#the-seam)). Step 1
 adds the other direction: Gamma starts the agent when the person sends.
 Where a folder has an agent on this computer, an outside agent leaves
 the requests the host has taken alone (their `state_by` names the host's

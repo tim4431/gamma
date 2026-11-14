@@ -215,7 +215,7 @@ folder's build, an opened PDF, a vault's PDF) with no comment thread open:
 the outgoing bytes were never stored, and the path holds the new ones.
 
 While a thread on such a page is open, every build it shows is stored
-(`feedback/kept.py`, [feedback.md](feedback.md) "The commented version
+(`feedback/kept.py`, [annotations.md](annotations.md) "The commented version
 kept"): the bytes at the thread's open, then the incoming ones first at
 each replacement (`vault.local_remote.LocalRemote.replace_doc`,
 `linked_files._take_bytes`). So the outgoing file the stamps name is in
@@ -524,7 +524,7 @@ it was drawn on (`hash`); every reader scales by fractions, so a figure
 rebuilt at another size keeps the region's relative place; and "drawn on
 another version" is derived, `hash` against the page's current file, never
 written: the viewer draws such a region dashed, the feedback reader says
-`placed: "earlier"` ([feedback.md](feedback.md)), and a picture rebuilt to
+`placed: "earlier"` ([annotations.md](annotations.md)), and a picture rebuilt to
 the bytes a region was drawn on reads as current again. The version a
 comment thread was opened on is held by the thread's anchor, not by the
 region (`storage._position_ids` names nothing for it).

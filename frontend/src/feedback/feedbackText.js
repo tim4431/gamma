@@ -1,11 +1,12 @@
-// The feedback view's words (docs/dev/feedback.md, feedback/FeedbackDialog.jsx):
-// an entry's heading as the Markdown form names it (gamma/feedback/markdown.py,
+// The feedback view's words (docs/dev/annotations.md, feedback/FeedbackDialog.jsx):
+// an entry's heading as the Markdown form names it (gamma/annotations/markdown.py,
 // here in the reader's language), how its place was found again, its
 // source line, a Send's line with what became of it, and what the Send
 // block says of an agent on this computer. Pure, so node
 // tests it (tests/feedbackText.test.mjs).
 //
-// An entry is the reader's (GET /api/feedback): {id, file, format, page_id,
+// An entry is the reader's (GET /api/annotations): {id, type ("thread" |
+// "highlight"), file, format, page_id,
 // block_id, kind ("passage" | "area" | "ink" | "region" | "lines" | "note" |
 // "file"), where: {page, quote, box, placed, note; a region's rect and size
 // in the picture's pixels; a text file's range its line, end and, placed
@@ -58,7 +59,7 @@ export function entryHeading(entry) {
 // (`where.placed`): exactly, roughly (with how alike the text is, a
 // `match` from 0 to 1, when it says), by estimate, not at all, not yet,
 // or on an earlier version (handwriting, which is never placed again): the
-// Markdown's words for every format (gamma/feedback/markdown.py PLACED); ""
+// Markdown's words for every format (gamma/annotations/markdown.py PLACED); ""
 // for an entry with no place. A region (`kind`) is placed exactly, drawn
 // on an earlier version of the picture (it stays where it was on the new
 // one), or lost when the file is no longer a picture.

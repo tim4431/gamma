@@ -142,8 +142,8 @@ from fastapi import HTTPException
 from .. import config, integrations, remote_servers
 from ..blocks_store import new_block_id
 from ..db import connect_pages_db, format_stamp, page_now
-from ..feedback import requests
-from ..feedback.entries import FeedbackError
+from ..annotations import requests
+from ..annotations.entries import AnnotationError
 from ..logbuf import log
 from . import catalog, chats, enabled, events, home, procs, prompt, store, tools
 
@@ -933,7 +933,7 @@ def recover() -> None:
                 requests.set_state(run["ws"], conn, run["request_id"], "failed",
                                    detail=f"Gamma stopped while {label} worked on this. Send again.",
                                    by_name=label, writer="agent", only_from=("running",))
-        except FeedbackError:
+        except AnnotationError:
             pass  # withdrawn, or gone: nothing to say
         except Exception as e:  # noqa: BLE001 — one workspace never keeps the others
             log.warning(f"[agents] failing the run {run['id']} left open in workspace {run['ws']}: {e}")

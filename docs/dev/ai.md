@@ -1339,7 +1339,7 @@ at a quarter of its alpha. The answer is `render_page`'s shape, `(bytes,
 "image/jpeg", width, height)`; None for a file not here, one that does not
 decode, a decompression bomb (`Image.MAX_IMAGE_PIXELS`) or one that changed
 under the read. The feedback reader's pictures of a region and of the
-whole picture are drawn by it ([feedback.md](feedback.md) "The pictures");
+whole picture are drawn by it ([annotations.md](annotations.md) "The pictures");
 the labels say "the picture" where a PDF's say "PDF page N".
 `GET /api/ai/selection-crop/{doc_id}` draws the selection pill's picture in
 saved replies. `ai_pictures.picture_at` gives the bytes of any of these
@@ -1349,7 +1349,7 @@ conversation export packs them
 ([chat_history.md](chat_history.md#exporting-a-conversation)).
 
 **Highlights drawn.** None of the chat's pictures draws Gamma's highlights.
-A feedback thread's region picture does ([feedback.md](feedback.md) "The
+A feedback thread's region picture does ([annotations.md](annotations.md) "The
 pictures", `feedback/pictures.py`): the same page as
 `ink_view.page_with_handwriting` makes it, its `marks` being the page's
 highlights measured on the file drawn, which `pdf_export.page_with_ink(highlights=…)`

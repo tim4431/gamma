@@ -1,5 +1,5 @@
-"""The feedback reader (gamma/feedback/entries.py, docs/dev/feedback.md "The
-entry and the document") and its Markdown (gamma/feedback/markdown.py): the
+"""The feedback reader (gamma/annotations/entries.py, docs/dev/annotations.md "The
+entry and the document") and its Markdown (gamma/annotations/markdown.py): the
 threads of a work folder, a directory or a file as entries — every kind's
 place and how it stands after a rebuild (exact, rough, estimate, lost,
 pending, earlier), a picture's regions and the whole picture, a text file's
@@ -8,7 +8,7 @@ name from the vault's rows and from the folder tree, the order, a Send
 waiting, a tombstone, the cut past ``MAX_ENTRIES``, the state filters, the
 scopes and their refusals, a root from before step 54 read from its block,
 the source live or as commented (the SyncTeX map stood in for:
-gamma/feedback/sources.py has its own tests) and the pictures' keys; then
+gamma/annotations/sources.py has its own tests) and the pictures' keys; then
 the Markdown of a fixed document byte for byte, its empty form and its
 picture modes."""
 
@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import gamma.feedback
+import gamma.annotations
 from conftest import (account_of, login, make_folder, make_page, make_user, mark_work_folder, thread_on, work_props,
                       workspace_of)
 from gamma import comments, storage
@@ -28,8 +28,8 @@ from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
 from gamma.db import connect_pages_db
 from gamma.documents.model import document
-from gamma.feedback import anchors, entries, kept, markdown, pictures, requests
-from gamma.feedback.entries import FeedbackError, Scope
+from gamma.annotations import anchors, entries, kept, markdown, pictures, requests
+from gamma.annotations.entries import AnnotationError, Scope
 from gamma.ops import commit_ops
 
 USER, PASSWORD = "fbe_own", "pw-fbe-1"
@@ -95,8 +95,8 @@ def synctex(monkeypatch):
         return fake.found
 
     fake.source_for = source_for
-    monkeypatch.setitem(sys.modules, "gamma.feedback.sources", fake)
-    monkeypatch.setattr(gamma.feedback, "sources", fake, raising=False)
+    monkeypatch.setitem(sys.modules, "gamma.annotations.sources", fake)
+    monkeypatch.setattr(gamma.annotations, "sources", fake, raising=False)
     return fake
 
 
@@ -159,13 +159,13 @@ def test_a_work_folders_entries_in_their_order(paper):
     assert [e["id"] for e in doc["entries"]] == [p.t[k] for k in ("fig", "file", "I", "H", "N", "A", "T", "notes")]
     assert [e["file"] for e in doc["entries"]] == ["figures/fig1.pdf", *["main.pdf"] * 6, "notes.md"]
     assert {k: doc[k] for k in ("format", "workspace", "work_folder", "scope", "owner", "state", "count")} == {
-        "format": "gamma-feedback-1", "workspace": p.ws, "work_folder": {"id": p.W, "name": "fbe-paper"},
+        "format": "gamma-annotations-1", "workspace": p.ws, "work_folder": {"id": p.W, "name": "fbe-paper"},
         "scope": {"kind": "work_folder", "id": p.W, "name": "fbe-paper"}, "owner": "tim", "state": "open", "count": 8}
     assert "truncated" not in doc and doc["answer"] == entries.ANSWER
     assert list(doc) == ["format", "workspace", "work_folder", "scope", "owner", "state", "updated_at", "count",
                          "answer", "entries"]
     with connect_pages_db(p.ws) as conn:
-        newest = max(t["last_at"] for t in entries.comments.threads_in_work_folder(conn, p.W, state="open"))
+        newest = max(t["last_at"] for t in entries.comments.threads_for(conn, [p.main, p.figure, p.notes], state="open"))
     assert doc["updated_at"] == newest
 
 
@@ -184,8 +184,9 @@ def test_every_kind_reads_its_place(paper):
     for key in ("file", "fig", "notes"):
         assert (got[p.t[key]]["kind"], got[p.t[key]]["where"]) == ("file", {})
     assert got[p.t["notes"]]["format"] == "markdown" and H["format"] == "pdf"
-    assert list(H) == ["id", "file", "format", "page_id", "block_id", "kind", "where", "source", "picture", "before",
-                       "state", "sent", "link", "comments"]
+    assert list(H) == ["id", "type", "file", "format", "page_id", "block_id", "kind", "where", "source", "picture",
+                       "before", "state", "sent", "link", "comments"]
+    assert {e["type"] for e in got.values()} == {"thread"}
     assert H["link"] == f"?ws={p.ws}&page={p.main}&block=fbeH&thread={p.t['H']}"
     assert H["comments"] == [{"id": p.t["H"], "by": USER, "agent": "", "at": H["comments"][0]["at"],
                               "body": "define it", "deleted": False}]
@@ -525,7 +526,7 @@ def test_states_a_tombstone_and_a_send(paper):
             return [e["id"] for e in entries.entries(p.ws, conn, entries.resolve_scope(conn, page), state=state)]
 
     assert ids("open") == [tomb] and ids("resolved") == [done] and sorted(ids("all")) == sorted([done, tomb])
-    with pytest.raises(FeedbackError) as e:
+    with pytest.raises(AnnotationError) as e:
         ids("later")
     assert e.value.status == 400
     got = _entry(p, tomb)
@@ -567,25 +568,98 @@ def test_a_document_is_cut_past_its_entries(paper, monkeypatch):
     assert [e["id"] for e in doc["entries"]] == [paper.t[k] for k in ("fig", "file", "I")]
 
 
+def test_the_threads_take_the_cap_first(paper, monkeypatch):
+    """An earlier file's bare highlights never push a later file's thread
+    out: the threads fill the cap, the highlights the rest, in the
+    document's order; ``truncated_threads`` counts the threads cut."""
+    p = paper
+    F = make_folder(p.own, "fbe-capped")
+    book, _ = storage.store_pdf(p.ws, _pdf(1, "a capped book"))
+    with connect_pages_db(p.ws) as conn:
+        first, later = (create_page(conn, title, {"folders": [F], "doc": document(book, name=f"{title}.pdf")},
+                                    actor=p.account, client="t")["id"] for title in ("a first", "b later"))
+    _ops(p.own, first, [_insert(f"fbeC{n}", first, pdf_position=_pos(1, (60, 80 + 40 * n, 300, 96 + 40 * n)),
+                                quote=f"bare {n}") for n in range(3)])
+    asked = thread_on(p.own, later, later, "say why")["id"]
+    monkeypatch.setattr(entries, "MAX_ENTRIES", 2)
+    doc = _document(p, F)
+    assert [e["id"] for e in doc["entries"]] == ["fbeC0", asked]
+    assert doc["truncated"] == 2 and "truncated_threads" not in doc
+    again = thread_on(p.own, later, later, "and this")["id"]
+    monkeypatch.setattr(entries, "MAX_ENTRIES", 1)
+    doc = _document(p, F)
+    assert [e["id"] for e in doc["entries"]] == [asked]
+    assert (doc["truncated"], doc["truncated_threads"]) == (4, 1) and again not in {e["id"] for e in doc["entries"]}
+
+
 def test_scopes(paper):
     p = paper
     with connect_pages_db(p.ws) as conn:
         assert entries.resolve_scope(conn, p.W) == Scope("work_folder", p.W, p.W, "fbe-paper")
         assert entries.resolve_scope(conn, p.D) == Scope("folder", p.D, p.W, "figures")
         assert entries.resolve_scope(conn, p.figure) == Scope("file", p.figure, p.W, "figures/fig1.pdf")
-        for scope_id, status in ((p.L, 400), (p.library, 400), ("noSuchThing", 404), ("", 404), ("folders", 404)):
-            with pytest.raises(FeedbackError) as e:
-                entries.resolve_scope(conn, scope_id)
-            assert e.value.status == status, scope_id
-        assert "work folder's files" in str(_refusal(lambda: entries.resolve_scope(conn, p.library)))
+        assert entries.resolve_scope(conn, p.L) == Scope("library_folder", p.L, "", "fbe-library")
+        assert entries.resolve_scope(conn, p.library) == Scope("page", p.library, "", "a library paper")
+        assert entries.resolve_scope(conn, "home") == Scope("home", "home", "", "")
+        for scope_id in ("noSuchThing", "", "folders"):
+            assert _refusal(lambda: entries.resolve_scope(conn, scope_id)).status == 404, scope_id
+        # what a Send names is a work folder's alone
+        assert entries.work_scope(conn, p.D) == entries.resolve_scope(conn, p.D)
+        for scope_id in (p.L, p.library, "home"):
+            refused = _refusal(lambda: entries.work_scope(conn, scope_id))
+            assert refused.status == 400 and "work folder's files" in refused.detail, scope_id
         assert entries.work_folder_named(conn, "FBE-Paper") == entries.work_folder_named(conn, p.W)
         assert _refusal(lambda: entries.work_folder_named(conn, "no such folder")).status == 404
     assert [e["id"] for e in _document(p, p.D)["entries"]] == [p.t["fig"]]
     assert _document(p, p.D)["scope"] == {"kind": "folder", "id": p.D, "name": "figures"}
     assert [e["id"] for e in _document(p, p.main)["entries"]] == [p.t[k] for k in ("file", "I", "H", "N", "A", "T")]
     assert p.t["library"] not in {e["id"] for e in _document(p)["entries"]}
+    assert _entry(p, p.t["library"])["file"] == "a library paper" and _entry(p, "noSuchThread") is None
+
+
+def test_the_library_its_folders_and_pages_with_their_highlights(paper):
+    """A library folder, a library page and the library: their threads and
+    the highlights that have none, a library page named by its title."""
+    p = paper
+    F, sub = make_folder(p.own, "fbe-shelf"), make_folder(p.own, "fbe-shelf/deeper")
+    book, _ = storage.store_pdf(p.ws, _pdf(2, "a book"))
     with connect_pages_db(p.ws) as conn:
-        assert _entry(p, p.t["library"]) is None and _entry(p, "noSuchThread") is None
+        shelf = create_page(conn, "shelf paper", {"folders": [F], "doc": document(book, name="shelf.pdf")},
+                            actor=p.account, client="t")["id"]
+        deep = create_page(conn, "deep paper", {"folders": [sub], "doc": document(book, name="deep.pdf")},
+                           actor=p.account, client="t")["id"]
+    _ops(p.own, shelf, [_insert("fbeB1", shelf, "a note on it", pdf_position=_pos(1, (60, 80, 300, 96)),
+                                quote="a bare passage"),
+                        _insert("fbeB2", shelf, pdf_position=_pos(1, (60, 300, 300, 316)), quote="a commented one")])
+    _ops(p.own, deep, [_insert("fbeB3", deep, pdf_position=_pos(2, (60, 400, 540, 720), area=True))])
+    commented = thread_on(p.own, shelf, "fbeB2", "say more")["id"]
+    doc = _document(p, F)
+    assert (doc["scope"], doc["work_folder"]) == ({"kind": "library_folder", "id": F, "name": "fbe-shelf"}, None)
+    assert doc["answer"] == entries.ANSWER_OUTSIDE and "mcp" not in doc["answer"]
+    assert [(e["id"], e["type"], e["file"]) for e in doc["entries"]] == [
+        ("fbeB3", "highlight", "deep paper"), ("fbeB1", "highlight", "shelf paper"), (commented, "thread", "shelf paper")]
+    bare = doc["entries"][1]
+    assert (bare["kind"], bare["where"]) == ("passage", {"page": 1, "quote": "a bare passage", "placed": "exact",
+                                                         "note": "a note on it"})
+    assert (bare["block_id"], bare["state"], bare["sent"], bare["comments"], bare["source"]) == (
+        "fbeB1", None, None, [], None)
+    assert bare["link"] == f"?ws={p.ws}&page={shelf}&block=fbeB1" and bare["picture"].startswith("img/")
+    assert doc["entries"][0]["kind"] == "area" and doc["entries"][0]["where"]["page"] == 2
+    # state filters the threads alone: a bare highlight is always listed
+    assert [e["id"] for e in _document(p, F, state="resolved")["entries"]] == ["fbeB3", "fbeB1"]
+    assert [e["id"] for e in _document(p, sub)["entries"]] == ["fbeB3"]
+    page = _document(p, shelf)
+    assert page["scope"] == {"kind": "page", "id": shelf, "name": "shelf paper"}
+    assert [e["id"] for e in page["entries"]] == ["fbeB1", commented]
+    home = _document(p, "home", state="all")
+    assert home["scope"] == {"kind": "home", "id": "home", "name": ""} and home["work_folder"] is None
+    assert {"fbeB1", "fbeB3", commented, p.t["library"], p.t["fig"], p.t["H"]} <= {e["id"] for e in home["entries"]}
+    assert "fbeH" not in {e["id"] for e in home["entries"]}  # a highlight with a thread is read by its thread
+    # one entry by its id: a bare highlight's, never a commented one's block
+    assert _entry(p, "fbeB1") == {**bare, "source": None}
+    assert _entry(p, "fbeB2") is None and _entry(p, "fbeT") is None
+    with connect_pages_db(p.ws) as conn:
+        assert entries.thread_ids(conn, entries.resolve_scope(conn, F)) == [commented]
 
 
 def test_two_work_folders_of_one_name(paper):
@@ -599,8 +673,8 @@ def test_two_work_folders_of_one_name(paper):
         assert entries.thread_ids(conn, entries.resolve_scope(conn, twins[0])) == []
 
 
-def _refusal(fn) -> FeedbackError:
-    with pytest.raises(FeedbackError) as e:
+def _refusal(fn) -> AnnotationError:
+    with pytest.raises(AnnotationError) as e:
         fn()
     return e.value
 
@@ -627,10 +701,10 @@ def _comment(cid, by, at, body, agent=""):
     return {"id": cid, "by": by, "agent": agent, "at": at, "body": body, "deleted": False}
 
 
-FIXED = {"format": "gamma-feedback-1", "workspace": "ws1", "work_folder": {"id": "W", "name": "paper"},
+FIXED = {"format": "gamma-annotations-1", "workspace": "ws1", "work_folder": {"id": "W", "name": "paper"},
          "scope": {"kind": "work_folder", "id": "W", "name": "paper"}, "owner": "tim", "state": "open",
-         "updated_at": "2026-11-10T13:58:41.120000Z", "count": 6, "answer": entries.ANSWER, "entries": [
-             {"id": "0d7c5e2a9f1b", "file": "main.pdf", "format": "pdf", "page_id": "P1", "block_id": "H1",
+         "updated_at": "2026-11-10T13:58:41.120000Z", "count": 7, "answer": entries.ANSWER, "entries": [
+             {"id": "0d7c5e2a9f1b", "type": "thread", "file": "main.pdf", "format": "pdf", "page_id": "P1", "block_id": "H1",
               "kind": "passage", "where": {"page": 3, "quote": "the loss is defined as", "placed": "exact"},
               "source": {"file": "sections/method.tex", "line": 118, "end": 120, "version": "current"},
               "picture": "img/3f9a2c1b7d4e6a01.jpg", "before": None, "state": "open",
@@ -639,23 +713,28 @@ FIXED = {"format": "gamma-feedback-1", "workspace": "ws1", "work_folder": {"id":
               "comments": [_comment("0d7c5e2a9f1b", "tim", "2026-11-10T13:58:10.000000Z", "lambda is never introduced."),
                            _comment("c2", "tim", "2026-11-10T14:06:31.000000Z",
                                     "Defined in 3.1 (sections/method.tex:112).", "Claude Code")]},
-             {"id": "a81e44b07c3d", "file": "main.pdf", "format": "pdf", "page_id": "P1", "block_id": "A1",
+             {"id": "a81e44b07c3d", "type": "thread", "file": "main.pdf", "format": "pdf", "page_id": "P1", "block_id": "A1",
               "kind": "area", "where": {"page": 5, "box": [0.1, 0.5, 0.9, 0.9], "placed": "estimate"},
               "source": {"file": "main.tex", "line": 18, "version": "commented"},
               "picture": "img/5b2e7a90c4d1f386.jpg", "before": "img/9c1d0e6f2a4b7358.jpg", "state": "open",
               "sent": None, "link": "?ws=ws1&page=P1&block=A1&thread=a81e44b07c3d",
               "comments": [_comment("a81e44b07c3d", "tim", "2026-11-10T13:59:00.000000Z",
                                     "move the legend inside the plot.")]},
-             {"id": "f3e19b2c6d70", "file": "figures/fig1.pdf", "format": "pdf", "page_id": "P2", "block_id": "P2",
+             {"id": "H9", "type": "highlight", "file": "main.pdf", "format": "pdf", "page_id": "P1", "block_id": "H9",
+              "kind": "passage", "where": {"page": 7, "quote": "we leave this to future work", "placed": "exact",
+                                           "note": "cite the follow-up"},
+              "source": None, "picture": "img/0e4d2c6b8a9f1735.jpg", "before": None, "state": None, "sent": None,
+              "link": "?ws=ws1&page=P1&block=H9", "comments": []},
+             {"id": "f3e19b2c6d70", "type": "thread", "file": "figures/fig1.pdf", "format": "pdf", "page_id": "P2", "block_id": "P2",
               "kind": "file", "where": {}, "source": None, "picture": None, "before": None, "state": "open",
               "sent": None, "link": "?ws=ws1&page=P2&block=P2&thread=f3e19b2c6d70",
               "comments": [_comment("f3e19b2c6d70", "tim", "2026-11-10T13:57:00.000000Z", "use the viridis palette.")]},
-             {"id": "5e0b7c13d2a4", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L1",
+             {"id": "5e0b7c13d2a4", "type": "thread", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L1",
               "kind": "lines", "where": {"line": 17, "quote": "This note measures how much it helps", "placed": "exact"},
               "source": {"file": "main.tex", "line": 17, "version": "current"}, "picture": None, "before": None,
               "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L1&thread=5e0b7c13d2a4",
               "comments": [_comment("5e0b7c13d2a4", "tim", "2026-11-10T13:56:00.000000Z", "say by how much.")]},
-             {"id": "6a1c8d24e3b5", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L2",
+             {"id": "6a1c8d24e3b5", "type": "thread", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L2",
               "kind": "lines", "where": {"line": 26, "end": 27,
                                          "quote": "Training and test loss per epoch,\nwithout any weight decay.",
                                          "placed": "rough", "match": 0.91,
@@ -663,18 +742,19 @@ FIXED = {"format": "gamma-feedback-1", "workspace": "ws1", "work_folder": {"id":
               "source": {"file": "main.tex", "line": 26, "end": 27, "version": "current"}, "picture": None,
               "before": None, "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L2&thread=6a1c8d24e3b5",
               "comments": [_comment("6a1c8d24e3b5", "tim", "2026-11-10T13:55:00.000000Z", "name the dataset.")]},
-             {"id": "7b2d9e35f4c6", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L3",
+             {"id": "7b2d9e35f4c6", "type": "thread", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L3",
               "kind": "lines", "where": {"line": 47, "quote": "validation loss was lowest.", "placed": "lost"},
               "source": {"file": "main.tex", "line": 47, "version": "commented"}, "picture": None, "before": None,
               "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L3&thread=7b2d9e35f4c6",
               "comments": [_comment("7b2d9e35f4c6", "tim", "2026-11-10T13:54:00.000000Z", "which run?")]}]}
 
-EXPECTED = """# Feedback on paper
+EXPECTED = """# Annotations on paper
 
-6 open comments · owner tim · updated 2026-11-10 13:58
+6 open comments · 1 highlight · owner tim · updated 2026-11-10 13:58
 
-Each item is a comment thread on a file of this work folder. Answer it in Gamma: reply with what you
-changed and where, resolve it when it is done (see "How to answer" at the end).
+Each item is a comment thread or a highlight. Answer a thread in Gamma: reply with what you changed
+and where, resolve it when it is done (see "How to answer" at the end). A highlight marks a place,
+with the note written on it: read it as context.
 
 ## main.pdf
 
@@ -703,9 +783,16 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 > **tim** · 2026-11-10 13:59
 > move the legend inside the plot.
 
+### 3. Page 7 · “we leave this to future work”
+
+- id: `H9` · highlight · passage · placed exactly
+- note: “cite the follow-up”
+
+![Page 7, the highlight's region](img/0e4d2c6b8a9f1735.jpg)
+
 ## figures/fig1.pdf
 
-### 3. The whole file
+### 4. The whole file
 
 - id: `f3e19b2c6d70` · file
 
@@ -714,7 +801,7 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 
 ## main.tex
 
-### 4. Line 17 · “This note measures how much it helps”
+### 5. Line 17 · “This note measures how much it helps”
 
 - id: `5e0b7c13d2a4` · lines · placed exactly
 - source: `main.tex`, line 17
@@ -722,7 +809,7 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 > **tim** · 2026-11-10 13:56
 > say by how much.
 
-### 5. Lines 26–27 · “Training and test loss per epoch, without any weight decay.”
+### 6. Lines 26–27 · “Training and test loss per epoch, without any weight decay.”
 
 - id: `6a1c8d24e3b5` · lines · placed roughly (0.91)
 - was: “Training and test loss per epoch, with no weight decay.”
@@ -731,7 +818,7 @@ changed and where, resolve it when it is done (see "How to answer" at the end).
 > **tim** · 2026-11-10 13:55
 > name the dataset.
 
-### 6. Line 47 · “validation loss was lowest.”
+### 7. Line 47 · “validation loss was lowest.”
 
 - id: `7b2d9e35f4c6` · lines · not found in the current version
 - source: `main.tex`, line 47 (as commented)
@@ -766,21 +853,24 @@ def test_the_markdown_of_a_local_agents_reply():
 
 def test_the_markdown_with_nothing_open():
     doc = {**FIXED, "entries": [], "count": 0, "updated_at": None}
-    assert markdown.render(doc) == ("# Feedback on paper\n\nNo open comments.\n\n---\n\n## How to answer\n\n"
-                                    + EXPECTED.split("## How to answer\n\n")[1])
-    assert markdown.render({**doc, "state": "resolved"}).split("\n")[2] == "No resolved comments."
+    assert markdown.render(doc) == ("# Annotations on paper\n\nNo open comments and no highlights.\n\n---\n\n"
+                                    "## How to answer\n\n" + EXPECTED.split("## How to answer\n\n")[1])
+    assert markdown.render({**doc, "state": "resolved"}).split("\n")[2] == "No resolved comments and no highlights."
+    library = markdown.render({**doc, "scope": {"kind": "home", "id": "home", "name": ""}, "work_folder": None})
+    assert library.startswith("# Annotations on the library\n") and "_feedback`" not in library
 
 
 def test_the_markdowns_picture_modes():
     tool = markdown.render(FIXED, pictures="tool")
-    assert "![" not in tool and 'Picture: read_feedback(thread_id="0d7c5e2a9f1b")' in tool
-    assert tool.count("Picture: read_feedback") == 2  # the whole file has none
-    assert tool.endswith("- `read_feedback(thread_id)` reads one item with its pictures and its JSON form.\n")
+    assert "![" not in tool and 'Picture: read_annotation(id="0d7c5e2a9f1b")' in tool
+    assert tool.count("Picture: read_annotation") == 3  # the whole file has none
+    assert tool.endswith("- `read_annotation(id)` reads one item with its pictures and its JSON form.\n")
     urls = markdown.render({**FIXED, "entries": [entries.with_urls(e) for e in FIXED["entries"]]}, pictures="urls")
-    assert ("![Page 3, the comment's region](/api/feedback/threads/0d7c5e2a9f1b/picture?at=now&v=3f9a2c1b7d4e6a01)"
+    assert ("![Page 3, the comment's region](/api/annotations/0d7c5e2a9f1b/picture?at=now&v=3f9a2c1b7d4e6a01)"
             in urls)
-    assert "/api/feedback/threads/a81e44b07c3d/picture?at=before&v=9c1d0e6f2a4b7358" in urls
-    assert urls.endswith("- The JSON form with every id is `GET /api/feedback?scope=W&state=open`.\n")
+    assert "/api/annotations/a81e44b07c3d/picture?at=before&v=9c1d0e6f2a4b7358" in urls
+    assert "![Page 7, the highlight's region](/api/annotations/H9/picture?at=now&v=0e4d2c6b8a9f1735)" in urls
+    assert urls.endswith("- The JSON form with every id is `GET /api/annotations?scope=W&state=open`.\n")
     with pytest.raises(ValueError):
         markdown.render(FIXED, pictures="inline")
 

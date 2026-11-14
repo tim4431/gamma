@@ -1,5 +1,5 @@
 """The version of a document a comment thread was opened on, kept while
-the thread is open (docs/dev/feedback.md "The commented version kept").
+the thread is open (docs/dev/annotations.md "The commented version kept").
 
 A page whose document is read in place (``documents.model.in_place``: a
 work folder's build or figure, an Opened file, a vault's PDF) has no stored
@@ -9,13 +9,13 @@ such a page has an open thread it keeps the bytes it shows stored
 readable: the relocation run places a PDF's highlights again from it
 (``find_upload_file`` looks in the store before a linked path), and the
 feedback reader draws the region as it was commented on
-(gamma/feedback/pictures.py).
+(gamma/annotations/pictures.py).
 
 - At a thread's open (``after_comment``, a ``create``), one daemon worker,
   never the request, stores the page's current bytes from its path
   (``linked_files.store_page_bytes``, hash-checked) and records the source
   line of the place on the root's anchor (``anchor.source``,
-  gamma/feedback/sources.py), which the next build's ``.synctex.gz`` no
+  gamma/annotations/sources.py), which the next build's ``.synctex.gz`` no
   longer describes.
 - At every replacement while it holds (``keeps_bytes``), the incoming bytes
   are stored first (``vault.local_remote.LocalRemote.replace_doc``,
@@ -23,7 +23,7 @@ feedback reader draws the region as it was commented on
   the replacement before, are the run's reference and get the
   replacement's short life (``upload_gc.retain``).
 - ``repair`` stores what a busy file, the quota or a crash between the
-  commit and the worker left unstored (the feedback files' writer and
+  commit and the worker left unstored (the annotation files' writer and
   ``linked_files.sweep`` call it).
 - An open root's ``anchor.doc_id`` is a held reference (``held_files``,
   which ``upload_gc._references`` reads): a resolve releases it
@@ -41,7 +41,7 @@ file's thread stores nothing at its open nor at a replacement, and a
 range's (``lines``) anchor holds no file (``anchors.held_file``). A
 ``file`` or ``note`` thread on a text page still names the page's version,
 which holds a stored library text document's old version while the thread
-is open (docs/dev/feedback.md "Known gaps").
+is open (docs/dev/annotations.md "Known gaps").
 """
 
 import json
@@ -109,7 +109,7 @@ def held_files(conn, pages=None) -> set[str]:
 
 def after_comment(ws: str, event: dict) -> None:
     """The kept version's part of a committed comment write (``event``,
-    ``comments.after_write``'s; gamma/feedback/listeners.py hands it over):
+    ``comments.after_write``'s; gamma/annotations/listeners.py hands it over):
     a new thread queues its page for the worker, a resolve releases the
     version its root holds (``upload_gc.schedule``: kept its own short
     life, or RETAIN_S, once nothing else holds it), a reopen claims it

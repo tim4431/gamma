@@ -38,7 +38,7 @@ from ..blocks_store import (
     sub_pages as pages_right_inside, tree_parents, tree_rows, with_sub_pages)
 from ..documents.model import SQL_IN_PLACE, is_pdf, page_document, pdf_file_hash, stored_name
 from ..db import connect_pages_db
-from ..feedback.kept import held_files
+from ..annotations.kept import held_files
 from ..db import (
     PAGES_SCHEMA,
     copy_chats,

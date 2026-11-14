@@ -14,7 +14,7 @@ import { png } from "./pictures.mjs";
 // fetched for it alone, CodeMirror's Find under Ctrl+F, Select all and
 // Copy, a large file's head and Show all); the picture (the fit, the zoom
 // at the pointer, a region drawn and commented on and a thread on the page,
-// both in .gamma/feedback/open.json with their pictures within seconds,
+// both in .gamma/annotations/open.json with their pictures within seconds,
 // which is the plan's gate, and a rebuilt picture with the region dashed);
 // the file pane (Download, Show in folder, the listed file); the players;
 // the viewer's words on the tab, the ×, the View menu and a phone's tab; a
@@ -96,7 +96,7 @@ export async function viewerScenarios(env) {
       "tone.wav": wav(), "clip.mp4": wav(1, 660), "run.log": logText, "weights.ckpt": Buffer.alloc(5 * 1024 * 1024),
     };
     for (const [rel, bytes] of Object.entries(files)) write(path.join(dir, rel), bytes);
-    const feedbackDir = path.join(dir, ".gamma", "feedback");
+    const feedbackDir = path.join(dir, ".gamma", "annotations");
     const openJson = () => JSON.parse(fs.readFileSync(path.join(feedbackDir, "open.json"), "utf8"));
     const isJpeg = (file) => fs.existsSync(file) && fs.readFileSync(file).subarray(0, 3).equals(JPEG);
 

@@ -45,7 +45,7 @@ from fake_agents import requests_in, script_agent, settle_probes, use_fakes
 from gamma import folder_links, gamma_sync, pdf_meta, storage, workspaces
 from gamma.computers import channel, registry
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
-from gamma.feedback import files as feedback_files
+from gamma.annotations import files as annotation_files
 from gamma.integrations import create_token
 from gamma.local_agents import catalog, chats, codex, events, home, info, procs, runner, store
 from gamma.vault import kinds, store as vault_store
@@ -119,7 +119,7 @@ def nas(lab, tmp_path, monkeypatch):
             return fn(at, *args, **kwargs)
         return call
 
-    for module in (folder_links, selection, feedback_files, runner, home, info):
+    for module in (folder_links, selection, annotation_files, runner, home, info):
         monkeypatch.setattr(module, "connect_pages_db", guarded(module.connect_pages_db))
     for name in ("reply_of", "write_reply", "sources_of"):
         monkeypatch.setattr(chats, name, guarded(getattr(chats, name)))
@@ -150,9 +150,9 @@ def nas(lab, tmp_path, monkeypatch):
             conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user,))
             conn.execute("DELETE FROM computers WHERE user_id = ?", (user,))
             conn.execute("DELETE FROM computer_links WHERE created_by = ?", (user,))
-    with feedback_files._guard:
-        feedback_files._pages.clear()
-        feedback_files._folders.clear()
+    with annotation_files._guard:
+        annotation_files._pages.clear()
+        annotation_files._scopes.clear()
     assert not left, f"children left running: {[c.proc.pid for c in left]}"
 
 

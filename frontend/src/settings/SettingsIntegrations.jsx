@@ -16,7 +16,7 @@ const PLATFORMS = [["windows", t("Windows PowerShell")], ["unix", t("macOS / Lin
 
 // One connected assistant: how it signed in, what it may read, where it may
 // also edit notes (and whether it answers feedback: a `feedback` connection replies to and resolves the
-// comments on work folders' files, docs/dev/feedback.md), when it was
+// comments on work folders' files, docs/dev/annotations.md), when it was
 // connected and when its access lapses. OAuth connections are minted with an
 // " (OAuth)" suffix on the client's name (mcp_oauth_provider.py). A
 // `computer` token is a computer's channel (docs/dev/computers.md): the

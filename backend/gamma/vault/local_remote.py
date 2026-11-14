@@ -19,7 +19,7 @@ from ..blocks_store import (FOLDERS, LABELS, PARENT_PAGE, TRASH, fetch_subtree, 
                             upload_refs, write_lock)
 from ..db import connect_pages_db, connect_vaults_db, page_now, parse_stamp
 from ..documents.model import document, document_at, in_place, page_document, pdf_file_hash, stored_name
-from ..feedback import kept
+from ..annotations import kept
 from ..folder_sync import ROOT
 from ..ops import MAX_OPS, OpError, after_commits, apply_batches, delete_tree, notify_commit, restore_page, trash_page
 from ..sync_tree import snapshot_from_rows

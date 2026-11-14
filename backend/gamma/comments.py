@@ -4,7 +4,7 @@
 A thread hangs on one block: a note, a highlight (its block), an ink group
 or the page itself (its root block). It is its root comment, whose
 ``thread_id`` is its own id, and the replies that name it; the root keeps
-the place it was opened on (``anchor``, gamma/feedback/anchors.py). A
+the place it was opened on (``anchor``, gamma/annotations/anchors.py). A
 comment an integration token wrote carries the token's display name and id
 (``agent``, ``agent_id``), and a thread one resolved its name
 (``resolved_agent``). The rows live in the workspace's
@@ -18,7 +18,7 @@ them touches the page (``touch_page``): a comment moves no change feed,
 starts no mirror round and does not reorder the home library. After its
 commit the caller hands the write's event to ``written`` (the page's room,
 then ``after_write``), the one place the derived work hangs on: the Inbox
-(gamma/inbox.py) and the ``write_listeners`` (gamma/feedback/listeners.py).
+(gamma/inbox.py) and the ``write_listeners`` (gamma/annotations/listeners.py).
 
 A comment follows its block (``orphan``, ``place``, ``purge``): the block
 deleted by an op marks it orphaned (hidden), the block brought back (an
@@ -35,7 +35,7 @@ from fastapi import HTTPException
 from . import collab, inbox
 from .blocks_store import follow_page, new_block_id, valid_block_id, write_lock
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now, parse_stamp, workspace_ids
-from .feedback import anchors
+from .annotations import anchors
 from .logbuf import log
 
 MAX_BODY = 20_000          # characters of one comment
@@ -55,7 +55,7 @@ _LIVE_PAGE = "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'"
 
 # What follows every committed comment write after the Inbox: ``fn(ws,
 # event)`` (``after_write``'s event), each called in turn, an error logged
-# and never raised (gamma/feedback/listeners.py appends its own).
+# and never raised (gamma/annotations/listeners.py appends its own).
 write_listeners: list = []
 
 
@@ -76,9 +76,10 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     wrote or resolved them ("" for a person), and a comment an agent on
     this computer wrote carries ``agent_kind: "local"``. ``made_on`` is the file the
     thread was opened on (its anchor's ``doc_id``, "" for none), ``sent``
-    the Send waiting on it (``_sent``) or None. The API and the feedback
-    reader are its callers (the other readers leave comments out:
-    docs/dev/comments.md "Not built"). The caller decides which pages are
+    the Send waiting on it (``_sent``) or None. The API and the annotations
+    reader (gamma/annotations/entries.py, which names a scope's pages) are
+    its callers (the other readers leave comments out: docs/dev/comments.md
+    "Not built"). The caller decides which pages are
     readable (a page in Recently deleted is no page of the library)."""
     _check_state(state)
     pages = sorted(set(page_ids))
@@ -88,20 +89,6 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
         f"SELECT {_ROW}, b.page_id FROM comments c JOIN unified_blocks b ON b.id = c.block_id "
         "WHERE b.page_id IN (SELECT value FROM json_each(?)) AND c.orphaned_at IS NULL "
         "ORDER BY c.created_at, c.id", (json.dumps(pages),)).fetchall()
-    return _threads(conn, rows, state)
-
-
-def threads_in_work_folder(conn, work_folder: str, *, state: str | None = None) -> list[dict]:
-    """The threads on the files of the work folder ``work_folder`` (the
-    live pages whose ``work_folder`` it is: a file in Recently deleted is
-    none), as ``threads_for`` gives them. One query by the pages' column
-    (``idx_ub_work_folder``)."""
-    _check_state(state)
-    rows = conn.execute(
-        f"SELECT {_ROW}, b.page_id FROM comments c JOIN unified_blocks b ON b.id = c.block_id "
-        "JOIN unified_blocks p ON p.id = b.page_id "
-        "WHERE p.work_folder = ? AND p.parent_id = 'root' AND c.orphaned_at IS NULL "
-        "ORDER BY c.created_at, c.id", (work_folder,)).fetchall()
     return _threads(conn, rows, state)
 
 
@@ -142,7 +129,7 @@ def has_open_thread(conn, page_id: str) -> bool:
 
 def _sent(conn, thread_ids) -> dict[str, dict]:
     """``{thread id: {request_id, state, at, detail, state_by}}``: the
-    newest Send (gamma/feedback/requests.py) that names each of the threads
+    newest Send (gamma/annotations/requests.py) that names each of the threads
     ``thread_ids`` and waits on it — sent, running or failed, the thread
     not answered since; threads with none left out. ``state_by`` names who
     set its state ("" while it is sent)."""

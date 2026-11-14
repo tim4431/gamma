@@ -5,9 +5,9 @@ import { marginLeft } from "../../../src/comments/marginLayout.js";
 import { Account, ROOT, Server, wanted } from "../harness.mjs";
 import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
 
-// Feedback on a work folder's files (docs/dev/feedback.md): the comments the
+// Feedback on a work folder's files (docs/dev/annotations.md): the comments the
 // person makes on a paper's PDF in a work folder, read by an agent through
-// the files Gamma writes into the directory (.gamma/feedback/) and the
+// the files Gamma writes into the directory (.gamma/annotations/) and the
 // feedback API, and answered as the agent's own comments. The vaults recipe
 // (GAMMA_FOLDER_LINKS, no shell secret, a desktop user agent) over the
 // SyncTeX sample paper (backend/tests/samples/synctex/paper, built twice):
@@ -59,7 +59,7 @@ export async function feedbackScenarios(env) {
     };
     const paperDir = path.join(disk, "paper");
     copyPaper("v1", paperDir);
-    const feedbackDir = path.join(paperDir, ".gamma", "feedback");
+    const feedbackDir = path.join(paperDir, ".gamma", "annotations");
     const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
     const openJson = () => readJson(path.join(feedbackDir, "open.json"));
     const filesOf = async (folder) => (await user.api(`/api/folders/${folder}/pages?limit=500`)).pages;
@@ -148,7 +148,7 @@ export async function feedbackScenarios(env) {
             return d.entries?.length === 2 ? d : null;
           } catch { return null; }
         }, { timeout: 8000, what: "open.json with the two entries" });
-        assertEq(doc.format, "gamma-feedback-1");
+        assertEq(doc.format, "gamma-annotations-1");
         assert(doc.entries.every((e) => e.file === "main.pdf"), "both under main.pdf");
         const byId = Object.fromEntries(doc.entries.map((e) => [e.id, e]));
         const passage = byId[passageThread.id], figure = byId[areaThread.id];
@@ -297,7 +297,7 @@ export async function feedbackScenarios(env) {
       await sync(link);
       await until(async () => JSON.stringify((await blockOf(main.id, passageBlock)).properties.pdf_position.boundingRect) !== before,
         { timeout: 30000, what: "the passage's highlight placed again" });
-      const doc = (await agent(`/api/feedback?scope=${W}`)).json;
+      const doc = (await agent(`/api/annotations?scope=${W}`)).json;
       const passage = doc.entries.find((e) => e.id === passageThread.id);
       assertEq(passage.source?.file, "sections/method.tex");
       assertEq(passage.source.line, passageLine + 3, "the source line moved by the three lines inserted");
@@ -385,7 +385,7 @@ export async function feedbackScenarios(env) {
 
     await step("feedback: removing the work folder takes its feedback files with it", async () => {
       await user.api(`/api/folder-links/${link.id}`, { method: "DELETE" });
-      await until(() => !fs.existsSync(feedbackDir), { timeout: 15000, what: ".gamma/feedback gone" });
+      await until(() => !fs.existsSync(feedbackDir), { timeout: 15000, what: ".gamma/annotations gone" });
       assert(fs.existsSync(path.join(paperDir, "main.pdf")), "the paper's own files stay");
       await user.api(`/api/integrations/tokens/${token.id}`, { method: "DELETE" });
     });

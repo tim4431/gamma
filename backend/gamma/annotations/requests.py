@@ -1,5 +1,5 @@
 """Send: a person's request that an agent act on a work folder's feedback
-(docs/dev/feedback.md "Requests and their states"), in the workspace's
+(docs/dev/annotations.md "Requests and their states"), in the workspace's
 pages.db (``db.FEEDBACK_SCHEMA``).
 
 A request names its work folder, the scope the person sent (a file, or a
@@ -18,7 +18,7 @@ token or another account replies to it or resolves it after the request
 (``answered``, a comment listener): it shows as sent until then
 (``comments._sent``). After every write the pages of its threads hear
 ``{t: "comments"}`` (open tabs refetch the threads and their Sent chips),
-and the files of its work folder are due (gamma/feedback/files.py), its
+and the files of its work folder are due (gamma/annotations/files.py), its
 request file written at once where this computer holds the vault.
 
 Nothing here travels: a mirror, a publication, a share export, a backup
@@ -36,7 +36,7 @@ from ..db import account_names, connect_pages_db, connect_users_db, format_stamp
 from ..logbuf import log
 from ..work_folders.marks import Tree
 from . import entries
-from .entries import FeedbackError, Scope
+from .entries import AnnotationError, Scope
 
 REQUEST_FORMAT = "gamma-feedback-request-1"
 STATES = ("sent", "running", "done", "failed")
@@ -94,9 +94,9 @@ def _records(conn, rows) -> list[dict]:
     for (request_id, rev, w, scope_id, scope_kind, by, by_name, at, note, state, state_at, state_by,
          detail) in rows:
         try:
-            scope = entries.resolve_scope(conn, scope_id, tree)
+            scope = entries.work_scope(conn, scope_id, tree)
             scope_out = {"kind": scope.kind, "id": scope.id, "name": scope.name}
-        except FeedbackError:  # the file or the directory went since
+        except AnnotationError:  # the file or the directory went since
             scope_out = {"kind": "file" if scope_kind == "file" else "work_folder" if scope_id == w else "folder",
                          "id": scope_id, "name": ""}
         out.append({"id": request_id, "rev": rev, "work_folder": {"id": w, "name": tree.names.get(w, "")},
@@ -127,7 +127,7 @@ def listing(conn, *, after: int = 0, scope: str = "", state: str = "", limit: in
     keeps its requests (by ``work_folder`` or ``scope``), ``state`` one
     state's. ``cursor`` is the last ``rev`` given, else ``after``."""
     if state and state not in STATES:
-        raise FeedbackError(400, f"state is one of {', '.join(STATES)}")
+        raise AnnotationError(400, f"state is one of {', '.join(STATES)}")
     where, args = ["rev > ?"], [max(0, after)]
     if scope:
         where.append("(work_folder = ? OR scope = ?)")
@@ -147,16 +147,16 @@ def entries_of(ws, conn, record: dict, *, paths: dict | None = None, link_base: 
     holds. ``places``: each placed on a PDF page says where
     (``entries.entries``)."""
     try:
-        scope = entries.resolve_scope(conn, record["work_folder"]["id"])
-    except FeedbackError:
+        scope = entries.work_scope(conn, record["work_folder"]["id"])
+    except AnnotationError:
         return []
     return entries.entries(ws, conn, scope, state="all", paths=paths, link_base=link_base,
-                           threads=[t["id"] for t in record["threads"]], regions=regions, places=places)
+                           ids=[t["id"] for t in record["threads"]], regions=regions, places=places)
 
 
 def document_of(ws, conn, request_id: str, *, paths: dict | None = None, regions: dict | None = None) -> dict | None:
-    """The request's file (``.gamma/feedback/requests/<id>.json``, written
-    by gamma/feedback/files.py): ``{format, id, rev, workspace, work_folder,
+    """The request's file (``.gamma/annotations/requests/<id>.json``, written
+    by gamma/annotations/files.py): ``{format, id, rev, workspace, work_folder,
     scope, by, at, note, state, state_at, state_by, detail, answer,
     entries}``, ``answer`` naming this request's state route. Its pictures
     are named as in ``open.json`` (``img/<key>.jpg``); the writer puts them
@@ -188,23 +188,23 @@ def create(ws, conn, scope: Scope, *, by: str, by_name: str, note: str = "", thr
     ``via`` is how it was made (``VIA``: a person's session or an
     integration token), stored for the agent on this computer, which takes
     a session's alone. Commits, then tells the threads' pages and the work
-    folder's files. FeedbackError 400 for nothing to send, a thread that
+    folder's files. AnnotationError 400 for nothing to send, a thread that
     is no open one here, too many or an id of the wrong shape; 413 for a
     longer note; 409 for another account's id."""
     if via not in VIA:
         raise ValueError(f"via is one of {', '.join(VIA)}")
     note = note if isinstance(note, str) else ""
     if len(note) > MAX_NOTE:
-        raise FeedbackError(413, f"an instruction holds at most {MAX_NOTE} characters")
+        raise AnnotationError(413, f"an instruction holds at most {MAX_NOTE} characters")
     if request_id and not valid_block_id(request_id):
-        raise FeedbackError(400, f"invalid request id: {request_id!r}")
+        raise AnnotationError(400, f"invalid request id: {request_id!r}")
     write_lock(conn)
     try:
         if request_id:
             row = conn.execute("SELECT by FROM feedback_requests WHERE id = ?", (request_id,)).fetchone()
             if row:
                 if row[0] != by:
-                    raise FeedbackError(409, "that request id is taken")
+                    raise AnnotationError(409, "that request id is taken")
                 conn.rollback()
                 return {"request": get(conn, request_id), "created": False}
         open_here = entries.thread_ids(conn, scope)
@@ -213,12 +213,12 @@ def create(ws, conn, scope: Scope, *, by: str, by_name: str, note: str = "", thr
         else:
             chosen = list(dict.fromkeys(threads))
             if len(chosen) > MAX_THREADS:
-                raise FeedbackError(400, f"a Send names at most {MAX_THREADS} comments")
+                raise AnnotationError(400, f"a Send names at most {MAX_THREADS} comments")
             known = set(open_here)
             if any(t not in known for t in chosen):
-                raise FeedbackError(400, "Only the open comments here can be sent.")
+                raise AnnotationError(400, "Only the open comments here can be sent.")
         if not chosen:
-            raise FeedbackError(400, "Nothing to send: no open comments here.")
+            raise AnnotationError(400, "Nothing to send: no open comments here.")
         request_id = request_id or new_block_id()
         now = page_now()
         conn.execute(f"INSERT INTO feedback_requests ({_COLUMNS}, via) "
@@ -272,7 +272,7 @@ def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_nam
     writer expects the request in (the local runner's writes pass
     ``("running",)``, so a request withdrawn meanwhile is not overwritten).
     A write takes the next ``rev``. Commits, then tells the threads' pages
-    and the work folder's files. FeedbackError 404 for no request, 400 for
+    and the work folder's files. AnnotationError 404 for no request, 400 for
     another state, 413 for a longer detail, 409 for a stored state outside
     ``only_from`` or a change the writer may not make (``TRANSITIONS``).
     An agent taking a request that is not running (``running`` from
@@ -281,22 +281,22 @@ def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_nam
     if writer not in WRITERS:
         raise ValueError(f"writer is one of {', '.join(WRITERS)}")
     if state not in STATES:
-        raise FeedbackError(400, f"state is one of {', '.join(STATES)}")
+        raise AnnotationError(400, f"state is one of {', '.join(STATES)}")
     detail = WITHDRAWN if writer == "requester" and state == "failed" else (detail or "")
     if len(detail) > MAX_DETAIL:
-        raise FeedbackError(413, f"a detail holds at most {MAX_DETAIL} characters")
+        raise AnnotationError(413, f"a detail holds at most {MAX_DETAIL} characters")
     write_lock(conn)
     try:
         row = conn.execute("SELECT state, detail FROM feedback_requests WHERE id = ?", (request_id,)).fetchone()
         if not row:
-            raise FeedbackError(404, "no such request")
+            raise AnnotationError(404, "no such request")
         if only_from and row[0] not in only_from:
-            raise FeedbackError(409, f"The request is {row[0]} now.")
+            raise AnnotationError(409, f"The request is {row[0]} now.")
         if (row[0], row[1]) == (state, detail) and (writer == "agent" or state == "failed"):
             conn.rollback()
             return get(conn, request_id)
         if writer not in TRANSITIONS.get((row[0], state), ()):
-            raise FeedbackError(409, f"A {row[0]} request cannot become {state}.")
+            raise AnnotationError(409, f"A {row[0]} request cannot become {state}.")
         conn.execute("UPDATE feedback_requests SET state = ?, state_at = ?, state_by = ?, detail = ?, rev = ? "
                      "WHERE id = ?", (state, page_now(), by_name or "", detail, _next_rev(conn), request_id))
         if state == "running" and row[0] != "running":   # taken again: a computer's earlier run holds it no more
@@ -354,8 +354,8 @@ change_listeners.append(_wake_computers)
 
 
 def _files_due(ws: str, w: str, request_id: str = "") -> None:
-    """The work folder ``w``'s feedback files are due
-    (gamma/feedback/files.py), and with ``request_id`` that request's file
+    """The work folder ``w``'s annotation files are due
+    (gamma/annotations/files.py), and with ``request_id`` that request's file
     is written now when a vault of this computer keeps ``w`` and may write
     (not paused, not choosing its files). Never raises."""
     if not config.folder_links_enabled():
@@ -384,12 +384,12 @@ def _local_link(ws: str, w: str) -> dict | None:
 
 
 def answered(ws: str, event: dict) -> None:
-    """The comment listener's part (gamma/feedback/listeners.py): a reply
+    """The comment listener's part (gamma/annotations/listeners.py): a reply
     or a resolve answers the thread in every request that waits on it and
     was made before it, unless it is its requester's own (a session's: a
     token's write answers whoever it belongs to). An event that says when
     its writer read the thread (``seen``: an agent on this computer's run,
-    gamma/feedback/agent.py) answers only the requests made by then: one
+    gamma/annotations/agent.py) answers only the requests made by then: one
     made while the run worked is still the next run's. A reopen answers
     nothing."""
     if event.get("kind") not in ("reply", "resolve") or not event.get("thread_id"):
@@ -465,14 +465,14 @@ def claim_run(ws, conn, request_id: str, *, holder: str, run: str, agent: str, b
     comments it read (``read``, ids by thread), in one step under the write
     lock → the request. The same run taking it again (a retry) is answered
     as holding it, its ``seen`` and ``read`` those of this read. Commits,
-    then tells the threads' pages. FeedbackError 404 for no request, 409
+    then tells the threads' pages. AnnotationError 404 for no request, 409
     when another run holds it or it is no longer sent."""
     detail = (detail or "")[:MAX_DETAIL]
     write_lock(conn)
     try:
         row = conn.execute("SELECT state FROM feedback_requests WHERE id = ?", (request_id,)).fetchone()
         if not row:
-            raise FeedbackError(404, "no such request")
+            raise AnnotationError(404, "no such request")
         held = conn.execute("SELECT holder, run FROM feedback_request_runs WHERE request_id = ?",
                             (request_id,)).fetchone()
         if held and tuple(held) == (holder, run) and row[0] == "running":
@@ -481,7 +481,7 @@ def claim_run(ws, conn, request_id: str, *, holder: str, run: str, agent: str, b
             conn.commit()
             return get(conn, request_id)
         if row[0] != "sent":
-            raise FeedbackError(409, "Another run holds this request." if held and row[0] == "running"
+            raise AnnotationError(409, "Another run holds this request." if held and row[0] == "running"
                                 else f"The request is {row[0]} now.")
         conn.execute("UPDATE feedback_requests SET state = 'running', state_at = ?, state_by = ?, detail = ?, rev = ? "
                      "WHERE id = ?", (page_now(), by_name or "", detail, _next_rev(conn), request_id))
@@ -502,11 +502,11 @@ def run_state(ws, conn, request_id: str, *, holder: str, run: str, state: str, d
     (``done``, ``failed``), only while it is running → the request. The
     same detail again changes nothing, and the end the run wrote, written
     again (a retry), is answered as stored. Commits, then tells the
-    threads' pages. FeedbackError 400 for another state, 404 when no run of
+    threads' pages. AnnotationError 400 for another state, 404 when no run of
     ``holder`` holds or held it, 409 when another run holds it or it is no
     longer running (withdrawn: the run is ``STOPPED`` from then on)."""
     if state not in ("running", "done", "failed"):
-        raise FeedbackError(400, "state is running, done or failed")
+        raise AnnotationError(400, "state is running, done or failed")
     detail = (detail or "")[:MAX_DETAIL]
     write_lock(conn)
     try:
@@ -514,9 +514,9 @@ def run_state(ws, conn, request_id: str, *, holder: str, run: str, state: str, d
         held = conn.execute("SELECT holder, run, ended FROM feedback_request_runs WHERE request_id = ?",
                             (request_id,)).fetchone()
         if not row or not held or held[0] != holder:
-            raise FeedbackError(404, "no such request")
+            raise AnnotationError(404, "no such request")
         if held[1] != run:
-            raise FeedbackError(409, "Another run holds this request.")
+            raise AnnotationError(409, "Another run holds this request.")
         if held[2] and held[2] == state == row[0]:
             conn.rollback()
             return get(conn, request_id)
@@ -524,7 +524,7 @@ def run_state(ws, conn, request_id: str, *, holder: str, run: str, state: str, d
             conn.execute("UPDATE feedback_request_runs SET ended = ? WHERE request_id = ? AND ended = ''",
                          (STOPPED, request_id))
             conn.commit()
-            raise FeedbackError(409, f"The request is {row[0]} now.")
+            raise AnnotationError(409, f"The request is {row[0]} now.")
         if (row[0], row[1]) == (state, detail):
             conn.rollback()
             return get(conn, request_id)

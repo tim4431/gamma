@@ -1,5 +1,5 @@
 """Where a thread was opened: the anchor a root comment keeps
-(``comments.anchor``, docs/dev/feedback.md "The anchor").
+(``comments.anchor``, docs/dev/annotations.md "The anchor").
 
 ::
 
@@ -25,7 +25,7 @@ note and the file), ``box`` the region picture's crop (fractions, four
 decimals; None for a range, a note and the file). ``lines`` is a range's
 alone: its first and last line (1-based, inclusive) when the thread
 opened; no other kind carries the key. ``source`` is added after the
-commit (gamma/feedback/kept.py) and absent until then.
+commit (gamma/annotations/kept.py) and absent until then.
 
 ``anchor_of`` computes it from the rows alone, no file read, inside
 ``comments.create``'s transaction. The kinds: the page root is the
@@ -268,7 +268,7 @@ def place_words(anchor: dict) -> str:
     handwriting", and in a text file "lines 118–120, “for step in…”" (the
     lines it was opened on, or ``following``'s: "line 47 (not found in the
     current version), “…”", "lines 3–5 of an earlier version, “…”"). What
-    the feedback tools' answers and the chat's context name a thread's
+    the annotations tools' answers and the chat's context name a thread's
     place by."""
     if anchor["kind"] == "file":
         return "the whole file"

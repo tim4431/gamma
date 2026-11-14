@@ -405,7 +405,7 @@ def test_signin_may_allow_answering_feedback(browser, ticked):
     token = tokens.json()["access_token"]
     assert resolve_connection(token, BASE + "/mcp").scope == ("feedback" if ticked else "read")
     names = _tool_names(c, token)
-    assert ({"reply_feedback", "resolve_feedback"} <= names) is ticked and "list_feedback" in names
+    assert ({"reply_feedback", "resolve_feedback"} <= names) is ticked and "list_annotations" in names
     # a read sign-in may be given the answering too
     if ticked:
         client_id, value = pending(c)

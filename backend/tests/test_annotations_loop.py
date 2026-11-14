@@ -1,7 +1,7 @@
-"""Step 2's gate (docs/research/file-explorer.md section 7, docs/dev/feedback.md):
+"""Step 2's gate (docs/research/file-explorer.md section 7, docs/dev/annotations.md):
 the loop end to end on the paper (samples/synctex/paper) in a work folder
 of this computer. The person comments on a passage and on the figure; the
-files below ``.gamma/feedback/`` say where each is in the sources, with a
+files below ``.gamma/annotations/`` say where each is in the sources, with a
 picture; a Send; a feedback token takes the request, rebuilds (v2 over the
 build, which the round takes and the kept version places the highlights
 on), answers each thread, resolves them and marks the request done; the
@@ -20,7 +20,7 @@ from gamma import folder_links, gamma_sync, jobs, pdf_meta, storage
 from gamma.vault import kinds, store as vault_store
 from gamma.blocks_store import new_block_id
 from gamma.db import connect_pages_db, connect_vaults_db
-from gamma.feedback import files, kept
+from gamma.annotations import files, kept
 from gamma.ops import commit_ops
 from test_highlight_relocate import H, W, _position
 from test_vault_routes import _page_of, _put, _sync, _vault
@@ -39,7 +39,7 @@ def owner(client):
 
 @pytest.fixture
 def disk(tmp_path, monkeypatch):
-    """This server as the desktop app runs it (test_feedback_files' fixture)."""
+    """This server as the desktop app runs it (test_annotations_files' fixture)."""
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
     monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: None)
     monkeypatch.setattr(folder_links, "due", lambda link: "")
@@ -54,7 +54,7 @@ def disk(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "_offline", {})
     with files._guard:
         files._pages.clear()
-        files._folders.clear()
+        files._scopes.clear()
     yield tmp_path / "disk"
     for link in folder_links.all_links():
         if folder_links.inside(link["path"], str(tmp_path)):
@@ -82,12 +82,12 @@ def _bearer(token: str):
 
 
 def _pass():
-    """The hot loop's feedback pass (``folder_links._feedback_pass`` for
+    """The hot loop's annotations pass (``folder_links._annotations_pass`` for
     each work folder due), once the kept version's worker is done."""
     assert kept.wait()
-    links = {link["id"]: link for link in folder_links.all_links() if folder_links.engine(link) and not link["remote_url"]}
-    for ws, w in files.due(0):
-        folder_links._feedback_pass(ws, w, links, files)
+    links = [link for link in folder_links.all_links() if not link["remote_url"]]
+    for ws, scope in files.due(0):
+        folder_links._annotations_pass(ws, scope, links, files)
 
 
 def _open(root) -> dict:
@@ -169,7 +169,7 @@ def test_the_loop(owner, disk):
     assert after["rects"][0]["y1"] > before["rects"][0]["y1"] + 20 and not {"approx", "doc_id", "lost"} & set(after)
     assert not {"doc_id", "lost"} & set(_position_of(owner, area))
     v2 = PLACES["v2"]
-    seen = {e["id"]: e for e in agent.get("/api/feedback", params={"scope": w}).json()["entries"]}
+    seen = {e["id"]: e for e in agent.get("/api/annotations", params={"scope": w}).json()["entries"]}
     assert seen[tp["id"]]["source"] == {"file": "sections/method.tex", "line": 6, "end": 8, "version": "current"}
     assert seen[tp["id"]]["where"]["placed"] == "exact" and seen[tp["id"]]["picture_url"]
     assert (seen[ta["id"]]["source"]["file"], seen[ta["id"]]["source"]["line"]) == ("main.tex", v2["figure"]["line"])

@@ -224,7 +224,7 @@ export function placedToCheck(pos) {
 // A text range measured on another version than `fileHash`, the file shown,
 // which the server's run has not placed on it yet: not lost, its `hash`
 // another (one stored empty reads as the file's own). The server's rule
-// (gamma/feedback/entries.py _placed, "pending": whether to check or not);
+// (gamma/annotations/entries.py _placed, "pending": whether to check or not);
 // false without a file to compare with.
 export function rangePending(pos, fileHash) {
   return !!fileHash && isRecord(pos) && !pos.lost && typeof pos.hash === "string" && !!pos.hash && pos.hash !== fileHash;

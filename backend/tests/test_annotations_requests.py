@@ -1,12 +1,12 @@
-"""Send and its requests (gamma/feedback/requests.py, routers/feedback.py,
-docs/dev/feedback.md "Requests and their states"): who may send and what,
+"""Send and its requests (gamma/annotations/requests.py, routers/feedback.py,
+docs/dev/annotations.md "Requests and their states"): who may send and what,
 a retry that writes once, "Nothing to send"; every change of state row by
 row for each writer (a feedback token, a write token, the requester's
 session, another member, a viewer, a read token, a share visitor); the
 cursor that shows a new request and a state change; a thread answered by a
 token's reply or another member's, not by the requester's own nor by a
 reopen; the room's nudge, the work folder's files marked (the files'
-writer stood in for: gamma/feedback/files.py has its own tests) and the
+writer stood in for: gamma/annotations/files.py has its own tests) and the
 sweep."""
 
 import sys
@@ -15,15 +15,15 @@ from types import SimpleNamespace
 
 import pytest
 
-import gamma.feedback
+import gamma.annotations
 from conftest import (account_of, fresh_client, login, make_folder, make_page, make_user, mark_work_folder, thread_on,
                       token_for, work_props)
 from gamma import collab, workspaces
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
 from gamma.db import connect_pages_db, format_stamp
-from gamma.feedback import requests
-from gamma.feedback.requests import TRANSITIONS
+from gamma.annotations import requests
+from gamma.annotations.requests import TRANSITIONS
 
 OWNER, EDITOR, VIEWER = "fbq_own", "fbq_edi", "fbq_vie"
 
@@ -229,7 +229,7 @@ def test_a_claim_takes_only_a_sent_request(lab):
 def test_only_from_refuses_a_state_the_writer_did_not_expect(lab):
     request_id = _send(lab)["id"]
     with connect_pages_db(lab.ws) as conn:
-        with pytest.raises(requests.FeedbackError) as e:
+        with pytest.raises(requests.AnnotationError) as e:
             requests.set_state(lab.ws, conn, request_id, "done", by_name="Codex", writer="agent", only_from=("running",))
         assert e.value.status == 409 and requests.get(conn, request_id)["state"] == "sent"
         requests.claim(lab.ws, conn, request_id, by_name="Codex", detail="Starting Codex")
@@ -238,7 +238,7 @@ def test_only_from_refuses_a_state_the_writer_did_not_expect(lab):
         assert got["detail"] == "Reading main.pdf"
     _ok(_state(lab, lab.owner, request_id, "failed"))  # withdrawn meanwhile
     with connect_pages_db(lab.ws) as conn:
-        with pytest.raises(requests.FeedbackError) as e:
+        with pytest.raises(requests.AnnotationError) as e:
             requests.set_state(lab.ws, conn, request_id, "done", detail="all fixed", by_name="Codex", writer="agent",
                                only_from=("running",))
         assert e.value.status == 409
@@ -359,8 +359,8 @@ def files(monkeypatch):
     fake = SimpleNamespace(mark=lambda ws, page_id: told.append(("page", ws, page_id)),
                            mark_folder=lambda ws, w: told.append(("folder", ws, w)),
                            write_request=lambda link, request_id: told.append(("request", link["id"], request_id)))
-    monkeypatch.setitem(sys.modules, "gamma.feedback.files", fake)
-    monkeypatch.setattr(gamma.feedback, "files", fake, raising=False)
+    monkeypatch.setitem(sys.modules, "gamma.annotations.files", fake)
+    monkeypatch.setattr(gamma.annotations, "files", fake, raising=False)
     return told
 
 

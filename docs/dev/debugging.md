@@ -106,7 +106,7 @@ What differs from the Windows commands elsewhere in these docs and in
 - **A directory symlink is removed with `os.unlink`**, not with
   `os.rmdir`, which removes only a Windows junction. A test that links a
   directory through its helper removes it by the platform
-  (`tests/test_vault_sync.py`, `tests/test_feedback_files.py`).
+  (`tests/test_vault_sync.py`, `tests/test_annotations_files.py`).
 - **The desktop app without a Developer ID**: `backend/venv/bin/python
   desktop/build_backend.py`, then, in `desktop/`,
   `CSC_IDENTITY_AUTO_DISCOVERY=false npm run pack` for

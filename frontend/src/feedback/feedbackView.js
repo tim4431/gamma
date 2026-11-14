@@ -1,14 +1,15 @@
 // The feedback view's pure part (feedback/FeedbackDialog.jsx, docs/dev/
-// feedback.md "In the app"): which scope the dialog reads, the entries
+// annotations.md "In the app"): which scope the dialog reads, the entries
 // grouped by their file, the requests it lists and what a person may do
 // with one, what the Send says of the folder's agent, and a Send's
 // body. Node tests it (tests/feedbackView.test.mjs).
 //
 // The dialog is opened on a scope, {kind: "file" | "folder", id}
-// (feedback/useFeedback.js), and reads GET /api/feedback?scope= for it or
-// for its work folder, the person's choice; the document is the reader's
-// (feedbackText.js says its entry's shape), the requests are
-// GET /api/feedback/requests' records.
+// (feedback/useFeedback.js), and reads GET /api/annotations?scope= for it
+// or for its work folder, the person's choice; the document is the
+// reader's (feedbackText.js says its entry's shape), of which it lists the
+// threads alone (`threadsOf`), the requests are GET /api/feedback/requests'
+// records.
 import { isWithdrawn } from "../comments/comments.js";
 
 // How long the line of instruction may be (the server's cap).
@@ -28,6 +29,10 @@ export function readScope(scope, choice, workFolder) {
 // Whether the scope switch has two sides: the scope opened on is not the
 // work folder itself.
 export const hasChoice = (scope, workFolder) => !!workFolder?.id && workFolder.id !== scope.id;
+
+// The document's threads: a highlight without one is an entry of the
+// reader's too, and nothing a Send names.
+export const threadsOf = (doc) => (doc?.entries || []).filter((entry) => entry.type === "thread");
 
 // The entries by file, in the document's order: [{file, entries}].
 export function groupByFile(entries) {

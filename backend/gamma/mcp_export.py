@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from .blocks_store import load_props, sub_pages, with_sub_pages
 from .db import account_name, connect_pages_db, connect_users_db
 from .documents.model import page_document
-from .feedback.anchors import text_kept
+from .annotations.anchors import text_kept
 from .markdown_export import UPLOAD_RE
 
 FORMATS = ("markdown", "pdf", "notes_pdf")

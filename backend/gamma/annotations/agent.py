@@ -8,7 +8,7 @@ Each writes one thing in a thread on a work folder's file, a reply or the
 thread resolved (never reopened), as the connection's account, signed with
 the token's display name and id (``agent``, ``agent_id``), through
 ``comments`` as the comment API writes it; what follows, the page's room,
-the Inbox and the feedback files, is ``comments.written``'s. A token's
+the Inbox and the annotation files, is ``comments.written``'s. A token's
 comment makes no one follow the page. A refusal is a ValueError, which the
 adapter (gamma/mcp_server.py) answers as a tool error.
 """
@@ -27,7 +27,7 @@ from . import anchors
 from .entries import file_path
 
 _THREAD = {"type": "string", "minLength": 1, "maxLength": 64,
-           "description": "The feedback item's id (list_feedback, read_feedback)."}
+           "description": "The feedback item's id (list_annotations, read_annotation)."}
 REPLY_SCHEMA = {"type": "object", "properties": {
     "thread_id": _THREAD,
     "body": {"type": "string", "minLength": 1, "maxLength": comments.MAX_BODY,
@@ -40,7 +40,7 @@ REPLY_DESCRIPTION = ("Reply to a feedback item (a comment thread on a work folde
                      "say what you changed and where. It writes nothing but the reply.")
 RESOLVE_DESCRIPTION = ("Resolve a feedback item once it is done. Never resolve one you did not address; leave one "
                        "that needs the user's decision open with a reply.")
-NO_ITEM = "No feedback item has that id: list_feedback lists them."
+NO_ITEM = "No feedback item has that id: list_annotations lists them."
 NOT_A_FILE = "That thread is not on a work folder's file."
 
 

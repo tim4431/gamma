@@ -78,8 +78,8 @@ def about(conn, bucket: str) -> dict | None:
     with ``work_folder`` its name and ``path`` the bucket's path in it (a
     directory's, a file's; "" for the work folder itself) when it is in
     one. A page in Recently deleted is none."""
-    from ..feedback import entries
-    from ..feedback.entries import FeedbackError
+    from ..annotations import entries
+    from ..annotations.entries import AnnotationError
     from ..work_folders.marks import Tree
 
     if bucket == HOME:
@@ -101,8 +101,8 @@ def about(conn, bucket: str) -> dict | None:
                  "w": w if w in tree else ""}
     if found["w"]:
         try:
-            scope = entries.resolve_scope(conn, bucket, tree)
-        except FeedbackError:
+            scope = entries.work_scope(conn, bucket, tree)
+        except AnnotationError:
             found["w"] = ""
         else:
             found.update(work_folder=tree.names.get(found["w"], ""),
@@ -249,11 +249,11 @@ def selections_of(raw) -> list[dict]:
 def sources_of(ws: str, conn, page_id: str, selections: list[dict | None]) -> list[dict | None]:
     """The line each of ``selections`` (as ``selections_of`` keeps one,
     None for one that is not) maps to in the work folder's sources
-    (``feedback.sources.source_for``: ``{file, line, end?}``), None where
+    (``annotations.sources.source_for``: ``{file, line, end?}``), None where
     its page or box is not known or nothing answers. Reads the synctex the
     build left; runs no process."""
     from ..blocks_store import load_props
-    from ..feedback import sources
+    from ..annotations import sources
     from ..logbuf import log
 
     row = conn.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
@@ -602,8 +602,8 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, agent: 
     no turn of ``user_id``'s, 409 when another run holds it, it is no
     longer queued, or it is another agent's (left queued, for a computer
     keeping the folder with that one)."""
-    from ..feedback import entries
-    from ..feedback.entries import FeedbackError
+    from ..annotations import entries
+    from ..annotations.entries import AnnotationError
 
     with connect_pages_db(ws) as conn:
         write_lock(conn)
@@ -632,8 +632,8 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, run: str, agent: 
         if (row["agent"] or reply.get("agent")) != agent:
             raise ChatError(409, f"This turn is for {reply.get('label') or 'another agent'}.")
         try:
-            scope = entries.resolve_scope(conn, row["bucket"])
-        except FeedbackError:
+            scope = entries.work_scope(conn, row["bucket"])
+        except AnnotationError:
             refusal = "This page is no longer a file of the synced folder."
             _end_run(conn, row, "failed", {"error": refusal})
             conn.commit()

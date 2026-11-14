@@ -1,4 +1,4 @@
-// Where App mounts the feedback view (docs/dev/feedback.md "In the app"):
+// Where App mounts the feedback view (docs/dev/annotations.md "In the app"):
 // it reads the dialog's store (feedback/useFeedback.js), which each opener
 // writes where it is, and while a scope is open renders the dialog, fetched
 // on first use (shared/ui/lazy.jsx). App hands it what the dialog needs of

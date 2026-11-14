@@ -6,7 +6,7 @@ home.
 
 ``LocalHome`` is a work folder of this server: the runner's in-process reads
 and writes of its pages.db, as they always were (``requests.claim`` and
-``set_state``, ``requests.entries_of``, the comments, ``feedback.agent``'s
+``set_state``, ``requests.entries_of``, the comments, ``annotations.agent``'s
 ``reply`` and ``resolve`` signed ``local:<agent>``).
 
 ``HttpHome`` is a work folder of another Gamma server (a NAS; step 4c of
@@ -24,16 +24,16 @@ runs it:
   says) and each thread's last speaker. 409 (another run holds it, or it
   is no longer sent) or 404 (not this computer's): nothing to run.
 - **The entries** are named by their files' paths on this disk (the vault's
-  rows, ``feedback.entries.paths_of``), their source lines computed here
-  from the PDF and the sources on this disk (``feedback.sources.
+  rows, ``annotations.entries.paths_of``), their source lines computed here
+  from the PDF and the sources on this disk (``annotations.sources.
   source_in_vault``), the region pictures of the ones put to the agent
   fetched (``GET /api/computers/threads/{id}/picture?at=now|before``) into
-  the directory's ``.gamma/feedback/img/``, where the prompt finds a local
+  the directory's ``.gamma/annotations/img/``, where the prompt finds a local
   work folder's (``prompt.picture_paths``).
 - **The progress** (``POST .../progress {run, detail}``) and **the end with
   the answers** (``POST .../answers {run, replies, state, summary, changed,
   error?}``): the replies, held until the end, are written by that server
-  as the agent's (``feedback.agent.reply`` with ``local:<agent>`` and the
+  as the agent's (``annotations.agent.reply`` with ``local:<agent>`` and the
   claim's ``seen``), each with an id minted here once per run and thread
   (``reply_id``), so a retry writes none twice; ``changed`` names only the
   files the vault tracks, relative to the folder.
@@ -71,7 +71,7 @@ conversation that server keeps and writes:
   paths relative to the folder; a 409 or 404 (stopped there, taken by
   another run, the conversation gone) stops the turn.
 - **Source lines** of the selections are computed here, as a Send's
-  entries' (``feedback.sources.source_in_vault``).
+  entries' (``annotations.sources.source_in_vault``).
 
 A turn there asks only on this computer (its agent's ``ask``, runner.py
 ``ask_refusal``): what it asks is drawn and answered in the
@@ -91,8 +91,8 @@ from urllib.parse import quote, urlencode
 
 from .. import gamma_sync
 from ..db import account_names, connect_pages_db, connect_users_db, page_now
-from ..feedback import requests
-from ..feedback.entries import FeedbackError
+from ..annotations import requests
+from ..annotations.entries import AnnotationError
 from ..logbuf import log
 from . import catalog, chats, store
 
@@ -101,7 +101,7 @@ RETRY_FIRST_S = 2      # the first wait between two tries, doubling
 RETRY_MAX_S = 30       # up to this
 TIMEOUT_S = 60         # one request's
 WRITE_EVERY_S = 1.0    # a chat turn's message is written to the other server at most this often
-_KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a picture's key (``feedback.pictures.key``)
+_KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a picture's key (``annotations.pictures.key``)
 _MAX_PICTURE = 16 * 1024 * 1024               # bytes of one picture fetched
 # The agent message's fields a chat turn writes to the other server: never ``asks``, what a turn there asks
 # stays on this computer; ``waiting`` says that one waits (runner.py ``_progress``).
@@ -179,7 +179,7 @@ class LocalHome:
                 requests.set_state(self.ws, conn, run.request_id, state, detail=detail, by_name=run.label,
                                    writer="agent", only_from=("running",))
             return True
-        except FeedbackError as e:
+        except AnnotationError as e:
             if e.status == 409 or e.status == 404:
                 return False
             raise
@@ -191,7 +191,7 @@ class LocalHome:
 
     def entries(self, run, files: dict) -> tuple[str, list[dict]]:
         """``(when the run read them, the request's entries)``."""
-        from ..feedback import entries
+        from ..annotations import entries
 
         seen_at = page_now()
         with connect_pages_db(self.ws) as conn:
@@ -203,7 +203,7 @@ class LocalHome:
         return _spoken_after(self.ws, since)
 
     def pictures(self, todo: list[dict], root: Path) -> None:
-        """The feedback files' pass writes a local work folder's."""
+        """The annotation files' pass writes a local work folder's."""
 
     def _connection(self, run):
         from .. import comments
@@ -219,7 +219,7 @@ class LocalHome:
         the thread (``seen``), and its thread's session recorded.
         ValueError for a refusal."""
         from ..blocks_store import new_block_id
-        from ..feedback import agent as feedback_agent
+        from ..annotations import agent as feedback_agent
 
         _, out = feedback_agent.reply(self._connection(run), self.ws, "", {"thread_id": thread_id, "body": body,
                                                                            "id": new_block_id()}, seen=run.seen_at)
@@ -228,7 +228,7 @@ class LocalHome:
     def resolve(self, run, thread_id: str) -> None:
         """The fixed thread resolved, unless a person said in it what the
         run did not read. ValueError for a refusal."""
-        from ..feedback import agent as feedback_agent
+        from ..annotations import agent as feedback_agent
         from .runner import _spoken_after
 
         unread = _spoken_after(self.ws, {thread_id: (run.seen_at, set(run.read.get(thread_id, ())))})
@@ -451,7 +451,7 @@ class HttpHome(_Remote):
     def entries(self, run, files: dict) -> tuple[str, list[dict]]:
         """``(the claim's seen, its entries)``, each named by its file's path
         on this disk and, open, with its source line computed here."""
-        from ..feedback import entries, sources
+        from ..annotations import entries, sources
 
         paths = entries.paths_of(files)
         root = Path(run.link["path"])
@@ -487,12 +487,12 @@ class HttpHome(_Remote):
 
     def pictures(self, todo: list[dict], root: Path) -> None:
         """The region pictures of ``todo`` fetched into the directory's
-        ``.gamma/feedback/img/<key>.jpg``, each once (write-once by key, as
-        the feedback files' are), the ``.gamma/feedback/.gitignore`` a
-        local work folder's feedback files carry written first, so a
+        ``.gamma/annotations/img/<key>.jpg``, each once (write-once by key,
+        as the annotation files' are), the ``.gamma/annotations/.gitignore``
+        a local work folder's annotation files carry written first, so a
         repository there never lists them; one not fetched is left out of
         the prompt."""
-        from ..feedback import entries, files
+        from ..annotations import entries, files
         from ..vault import disk as vault_disk
 
         folder = Path(root) / files.IMG
@@ -514,7 +514,7 @@ class HttpHome(_Remote):
                     try:
                         ignored = vault_disk.write_own(Path(root), f"{files.DIR}/.gitignore", files.GITIGNORE)
                     except (OSError, vault_disk.Offline) as e:
-                        log.info(f"[agents] the feedback files' .gitignore of vault {self.link_id}: {e}")
+                        log.info(f"[agents] the annotation files' .gitignore of vault {self.link_id}: {e}")
                         ignored = True   # asked once a run
                 folder.mkdir(parents=True, exist_ok=True)
                 part = folder / f".{key}.{uuid.uuid4().hex[:8]}.part"
@@ -664,9 +664,9 @@ class LocalChatHome:
         the prompt)``: the place's ``about``, a file's ``path`` as the
         vault's rows name it, and each selection ``{page, quote, source}``,
         ``source`` the line its passage maps to in the work folder's sources
-        (``feedback.sources.source_for``) when its box is known, else None
+        (``annotations.sources.source_for``) when its box is known, else None
         (always, outside a work folder kept here)."""
-        from ..feedback import entries
+        from ..annotations import entries
         from ..vault import store as vault_store
 
         about, link, chosen = dict(place["about"]), place["link"], context["selections"]
@@ -692,7 +692,7 @@ def _vault_file(turning, link: dict) -> str:
     """The page's path in the vault as this computer's rows of it name it,
     "" when they name none: what an ask on this computer names, never a
     word the other server gave."""
-    from ..feedback import entries
+    from ..annotations import entries
     from ..vault import store as vault_store
 
     return entries.paths_of(vault_store.files(link["id"])).get(turning.bucket) or ""
@@ -858,10 +858,10 @@ class HttpChatHome(_Remote):
         the prompt)``: the page, its path the one the vault's rows give it
         (else the claim's), and each selection's source line computed here
         from the PDF and the sources on this disk
-        (``feedback.sources.source_in_vault``), on the version the selection
+        (``annotations.sources.source_in_vault``), on the version the selection
         was made on (its ``doc_id`` when that server names it, else the one
         the vault read: the page as it is shown)."""
-        from ..feedback import entries, sources
+        from ..annotations import entries, sources
         from ..vault import kinds, store as vault_store
 
         link = place["link"]

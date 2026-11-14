@@ -684,7 +684,7 @@ AI:
   Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
   its scope as a `Segmented` (read-only for assistants; read and answer
   feedback for an agent or script that replies to and resolves the comments
-  on work folders' files, [feedback.md](feedback.md) "Tokens and MCP"; read
+  on work folders' files, [annotations.md](annotations.md) "Tokens and MCP"; read
   and write for an offline copy of the open workspace on another Gamma,
   [mirror.md](mirror.md)) and, but for read and write, its workspaces. The
   checklist (`WorkspacePicker.jsx`, the page

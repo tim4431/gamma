@@ -179,7 +179,7 @@ export const RULES = [
   ["frontend/src/comments/**", ["comments", "collab", "inbox", "feedback", "local-agents", "text-anchors", "remote-sends"]],
   // the bell, its panel and the jumps (a thread's opens through comments/); feedback: an agent's items
   ["frontend/src/inbox/**", ["inbox", "feedback"]],
-  // the feedback view and Send (docs/dev/feedback.md "In the app"); local-agents: Send naming the
+  // the feedback view and Send (docs/dev/annotations.md "In the app"); local-agents: Send naming the
   // folder's agent on this computer, its lines and the request it works; remote-sends: on the computer
   // that keeps a work folder of this server
   ["frontend/src/feedback/**", ["feedback", "local-agents", "remote-sends"]],
@@ -349,10 +349,13 @@ export const RULES = [
   // (text-anchors: a range of a text file's lines as an entry, placed again after a change)
   // (remote-sends: a Send of a work folder a computer keeps, its claim, its run's state and the
   // computer woken; the replies it posts, the source line found on the computer)
-  ["backend/gamma/feedback/requests.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
-  ["backend/gamma/feedback/agent.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
-  ["backend/gamma/feedback/sources.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
-  ["backend/gamma/feedback/**", ["feedback", "viewers", "local-agents", "text-anchors"]],
+  ["backend/gamma/annotations/requests.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
+  ["backend/gamma/annotations/agent.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
+  ["backend/gamma/annotations/sources.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
+  // (work-folders: a highlight in a synced folder's file reaching its .gamma/annotations/open.md)
+  ["backend/gamma/annotations/files.py", ["feedback", "viewers", "local-agents", "text-anchors", "work-folders", "remote-sends"]],
+  ["backend/gamma/annotations/**", ["feedback", "viewers", "local-agents", "text-anchors"]],
+  ["backend/gamma/routers/annotations.py", ["feedback", "local-agents", "remote-sends"]],
   ["backend/gamma/routers/feedback.py", ["feedback", "local-agents", "remote-sends"]],
   // an agent on this computer answering a Send (docs/dev/local_agents.md): finding the CLIs, the
   // drivers, the runner, what this computer keeps, and GET /api/local-agents

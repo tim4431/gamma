@@ -117,9 +117,11 @@ such a folder's Sends are its next steps.
   root) that pushes everything and whose state carries `TAKEN_OVER`, which
   only this way of making one sets. The remote kept folders that pushed
   everything before stay kept folders. `work_vault` decides the mark, the
-  round's work-folder turn, the tracking dialog, the push and pull locks
-  and removal; `work_folder_link` keeps its local meaning for the agents,
-  the feedback files and the chip.
+  round's work-folder turn, the tracking dialog, the push and pull locks,
+  removal and the annotation files its rounds write, read from that server
+  with the vault's token ([annotations.md](annotations.md) "The files");
+  `work_folder_link` keeps its local meaning for the agents, the hot pass
+  of those files and the chip.
 - **Made of an empty folder only.** `create_remote_link(..., choose,
   library)` (the host's `POST /api/folder-links` with `remote_url`,
   `choose: true`, push everything, pull on): that server must say
@@ -361,7 +363,7 @@ as the disk gave it, NFD from a Mac, and a typed one is NFC, as the vault's
 link reader and the search fold them). `work_folders_named(tree,
 name_or_id)` applies it to the work folders' roots (an id is itself), and
 feedback's `work_folder_named` builds its 404 and 400 on it
-([feedback.md](feedback.md)). The readers: the feedback document's file
+([annotations.md](annotations.md)). The readers: the feedback document's file
 names (`file_path`, which prefers the vault's rows on the computer that
 holds them), the chat's `read_page(path=…)` and `list_pages`' `path=`, and
 the search's file hits ([api.md](api.md) "Search"), quick open's file
@@ -1138,19 +1140,21 @@ classes" the class `file`.)
   as any new file is.
 - **A library file's versions** are stored as they come, as a library
   document's bytes are; so are a PDF's or a picture's while a comment
-  thread on it is open (`feedback.kept.keeps_bytes`, the one predicate at
+  thread on it is open (`annotations.kept.keeps_bytes`, the one predicate at
   the replacement: the version a thread was opened on is held until it is
-  resolved, [feedback.md](feedback.md) "The commented version kept"); a
+  resolved, [annotations.md](annotations.md) "The commented version kept"); a
   text file's are not, since its ranges carry their own context and are
   placed again in the round itself
   ([highlight_relocation.md](highlight_relocation.md#text-files)); its
   document still reads in place here.
-- **The feedback files.** Every whole round writes the work folder's
-  `.gamma/feedback/` after its sync (`open.json`, `open.md`, the pictures,
-  a file per Send; the summary in `status.feedback`), and the hot loop
-  writes them within a pass of a comment, a reply, a resolve, a relocation
-  or a Send ([feedback.md](feedback.md) "The files"); a paused or choosing
-  vault writes none.
+- **The annotation files.** Every whole round writes the work folder's
+  `.gamma/annotations/` after its sync (`open.json`, `open.md`, the open
+  threads and the bare highlights with their pictures, a file per Send;
+  the summary in `status.annotations`), and the hot loop writes them
+  within a pass of a highlight, a comment, a reply, a resolve, a
+  relocation or a Send ([annotations.md](annotations.md) "The files"); a
+  paused or choosing vault writes none between rounds. The
+  `.gamma/feedback/` they were in before goes at the first round.
 - **Opening a file with the app** (`linked_files.open_file`, `POST
   /api/folder-links/open`) inside a work folder opens the page of a file it
   tracks, after a round for one it has not read yet. A file it does not
@@ -1204,8 +1208,8 @@ Lowering the push is refused while a file is not in the library.
 
 Detach is the one way a work folder leaves Gamma; the interface calls it a
 synced folder (*Detach from TIM-PC…*). It stops the sync and leaves the
-directory as it is: only Gamma's own marker, its feedback files
-(`.gamma/feedback/`, regenerable: [feedback.md](feedback.md) "The files")
+directory as it is: only Gamma's own marker, its annotation files
+(`.gamma/annotations/`, regenerable: [annotations.md](annotations.md) "The files")
 and then `.gamma/`, when that leaves it empty, are taken away. It asks
 what becomes of the files (`pages`):
 

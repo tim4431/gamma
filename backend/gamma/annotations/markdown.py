@@ -1,8 +1,9 @@
-"""The Markdown form of a feedback document (docs/dev/feedback.md "The
-Markdown"): what ``.gamma/feedback/open.md``, ``GET /api/feedback?format=md``
-and the MCP tools give an agent to read. A heading per file, an item per
-thread with its place, source, Send and pictures, its comments quoted line
-by line (a body's own Markdown left as it is), and how to answer at the end.
+"""The Markdown form of an annotations document (docs/dev/annotations.md
+"The Markdown"): what ``.gamma/annotations/open.md``, ``GET
+/api/annotations?format=md`` and the MCP tools give an agent to read. A
+heading per file, an item per highlight and thread with its place, source,
+Send and pictures, a thread's comments quoted line by line (a body's own
+Markdown left as it is), and how to answer at the end.
 
 The pictures are written as the reader can reach them: ``files`` the
 ``img/`` files beside ``open.md``, ``urls`` the routes that serve them,
@@ -20,8 +21,9 @@ MODES = ("files", "urls", "tool")
 HEADING_QUOTE = 80   # characters of a passage's quote in an item's heading
 NOTE_LINE = 300      # characters of a note's text in its item
 
-INTRO = ("Each item is a comment thread on a file of this work folder. Answer it in Gamma: reply with what you\n"
-         "changed and where, resolve it when it is done (see \"How to answer\" at the end).")
+INTRO = ("Each item is a comment thread or a highlight. Answer a thread in Gamma: reply with what you changed\n"
+         "and where, resolve it when it is done (see \"How to answer\" at the end). A highlight marks a place,\n"
+         "with the note written on it: read it as context.")
 PLACED = {"exact": "placed exactly", "rough": "placed roughly ({match})", "estimate": "placed by estimate",
           "lost": "not found in the current version", "pending": "not placed yet",
           "earlier": "drawn on an earlier version"}
@@ -46,13 +48,14 @@ def heading(entry: dict) -> str:
     ``Page 5 · area``, ``Page 2 · handwriting``, ``Page 3 · note on “…”``,
     ``Region · 320×180 px at (40, 60)``, ``Note on a region · …``, ``Lines
     118–120 · “…”``, ``Line 118 · note on “…”``, ``A note``, ``The whole
-    file``."""
+    file``. A highlight's own note is no "note on": the note is the
+    highlight's."""
     kind, where = entry["kind"], entry["where"]
     if kind == "file":
         return "The whole file"
     if kind == "note":
         return "A note"
-    on = "note on " if where.get("note") else ""
+    on = "note on " if where.get("note") and entry.get("type") != "highlight" else ""
     if kind == "lines":
         line = where.get("line")
         lines = anchors.line_words(line, where.get("end") or line).capitalize() + " · " if line else ""
@@ -72,7 +75,7 @@ def heading(entry: dict) -> str:
 
 def _facts(entry: dict) -> list[str]:
     where = entry["where"]
-    facts = [f"id: `{entry['id']}`", entry["kind"]]
+    facts = [f"id: `{entry['id']}`", *(["highlight"] if entry.get("type") == "highlight" else []), entry["kind"]]
     if where.get("placed"):
         words = REGION_PLACED if entry["kind"] == "region" else PLACED
         facts.append(words[where["placed"]].format(match=where.get("match", "")))
@@ -104,13 +107,14 @@ def _pictures(entry: dict, mode: str) -> list[str]:
     if not now and not before:
         return []
     if mode == "tool":
-        return [f"Picture: read_feedback(thread_id=\"{entry['id']}\")"]
+        return [f"Picture: read_annotation(id=\"{entry['id']}\")"]
     page = entry["where"].get("page")
     if entry["kind"] == "file":
         what, was = "The picture", "The picture as it was commented on"
     else:
         at = f"Page {page}, the" if page else "The"
-        what, was = f"{at} comment's region", f"{at} region as it was commented on"
+        mark = "highlight" if entry.get("type") == "highlight" else "comment"
+        what, was = f"{at} {mark}'s region", f"{at} region as it was commented on"
     if mode == "urls":
         now, before = entry.get("picture_url") or now, entry.get("before_url") or before
     lines = []
@@ -143,13 +147,13 @@ def render_entry(entry: dict, *, pictures: str = "tool", number: int | None = No
 
 def _how_to_answer(doc: dict, mode: str) -> list[str]:
     last = {"files": "- The JSON form with every id is `open.json` beside this file.",
-            "urls": f"- The JSON form with every id is `GET /api/feedback?scope={doc['scope']['id']}"
+            "urls": f"- The JSON form with every id is `GET /api/annotations?scope={doc['scope']['id']}"
                     f"&state={doc.get('state', 'open')}`.",
-            "tool": "- `read_feedback(thread_id)` reads one item with its pictures and its JSON form."}[mode]
+            "tool": "- `read_annotation(id)` reads one item with its pictures and its JSON form."}[mode]
+    reply, resolve = (", or `reply_feedback`", ", or `resolve_feedback`") if doc.get("work_folder") else ("", "")
     return ["---", "", "## How to answer", "",
-            "- Reply: `POST /api/pages/{page_id}/comments` with `{\"block_id\", \"thread_id\", \"body\"}`, "
-            "or `reply_feedback`.",
-            "- Resolve: `POST /api/comments/{id}/resolve` with `{\"resolved\": true}`, or `resolve_feedback`.",
+            f"- Reply: `POST /api/pages/{{page_id}}/comments` with `{{\"block_id\", \"thread_id\", \"body\"}}`{reply}.",
+            f"- Resolve: `POST /api/comments/{{id}}/resolve` with `{{\"resolved\": true}}`{resolve}.",
             last]
 
 
@@ -159,13 +163,16 @@ def render(doc: dict, *, pictures: str = "files") -> str:
     if pictures not in MODES:
         raise ValueError(f"pictures is one of {', '.join(MODES)}")
     words = STATE_WORDS.get(doc.get("state", "open"), "comment")
-    out = [f"# Feedback on {doc['scope']['name'] or doc['work_folder']['name']}", ""]
+    out = [f"# Annotations on {doc['scope']['name'] or 'the library'}", ""]
     entries = doc["entries"]
     if not entries:
-        out += [f"No {words}s.", ""]
+        out += [f"No {words}s and no highlights.", ""]
     else:
-        count = len(entries)
-        facts = [f"{count} {words}{'' if count == 1 else 's'}"]
+        threads = sum(1 for e in entries if e.get("type") != "highlight")
+        marks = len(entries) - threads
+        facts = [f"{threads} {words}{'' if threads == 1 else 's'}"] if threads else []
+        if marks:
+            facts.append(f"{marks} highlight{'' if marks == 1 else 's'}")
         if doc.get("owner"):
             facts.append(f"owner {doc['owner']}")
         if doc.get("updated_at"):

@@ -14,7 +14,7 @@ Status: **a plan; nothing is built.** The mechanics as they stand are in
 [dev/work_folders.md](../dev/work_folders.md),
 [dev/local_agents.md](../dev/local_agents.md),
 [dev/computers.md](../dev/computers.md) and
-[dev/feedback.md](../dev/feedback.md). This note records where the built
+[dev/annotations.md](../dev/annotations.md). This note records where the built
 design differs from what was asked, the decisions, the design and its
 steps. Three of the corrections reverse decisions the two earlier notes
 record ("Reversed" below). What to build, unit by unit with its files,
@@ -189,7 +189,7 @@ explorer's look.
   stays as it is: anchors, source lines, pictures, the version kept
   while a thread is open, the Markdown form.
 - **On disk.** A synced folder's directory holds the marks of its files
-  as `.gamma/annotations/` (`open.md`, `open.json`, `img/`), kept by the
+  as `.gamma/feedback/` (`open.md`, `open.json`, `img/`), kept by the
   vault's rounds, for a folder of another server too (today a remote
   vault writes none). An agent started in a terminal reads them with no
   connection.
@@ -284,7 +284,7 @@ tests, are in [the plan](agents-as-participants-plan.md).
 |---|---|
 | 1. The explorer and Detach | the icon function and its set, the synced folder's mark and tree, Detach with its two outcomes, in every window |
 | 2. Agents in Settings and the picker | the settings moved to the computer, the Agents list, the picker on every page, one conversation store, the turn's connection and Gamma's tools, the chat without a provider |
-| 3. Marks and identity | the reader for any page with highlights, `.gamma/annotations/`, `comment` / `resolve` / `highlight`, the *Comment* level, the agent's row and stamp, a mention as a turn, a co-author's use; the request layer removed |
+| 3. Marks and identity | the reader for any page with highlights, `.gamma/feedback/`, `comment` / `resolve` / `highlight`, the *Comment* level, the agent's row and stamp, a mention as a turn, a co-author's use; the request layer removed |
 | 4. Another server | a computer linked in Settings, the choice of computer and directory, asks relayed |
 | 5. Sessions | the CLI's sessions listed in History, read and continued |
 

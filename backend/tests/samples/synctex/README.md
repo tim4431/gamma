@@ -1,8 +1,8 @@
 # SyncTeX samples
 
 Builds of TeX Live 2024 for the SyncTeX reader's tests
-(`backend/tests/test_synctex.py`, `test_feedback_sources.py`,
-docs/dev/feedback.md "SyncTeX"), all made here by `build.py` in this folder:
+(`backend/tests/test_synctex.py`, `test_annotations_sources.py`,
+docs/dev/annotations.md "SyncTeX"), all made here by `build.py` in this folder:
 
     cd backend
     venv/Scripts/python.exe -I tests/samples/synctex/build.py [--compare]

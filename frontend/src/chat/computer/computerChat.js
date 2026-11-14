@@ -491,7 +491,7 @@ export function canSend(info, conversation, text) {
 // (chat/agentSteps.js isChange), and whether it failed or was not allowed.
 const STEP_KINDS = { read: "file", edit: "fileEdit", run: "run", search: "search" };
 const GAMMA_KINDS = {
-  list_pages: "list", list_folders: "list", list_feedback: "list", list_workspaces: "list",
+  list_pages: "list", list_folders: "list", list_annotations: "list", list_workspaces: "list",
   search_library: "search", view_pdf_page: "view", view_ink: "ink", view_image: "image", cite: "cite",
 };
 const chipKind = (step) => (step?.kind === "gamma" ? GAMMA_KINDS[step.tool] || "read" : STEP_KINDS[step?.kind] || "work");

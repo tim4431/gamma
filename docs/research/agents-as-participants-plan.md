@@ -1,7 +1,7 @@
 # Agents as participants: the build plan
 
-Status: **a plan, partly built**: steps 1 and 2 are built, each step's
-"As built" saying where the build differs. Written 2026-11-14
+Status: **a plan, partly built**: steps 1, 2, 3.1 and 3.2 are built, each
+step's "As built" saying where the build differs. Written 2026-11-14
 against `dev` @ b4870d47, after a survey of the code behind work folders, local agents,
 computers and feedback. The file and line references were read then, so
 check them again before building. This file says what to build and in
@@ -767,6 +767,48 @@ folder edits that file; the sync panel no longer names an agent.
   `_pictures`, `_images`, `_tools` under their new names, with a library
   page and a bare highlight added.
 
+**As built** (3.1). The package is `gamma/annotations/`, its tests
+`test_annotations_*.py` and its doc [dev/annotations.md](../dev/annotations.md),
+whose request sections say they go in 3.7; `FeedbackError` is
+`AnnotationError`. The reader has a router of its own,
+`routers/annotations.py`: `GET /api/annotations`, `GET
+/api/annotations/{id}` (a thread's id or a bare highlight's block id) and
+`…/{id}/picture` in place of `/api/feedback`, `/threads/{id}` and its
+picture; `routers/feedback.py` keeps the Sends' routes, and its
+`dialog_agent` is what the reader's route adds for a work folder's scope
+(the Feedback dialog's `agent`, `agents_found`), the dialog listing the
+document's threads alone (`feedbackView.threadsOf`). `resolve_scope`
+answers six kinds (`page`, `library_folder`, `home` added) and refuses
+none; `work_scope` refuses what is no work folder's for the callers that
+need one (a Send, the files' writer, the far turn's claim, the chat strip,
+a mention's Send). `comments.threads_in_work_folder` is gone: the reader
+names a scope's pages (`_page_ids`: the work folder's column,
+`pages_in_folder`, `live_pages`) and reads them with `threads_for`. An
+entry gains `type` (`thread` or `highlight`); a bare highlight is a
+highlight block (the `kind` column) that no thread of any state is placed
+on, read as a root without an anchor is, its own text as `where.note`,
+`state` and `sent` null, no comments, no `before`; `state` filters threads
+alone. The document's format is `gamma-annotations-1`, its `work_folder`
+null outside one, `updated_at` a highlight's write too; past
+`MAX_ENTRIES` the threads fill the cap first, so a file of many
+highlights never pushes another's threads out, and `truncated_threads`
+counts the threads cut (the dialog's *n more are not shown*). Outside a
+work folder `answer.mcp` and the Markdown name no answering tool, which
+reach a work folder's threads alone until 3.3. The Markdown is
+headed *Annotations on …* and counts threads and highlights apart. The
+tools are `list_annotations` (`scope` a page's or a folder's id, a work
+folder by name, a folder's path, or `home`; without one the chat's own
+page or folder, so a folder chat reads one document, no longer a section
+per work folder) and `read_annotation(id)`; the old names stay callable
+through `DEPRECATED_TOOLS`, `thread_id` too. MCP finds an annotation's
+workspace by `ANNOTATION_ARGS` (the list's `after`, the read's `id`, as a
+block and as a thread). The turn's prompt names `list_annotations` with the
+page's, the folder's or `home` for every conversation. data.db's table is
+`annotation_pictures`; `DATA_SCHEMA` drops `feedback_pictures`, a cache
+drawn again when asked for. The model-facing text keeps "work folder", as
+the registry's other tools do; the chat's step labels are the person's
+(*Listing the highlights and comments…*, with their `zh`).
+
 ### 3.2 On disk
 
 - `annotations/files.py`: `.gamma/annotations/open.md`, `open.json` and
@@ -776,6 +818,45 @@ folder edits that file; the sync panel no longer names an agent.
   pictures from that server with the vault's token and writes the same
   files (today `files.py:138` writes none there).
 - Tests: `test_feedback_files.py` renamed, `test_remote_work_folders.py`.
+
+**As built** (3.2). A work folder's files are below `.gamma/annotations/`
+(the Sends' `requests/` with them until 3.7), and a vault of one file's,
+which the owner asked for after the plan, beside its file in
+`.gamma/annotations/<file name>/` (`files.place`), the same shape; both
+list the open threads and the bare highlights, and the Markdown's opening
+lines say what a highlight is to the reader. `.gamma/feedback/` is
+`files.FORMER`, deleted by every write and every removal while it is
+there. One test, `folder_links.annotated`, says who writes: a work folder
+of this server or another (`work_vault`, no longer `work_folder_link`), or
+a vault of one file that no folder vault's directory holds (one
+`_take_in` could not take, whose `.gamma/` may be that vault's). A vault
+of one file writes at its round (`_file_round`) and in the hot pass, whose
+marks now resolve to a work folder or to a followed page
+(`files._scopes`, `_annotations_pass`); its files go at its removal, a
+relink (beside the file that was) and a take-in, `.gamma/` with them when
+left empty. The `.gamma/` beside a file holds no marker, and
+`place_refusal` now refuses a vault of a `.gamma` directory or one inside
+it (`OWN_REFUSED`). `vault.disk.write_own` takes `beside`, the followed
+file standing for the marker, and hides the `.gamma/` it makes. A vault of
+another server reads its document there (`GET /api/annotations` of its
+folder or page, cut to the document's fields) and fetches the pictures by
+the routes it names, with the vault's token: an integration token of that
+workspace already reads both as any member, so the token gained nothing.
+Such a work folder writes at every whole round and, on a round of push
+alone, at most every `REMOTE_POLL_S` (`_annotations_read`), its document
+asked for within `ASK_TIMEOUT_S`, so a silent server holds the lock no
+longer than a question; a followed file of another server has a round every
+`REMOTE_POLL_S` while its file rests (`folder_links._poll`), which sends
+nothing and reads its annotations again, since no mark reaches this
+computer from there. The status's summary is `annotations`, in place of
+`feedback`. A remote run's pictures in `img/` are now pruned by the work
+folder's rounds as a local one's are, but not while an agent works there
+(`runner.at_work`). A vault of one file writes nothing in a directory no
+vault may have (`place_refusal`: a drive's root, home, a system or
+temporary place), and nothing where that directory's `.gamma/` holds a
+marker (a vault this server does not know); a take-in removes the file
+vault's files under its lock. The browser step is in
+`work-folders`: a highlight made in `main.pdf` reaches `open.md` on disk.
 
 ### 3.3 The writing tools and the Comment level
 
@@ -876,7 +957,9 @@ Removed, with their tests and docs:
 - `feedback/requests.py` and the tables `feedback_requests`,
   `feedback_request_threads`, `feedback_request_runs` (`db.py:1106-1149`);
   the routes `/api/feedback/requests*` (`routers/feedback.py:221-317`);
-  `.gamma/feedback/requests/`.
+  `.gamma/annotations/requests/` (moved there in 3.2) and the request files'
+  half of `annotations/files.py` (`write_request`, `_requests`,
+  `_prune_requests`, `REQUESTS`).
 - `runner.py`'s `_Run` (`:1152`) with `on_request`, `_consider`,
   `queue_remote`, `withdraw_remote`, `waiting`, `queue_folder`; vaults.db
   `agent_runs` and `agent_threads` left unread; `home.py`'s Send half.
@@ -885,9 +968,8 @@ Removed, with their tests and docs:
 - `frontend/src/feedback/`, the Feedback button (`App.jsx:11630`), the
   vault chip's item (`VaultChip.jsx:120`), the Comments window's button
   (wired at `App.jsx:12609`), `FeedbackHost` (`App.jsx:14477`).
-- [dev/feedback.md](../dev/feedback.md) becomes `annotations.md`, its
-  request sections gone; the developer guide's row and every source
-  comment citing it follow.
+- [dev/annotations.md](../dev/annotations.md) (renamed in 3.1) loses its
+  request sections, and `routers/feedback.py` goes with the routes.
 
 Done when: on a library PDF and on a `.tex` of a synced folder, the
 person highlights a passage, comments with the tick, and Codex answers in

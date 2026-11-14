@@ -81,7 +81,7 @@ on, always written: "drawn on another version" is read, never stamped
 (``hash`` differs from the page's ``file_hash``), so a replacement writes
 no op on regions, and ``hash`` holds no file (storage._position_ids names
 nothing for it; the version a thread needs is held by its anchor,
-gamma/feedback/anchors.py). Regions are never relocated; readers scale by
+gamma/annotations/anchors.py). Regions are never relocated; readers scale by
 fractions (``region_box``). ``is_region`` is their test, the twin of
 ``is_highlight``; the ``kind`` column calls both ``highlight``.
 

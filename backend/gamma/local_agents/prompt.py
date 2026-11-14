@@ -104,8 +104,8 @@ def _safe(value):
 
 def _pictures(entry: dict, root: Path) -> list[str]:
     """The entry's pictures (now, and as it was commented on) that the
-    vault's ``.gamma/feedback/img/`` holds, relative to the folder."""
-    from ..feedback import files  # local: the feedback files reach the vaults
+    vault's ``.gamma/annotations/img/`` holds, relative to the folder."""
+    from ..annotations import files  # local: the annotation files reach the vaults
 
     out = []
     for picture in (entry.get("picture"), entry.get("before")):
@@ -248,7 +248,7 @@ def _tools(about: dict, owner: str) -> list[str]:
         "the message needs before you answer, and say where it comes from (the page, its PDF page, a file's line).",
         "",
     ]
-    ref = json.dumps(about.get("id") or "", ensure_ascii=False)
+    ref = json.dumps(about.get("id") or "home", ensure_ascii=False)  # "home": the library, as list_annotations names it
     if about["kind"] == "page":
         lines.append(f"- `read_page` with `page_id` {ref} reads this page: the passages {owner} highlighted and "
                      f"{owner}'s notes on them, its open comment threads, and its text (a PDF's, read on with "
@@ -262,9 +262,10 @@ def _tools(about: dict, owner: str) -> list[str]:
     else:
         lines.append("- `list_folders` and `list_pages` show how the library is organized; `read_page` reads a "
                      "page by its id.")
-    if about.get("w"):
-        lines.append(f"- `list_feedback` with `scope` {ref} lists the comment threads on the work folder's files "
-                     "here, each with its source line, and `read_feedback` reads one with a picture of its region.")
+    what = {"page": "of this page", "folder": "of this folder's pages"}.get(about["kind"], "of the whole library")
+    lines.append(f"- `list_annotations` with `scope` {ref} lists the highlights and comment threads {what}, each "
+                 "with its place and its source line, and `read_annotation` reads one by its id with a picture of "
+                 "its region.")
     lines.append("- `search_library` searches the rest of the library (notes, highlights, PDF text, files); `cite` "
                  "gives a page's paper metadata and BibTeX; `read_chats` reads what Gamma AI answered in a page's "
                  "chat, an AI's words and not the page's.")

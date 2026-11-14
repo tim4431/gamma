@@ -191,7 +191,7 @@ export async function remoteSendScenarios(env) {
       name = seen.name;
       assertEq(name.toLowerCase(), os.hostname().slice(0, 64).toLowerCase(), "the computer's host name");
       assertEq(JSON.stringify(seen.vault.agent), JSON.stringify({ name: "codex", label: "Codex" }), "the vault's agent");
-      const doc = await alice.api(`/api/feedback?scope=${folderId}`);
+      const doc = await alice.api(`/api/annotations?scope=${folderId}`);
       assertEq(JSON.stringify([doc.agent?.name, doc.agent?.computer, doc.agent?.online, doc.agent?.takes]),
         JSON.stringify(["codex", name, true, true]), "the feedback document names Codex on the computer for its maker");
       assert(!JSON.stringify(seen).includes(disk) && !JSON.stringify(doc).includes(disk), "no path of the computer reaches the NAS");
@@ -286,7 +286,7 @@ export async function remoteSendScenarios(env) {
     let units = null;
     await step("remote-sends: bob sees no agent and his @codex is plain text that sends nothing; a Send made with a token is refused", async () => {
       assertEq(JSON.stringify(await computersOf(bob)), "[]", "the page's computers for another member");
-      assertEq((await bob.api(`/api/feedback?scope=${folderId}`)).agent ?? null, null, "the feedback document names him no agent");
+      assertEq((await bob.api(`/api/annotations?scope=${folderId}`)).agent ?? null, null, "the feedback document names him no agent");
       units = await commentOn(alice, PLACES.v1.equation.rect, "the units are missing");
       const before = (await requestsOf(alice)).length;
       const ctx = await bob.context(browser);

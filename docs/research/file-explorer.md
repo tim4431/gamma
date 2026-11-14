@@ -1005,13 +1005,13 @@ differs from the plan above, the whole list:
     as every vault does.
 
 **As built (step 2).** Built as its row says
-([dev/feedback.md](../dev/feedback.md)). A thread's root stores where it
+([dev/annotations.md](../dev/annotations.md)). A thread's root stores where it
 was opened (`comments.anchor`: the kind, the block, the file it was
 measured on, the page, the rects, the quote, the picture's crop and the
 source recorded then), and every comment the token that wrote it (`agent`,
 `agent_id`; `resolved_agent` on a resolve), with migration step 54
 (`feedback`), which is local (`LOCAL_STEPS`), so the workspace format
-stays 52. The reader is `gamma/feedback/` (`entries` the scopes, entries
+stays 52. The reader is `gamma/annotations/` (`entries` the scopes, entries
 and document; `markdown` the Markdown form; `pictures` the region
 pictures, cached in data.db; `kept` the commented version held;
 `synctex` and `sources` the SyncTeX map; `requests` a Send's store and
@@ -1082,7 +1082,7 @@ whole list:
 ([dev/synced_vaults.md](../dev/synced_vaults.md) "The classes",
 [dev/work_folders.md](../dev/work_folders.md),
 [dev/documents.md](../dev/documents.md) "Writing a document" and
-"Viewers", [dev/feedback.md](../dev/feedback.md)). The vault engine is the
+"Viewers", [dev/annotations.md](../dev/annotations.md)). The vault engine is the
 package `gamma/vault/` (`kinds` the class registry, one object per row
 kind, `class_of` deciding by name and never by bytes; `remote` what both
 remotes and the round share; `local_remote` and `http_remote`; `sync` the
@@ -1600,7 +1600,7 @@ plan above, the whole list:
 ([dev/api.md](../dev/api.md) "The highlight shape" and the
 `PUT /pages/{page_id}/attachment` row,
 [dev/highlight_relocation.md](../dev/highlight_relocation.md) "Text files",
-[dev/feedback.md](../dev/feedback.md) "The anchor", "An entry" and "The
+[dev/annotations.md](../dev/annotations.md) "The anchor", "An entry" and "The
 Markdown", [dev/documents.md](../dev/documents.md) "Viewers",
 [dev/comments.md](../dev/comments.md) "Threads" and "The margin",
 [dev/ai_context.md](../dev/ai_context.md): a selection of lines, a
@@ -1643,7 +1643,7 @@ Where it differs from the plan above, the whole list:
    `held_file` is `""` for a `lines` anchor, and a text page under an open
    thread stores none of its rebuilds, so the run reads the linked path. A
    `file` or `note` anchor on a text page still names `<hash>.tex`, which is
-   never stored for it ([dev/feedback.md](../dev/feedback.md) "Known
+   never stored for it ([dev/annotations.md](../dev/annotations.md) "Known
    gaps"). A page without a document keeps no bytes, whatever its
    threads.
 3. `hash`, not `doc_id`, names the version a range was measured on, always
