@@ -686,6 +686,7 @@ def test_a_claim_whose_answer_never_came_is_failed_there_once_it_is_reached(lab,
 
 def test_a_stop_there_of_a_turn_left_open_here_ends_it_there_and_here(lab, nas, monkeypatch):
     f = _made(lab, nas, "RC stop open")
+    catalog.probes()                                                       # announced as found: nothing to announce again
     f.turn.once()
     opened = gamma_sync.default_open
 
