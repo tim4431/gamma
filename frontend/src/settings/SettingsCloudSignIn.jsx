@@ -51,8 +51,8 @@ function takeConnectResult() {
 }
 
 // `action` receives the Save button (present while the draft is dirty) so
-// the Server pane can put it on its Sign-in section rule. The settings are
-// the Server pane's one read of /api/admin/settings (settingsReads.js); a
+// the Users pane can put it on its Sign-in section rule. The settings are
+// the Users pane's one read of /api/admin/settings (settingsReads.js); a
 // save also reads the account pane's /auth/cloud/status again, which they
 // decide and which the dialog, opening on that pane, read moments before.
 const NO_CLOUD_DRAFT = { issuer: "", client_id: "", secret: "", policy: "refuse", share_host: false };

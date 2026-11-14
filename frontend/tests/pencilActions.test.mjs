@@ -85,7 +85,7 @@ test("stylusPen: the last pen armed while it is a pen on the strip, else the fir
     { began: { ignored: false, pick: "pen1" } }, "Eraser while held, from the eraser");
 });
 
-// --- the choices (Settings → Reading & editing → Apple Pencil) ---------------------
+// --- the choices (Settings → Handwriting → Apple Pencil) ---------------------
 const tap = (action = "switchEraser") => ({ gesture: "tap", action });
 const squeeze = (phase, action = "switchEraser") => ({ gesture: "squeeze", action, ...(phase ? { phase } : {}) });
 

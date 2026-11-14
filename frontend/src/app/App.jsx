@@ -12866,7 +12866,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   );
 
   // Where each of the topbar's items goes (app/topbarItems.js, Settings →
-  // Appearance › Top bar), in the order the user gave them: on the bar, or
+  // Toolbars › Top bar), in the order the user gave them: on the bar, or
   // a row of the account menu — the phone's More sheet, where Background
   // tasks, the Inbox and the View menu always go (the bottom bar keeps Add,
   // Search, a page's Share and the sync pill). An item off the bar keeps
@@ -13308,7 +13308,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   ) : null);
 
   // The viewer's side strip, the PDF's and the notebook's (app/viewerToolItems.js,
-  // Settings → Appearance › Viewer tools): its tools in the user's order,
+  // Settings → Toolbars › Viewer tools): its tools in the user's order,
   // each on the strip or a row of the ⋯ menu at its end. A tool that does
   // not apply here is in neither: Paper and Notes view are a notebook's,
   // Translate a PDF's outside a share, the selection mode a touch screen's,
@@ -13686,7 +13686,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ),
   };
   // A right-click or a held finger on a bar's own background offers its
-  // Customize… row (Settings → Appearance at the bar's section). `pane` is
+  // Customize… row (Settings → Toolbars at the bar's section). `pane` is
   // the Settings target; `space(el)` says whether the press landed on the
   // bar itself. A control's own menu answers first, and what a portal of
   // the bar's shows (a popover's menu) is not the bar. The bar is no

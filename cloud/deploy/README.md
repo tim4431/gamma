@@ -295,7 +295,7 @@ Zotero"). Without it, people paste a Zotero API key in Gamma instead.
 
 ## Connecting Gamma servers
 
-- **The desktop app / any local Gamma**: Settings → Server → Sign-in →
+- **The desktop app / any local Gamma**: Settings → Users → Sign-in →
   Account server `https://account.gammapdf.com`, server client empty,
   policy *Claim* or *Refuse*. Nothing to register on the account server:
   every local Gamma is the built-in desktop client.

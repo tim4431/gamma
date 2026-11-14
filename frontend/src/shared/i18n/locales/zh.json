@@ -4287,7 +4287,7 @@
   "Shown items": "显示的条目",
   "Shows its synced folders and files": "显示它的同步文件夹和文件",
   "Shows its synced folders and files of {workspaces}": "显示它在 {workspaces} 中的同步文件夹和文件",
-  "Shows the translate button on the PDF viewer's strip; off, it is a row of the strip's ⋯ menu that opens its options. A click translates the page being read, or shows the original or the translation once it is translated; right-click or long-press opens the options: the whole document, the language, Forget. Nothing translates until you ask. Appearance › Viewer tools sets the same, and the strip's order.": "在 PDF 阅读器工具栏上显示翻译按钮；关闭后，它成为工具栏 ⋯ 菜单中的一行，点按即打开其选项。点击会翻译正在阅读的页面，翻译完成后则在原文与译文之间切换；右键或长按打开选项：整篇文档、语言、忘记译文。在你请求之前不会翻译任何内容。外观 › 阅读器工具可设置同样的选项及工具栏顺序。",
+  "Shows the translate button on the PDF viewer's strip; off, it is a row of the strip's ⋯ menu that opens its options. A click translates the page being read, or shows the original or the translation once it is translated; right-click or long-press opens the options: the whole document, the language, Forget. Nothing translates until you ask. Toolbars › Viewer tools sets the same, and the strip's order.": "在 PDF 阅读器工具栏上显示翻译按钮；关闭后，它成为工具栏 ⋯ 菜单中的一行，点按即打开其选项。点击会翻译正在阅读的页面，翻译完成后则在原文与译文之间切换；右键或长按打开选项：整篇文档、语言、忘记译文。在你请求之前不会翻译任何内容。工具栏 › 阅读器工具可设置同样的选项及其顺序。",
   "Sign in": "登录",
   "Sign in again": "重新登录",
   "Sign in again, or pick another model for this chat.": "请重新登录，或为此聊天换一个模型。",

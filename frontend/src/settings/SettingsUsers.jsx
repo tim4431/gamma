@@ -29,7 +29,7 @@ import { useActiveJobs, useJobEnd } from "../tasks/useTasks";
 import { T, t } from "../shared/i18n/i18n.js";
 import { composing } from "../shared/lib/hotkeys.js";
 
-// `onServer` (admins) opens Settings → Server at the Gamma Cloud sign-in.
+// `onServer` (admins) opens Settings → Users at the Gamma Cloud sign-in.
 export function UsersSettings({ value, selfOnly = false, onServer }) {
   const { setStatus, confirm, onSelfRenamed, refreshQuota, isAdmin, me, isGuest, quotaInfo,
     workspaces: mine, switchWorkspace, refreshSession, tasks, closeSettings } = value;

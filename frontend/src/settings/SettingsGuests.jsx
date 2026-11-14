@@ -6,7 +6,7 @@
 // (GAMMA_GUEST_TTL_HOURS, GAMMA_DEMO) overrides the saved value, and the row
 // is then read-only. A server that can take no guest logins (a hosted
 // container, a share host, GAMMA_GUEST_MAX=0) has no Guests section — there
-// is nothing to switch on. docs/dev/guests.md. The settings are the Server
+// is nothing to switch on. docs/dev/guests.md. The settings are the Users
 // pane's one read of /api/admin/settings (settingsReads.js).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";

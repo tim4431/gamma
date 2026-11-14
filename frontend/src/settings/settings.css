@@ -803,7 +803,7 @@ button.aiModelTag:disabled { cursor: default; }
 .paletteEditorSide .uiBtn { align-self: flex-start; }
 .paletteEditor > .uiClose { margin-left: auto; }
 @media (max-width: 560px) { .paletteEditor { flex-wrap: wrap; } }
-/* Appearance › Text highlighters (TextHighlighters.jsx): a row per
+/* Toolbars › Text highlighters (TextHighlighters.jsx): a row per
    highlighter — grip, look, name, key, On the strip, Edit, Duplicate,
    Remove — the hidden ones muted under their line, and a row's editor (its
    style, its colours) under it. */

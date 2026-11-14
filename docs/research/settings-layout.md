@@ -99,6 +99,6 @@ height, or two panes made one.
 - **Pane subtitles.** The rule says a pane carries none, yet Integrations,
   Backups and Network proxy do; each explains a pane whose name says
   little. Left as they are.
-- **Connections** opens with a section titled like the pane.
+- **Connections** holds a section titled like the pane, under Agents.
 - **Appearance** draws its Interface rows boxed and its rows without the
   hover fill, unlike every other pane; it is consistent within the pane.
