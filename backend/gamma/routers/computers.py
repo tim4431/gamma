@@ -36,7 +36,9 @@ to stop; a run takes one with ``/chats/{turn}/claim``, keyed by its id as a
 Send's is, and gets the message, the earlier ones and the page's path; it
 writes the agent's message with ``/chats/{turn}/write``, each write
 numbered (``seq``), so this server takes only the newest one of the run
-that holds the turn running (gamma/local_agents/chats.py)."""
+that holds the turn running (gamma/local_agents/chats.py). What a turn asks
+never comes here: the message says ``waiting`` while an ask waits for an
+answer on the computer (step 5b)."""
 
 import asyncio
 import json
@@ -499,9 +501,11 @@ def _turn_fields(raw: dict) -> dict:
     inert again, ``prompt.inert``, at most ``chats.MAX_TEXT``), ``steps``,
     ``changes`` (paths in the folder: one named otherwise, which the
     computer's own file system may allow, left out), ``changed``, ``built``, ``error``,
-    ``fresh``, ``state`` (running or an end), ``model``, ``effort``;
-    ``ended_at`` is this server's clock (``chats.write_run``), any other
-    field left out. 400 for one of another shape."""
+    ``fresh``, ``waiting`` (an ask of the turn waits for an answer on the
+    computer, which alone shows it: never ``asks``), ``state`` (running or
+    an end), ``model``, ``effort``; ``ended_at`` is this server's clock
+    (``chats.write_run``), any other field left out. 400 for one of another
+    shape."""
     from ..local_agents import chats, prompt, store
 
     out: dict = {}
@@ -528,6 +532,7 @@ def _turn_fields(raw: dict) -> dict:
     text("error", MAX_ERROR)
     flag("built")
     flag("fresh")
+    flag("waiting")
     choice("model", 100)
     choice("effort", 40)
     if "steps" in raw:

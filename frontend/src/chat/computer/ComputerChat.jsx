@@ -35,7 +35,7 @@ import {
 } from "../../shared/ui/Icons";
 import { t, tn } from "../../shared/i18n/i18n.js";
 import {
-  TEXT_MAX, awayFrom, canContinue, canSend, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, modelChoice, modelDisplay,
+  TEXT_MAX, awayFrom, canContinue, canSend, drawsAsks, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, modelChoice, modelDisplay,
   offersMenu, retryOf, sourceNote, stepText, stripLine, turnChanges, turnLabel,
 } from "./computerChat.js";
 import "./computer.css";
@@ -223,12 +223,14 @@ function TurnChanges({ changes }) {
 
 // The agent's message: the turn's steps in one pill that unfolds to each
 // (StepsPill, as Gamma AI's replies), a card for each thing it asks and
-// waits on, the reply, what changed, and how the turn ended when it did
-// not answer: a failed turn the chat's error card, with Retry while it is
+// waits on (`asks`: for the agent on this computer only; another
+// computer's, `computer` its name, are answered there), the reply, what
+// changed, and how the turn ended when it did not answer: a failed turn
+// the chat's error card, with Retry while it is
 // the newest (`onRetry`), a stopped one a quiet line. A turn that had
 // ended when it was first shown (a conversation opened from History, read
 // again) is `still`: its pill is not read out.
-function AgentMessage({ message, label, away, copied, onCopy, onAnswer, onRetry }) {
+function AgentMessage({ message, label, away, computer, asks, copied, onCopy, onAnswer, onRetry }) {
   const [open, setOpen] = useState(false);
   const live = isLive(message);
   const [still] = useState(!live);
@@ -244,7 +246,8 @@ function AgentMessage({ message, label, away, copied, onCopy, onAnswer, onRetry 
       <div className="chatMsgCol">
         <div className="chatBubble ai">
           {message.fresh ? <div className="computerFresh">{freshLine(message.label || label)}</div> : null}
-          <StepsPill label={turnLabel(message, label, away)} live={live} waiting={live && !!message.asks?.length} still={still}
+          <StepsPill label={turnLabel(message, label, away, computer)} live={live}
+            waiting={live && (!!message.asks?.length || message.waiting === true)} still={still}
             steps={steps.length} counts={counts} title={t("Show every step")} open={open} onToggle={() => setOpen((v) => !v)}>
             <div className="chatToolActions">
               {steps.map((step, j) => {
@@ -258,7 +261,7 @@ function AgentMessage({ message, label, away, copied, onCopy, onAnswer, onRetry 
               })}
             </div>
           </StepsPill>
-          {live ? (message.asks || []).map((ask) => (
+          {live && asks ? (message.asks || []).map((ask) => (
             <ComputerAsk key={ask.id} ask={ask} label={message.label || label}
               onAnswer={(decision, note) => onAnswer(message.turn_id, ask.id, decision, note)} />
           )) : null}
@@ -398,7 +401,8 @@ export default function ComputerChat({ chat, computer, pageId, pdfSelections, se
         <PathLinkContext.Provider value={pathLinks}>
           {messages.map((m, i) => (m.role === "user"
             ? <PersonMessage key={m.id || i} message={m} />
-            : <AgentMessage key={m.id || i} message={m} label={label} away={away} copied={copied === i} onAnswer={chat.answer}
+            : <AgentMessage key={m.id || i} message={m} label={label} away={away} computer={where} asks={drawsAsks(info)}
+                copied={copied === i} onAnswer={chat.answer}
                 onRetry={retry(m)} onCopy={async () => { if (await copyText(m.text || "")) flashCopied(i); }} />))}
         </PathLinkContext.Provider>
       </div>

@@ -28,7 +28,9 @@ certificate proves who ``to`` is, so the shell asks the person first,
 naming the tokens that go there, but for the same host name moving to
 https:// (``kind`` ``upgrade``). Only this server's rows move: the
 shell runs the move on its host alone, so the offline copies another
-local server keeps stay at the old address.
+local server keeps stay at the old address. A vault moved without its
+token proving ``to`` (one that no longer opens) loses what its agent may
+ask on this computer (``_unasked``).
 
 **This computer's id** for a server (``channel.computer_id``) is computed
 from the address it was first shown at (users.db ``server_addresses``,
@@ -42,6 +44,7 @@ from urllib.parse import urlsplit
 
 from . import gamma_sync, host_scope
 from .db import connect_users_db, page_now
+from .logbuf import log
 
 
 class MoveError(Exception):
@@ -289,15 +292,18 @@ def _probe(to: str) -> None:
         raise _unreached(to, "it did not answer as a Gamma server")
 
 
-def _check_rows(frm: str, to: str, rows: dict) -> None:
+def _check_rows(frm: str, to: str, rows: dict) -> list[str]:
     """Each row's token at ``to``, one at a time, stopping at the first
     that fails (MoveError): the channels first (their token opens only the
     channel), then the vaults, then the offline copies. A row whose token
     no longer opens (the data directory's key changed) is not asked: it
-    has nothing to send, and fails at either address."""
+    has nothing to send, and fails at either address → the vaults moved so,
+    unchecked (``move`` takes back what their agent may ask on this
+    computer: nothing proved ``to`` the same server)."""
     from . import folder_links, sync_engine, workspaces  # local: folder_links and sync_engine import this module
     from .computers import channel
 
+    unchecked = []
     for link_id in rows["computers"]:
         link = channel.get(link_id, with_token=True)
         if not link or not link["token"]:
@@ -319,8 +325,10 @@ def _check_rows(frm: str, to: str, rows: dict) -> None:
         try:
             link = folder_links.get_link(link_id, with_token=True)
         except folder_links.LinkError:
+            unchecked.append(link_id)
             continue
         if not link or not link["token"]:
+            unchecked.append(link_id)
             continue
         what = f"the synced vault “{folder_links.vault_name(link)}”"
         try:
@@ -345,6 +353,7 @@ def _check_rows(frm: str, to: str, rows: dict) -> None:
             raise (_refused(frm, to, what) if e.status in (401, 403) else _unreached(to, e)) from e
         if ((me or {}).get("workspace") or {}).get("id") != mirror["remote_ws"]:
             raise _refused(frm, to, what, other_workspace=True)
+    return unchecked
 
 
 def _after_move(text: str) -> dict:
@@ -357,6 +366,23 @@ def _after_move(text: str) -> dict:
         status = {}
     drop = (*gamma_sync.STATUS_KEYS, "failed_at")
     return {k: v for k, v in status.items() if k not in drop} if isinstance(status, dict) else {}
+
+
+def _unasked(link_ids: list[str]) -> None:
+    """The vaults moved without their token proving the new address the
+    same server: what their agent may ask on this computer (``computer``,
+    docs/dev/local_agents.md "Asking on this computer") is set back to
+    never, since the person said yes to the other one. Never raises: the
+    move is made."""
+    from . import folder_links  # local: it imports this module
+    from .local_agents import store as agents
+
+    for link_id in link_ids:
+        try:
+            if agents.runs_of(link_id) == "computer":
+                folder_links.set_agent_runs(link_id, "never", by="")
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[servers] taking back what the agent of vault {link_id} may ask after its move: {e}")
 
 
 def move(frm: str, to: str, user_id: str, *, plain_ok: bool = False) -> dict:
@@ -383,7 +409,7 @@ def move(frm: str, to: str, user_id: str, *, plain_ok: bool = False) -> dict:
         raise MoveError(400, "Moving to http:// sends the links' tokens without encryption: the desktop app asks "
                              "you first.")
     _probe(to)
-    _check_rows(frm, to, rows)
+    unchecked = _check_rows(frm, to, rows)
     ido, moved, merged = id_origin(frm), {"vaults": [], "computers": [], "mirrors": []}, []
     upsert = ("INSERT INTO server_addresses (origin, id_origin, moved_to) VALUES (?, ?, ?) ON CONFLICT(origin) "
               "DO UPDATE SET id_origin = excluded.id_origin, moved_to = excluded.moved_to")
@@ -420,5 +446,6 @@ def move(frm: str, to: str, user_id: str, *, plain_ok: bool = False) -> dict:
     for link_id in moved["computers"]:
         channel.stop(link_id)
         channel.start(link_id)
+    _unasked([link_id for link_id in unchecked if link_id in moved["vaults"]])
     folder_links._vaults_changed()
     return {**done, "moved": {key: len(ids) for key, ids in moved.items()}}

@@ -179,6 +179,16 @@ def _page_ids_kept():
 
 
 @pytest.fixture(autouse=True)
+def _shell_secret_forgotten():
+    """The shell's secret a test set (``GAMMA_SHELL_SECRET``, read once and
+    taken off the environment: config.shell_secret) is forgotten after it,
+    so the next test reads its own, or none."""
+    yield
+    from gamma import config
+    config._shell_secret = None
+
+
+@pytest.fixture(autouse=True)
 def _reset_ratelimit():
     """The whole suite shares one TestClient source IP, so the per-IP login
     throttle would trip mid-run. Clear counters before each test — production

@@ -27,7 +27,7 @@ def test_read_token_reads_and_cannot_write(guest):
     c = _bearer(token)
     me = c.get("/api/sync/whoami").json()
     assert me == {"user": "tok_reader", "workspace": {"id": ws, "name": me["workspace"]["name"]},
-                  "role": "owner", "scope": "read", "work_folders": 1}
+                  "role": "owner", "scope": "read", "work_folders": 1, "computer_asks": 1}
     assert c.get(f"/api/blocks/{page['id']}").json()["content"] == "Token page"
     r = c.post(f"/api/pages/{page['id']}/ops", json={"client": "t", "ops": [
         {"op": "set", "id": page["id"], "content": "renamed"}]})

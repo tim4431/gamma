@@ -372,7 +372,8 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // (`agentRunning`: the detail of its run while one works, else "";
 // `agentChat` when that run is a turn of a page's chat, not a Send), and
 // what it may run beyond its confinement (`agentRuns`: "ask", it may ask in
-// the chat, or "never"), as the link's `agent` says them. `agents` is what
+// the chat; "computer", an agent of a work folder of another server may ask
+// in this computer's window; or "never"), as the link's `agent` says them. `agents` is what
 // the server finds on this computer (`GET /api/local-agents`' `agents`;
 // null: a server that runs no agents, which then offers none).
 //
@@ -383,7 +384,8 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 //
 // A vault of another server reached over plain http:// says so (`plain`,
 // the list's DNS-free word: "lan" or "name", "" for https or loopback), its
-// title saying the token travels in clear for a dotted name; and one whose
+// title saying the token travels in clear for a dotted name, and `secure`
+// is false (the host's word, never decided here); and one whose
 // last round failed on the way there reads by its kind (failureOf, with
 // `net`).
 function vault(server, link, servers, roles = null, agents = null, computers = null, net = {}) {
@@ -411,6 +413,9 @@ function vault(server, link, servers, roles = null, agents = null, computers = n
       && (typeof link.work === 'boolean' ? link.work : !link.remote_url && pushWord(link.push) === 'everything'),
     library: Boolean(link.library), choosing: Boolean(link.choosing), mine: Boolean(link.mine),
     plain: link.remote_url && (link.plain === 'lan' || link.plain === 'name') ? link.plain : '',
+    // reached securely, as the list says it ("" for https or loopback): what
+    // Ask on this computer needs; a list that says nothing reads not secure
+    secure: !link.remote_url || link.plain === '',
   };
   item.computer = link.remote_url && !item.seen && computers && Array.isArray(computers.links)
     ? computerLine(item, link, computers, servers, net) : null;
@@ -421,7 +426,7 @@ function vault(server, link, servers, roles = null, agents = null, computers = n
     agent: (agent && agent.name) || '', agentLabel: agent ? agent.label || AGENT_LABELS[agent.name] || agent.name : '',
     agentReady: agent ? (agent.ready === undefined ? null : agent.ready) : null, agentProblem: (agent && agent.problem) || '',
     agentRunning: run ? String(run.detail || 'Working') : '', agentChat: Boolean(run && run.kind === 'chat'),
-    agentRuns: agent && agent.runs === 'ask' ? 'ask' : 'never',
+    agentRuns: agent && (agent.runs === 'ask' || agent.runs === 'computer') ? agent.runs : 'never',
     agents: item.agentHere && Array.isArray(agents) ? agentChoices(agents) : null,
   });
   const failure = s.last_error && !s.running ? failureOf(s, link.remote_url, servers, net) : null;
@@ -903,8 +908,16 @@ function agentAsk(item, name, waiting = null) {
 }
 
 // Why a work folder of another server lets its agent ask nothing in the
-// chat (the chat there stays on this computer's server, for now).
-const FAR_RUNS_RULE = 'Asking in the chat is for a work folder of this computer\'s server.';
+// chat (a chat there is that server's page, which never draws the card),
+// and why one of this computer's server is not asked on this computer (its
+// chat is this computer's own).
+const FAR_RUNS_RULE = 'Asking in the chat is for a work folder of this computer\'s server: for one of another server, choose Ask on this computer.';
+const NEAR_COMPUTER_RULE = 'Ask on this computer is for a work folder of another server: here the agent asks in the chat.';
+
+// Why Ask on this computer is refused for a work folder of a server reached
+// over plain http (`item.secure` false, the host's word): whoever is on the
+// way would write what the card asks.
+const plainRule = (item) => `Ask on this computer needs https: ${item.remote} is reached over plain http.`;
 
 // What turning a work folder's agent on (`name`, with the `queued` Sends
 // handed to it) or off ("": `item.agentLabel` was on) came to, for the bar.
@@ -932,12 +945,34 @@ function runsAsk(item) {
     buttons: ['Ask me in the chat', 'Cancel'] };
 }
 
+// The question before the agent of a work folder of another server may ask
+// on this computer, in the bar of Gamma's window, in a turn started there
+// (main.js setAgentRuns): that the question shows only here, that whoever
+// signs in there as the account it is shown to (`item.computer.who`), and
+// whoever runs that server, writes what the agent is asked to do. `{
+// message, detail, buttons, defaultId, cancelId }`, Cancel the default.
+function runsComputerAsk(item) {
+  const label = item.agentLabel || AGENT_LABELS[item.agent] || 'The agent';
+  const remote = item.remote;
+  const who = (item.computer && item.computer.who) || 'your account';
+  return { message: `Let ${label} ask on this computer to run more in ${item.dest}?`,
+    detail: `In a chat on ${remote}, ${label} can then ask you ${AGENT_ASKS[item.agent] || 'to run a command'}. The question shows here only, in Gamma's window, and nothing of it runs until you allow it there, one command at a time.` +
+      ` Whoever can sign in to ${remote} as ${who}, and whoever runs ${remote}, writes what ${label} is asked to do: read each command before you allow it. A command you allow runs as you, with your files and the network.`,
+    buttons: ['Ask on this computer', 'Cancel'], defaultId: 1, cancelId: 1 };
+}
+
 // What setting a work folder's "What it may run" to `runs` came to, for the bar.
 function runsSaid(item, runs) {
   const label = item.agentLabel || AGENT_LABELS[item.agent] || 'The agent';
+  if (runs === 'computer') return `${label} may now ask on this computer to run more on ${item.name}.`;
   return runs === 'ask' ? `${label} may now ask you in the chat to run more on ${item.name}.`
     : `${label} no longer asks to run more on ${item.name}: it keeps to its confinement.`;
 }
+
+// What the bar adds when the server of a work folder set to Ask on this
+// computer runs a Gamma that does not say a turn waits (its whoami without
+// `computer_asks`: the PATCH's `older`).
+const olderServer = (item) => `${item.remote} runs an older Gamma: its page will not say that ${item.agentLabel || AGENT_LABELS[item.agent] || 'the agent'} waits here. The question still shows in this window.`;
 
 // What a round asked for came to, for the bar: its status as the round
 // left it (main.js followRound).
@@ -958,5 +993,6 @@ function roundSaid(item, status) {
 }
 
 module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, REMOTE_WORK_RULE, remoteWorkRefused, WHOLE_RULE, firstRound, removalAsk, farRemovalAsk, forceAsk,
-  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, FAR_RUNS_RULE, runsAsk, runsSaid, computerLine, computerFailed, computerSaid,
+  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, FAR_RUNS_RULE, NEAR_COMPUTER_RULE, plainRule, runsAsk, runsComputerAsk, runsSaid,
+  olderServer, computerLine, computerFailed, computerSaid,
   computerStranded, computerOtherAccount, upgradeOf, failureOf, plainAsk, moveAsk, moveSaid };

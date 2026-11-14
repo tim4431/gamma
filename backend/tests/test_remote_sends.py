@@ -396,7 +396,8 @@ def test_the_panel_turns_an_agent_on_for_a_work_folder_of_another_server_shown_t
     # asking in the chat stays a work folder of this server's
     r = lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent_runs": "ask"}, headers=SHELL)
     assert (r.status_code, r.json()["detail"]) == (409, "Asking in the chat is for a work folder of this computer's "
-                                                        "server.")
+                                                        "server: for one of another server, choose Ask on this "
+                                                        "computer.")
     assert lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent_runs": "never"}).status_code == 200
     off = lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent": ""})
     assert off.status_code == 200 and off.json()["agent"] is None

@@ -191,6 +191,47 @@
   .menuLabel { color: var(--text-secondary); font-size: var(--fs-xs); font-weight: 600; padding: 4px 9px 2px; }
   .menuEmpty { color: var(--text-muted); font-size: var(--fs-xs); padding: 4px 9px; }
 
+  /* An agent's question on this computer (state.agentAsk, renderAgentAsk):
+     the bar view covers the whole window, the page under it hidden; the
+     strip says only Gamma's words, and the card sits centred on an opaque
+     layer over everything else, dropdowns included. Its body scrolls, its
+     footer with the buttons never does. */
+  .askTitle { display: none; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body.asking .bar > :not(.drag):not(.askTitle):not(.status) { display: none; }
+  body.asking .bar > .askTitle { display: block; -webkit-app-region: drag; }
+  #agentAskLayer {
+    position: fixed; inset: 38px 0 0 0; z-index: 10; background: var(--bg-page);
+    display: flex; align-items: center; justify-content: center; padding: 8px;
+  }
+  #agentAskLayer[hidden] { display: none; }
+  .askCard {
+    width: min(560px, 100% - 16px); max-height: calc(100vh - 56px); display: flex; flex-direction: column;
+    background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-2);
+  }
+  .askCard .askHead { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px 4px; font-size: var(--fs-xs); color: var(--text-muted); }
+  .askCard .askHead .cap { flex: 1; font-weight: 600; color: var(--warn); }
+  .askCard .askBody { overflow-y: auto; padding: 4px 14px 10px; display: flex; flex-direction: column; gap: 7px; font-size: var(--fs-xs); }
+  .askCard .askTitleLine { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); }
+  .askCard .lines { color: var(--text-muted); font-size: var(--fs-2xs); }
+  .askCard .box {
+    margin: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-page);
+    font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-primary);
+    white-space: break-spaces; overflow-wrap: anywhere; unicode-bidi: plaintext; direction: ltr; max-height: 120px; overflow-y: auto;
+  }
+  .askCard .box.diff { max-height: 160px; }
+  .askCard .mark { color: var(--warn); font-weight: 600; }
+  .askCard .through { color: var(--text-muted); font-family: var(--font-mono); font-size: var(--fs-2xs); overflow-wrap: anywhere;
+    white-space: break-spaces; unicode-bidi: plaintext; direction: ltr; }
+  .askCard .row { display: flex; gap: 8px; align-items: baseline; }
+  .askCard .row .k { color: var(--text-muted); width: 56px; flex-shrink: 0; }
+  .askCard .row .v { min-width: 0; overflow-wrap: anywhere; white-space: break-spaces; unicode-bidi: plaintext; color: var(--text-primary); }
+  .askCard .row .v.path { font-family: var(--font-mono); font-size: var(--fs-2xs); }
+  .askCard .says { font-style: italic; color: var(--text-secondary); overflow-wrap: anywhere; unicode-bidi: plaintext; }
+  .askCard .note { color: var(--text-secondary); line-height: 1.45; }
+  .askCard .note.warn { color: var(--warn); }
+  .askCard .askFoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border); }
+  .askCard .askFoot .stop { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* The iPad and Android apps (body[data-touch], SHELLS below): a 44 px row,
      no window controls to keep clear, touch-sized targets; the menu hangs
      under the row and stops 16 px short of the bottom, scrolling the rest.
@@ -229,6 +270,7 @@
     <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
   </button>
   <span class="status" id="status"></span>
+  <span class="askTitle" id="askTitle">Gamma · Approval needed on this computer</span>
   <div class="drag"></div>
   <button class="syncBtn" id="syncBtn" hidden><span class="ico" id="syncIco"></span><span class="text" id="syncText"></span></button>
   <button class="updPill" id="btnUpdate" hidden>
@@ -245,6 +287,7 @@
 </div>
 <div class="menu" id="menu" hidden></div>
 <div class="menu right" id="syncPanel" hidden></div>
+<div id="agentAskLayer" hidden></div>
 
 <script>
   // Gamma's theme on the chrome: tokens.css derives each theme's colours
@@ -368,6 +411,124 @@
     renderSyncButton();
     renderMenu();
     renderSync();
+    renderAgentAsk(state.agentAsk || null);
+  }
+
+  // An agent's question on this computer (main.js "an agent's ask on this
+  // computer"): only the desktop's state carries `agentAsk`, so the iPad and
+  // Android apps never draw it. Drawn once per ask (`askDrawn`, its key),
+  // each word of it as plain text, a mark ⟨U+…⟩ in the warning colour (only
+  // on a card that says Gamma marked some, `marked`: the agent may write the
+  // same letters itself); the
+  // state pushed after only updates how many wait and whether the buttons
+  // are armed, so a box scrolled stays where it is. Allow once waits, on top
+  // of main's arming, until each box that scrolls was scrolled to its end.
+  // Decline sits at the right end, where a stream of clicks lands. No button
+  // is ever focused by script. Once drawn the bar tells main
+  // (agentAskDrawn), from which its quiet second counts.
+  let askDrawn = '';
+  let askAnswered = '';
+  function markedText(el, text, marked) {
+    if (!marked) {
+      el.textContent = String(text || '');
+      return el;
+    }
+    for (const part of String(text || '').split(/(⟨U\+[0-9A-F]{4,6}⟩)/)) {
+      if (!part) continue;
+      if (/^⟨U\+[0-9A-F]{4,6}⟩$/.test(part)) {
+        const m = document.createElement('span');
+        m.className = 'mark';
+        m.textContent = part;
+        el.appendChild(m);
+      } else {
+        el.appendChild(document.createTextNode(part));
+      }
+    }
+    return el;
+  }
+  const atEnd = (box) => box.scrollTop + box.clientHeight >= box.scrollHeight - 2;
+  function askButtons(a) {
+    const layer = $('agentAskLayer');
+    const read = [...layer.querySelectorAll('.box')].every(atEnd);
+    const off = !a.armed || askAnswered === a.key;
+    for (const b of layer.querySelectorAll('[data-answer]')) b.disabled = off || (b.dataset.answer === 'once' && !read);
+    const count = layer.querySelector('.count');
+    if (count) count.textContent = a.count || '';
+  }
+  function renderAgentAsk(a) {
+    const layer = $('agentAskLayer');
+    document.body.classList.toggle('asking', Boolean(a));
+    if (!a) {
+      layer.hidden = true;
+      layer.innerHTML = '';
+      askDrawn = '';
+      return;
+    }
+    layer.hidden = false;
+    if (askDrawn === a.key) {
+      askButtons(a);
+      return;
+    }
+    askDrawn = a.key;
+    askAnswered = '';
+    layer.innerHTML = '';
+    const el = (tag, cls, text) => {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) markedText(e, text, a.marked);
+      return e;
+    };
+    const card = el('div', 'askCard');
+    card.id = 'agentAsk';
+    card.setAttribute('role', 'alertdialog');
+    card.setAttribute('aria-label', a.caption);
+    const head = el('div', 'askHead');
+    head.append(el('span', 'cap', a.caption), el('span', 'count', a.count || ''));
+    const body = el('div', 'askBody');
+    body.appendChild(el('div', 'askTitleLine', a.title));
+    if (a.kind === 'command') {
+      if (a.lines) body.appendChild(el('div', 'lines', a.lines));
+      const box = el('pre', 'box', a.box);
+      box.id = 'agentAskCommand';
+      body.appendChild(box);
+      if (a.through) body.appendChild(el('div', 'through', a.through));
+    }
+    for (const [k, v, mono] of a.rows || []) {
+      const r = el('div', 'row');
+      r.append(el('span', 'k', k), el('span', `v${mono ? ' path' : ''}`, v));
+      body.appendChild(r);
+    }
+    if (a.kind === 'files' && a.diff) {
+      const diff = el('pre', 'box diff', a.diff);
+      diff.id = 'agentAskDiff';
+      body.appendChild(diff);
+    }
+    if (a.says) body.appendChild(el('div', 'says', a.says));
+    for (const n of a.notes || []) body.appendChild(el('div', `note${/^This holds|went away/.test(n) ? ' warn' : ''}`, n));
+    const foot = el('div', 'askFoot');
+    const buttons = [['stop', 'uiBtn sm ghost stop', a.stop], ['once', 'uiBtn sm', 'Allow once'], ['deny', 'uiBtn sm', 'Decline']];
+    for (const [decision, cls, text] of buttons) {
+      const b = el('button', cls, text);
+      b.dataset.answer = decision;
+      b.id = `agentAsk-${decision}`;
+      b.title = text;
+      b.disabled = true;
+      b.onclick = () => {
+        askAnswered = a.key;
+        for (const x of layer.querySelectorAll('[data-answer]')) x.disabled = true;
+        const key = a.key;
+        // (main disarmed the buttons before it sent anything: from here they follow its `armed`)
+        const settle = () => { if (askDrawn === key) askAnswered = ''; render(); };
+        gammaShell.answerAgentAsk(key, decision).then(settle, settle);
+      };
+      foot.appendChild(b);
+    }
+    card.append(head, body, foot);
+    layer.appendChild(card);
+    for (const box of layer.querySelectorAll('.box')) box.addEventListener('scroll', () => askButtons(state.agentAsk || a));
+    askButtons(a);
+    const key = a.key;
+    if (gammaShell.agentAskDrawn) requestAnimationFrame(() => { if (askDrawn === key) gammaShell.agentAskDrawn(key).catch(() => {}); });
   }
 
   function label(text) {
@@ -652,36 +813,52 @@
   };
 
   // What a work folder's agent may run beyond its confinement: Nothing more
-  // ('never') / Ask me in the chat ('ask'), as two buttons.
-  function runsSeg(value, onPick) {
+  // ('never') / Ask me in the chat ('ask') for a work folder of this
+  // computer's server, Nothing more / Ask on this computer ('computer') for
+  // one of another server, as two buttons; `shut`, why Ask on this computer
+  // cannot be chosen (that server reached over plain http).
+  const RUNS_HERE = [['never', 'Nothing more'], ['ask', 'Ask me in the chat']];
+  const RUNS_FAR = [['never', 'Nothing more'], ['computer', 'Ask on this computer']];
+  function runsSeg(value, choices, onPick, shut) {
     const seg = document.createElement('span');
     seg.className = 'seg';
     seg.id = 'vaultRuns';
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', 'What it may run');
-    for (const [word, text] of [['never', 'Nothing more'], ['ask', 'Ask me in the chat']]) {
+    for (const [word, text] of choices) {
       const b = document.createElement('button');
       b.dataset.runs = word;
       b.textContent = text;
       b.setAttribute('aria-pressed', String(value === word));
+      if (word === 'computer' && shut && value !== word) {
+        b.disabled = true;
+        b.title = shut;
+      }
       b.onclick = (e) => { e.stopPropagation(); if (value !== word) onPick(word); };
       seg.appendChild(b);
     }
     return seg;
   }
 
-  // What the agent on may run, and may ask for, under the row What it may run.
+  // What the agent on may run, and may ask for, under the row What it may
+  // run: in the chat here, or on this computer for a turn started on
+  // another server (`remote`, its name).
   const RUNS_SAYS = {
     codex: 'Codex runs commands in its sandbox, without network; with Ask, it can ask in the chat to go further (the network, files outside this folder).',
     claude: 'Claude Code edits the files here and runs no commands; with Ask, it can ask in the chat to run one (your build).',
+  };
+  const RUNS_SAYS_FAR = {
+    codex: (remote) => `Codex keeps to its sandbox. With Ask on this computer it can ask to go further (the network, files outside this folder) in a turn started on ${remote}; the question shows in this window, never on ${remote}.`,
+    claude: (remote) => `Claude Code edits the files here and runs no commands. With Ask on this computer it can ask to run one (your build) in a turn started on ${remote}; the question shows in this window, never on ${remote}.`,
   };
 
   // A work folder's agent row (its maker's alone): the segment, then as
   // visible lines the problem of the chosen agent (amber; one that cannot
   // be chosen says why in its button's tooltip), what the chosen one does,
-  // and what it does now (Gamma's agentWorking words); with
-  // an agent on, the row What it may run and its line (none for a work
-  // folder of another server, whose agent asks nothing in the chat).
+  // and what it does now (Gamma's agentWorking words); with an agent on,
+  // the row What it may run and its line, for a work folder of another
+  // server Ask on this computer, shut while that server is reached over
+  // plain http, which an error line says when it is set.
   function agentRow(i) {
     const box = document.createElement('div');
     box.className = 'agentRow';
@@ -699,8 +876,15 @@
       line(doing ? `${i.agentLabel} is working: ${doing}` : `${i.agentLabel} is working…`, false);
     }
     if (i.agent && !i.remoteUrl) {
-      box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, (word) => runKept(i, 'agent-runs', word))]]));
+      box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, RUNS_HERE, (word) => runKept(i, 'agent-runs', word))]]));
       if (RUNS_SAYS[i.agent]) line(RUNS_SAYS[i.agent], false);
+    } else if (i.agent) {
+      const shut = i.secure ? '' : `Needs https: ${i.remote} is reached over plain http.`;
+      box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, RUNS_FAR, (word) => runKept(i, 'agent-runs', word), shut)]]));
+      if (RUNS_SAYS_FAR[i.agent]) line(RUNS_SAYS_FAR[i.agent](i.remote), false);
+      if (i.agentRuns === 'computer' && !i.secure) {
+        line(`${i.remote} is reached over plain http now: whatever ${i.agentLabel || 'the agent'} asks is declined until it is reached over https.`, true);
+      }
     }
     return box;
   }
@@ -1054,11 +1238,13 @@
   $('btnHome').onclick = () => { closeMenu(); gammaShell.launcher(); };
   // A press outside the open dropdown and its buttons closes it. Not a click:
   // iOS sends none for a tap on the bare see-through page.
-  document.addEventListener('pointerdown', (e) => { if (openDrop && !e.target.closest('.menu, #wsBtn, #syncBtn')) closeMenu(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+  // While an agent's question is up nothing closes under it: a dropdown stays
+  // open beneath the card (closing the sync panel would cancel a vault dialog).
+  document.addEventListener('pointerdown', (e) => { if (!state.agentAsk && openDrop && !e.target.closest('.menu, #wsBtn, #syncBtn')) closeMenu(); });
+  document.addEventListener('keydown', (e) => { if (!state.agentAsk && e.key === 'Escape') closeMenu(); });
   // The window losing the focus closes a dropdown, but not the vault dialog,
   // which waits for Sync or Cancel (a look at the directory meanwhile is fine).
-  window.addEventListener('blur', () => { if (!(openDrop === 'sync' && state.vaultAsk)) closeMenu(); });
+  window.addEventListener('blur', () => { if (!state.agentAsk && !(openDrop === 'sync' && state.vaultAsk)) closeMenu(); });
   $('btnReload').onclick = () => gammaShell.reload();
   $('btnHideBar').onclick = () => { closeMenu(); gammaShell.hideBar(); };
   $('btnUpdate').onclick = () => gammaShell.updateInstall();

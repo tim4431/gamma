@@ -21,10 +21,14 @@ A turn's ``events()`` gives, in order as they happen:
   exactly one, last, however the turn ends: its end, ``stop()``, a crash,
   a broken pipe, ten minutes of silence (``done``).
 
-An ask is answered with ``answer()``, from any thread; while one waits,
-silence is no idleness (an agent says nothing while it waits for a person),
-and a stop declines it first. Without ``ask`` a driver asks nothing and
-refuses whatever its agent asks, as it always did.
+An ask is answered with ``answer()``, from any thread, the person's or
+Gamma's own (``by``: a driver words the agent's decline after whose it
+is); while one waits, silence is no idleness (an agent says nothing while
+it waits for a person), and a stop declines it first. Without ``ask`` a
+driver asks nothing and refuses whatever its agent asks, as it always did.
+What an ask shows a person is marked where it would not show
+(``shown_text``), and a shell wrapper's inner command read out of it only
+on an exact round trip (``unwrap_shell``).
 
 The thread that reads ``events()`` does all the work: ``stop()`` only sets
 a flag, which that thread sees within ``POLL_S``; it asks the agent to stop
@@ -39,10 +43,13 @@ kills the tree at once. ``close()`` ends the process of a turn whose
 events nobody will read.
 """
 
+import ipaddress
 import json
 import re
+import shlex
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 from ..logbuf import log
@@ -98,12 +105,15 @@ def tool(tool_id: str, kind: str, title: str, status: str, *, path: str = "", co
 
 def ask(ask_id: str, kind: str, *, step: str = "", command: str | None = None, cwd: str | None = None,
         host: str = "", paths: list[str] | None = None, diff: str | None = None, reason: str = "",
-        tool: str | None = None) -> dict:
-    """An ask: ``kind`` command (``command``, its ``cwd`` and the network
-    ``host`` it would reach, if any), files (``paths`` and their ``diff``,
-    cut to ``MAX_DIFF``, ``cut_diff``) or tool (``tool``, its name), with
-    the agent's ``reason``; ``step`` the tool event it is about. Paths
-    relative to the folder (``rel_path``), absolute outside it."""
+        tool: str | None = None, background: bool = False, grant_root: str = "") -> dict:
+    """An ask: ``kind`` command (``command``, its ``cwd``, the network
+    ``host`` it would reach, if any, and ``background`` when the agent
+    asked to run it in the background), files (``paths`` and their
+    ``diff``, cut to ``MAX_DIFF``, ``cut_diff``, ``diff_cut`` when it was;
+    ``grant_root`` a directory the agent asks to write below for the rest
+    of its session) or tool (``tool``, its name), with the agent's
+    ``reason``; ``step`` the tool event it is about. Paths relative to the
+    folder (``rel_path``), absolute outside it."""
     event = {"type": "ask", "id": ask_id, "kind": kind, "step": step}
     if command is not None:
         event["command"] = command
@@ -115,11 +125,109 @@ def ask(ask_id: str, kind: str, *, step: str = "", command: str | None = None, c
         event["paths"] = list(paths)
     if diff is not None:
         event["diff"] = cut_diff(diff)
+        if event["diff"] != diff:
+            event["diff_cut"] = True
     if reason:
         event["reason"] = reason[:MAX_REASON]
     if tool is not None:
         event["tool"] = tool
+    if background:
+        event["background"] = True
+    if grant_root:
+        event["grant_root"] = grant_root
     return event
+
+
+def shown_text(text: str) -> tuple[str, int]:
+    """``text`` with every character that would not show replaced by a mark
+    that does (``⟨U+202E⟩``): a control character but a newline and a tab,
+    a format character (the bidi controls and isolates, the zero-width
+    ones, a byte order mark), a line or a paragraph separator → ``(the text,
+    how many were marked)``. What an ask shows the person who answers it."""
+    out, marked = [], 0
+    for ch in text or "":
+        if (ch not in "\n\t" and unicodedata.category(ch) in ("Cc", "Cf")) or ch in "  ":
+            out.append(f"⟨U+{ord(ch):04X}⟩")
+            marked += 1
+        else:
+            out.append(ch)
+    return "".join(out), marked
+
+
+_HOST = re.compile(r"^(?:[A-Za-z0-9.-]{1,253}|\[(?P<ip6>[0-9A-Fa-f:.]{2,45})\])(?::(?P<port>\d{1,5}))?$")
+
+
+def host_ok(host: str) -> bool:
+    """Whether a network host an ask names reads as one: a name or an IPv4
+    address, or an IPv6 address in brackets, each with a port or not."""
+    found = _HOST.match(host or "")
+    if not found or (found["port"] is not None and not 0 < int(found["port"]) <= 65535):
+        return False
+    if found["ip6"] is not None:
+        try:
+            ipaddress.IPv6Address(found["ip6"])
+        except ValueError:
+            return False
+    return True
+
+
+# The shells a command line is wrapped in (Codex runs each command through
+# one): ``<program> [flags] '<body>'``, the program bare or in double quotes.
+_PROGRAM = re.compile(r'^(?:"([^"\r\n]+)"|([^\s"\']+)) +')
+_POWERSHELL = re.compile(r"^(?:-(?:NoProfile|NoLogo|NonInteractive) +)*-Command +(?=')", re.I)
+_POSIX_SHELL = re.compile(r"^-l?c +(?=')")
+# PowerShell reads these as single quotes too: a body holding one may end where it does not seem to.
+_SMART_QUOTES = "‘’‚‛"
+
+
+def unwrap_shell(command: str) -> tuple[str, str] | None:
+    """The command a shell wrapper runs, ``(the shell, the body)``:
+    ``("PowerShell", body)`` for ``<powershell|pwsh>[.exe] [-NoProfile]
+    [-NoLogo] [-NonInteractive] -Command '<body>'`` (its ``''`` read as
+    ``'``), ``("bash" | "sh" | "zsh", body)`` for ``<shell> -c|-lc
+    '<body>'`` (a ``'`` written ``'\\''`` or ``'"'"'``), the program by
+    its name or a path to it, bare or in double quotes. Only when quoting
+    the body again by that shell's rule, after the same program and flags
+    as they are spelled, gives back ``command`` byte for byte, and the body
+    holds no character ``shown_text`` marks (nor, for PowerShell, a quote
+    it reads as one): else None, and the person reads the whole command.
+    The one parser of a wrapper: ``runner._program`` names its program
+    from the body first."""
+    command = command or ""
+    found = _PROGRAM.match(command)
+    if not found:
+        return None
+    name = re.split(r"[\\/]", found.group(1) or found.group(2))[-1].lower()
+    rest = command[found.end():]
+    if name in ("powershell", "powershell.exe", "pwsh", "pwsh.exe"):
+        flags = _POWERSHELL.match(rest)
+        if not flags:
+            return None
+        quoted = rest[flags.end():]
+        body = quoted[1:-1].replace("''", "'")
+        if len(quoted) < 2 or quoted != "'" + body.replace("'", "''") + "'" or any(q in body for q in _SMART_QUOTES):
+            return None
+        shell = "PowerShell"
+    elif name in ("bash", "sh", "zsh", "bash.exe", "sh.exe", "zsh.exe"):
+        flags = _POSIX_SHELL.match(rest)
+        if not flags:
+            return None
+        quoted = rest[flags.end():]
+        try:
+            words = shlex.split(quoted, posix=True)
+        except ValueError:
+            return None
+        if len(words) != 1:
+            return None
+        body = words[0]
+        if quoted not in ("'" + body.replace("'", "'\\''") + "'", "'" + body.replace("'", "'\"'\"'") + "'"):
+            return None
+        shell = name.removesuffix(".exe")
+    else:
+        return None
+    if not body.strip() or shown_text(body)[1]:
+        return None
+    return shell, body
 
 
 MAX_MODELS = 50       # models an agent's listing keeps
@@ -271,11 +379,13 @@ class Turn:
     def stop(self) -> None:
         self._stop.set()
 
-    def answer(self, ask_id: str, decision: str, note: str = "") -> bool:
-        """The person's answer to the ask ``ask_id``: ``decision`` once,
-        chat or deny (``DECISIONS``), ``note`` what a decline tells the
-        agent → whether it was written (False: no such ask waits, the agent
-        withdrew it or is gone). ValueError for another decision."""
+    def answer(self, ask_id: str, decision: str, note: str = "", by: str = "owner") -> bool:
+        """The answer to the ask ``ask_id``: ``decision`` once, chat or deny
+        (``DECISIONS``), ``note`` what a decline tells the agent, ``by``
+        whose it is (``owner`` the person's, ``gamma`` Gamma's own: a
+        decline says which) → whether it was written (False: no such ask
+        waits, the agent withdrew it or is gone). ValueError for another
+        decision."""
         if decision not in DECISIONS:
             raise ValueError(f"a decision is one of {', '.join(DECISIONS)}")
         with self._asking:
@@ -283,7 +393,7 @@ class Turn:
         if held is None or self.child is None:
             return False
         try:
-            self._reply(held, decision, note)
+            self._reply(held, decision, note, by)
         except EOFError:
             return False
         return True
@@ -354,9 +464,10 @@ class Turn:
         kill it now."""
         return 0.0
 
-    def _reply(self, held, decision: str, note: str) -> None:
-        """Write the answer to an ask the driver held as ``held``; EOFError
-        when the agent is gone."""
+    def _reply(self, held, decision: str, note: str, by: str) -> None:
+        """Write the answer to an ask the driver held as ``held`` (``by``
+        the person, ``owner``, or Gamma itself, ``gamma``); EOFError when
+        the agent is gone."""
         raise EOFError
 
     def _asked(self, ask_id: str, held) -> None:

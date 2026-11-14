@@ -3,7 +3,7 @@
 // asks (computer/ComputerAsk.jsx). A caption, the head (an icon and what
 // the call would do), the card's preview as its children, then the
 // answers: the card's own that allow (`answers`, [{decision, label,
-// primary, danger, title}]) and, after a spacer, Don't allow, which opens
+// primary, danger, title, disabled}]) and, after a spacer, Don't allow, which opens
 // a line for what to do instead (optional; Enter declines with it, Escape
 // or Back closes it). Once answered the card says so ("Allowed. … goes
 // on…" or "Not allowed. … goes on without it…"); a refusal is said on it,
@@ -68,8 +68,8 @@ export function ApprovalAnswers({ answer, answers, agent = "" }) {
       </form>
     ) : (
       <div className="chatApprovalActions">
-        {answers.map(({ decision, label, primary, danger, title }) => (
-          <button key={decision} type="button" title={title} onClick={() => decide(decision)}
+        {answers.map(({ decision, label, primary, danger, title, disabled }) => (
+          <button key={decision} type="button" title={title} disabled={disabled} onClick={() => decide(decision)}
             className={`uiBtn sm${primary ? " primary" : ""}${danger ? " danger" : ""}`}>
             {label}
           </button>

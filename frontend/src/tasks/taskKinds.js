@@ -14,7 +14,8 @@ const named = (value) => value || t("Untitled");
 
 // `icon`: a key of TasksTray.jsx's icon table. `open`: what a click on the
 // row opens — "export" / "import" (the dialog, on this job), "settings:<pane>",
-// "computer" (the page's chat on the computer side).
+// "computer" (the page's chat on the computer side). `phase`: the words of
+// a phase of its own, before the shared ones (PHASES).
 // `quiet`: a failure that does not dot the tray button (a paper without
 // findable metadata is routine).
 export const TASK_KINDS = {
@@ -148,7 +149,8 @@ export const TASK_KINDS = {
   // computer side"), read-only: a click opens the page's chat on that side,
   // and Stop is the turn's own. The server's title is "<agent> · <page
   // title>". A turn of a work folder another computer keeps (step 4d) names
-  // that computer (`params.computer`).
+  // that computer (`params.computer`), and while it asks there (phase
+  // `asking`) says the answer is given on that computer.
   "computer-turn": {
     icon: "terminal", open: "computer",
     title: ({ title, params }) => {
@@ -159,6 +161,8 @@ export const TASK_KINDS = {
       return computer ? t("{agent} on {computer}: {title}", { agent, computer, title: named(page) })
         : t("{agent} on this computer: {title}", { agent, title: named(page) });
     },
+    phase: ({ progress, params }) => (progress?.phase === "asking" && typeof params?.computer === "string" && params.computer
+      ? t("Waiting for your answer on {computer}", { computer: params.computer }) : ""),
     stop: ({ workspace, params }) => `/local-agents/chat/turns/${encodeURIComponent(params?.turn || "")}/stop${
       workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
   },
@@ -236,7 +240,7 @@ export function progressCounts({ done, total, unit } = {}) {
 export function progressText(task) {
   if (task.stopping) return t("Stopping…");
   const p = task.progress || {};
-  return [PHASES[p.phase] || "", progressCounts(p), p.item || ""].filter(Boolean).join(" · ") || t("Working…");
+  return [kindOf(task).phase?.(task) || PHASES[p.phase] || "", progressCounts(p), p.item || ""].filter(Boolean).join(" · ") || t("Working…");
 }
 
 const sameDay = (a, b) => a.toDateString() === b.toDateString();

@@ -454,8 +454,10 @@ the research note; the chat's computer side stays local (4d).
   work folder (`folder_links.work_vault`), with the shell's word as
   locally; it is refused (400 "Show this computer on <host> first.")
   while this computer has no channel to that server and workspace, and
-  asking (`agent_runs: ask`) stays refused for it (409 "Asking in the
-  chat is for a work folder of this computer's server."). The shell's
+  asking in the chat (`agent_runs: ask`) stays refused for it (409 "Asking
+  in the chat is for a work folder of this computer's server: for one of
+  another server, choose Ask on this computer."): its turns ask on this
+  computer instead (`computer`, "Asking on this computer"). The shell's
   confirm says what a server someone else runs can then do, and that a
   server reached over plain `http://` outside this computer is reached
   without encryption: the link's `plain`, as the host lists it, says so
@@ -569,10 +571,13 @@ reads while the computer is off.
   message, the selections with their places, the last 6 messages, the
   model and effort, the page's path), computes the selections' source
   lines from its disk, resumes the conversation's session from its own
-  vaults.db as locally, runs the agent confined as a Send (no asking),
-  and writes the agent message back at most every second, each write with
-  the next `seq` (an older one changes nothing: `stale`), the last always
-  sent, retried while the NAS cannot be reached; a 409 stops the turn.
+  vaults.db as locally, runs the agent confined as a Send (asking only
+  where its folder's policy is *Ask on this computer*, "Asking on this
+  computer"), and writes the agent message back at most every second,
+  each write with the next `seq` (an older one changes nothing: `stale`),
+  the last always sent, retried while the NAS cannot be reached, a lost
+  one by the next flush (`home.missed`; one refused there waits for the
+  next change); a 409 stops the turn.
 - **Stop**: a queued turn ends at once; a running one is flagged and its
   computer woken (it stops it and writes its end, or, for a turn it no
   longer runs, ends it there under its run); a running one whose computer
@@ -580,14 +585,17 @@ reads while the computer is off.
   refused. Stop is the account's on its own turn's row, with no seat
   needed, so a turn stays stoppable after the agent is turned off, the
   token goes or the page is deleted.
-- **Not on another server's page**: asking (409 "Asking is for a work
-  folder of this computer's server."), *Continue in a terminal* and *Show
-  in folder* (the strip's ⋯ menu is hidden; `/chat/terminal` 404), and the
-  passage chips' source lines (`/chat/sources` answers nulls; the turn's
-  prompt still gets them, computed on the computer).
+- **Not on another server's page**: answering what the agent asks (409
+  "This is answered on the computer that runs the agent.": the page says
+  *Waiting for your answer on TIM-PC* while the message's `waiting` is
+  true, and draws no card), *Continue in a terminal* and *Show in folder*
+  (the strip's ⋯ menu is hidden; `/chat/terminal` 404), and the passage
+  chips' source lines (`/chat/sources` answers nulls; the turn's prompt
+  still gets them, computed on the computer).
 - **Background tasks** lists the account's queued and running remote
   turns from `computer_chat_runs`, named with the computer that holds or
-  keeps them (*Codex on TIM-PC: main*), Stop the same route.
+  keeps them (*Codex on TIM-PC: main*), in the phase `asking` while the
+  message says `waiting`, Stop the same route.
 - **Recovery** as for Sends: an open remote turn is failed through its
   home at start and whenever its channel's announce succeeds again; a
   computer's token taken back fails the turns its runs hold and the
@@ -798,30 +806,49 @@ asks (nobody watches it) and keeps refusing; a folder whose maker has not
 turned asking on behaves as without it.
 
 - **What it may run** is a vault's second setting, set on the computer
-  only: vaults.db `agent_policies` (`link_id`, `runs` `never` or `ask`,
-  `set_by`, `set_at`; no row is `never`), through `PATCH
+  only: vaults.db `agent_policies` (`link_id`, `runs` `never`, `ask` or
+  `computer`, `set_by`, `set_at`; no row is `never`, and an app older than
+  step 5b reads `computer` as `never`), through `PATCH
   /api/folder-links/{id}` `{agent_runs}` with the agent's gate and, for
   `ask`, the shell's word ("The routes"); the link's `agent` carries
-  `runs`. It goes, with the chat grants, when the agent is turned off or
-  changed (`store.set_agent`), the vault relinked or removed, and set back
-  to `never`. `_ChatTurn` reads it when the turn starts and starts the
-  driver with `ask=True` only for `ask`.
+  `runs`. `ask` is for a work folder of this server, `computer` for one of
+  another ("Asking on this computer"). It goes, with the chat grants, when
+  the agent is turned off or changed (`store.set_agent`), the vault
+  relinked or removed, and set back to `never`. `_ChatTurn` reads it when
+  the turn starts (`runner.ask_refusal`) and starts the driver with
+  `ask=True` only when it may ask; each ask checks it again.
 - **The asks.** A driver started with `ask` yields `{type: "ask", id, kind:
-  command | files | tool, step, command?, cwd?, paths?, diff?, reason?,
-  tool?}` (`id` the driver's key: Codex's JSON-RPC id, Claude Code's
-  `request_id`; `step` the tool event it belongs to) and `{type:
+  command | files | tool, step, command?, cwd?, host?, paths?, diff?,
+  diff_cut?, reason?, tool?, background?, grant_root?}` (`id` the driver's
+  key: Codex's JSON-RPC id, Claude Code's `request_id`; `step` the tool
+  event it belongs to; `host` the network host a Codex command reaches,
+  its own field, the reason as Codex gave it; `diff_cut` when the diff was
+  cut to `MAX_DIFF`; `background` a Claude Code call asked to run in the
+  background; `grant_root` a Codex file change's `grantRoot`) and `{type:
   "ask_gone", id}` when the agent withdraws one, and takes the answer
-  through `Turn.answer(id, decision, note)` (`once`, `chat`, `deny`;
-  thread-safe). While an ask waits, the idle watchdog does not count the
-  silence and the run's deadline moves by the wait.
+  through `Turn.answer(id, decision, note, by)` (`once`, `chat`, `deny`;
+  `by` `owner` or `gamma`, whose decline it is; thread-safe). While an ask
+  waits, the idle watchdog does not count the silence and the run's
+  deadline moves by the wait.
 - **The runner** holds each ask for the turn and writes it in the agent's
-  message as `asks: [{id (Gamma's own), kind, command?, cwd?, paths?,
-  diff?, reason?, tool?, at}]`, its step reading `asked`; the strip reads
+  message as `asks: [{id (Gamma's own), kind, command?, command_shown?,
+  marked?, lines?, inner?, shell?, background?, cwd?, host?, paths?, diff?,
+  reason?, tool?, at, expires_at}]`, its step reading `asked` (a step the
+  event names none of takes a new id, never the ask's); the strip reads
   *Waiting for you*. An ask shows the person what would run: the command
-  exactly as the agent gave it, its folder and paths relative to the work
-  folder or under `~` (rewritten only at a path boundary, so a sibling such
-  as `paper-old` is never read as the folder; `_relative`), every other
-  path as it is (the message's other words are `_redact`ed); it leaves the
+  exactly as the agent gave it, and, when it holds a character that would
+  not show (a control or format character: bidi controls, zero-width
+  ones, a BOM, U+2028/9), `command_shown` with each marked `⟨U+202E⟩`
+  and `marked` their count (`events.shown_text`); `lines` its line count
+  when over one; `inner` and `shell` the command a shell wrapper runs
+  (`powershell.exe -Command '…'`, `bash -lc '…'`), only when quoting it
+  again by that shell's rule gives back the whole command byte for byte
+  and nothing in it is marked (`events.unwrap_shell`, the one parser:
+  `_program` names a step's program from it first); `expires_at` when
+  Gamma declines it; its folder and paths relative to the work folder or
+  under `~` (rewritten only at a path boundary, so a sibling such as
+  `paper-old` is never read as the folder; `_relative`), every other path
+  as it is (the message's other words are `_redact`ed); it leaves the
   message once answered (and when a stopped server's turn is failed).
   `POST /api/local-agents/chat/turns/{turn}/asks/{ask}` answers it
   (`runner.answer_chat`): `once`, `chat` (a command only) or `deny` with
@@ -842,11 +869,22 @@ turned asking on behaves as without it.
   grant is written any more.
 - **Never asked, declined by Gamma**: a change to a protected part of the
   folder (`.git`, `.codex`, `.claude`, `.vscode`, `.husky`, `.idea`, a
-  top-level dotfile such as `.gitconfig`), by either agent; and a Codex
+  top-level dotfile such as `.gitconfig`), by either agent; a Codex
   approval that is not a new command (`writeStdin`, input to a terminal it
-  already runs).
-- **Unanswered** for `ASK_TIMEOUT_S` (600 s), an ask is declined with "No
-  answer within 10 minutes."; a Stop, a pause, the agent turned off and
+  already runs); a Codex file change with a `grantRoot` (writes below a
+  root for the rest of the session: "Gamma allows file changes one at a
+  time."); a turn's 21st ask (`MAX_ASKS`: "This turn asked 20 times: …")
+  and every ask after three declines of the person's in a row
+  (`MAX_DECLINES`: "The owner declined three asks in a row: …"; an allow
+  sets the count back, Gamma's own declines leave it). A decline that is
+  Gamma's reaches the agent as Gamma's ("Gamma declined that: …" for
+  Codex, "Gamma declined: …" for Claude Code), the person's as the owner's.
+- **Claude Code's allowed call** runs with its input cut to `command`,
+  `description` and `timeout` (`claude.ALLOWED_INPUT`; the timeout a whole
+  number): never `run_in_background`, so an allowed command stays in the
+  foreground, where Stop and the turn's end reach it.
+- **Unanswered** for `ASK_TIMEOUT_S` (600 s), an ask is declined by Gamma
+  with "No answer within 10 minutes."; a Stop, a pause, the agent turned off and
   Gamma closing take the cards out of the message at once and decline what
   waits (Codex `cancel`, Claude Code a denial, then its interrupt).
 - **The prompt** (`prompt.build_chat`) tells Claude Code, when asking is
@@ -860,6 +898,90 @@ asked through Gamma's handler, allowed once and run; its Edit of
 `.git/config` refused by Gamma with no card, the file unchanged; Codex
 asking to run `curl` outside its sandbox (an integer id, echoed), allowed
 once and run with the network.
+
+## Asking on this computer
+
+A chat turn of a page of another server's work folder ("The chat on
+another server's page") may ask too, as a local turn does, but the card is
+drawn and answered on the computer itself, in the desktop app's bar, with
+the server's page hidden while it is up
+([desktop architecture](../../desktop/docs/architecture.md)). That server
+starts the turn and learns that it waits, never what it asks: nothing it
+sends draws, words or answers the card. Step 5b of
+[agent-collab](../research/agent-collab.md).
+
+- **The policy** is the vault's `runs` `computer` (*Ask on this computer*
+  in the sync panel), for a work folder of another server only (409 for a
+  local one, which asks in the chat; `ask` 409 for a remote one), refused
+  while that server is reached over plain http (409 "{host} is reached over
+  plain http: Ask on this computer needs https.": `remote_servers.plain`
+  must be "", https or this computer, [https.md](https.md)), and set with
+  the shell's word, never unchecked (`_shell_strict`: 403 without it, and
+  on a server started without a secret). The PATCH then asks that server's
+  whoami once (15 s): `older: true` when it lacks `computer_asks`, whose
+  pages will not say the turn waits; the policy is set either way. A vault
+  that a move (`remote_servers.move`) carries to a new address without its
+  token proving the same server (a sealed token that no longer opens) is
+  set back to `never` (`remote_servers._unasked`).
+- **Who may ask** (`runner.ask_refusal`, at the turn's start and at every
+  ask): the policy `computer`, the shell's secret set (`NOBODY_HERE`
+  without: no window to ask in), and that server reached securely now
+  (`NOT_SECURE`). A turn that may not starts its agent without `ask`.
+- **Each ask**, in `_ChatTurn._asked`'s order, is declined unseen ("Gamma
+  declined that: …") for: the policy or the address no longer allowing it;
+  a kind other than a command or a file change; a `grantRoot` (every
+  turn); a command over `FAR_MAX_COMMAND` (8000 characters) or
+  `FAR_MAX_LINES` (200), a cut diff or more than `FAR_MAX_PATHS` (20)
+  paths (`TOO_LONG`: what this computer cannot show whole); a network host
+  that does not read as one (`events.host_ok`: `HOST_UNREAD`); the caps of
+  every turn; and the desktop app not there to answer: unless it read the
+  asks within `SHELL_SEEN_S` (60 s), the ask waits up to `SHELL_GRACE_S`
+  (15 s) for its first read, else `NOBODY_HERE`. No grant is looked up for
+  a remote turn: only *Allow once*, *Decline* and the shell's *Stop
+  asking*, which declines and sets the policy back to `never`.
+- **What is held** is the ask with its card (`_ChatTurn._card`): `{id,
+  turn_id, link_id, agent, label, kind, command?, lines?, inner?, shell?,
+  marked?, background?, dir, folder, file, host?, paths?, diff?, reason?,
+  server: {origin, account}, at, expires_at}`, every string through
+  `events.shown_text` (`marked` counting the marks in all), `dir` and
+  `paths` absolute on this computer, `folder` the vault's directory,
+  `file` the page's path from this computer's vault rows alone (""
+  otherwise: never that server's path or title, which the prompt keeps),
+  `reason` the agent's one line (300 characters), `server.origin` the
+  link's, `server.account` the channel's account there (64 characters):
+  the one word in it that server chose.
+- **What that server learns**: the message's `waiting` (`home.CHAT_FIELDS`;
+  `_turn_fields` takes it as a flag, `chats.write_run` and `_end_run` set it
+  false at every end) and the steps as for any turn (`{id, kind, status,
+  program | path}`, a step id never this computer's ask id); never `asks`.
+  Integrity, not secrecy: the agent's next words may say what it did.
+- **The routes** are the computer's alone (404 where agents do not run),
+  with the shell's word, never unchecked (403), and a session of the
+  account that made the vaults (the shell's own partition): `GET
+  /api/local-agents/asks?after=&wait=` → `{version, asks}` (the asks of
+  that account's vaults, oldest first), held up to `wait` (20 s at most)
+  while `version` is `after`, each read telling the runner the app is
+  there (`runner.wait_asks`); `POST /api/local-agents/asks/{id}`
+  `{decision: once | deny}` → `{answered, version}` (`runner.
+  answer_computer`; 404 "No question on this computer has that id.", also
+  for another account's; 400 "On this computer an ask is allowed once or
+  declined."; 409 as an answer in the chat). `version` rises at every
+  change of what waits (`_asks_changed`), so the shell drops a held list
+  older than an answer. The chat's own answer route refuses every remote
+  turn (409 "This is answered on the computer that runs the agent."), by
+  rule too: `_ChatTurn.answer` refuses it, only `answer_computer` reaches
+  `_answer_here`.
+- **The answer never waits on that server**: after an ask or an answer a
+  remote turn's message is written by the flush thread (`_show_later`),
+  so the POST returns once the driver has the answer; a write that did not
+  reach that server (`HttpChatHome.missed`) is tried again by the flush.
+- **The time**: a remote turn's waiting moves its deadline by `FAR_WAIT_S`
+  (600 s) in all, so a turn holds one of this computer's two slots at
+  most 10 minutes past `RUN_TIMEOUT_S`; an ask is declined after
+  `ASK_TIMEOUT_S` as in the chat. Stop there declines what waits here (the
+  drivers' stop), and the list loses it at once.
+- **Background tasks** there read the turn's phase `asking` while its
+  message says `waiting` (`chats.remote_turns`' `asking`).
 
 ## The drivers
 
@@ -979,7 +1101,8 @@ sandbox check) or 120 s (`thread/start`, `thread/resume`, `turn/start`).
    protected part of the folder is declined, never asked. The
    answer echoes the request's id exactly (an integer as an integer):
    once `accept`, chat `acceptForSession`, deny `decline` and, with a note,
-   a `turn/steer` "The owner declined that: <note>" in the same write, so
+   a `turn/steer` "The owner declined that: <note>" ("Gamma declined that:
+   <note>" for Gamma's own) in the same write, so
    a turn that ends on reading the decline still has the note and the
    answer counts as given. The step reads allowed or declined before the
    agent hears the answer, and what the agent says of a declined step
@@ -1052,9 +1175,13 @@ values, so nothing positional follows them.
   protected file (`.git`, `.claude`, `.vscode`…) reaches Gamma, refused
   "Gamma does not let an agent change that file.", and anything else "Gamma
   does not offer that tool here." Answers: a success `control_response`
-  with `toolUseID`, `{behavior: "allow", updatedInput: <the input as
-  asked>}` (never `updatedPermissions`: no rule is written anywhere) or
-  `{behavior: "deny", message: "The owner declined: <note>"}`. A Stop denies
+  with `toolUseID`, `{behavior: "allow", updatedInput: <the input cut to
+  command, description and timeout>}` (`ALLOWED_INPUT`: never
+  `run_in_background`; never `updatedPermissions`: no rule is written
+  anywhere) or `{behavior: "deny", message: "The owner declined: <note>"}`
+  ("Gamma declined: <note>" for Gamma's own). A call asked with
+  `run_in_background` is an ask with `background: true`: allowed, it runs
+  in the foreground. A Stop denies
   what waits, then sends an `interrupt` control request and gives it the
   grace period before the kill. Other control requests get an error
   response; `keep_alive`, `control_response` and `stream_event` lines are
@@ -1135,7 +1262,7 @@ short connection):
 | `agent_threads` | `link_id` and `thread_id` (the key), `agent`, `session`, `cwd` (the vault's directory the turn ran in), `seen_at` (when the run read the thread), `read_ids` (JSON, the comments it read), `comment_id` (its reply), `request_id`, `at`: the thread an agent of the vault answered last ("Resuming the session") |
 | `agent_conversations` | `conversation_id` (the key), `link_id`, `agent`, `session`, `cwd`, `at`: the session a chat conversation's turns resume ("The chat's computer side") |
 | `agent_turns` | `id` (the turn), `ws`, `link_id`, `conversation_id`, `page_id`, `agent`, `state` (queued, running, then done, failed or stopped), `started_at`, `ended_at`, `error` (this computer's record), `pid`: a chat turn's run |
-| `agent_policies` | `link_id` (the key), `runs` (`never` or `ask`), `set_by`, `set_at`: what the vault's agent may run beyond its confinement; no row is `never` ("Asking in the chat") |
+| `agent_policies` | `link_id` (the key), `runs` (`never`, `ask` or `computer`), `set_by`, `set_at`: what the vault's agent may run beyond its confinement; no row is `never` ("Asking in the chat", "Asking on this computer") |
 | `agent_grants` | `conversation_id`, `command`, `cwd` (the folder it runs in, `.` the work folder) and `host` (a network host, "" for none), the key; `link_id`, `at`: a command the person allowed in that chat, answered by Gamma when the same command is asked again in the same folder for the same host |
 
 `agent_of`, `agents_of` (one query for a listing), `set_agent(link_id,
@@ -1146,7 +1273,9 @@ and `pid` while it runs), `end_run` (a run that ended stays as it ended),
 thread_ids)` (one query), `conversation_of`, `ran_conversation` (a chat
 conversation's session, in place of the one it had), `forget_conversation`
 (a conversation deleted), `add_turn`, `turn_running`, `end_turn`,
-`get_turn` and `open_turns` (a chat turn's row). What goes with a vault:
+`get_turn` and `open_turns` (a chat turn's row; `claimed_of` the row of a
+turn of another server's page this computer claimed, by which this
+server's own chat route answers such a turn's asks 409). What goes with a vault:
 `forget_threads(link_id)` (a relink: the threads' and the conversations'
 sessions, which belong to the directory that was);
 `vault.store.forget_link` (a vault removed: its `agent_folders`,
@@ -1161,7 +1290,7 @@ and nothing of the run's row.
 
 | Method | Path | What |
 |---|---|---|
-| PATCH | `/api/folder-links/{id}` | `agent` (`LinkPatch`, at most 32 characters): `"codex"` or `"claude"` turns the work folder's agent on, `""` off; counts toward the PATCH's changes. The gate, in order: the vault's maker (`_made`, 403); `enabled()` (404 "Agents run on the desktop app's own server."); a work folder (400 "Only a work folder can have an agent."); then, turning on or changing only, the shell's word (403 "Only the desktop app may turn on an agent for this folder."), a known name (400 "Gamma knows no agent named …") and `catalog.probe(name, fresh=True)` ready (400 with its problem). `folder_links.set_agent(link_id, agent, by=)` stores it, stops the run of the agent it had when it is turned off or changed (`_stop_agent`), and when one is turned on hands it the Sends that wait now; the answer is the link with `queued`, how many it took. `{paused: false}` and a saved selection (`PUT …/selection`) of a vault with an agent hand it the Sends that wait (`_hand_waiting`); a pause stops its run. A relink and a delete stop the run and turn the agent off (`_forget_agent`). `agent_runs` (`never` or `ask`, "Asking in the chat"): the same gate, then a known value (400 "What an agent may run is never or ask."), an agent on after this PATCH's `agent` (400 "Turn an agent on first."), and for `ask` the shell's word (403 "Only the desktop app may let an agent ask to run commands in this folder."); `never` needs the maker alone. The link's `agent` gains `runs` |
+| PATCH | `/api/folder-links/{id}` | `agent` (`LinkPatch`, at most 32 characters): `"codex"` or `"claude"` turns the work folder's agent on, `""` off; counts toward the PATCH's changes. The gate, in order: the vault's maker (`_made`, 403); `enabled()` (404 "Agents run on the desktop app's own server."); a work folder (400 "Only a work folder can have an agent."); then, turning on or changing only, the shell's word (403 "Only the desktop app may turn on an agent for this folder."), a known name (400 "Gamma knows no agent named …") and `catalog.probe(name, fresh=True)` ready (400 with its problem). `folder_links.set_agent(link_id, agent, by=)` stores it, stops the run of the agent it had when it is turned off or changed (`_stop_agent`), and when one is turned on hands it the Sends that wait now; the answer is the link with `queued`, how many it took. `{paused: false}` and a saved selection (`PUT …/selection`) of a vault with an agent hand it the Sends that wait (`_hand_waiting`); a pause stops its run. A relink and a delete stop the run and turn the agent off (`_forget_agent`). `agent_runs` (`never`, `ask` or `computer`, "Asking in the chat", "Asking on this computer"): the same gate, then a known value (400 "What an agent may run is never, ask or computer."), an agent on after this PATCH's `agent` (400 "Turn an agent on first."); for `ask` a work folder of this server (409 "Asking in the chat is for a work folder of this computer's server: for one of another server, choose Ask on this computer.") and the shell's word (403 "Only the desktop app may let an agent ask to run commands in this folder."); for `computer` a work folder of another server (409 "Ask on this computer is for a work folder of another server: here the agent asks in the chat."), reached securely (409 "{host} is reached over plain http: Ask on this computer needs https.") and the shell's word, never unchecked (403 "Only the desktop app may let an agent ask on this computer.", a server without a secret too), the answer's `older` whether that server's whoami lacks `computer_asks`; `never` needs the maker alone. The link's `agent` gains `runs` |
 | GET | `/api/folder-links` | each link's `agent`: `{name, label, ready, problem, running: {kind: "send" \| "chat", request_id (null for a chat turn), detail} \| null}` for a work folder with one, else null (`local_agents.info.listing`: one store query for the whole listing, readiness from `catalog.cached`, nothing run). A member who cannot act on the vault (`_acts`) reads `running.detail` as "" (it may name files) |
 | GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only, and `mine` (whether this account made the vault, whose comments may name its agent) on every server. Turning an agent on, off or to another (`set_agent`) tells each open page of the folder `{t: "vault"}` (`_tell_open_pages`, from `collab.open_pages()`), so its chip and the comments' @ menu read it again |
 | POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment that names the folder's agent is a Send too, answered as `send` ("A mention in a comment") |
@@ -1172,7 +1301,9 @@ and nothing of the run's row.
 | GET | `/api/local-agents/chat/history?page=` | `{conversations: [{id, title, agent, updated_at, turns}]}`, newest first |
 | DELETE | `/api/local-agents/chat/grants/{id}` | the conversation's Allowed in this chat taken back (`store.forget_grants`) → `{forgotten: true}`; 404 for a conversation not the account's |
 | POST, DELETE | `/api/local-agents/chat/history/{id}/open`, `/api/local-agents/chat/history/{id}` | open (→ `{conversation}`, 409 while a turn runs, 404 for one not archived) or delete (→ `{deleted: true}`, 409 for the active one) an archived conversation |
-| POST | `/api/local-agents/chat/turns/{turn}/asks/{ask}` | `{decision: "once" \| "chat" \| "deny", note?}` (a note at most 2,000 characters) → `{answered: true}`: the person's answer to a waiting ask ("Asking in the chat"); 400 for another decision, a longer note or `chat` on anything but a command; 404 for no such turn of the account or ask; 409 when it was answered, withdrawn or declined already, or the turn ended |
+| POST | `/api/local-agents/chat/turns/{turn}/asks/{ask}` | `{decision: "once" \| "chat" \| "deny", note?}` (a note at most 2,000 characters) → `{answered: true}`: the person's answer to a waiting ask ("Asking in the chat"); 400 for another decision, a longer note or `chat` on anything but a command; 404 for no such turn of the account or ask; 409 when it was answered, withdrawn or declined already, or the turn ended, and for a turn that runs on another computer, on every server ("This is answered on the computer that runs the agent.") |
+| GET | `/api/local-agents/asks?after=&wait=` | the desktop app's alone ("Asking on this computer"): `{version, asks}`, the asks waiting on remote turns of the account's vaults, oldest first, held up to `wait` s (at most 20) while `version` is `after`; 404 where agents do not run, 403 "Only the desktop app reads what waits for an answer on this computer." without the shell's word or with no secret |
+| POST | `/api/local-agents/asks/{ask}` | the desktop app's alone: `{decision: "once" \| "deny"}` → `{answered: true, version}`, given to the agent before it returns; 403 "Only the desktop app answers on this computer."; 404 "No question on this computer has that id." (another account's too); 400 "On this computer an ask is allowed once or declined."; 409 "{agent} no longer waits for that." or "This turn has ended." |
 | GET | `/api/local-agents/chat/terminal?page=` | the desktop shell's alone in practice (Continue in a terminal): `{cwd, argv, agent, label}`, the conversation's session resumed ("Its model, its typing, a terminal…"); 404 "This conversation has no session to continue.", 409 while a turn runs, when the folder has no agent or it is not on this computer |
 | POST | `/api/local-agents/chat/sources` | `{page, selections: [{text, page, box}]}` → `{sources: [{file, line, end?} \| null]}`, in order; 400 past 20 selections |
 | GET | `/api/local-agents?fresh=0\|1` | `{agents: [{name, label, found, version, ready, problem, models, at}]}` (`models`: "Its model, its typing…"), Codex then Claude Code, from `catalog.cached`; `fresh=1` probes both anew, at most once every 10 s on this server (sooner, the kept answers). A signed-in account's session (`require_personal_user_id`; no token, no guest); 404 when not `enabled()` (`gamma/routers/local_agents.py`, registered beside the feedback router) |
@@ -1309,7 +1440,14 @@ either agent.
   change files outside its sandbox" with the paths and the diff; **Allow
   once**, **Allow in this chat** (a command only: "Run this exact command
   without asking for the rest of this conversation") and **Don't allow**
-  (a note, then Don't allow); under them "It runs as you, with your files
+  (a note, then Don't allow). The box shows `askCommand`: the inner
+  command of a shell wrapper with "Through PowerShell: …" under it, else
+  `command_shown` with its `⟨U+…⟩` marks in the warning colour ("This
+  holds 2 characters that do not show: …"), "3 lines" over it, "It reaches
+  example.org on the network" for a `host`; the allow buttons stay off
+  ("Scroll to the end first: …") until the command's box and the diff were
+  scrolled to their end (`scrolledToEnd`, the answers' `disabled`). Under
+  them "It runs as you, with your files
   and the network." or "It changes files outside the work folder."; the
   strip reads "Waiting for you: Codex wants to run a command" (amber,
   `asking`), the turn's pill "Codex is waiting for you", and the steps
@@ -1363,6 +1501,13 @@ the chat, and that an allowed command runs as the person, with their files
 and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
 (main.js `setAgentRuns`, action `agent-runs`); *Nothing more* PATCHes
 `never` and asks nothing; a notice says what came of it (`keeping.runsSaid`).
+For a work folder of another server the choice is *Nothing more* | *Ask
+on this computer* (`computer`, refused while that server is reached over
+plain http), confirmed first and PATCHed with the shell's word; its cards
+are drawn in the bar over the whole window, followed from `GET
+/api/local-agents/asks` and answered with `POST …/asks/{id}` ("Asking on
+this computer"; the shell's side is the
+[desktop architecture](../../desktop/docs/architecture.md)'s).
 
 ## Trust
 
@@ -1400,6 +1545,19 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
   included; a grant of `latexmk` in this chat lets the next turn do so
   unasked. The card shows the command exactly as given for that reason,
   and a chat grant holds for one command in one folder only.
+- **Asking on this computer** ("Asking on this computer"). The person at
+  the computer alone answers, in the desktop app's bar, with the shell's
+  word on routes that never take a session alone; the other server starts
+  the turn, so it writes what the agent is asked to do, but never the card
+  or the answer, and learns `waiting` and the step statuses, never the
+  ask. Over plain http it is refused (a man in the middle would write the
+  prompt), without the desktop app's secret nobody is asked, and what this
+  computer cannot show whole is declined unseen. The shell's secret is
+  read once and taken off the server's environment (`config.shell_secret`,
+  on Linux and macOS its bytes in the block the process began with too,
+  which /proc and `ps eww` read), and no agent inherits
+  a `GAMMA_*` variable (`procs.child_env`), so a confined command cannot
+  answer its own ask by reading it.
 - **Prompt injection.** A viewer and a share visitor may comment, so a
   comment is not trusted text. Other members' comments reach the agent
   named as theirs (`is_owner` false), escaped in JSON, under an instruction
@@ -1432,10 +1590,21 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
 ## Known gaps
 
 - Asking is the chat's alone: a Send never asks, so there Claude Code edits
-  and does not build, and Codex's requests for approval are refused. The
-  plan's *Ask on this computer* (a card on the computer's own screen) is
-  not built. On Windows a Codex command's card shows the shell it runs through
-  (`powershell.exe -Command '…'`).
+  and does not build, and Codex's requests for approval are refused.
+  The inner command of a shell wrapper (`unwrap_shell`) is checked against
+  the shapes Gamma expects, not yet against Codex 0.167's real approvals
+  on each platform: a shape it does not round-trip shows the whole
+  command, as before.
+- Asking on this computer: no *Allow in this chat* and no note on a
+  decline (each command its own consent); remote turns may take both of
+  the computer's slots while they wait (at most 10 minutes past their
+  deadline); the host's own Background tasks list no remote turn (the bar
+  and the tray say what waits); the other server learns how soon the
+  person answers (`waiting`) and the agent's words after a decline.
+  Whether Codex's sandbox reaches 127.0.0.1 and whether several approvals
+  come for one item (the zsh exec bridge's `approvalId`) is to be checked
+  against the real CLI; a `grantRoot` is declined whatever Codex does
+  with it.
 - Codex's Windows sandbox must be set up once in a terminal; until then
   Codex is not ready. On Windows, Codex edits through shell commands and
   reports no file changes as items, so the progress shows `Running …`
@@ -1472,8 +1641,9 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
 - Comments on a clone never reach this computer's agent, as they never
   reach its files (feedback.md "Known gaps"). A work folder of another
   server does ("A work folder of another server"), its chat too ("The
-  chat on another server's page"); asking, the terminal and Show in
-  folder stay on this computer's own pages.
+  chat on another server's page"); its asks are answered on this computer
+  ("Asking on this computer"), and the terminal and Show in folder stay on
+  this computer's own pages.
 - A remote run's region pictures stay in the directory's
   `.gamma/feedback/img/` (the cleanup runs for local work folders only).
 - On the NAS, another member's waiting Send in the maker's work folder
@@ -1561,7 +1731,28 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
   paths made short only at a boundary, a grant per command, folder and
   host, Codex's terminal input and a protected change declined unasked,
   asking turned back to never mid-turn, a diff's headers and its cut,
-  Claude Code's ask turn starting each Bash call in the folder.
+  Claude Code's ask turn starting each Bash call in the folder; what an
+  ask shows (`shown_text`'s marks, `host_ok`, `unwrap_shell` on a round
+  trip only, `_program` naming its inner command, a card's `marked`,
+  `lines`, `inner`), Claude Code's allowed input cut to command,
+  description and timeout, Gamma's declines worded as Gamma's, a
+  `grantRoot` declined unseen, the 20 asks and three declines of a turn.
+- `tests/test_remote_asks.py`: asking on this computer, against
+  test_remote_chat.py's NAS with a follower of the shell's own: the policy
+  (the shell's word, never unchecked, plain http, a local folder, `ask`
+  on a remote one, `older`, the agent off forgetting it, a move unchecked
+  taking it back), an ask listed here with Gamma's reading of it and none
+  of it there (`waiting`, the step, no host or path in the conversation),
+  the chat's routes and a session refused, allowed once by the shell, a
+  decline and an expiry, Stop there, the grace for the app's first read
+  and nobody reading, plain http and no secret mid-turn, too long, too
+  many lines, a cut diff, an odd host and a mark drawn, the caps, an
+  answer while that server hangs, a lost write of `waiting` written again,
+  the deadline's ten minutes, the read held until a change, no grant, the
+  maker alone, Background tasks there, `waiting` false at every end, the
+  card's file from this computer's rows, the secret off the environment
+  (in a child started with it on Linux and macOS), a refused write not
+  tried again.
 - `tests/test_local_agents_chat.py`: the chat's computer side: only the
   vault's maker (a co-author, a page outside a work folder, another
   server: 404; a token and the guest: 403), a turn run and its reply kept

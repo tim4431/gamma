@@ -680,7 +680,7 @@ keep their rows, where their words warn. Each goes through
 | *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
 | the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
 | the agent row | a work folder of its maker, on a server that runs agents | `setAgent`: turning one on asks first, then `PATCH {agent}` with the shell's word; off is `PATCH {agent: ""}` |
-| *What it may run* | under the agent row, while an agent is on | `setAgentRuns`: *Ask me in the chat* asks first (`keeping.runsAsk`), then `PATCH {agent_runs: "ask"}` with the shell's word; *Nothing more* is `PATCH {agent_runs: "never"}` |
+| *What it may run* | under the agent row, while an agent is on | `setAgentRuns`: *Ask me in the chat* (a work folder of this server) or *Ask on this computer* (one of another server, shut over plain http) asks first (`keeping.runsAsk`, `keeping.runsComputerAsk`), then `PATCH {agent_runs: "ask" \| "computer"}` with the shell's word; *Nothing more* is `PATCH {agent_runs: "never"}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
 now*, the switches and the agent row) leave the panel open on the new
@@ -713,6 +713,28 @@ allowed command runs as the person, with their files and the network; then
 (`keeping.runsSaid`). *Nothing more* asks nothing
 ([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Asking in the
 chat").
+
+A work folder of another server never asks in the chat
+(`keeping.FAR_RUNS_RULE`): its row offers *Nothing more* | *Ask on this
+computer*, under it "Codex keeps to its sandbox. With Ask on this computer
+it can ask to go further (the network, files outside this folder) in a
+turn started on NAS; the question shows in this window, never on NAS."
+(Claude Code: "… it can ask to run one (your build) …"). *Ask on this
+computer* is shut, its title "Needs https: NAS is reached over plain
+http.", while the item is not `secure` (the host's `plain` for the link is
+not "", never decided by the shell); set and then reached over plain http,
+an error line says whatever is asked is declined until it is reached over
+https. Setting it is refused for a local work folder
+(`keeping.NEAR_COMPUTER_RULE`) and over plain http (`keeping.plainRule`),
+then asked (`keeping.runsComputerAsk`, a warning whose default is Cancel:
+the question shows only in this window, nothing runs until allowed there,
+and whoever signs in to that server as the account this computer is shown
+to, and whoever runs it, writes what the agent is asked to do), then
+`PATCH {agent_runs: "computer"}` with the shell's word. Its answer's
+`older` (that server's whoami lacks `computer_asks`) adds
+`keeping.olderServer` to the notice: that server's page will not say a
+turn waits, the question still shows here. The question itself is the
+bar's ("An agent's ask on this computer", under "Window").
 
 *Remove the vault…* offers *Remove, keep the files* and
 *Remove, move them to the trash* (the files the sync wrote go to
@@ -940,6 +962,152 @@ The bar's status stays on one line. One control is the apps' own: a
 chevron after reload that hides the bar (`gammaShell.hideBar`), shown only
 while the state's `barHideable` is true, a key the desktop's state never
 has.
+
+**This computer's servers stay out of a remote page's reach.** The content
+guard (`will-navigate`, `will-redirect`) prevents a navigation to a running
+local sidecar's origin (`isLocalOrigin`) started by a page that is not this
+computer's (`isLocalPage`: a running local sidecar's, or the launcher), and
+opens nothing for it: the window's session is signed in to the host, so a
+host page a NAS page placed under the cursor would act as the host's own
+window. The shell's own loads emit no `will-navigate`, so opening a local
+server from a NAS page is unchanged. A redirect is judged by the address
+it comes from (`navHop`: the main frame's navigation as
+`did-start-navigation` and `did-redirect-navigation` last had it), never
+by the page shown or by who started the load: a local server's redirect
+within itself passes, a remote server's to a local one is refused, also
+when the shell started the load (the NAS opened from the launcher, a
+Reload of a NAS page) and the host's origin is still allowed from an
+earlier open. The frames below a remote page are guarded too ("What a
+server's page may use").
+
+### An agent's ask on this computer
+
+A turn of a chat on another server's page, which the host runs for a work
+folder whose *What it may run* is *Ask on this computer*
+([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Asking on this
+computer"), may ask to run a command or to change files outside its
+sandbox. The question is the host's and is drawn here alone, in the bar,
+in the shell's words; nothing the other server sends draws, words or
+answers it, and it shows no answerable card ("Waiting for your answer on
+TIM-PC" is all its page says).
+
+```
+┌──────────────────────────── the whole window (content view hidden) ───────────────────────────┐
+│ Gamma · Approval needed on this computer                                         ─  □  ✕      │
+│   ┌ Approval needed on this computer ─────────────────────────────────── 1 of 2 waiting ┐     │
+│   │ Codex wants to run a command                                                         │     │
+│   │ 3 lines   ┌ latexmk -pdf main.tex … ┐  Through PowerShell: "…powershell.exe" -Command │     │
+│   │ In D:\Papers\cavity · Network example.org · From the chat of main.tex on NAS (https://…) │     │
+│   │ As alice · Codex says: “Rebuild the PDF after the edit.” · the risk · Declined at 14:32  │     │
+│   ├──────────────────────────────────────────────────────────────────────────────────────┤     │
+│   │ Stop Codex asking from NAS               [ Allow once ]               [ Decline ]   │     │
+│   └──────────────────────────────────────────────────────────────────────────────────────┘     │
+└───────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Following.** While the host's last reading lists a work folder set to
+*Ask on this computer* (`refreshKeeping`; the host restarted with one,
+`startLocalNow`), one follower holds `GET
+/api/local-agents/asks?after=<version>&wait=20` on the host (the first
+local server, never made for it) with the shell's word, through the host's
+own session (`localServer`), each read answered at once when the list
+changed and held up to 20 s otherwise (`after=-1` for a follower's first
+read, and after a failure: answered at once). A reading that says no folder asks
+here stops it; one that did not come leaves it be. Every list is taken
+into the queue (`lib/agentAsks.js take`): the asks answered here are kept
+out by their tombstones while a list read before the answer still holds
+them, the shown ask keeps its place, and new ones queue behind it in the
+order they were asked. A failure, a 404 (a server that runs no agents) or
+a 403 (the word refused: a bug, logged) empties the queue, so nothing
+shown can be answered; another try follows after 2 s while the host runs,
+none after a 404 or 403 or once it stopped, until the next reading. A
+host that answers at once with nothing new is read again after 2 s.
+
+**The card** (`agentAsks.cardOf`, `barState().agentAsk` with `armed`) is
+drawn by the bar only when the state carries it, which only the desktop's
+does: the iPad and Android apps share `bar.html` and never draw it, and
+their `gammaShell` has neither `agentAskDrawn` nor `answerAgentAsk`. While
+it is up the bar view covers the whole window and the content view is
+hidden (`layout`, `content.setVisible(false)`): the page is neither seen
+nor clicked. The strip says only "Gamma · Approval needed on this
+computer" and the shell's status line, none of the page's workspace, user
+or title; the window's title stays `Gamma` (the page's comes back after).
+A download the page starts meanwhile is cancelled, and a page's ask about
+this computer (`fromPage`) is refused with "Answer Codex's question
+first." A server switch or the launcher keeps the card; the dropdowns and
+the vault dialog stay open under it (closing the sync panel would cancel a
+waiting vault dialog), and the bar's press, Escape and blur handlers close
+nothing while it is up. The card shows, every word as plain text and every
+character that would not show marked `⟨U+202E⟩` in the warning colour (the
+host marks them; `agentAsks.shown` marks any it missed, and the marks line
+counts both; the colour only on a card that counts some, `marked`, since
+the agent may type the same letters): what it runs (the inner command of one shell wrapper large
+with "Through PowerShell: …" under it, its line count when over one),
+*In* the directory, *Network* the host it reaches, *Files* and the diff
+for a file change, *From* the chat of the page's file (only when the
+vault's rows name it) on the server's name and origin, *As* the account
+there (64 characters at most), the agent's one-line reason marked as the
+agent's, the risk, and when it is declined by itself. The command box and
+the diff break anywhere, plaintext bidi, and scroll at 120 and 160 px;
+*Allow once* stays shut until each box that scrolls was read to its end.
+The card's body scrolls, its footer never does: *Stop Codex asking from
+NAS* (left), *Allow once*, *Decline* (the right end, where a stream of
+clicks lands), never focused by script. A card stays until it is
+answered, withdrawn or expired; one that takes the place of a card that
+went away unanswered here says so ("The question before this one went
+away: this is another one.").
+
+**Arming.** The buttons arm `ARM_MS` (1 s) after the bar said it drew the
+card (`shell:agent-ask-drawn`, from a `requestAnimationFrame`) and only
+while the window has the focus (the test scripts' minimized window never
+has it: taken as given there); a press, a key, a wheel or a tap in the bar
+before that (the bar's `input-event`s; a tap comes as `touchStart`, its
+mouse events and click made in the page), a focus, a resize or a move counts the
+second again, and a blur disarms. A new card, and a window made again,
+start disarmed. An answer (`shell:answer-agent-ask`, `barOnly`: the bar's
+main frame alone, never the launcher) counts only for the card shown,
+armed, after a press made since it armed; main's check is the rule, the
+bar's disabled buttons the look. Every button goes inactive at once, then
+`POST /api/local-agents/asks/<id> {decision: "once" | "deny"}` (*Stop*
+posts `deny`) with the shell's word, 30 s at most. The bar says only what
+the route answered: "Allowed once: Codex goes on.", "Declined: Codex goes
+on without it.", "Declined, and Codex no longer asks on this computer for
+NAS." (*Stop*, which then sets the folder back to *Nothing more*, `PATCH
+{agent_runs: "never"}` with the word, whatever became of the ask); a 404
+or 409 "Codex no longer waits for that: nothing was allowed.", except
+after an earlier answer to that ask the bar did not hear of, which may be
+the one taken: then the unsure line below again; not
+reached, or refused, "Could not answer Codex: … Without an answer it is
+declined at 14:32." with the card kept and armed again; a timeout or a
+reset after the request left "Gamma did not hear whether Codex got your
+answer: see the chat on NAS.", the card kept likewise.
+
+**Getting the person's attention** (`surfaceForAsk`, for each new card):
+no window, one is made on the launcher (bundled, nothing loaded from a
+server) and shown without the focus (`createWindow({ inactive: true })`);
+a hidden or minimized one is shown inactive; so every card can be
+answered. A window without the focus is then flashed (off at its focus),
+the Dock bounces on macOS, and a notification says "Codex asks to run a
+command" / "Codex asks to change files", "From NAS, in cavity. Answer it
+in Gamma's window." (the folder's name, never its path: a toast can show
+on a locked screen; its click shows the window), at most once a minute
+while the window has not had the focus since. Windows shows it under the
+app's id (`app.setAppUserModelId('io.github.tim4431.gamma')` outside the
+Store build). The tray's first line while asks wait is "Answer Codex…"
+("Answer Codex (2 waiting)…"), its tooltip "Gamma: Codex waits for your
+answer".
+
+| Case | What happens |
+|---|---|
+| The window shows the page the turn came from, another server or the launcher | the card fills the window, the page hidden; a switch keeps it |
+| Minimized or hidden | shown inactive, flashed, notified; armed a second after it has the focus |
+| Closed, the app in the tray | a window made inactive on the launcher, flashed, notified, the tray's line |
+| Closed and made again while a card waits | drawn again, disarmed until drawn and focused |
+| A native dialog up | the window blurs: disarmed; armed a second after it has the focus again |
+| A remote page asks for a permission meanwhile | refused unasked ("What a server's page may use") |
+| An ask arrives while another is shown | queued behind it, "1 of 2 waiting" |
+| The shown ask is withdrawn | the next one drawn, disarmed, saying so |
+| The host stops | the queue empties at the follower's error |
 
 ### Gamma Cloud sign-in
 
@@ -1337,14 +1505,49 @@ app held when they started, a PDF is added as an upload in Gamma adds it
 A file dropped on the window is Gamma's own upload, into the place the drop
 names.
 
+### What a server's page may use
+
+Electron grants a page every permission it asks for unless the session has
+a handler. The shell's (`lib/permissions.js`, set on the default session
+at launch with an agreeing `setPermissionCheckHandler`) tells two kinds of
+page apart by the requesting frame's URL (none: refused). A page of this
+computer, a running local sidecar's or one of the two bundled shell pages
+(`isLocalPage`), keeps what it had: every request through
+`lib/microphone.js` (below), every check yes. Any other page, a NAS's or
+any remote server's, gets:
+
+- allowed: fullscreen, writing the clipboard (`clipboard-sanitized-write`)
+  and notifications (its reminders and Inbox; a notification answers no
+  agent's card, the bar does);
+- asked once per origin and kind, the answer kept until the app quits: the
+  microphone and the camera (each its own question; on macOS the system's
+  check of the microphone still follows a yes) and reading the clipboard.
+  A check says yes for the microphone or the camera only once allowed (a
+  check alone would name the devices), and for reading the clipboard
+  unless refused, so the page goes on to ask. While an agent's card hides
+  the page such a request is refused without a question, and nothing is
+  kept;
+- refused: everything else, the location, the devices (HID, serial, USB;
+  a remote page's Bluetooth chooser is cancelled, `select-bluetooth-device`),
+  an external protocol opened from the page (`openExternal`), the pointer
+  lock, MIDI, screen capture and any permission the table does not name.
+
+The frames below a remote page load only web schemes (http, https, about,
+blob, data: a sign-in's or a challenge's frame loads) and never a running
+local sidecar's origin (`will-frame-navigate`, `permissions.frameAllowed`);
+under a page of this computer they load as before.
+`test/permissions.test.js` (`npm test`) and `test/security.e2e.js` (real
+Electron: notifications granted, the location denied, a remote page's
+navigation, link and frame to a local server going nowhere) cover it.
+
 ### The microphone
 
 A server's page records into a note and dictates to the assistant with
-`getUserMedia`. Electron grants a page every permission it asks for unless
-the session has a handler, and the shell's (`lib/microphone.js`, set on the
-default session at launch) still grants everything, with one exception:
-the microphone on macOS, which the system lets an app use only once the
-user said yes. When the system has not asked yet, the handler has it ask
+`getUserMedia`. A page of this computer gets the microphone as Electron
+grants it, through `lib/microphone.js`, and a remote page once the person
+allowed it ("What a server's page may use"), with one exception: the
+microphone on macOS, which the system lets an app use only once the user
+said yes. When the system has not asked yet, the handler has it ask
 (`systemPreferences.askForMediaAccess`), with the app's
 `NSMicrophoneUsageDescription` (`mac.extendInfo` in `electron-builder.cjs`),
 and the page gets the user's answer. When the user said no, or the Mac
@@ -1366,7 +1569,8 @@ is `settings.background`, turned on by the launcher's switch, the *Server*
 menu, the tray menu, or `offerBackground`, the offer made when a clone or
 a synced vault is first created. On, `window-all-closed` leaves the app
 running with a tray icon (`ensureTray`: *Open Gamma*, the two switches,
-*Quit Gamma*). At launch `startBackgroundHosts` then starts every local
+*Quit Gamma*; first, while an agent's question waits on this computer,
+*Answer Codex…*, its tooltip saying it waits). At launch `startBackgroundHosts` then starts every local
 server instead of only the hosts of clones, of remote servers' synced
 vaults and of Zotero links, so clones, Zotero links and synced vaults
 keep syncing with no window. The tray's click or *Open Gamma* brings the
@@ -1637,9 +1841,21 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   launch, and when a
   server must start again to reach one ([release.md](release.md#mac-app-store));
   no Electron, unit tested by `test/folderAccess.test.js`.
-- `lib/microphone.js` — the pages' permission requests: all granted, the
-  microphone on macOS once the system allows it ("The microphone"); no
-  Electron, unit tested by `test/microphone.test.js`.
+- `lib/permissions.js` — what a page in the window may use: a page of this
+  computer as before (through `lib/microphone.js`), a remote page only
+  fullscreen, writing the clipboard and notifications, the microphone, the
+  camera and reading the clipboard after a question kept until quit, and
+  the frames under it web schemes only, never a local server ("What a
+  server's page may use"). No Electron, unit tested by
+  `test/permissions.test.js`.
+- `lib/agentAsks.js` — an agent's ask on this computer: the queue of the
+  host's list, the card's words and what the bar, the notification and the
+  tray say ("An agent's ask on this computer"). No Electron, unit tested by
+  `test/agentAsks.test.js`.
+- `lib/microphone.js` — what `lib/permissions.js` grants (a page of this
+  computer's requests, a remote page's microphone once allowed): all
+  granted, the microphone on macOS once the system allows it ("The
+  microphone"); no Electron, unit tested by `test/microphone.test.js`.
 - `lib/windowControls.js` — on Linux, the ends of the shell bar the window
   controls take, from the desktop's title-bar layout and the UI's text
   direction (the shell bar, above); no Electron, unit tested by
@@ -1710,10 +1926,15 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   and a file or a folder opened with Gamma: `whereIs` and the account each
   server is asked as, each answer's navigation, notice or error, the
   question about a lone Markdown file, one new work folder at a time, the
-  broad places, a file read where it is (`npm test`).
+  broad places, a file read where it is, and an agent's ask on this
+  computer: *Ask on this computer* set and refused, the card over the
+  whole window, its arming against a fake window that emits focus, blur,
+  resize and the bar's presses, each answer's words, the follower, a
+  window made for a card (`npm test`).
 - `test/e2e.js` — the Playwright-driven end-to-end suite (see
   [checklist.md](checklist.md)). `test/security.e2e.js` — the Electron
-  boundary against a fake remote server, no backend ("Invariants").
+  boundary against a fake remote server and a fake local one, no backend
+  ("Invariants", "What a server's page may use").
   `test/smoke.js` — runs the app's `--smoke` self-test (dev or
   `--packaged`). All three keep the window minimized through
   `test/quiet.js` ("Under the test scripts").
@@ -1745,6 +1966,14 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   handler checks the exact page URL, sender web contents and main frame
   (`lib/shellSecurity.js`); a `file:` URL alone grants nothing. Remote
   workspace metadata, including roles, is rendered as text in the bar.
+- An agent's question on this computer is the bar's alone: drawn only from
+  the shell state over the hidden page, in the shell's words with what came
+  from elsewhere marked, answered only through `barOnly` IPC after an
+  armed, focused second and a press since, and sent with the shell's word
+  to the host's computer-only route. A server's page cannot reach this
+  computer's servers: no navigation, link or frame of a remote page goes
+  to a running local sidecar's origin, and a remote page gets only the
+  permissions "What a server's page may use" lists.
 - `ui/` is also the iPad and Android apps' chrome ("Window"). A page keeps
   working under an app's `gammaShell`, which has only the calls the app
   answers and no `keeping`, `update` or `settings` in its state: a control

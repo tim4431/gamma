@@ -5,7 +5,9 @@ stream-json`` with the prompt on stdin, writing the lines Claude Code
 With ``--input-format stream-json`` it speaks the control protocol: it
 answers ``initialize`` and ``interrupt`` (any other subtype with an error),
 takes the prompt from the user message, asks ``can_use_tool`` for each of
-``ask`` (``{"command", "description"?}`` a Bash call, ``{"edit"}`` an Edit
+``ask`` (``{"command", "description"?, "background"?, "timeout"?,
+"extra"?}`` a Bash call, ``background`` its ``run_in_background``,
+``extra`` one more input field, ``{"edit"}`` an Edit
 of that path, ``{"tool"}`` another tool; ``blocked``, a path, is its
 ``blocked_path``) and waits for each answer as long as stdin is open,
 withdrawing it (``control_cancel_request``) when an interrupt comes
@@ -180,7 +182,9 @@ def ask_all(session: str, cwd: str) -> tuple[list[str], bool]:
     for n, asked in enumerate(FAKE.get("ask") or []):
         tool_id, request_id = f"toolu_ask{n}", f"req-{n}"
         if "command" in asked:
-            name, args = "Bash", {"command": asked["command"], "description": asked.get("description", "")}
+            name, args = "Bash", {"command": asked["command"], "description": asked.get("description", ""),
+                                  **({"run_in_background": True} if asked.get("background") else {}),
+                                  **{k: asked[k] for k in ("timeout", "extra") if k in asked}}
         elif "edit" in asked:
             name, args = "Edit", {"file_path": os.path.join(cwd, asked["edit"]), "old_string": "a", "new_string": "b"}
         else:
