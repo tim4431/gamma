@@ -8,8 +8,7 @@
 // conversation, which tells the model on the next turn (ai_context's
 // replay). A revert or redo that left pages as they were saves how many
 // (`kept`), which the replay tells the model. The request's history leaves
-// out `revert`, a batch's `items` and a plan's `plan` (its result carries
-// the checklist the model reads). The rows that do it are
+// out `revert` and a batch's `items`. The rows that do it are
 // chat/AgentChanges.jsx, and the dialog that takes back several at once,
 // any of the conversation's, chat/RevertChanges.jsx.
 import { changePlace, isChange } from "./agentSteps.js";
@@ -60,8 +59,8 @@ export function canRedo(a) {
 // texts kept for reverting stay with the saved conversation.
 export function forReplay(actions) {
   return actions.map((a) => {
-    if (!a?.revert && !a?.items && !a?.plan) return a;
-    const { revert: _kept, items: _pages, plan: _plan, ...rest } = a;
+    if (!a?.revert && !a?.items) return a;
+    const { revert: _kept, items: _pages, ...rest } = a;
     return rest;
   });
 }

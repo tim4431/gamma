@@ -10,8 +10,7 @@
 // and a call that hands a document to a helper lists each helper under the
 // pill with what it is doing ({"helper"} lines).
 // A call the user did not allow on its approval card (`declined`) counts on
-// its own, not as a failure, and so does a change a planning turn kept for
-// the plan (`held`, chat/plan.js). update_plan reads as "updated the plan".
+// its own, not as a failure.
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore", "label"]);
@@ -43,8 +42,8 @@ export const changeCount = (a) => a?.items?.length || 1;
 export function splitActions(actions = []) {
   const library = [], notes = [];
   for (const a of actions) if (isChange(a)) (changePlace(a) === "library" ? library : notes).push(a);
-  return { library, notes, failed: actions.filter((a) => a.error && !a.declined && !a.held).length,
-    declined: actions.filter((a) => a.declined).length, held: actions.filter((a) => a.held).length };
+  return { library, notes, failed: actions.filter((a) => a.error && !a.declined).length,
+    declined: actions.filter((a) => a.declined).length };
 }
 
 // The pill's words for the reading steps, in the order they first ran.
@@ -60,7 +59,6 @@ const READ_VERBS = {
   websearch: (n) => tn("searched online", "searched online {n} times", n),
   fetch: (n) => tn("fetched {n} document", "fetched {n} documents", n),
   helper: (n) => tn("used {n} helper", "used {n} helpers", n),
-  plan: (n) => tn("updated the plan", "updated the plan {n} times", n),
 };
 
 export function stepsSummary(actions = []) {
@@ -193,7 +191,6 @@ export function runningLabel(step, titleOf = () => "") {
     case "create_block": return t("Adding a note…");
     case "move_block": return t("Moving a note…");
     case "delete_block": return t("Deleting a note…");
-    case "update_plan": return t("Updating the plan…");
     default: return t("Working…");
   }
 }
