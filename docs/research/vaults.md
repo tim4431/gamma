@@ -28,7 +28,7 @@ shows the plan, not the corrections.
 |---|---|---|
 | kept folder (then `dev/folder_sync.md`, now [dev/synced_vaults.md](../dev/synced_vaults.md)) | a library folder written to a directory: each PDF beside a notes file | notes files go one way; a new file in the directory is never taken in |
 | followed file | one PDF on disk becomes a page's file on every change | the bytes are stored in Gamma; one file, one page |
-| *Open with* ([desktop architecture](../../desktop/docs/architecture.md) "Opening PDF files") | a PDF handed to the app is uploaded and gets a page | always stored, on the server the window shows (`openOrigin()` in `desktop/main.js`), a NAS included |
+| *Open with* ([desktop architecture](../../desktop/docs/architecture.md) "Opening files and folders") | a PDF handed to the app is uploaded and gets a page | always stored, on the server the window shows (`openOrigin()` in `desktop/main.js`), a NAS included |
 | vault import and export ([dev/import_export.md](../dev/import_export.md#obsidian-vault-export)) | a zip that is an Obsidian vault, read and written | one shot each way |
 
 What the code says about going further:

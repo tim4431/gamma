@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
-  dateLabel, datePending, dateToken, mentionChip, mentionRows, mentionText, mentionTrigger, parseDateQuery, peopleIn, remindAt, scanMentions,
+  agentAway, agentWhere, dateLabel, datePending, dateToken, mentionChip, mentionRows, mentionText, mentionTrigger, parseDateQuery, peopleIn, remindAt, scanMentions,
 } from "../src/editor/mentions.js";
 
 const shared = JSON.parse(await readFile(new URL("../../tests/shared/mentions.json", import.meta.url), "utf8"));
@@ -164,7 +164,7 @@ test("a comment field's agent: a row of People past the people's cap, by its nam
   assert.deepEqual(summary(list).filter((r) => r.startsWith("people")),
     ["people:person:carol", "people:person:alice", "people:person:bob.k", "people:agent"]);
   assert.deepEqual(list.find((r) => r.kind === "agent"),
-    { section: "people", kind: "agent", key: "agent:codex", name: "codex", label: "Codex", ready: true, problem: "" });
+    { section: "people", kind: "agent", key: "agent:codex", name: "codex", label: "Codex", ready: true, problem: "", computer: "", online: true });
   assert.equal(rows("", { people: many, agents: [CODEX] }).filter((r) => r.kind === "person").length, 5);
   assert.equal(rows("", { people: many, agents: [CODEX] }).some((r) => r.kind === "agent"), true, "five members never push it out");
   assert.deepEqual(summary(rows("cod", { agents: [CODEX] })), ["people:agent"]);
@@ -190,6 +190,22 @@ test("the agent's row writes its @name, and its token chips as the agent's befor
   assert.equal(mentionChip(token, { me: "carol", known }).kind, "person", "without the agent: the member");
   assert.equal(mentionChip(token, { me: "carol", known: new Set() }), null, "nor a member: plain text");
   assert.equal(mentionChip(scanMentions("@Codex")[0], { me: "carol", known: new Set(), agents: [CODEX] }), null, "the name exactly");
+});
+
+test("the agent of the computer that keeps the folder: its row and chip name that computer, and say when it is offline", () => {
+  const there = { ...CODEX, ready: null, computer: "TIM-PC", online: false };
+  const row = rows("", { agents: [there] }).find((r) => r.kind === "agent");
+  assert.equal(row.computer, "TIM-PC");
+  assert.equal(row.online, false);
+  assert.equal(agentAway(row), "TIM-PC is offline: this runs when it connects.");
+  assert.equal(agentWhere(row), "on TIM-PC");
+  assert.equal(agentAway({ ...there, online: true }), "", "online: nothing waits");
+  assert.equal(agentAway(CODEX), "", "this computer's own");
+  assert.equal(agentWhere(CODEX), "on this computer");
+  assert.equal(rows("", { agents: [{ ...CODEX, computer: "TIM-PC" }] }).find((r) => r.kind === "agent").online, true, "online unless it says");
+  const [token] = scanMentions("@codex please");
+  assert.deepEqual(mentionChip(token, { me: "carol", known: new Set(), agents: [there] }),
+    { kind: "agent", text: "@codex", title: "Agent: Codex on TIM-PC" });
 });
 
 test("the people a text mentions outside code, as the server reads them", () => {

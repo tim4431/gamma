@@ -14,12 +14,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson, getCurrentWorkspace } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { t } from "../shared/i18n/i18n.js";
+import { keptFolders } from "../explorer/workFolderActions.js";
 import { bannerKey, readVault, vaultBanner } from "./vaultState.js";
 
 let elsewhere = false;
 
 // `{state, refresh, banner, dismissBanner, adding, setAdding, addingFile,
-// setAddingFile, editing, setEditing, links, refreshLinks, tracking, track,
+// setAddingFile, editing, setEditing, links, kept, refreshLinks, tracking, track,
 // closeTracking, watchRound}`:
 //   state     null for a page of no vault reading no file here, and wherever
 //             the route does not answer (outside the desktop app, a share's
@@ -42,14 +43,23 @@ let elsewhere = false;
 //             routes are the maker's) by their folder's id (GET
 //             /api/folder-links, read once and by `refreshLinks()`);
 //             elsewhere empty
-//   tracking  {link, fresh} while the tracking dialog is open for the vault
-//             `link` (as GET /api/folder-links/{id} answers it), `fresh`
-//             when the vault is still choosing its
-//             first files, else null: `track(linkId)` opens it, as the boot
-//             parameter `track` (`options.track`, the shell's hand-over)
-//             does once the workspace is known, which also leaves the URL;
-//             a link that cannot be read says so (`options.setStatus`)
-export function useVault(pageId, enabled, { track = "", setStatus = null } = {}) {
+//   kept      the folders a vault of this server keeps, whoever made it
+//             (every local folder link the account sees, which for a
+//             workspace's owner is all of its workspace's), read with
+//             `links`: null in the desktop app until they are known, empty
+//             on a server that keeps no vault (404) and outside the desktop
+//             app (that server's own answer refuses a folder it keeps)
+//   tracking  {link, fresh, tick} while the tracking dialog is open for the
+//             vault `link` (as GET /api/folder-links/{id} answers it), `fresh`
+//             when the vault is still choosing its first files, `tick` the
+//             path in its directory of a file to tick ("" for none), else
+//             null: `track(linkId, tick)` opens it, as the boot parameters
+//             `track` and `tick` (`options.track` and `options.tick`, the
+//             shell's hand-over, `tick` when a file of the directory was
+//             opened with Gamma) do once the workspace is known, which also
+//             leaves the URL; a link that cannot be read says so
+//             (`options.setStatus`)
+export function useVault(pageId, enabled, { track = "", tick = "", setStatus = null } = {}) {
   const onStatus = useRef(setStatus);
   onStatus.current = setStatus;
   const [held, setHeld] = useState({ pageId: "", state: null });
@@ -75,6 +85,7 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
     }
   }, []);
   useEffect(() => { refresh(); }, [pageId, enabled, refresh]);
+  const [kept, setKept] = useState(() => (IS_DESKTOP ? null : new Set()));
   const refreshLinks = useCallback(async () => {
     if (!IS_DESKTOP || !open.current.enabled) return;
     const ws = getCurrentWorkspace();
@@ -82,13 +93,16 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
       const { links: all = [] } = await apiJson(`${API}/folder-links`);
       setLinks(new Map(all.filter((l) => l.kind === "folder" && !l.remote_url && l.workspace_id === ws && l.mine)
         .map((l) => [l.folder_id, l])));
-    } catch {}
+      setKept(keptFolders(all));
+    } catch (err) {
+      if (err?.status === 404) setKept(new Set());
+    }
   }, []);
   useEffect(() => { refreshLinks(); }, [enabled, refreshLinks]);
-  const trackLink = useCallback(async (linkId) => {
+  const trackLink = useCallback(async (linkId, file = "") => {
     try {
       const link = await apiJson(`${API}/folder-links/${encodeURIComponent(linkId)}`);
-      setTracking({ link, fresh: !!link.choosing });
+      setTracking({ link, fresh: !!link.choosing, tick: file || "" });
     } catch (err) {
       onStatus.current?.(t("Could not open Choose files…: {message}", { message: err.message }));
     }
@@ -112,9 +126,10 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
     booted.current = true;
     const url = new URL(window.location.href);
     url.searchParams.delete("track");
+    url.searchParams.delete("tick");
     window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
-    trackLink(track);
-  }, [track, enabled, trackLink]);
+    trackLink(track, tick);
+  }, [track, tick, enabled, trackLink]);
   const state = held.pageId === pageId ? held.state : null;
   const banner = vaultBanner(state);
   const key = bannerKey(pageId, banner);
@@ -123,7 +138,7 @@ export function useVault(pageId, enabled, { track = "", setStatus = null } = {})
   return {
     state, refresh, banner: key !== dismissed ? banner : null, dismissBanner,
     adding, setAdding, addingFile, setAddingFile, editing, setEditing,
-    links, refreshLinks, tracking, track: trackLink, closeTracking, watchRound,
+    links, kept, refreshLinks, tracking, track: trackLink, closeTracking, watchRound,
   };
 }
 

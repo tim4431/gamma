@@ -6,14 +6,20 @@
 // work_folder, choosing, mine, agent}`, `mine` whether this account made it,
 // `choosing` a work folder still choosing its first files, `agent` a work
 // folder's agent on this computer or null), `reader`
-// the PDF the page reads where it lies (`{path, missing, mine,
-// relocation_error?}`, `mine` whether this account opened the file).
+// the file the page reads where it lies (`{path, missing, mine, format,
+// ext, relocation_error?}`, `mine` whether this account opened the file,
+// `format` and `ext` its document's: a PDF, or any other format Gamma
+// shows, which cannot do all a PDF can, opensAsPdf and openedNote).
 // What the page shows of it: the chip in the page header and its card
 // (VaultChip.jsx), the banner over the page (its VaultBanner), whether the
 // notes are locked, and the conflict route the merge chips read. A path is
 // "" for a member who cannot act on the vault: where its files lie is the
-// reading of whoever made it. Pure: tests/vaultState.test.mjs.
-import { t, tn } from "../shared/i18n/i18n.js";
+// reading of whoever made it. On any other server the page's chip names
+// the computer that keeps it instead (computerChip, read by
+// usePageComputer.js), and a work folder's agent there (keeperAgent, and
+// for the chat's computer side keeperComputer).
+// Pure: tests/vaultState.test.mjs.
+import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { inPlace, isPdf } from "../documents/pageDocument.js";
 
 // The answer, kept only when it says something: null for a page of no vault
@@ -44,8 +50,8 @@ export function directionText(vault) {
 // paused, "alert" the vault could not write or the file is gone. The label
 // says the same in words, for the tooltip, the screen reader and the card;
 // a folder vault's page says where it is synced, a vault of one file where
-// its PDF is pushed from (a file vault only pushes), an opened PDF that it
-// is on this computer.
+// its PDF is pushed from (a file vault only pushes), an opened file that it
+// is on this computer, in a PDF's words or any other file's.
 export function vaultChip(state) {
   if (!state) return null;
   const { vault, reader } = state;
@@ -62,13 +68,14 @@ export function vaultChip(state) {
     return { kind, label, title: lines.join("\n") };
   }
   const missing = !!reader.missing;
-  return {
-    kind: missing ? "alert" : "disk",
-    label: missing ? t("File missing") : t("On this computer"),
-    title: missing ? t("The file this PDF was read from is gone")
-      : reader.path ? t("This PDF is read from {path}, not stored in the library", { path: reader.path })
-      : t("This PDF is read from a file on this computer, not stored in the library"),
-  };
+  const pdf = opensAsPdf(reader);
+  const title = pdf ? (missing ? t("The file this PDF was read from is gone")
+    : reader.path ? t("This PDF is read from {path}, not stored in the library", { path: reader.path })
+    : t("This PDF is read from a file on this computer, not stored in the library"))
+    : missing ? t("The file this page was read from is gone")
+    : reader.path ? t("This file is read from {path}, not stored in the library", { path: reader.path })
+    : t("This file is read where it lies on this computer, not stored in the library");
+  return { kind: missing ? "alert" : "disk", label: missing ? t("File missing") : t("On this computer"), title };
 }
 
 // What the card says of the agent on this computer that answers the work
@@ -127,8 +134,143 @@ export function computerAgent(state) {
   };
 }
 
+// The computers that keep the page in a synced vault of the account's, as
+// the page's server knows them (GET /api/pages/{id}/computer,
+// docs/dev/computers.md): each announces itself to that server over its
+// own channel, `[{id, name, online, since, vault: {kind, name, paused,
+// agent}, assistants: [{name, label, found, ready, version, code}]}]`,
+// online ones first; `vault.agent` ({name, label} | null) the agent that
+// answers the Sends of a work folder of that server there. Only the
+// vault's maker is told: `[]` for anyone else, for a server older than the
+// route and for an answer that says nothing.
+export function readComputers(answer) {
+  const list = Array.isArray(answer?.computers) ? answer.computers : [];
+  return list.filter((c) => c && typeof c === "object" && typeof c.name === "string" && c.name);
+}
+
+// When a computer went offline, as the chip says it: "2:02 PM" today, "Nov 3"
+// another day this year, with the year before it, in the interface's
+// language ("" for no time known).
+export function sinceText(since, now = new Date()) {
+  const d = new Date(since);
+  if (!since || Number.isNaN(d.getTime())) return "";
+  if (d.toDateString() === now.toDateString()) return fmtDate(d, { hour: "numeric", minute: "2-digit" });
+  return fmtDate(d, d.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+
+const ASSISTANTS = { codex: T("Codex"), claude: T("Claude Code") };
+
+// An assistant a computer has, by its announced code (never the computer's
+// English problem): "Codex", "Codex (not signed in)", "Claude Code
+// (checking)", "Codex (not ready)".
+function assistantText(assistant) {
+  const name = String(assistant.label || (ASSISTANTS[assistant.name] ? t(ASSISTANTS[assistant.name]) : assistant.name) || "");
+  if (assistant.code === "signed_out") return t("{agent} (not signed in)", { agent: name });
+  if (assistant.code === "checking" || assistant.ready == null) return t("{agent} (checking)", { agent: name });
+  if (assistant.code === "not_ready" || assistant.ready === false) return t("{agent} (not ready)", { agent: name });
+  return name;
+}
+
+// The chip of a page another computer keeps (readComputers' first), drawn
+// where vaultChip has nothing to say (any server but this computer's own):
+// {online, label, title, state, vault, paused, assistants}. `label` names
+// the computer ("Synced vault on TIM-PC"); `state` is "Connected" or when it
+// went offline; `vault` the folder or file it keeps, as the page's server
+// names it; `paused` whether its vault is paused there ("" if not);
+// `assistants` the assistants found there, a not-ready one saying why (""
+// for none); `agent` the agent there that runs the Sends of the work
+// folder it keeps ("Agent: Codex on TIM-PC", "" for none); `title` the
+// lines after the label, for the tooltip. Null for a page no computer of
+// the account's keeps.
+export function computerChip(computers, now = new Date()) {
+  const computer = readComputers({ computers })[0];
+  if (!computer) return null;
+  const name = computer.name;
+  const online = computer.online === true;
+  const when = online ? "" : sinceText(computer.since, now);
+  const state = online ? t("Connected") : when ? t("Offline since {when}", { when }) : t("Offline");
+  const vault = computer.vault && typeof computer.vault === "object" ? computer.vault : {};
+  const kept = !vault.name ? "" : vault.kind === "file" ? t("File: {name}", { name: vault.name }) : t("Folder: {name}", { name: vault.name });
+  const paused = vault.paused ? t("Paused on {computer}", { computer: name }) : "";
+  const found = (Array.isArray(computer.assistants) ? computer.assistants : [])
+    .filter((a) => a && typeof a === "object" && a.found !== false && a.code !== "missing"); // found: null while checking
+  const assistants = found.length ? t("Assistants there: {names}", { names: found.map(assistantText).join(", ") }) : "";
+  const answers = vaultAgent(computer);
+  const agent = answers ? t("Agent: {agent} on {computer}", { agent: answers.label, computer: name }) : "";
+  return {
+    online, label: t("Synced vault on {computer}", { computer: name }), state, vault: kept, paused, assistants, agent,
+    title: [state, kept, paused, assistants, agent].filter(Boolean).join("\n"),
+  };
+}
+
+// A computer's agent on the work folder it keeps of the page's server
+// (`vault.agent`), {name, label}, or null for none.
+function vaultAgent(computer) {
+  const agent = computer?.vault?.agent;
+  if (!agent || typeof agent !== "object" || typeof agent.name !== "string" || !agent.name) return null;
+  return { name: agent.name, label: String(agent.label || (ASSISTANTS[agent.name] ? t(ASSISTANTS[agent.name]) : agent.name)) };
+}
+
+// How the agent stands on a computer that is online, as its announced
+// assistant says (by its code, never the computer's English problem):
+// {ready, problem}, `ready` null while it is still checking or not
+// announced, `problem` why it cannot run ("" while it can).
+function assistantState(computer, agent) {
+  const found = (Array.isArray(computer.assistants) ? computer.assistants : [])
+    .find((a) => a && typeof a === "object" && a.name === agent.name);
+  const words = { agent: agent.label, computer: computer.name };
+  if (!found || found.code === "checking" || found.ready == null) return { ready: null, problem: "" };
+  if (found.code === "missing" || found.found === false) return { ready: false, problem: t("{agent} is not on {computer}.", words) };
+  if (found.code === "signed_out") return { ready: false, problem: t("{agent} is not signed in on {computer}.", words) };
+  if (found.code === "not_ready" || found.ready === false) return { ready: false, problem: t("{agent} is not ready on {computer}.", words) };
+  return { ready: true, problem: "" };
+}
+
+// The agent a comment on the page can name where this computer has none
+// for it (mentionAgent null: any window but the desktop app's own server's):
+// the agent of the first of the page's computers (readComputers, so the
+// maker's alone) whose work folder of the page's server has one turned on,
+// which the maker's Sends and mentions made here run on
+// (docs/dev/local_agents.md). mentionAgent's {name, label, ready, problem}
+// with `computer` its name and `online` whether it is connected: `ready`
+// and `problem` as its announced assistant says while it is online, null
+// and "" while it is away (the Send waits for it). Null for none.
+export function keeperAgent(computers) {
+  const computer = keeperOf(computers);
+  if (!computer) return null;
+  const agent = vaultAgent(computer);
+  const online = computer.online === true;
+  const { ready, problem } = online ? assistantState(computer, agent) : { ready: null, problem: "" };
+  return { ...agent, ready, problem, computer: computer.name, online };
+}
+
+// The first of the page's computers whose work folder of the page's
+// server has an agent on, or null.
+function keeperOf(computers) {
+  return readComputers({ computers }).find((computer) => vaultAgent(computer)) || null;
+}
+
+// The chat's computer side where this computer has none for the page
+// (computerAgent null: any window but the desktop app's own server's):
+// keeperAgent's agent, the maker's alone, which the side's messages run on
+// in the work folder's directory there, as computerAgent's shape until the
+// side's own read lands (GET /api/local-agents/chat's `computer`, which
+// says the same): `folder` the work folder's name, `paused` whether it is
+// paused there, `since` when the computer went away (null while online),
+// `remote` true (chat/computer/computerChat.js words it by the computer's
+// name). Null for none.
+export function keeperComputer(computers) {
+  const agent = keeperAgent(computers);
+  if (!agent) return null;
+  const { vault, since } = keeperOf(computers);
+  return {
+    ...agent, running: null, folder: String(vault.name || ""), paused: !!vault.paused,
+    since: agent.online ? null : since || null, remote: true,
+  };
+}
+
 // The banner over the page, in the missing-page notice's slot: a note the
-// vault could not write (`problem`, why), or an opened PDF whose file is
+// vault could not write (`problem`, why), or an opened file whose file is
 // gone (`missing`, with Locate… and Remove). Null for neither.
 export function vaultBanner(state) {
   if (state?.vault?.problem) return { kind: "problem", reason: String(state.vault.problem) };
@@ -165,7 +307,7 @@ export function editsFile(state) {
   return !!vault && vault.push === "everything" && /\.(md|markdown)$/i.test(vault.path || "");
 }
 
-// Whether Add to library… takes the page in as an opened PDF (a work
+// Whether Add to library… takes the page in as an opened file (a work
 // folder's file is fileRules' addToLibrary, explorer/workFolders.js).
 export function addsToLibrary(state) {
   return !!state?.reader && !state.vault;
@@ -180,11 +322,25 @@ export function openedHere(state) {
   return state?.reader?.mine !== false;
 }
 
+// Whether a document (a page's pageDocument, a library row's `_doc`, or
+// the open page's `reader`, which carries its document's format and ext)
+// is a PDF: an opened file of any other format neither keeps pushing from
+// its file nor is carried to another server (linked_files.add_to_library
+// and the carry routes refuse it).
+export const opensAsPdf = (doc) => doc?.format === "pdf";
+
+// Whether a document is a Markdown file read as a text document: an opened
+// lone .md, shown read-only in the code view, which never joins the library
+// (every .md there is a note; linked_files.add_to_library refuses it). To
+// edit it as a note, its folder becomes a work folder (Open with Gamma's
+// Edit in Gamma); dropped on the library, it is imported as a note.
+export const openedNote = (doc) => doc?.format === "text" && /^\.(md|markdown)$/i.test(doc.ext || "");
+
 // Whether the page's PDF can be carried to another server's library (the
 // desktop app's `carry-to-server`): an opened PDF whose file is there to read,
 // opened by this account.
 export function carriesToServer(state) {
-  return addsToLibrary(state) && !state.reader.missing && openedHere(state);
+  return addsToLibrary(state) && opensAsPdf(state.reader) && !state.reader.missing && openedHere(state);
 }
 
 // Where the page's vault keeps its conflicts (the merge chips' read and
@@ -196,11 +352,11 @@ export function vaultConflictsPath(state) {
 }
 
 // Whether a library row (App's pageBlocks: `_doc`, `_parentPage`, `_opened`)
-// is a PDF opened from this computer, one whose document is read in place,
-// inside *Opened files*: the page Move to library and Move into page… take
-// to Add to library… instead, since its bytes must be stored before it
-// leaves.
-export function isOpenedPdf(id, pagesById) {
+// is a file opened from this computer, of any format, one whose document is
+// read in place, inside *Opened files*: the page Move to library and Move
+// into page… take to Add to library… instead, since its bytes must be
+// stored before it leaves.
+export function isOpenedFile(id, pagesById) {
   const row = pagesById?.get(id);
   return inPlace(row?._doc) && !!row._parentPage && !!pagesById.get(row._parentPage)?._opened;
 }

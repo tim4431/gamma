@@ -14,7 +14,7 @@
 // stopping a page the server was updated under. /Ink in the
 // annotated PDF is backend/tests/test_ink.py; the chat's view_ink is
 // test_ai_tools_ink.py.
-import { Account, PYTHON, assertMenuFrom, assertMenuRoles, assertOpensInPlace, fakeAiModels, until } from "../harness.mjs";
+import { Account, PYTHON, assertMenuFrom, assertMenuRoles, assertOpensInPlace, fakeAiModels, keyLabel, until } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { DEFAULT_TOOLS, decodeStroke, encodeStroke, newInk, strokeWidth } from "../../../src/ink/ink.js";
 import { execFileSync } from "node:child_process";
@@ -151,17 +151,17 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.click("button[aria-label='Handwriting tools']");
     await page.waitForSelector(".pdfInkBar");
     // The history is per visit: after the reload only the erasure is on it.
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await page.$$('[data-page="1"] .inkLayer path')).length === 2, { what: "erased stroke back" });
     await page.keyboard.press("p");
     box = await page.locator('[data-page="1"]').boundingBox();
     await drawLine(page, [box.x + 100, box.y + 400], [box.x + 250, box.y + 420]);
     await until(async () => (await page.$$('[data-page="1"] .inkLayer path')).length === 3, { what: "a third stroke" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await page.$$('[data-page="1"] .inkLayer path')).length === 2, { what: "third stroke undone" });
-    await page.keyboard.press("Control+Shift+z");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
     await until(async () => (await page.$$('[data-page="1"] .inkLayer path')).length === 3, { what: "redone" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await page.$$('[data-page="1"] .inkLayer path')).length === 2, { what: "undone again" });
     await until(async () => (await inkBlockOnServer())?.properties.ink_strokes === 2, { what: "two strokes on the server" });
     assert((await page.$$(".blockRow")).length >= 1, "the block is still there");
@@ -296,7 +296,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       // The pass, three flushes over two groups, is one undo entry: one
       // Ctrl+Z brings every stroke back as it was, and there is nothing
       // before it.
-      await tab.keyboard.press("Control+z");
+      await tab.keyboard.press("ControlOrMeta+z");
       await tab.getByText("Undone: partial ink erasure (page 1).", { exact: true }).waitFor();
       const back = await until(async () => {
         const s = await stored();
@@ -310,7 +310,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       }
       // Ctrl+Shift+Z brings the whole pass back, every piece of both groups
       // as it was cut (the entry's `after` per group is the last flush's).
-      await tab.keyboard.press("Control+Shift+z");
+      await tab.keyboard.press("ControlOrMeta+Shift+z");
       await tab.getByText("Redone: partial ink erasure (page 1).", { exact: true }).waitFor();
       const ids = (list) => list.map((st) => st.id).sort().join();
       const redone = await until(async () => {
@@ -322,12 +322,12 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
           assertEq(JSON.stringify(redone[name].find((x) => x.id === st.id).pts), JSON.stringify(st.pts), `${st.from || st.id} as it was cut`);
         }
       }
-      await tab.keyboard.press("Control+z");
+      await tab.keyboard.press("ControlOrMeta+z");
       await until(async () => {
         const s = await stored();
         return ids(s.a) === "held,pressed,sparse" && ids(s.b) === "aside,marker,plain";
       }, { what: "Ctrl+Z after the redo restored both groups again" });
-      await tab.keyboard.press("Control+z");
+      await tab.keyboard.press("ControlOrMeta+z");
       await tab.getByText("Nothing to undo in handwriting.", { exact: true }).waitFor();
       assertNoProblems(tab);
     } finally {
@@ -456,7 +456,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     const paste = menu.locator("[data-command='ink.paste']");
     assert(await paste.isDisabled(), "nothing on the handwriting clipboard: Paste is greyed");
     assertEq(await paste.getAttribute("title"), "Copy or cut handwriting first");
-    assertEq(await paste.textContent(), "Paste handwritingCtrl+V", "the command's label and its chord");
+    assertEq(await paste.textContent(), `Paste handwriting${keyLabel("Mod-v")}`, "the command's label and its chord");
     assert(!(await menu.locator("[data-command='ink.selectAll']").isDisabled()), "Select all applies with a tool armed");
     assertEq(await menu.getByRole("menuitem", { name: "Handwriting settings…", exact: true }).count(), 1);
     await page.keyboard.press("Escape");
@@ -1379,7 +1379,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     } finally {
       await page.evaluate(() => { WebSocket.prototype.send = window.e2eSocketSend; });
     }
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => (await pathCount()) === before, { what: "the stroke undone" });
     assertNoProblems(page);
   });

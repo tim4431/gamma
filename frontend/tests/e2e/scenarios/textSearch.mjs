@@ -84,7 +84,7 @@ export async function textSearchScenarios(env) {
     const openSearch = async (page) => {
       await page.locator(".fileList").waitFor({ timeout: 15000 });
       await page.evaluate(() => document.activeElement?.blur?.());
-      await page.keyboard.press("Control+Shift+F");
+      await page.keyboard.press("ControlOrMeta+Shift+F");
       const search = page.locator(".searchPopover .searchInput");
       await search.waitFor();
       const details = page.locator("button[aria-label='Toggle result details']");

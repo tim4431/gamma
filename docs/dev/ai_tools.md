@@ -375,8 +375,11 @@ The user's notes as an outline of blocks, every line prefixed with its block
 id (`- [id] text`) — the ids the editing tools take, so the agent is told to
 call it before any block edit. `block_id` may be a page id (the whole page's
 note tree) or a nested block id (that block's own text in full plus its
-subtree). Highlight blocks show their quoted passage inline, handwriting
-blocks a "handwriting on p. N" label before their caption; long child
+subtree). Highlight blocks show their quoted passage inline — a range of a
+text file with its lines and how the last change left it, `(highlight:
+"…"; lines 118–120)`, `…; line 47; not found in the current file)`, `…;
+placed roughly)` (`ai_context.range_words`, the page section's words too) —
+handwriting blocks a "handwriting on p. N" label before their caption; long child
 contents are snipped per line with an explicit "read_block this id for the
 full text" marker, and the listing stops at the read-window budget naming how
 many blocks were left out. A text box ([text_boxes.md](text_boxes.md)) shows

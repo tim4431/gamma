@@ -7,14 +7,14 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) and the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights, and a changed text file's ranges, are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), the network proxy (the `proxy` key via `/api/admin/proxy`, its password encrypted the same way, [network_proxy.md](network_proxy.md)), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -371,7 +371,9 @@ Preferences:
   only where `IS_DESKTOP`.
   **Replacing a PDF** (account scope, `SECTION_PREFS.reading["Replacing a
   PDF"]`): how the highlight run of a replaced PDF finds each highlight's
-  text ([highlight_relocation.md](highlight_relocation.md#the-thresholds)).
+  text ([highlight_relocation.md](highlight_relocation.md#the-thresholds)),
+  and, by the same two numbers, how a changed text file's run finds each
+  range's ([Text files](highlight_relocation.md#text-files)).
   **Apply a rough match from** (`Stepper` from 50% to 100% in steps of 5,
   with Reset, `relocateMinMatch`, `stepClamped(50, 100, 5)`, default 80:
   like `intClamped`, a value between two steps reading as the nearer one;
@@ -381,7 +383,8 @@ Preferences:
   `intClamped(0, 60)`, default 12; hint "A shorter passage that changed is
   not moved"). The server reads both from the run owner's profile when a
   run starts, so a change applies from the next replacement or Find
-  highlights in this PDF, as the first row's title says.
+  highlights in this PDF, as the first row's title says; a text file's
+  next change, or its Find highlights, likewise.
   **Notes**: **Linked from** (`backlinksVisible`, off by default) shows or
   hides a page's "Linked from" section ([ui-design.md](ui-design.md); off,
   App fetches no backlinks at all). **Handwriting** (account scope,
@@ -799,6 +802,47 @@ Administration (admins only):
   a `db-check` job, [tasks.md](tasks.md), the damaged ones listed under
   the row), server backups and the log with its
   level filter ([user_db.md](user_db.md)).
+- **Network proxy** (pane id `proxy`,
+  [SettingsProxy.jsx](../../frontend/src/settings/SettingsProxy.jsx)): how
+  this server reaches the internet ([network_proxy.md](network_proxy.md)).
+  It is shown where the Server pane is. The Connection section's Proxy row
+  is a `Segmented` of Use system settings, No proxy and Manual, its hint
+  saying what the mode does: under the system's settings, the proxy found
+  and where ("Uses http://127.0.0.1:7897, from the server's environment",
+  "… from this computer's network settings"; for `system.proxy`, the
+  proxy https takes), "Uses … for http:// addresses only; https connects
+  directly" when the system sets a proxy for http alone (`system.http`),
+  or "No system proxy found: connects directly", or that the proxy found
+  can't be used. Manual adds the Proxy server address, the Sign-in (a
+  user name and a write-only `PasswordInput` that reads "password set —
+  type to replace" only while the server would keep the stored one: a
+  user name is typed and it and the proxy's host, read as the server
+  reads it, are the saved ones; else "Password", the server then asking
+  for it again) and "Don't use the proxy for", a textarea with Reset to
+  defaults while it differs from `default_bypass`. "Let the proxy look up
+  names" shows wherever a proxy is in use (Manual, or the system's
+  settings with a proxy found, an http-only one too). Save sits on the section's rule while the
+  draft differs. What Save and Test send is worked out once
+  (`payload`): the mode, the name lookups while their switch shows, and
+  the address, sign-in and list only under Manual, the password only when
+  typed. So a half-typed address left under Manual is neither refused nor
+  saved by another mode, and the stored manual proxy stays for next time
+  (a PUT keeps the fields it leaves out). A refusal shows the server's
+  reason under the rows until the next edit. The Test section takes an
+  optional address beside its Test button and tries the draft, saved or
+  not: one `TestResult` line per site, ✓ or ✗, the name (the host, for
+  the typed address), a Proxy or Direct tag (its hover the proxy, or why
+  direct), then the status and time or the error. The lines sit in one
+  `role="status"` region mounted before any Test (`aria-busy` while one
+  runs, the lines `live={false}`), so the outcome is read out as it
+  replaces Testing…. An edit, or discarding the draft, drops the lines. On the
+  desktop the intro adds that the app's windows and updates follow the
+  system's proxy settings. On a hosted container (`managed`) every
+  setting is disabled, the Proxy row's hint is "Gamma Cloud manages this
+  server's network." (the mode's hint moves to its hover), and Test tries
+  the setting in force. The search rows shown only under Manual, and the
+  name-lookup switch, land on the Proxy row, which is always on screen.
+  `GET/PUT /api/admin/proxy`, `POST /api/admin/proxy/test`.
 
 At the bottom of the rail:
 
@@ -1242,7 +1286,10 @@ can show another colour for its first highlighter there.
 (`pdf/highlighterState.js`, held by `pdf/useTextHighlighter.js`, which App
 calls once): its id, resolved against the list on render, so one removed
 elsewhere turns the highlighter off. Armed only where a highlight can be
-made (a PDF the reader may write on). While one is, PdfViewer's
+made: a pane whose `tools` hold `highlighter` (`documents/viewers.js`: the
+PDF once it has its address, and a text file's code view) on a page the
+reader may write on. The strip's buttons, the keys 1–9 and the command
+palette's toggle and next follow that one gate. While one is, PdfViewer's
 `highlighter` prop is its selection tint (`selectionTint`: the wash it
 lays, or its line's tone at a quarter): a text selection ended by a
 mouse's `mouseup` or a pen's lift (`pdf/penSelect.js`), not a finger's,
@@ -1257,6 +1304,15 @@ hidden ones joins the row, as on the strip), so one tap marks with it. An
 area drag gets the popup with its swatches alone, and a selection that
 places a highlight waiting to be moved only the Move button. Opening the pen's strip turns the highlighter off and arming one closes
 the strip: both take a drag on the page.
+
+**In the code view** the same holds for a range of lines
+([documents.md](documents.md) "Viewers"): a selection a mouse or a pen
+lets go of reaches the surface's `onAnchor` with `{highlighter: true}`,
+and App's one `finishSelection` (the PDF's `onSelectionFinished` too)
+stores it under `text_position` in the armed look; the bar over it is
+the surface's `onHighlightAction`, App's `madeHighlightAction`, the PDF's
+own. A line style draws as on the PDF (`markStyle.isBox` is a PDF area's
+or a region's alone).
 
 **Nothing but a highlighter's own edits changes it.** A swatch or a style
 picked in the popup, the bar over a highlight and a highlight's menu each
@@ -1390,7 +1446,11 @@ text appears on hover, without a Details toggle.
 Use the existing shared controls: `PictureChoices` for illustrated choices,
 `IconChoices` for a small exclusive set pictured as icon tiles (the share
 popover's audience, handwriting's "Draws with"), `Segmented` for two or three
-short words, `ToggleGroup` for independent chips.
+short words, `ToggleGroup` for independent chips, `TestResult` for a
+Test button's answer (testing, ✓ what was found or ✗ why it failed; the
+message may be an element, as Network proxy's lines with their route tag
+are; `live={false}` drops its own `role` for lines inside a status region
+of the pane's).
 An irreversible action sits in the pane's or dialog's Danger zone
 (`Section tone="danger"`; the rules are in [ui-design.md](ui-design.md)
 "Dialogs"). Editor dialogs share one layout. A `SubDialog`'s title row
@@ -1419,7 +1479,15 @@ Backups › Off-site copies: an admin's alone, set up in its dialog and read
 back there with its write-only secret, the unsaved-edit question on Cancel,
 Test against an unreachable endpoint, Copy now against a stand-in bucket
 that refuses, and the read-only summary of a second server started with
-`GAMMA_S3_BUCKET`.
+`GAMMA_S3_BUCKET`; and Administration › Network proxy: no pane or search
+match for a member, an admin's search landing on it, an `https://` proxy
+refused with nothing saved and the refusal gone once the address is
+corrected, a Test of the unreachable proxy
+`http://127.0.0.1:1` failing every site through it while a typed loopback
+address goes direct, an edit clearing the lines, Manual saved and read
+back after a reload with the password never shown (an emptied user name
+turning its placeholder to "Password"), Reset to defaults, and
+the system's settings saved again with the manual proxy kept.
 Use `--keep` to retain desktop/mobile screenshots. For concurrent development,
 build into a private directory and set `GAMMA_E2E_DIST` to that directory so
 another build cannot replace the assets while the suite runs.

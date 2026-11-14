@@ -42,7 +42,12 @@ changed and before each round (a refused round is ``status.stopped``), and
 by the mirror and Zotero when they would take a workspace a vault pushes
 everything into (``pushing_vault``). Vaults do not overlap on this computer
 or, when both push, in Gamma; a vault made from a directory takes in the
-vaults of one file inside it (``_take_in``).
+vaults of one file inside it (``_take_in``). The places no vault may have
+at all (a drive's root, home or a directory around it, the data directory,
+a system place) are ``place_refusal``'s, asked when a vault is made or
+moved (``clean_path``), never of one that exists. What a path of this
+computer is to Gamma (in a vault, around vaults, nothing) is
+``where_is``'s, for the desktop app's *Open with Gamma*.
 
 A **work folder** (``work_folder_link``; docs/dev/work_folders.md) is a vault
 of a folder of this server that pushes everything: its folder carries the
@@ -54,7 +59,11 @@ directory's ``.gammaignore``, chosen in the web app's tracking dialog
 then, and removing it cancels it, taking back what making it made
 (``_cancel``). A vault from before work folders is taken over at its first
 round, and one whose push came down is let go at its next
-(gamma/work_folders/takeover.py).
+(gamma/work_folders/takeover.py). A vault of another server is a work
+folder there only when it was made one, with ``choose``, of an empty folder
+of that server (``work_vault``, ``create_remote_link``): it is marked,
+chosen, let go and removed through that server, keeps pushing everything
+and pulling, and stops when that server let go of it (``MARK_GONE``).
 
 Rounds run from ``tick`` (the app's periodic loop, every ``TICK_S``): a
 vault of this server scans each time; a vault of another server has a whole
@@ -97,11 +106,13 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import threading
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
@@ -110,7 +121,7 @@ from . import collab, config, folder_sync, gamma_sync, md_lens, storage, workspa
 from .auth import DISK_CLIENT
 from .blocks_store import (FOLDERS, PARENT_PAGE, TREES, filing, folder_path, folder_paths, folder_subtree_ids,
                            live_pages, load_json, load_props, new_block_id, page_in_folder, page_root_id, pages_in_folder)
-from .db import connect_pages_db, connect_users_db, connect_vaults_db, page_now
+from .db import connect_pages_db, connect_users_db, connect_vaults_db, page_now, ws_db_path
 from .vault import disk as vault_disk, store as vault_store
 from .documents.model import document_at, in_place, own_hash, page_document
 from .jobs import error_text
@@ -118,7 +129,7 @@ from .logbuf import log
 from .ops import OpError, commit_listeners, commit_ops
 from .publisher_sessions import seal, unseal
 from .storage import store_file_stream, store_pdf_stream
-from .work_folders import marks
+from .work_folders import elsewhere, marks
 from .work_folders.library import SQL_OUTSIDE_LIBRARY
 
 TICK_S = 30            # how often the loop looks for links whose source changed
@@ -156,10 +167,26 @@ PAUSED = "paused_at"   # the status key of a pause: the user's, which no round w
 CHOOSING = "choosing"  # the state key of a work folder made with ``choose`` whose files are not chosen yet
 CHOOSE_FIRST = "choose its files first"   # what every way into a round answers a choosing vault
 CHOOSES_ONLY = "Only a vault that pushes everything chooses its files."
+# The words of a work folder of another server (``work_vault``): what makes one, and what stays as it was made
+REMOTE_WORK = "A work folder of another server is made of one of its folders, pushing everything and pulling."
+REMOTE_RAISED = ("A vault of another server comes to push everything only as a work folder made of an empty folder "
+                 "there: remove this one, then make that.")
+REMOTE_LOWERED = "A work folder of another server pushes everything and pulls: remove the vault to stop it."
+MARK_GONE = "the other server let go of this work folder (its mark is gone there): remove this vault"
+# The state key of a work folder of another server whose round found its mark gone there (``MARK_GONE``), and
+# when: the mark names no vault, so the link never acts on that folder again (``work_vault``, ``_works``)
+LET_GO_THERE = "let_go_there"
 
 
 class LinkError(ValueError):
-    pass
+    """A link refused, with why. ``status`` is what the route making a link
+    answers it with: 400, 409 for the other server's folder as it stands
+    (not empty, a work folder already, a mark it refused), 502 for another
+    server that does not answer."""
+
+    def __init__(self, message: str = "", status: int = 400):
+        super().__init__(message)
+        self.status = status
 
 
 class NoteMoved(LinkError):
@@ -210,18 +237,57 @@ def work_folder_link(link: dict) -> bool:
             and link["push"] == PUSH_ALL)
 
 
+def work_vault(link: dict) -> bool:
+    """Whether the vault keeps a work folder, wherever its folder is: one of
+    this server (``work_folder_link``), or one of another server made so
+    (``create_remote_link`` with ``choose``, into an empty folder there),
+    which its state says from then on (``TAKEN_OVER``), until its round
+    finds that server let go of it (``LET_GO_THERE``). A vault of another
+    server that pushes everything into a folder made otherwise stays a kept
+    folder. The life cycle asks this (making, marking, letting go,
+    removing, its tracking dialog) and whether its agent here answers its
+    Sends (``agent_folder``); the feedback files, a page's chip and the
+    chat keep to ``work_folder_link``."""
+    from .work_folders import takeover
+
+    if work_folder_link(link):
+        return True
+    return bool(link["kind"] == "folder" and link["remote_url"] and link["folder_id"] != folder_sync.ROOT
+                and link["push"] == PUSH_ALL and link["state"].get(takeover.TAKEN_OVER)
+                and not link["state"].get(LET_GO_THERE))
+
+
+def agent_folder(link: dict) -> bool:
+    """Whether an agent on this computer may answer the vault's Sends: a
+    work folder of this server (``work_folder_link``), or one of another
+    server (``work_vault``; step 4c of docs/research/agent-collab.md), whose
+    Sends that server hands this computer over its channel. Asking in the
+    chat stays a work folder of this server's."""
+    return work_vault(link)
+
+
+def server_name(link: dict) -> str:
+    """The other server a vault keeps a folder of, as its host names it
+    (``NAS``), for the words of a refusal."""
+    return urlsplit(link["remote_url"]).hostname or link["remote_url"]
+
+
 def choosing(link: dict) -> bool:
     """Whether the work folder waits for its files to be chosen (made with
     ``choose``, not saved yet): no round runs it."""
     return bool(link["state"].get(CHOOSING))
 
 
-def _set_mark(link: dict, mark: dict | None) -> None:
+def _set_mark(link: dict, mark: dict | None, remote=None) -> None:
     """The vault's folder carries ``mark`` (``takeover.mark_of``), or none,
     written as the vault (``DISK_CLIENT``), the one writer a person's op may
-    not stand in for."""
-    commit_ops(link["workspace_id"], FOLDERS, [{"op": "set", "id": link["folder_id"], "props": {"vault": mark}}],
-               actor=link["created_by"], client=DISK_CLIENT)
+    not stand in for: in-process, or through ``remote``, the vault's
+    ``HttpRemote``, for a folder of another server."""
+    op = {"op": "set", "id": link["folder_id"], "props": {"vault": mark}}
+    if remote is not None:
+        remote.folder_op(op)
+        return
+    commit_ops(link["workspace_id"], FOLDERS, [op], actor=link["created_by"], client=DISK_CLIENT)
 
 
 def _absolute(text: str) -> bool:
@@ -249,23 +315,30 @@ def _in_data_dir(target: Path) -> bool:
 
 def _under(target: Path, top: Path) -> bool:
     """Whether ``target`` or a directory above it is ``top`` by identity
-    (``os.stat``'s device and file id), so that another spelling of the same
-    place counts: a device path (``//?/C:/...``) or an administrative share
-    (``//host/C$/...``), which ``resolve`` keeps as given."""
+    (``_above``)."""
+    return _above(target, top) is not None
+
+
+def _above(target: Path, top: Path) -> Path | None:
+    """``target`` or the directory above it that is ``top`` by identity
+    (``os.stat``'s device and file id), None for none, so that another
+    spelling of the same place counts: a device path (``//?/C:/...``), an
+    administrative share (``//host/C$/...``), which ``resolve`` keeps as
+    given, or a link to it."""
     try:
         st = top.stat()
     except OSError:
-        return False
+        return None
     if not st.st_ino:   # a filesystem without file ids: the spelling is all there is
-        return False
+        return None
     for place in (target, *target.parents):
         try:
             here = place.stat()
         except OSError:
             continue   # not made yet (a directory a link will make), or not reachable
         if (here.st_dev, here.st_ino) == (st.st_dev, st.st_ino):
-            return True
-    return False
+            return place
+    return None
 
 
 def _within(path: str, parent: str) -> bool:
@@ -274,35 +347,111 @@ def _within(path: str, parent: str) -> bool:
     return inside(path, parent) or _under(Path(path), Path(parent))
 
 
+# The operating system's places no vault may have (``place_refusal``), per platform: those refused with everything
+# inside them, which hold only the system, and those refused themselves only, inside which a user's own things lie
+# (a mounted disk, a share, an app's tree). Windows' are environment variables, an unset one skipped.
+SYSTEM_PLACES = {
+    "win32": (("%SystemRoot%", "%ProgramFiles%", "%ProgramFiles(x86)%", "%ProgramData%"), ()),
+    "darwin": (("/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/etc"),
+               ("/Volumes", "/private", "/private/tmp", "/private/var")),
+    "linux": (("/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/etc", "/boot", "/dev", "/proc", "/sys"),
+              ("/run", "/run/media", "/run/user", "/media", "/mnt", "/opt", "/srv", "/var", "/tmp", "/snap")),
+}
+ROOT_REFUSED = "Pick a directory, not the root of a drive."
+HOME_REFUSED = "Pick a project directory: Gamma does not sync your whole home directory or a directory around it."
+DATA_REFUSED = "That directory is Gamma's data directory, inside it or around it; pick another."
+DATA_FILE_REFUSED = "That file is inside Gamma's data directory; pick another."
+
+
+def _system_places() -> tuple[list[Path], list[Path]]:
+    """``(whole, itself)``: this platform's ``SYSTEM_PLACES``, resolved (macOS's
+    ``/etc`` is ``/private/etc``, a merged ``/bin`` is ``/usr/bin``)."""
+    whole, itself = SYSTEM_PLACES.get(sys.platform, SYSTEM_PLACES["linux"])
+
+    def places(names):
+        out = []
+        for name in names:
+            name = os.path.expandvars(name)
+            if "%" not in name and name:
+                out.append(Path(name).resolve())
+        return out
+    return places(whole), places(itself)
+
+
+def _key(path) -> str:
+    """A place as this computer compares names: ``normcase``, and folded on
+    macOS too, whose disks ignore case."""
+    key = os.path.normcase(os.path.normpath(str(path)))
+    return key.casefold() if sys.platform == "darwin" else key
+
+
+def _home() -> Path | None:
+    try:
+        return Path.home().resolve()
+    except (RuntimeError, OSError):   # no home directory known
+        return None
+
+
+def place_refusal(target: Path, directory: bool = True) -> str:
+    """Why no vault may have ``target`` (resolved), "" when one may: the one
+    text of every way a vault is made or moved (``clean_path``) and of what
+    a path is (``where_is``); never asked of a vault that exists
+    (``check_vault``). For a directory, the first that applies of: a drive or
+    filesystem root; the home directory or a directory around it (``/home``,
+    ``C:\\Users``); Gamma's data directory, inside it or around it
+    (``_in_data_dir``); a place of the operating system's (``SYSTEM_PLACES``:
+    one of the system's trees or what is inside it, or a mount or temporary
+    directory itself, never what is inside that). Home comes before the data
+    directory, which is inside it on every desktop, so the words fit. For a
+    file (``directory`` false), the data directory alone: a file anywhere
+    else may be read."""
+    if not directory:
+        return DATA_FILE_REFUSED if _in_data_dir(target) else ""
+    if target.parent == target:
+        return ROOT_REFUSED
+    home, key = _home(), _key(target)
+    if home is not None and (key == _key(home) or any(key == _key(p) for p in home.parents) or _under(home, target)):
+        return HOME_REFUSED
+    if _in_data_dir(target):
+        return DATA_REFUSED
+    whole, itself = _system_places()
+    if any(key == _key(p) or key.startswith(_key(p).rstrip("\\/") + os.sep) for p in whole) \
+            or any(key == _key(p) for p in itself):
+        return f"Pick a project directory: {target} is the operating system's."
+    return ""
+
+
 def clean_path(text: str) -> str:
     """A directory as a link stores it: the full path the user picked, as
-    this computer resolves it. A relative path, a filesystem root, and
-    Gamma's data directory, anything inside it and anything around it are
+    this computer resolves it. A relative path, and a place no vault may
+    have (``place_refusal``: a drive's root, home or a directory around it,
+    Gamma's data directory, inside it or around it, a system place) are
     refused."""
     text = str(text or "").strip()
     if not _absolute(text):
         raise LinkError("Give the full path of a directory on this computer.")
     target = Path(text).expanduser().resolve()
-    if target.parent == target:
-        raise LinkError("Pick a directory, not the root of a drive.")
-    if _in_data_dir(target):
-        raise LinkError("That directory is Gamma's data directory, inside it or around it; pick another.")
+    refusal = place_refusal(target)
+    if refusal:
+        raise LinkError(refusal)
     return str(target)
 
 
-def clean_file_path(text: str) -> str:
-    """A followed file as a link stores it: the full path of a PDF the user
-    picked, as this computer resolves it. A relative path, another kind of
+def clean_file_path(text: str, *, pdf_only: bool = True) -> str:
+    """A file as a link or a reader stores it: the full path the user
+    picked, as this computer resolves it, of a PDF (``pdf_only``: a file
+    vault's; an opened file is any file). A relative path, another kind of
     file, a file that is not there, and anything inside Gamma's data
     directory are refused."""
     text = str(text or "").strip()
     if not _absolute(text):
-        raise LinkError("Give the full path of a PDF on this computer.")
+        raise LinkError(f"Give the full path of a {'PDF' if pdf_only else 'file'} on this computer.")
     target = Path(text).expanduser().resolve()
-    if target.suffix.lower() != ".pdf":
+    if pdf_only and target.suffix.lower() != ".pdf":
         raise LinkError("Pick a PDF file.")
-    if _in_data_dir(target):
-        raise LinkError("That file is inside Gamma's data directory; pick another.")
+    refusal = place_refusal(target, directory=False)
+    if refusal:
+        raise LinkError(refusal)
     if not target.is_file():
         raise LinkError(f"There is no file {target}.")
     return str(target)
@@ -430,19 +579,9 @@ def _named_overlap(a: dict, b: dict) -> bool:
 
 
 def _kept_elsewhere(ws: str) -> str:
-    """Why nothing may push everything into ``ws`` ("" when it may): a clone
-    copies another workspace and a Zotero link keeps one in step with a
-    library, and each writes it too."""
-    from .sync_engine import get_mirror  # local: it imports the routers
-
-    mirror = get_mirror(ws)
-    if mirror is not None and mirror["page_filter"] is None:
-        return "This workspace is a clone of another: a vault in it pulls, or pushes PDFs, but cannot push everything."
-    with connect_users_db() as conn:
-        if conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (ws,)).fetchone():
-            return ("This workspace is kept in step with a Zotero library: a vault in it pulls, or pushes PDFs, "
-                    "but cannot push everything.")
-    return ""
+    """Why nothing may push everything into ``ws`` ("" when it may):
+    gamma/work_folders/elsewhere.py, which every server's op rule asks too."""
+    return elsewhere.kept_elsewhere(ws)
 
 
 def _takes_in(link: dict, other: dict) -> bool:
@@ -538,10 +677,17 @@ def _check_vault(link: dict, earlier: bool) -> None:
 
 def pushing_vault(ws: str) -> str:
     """The directory of a vault of this server that pushes everything into
-    ``ws`` ("" for none): what a clone or a Zotero link of that workspace
+    ``ws``, else the name of a folder of it that carries a vault's mark (a
+    work folder of a vault on another computer, which this server keeps no
+    link of), "" for none: what a clone or a Zotero link of that workspace
     would write over (``check_vault``'s rule, asked from their side)."""
-    return next((link["path"] for link in all_links() if link["kind"] == "folder" and not link["remote_url"]
-                 and link["workspace_id"] == ws and link["push"] == PUSH_ALL), "")
+    found = next((link["path"] for link in all_links() if link["kind"] == "folder" and not link["remote_url"]
+                  and link["workspace_id"] == ws and link["push"] == PUSH_ALL), "")
+    if found or not Path(ws_db_path(ws, "pages.db")).is_file():
+        return found
+    with connect_pages_db(ws) as conn:
+        tree = marks.Tree.read(conn)
+    return next((tree.names[w] or w for w in tree.roots()), "")
 
 
 # --- making a link --------------------------------------------------------------------------
@@ -579,7 +725,16 @@ def _insert(link: dict, token: str = "") -> dict:
                           link["page_id"], link["push"], json.dumps(link["state"]), link["pull"], int(link["library"])))
         except sqlite3.IntegrityError as e:   # the path, taken meanwhile (UNIQUE, ignoring case)
             raise LinkError(_taken(link)) from e
+    _vaults_changed()
     return link
+
+
+def _vaults_changed() -> None:
+    """A vault was made, paused, resumed or removed: this computer's
+    channels to other servers announce it (gamma/computers/channel.py)."""
+    from .computers import channel  # local: it imports this module
+
+    channel.nudge()
 
 
 def _new(ws: str, path: str, user_id: str, **fields) -> dict:
@@ -641,7 +796,8 @@ def _new_folder(ws: str, name: str, user_id: str, mark: dict | None = None) -> s
     return folder_id
 
 
-def _make_vault(link: dict, marker: dict | None, *, new_folder: bool, token: str = "", choose: bool = False) -> dict:
+def _make_vault(link: dict, marker: dict | None, *, new_folder: bool, token: str = "", choose: bool = False,
+                remote=None) -> dict:
     """A vault's row (with the token of its other server, ``token``), made
     after its folder (``new_folder``) and its marker (unless ``marker``, the
     one the directory holds), both taken back when the row cannot be stored.
@@ -651,11 +807,15 @@ def _make_vault(link: dict, marker: dict | None, *, new_folder: bool, token: str
     that holds no page yet has nothing to take over (``TAKEN_OVER`` now).
     With ``choose`` it is paused and choosing, what was made for it noted for
     a cancel (``_cancel``), and its file vaults wait for its files to be
-    chosen (``save_selection``)."""
+    chosen (``save_selection``). ``remote``, the ``HttpRemote`` of a work
+    folder of another server (``create_remote_link``): its folder, marked
+    there by no vault nor inside or around a work folder, takes the mark
+    through it, and must then hold no page that is not the work folder's
+    file (``_empty_there``): no takeover runs over HTTP."""
     from .work_folders import takeover
 
     root = dest_of(link)
-    work = work_folder_link(link)
+    work = work_folder_link(link) or remote is not None
     mark = takeover.mark_of(link) if work else None
     made_folder = made_marker = marked = False
     made_dir = not (root / vault_disk.MARKER_DIR).exists()
@@ -665,8 +825,13 @@ def _make_vault(link: dict, marker: dict | None, *, new_folder: bool, token: str
                 link["folder_id"] = _new_folder(link["workspace_id"], root.name or "Vault", link["created_by"], mark)
                 made_folder = True
             elif work:
-                _set_mark(link, mark)
+                if remote is not None:
+                    _unmarked_there(remote, link)
+                marked = remote is not None    # a mark there may have landed though its answer was lost
+                _set_mark(link, mark, remote)
                 marked = True
+                if remote is not None:
+                    _empty_there(remote, link)
             if marker is None:
                 try:
                     marker = vault_disk.make_marker(root)
@@ -674,7 +839,7 @@ def _make_vault(link: dict, marker: dict | None, *, new_folder: bool, token: str
                     raise LinkError(f"Cannot write {root}: {e}") from e
                 made_marker = True
             state = {"vault": marker["id"]}
-            if work and (made_folder or not _holds_pages(link)):
+            if work and (made_folder or remote is not None or not _holds_pages(link)):
                 state[takeover.TAKEN_OVER] = page_now()
             if choose:
                 state |= {CHOOSING: True, "made": {"folder": made_folder, "marker": made_marker,
@@ -691,11 +856,46 @@ def _make_vault(link: dict, marker: dict | None, *, new_folder: bool, token: str
                 commit_ops(link["workspace_id"], FOLDERS, [{"op": "delete", "id": link["folder_id"]}],
                            actor=link["created_by"], client=DISK_CLIENT)
             elif marked:
-                _set_mark(link, None)
+                _unmark(link, remote)
             raise
         if not choose:
             _take_in(link)
     return link
+
+
+def _unmark(link: dict, remote) -> None:
+    """``_make_vault``'s mark taken back; one another server cannot take now
+    is logged, left for a workspace owner's Let go there."""
+    from .vault.remote import Refused  # local: it imports this module
+
+    try:
+        _set_mark(link, None, remote)
+    except (OpError, Refused) as e:
+        if remote is None:
+            raise
+        log.warning(f"[folders] {link['path']}: the mark stays on its folder there: {getattr(e, 'detail', '') or e}")
+
+
+def _unmarked_there(remote, link: dict) -> None:
+    """LinkError (409) unless the folder of another server a work folder is
+    made of carries no mark there and lies neither inside a work folder nor
+    around one: two vaults never split or share one work folder."""
+    tree, w = remote.work_tree(), link["folder_id"]
+    if tree.mark(w) is not None:
+        raise LinkError("That folder of the other server is a work folder already: another vault keeps it.", 409)
+    below = tree.subtree(w)
+    if tree.work_of(tree.parent.get(w)) or any(root != w and root in below for root in tree.roots()):
+        raise LinkError("That folder of the other server is inside a work folder, or holds one: pick another.", 409)
+
+
+def _empty_there(remote, link: dict) -> None:
+    """LinkError (409) when the folder of another server just marked holds
+    a page that is not its work folder's file, read there after the mark:
+    from the mark on, a page a member makes there is a file of it, and no
+    page of the library is filed into it."""
+    if remote.strangers():
+        raise LinkError("That folder of the other server is not empty: a work folder of another server starts "
+                        "empty.", 409)
 
 
 def _holds_pages(link: dict) -> bool:
@@ -861,20 +1061,36 @@ def _remote(url: str, token: str, workspace: str) -> tuple[gamma_sync.Server, di
 
 
 def create_remote_link(url: str, token: str, token_id: str, workspace: str, folder_id: str, path: str, notes: bool,
-                       user_id: str, push: str = "off", pull: bool = True) -> dict:
+                       user_id: str, push: str = "off", pull: bool = True, *, choose: bool = False,
+                       library: bool = False) -> dict:
     """A new vault of a folder on *another* Gamma server (gamma/vault/http_remote.py),
     read with a token of that server (read access is enough unless ``push``,
     which takes a token that may write; the token is kept Fernet-encrypted,
     ``token_id`` for whoever revokes it there later). The token is checked
     on that server (``_remote``), and the folder must exist there. The
     directory gets its marker, as ``create_link``'s does; one an earlier link
-    kept that folder in is that folder's again."""
+    kept that folder in is that folder's again. With ``choose`` it is a work
+    folder there (``work_vault``; ``library`` its switch), made only of a
+    folder that is not the library's top, pushing everything and pulling
+    (``REMOTE_WORK``), on a server that keeps work folders (its whoami's
+    ``work_folders``: an older one would take the mark as a plain property),
+    into a folder that is empty once marked (``_make_vault`` with its
+    ``HttpRemote``); paused and choosing as ``create_link``'s, until its
+    tracking dialog saves. That server's refusals are LinkError, with the
+    status ``LinkError`` says."""
+    from .vault.http_remote import HttpRemote, Unreachable  # local: they import this module
+    from .vault.remote import Refused
+
     path, push, pull = clean_path(path), push_value(push), bool(pull)
     if not pull and not push:
         raise LinkError("A vault pulls, pushes, or both.")
+    if choose and (push != PUSH_ALL or not pull or folder_id == folder_sync.ROOT):
+        raise LinkError(REMOTE_WORK)
     server, who = _remote(url, token, workspace)
     if push and who.get("scope") != "write":
         raise LinkError("Pushing needs a token that may write.")
+    if choose and not who.get("work_folders"):
+        raise LinkError("The other server is older than this app and keeps no work folders: update it first.")
     try:
         tree = server.get_json("/api/sync/folders")
     except gamma_sync.SyncError as e:
@@ -884,15 +1100,28 @@ def create_remote_link(url: str, token: str, token_id: str, workspace: str, fold
         raise LinkError("That folder does not exist on the other server.")
     link = _new(who["workspace"]["id"], path, user_id, folder_id=folder_id, notes=bool(notes) or push == PUSH_ALL,
                 push=push, pull=int(pull), remote_url=server.url, token_id=str(token_id or ""),
+                library=bool(library) and choose,
                 status={"folder_path": folders.get(folder_id) or []})    # its names there, which ``check_vault`` reads
     root = Path(path)
     check_vault(link)
     if _kept_before(link, root):
+        if choose:
+            raise LinkError(f"{root} holds a folder kept on disk before synced vaults: sync it as it is.")
         return _insert(link, token)
     marker = _found_marker(root, adopt=False)
     with connect_users_db() as conn:
         _room_for(conn, link)
-    return _make_vault(link, marker, new_folder=False, token=token)
+    if not choose:
+        return _make_vault(link, marker, new_folder=False, token=token)
+    try:
+        return _make_vault(link, marker, new_folder=False, token=token, choose=True,
+                           remote=HttpRemote({**link, "token": token}, server))
+    except OpError as e:     # that server refused the mark: a clone, a Zotero link, a work folder around it
+        raise LinkError(f"The other server refused the work folder: {e.detail}", 409) from e
+    except Unreachable as e:
+        raise LinkError(f"The other server cannot be reached: {e}", 502) from e
+    except Refused as e:
+        raise LinkError(str(e)) from e
 
 
 def create_file_link(ws: str, page_id: str, path: str, user_id: str) -> dict:
@@ -1042,7 +1271,11 @@ def set_push(link_id: str, word: str, token: str = "", token_id: str = "") -> di
     to push everything becomes a work folder, its pages in the library,
     taken over at its next round; a work folder's push comes down only while
     every file of it is in the library, and its next round lets it go
-    (gamma/work_folders/takeover.py)."""
+    (gamma/work_folders/takeover.py). A vault of another server is a work
+    folder only as it was made: one does not come to push everything
+    (``REMOTE_RAISED``: no takeover runs over HTTP), and a work folder of
+    another server keeps pushing everything (``REMOTE_LOWERED``: its files'
+    library, which letting it go reads, is that server's)."""
     from .work_folders import takeover
 
     push = push_value(word)
@@ -1053,6 +1286,11 @@ def set_push(link_id: str, word: str, token: str = "", token_id: str = "") -> di
         raise LinkError("A vault of one file always pushes its new versions.")
     if not push and not link["pull"]:
         raise LinkError("A vault pulls, pushes, or both.")
+    if link["remote_url"] and push != link["push"]:
+        if work_vault(link):
+            raise LinkError(REMOTE_LOWERED)
+        if push == PUSH_ALL:
+            raise LinkError(REMOTE_RAISED)
     after = {**link, "push": push}
     if push != link["push"]:
         _whole_library(after)
@@ -1119,7 +1357,8 @@ def set_pull(link_id: str, pull: bool) -> dict | None:
     """Whether a folder link writes Gamma's changes to its directory; None
     for no such link. A vault that does not pull pushes something. The row
     changes, and a work folder's mark, which tells the op path whether its
-    notes follow Gamma's renames and moves."""
+    notes follow Gamma's renames and moves. A work folder of another server
+    keeps pulling (``REMOTE_LOWERED``)."""
     link = get_link(link_id)
     if link is None:
         return None
@@ -1127,11 +1366,12 @@ def set_pull(link_id: str, pull: bool) -> dict | None:
         raise LinkError("A vault of one file only pushes its new versions: nothing is pulled.")
     if not pull and not link["push"]:
         raise LinkError("A vault pulls, pushes, or both.")
+    if not pull and link["remote_url"] and work_vault(link):
+        raise LinkError(REMOTE_LOWERED)
     with connect_users_db() as conn:
         conn.execute("UPDATE folder_links SET pull = ? WHERE id = ?", (int(bool(pull)), link_id))
-    link = get_link(link_id)
-    _mark_again(link)
-    return link
+    _mark_again(get_link(link_id, with_token=True))
+    return get_link(link_id)
 
 
 def set_library(link_id: str, on: bool) -> dict | None:
@@ -1146,43 +1386,78 @@ def set_library(link_id: str, on: bool) -> dict | None:
         raise LinkError("A vault of one file pushes its PDF to its page: it adds nothing to the library.")
     with connect_users_db() as conn:
         conn.execute("UPDATE folder_links SET library = ? WHERE id = ?", (int(bool(on)), link_id))
-    link = get_link(link_id)
-    _mark_again(link)
-    return link
+    _mark_again(get_link(link_id, with_token=True))
+    return get_link(link_id)
 
 
 def set_agent(link_id: str, agent: str, *, by: str) -> int:
     """A work folder's agent on this computer (docs/dev/local_agents.md):
     ``agent`` (``codex``, ``claude``) answers its Sends from now on, turned
     on by the account ``by``, or ``""`` none. The row is this computer's
-    (``local_agents.store``); a run of the agent it had stops when it is
+    (``local_agents.store``, which forgets what the agent may run when it
+    is turned off or changed); a run of the agent it had stops when it is
     turned off or changed, the folder's open pages hear ``{t: "vault"}``
     (their chip and the comments' @ menu read the agent again), and an
     agent turned on (or changed) takes the Sends that wait now → how many
-    it took. The route checks who may and whether the agent is ready.
-    LinkError for a vault that is no work folder; 0 for no such link."""
+    it took. The route checks who may and whether the agent is ready. A
+    work folder of another server (``agent_folder``; step 4c) needs this
+    computer shown there (its channel, gamma/computers/channel.py), which
+    then announces the agent and asks that server for the Sends that wait
+    (0 here). LinkError for a vault that is no work folder, or one of
+    another server not shown there; 0 for no such link."""
+    from .computers import channel  # local: it imports this module
     from .local_agents import runner, store as agents  # local: the runner imports the feedback modules
 
     link = get_link(link_id)
     if link is None:
         return 0
-    if agent and not work_folder_link(link):
+    if agent and not agent_folder(link):
         raise LinkError("Only a work folder can have an agent.")
+    if agent and link["remote_url"] and channel.of_vault(link) is None:
+        raise LinkError(f"Show this computer on {server_name(link)} first.")
     had = (agents.agent_of(link_id) or {}).get("agent", "")
     agents.set_agent(link_id, agent, by=by)
     if had and had != agent:
         _stop_agent(link_id)
     if had != agent:
         _tell_open_pages(link)
+        if link["remote_url"]:
+            _vaults_changed()   # its channel announces the folder's agent there
     if agent and agent != had:
         return runner.queue_folder(link["workspace_id"], link_id)
     return 0
 
 
+def set_agent_runs(link_id: str, runs: str, *, by: str) -> None:
+    """What a work folder's agent on this computer may run
+    (docs/dev/local_agents.md): ``ask``, its chat's turns may ask the
+    person, set by the account ``by``, or ``never``. The row is this
+    computer's (``local_agents.store.set_runs``), read when a turn starts;
+    turning the agent off or changing it forgets it. The folder's open
+    pages hear ``{t: "vault"}``. Set back to never, the chat turns running
+    decline the asks that wait and whatever they ask next
+    (``runner.runs_never``). The route checks who may and that the agent
+    is on. Nothing for no such link."""
+    from .local_agents import runner, store as agents  # local: the runner imports the feedback modules
+
+    link = get_link(link_id)
+    if link is None:
+        return
+    had = agents.runs_of(link_id)
+    agents.set_runs(link_id, runs, by=by)
+    if runs == "never":
+        runner.runs_never(link_id)
+    if had != runs:
+        _tell_open_pages(link)
+
+
 def _tell_open_pages(link: dict) -> None:
     """Each page of the vault's work folder open in a window now hears
-    ``{t: "vault"}``, for its vault chip to look again. Never raises: the
+    ``{t: "vault"}``, for its vault chip to look again; a vault of another
+    server tells none (that server's pages are its own). Never raises: the
     change is made."""
+    if link["remote_url"]:
+        return
     ws = link["workspace_id"]
     opened = sorted(page_id for key_ws, page_id in collab.open_pages() if key_ws == ws)
     if not opened:
@@ -1210,17 +1485,25 @@ def _stop_agent(link_id: str) -> None:
 
 
 def _mark_again(link: dict) -> None:
-    """A work folder's mark written again from its row's switches. A folder
-    gone, or a mark that cannot be written now, is the next round's to put
-    right (it writes the mark whenever it differs)."""
+    """A work folder's mark written again from its row's switches, through
+    its remote for a folder of another server (``link`` read with its
+    token), asked there first: a mark gone there (that server let go of
+    it) is never written again, its next round stops (``MARK_GONE``). A
+    folder gone, or a mark that cannot be written now (that server not
+    answering), is the next round's to put right (it writes the mark
+    whenever it differs)."""
+    from .vault.remote import Refused, remote_for  # local: it imports this module
     from .work_folders import takeover
 
-    if not work_folder_link(link):
+    if not work_vault(link):
         return
     try:
-        _set_mark(link, takeover.mark_of(link))
-    except OpError as e:
-        log.warning(f"[folders] {link['path']}: its mark waits for the next round: {e.detail}")
+        remote = remote_for(link, ask=True) if link["remote_url"] else None
+        if remote is not None and remote.mark() is None:
+            return
+        _set_mark(link, takeover.mark_of(link), remote)
+    except (OpError, Refused) as e:
+        log.warning(f"[folders] {link['path']}: its mark waits for the next round: {getattr(e, 'detail', '') or e}")
 
 
 def set_paused(link_id: str, paused: bool) -> dict | None:
@@ -1240,6 +1523,7 @@ def set_paused(link_id: str, paused: bool) -> dict | None:
         if paused:
             status[PAUSED] = since or page_now()
         conn.execute("UPDATE folder_links SET status = ? WHERE id = ?", (json.dumps(status), link_id))
+    _vaults_changed()
     if paused:
         _stop_agent(link_id)
     return get_link(link_id)
@@ -1364,8 +1648,12 @@ def removal(link: dict) -> dict:
     in_place, bytes, files, in_library}``, the pages it holds, of which a
     work folder's files not in the library (``files``) go to Recently
     deleted and the rest (``in_library``) stay, and the PDFs it reads in
-    place with what they weigh, which are stored first."""
+    place with what they weigh, which are stored first. A work folder of
+    another server counts its files there (``HttpRemote.work_pages``), and
+    says ``unreachable: true`` with none counted when that server cannot be
+    asked, which refuses the removal until it can (``delete_link``)."""
     from .vault import upgrade as vault_upgrade  # local: it imports this module
+    from .vault.remote import Refused, remote_for
 
     if link["kind"] == "file":
         return {"pages": 1, "in_place": 0, "bytes": 0, "files": 0, "in_library": 1}
@@ -1381,20 +1669,31 @@ def removal(link: dict) -> dict:
             size += os.stat(dest_of(link) / rel).st_size
         except OSError:
             pass
-    files = 0
-    if _works(link):
+    files, out = 0, {}
+    if _works(link) and link["remote_url"]:
+        try:
+            there = remote_for(get_link(link["id"], with_token=True) or link, ask=True).work_pages()
+            files = sum(1 for props in there.values() if props.get("library") is not True)
+        except (OpError, Refused):
+            out["unreachable"] = True
+    elif _works(link):
         with connect_pages_db(link["workspace_id"]) as conn:
             files = conn.execute(f"SELECT COUNT(*) FROM unified_blocks WHERE work_folder = ? AND +parent_id = 'root' "
                                  f"AND {SQL_OUTSIDE_LIBRARY}", (link["folder_id"],)).fetchone()[0]
-    return {"pages": pages, "in_place": len(pdfs), "bytes": size, "files": files, "in_library": max(pages - files, 0)}
+    return {"pages": pages, "in_place": len(pdfs), "bytes": size, "files": files, "in_library": max(pages - files, 0),
+            **out}
 
 
 def _works(link: dict) -> bool:
     """Whether the link holds a work folder to let go: it is one, or was one
-    its round has not let go yet."""
+    its round has not let go yet. Never one its other server let go of
+    (``LET_GO_THERE``): whatever mark that folder carries now is no longer
+    this vault's."""
     from .work_folders import takeover
 
-    return work_folder_link(link) or bool(link["state"].get(takeover.TAKEN_OVER))
+    if link["state"].get(LET_GO_THERE):
+        return False
+    return work_vault(link) or bool(link["state"].get(takeover.TAKEN_OVER))
 
 
 def _store_copy(ws: str, path: Path, doc: str) -> None:
@@ -1562,9 +1861,10 @@ def _forget(link: dict) -> None:
     if engine(link):
         vault_store.forget_link(link["id"])
     _polled.pop(link["id"], None)
+    _vaults_changed()
 
 
-def delete_link(link_id: str, files: str = "keep") -> bool:
+def delete_link(link_id: str, files: str = "keep", *, force: bool = False) -> dict | None:
     """Remove the link, its pages staying as they are (the module doc): a
     vault by ``_remove_vault``, its files kept (``keep``) or the ones its
     pulls made moved to its trash (``trash``). A folder kept before and not
@@ -1576,20 +1876,29 @@ def delete_link(link_id: str, files: str = "keep") -> bool:
     files were never chosen is taken back as if it had not been made
     (``_cancel``). After a round that runs finishes. LinkError when a PDF
     read in place cannot be stored, or the state file a folder kept before
-    left is held open (``_remove_vault``): nothing is removed. A remote
+    left is held open (``_remove_vault``): nothing is removed. A work folder
+    of another server, removed or cancelled, is let go through it, which
+    must answer first (``_letting_go``): LinkError, nothing removed, while
+    it does not, unless ``force``, which removes the link all the same, the
+    folder staying marked there (``mark_stays``) for a workspace owner's Let
+    go; so does a release that server stopped answering or refused midway.
+    One that server let go of already (``LET_GO_THERE``) is only forgotten. A remote
     source's token stays on that server (whoever minted it revokes it: the
     desktop app does when it drops a link it made). A run of the vault's
-    agent stops first; its row goes with the vault's (``vault_store.forget_link``)."""
+    agent stops first; its row goes with the vault's (``vault_store.forget_link``).
+    → ``{ok, mark_stays?}``; None for no such link."""
     from .vault import upgrade as vault_upgrade  # local: it imports this module
 
-    link = get_link(link_id)
+    link = get_link(link_id, with_token=True)
     if link is None:
-        return False
+        return None
+    out = {"ok": True}
     _stop_agent(link_id)
     with _holding(link_id):
-        link = get_link(link_id) or link
+        link = get_link(link_id, with_token=True) or link
         if choosing(link):
-            _cancel(link)
+            if not _cancel(link, _letting_go(link, force)) and link["remote_url"]:
+                out["mark_stays"] = True
         else:
             if older(link) and files == "trash":
                 try:
@@ -1597,19 +1906,53 @@ def delete_link(link_id: str, files: str = "keep") -> bool:
                 except (vault_disk.Offline, vault_disk.Stopped, OSError) as e:
                     log.warning(f"[folders] removing {link['path']}: its files stay: {e}")
             if engine(link) and not older(link):
+                remote = _letting_go(link, force) if _works(link) else None
                 _remove_vault(link, files)
-                if _works(link):
-                    _release_work(link)
+                if remote is not None:
+                    if not _release_work(link, remote) and link["remote_url"]:
+                        out["mark_stays"] = True
+                elif _works(link):
+                    out["mark_stays"] = True
         _forget(link)
-    return True
+    return out
 
 
-def _cancel(link: dict) -> None:
+def _letting_go(link: dict, force: bool):
+    """The remote a removed or cancelled work folder is let go through
+    (``_release_work``, ``_cancel``), its files there read now, before
+    anything is removed: for a folder of another server, asked as a
+    question between rounds is (``ASK_TIMEOUT_S``), LinkError (409) when
+    that server cannot be asked, or None with ``force`` (the mark stays
+    there)."""
+    from .vault.http_remote import Unreachable  # local: they import this module
+    from .vault.remote import Refused, remote_for
+
+    remote = remote_for(link, ask=True)
+    if not link["remote_url"]:
+        return remote
+    try:
+        remote.work_pages()
+    except (Unreachable, Refused, OpError) as e:
+        log.warning(f"[folders] removing {link['path']}: its work folder there: {getattr(e, 'detail', '') or e}")
+        if force:
+            return None
+        if isinstance(e, Unreachable):
+            raise LinkError("The other server cannot be reached: remove the vault when it can, or let go of the "
+                            "folder there.", 409) from e
+        raise LinkError(f"The other server cannot let go of this work folder now ({getattr(e, 'detail', '') or e}): "
+                        "remove the vault when it can, or let go of the folder there.", 409) from e
+    return remote
+
+
+def _cancel(link: dict, remote) -> bool:
     """A work folder whose files were never chosen taken back (the tracking
     dialog's Cancel): what making it made, the marker, ``.gamma/`` when it
     is left empty and the folder when nothing is filed there, and its mark
     from a folder it was made of, a note made there meanwhile kept as a
-    library page (``takeover.release``). It never wrote a ``.gammaignore``."""
+    library page (``takeover.release`` through ``remote``, ``_letting_go``'s:
+    another server's for a folder of it, None when that server did not
+    answer and the cancel was forced). It never wrote a ``.gammaignore``.
+    → whether its folder was let go."""
     from .vault import sync as vault_sync  # local: it imports this module
     from .work_folders import takeover
 
@@ -1623,56 +1966,55 @@ def _cancel(link: dict) -> None:
         else:
             if made.get("marker_dir"):
                 _drop_empty(root / vault_disk.MARKER_DIR)
+    if remote is None:
+        return False
     try:
-        remote = vault_sync.remote_for(link)
         takeover.release(link, remote, trash_files=False)
         if made.get("folder"):
             remote.drop_folder(link["folder_id"])
     except (OpError, vault_sync.Refused) as e:
         log.warning(f"[folders] {root}: its folder stays as it is: {getattr(e, 'detail', '') or e}")
+        return False
+    return True
 
 
-def _release_work(link: dict) -> None:
-    """A removed work folder let go (``takeover.release``): its files not in
-    the library to Recently deleted, the others library pages, filed where
-    they were; then the directory folders below its folder that hold no
-    live page deleted, deepest first, and its folder too when that leaves
-    it empty: they stood for directories, and nothing is filed there now."""
+def _release_work(link: dict, remote) -> bool:
+    """A removed work folder let go (``takeover.release``) through
+    ``remote``, its folder tree read before: its files not in the library
+    to Recently deleted, the others library pages, filed where they were;
+    then the directory folders below its folder that hold no live page
+    deleted, deepest first, and its folder too when that leaves it empty
+    (``takeover.drop_directories``): they stood for directories, and nothing
+    is filed there now. → whether it was let go: another server that stops
+    answering, or refuses a step, midway leaves its mark there."""
     from .vault import sync as vault_sync  # local: it imports this module
     from .work_folders import takeover
 
-    w = link["folder_id"]
-    with connect_pages_db(link["workspace_id"]) as conn:
-        tree = marks.Tree.read(conn)
-
-    def depth(folder: str) -> int:
-        n = 0
-        while folder in tree.parent and folder != w:
-            folder, n = tree.parent[folder], n + 1
-        return n
-
     try:
-        remote = vault_sync.remote_for(link)
+        tree = remote.work_tree()
         takeover.release(link, remote, trash_files=True)
-        for folder in sorted(tree.subtree(w), key=depth, reverse=True):
-            remote.drop_folder(folder)
+        takeover.drop_directories(remote, tree, link["folder_id"])
     except (OpError, vault_sync.Refused) as e:
         log.warning(f"[folders] {link['path']}: its work folder stays as it was: {getattr(e, 'detail', '') or e}")
+        return False
+    return True
 
 
 # --- reading and writing Gamma here -----------------------------------------------------------
 
 def _page(ws: str, page_id: str) -> dict | None:
-    """``{doc_id, filename, title}`` of a page of this server's workspace:
-    the hash of the document it owns and that document's name (``""`` for
-    no PDF or no file name); None when ``page_id`` is no page of the
+    """``{doc_id, filename, title, format, ext}`` of a page of this server's
+    workspace: the hash of the document it owns, that document's name
+    (``""`` for no document or no file name), its format and stored
+    extension (a PDF's for none); None when ``page_id`` is no page of the
     library: not there, a block inside a page, or in the trash."""
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     if not row or row[0] != "root":
         return None
     view = page_document(load_json(row[2] or "{}") or {})
-    return {"doc_id": own_hash(view), "filename": view["name"] if view else "", "title": row[1] or ""}
+    return {"doc_id": own_hash(view), "filename": view["name"] if view else "", "title": row[1] or "",
+            "format": view["format"] if view else "pdf", "ext": view["ext"] if view else ".pdf"}
 
 
 def may_edit(ws: str, user_id: str) -> bool:
@@ -1713,18 +2055,23 @@ class LocalSink:
             raise gamma_sync.SyncError(str(e.detail)) from e
         return doc_id
 
-    def replace(self, page_id: str, doc_id: str, filename: str, *, check_held: bool = True) -> dict:
+    def replace(self, page_id: str, doc_id: str, filename: str, *, check_held: bool = True, format: str = "pdf",
+                ext: str | None = None, size: int | None = None) -> dict:
         """The page takes the file ``doc_id``: stored, or still read in place
         on a page that reads its file in place (``replace_attachment``).
         ``check_held`` False: bytes
         another page carries are no refusal, for a page reading a file where
-        it is, whose bytes are whatever the disk holds (gamma/linked_files.py)."""
+        it is, whose bytes are whatever the disk holds (gamma/linked_files.py).
+        A file of another format than a PDF (an opened ``.tex``) names its
+        ``format``, stored extension ``ext`` and ``size``, so it stays a
+        document of its format; a file vault's is always a PDF."""
         from .routers.pages import replace_attachment, replaced_answer  # local: keep gamma.* free of the routers package
 
         self._may_write()
+        shape = {} if format == "pdf" else {"format": format, "ext": ext, "size": size}
         try:
             done = replace_attachment(self.ws, page_id, doc_id, "", filename, actor=self.user_id, owner=self.user_id,
-                                      check_held=check_held, keep_old_days=gamma_sync.KEEP_OLD_DAYS)
+                                      check_held=check_held, keep_old_days=gamma_sync.KEEP_OLD_DAYS, **shape)
         except OpError as e:   # the page gone, its Zotero PDF on its way, or the bytes another page's (HeldElsewhere)
             raise gamma_sync.SyncError(str(e.detail)) from e
         return replaced_answer(done)
@@ -1753,6 +2100,142 @@ def sink_of(link: dict):
     if link["remote_url"]:
         return gamma_sync.RemoteSink(remote_server(link))
     return LocalSink(link["workspace_id"], link["created_by"])
+
+
+# --- what a path is -------------------------------------------------------------------------
+
+def _rel_in(path: str, root: str) -> str | None:
+    """``path``'s place in the directory ``root``, ``/`` between its names
+    ("" for ``root`` itself), when it is there: by its spelling
+    (``inside``), else by identity (``_above``: a directory on the way, or a
+    link standing for one, that is ``root``). None when it is not."""
+    place = path if inside(path, root) else _above(Path(path), Path(root))
+    if place is None:
+        return None
+    rel = os.path.relpath(path, root if place == path else place)
+    return "" if rel == "." else rel.replace(os.sep, "/")
+
+
+def _sees(link: dict, actor: str) -> bool:
+    """Whether ``where_is`` tells ``actor`` of the vault: a role in its
+    workspace for one of this server, its own for one of another server."""
+    if link["remote_url"]:
+        return link["created_by"] == actor
+    return bool(workspaces.role_of(link["workspace_id"], actor))
+
+
+def vault_name(link: dict) -> str:
+    """A folder vault's name in words said of it: its folder's (a vault of
+    another server's as its rounds recorded it), the directory's for a
+    vault of the whole library."""
+    names = _folder_names(link, ask=False)
+    return (names[-1] if names else "") or dest_of(link).name
+
+
+def _vault_word(link: dict, actor: str) -> dict:
+    """A vault as ``where_is`` names it: ``{id, kind, workspace, folder,
+    remote_url, work, choosing, paused, mine, name}`` (``vault_name``)."""
+    return {"id": link["id"], "kind": "folder", "workspace": link["workspace_id"], "folder": link["folder_id"],
+            "remote_url": link["remote_url"], "work": work_vault(link), "choosing": choosing(link),
+            "paused": bool(link["status"].get(PAUSED)), "mine": link["created_by"] == actor, "name": vault_name(link)}
+
+
+def dir_folder(link: dict, rel: str) -> tuple[str, bool]:
+    """The folder of the vault's directory ``rel`` (``/`` between names, ""
+    its top) → ``(folder id, exact)``: the folder a round recorded for it
+    (vaults.db ``vault_dirs``), else the nearest directory above it's, else
+    the vault's own, the names compared as this computer compares them;
+    ``exact`` when ``rel`` itself had one, or is the top. A vault of another
+    server's are that server's ids, as its rounds recorded them."""
+    if not rel:
+        return link["folder_id"], True
+    fold = "lower(path) = lower(?)" if os.path.normcase("A") == "a" else "path = ?"
+    names = rel.split("/")
+    with connect_vaults_db() as conn:
+        for k in range(len(names), 0, -1):
+            at = "/".join(names[:k])
+            row = conn.execute(f"SELECT folder_id FROM vault_dirs WHERE link_id = ? AND folder_id != '' AND {fold} "
+                               "ORDER BY path = ? DESC LIMIT 1", (link["id"], at, at)).fetchone()
+            if row:
+                return row[0], k == len(names)
+    return link["folder_id"], False
+
+
+def where_is(text: str, actor: str) -> dict:
+    """What the path ``text`` is to Gamma for ``actor``, read only (nothing
+    written, no round run): the desktop app's *Open with Gamma* asks it of
+    each local server (``POST /api/folder-links/where``) and then goes by
+    ids. The path is taken two ways: as named (absolute, normalized, links
+    not followed: the file manager's) and resolved. → in this order:
+
+    - ``{is: "vault", dir, name, link, rel, never, …}``: inside a folder
+      vault's directory, of this server or another (by the path as named,
+      else resolved: a link outside every vault to a file inside one is
+      that file; the deepest vault). ``link`` is ``_vault_word``'s,
+      ``rel`` the path in the vault ("" its top), ``never`` the words of
+      why its scan never tracks it (``selection.never_reason``, read
+      unresolved, so a link on the way is one). A directory has ``folder``
+      and ``exact`` (``dir_folder``); a file ``page`` (its row's of any
+      kind: "" for none, and with ``trashed`` for one in Recently deleted;
+      a vault of another server's unchecked) and ``tracked`` (a page, or a
+      vault that pushes everything whose ``.gammaignore`` tracks it and
+      whose scan may).
+    - ``{is: "hidden"}``: such a vault ``actor`` may not see (``_sees``),
+      or a directory around vaults none of which it may.
+    - ``{is: "around", vaults: [{id, workspace, folder, remote_url, work,
+      choosing, mine, name, rel}]}``: a directory holding the directories
+      of vaults it may see, ``rel`` each one's in it, by ``rel``.
+    - ``{is: "file_vault", workspace, page}``: a file that is a vault of
+      one file (``linked_files._file_vault_page``).
+    - ``{is: "none", dir, name, refusal}``: nothing of Gamma's,
+      ``refusal`` ``place_refusal``'s ("" for none).
+
+    LinkError for a path that is not a full one or names nothing."""
+    from . import linked_files  # local: it imports this module
+    from .work_folders import selection
+
+    text = str(text or "").strip()
+    if not _absolute(text):
+        raise LinkError("Give the full path of a file or directory on this computer.")
+    p = os.path.abspath(os.path.expanduser(text))
+    if not os.path.exists(p):
+        raise LinkError(f"There is no file or directory {p}.")
+    real = Path(p).resolve()
+    is_dir, name = os.path.isdir(p), Path(p).name or p
+    links = [link for link in all_links() if link["kind"] == "folder"]
+    for spelled in (p, str(real)):
+        held = [(link, rel) for link in links if (rel := _rel_in(spelled, link["path"])) is not None]
+        if held:
+            link, rel = max(held, key=lambda m: len(m[0]["path"]))
+            if not _sees(link, actor):
+                return {"is": "hidden"}
+            root = dest_of(link)
+            code, words = selection.never_reason(root, rel) if rel else ("", "")
+            answer = {"is": "vault", "dir": is_dir, "name": name, "link": _vault_word(link, actor), "rel": rel,
+                      "never": words}
+            if is_dir:
+                folder, exact = dir_folder(link, rel)
+                return {**answer, "folder": folder, "exact": exact}
+            page, trashed = linked_files.vault_page(link, rel)
+            tracked = bool(page) or (link["push"] == PUSH_ALL and not code and selection.tracked(root, rel))
+            return {**answer, "page": page, "trashed": trashed, "tracked": tracked}
+    if is_dir:
+        around = []
+        for link in links:
+            top = next((t for t in (str(real), p) if inside(link["path"], t) and _key(link["path"]) != _key(t)), None)
+            if top is not None:
+                around.append((link, os.path.relpath(link["path"], top).replace(os.sep, "/")))
+        shown = [{**{k: v for k, v in _vault_word(link, actor).items() if k not in ("kind", "paused")}, "rel": rel}
+                 for link, rel in around if _sees(link, actor)]
+        if shown:
+            return {"is": "around", "vaults": sorted(shown, key=lambda v: v["rel"])}
+        if around:
+            return {"is": "hidden"}
+    else:
+        vault = linked_files._file_vault_page(str(real), actor)
+        if vault:
+            return {"is": "file_vault", "workspace": vault["workspace"], "page": vault["page"]["id"]}
+    return {"is": "none", "dir": is_dir, "name": name, "refusal": place_refusal(real, directory=is_dir)}
 
 
 # --- a page and its vault -------------------------------------------------------------------
@@ -2246,7 +2729,9 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
     stays off. → its status (the API contract): ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked, refused?,
     capped?, held?, stopped?, offline?, shared?, upgraded_at?, push_off?,
-    feedback?, folder_path}``, and ``paused_at`` kept as it was (``_write_status``); a
+    feedback?, folder_path}``, and ``paused_at`` kept as it was (``_write_status``). A
+    work folder of another server that let go of it stops at once
+    (``LET_GO_THERE``: ``MARK_GONE``), writing and asking nothing there; a
     round that the marker, the disk or the account (or another server)
     stopped counts as failed, so ``RETRY_S`` applies. A vault of this server
     whose maker has no role in its workspace any more fails at once, before
@@ -2267,6 +2752,8 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
 
     if choosing(link):
         return _stopped(link, started, CHOOSE_FIRST)
+    if link["state"].get(LET_GO_THERE):
+        return _stopped(link, started, MARK_GONE)
     if not link["remote_url"] and not workspaces.role_of(link["workspace_id"], link["created_by"]):
         return _failed(link, local_remote.NO_ACCESS)
     lowered = link["status"].get("push_off")
@@ -2323,7 +2810,7 @@ def _work_turn(link: dict) -> dict:
     from .feedback import files as feedback_files
     from .work_folders import takeover
 
-    work, taken = work_folder_link(link), link["state"].get(takeover.TAKEN_OVER)
+    work, taken = work_vault(link), link["state"].get(takeover.TAKEN_OVER)
     if work and not taken:
         link = {**link, "state": takeover.take_over(link, vault_sync.remote_for(link))}
     elif taken and not work:
@@ -2453,7 +2940,10 @@ def tick() -> None:
     runs in a thread of its own (its lock held keeps the next tick off it),
     so a slow or silent server never holds up the rest. A link whose
     workspace on this server is gone is forgotten, its directory as it is.
-    Then the linked files' sweep (``linked_files.sweep``). Nothing runs
+    Then the linked files' sweep (``linked_files.sweep``). Before the
+    links, this computer's channels to other servers are checked, each
+    running (gamma/computers/channel.py ``check``: the lifespan has no room
+    for another loop). Nothing runs
     where links are not kept (``config.folder_links_enabled``): a row left
     from before stays as it is. One tick at a time: one a hint asks for
     while another runs runs again after it (``_tick_asked``), for a link that
@@ -2470,6 +2960,9 @@ def tick() -> None:
 
 
 def _tick_once() -> None:
+    from .computers import channel  # local: it imports this module
+
+    channel.check()
     for link in all_links():
         if not link["remote_url"] and not workspaces.get(link["workspace_id"]):
             with _holding(link["id"]):

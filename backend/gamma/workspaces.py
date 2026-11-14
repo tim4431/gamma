@@ -988,6 +988,7 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
     ``wait`` (``email_invites.cancel_links``). Returns the deleted
     workspace ids."""
     from . import email_invites  # local: email_invites imports this module
+    from .computers import registry  # local: the registry imports this module
 
     links = []
     with connect_users_db() as conn:
@@ -999,6 +1000,8 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
         conn.execute("DELETE FROM workspace_members WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM share_users WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user_id,))
+        computers = [token_id for token_id, in conn.execute("SELECT token_id FROM computers WHERE user_id = ?", (user_id,))]
+        conn.execute("DELETE FROM computers WHERE user_id = ?", (user_id,))  # what its computers announced
         conn.execute("DELETE FROM publisher_sessions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM zotero_links WHERE owner = ?", (user_id,))  # its Zotero connection goes too
         for ws in deleted:
@@ -1007,6 +1010,7 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
         conn.execute("DELETE FROM reminders_done WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM inbox_items WHERE user_id = ?", (user_id,))
         conn.commit()
+    registry.drop(computers)
     email_invites.cancel_links(links, wait=wait)
     for ws in deleted:
         remove_files(ws)

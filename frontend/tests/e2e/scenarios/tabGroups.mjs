@@ -11,7 +11,7 @@
 // and the two panes' own chrome: the live one ringed, the page's topbar
 // buttons at each pane's strip acting on that pane, their place changed
 // from a right-click, and the split's rows in the tab and bar menus.
-import { Account, launchBrowser, live } from "../harness.mjs";
+import { Account, MAC, launchBrowser, live } from "../harness.mjs";
 import { closeEditor } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -42,7 +42,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
   const tabIn = (scope, title) => scope.locator(".tabStrip .tab", { hasText: title });
   // The notes page opened as a tab through the page palette.
   async function openNotes(page) {
-    await page.keyboard.press("Control+p");
+    await page.keyboard.press("ControlOrMeta+p");
     const dialog = page.getByRole("dialog", { name: "Open a page" });
     await dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Lecture notes");
     await until(async () => (await dialog.locator('[role="option"][data-kind="page"]').count()) === 1, { what: "the notes page listed" });
@@ -463,18 +463,21 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       await page.waitForTimeout(400);
       assertEq(blockOf(page), notes.id, "a right-click opens nothing");
       assertEq(await readGroup(page).locator(".pagePane").count(), 1, "the paper still reads in its pane");
-      // a press on the viewer's scrollbar track: it scrolls the view, and the notes stay live
-      const bar = await scroller.evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        return { width: el.offsetWidth - el.clientLeft - el.clientWidth, x: r.left + el.clientLeft + el.clientWidth, y: r.top + r.height * 0.8,
-          overflows: el.scrollHeight > el.clientHeight, top: el.scrollTop };
-      });
-      assert(bar.overflows && bar.width >= 4, `the read view shows a scrollbar: ${JSON.stringify(bar)}`);
-      await page.mouse.click(bar.x + bar.width / 2, bar.y);
-      await until(async () => (await scroller.evaluate((el) => el.scrollTop)) > bar.top, { what: "the track press scrolls the view" });
-      await page.waitForTimeout(400);
-      assertEq(blockOf(page), notes.id, "a scrollbar press opens nothing");
-      assertEq(await liveView(page).locator(".sidebar .blockList", { hasText: "Lecture notes body line" }).count(), 1, "the notes stay live");
+      // a press on the viewer's scrollbar track: it scrolls the view, and the notes stay live.
+      // A Mac draws overlay scrollbars, which take no room and have no track to press.
+      if (!MAC) {
+        const bar = await scroller.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return { width: el.offsetWidth - el.clientLeft - el.clientWidth, x: r.left + el.clientLeft + el.clientWidth, y: r.top + r.height * 0.8,
+            overflows: el.scrollHeight > el.clientHeight, top: el.scrollTop };
+        });
+        assert(bar.overflows && bar.width >= 4, `the read view shows a scrollbar: ${JSON.stringify(bar)}`);
+        await page.mouse.click(bar.x + bar.width / 2, bar.y);
+        await until(async () => (await scroller.evaluate((el) => el.scrollTop)) > bar.top, { what: "the track press scrolls the view" });
+        await page.waitForTimeout(400);
+        assertEq(blockOf(page), notes.id, "a scrollbar press opens nothing");
+        assertEq(await liveView(page).locator(".sidebar .blockList", { hasText: "Lecture notes body line" }).count(), 1, "the notes stay live");
+      }
       // a plain click on the page makes the group live
       await page.mouse.click(box.x + box.width / 2, box.y + 60);
       await until(() => blockOf(page) === paper.id, { what: "the paper opens in the workbench" });

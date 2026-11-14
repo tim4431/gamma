@@ -22,6 +22,7 @@ const FAKES = path.join(ROOT, "backend", "tests", "fake_agents");
 const PAGE = { width: 612, height: 792 };
 const SUMMARY = "Moved the legend and introduced the penalty's weight.";
 const CHAT_REPLY = "Tightened the sentence in sections/method.tex:3.";
+const BUILD = "latexmk -pdf main.tex";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -44,6 +45,10 @@ export async function localAgentScenarios(env) {
     GAMMA_AGENT_CODEX: JSON.stringify([PYTHON, path.join(FAKES, "fake_codex.py")]),
     GAMMA_AGENT_CLAUDE: JSON.stringify([PYTHON, path.join(FAKES, "fake_claude.py")]),
     FAKE_AGENT: JSON.stringify({ each: "fixed", summary: SUMMARY, delay: 8, log: agentLog, distinct: true, chat: CHAT_REPLY,
+      // a turn of a folder that lets it ask (3b) asks to run the build with the network
+      ask: [{ command: BUILD, reason: "The build fetches a font", host: "fonts.example" }],
+      // a chat turn's reply comes as it is typed (3c): a word every half second
+      typing: 0.5,
       edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }] }),
   } });
   try {
@@ -473,6 +478,146 @@ export async function localAgentScenarios(env) {
       } finally { await ctx.close(); }
       assert(await user.api("/api/local-agents/chat/history?page=" + main.id).then((h) => h.conversations.length === 0),
         "the opened conversation is the active one again");
+    });
+
+    // Step 3b: asking in the chat (docs/dev/local_agents.md "Asking in the chat").
+    // What Codex was told of its asks, in order: the decisions, and a note's steer.
+    const decisions = () => heard().filter((e) => e.answer?.result?.decision !== undefined).map((e) => e.answer.result.decision);
+    const steers = () => heard().filter((e) => e.in?.method === "turn/steer").map((e) => e.in.params.input.map((p) => p.text).join(""));
+    const askAndAnswer = async (message, answer) => {
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(message);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        const card = dock.locator(".computerAsk");
+        await card.waitFor({ timeout: 20000 });
+        assertEq((await card.locator(".chatApprovalHead").innerText()).trim(), "Codex wants to run a command");
+        assertEq((await card.locator(".computerAskCommand code").innerText()).trim(), BUILD, "the command, whole");
+        assert((await card.innerText()).includes("The build fetches a font"), "its reason");
+        assert((await card.innerText()).includes("It runs as you, with your files and the network."), "what allowing means");
+        await until(async () => (await dock.locator(".computerStrip.asking").innerText().catch(() => "")).trim()
+          === "Waiting for you: Codex wants to run a command", { what: "the strip waits for the person" });
+        await answer(card);
+        await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 40000, what: "the turn ends" });
+        const replies = (await conversation()).messages.filter((m) => m.role === "agent" && m.text === CHAT_REPLY).length;
+        await until(async () => (await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).count()) === replies,
+          { what: "the turn's reply in the window" });
+        assertEq(await dock.locator(".computerAsk").count(), 0, "no card left");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    };
+
+    await step("local-agents: the maker lets Codex ask in the chat, and a command it asks to run waits on a card until allowed once", async () => {
+      const turned = await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "ask" } });
+      assertEq(turned.agent?.runs, "ask", "the folder lets its agent ask");
+      const before = decisions().length;
+      await askAndAnswer("build it", (card) => card.getByRole("button", { name: "Allow once", exact: true }).click());
+      assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["accept"]), "Codex heard accept");
+    });
+
+    await step("local-agents: declined with a note, Codex hears why; allowed in this chat, the same command runs unasked next time", async () => {
+      let before = decisions().length;
+      await askAndAnswer("build it again", async (card) => {
+        await card.getByRole("button", { name: "Decline…", exact: true }).click();
+        await card.getByRole("textbox").fill("use make instead");
+        await card.getByRole("button", { name: "Decline", exact: true }).click();
+      });
+      assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["decline"]), "Codex heard decline");
+      assert(steers().some((s) => s.includes("use make instead")), `the note went with it: ${JSON.stringify(steers())}`);
+
+      before = decisions().length;
+      await askAndAnswer("one more build", (card) => card.getByRole("button", { name: "Allow in this chat", exact: true }).click());
+      assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["acceptForSession"]), "allowed for the conversation");
+      // the next turn asks the same command: answered by Gamma, no card
+      before = decisions().length;
+      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { page: main.id, text: "and once more" } });
+      await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 40000, what: "the turn ends unasked" });
+      assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["accept"]), "Gamma answered the granted command");
+      const last = (await conversation()).messages.at(-1);
+      assert(!last.steps.some((s) => s.status === "asked") && !(last.asks || []).length, "nothing was put to the person");
+      await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "never" } });
+    });
+
+    // Step 3c: the rest of the computer side.
+    await step("local-agents: the passage chip names its source line, the strip's menu asks the shell, and a model and effort chosen reach Codex as its reply is typed", async () => {
+      const before = heard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        // what the page asks the desktop shell (no shell here: the asks are recorded)
+        await page.evaluate(() => {
+          window.shellAsks = [];
+          window.addEventListener("message", (e) => { if (e.data?.source === "gamma-app") window.shellAsks.push(e.data); });
+        });
+        await selectOnPdf(page, 1, "The penalty");
+        const chip = dock.locator(".chatSelChips .chatSelChip").first();
+        await until(async () => (await chip.innerText()).includes("sections/method.tex:3"), { what: "the chip names the passage's source line" });
+
+        await dock.locator(".computerStripMenu").click();
+        await page.locator(".ctxMenuItem", { hasText: "Continue in a terminal" }).click();
+        await dock.locator(".computerStripMenu").click();
+        await page.locator(".ctxMenuItem", { hasText: "Show in folder" }).click();
+        // a message event comes after its post: wait for both
+        const asks = await until(async () => {
+          const got = await page.evaluate(() => window.shellAsks.map((a) => [a.type, a.page]));
+          return got.length >= 2 ? got : null;
+        }, { what: "both asks posted" });
+        assertEq(JSON.stringify(asks), JSON.stringify([["continue-in-terminal", main.id], ["reveal-on-disk", main.id]]),
+          "the page asks the shell with the page's id, nothing more");
+
+        const modelChip = dock.locator(".chatModelChip .uiSelectBtn");
+        await modelChip.click();
+        const items = page.locator(".uiSelectMenu .ctxMenuItem");
+        assert((await items.allInnerTexts()).some((s) => s.includes("GPT Fake Mini")) &&
+          !(await items.allInnerTexts()).some((s) => s.includes("Hidden")), "the models Codex lists, not its hidden ones");
+        await items.filter({ hasText: "GPT Fake Mini" }).click();
+        await modelChip.click();
+        await page.locator(".uiSelectMenu .ctxMenuItem").filter({ hasText: /^\s*medium\s*$/i }).click();
+        await until(async () => /GPT Fake Mini · medium/i.test(await modelChip.innerText()), { what: "the chip shows the choice" });
+
+        const replies = dock.locator(".chatBubble.ai");
+        const earlier = await replies.count();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("say it slowly");
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await until(async () => (await replies.count()) > earlier, { timeout: 10000, what: "the new turn's bubble" });
+        // the reply grows: seen part-way before it is whole
+        const seen = new Set();
+        await until(async () => {
+          const last = (await replies.nth(earlier).innerText().catch(() => "")).trim();
+          if (last) seen.add(last);
+          return last.includes(CHAT_REPLY);
+        }, { timeout: 40000, every: 250, what: "the reply, whole" });
+        await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 20000, what: "the turn ends" });
+        const first = CHAT_REPLY.split(" ")[0];
+        assert([...seen].some((s) => s.includes(first) && !s.includes(CHAT_REPLY)),
+          `a part of the reply was seen before the whole: ${JSON.stringify([...seen])}`);
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const since = heard().slice(before);
+      const thread = since.find((e) => ["thread/start", "thread/resume"].includes(e.in?.method))?.in.params;
+      const turn = since.find((e) => e.in?.method === "turn/start")?.in.params;
+      assertEq(JSON.stringify([thread?.model, turn?.effort]), JSON.stringify(["gpt-fake-mini", "medium"]), "the model and the effort chosen");
+    });
+
+    await step("local-agents: a running turn is a Background tasks row, whose Stop ends it", async () => {
+      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { page: main.id, text: "take your time" } });
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        await page.click("button[aria-label='Background tasks']");
+        const row = page.locator(".tasksPopover .taskRow", { hasText: "Codex on this computer" });
+        await row.waitFor({ timeout: 15000 });
+        await row.locator('button[aria-label^="Stop Codex on this computer"]').click();
+        await until(async () => (await conversation()).messages.at(-1).state === "stopped", { timeout: 20000, what: "the turn stops" });
+        await row.waitFor({ state: "detached", timeout: 15000 });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
     });
 
     await step("local-agents: turned off by its maker, the folder has no agent and the feedback document names none", async () => {

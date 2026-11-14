@@ -9,7 +9,10 @@ the router that owns it (export.py, imports.py, metadata.py, ws_backups.py,
 admin.py).
 The listing also shows the account's scheduled backup tasks while one runs
 (gamma/backup_schedule.py, which keeps its own state): read-only rows of
-kind ``scheduled-backup``.
+kind ``scheduled-backup``; and the account's turns of the chat's computer
+side while an agent on this computer has them queued or running, or they
+wait for or run on another computer of the account's (step 4d): read-only
+rows of kind ``computer-turn``.
 
 A share view's exports are the share's (``auth.share_job_owner``): a
 request carrying the ``?share=`` that started one reads, stops, removes and
@@ -106,14 +109,80 @@ def _waiting_papers(user_id: str) -> list[dict]:
     } for req in fetch_handoff.waiting(user_id)]
 
 
+def _computer_turns(user_id: str) -> list[dict]:
+    """The account's turns of the chat's computer side that this server's
+    agents have queued or running (gamma/local_agents/runner.py
+    ``chat_turns``), in the jobs' shape: read-only rows titled ``<agent> ·
+    <page title>``, ``progress.phase`` ``asking`` while an ask waits for
+    the person. A click opens the page's chat on that side, and Stop is the
+    turn's own (``POST /api/local-agents/chat/turns/{turn}/stop``), never
+    ``cancel``."""
+    from ..db import connect_pages_db
+    from ..local_agents import enabled, runner
+
+    if not enabled():
+        return []
+    try:
+        turns = runner.chat_turns(user_id)
+    except Exception:  # noqa: BLE001 — the tray never breaks over the agents
+        log.exception("[jobs] could not read the chat turns")
+        return []
+    rows = []
+    for turn in reversed(turns):  # newest first, as the jobs
+        try:
+            with connect_pages_db(turn["ws"]) as conn:
+                found = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (turn["page_id"],)).fetchone()
+        except Exception:  # noqa: BLE001 — a workspace that cannot be read names no page
+            found = None
+        page_title = found[0] if found else ""
+        rows.append(_turn_row(user_id, turn, page_title, asking=turn["asking"]))
+    return rows
+
+
+def _turn_row(user_id: str, turn: dict, page_title: str, *, asking: bool = False) -> dict:
+    from ..local_agents import catalog
+
+    label = catalog.label(turn["agent"])
+    return {
+        "id": f"computer-{turn['turn_id']}", "kind": "computer-turn", "owner": user_id, "workspace": turn["ws"],
+        "title": f"{label} · {page_title or 'Untitled'}",
+        "params": {"page": turn["page_id"], "turn": turn["turn_id"], "agent": turn["agent"], "label": label,
+                   "title": page_title, **({"computer": turn["computer"]} if turn.get("computer") else {})},
+        "state": turn["state"], "progress": {"phase": "asking"} if asking else {}, "error": "",
+        "created_at": turn["queued_at"], "started_at": turn["started_at"], "finished_at": "", "artifact": None,
+        "downloaded": False, "stoppable": not turn["stopping"], "stopping": turn["stopping"], "readonly": True,
+    }
+
+
+def _far_turns(user_id: str, ws: str) -> list[dict]:
+    """The account's turns of the chat's computer side queued or running on
+    another computer (step 4d, ``chats.remote_turns``: kept in the
+    workspaces its computers keep a work folder of with an agent, and the
+    one the request works in), as ``_computer_turns`` gives them, newest
+    first; Stop the same route."""
+    from ..computers import registry
+    from ..local_agents import chats
+
+    rows = []
+    try:
+        for each in sorted({*registry.workspaces_of(user_id), *([ws] if ws else [])}):
+            rows += [_turn_row(user_id, turn, turn["title"]) for turn in chats.remote_turns(each, user_id)]
+    except Exception:  # noqa: BLE001 — the tray never breaks over the agents
+        log.exception("[jobs] could not read the chat turns run on other computers")
+        return []
+    return sorted(rows, key=lambda row: row["created_at"], reverse=True)
+
+
 @router.get("")
 def list_jobs(request: Request):
     """``{jobs: [...]}``: the account's jobs (newest first, without their
-    results), the running scheduled backups and the paper fetches waiting
-    for their browser, plus the own jobs of the workspace the request works
-    in."""
+    results), the running scheduled backups, the paper fetches waiting for
+    their browser and the chat turns this computer's agents have queued or
+    running and those queued or running on another computer, plus the own
+    jobs of the workspace the request works in."""
     user_id, ws, _ = _context(request)
-    return {"jobs": _running_backup_tasks(user_id) + _waiting_papers(user_id) + jobs.for_account(user_id, ws)}
+    return {"jobs": _running_backup_tasks(user_id) + _waiting_papers(user_id) + _computer_turns(user_id)
+            + _far_turns(user_id, ws) + jobs.for_account(user_id, ws)}
 
 
 @router.post("/clear")

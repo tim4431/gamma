@@ -141,9 +141,11 @@ def is_secret(name: str) -> bool:
     return leaf in SECRET_NAMES or leaf.startswith(".env.") or leaf.endswith(SECRET_SUFFIXES)
 
 
-def _split(text: str) -> list[str]:
+def split_lines(text: str) -> list[str]:
     """``text``'s lines, ``\\r\\n`` and ``\\r`` read as ``\\n``; a final line
-    break ends the last line and starts none."""
+    break ends the last line and starts none. The lines a text range's
+    columns count in (gamma/documents/text_anchors.py), as the viewer splits
+    them."""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     if lines[-1] == "":
         lines.pop()
@@ -195,7 +197,7 @@ def extract(path, format: str, *, name: str = "") -> Extracted:
         text, truncated = text[:MAX_TEXT_CHARS], True
     if truncated and "\n" in text:
         text = text[:text.rfind("\n") + 1]  # the line the cut went through is left out
-    lines = _split(text)
+    lines = split_lines(text)
     if len(lines) > MAX_TEXT_LINES:
         lines, truncated = lines[:MAX_TEXT_LINES], True
     units = []

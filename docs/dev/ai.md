@@ -939,6 +939,12 @@ without a picture. Nothing placed at all falls back to the
 plain head excerpt. With a native PDF attachment there is no window and no
 picture, and the passages carry the viewer's page only.
 
+A selection in a text file's code view comes as `{text, page: 0, line,
+end}`: `request_selections` keeps its `lines`, the question labels it
+"Selected passage (lines 118–120)", and `text_selection_context` sends the
+numbered lines around it with the message, as a PDF passage's window
+([ai_context.md](ai_context.md)); there is no section and no picture.
+
 **How much is quoted.** A selection is what the user asks about, so it gets
 the single-paper budget the request carries (`context_char_limit`,
 Settings → AI → Chat → Context size, 60,000 characters by default): a dozen
@@ -961,8 +967,9 @@ character being a code point on both sides, with the cases in
 and the setting in its hover text. After sending, the stream's
 `{"shortened": {items, budget, asked}}` line (after `{"trimmed"}`) lists
 what went short, block outlines included, which only the server can
-measure. The reply keeps it as `shortened` and shows the pill
-(`coverage.js` `shortenedNote`). Its explanation names the setting, or the
+measure; a selection of a text file's lines carries its `lines` and is
+named by them ("Lines 118–120 shortened: …"). The reply keeps it as
+`shortened` and shows the pill (`coverage.js` `shortenedNote`). Its explanation names the setting, or the
 model's window when the window fit shrank the budget (`budget` below
 `asked`, "Fitting the window" above).
 

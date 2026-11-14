@@ -8,7 +8,8 @@ nothing in `backend/` or `frontend/` needs to know about it:
 - [desktop/docs/architecture.md](../../desktop/docs/architecture.md) —
   servers (local sidecar servers + remote URLs) and Gamma's workspaces in
   the switcher, the window (shell bar + content view), remote reachability
-  probes, in-app updates, shell state, file map, invariants.
+  probes, files and folders opened from the file manager, in-app updates,
+  shell state, file map, invariants.
 - [desktop/docs/release.md](../../desktop/docs/release.md) — package, the
   `desktop` workflow, secret-gated code signing, the auto-update feed,
   distribution alternatives. All workflows side by side:
@@ -40,13 +41,22 @@ server's guidance page, [migrations.md](migrations.md)); `/api/session` +
 focus), a work folder made with `choose` (paused, choosing, no round) and
 the `?ws=<id>&folder=<id>&track=<link id>` URL the shell then loads, on
 which the web app's tracking dialog chooses its files through the server
-([work_folders.md](work_folders.md)); for a PDF opened with the app, `POST /api/folder-links/open` on a
-local server (read where it is, under *Opened files*), or with the
+([work_folders.md](work_folders.md)); for a file or a folder opened with
+the app, `POST /api/folder-links/where` on each local server (what the path
+is to Gamma, for the account the shell asks as: a vault's directory or
+file, around vaults, a vault of one file, or nobody's with the place's
+refusal, [synced_vaults.md](synced_vaults.md#which-path-is-what)), `GET
+/api/folder-links/<id>` (whether a work folder the app made still
+chooses), the `?ws=<id>&folder=<id>` URL of a directory's folder and
+`&tick=<path>` beside `track` (a file to tick in the tracking dialog, its
+path relative to the work folder), `POST /api/folder-links/open` on a
+local server (a file of any format read where it is, under *Opened
+files*: `{workspace, page, created, title, format}`), or for a PDF with the
 `openAddsToLibrary` entry of the account's profile on, and in the Mac App
 Store build, the upload routes and `POST /api/blocks/by-doc/<hash>`; `POST
 /api/import/pdf-annotations`, the `embAnnots` entry of the account's
 profile and the `?ws=<id>&page=<id>` URL ([architecture.md](../../desktop/docs/architecture.md)
-"Opening PDF files"); a page's document, `properties.doc` of `GET
+"Opening files and folders"); a page's document, `properties.doc` of `GET
 /api/blocks/<id>` (its `format`, `hash`, `ext` and `copy`: an opened PDF's
 hash for its annotations, a carried page's own PDF and its stored name in
 the export), read of the app's own local server only, which is always the
@@ -54,6 +64,14 @@ shell's release; the change feed's `format` (`GET
 /api/sync/changes?limit=1`) of both servers before a carry, which refuses
 a target of an older one; and the `data-theme` attribute on `<html>` (the shell
 mirrors it into its own chrome).
+
+The shell sets no proxy. Its own traffic (the windows, the remote
+servers' health probes, the updater) is Chromium's and follows the OS
+proxy settings, PAC included. A local server's outbound connections follow
+that server's own Network proxy setting ([network_proxy.md](network_proxy.md));
+it starts with the shell's whole environment, so its "Use system
+settings" reads the `*_proxy` variables, else the Windows or macOS proxy
+settings, and never PAC. The pane says so on the desktop.
 
 The iPad and Android apps run the same sidecar model: the same backend
 inside the app, started with these variables except `GAMMA_FOLDER_LINKS`

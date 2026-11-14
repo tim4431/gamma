@@ -12,9 +12,9 @@
 // the person's own); `made_on` the file the thread was opened on, `sent`
 // the Send waiting on it (docs/dev/feedback.md).
 import { t } from "../shared/i18n/i18n.js";
-import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, pdfAnchorOf } from "../shared/model/blockModel.js";
+import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlock, pdfAnchorOf, textSpan } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
-import { peopleIn } from "../editor/mentions.js";
+import { agentAway, peopleIn } from "../editor/mentions.js";
 import { AGENT_MAX } from "../feedback/feedbackView.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
@@ -250,8 +250,12 @@ export const isWithdrawn = (request) => request?.state === "failed" && request.d
 // Sent while the request waits for the agent, the agent working (named by
 // `state_by` when it says) with what it is at in the title, Failed with its
 // reason in the title. null for none, and for a Send withdrawn: the thread
-// is open, the person's to send again.
-export function sentChip(thread) {
+// is open, the person's to send again. `answers`, the agent that answers
+// the reader's Sends (vaultState.js mentionAgent or keeperAgent, null for
+// none), names the computer a Send waits for when another computer keeps
+// the folder: "Waiting for TIM-PC", the chip's own label while that
+// computer is offline.
+export function sentChip(thread, answers = null) {
   const sent = thread?.sent;
   if (!sent || isWithdrawn(sent)) return null;
   const { state, detail, state_by: agent } = sent;
@@ -262,22 +266,34 @@ export function sentChip(thread) {
     const label = agent ? t("{agent} is working", { agent }) : t("The agent is working");
     return { state, label, title: detail || label, tone: "pending" };
   }
+  if (answers?.computer) {
+    const waiting = t("Waiting for {computer}", { computer: answers.computer });
+    const away = agentAway(answers);
+    return { state, label: away ? waiting : t("Sent"), title: away || waiting, tone: "pending" };
+  }
   return { state, label: t("Sent"), title: t("Waiting for the agent"), tone: "pending" };
 }
 
 // What a comment field says under the text while it names the work
-// folder's agent on this computer (`agent`, vaultState.js mentionAgent) as
-// the server reads it: a mention outside code that `initial` (an edit's
-// text before) did not have. Sending it is a Send of the thread, or of the
-// file's open comments from the page's own thread (`file`); an edit the
-// server will not send (`refused`: "closed" in a resolved thread,
-// "not_newest" for an older comment, as local_agents/mention.py) says why,
-// and while the agent cannot run, its problem. → {text, warn}, or null for
-// nothing to say.
+// folder's agent (`agent`, vaultState.js mentionAgent on this computer, or
+// keeperAgent on the computer that keeps a work folder of this server,
+// `computer`) as the server reads it: a mention outside code that `initial`
+// (an edit's text before) did not have. Sending it is a Send of the thread,
+// or of the file's open comments from the page's own thread (`file`),
+// waiting while the agent's computer is offline; an edit the server will
+// not send (`refused`: "closed" in a resolved thread, "not_newest" for an
+// older comment, as local_agents/mention.py) says why, and while the agent
+// cannot run, its problem. → {text, warn}, or null for nothing to say.
 export function mentionHint({ agent, text, initial = "", file = false, refused = "" }) {
   if (!agent || !peopleIn(text).has(agent.name) || peopleIn(initial).has(agent.name)) return null;
   if (refused) return { text: sendRefusal({ agent: agent.label, refused }), warn: true };
   if (agent.ready === false && agent.problem) return { text: agent.problem, warn: true };
+  if (agent.computer) {
+    const words = { agent: agent.label, computer: agent.computer };
+    const sends = file ? t("Sends this file's open comments to {agent} on {computer}.", words)
+      : t("Sends this thread to {agent} on {computer}.", words);
+    return { text: [sends, agentAway(agent)].filter(Boolean).join(" "), warn: false };
+  }
   return {
     text: file ? t("Sends this file's open comments to {agent} on this computer.", { agent: agent.label })
       : t("Sends this thread to {agent} on this computer.", { agent: agent.label }),
@@ -304,11 +320,17 @@ export function sendRefusal(send) {
 // What a thread is on, in the Comments window's words: the highlight's
 // quote, else the block's text, else for an ink group on a PDF page
 // "Handwriting on page 3", for a region of a picture "Region of the
-// picture"; "" for a block without words.
+// picture", for a range of a text file "Lines 118–120 of the file"; "" for
+// a block without words.
 export function anchorWords(block) {
   const words = blockQuote(block) || block?.content || "";
   if (words) return words;
   if (isRegionBlock(block)) return t("Region of the picture");
+  const span = isTextRangeBlock(block) ? textSpan(block.properties.text_position) : null;
+  if (span) {
+    return span.end > span.line ? t("Lines {from}–{to} of the file", { from: span.line, to: span.end })
+      : t("Line {n} of the file", { n: span.line });
+  }
   if (!isInkGroup(block)) return "";
   const page = pdfAnchorOf(block)?.page;
   return page ? t("Handwriting on page {n}", { n: page }) : "";
@@ -321,12 +343,19 @@ export function anchorWords(block) {
 // again, so it stands where that build had its content; a region of a
 // picture drawn on another version than `docHash`, its image_position's
 // `hash`: regions are never placed again either, and stay where they were
-// on the new picture), else "". `block` is the thread's as the tree holds
-// it now, `made_on` (the thread's) the file it was opened on.
+// on the new picture), else "". A range of a text file is "lost" or
+// "moved" by its text_position's flags, as a highlight is; one the server's
+// run has not placed on the file the page shows yet says nothing. `block`
+// is the thread's as the tree holds it now, `made_on` (the thread's) the
+// file it was opened on.
 export function threadPlace(thread, block, docHash) {
   if (isRegionBlock(block)) {
     const { hash } = block.properties.image_position;
     return hash && docHash && hash !== docHash ? "earlier" : "";
+  }
+  if (isTextRangeBlock(block) && !isHighlightBlock(block)) {
+    const pos = block.properties.text_position;
+    return pos.lost ? "lost" : pos.approx ? "moved" : "";
   }
   const pos = pdfAnchorOf(block)?.position;
   if (!pos) return "";
@@ -344,6 +373,16 @@ export function anchorTop(anchor, pageH) {
   for (const r of pos.rects || []) top = Math.min(top, r.y1);
   if (!Number.isFinite(top)) top = pos.boundingRect?.y1 || 0;
   return top * pageH / (pos.height || 1);
+}
+
+// The anchors a margin draws a card for, {id, top}: those with open threads
+// and the one a new comment is being written on (`composing`, its block
+// id), each at `topOf(anchor)` (anchorTop on a page, a line's top in the
+// code view; marginSlot.jsx).
+export function cardedAnchors(anchors, composing, topOf) {
+  const out = [];
+  for (const a of anchors) if (a.threadCount > 0 || a.id === composing) out.push({ id: a.id, top: topOf(a) });
+  return out;
 }
 
 // A text as one line of at most `max` characters: in the Comments window,

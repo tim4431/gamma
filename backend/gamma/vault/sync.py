@@ -617,8 +617,12 @@ class Round:
     def _open(self) -> None:
         """The marker, the mark of the vault's folder (a work folder's whole
         round writes it again where it is not the link's, after a restore or
-        a mirror's merge; a vault that does not push everything, of another
-        server's work folder, keeps a kept folder's round), what the vault
+        a mirror's merge, but one of another server whose mark is gone there
+        stops, ``folder_links.MARK_GONE``: that server let go of it, which
+        its state keeps (``folder_links.LET_GO_THERE``), so a mark another
+        vault writes on that folder later is never taken for its own; a vault
+        that does not push everything, of another server's work folder,
+        keeps a kept folder's round), what the vault
         tracks (``_read_rules``), the journal settled (it may move files),
         then the scan, which a work folder's round holds to its cap
         (``_capped``); one page's round reads no scan."""
@@ -626,7 +630,10 @@ class Round:
         self.marker = disk.check_marker(self.root, vault_id)
         self._same_place()
         self.work = self.remote.mark() if self.link.get("push") == folder_links.PUSH_ALL else None
-        if not self.only and self.state.get(takeover.TAKEN_OVER) and folder_links.work_folder_link(self.link):
+        if not self.only and self.state.get(takeover.TAKEN_OVER) and folder_links.work_vault(self.link):
+            if self.link["remote_url"] and self.work is None:   # let go there: marked again, its files would be refused
+                self.state[folder_links.LET_GO_THERE] = page_now()   # and never again: a mark there names no vault
+                raise disk.Stopped(folder_links.MARK_GONE)
             self.work = takeover.write_mark(self.link, self.remote)
         self.rules = self._read_rules()
         self._recover()

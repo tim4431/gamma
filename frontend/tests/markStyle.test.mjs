@@ -49,6 +49,16 @@ test("a selection's highlight takes its style, and the viewer's highlight carrie
   assert.deepEqual(blocksToHighlights([line, wash, area]).map((h) => [h.id, h.style]), [["h1", "squiggly"], ["h2", "highlight"], ["h4", "highlight"]]);
 });
 
+test("a range of a text file keeps a line style: no area to make it a box", () => {
+  const range = { line: 3, col: 0, end: 3, end_col: 5, prefix: "", suffix: "", hash: "f1" };
+  const [line] = addHighlightAsBlock([], { id: "t1", quote: "q", position: range, color: "#9bcdffa6", style: "strikeout", place: "text_position" });
+  const props = { ...line.properties };
+  delete props.t0;
+  assert.deepEqual(props, { color: "#9bcdffa6", quote: "q", text_position: range, style: "strikeout" });
+  assert.equal(blockStyle(line), "strikeout");
+  assert.deepEqual(blocksToHighlights([line], "text_position", "f1").map((h) => [h.id, h.style]), [["t1", "strikeout"]]);
+});
+
 const W = (hex, alpha = 0.65) => ({ hex, alpha });
 const hl = (id, style = "highlight", color = W("#ffe28f"), extra = {}) => ({ id, name: "", style, color, ...extra });
 const ids = (list) => list.map((p) => p.id + (p.hidden ? "*" : ""));

@@ -46,6 +46,7 @@ import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors"
 import { BLOCK_TOOLS, changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
+import { linesLabel } from "../shared/model/blockModel.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from "../settings/AssistantTools";
 import { aiServiceTiles } from "../settings/providerEditor.js";
@@ -60,7 +61,8 @@ import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
 import { UsageRing } from "../shared/ui/UsageRing";
 import ComputerChat, { ChatSides, ComputerHeader } from "./computer/ComputerChat.jsx";
-import { useChatSide, useComputerChat } from "./computer/useComputerChat.js";
+import { useChatSide } from "./computer/chatSide.js";
+import { useComputerChat } from "./computer/useComputerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 // A conversation this tab has nothing of yet (one array, never written).
@@ -527,7 +529,9 @@ export default function ChatDock({
   askSignal = null,
   // The work folder's agent on this computer the open page's chat can talk
   // to instead (vaultState computerAgent: the vault's maker, in the desktop
-  // app), else null: the header's switch and the side chat/computer/ draws.
+  // app), or in any window of the maker the agent of the computer that keeps
+  // the page's work folder (keeperComputer, `remote`), else null: the
+  // header's switch and the side chat/computer/ draws.
   computer = null,
   onGrip, onFold, collapsed, onClose,
 }) {
@@ -1910,7 +1914,8 @@ export default function ChatDock({
   const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
   // The switch between the two sides leads the header, whether Gamma AI is
   // set up or not: an account with an agent here and no AI still has a chat.
-  const sides = computer && !readOnly ? <ChatSides side={side} onSide={setSide} label={computer.label} /> : null;
+  const sides = computer && !readOnly
+    ? <ChatSides side={side} onSide={setSide} label={computer.label} where={computer.remote ? computer.computer : ""} /> : null;
   if (onComputer) {
     return (
       <DockWindow title={t("Chat")} guide="chat.grip" onGrip={onGrip} onFold={onFold}
@@ -2440,9 +2445,10 @@ export default function ChatDock({
             ) : null}
             {pdfSelections.map((s, i) => (
               <SelChip key={`p${i}`} text={s.text} icon="passage"
-                label={pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
-                note={s.page ? t("p. {page}", { page: s.page }) : ""} cut={keptOf(s)}
-                title={[s.text.slice(0, 2000), keptHint(s), t("Hold Ctrl while selecting in the PDF to add more passages")].filter(Boolean).join("\n\n")}
+                label={s.line ? linesLabel(s.line, s.end)
+                  : pdfSelections.length > 1 ? t("PDF passage {i}", { i: i + 1 }) : t("PDF passage")}
+                note={s.file || (s.page ? t("p. {page}", { page: s.page }) : "")} cut={keptOf(s)}
+                title={[s.text.slice(0, 2000), keptHint(s), t("Hold Ctrl while selecting to add more passages")].filter(Boolean).join("\n\n")}
                 onRemove={() => setPdfSelections((prev) => prev.filter((_, j) => j !== i))}
                 removeTitle={t("Remove this passage")} />
             ))}

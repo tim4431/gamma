@@ -26,6 +26,8 @@ const e = (pane, label, section, hint, keywords, target) => ({ pane, label, sect
 const admin = (entry) => ({ ...entry, admin: true });
 const hostOnly = (flags, entry) => ({ ...entry, host: [].concat(flags) });
 const desktopOnly = (entry) => ({ ...entry, desktop: true });
+// What people call a proxy setting, shared by every row of the Network proxy pane.
+const PROXY_WORDS = "proxy http https socks socks5 vpn clash v2ray network firewall no_proxy bypass internet china";
 const entries = [
   e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
@@ -162,6 +164,19 @@ const entries = [
   e("server", t("Guest workspaces last"), t("Guests"), t("Then the guest's account and workspace are deleted"), "administration guests temporary expiry hours delete throwaway"),
   e("server", t("Demo mode"), t("Guests"), t("The login page leads with Try the demo"), "administration guests try the demo public login page first-run tour"),
   e("server", t("Check databases"), t("Databases"), t("a quick check of every account and workspace database"), "administration integrity corruption damaged sqlite quick_check health"),
+  // Network proxy: the rows shown only under Manual (and the name lookups,
+  // under a proxy) jump to the Proxy row, which always is, and offers Manual.
+  e("proxy", t("Network proxy"), null, t("How this server reaches the internet: AI providers, paper lookups and downloads, translation, Zotero, Gamma Cloud and other Gamma servers. Not a library proxy (EZproxy)."),
+    `administration ${PROXY_WORDS} outbound connections`),
+  e("proxy", t("Proxy"), t("Connection"), t("Use system settings follows the server's environment or this computer's network settings; No proxy connects directly; Manual uses a proxy you set"),
+    `administration ${PROXY_WORDS} system environment HTTPS_PROXY ALL_PROXY manual direct`),
+  e("proxy", t("Proxy server"), t("Connection"), t("http:// or socks5://, with its port"), `administration ${PROXY_WORDS} address host port`, t("Proxy")),
+  e("proxy", t("Sign-in"), t("Connection"), t("Only if the proxy asks for one"), `administration ${PROXY_WORDS} username password credentials authentication`, t("Proxy")),
+  e("proxy", t("Don't use the proxy for"), t("Connection"), t("Hosts, domains (*.example.com), IP addresses and ranges (10.0.0.0/8), <local>. This computer always connects directly."),
+    `administration ${PROXY_WORDS} exceptions direct local lan intranet`, t("Proxy")),
+  e("proxy", t("Let the proxy look up names"), t("Connection"), t("For links, PDFs and pages people or the assistant open: when only the proxy can resolve internet names, or with a VPN in fake-IP mode. The proxy then decides which addresses they can reach."),
+    `administration ${PROXY_WORDS} dns resolve names fake-ip tun socks5h`, t("Proxy")),
+  e("proxy", t("Test the connection"), t("Test"), t("Tries the settings above before you save them"), `administration ${PROXY_WORDS} check try reach`),
   e("diagnostics", t("Debug logging"), t("Tracing"), t("Trace reading-position, restore and sync events"), "diagnostics tracing browser system log"),
   e("diagnostics", t("Privacy policy"), t("Help"), t("What Gamma stores, what it sends and to whom, on gammapdf.com"),
     "privacy data personal information collected shared deletion legal gammapdf.com"),

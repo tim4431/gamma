@@ -1,7 +1,7 @@
 // Tours are manual, compact, and never submit a message or activate the mic.
 // The AI chat tour has steps per place (a paper, the library), each ending on
 // the user's own Send; with no AI connected it points at the setup card.
-import { FAKE_AI_MODELS, assertOpensInPlace } from "../harness.mjs";
+import { FAKE_AI_MODELS, assertOpensInPlace, keyLabel } from "../harness.mjs";
 
 export async function contextualGuideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
@@ -163,7 +163,7 @@ export async function contextualGuideScenarios(env) {
         await page.waitForSelector('[data-guide-overlay="chat-new"]');
         await page.mouse.move(5, 5);
         await page.locator('[data-guide-scene="chat-new"] .guideHeldKey').waitFor({ state: "attached", timeout: 12000 });
-        assertEq((await page.locator('[data-guide-scene="chat-new"] .guideHeldKey').textContent()).trim(), "Alt");
+        assertEq((await page.locator('[data-guide-scene="chat-new"] .guideHeldKey').textContent()).trim(), keyLabel("Alt"));
         assertEq((await page.locator('.guideCard .primary').textContent()).trim(), "Done", "a light last step: Done");
         await page.locator('.guideCard .primary').click();
         await until(async () => await page.locator('.guideCard').count() === 0);

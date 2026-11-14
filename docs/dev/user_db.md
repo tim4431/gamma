@@ -132,14 +132,19 @@ All state is SQLite + files on disk under a data directory (env
     keys of the cloud sign-in (below) and the off-site copies (`offsite`:
     `{enabled, bucket, endpoint, region, access_key, secret_key, prefix,
     interval_s, keep}` as JSON, the secret key encrypted like the AI keys;
-    [debugging.md](debugging.md#off-site-copies-in-a-bucket));
+    [debugging.md](debugging.md#off-site-copies-in-a-bucket)) and the
+    network proxy (`proxy`: `{mode, server, username, password, bypass,
+    proxy_dns}` as JSON, the password encrypted the same way;
+    [network_proxy.md](network_proxy.md));
   - `publisher_sessions` — encrypted publisher cookie snapshots per
     `(user_id, host)`, each sealed with its account's id, imported by the
     Connector ([extension.md](extension.md));
   - `integration_tokens` — hashed assistant tokens per account, each of one
-    workspace (with a `scope` — `read`, `write`, or `feedback`, a read token
+    workspace (with a `scope` — `read`, `write`, `feedback`, a read token
     that may also reply to and resolve the threads on a work folder's files
-    ([comments.md](comments.md) "Who may comment"); free text, so a scope
+    ([comments.md](comments.md) "Who may comment"), or `computer`, a
+    computer's channel to this server, which opens nothing else
+    ([computers.md](computers.md)); free text, so a scope
     this server does not know reads as `read` — and `workspaces`, what a read
     or feedback token's MCP connection reads beside it: `''`, `'*'` or a JSON
     list), and `mcp_oauth` — the OAuth flow's
@@ -183,6 +188,18 @@ All state is SQLite + files on disk under a data directory (env
     mirrors') and the token's id. What this computer knows of a vault's
     files is in `vaults.db` (below), never here
     ([synced_vaults.md](synced_vaults.md#what-lands-on-disk));
+  - `computers` — what each computer announced over its channel, a row per
+    `computer` token: the account, the workspace, the computer's id for
+    this server and its name, the vaults it keeps here (folder and page ids,
+    paused or not), the assistants there, the app's version and when it was
+    last seen; whether it is online is in memory. Gone with its token, its
+    workspace and its account; additive, never migrated
+    ([computers.md](computers.md));
+  - `computer_links` — on the desktop app's own server, this computer's
+    channels to other servers, a row per server, workspace there and local
+    account: the address, the `computer` token (sealed like a vault's) and
+    its id, the account there and the channel's status; additive
+    ([computers.md](computers.md#the-host));
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced
@@ -191,7 +208,7 @@ All state is SQLite + files on disk under a data directory (env
 - `vaults.db` — global, and only on the desktop app's own server
   (`config.folder_links_enabled`; `db.connect_vaults_db` makes it, and every
   caller asks first): what this computer knows of its synced vaults and of
-  the PDFs read where they are ([synced_vaults.md](synced_vaults.md)). It
+  the files read where they are ([synced_vaults.md](synced_vaults.md)). It
   stays out of every workspace's files, so a workspace backup never carries
   a path that a restored server could be made to read; a server backup and
   the integrity check take it beside users.db, whose `folder_links` rows it
@@ -272,8 +289,8 @@ All state is SQLite + files on disk under a data directory (env
     object there), `link` (a non-empty `link_url` or `link_page_id`,
     `highlights.is_link`), `highlight` (a `pdf_position`, `image_position`
     or `text_position` object: a place on a PDF page, a region of a
-    picture, a range of a text file; `highlights.is_highlight` and
-    `is_region` each read their own key), `note`, tested in that order
+    picture, a range of a text file; `highlights.is_highlight`,
+    `is_region` and `is_text_range` each read their own key), `note`, tested in that order
     (`db.BLOCK_HOT_COLUMNS`; `picture` since step 44, the region and the
     range since step 55, [migrations.md](migrations.md)). The filters read the column (its
     index); the block dict computes the same rule in Python from the
@@ -388,6 +405,18 @@ All state is SQLite + files on disk under a data directory (env
     its membership ends or the account is deleted
     (`db.delete_workspace_prefs`). From `db.PAGES_SCHEMA` as the file opens
     (no workspace step);
+  - `computer_chat_runs` — a turn of such a conversation run on another
+    computer (step 4d, [local_agents.md](local_agents.md) "The chat on
+    another server's page"): the turn, its conversation, page and account,
+    the turn's agent and the computer last known to take it, the computer
+    token holding it and its run once claimed, the last
+    write's `seq`, a stop flag, its state, when it was queued and started.
+    Private like `computer_chats` (`ws_backup.PRIVATE_TABLES`), gone with
+    its page (`ops._purge`) and with its account's rows; additive;
+  - `feedback_request_runs` — the run of a computer that holds a Send of
+    this server's (step 4c, [computers.md](computers.md) "The Sends"): the
+    request, the holding token, the run, the agent, the `seen` time, the
+    comment ids it read, its end; swept with its request; additive;
   - `chats` / `chat_history` — the AI chat
     ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version
@@ -462,7 +491,10 @@ All state is SQLite + files on disk under a data directory (env
   (`ws_backup._normalize_copies`, which runs the `normalize.py` steps of
   migrations 26–30 and 33 on a copy stamped below the base, the workspace
   steps above the copy's version and the notes index's rebuild, in the
-  order [migrations.md](migrations.md) "Writing a step" gives). A
+  order [migrations.md](migrations.md) "Writing a step" gives; step 30's
+  `highlight_shape` reshapes `pdf_position` alone, so a region's
+  `image_position` and a text range's `text_position` pass through
+  untouched). A
   restore never replaces the live
   change log ([workspaces.md](workspaces.md) "Export and backups"). Backups
   copy it with the sqlite backup API, which is WAL-safe. Nothing may
@@ -782,7 +814,11 @@ track of the ones nothing uses.
   `pdf_position.doc_id` and `pdf_position.prev.doc_id` (a picture's
   region names the version it was drawn on in `image_position.hash`, which
   holds nothing: regions are never relocated, and the version a thread on
-  one needs is held by the thread's anchor). Those two name the
+  one needs is held by the thread's anchor; a range of a text file names
+  the version it was measured on in `text_position.hash`, and its `prev`
+  and `closest` a `hash` each, which hold nothing either: a range carries
+  its own quote and context, so the run that places it again reads the new
+  version alone and keeps no old one). Those two name the
   file a highlight's rectangles were measured on, after a replacement: a
   pending highlight's `prev` (and a lost one's `doc_id`) is its reference,
   the version it is matched from at every later replacement, and stays

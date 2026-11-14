@@ -1,5 +1,5 @@
 import { generateNKeysBetween } from "fractional-indexing";
-import { Account, live, pressMouseBack, wanted } from "../harness.mjs";
+import { Account, keyLabel, live, pressMouseBack, wanted } from "../harness.mjs";
 
 // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx).
 export async function quickOpenScenarios(env) {
@@ -22,7 +22,7 @@ export async function quickOpenScenarios(env) {
     const page = await openPage(ctx, `${server.base}/?page=${papers["Atomic clocks"].id}&ws=${user.ws}`);
     try {
       await page.locator(".blockList").first().waitFor();
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
       const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
@@ -50,7 +50,7 @@ export async function quickOpenScenarios(env) {
       await until(() => new URL(page.url()).searchParams.get("block") === papers[picked].id);
       assertEq(await page.getByRole("dialog", { name: "Open a page" }).count(), 0, "opening closes the palette");
 
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       await dialog.waitFor();
       await page.keyboard.press("Escape");
       assertEq(await page.getByRole("dialog", { name: "Open a page" }).count(), 0, "Escape closes the palette");
@@ -66,7 +66,7 @@ export async function quickOpenScenarios(env) {
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
       // A folder is a row of its own; picking it opens the folder view.
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       await input.fill("cavities");
       const folderRow = dialog.locator('[role="option"][data-kind="folder"]');
       await until(async () => (await folderRow.count()) === 1, { what: "the folder matches" });
@@ -75,7 +75,7 @@ export async function quickOpenScenarios(env) {
       await until(async () => new URL(page.url()).searchParams.get("folder") === cavities, { what: "the folder view opens" });
       await page.locator(".fileRow", { hasText: "Cavity readout" }).waitFor();
       // A label row opens the label's view, over the whole library.
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       await input.fill("horlogerie");
       const labelRow = dialog.locator('[role="option"][data-kind="label"]');
       await until(async () => (await labelRow.count()) === 1, { what: "the label matches" });
@@ -87,9 +87,9 @@ export async function quickOpenScenarios(env) {
       await page.locator(".fileRow", { hasText: "Cavity readout" }).waitFor();
 
       // Ctrl+Enter hands the query to the workspace search.
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       await input.fill("quantum");
-      await page.keyboard.press("Control+Enter");
+      await page.keyboard.press("ControlOrMeta+Enter");
       const search = page.locator(".searchPopover .searchInput");
       await search.waitFor();
       await until(async () => (await search.inputValue()) === "quantum", { what: "the search opens with the query" });
@@ -97,7 +97,7 @@ export async function quickOpenScenarios(env) {
       await page.mouse.click(5, 300);
 
       // Shift+Enter creates a page with the query as its title, and opens it.
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       await input.fill("Fresh cavity idea");
       await page.keyboard.press("Shift+Enter");
       await until(async () => (await user.api("/api/blocks/root/children")).children.some((b) => b.content === "Fresh cavity idea"),
@@ -119,7 +119,7 @@ export async function quickOpenScenarios(env) {
       await page.locator(".blockList").first().waitFor();
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       // "c" is in every title: the label alone narrows it.
       await input.fill("label:horlogerie c");
       const rows = dialog.getByRole("option");
@@ -147,7 +147,7 @@ export async function quickOpenScenarios(env) {
     const page = await openPage(ctx, `${server.base}/?page=${papers["Atomic clocks"].id}&ws=${user.ws}`);
     try {
       await page.locator(".blockList").first().waitFor();
-      await page.keyboard.press("Control+Shift+p");
+      await page.keyboard.press("ControlOrMeta+Shift+p");
       const dialog = page.getByRole("dialog", { name: "Command palette" });
       await dialog.waitFor();
       const input = dialog.getByRole("textbox", { name: "Type a command" });
@@ -161,7 +161,7 @@ export async function quickOpenScenarios(env) {
       assertEq(await page.getByRole("dialog", { name: "Command palette" }).count(), 0, "running closes the palette");
       await page.keyboard.press("Escape");
       // ">" typed into Ctrl+P is the same palette.
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       await page.getByRole("dialog", { name: "Open a page" }).waitFor();
       await page.keyboard.type(">");
       await page.getByRole("dialog", { name: "Command palette" }).waitFor();
@@ -215,7 +215,7 @@ export async function quickOpenScenarios(env) {
       await row.locator(".labelTagBadge", { hasText: "urgent" }).waitFor();
       // A label every picked page carries is checked; picking it takes it off.
       await row.click({ button: "right" });
-      assertEq(await page.locator(".ctxMenuItem", { hasText: "Delete" }).locator(".ctxMenuKey").textContent(), "Del", "Delete shows its key");
+      assertEq(await page.locator(".ctxMenuItem", { hasText: "Delete" }).locator(".ctxMenuKey").textContent(), keyLabel("Delete"), "Delete shows its key");
       await page.locator(".ctxMenuItem", { hasText: "Add label" }).click();
       const urgent = page.locator(".ctxSubMenu .ctxMenuItem", { hasText: "urgent" });
       await urgent.locator(".ctxMenuCheck").waitFor();
@@ -365,7 +365,7 @@ export async function quickOpenScenarios(env) {
       // A dialog keeps it, as it keeps Alt+←.
       await page.locator(".fileRow", { hasText: from.content }).dblclick();
       await until(() => block() === from.id, { what: "the page opens from the library" });
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
       await pressMouseBack(page, dialog);
@@ -610,7 +610,7 @@ export async function quickOpenScenarios(env) {
       assertEq(await page.locator(".sharePopover").count(), 0, "no Share popover over the page after");
       // That page opened later, from a link to its block: it lands on it,
       // and only on it, with no Share popover.
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Jump target");
       await dialog.getByRole("option", { name: /Jump target/ }).first().click();

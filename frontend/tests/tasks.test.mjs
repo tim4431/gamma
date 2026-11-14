@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
   progressFraction, sortTasks, trayBadge } from "../src/tasks/taskModel.js";
 import { canOpen, exportAgain, kindOf, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
-  taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
+  stopPath, taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
 
 const at = (minutes) => new Date(Date.UTC(2026, 8, 29, 12, minutes)).toISOString();
 const job = (fields) => ({ kind: "export", state: "running", params: {}, progress: {}, error: "", artifact: null,
@@ -204,6 +204,19 @@ test("a finished highlights run says how many moved, are dashed to check, stayed
     "Highlights placed in the PDF: 1 moved, 0 matched roughly or estimated, 0 stayed in place, 0 not found.");
 });
 
+test("a text file's run is worded for the file: a dashed range is checked from its menu, a lost one is a tag", () => {
+  const result = (fields) => ({ format: "text", highlights: 0, moved: 0, kept: 0, approx: 0, lost: 0, changed: 0, ...fields });
+  assert.equal(relocationSummary(result({ highlights: 10, moved: 5, kept: 1 })),
+    "Highlights placed in the file: 5 moved, 0 matched roughly, 1 stayed in place, 0 not found.");
+  assert.equal(relocationSummary(result({ highlights: 10, moved: 5, kept: 1, approx: 2, lost: 2, changed: 2 })), [
+    "Highlights placed in the file: 5 moved, 2 matched roughly, 1 stayed in place, 2 not found.",
+    "A dashed highlight moved: right-click it to accept it or move it.",
+    "2 that someone moved meanwhile were left as they are.",
+    "A hollow tag marks a highlight whose text is gone: right-click it and choose Move to a selection or Use the closest match.",
+  ].join(" "));
+  assert.doesNotMatch(relocationSummary(result({ approx: 1 })), /PDF|Document menu|Hover/);
+});
+
 test("a click opens the export and import dialogs again, or where the work is managed", () => {
   assert.equal(canOpen(job({})), true);
   assert.equal(kindOf(job({ kind: "import" })).open, "import");
@@ -240,4 +253,26 @@ test("a follow round: the answer, the job failed when the share refuses it or it
   for (const error of [{ status: 500, message: "boom" }, new Error("Failed to fetch"), {}]) {
     assert.equal(afterFollow(row, { error }), row, "offline or a 5xx: asked again next round");
   }
+});
+
+test("a computer turn's row: the agent and the page, waiting for the person while it asks, its own Stop", () => {
+  const params = { page: "p1", turn: "t1", agent: "codex", label: "Codex", title: "Thesis · draft" };
+  const turn = (fields = {}) => job({ id: "computer-t1", kind: "computer-turn", title: "Codex · Thesis · draft", workspace: "w1",
+    params, readonly: true, ...fields });
+  assert.equal(taskTitle(turn()), "Codex on this computer: Thesis · draft", "the page's own title, a · in it kept");
+  assert.equal(taskTitle(turn({ params: { ...params, title: "" } })), "Codex on this computer: Untitled");
+  assert.equal(taskTitle(turn({ params: { ...params, title: undefined }, title: "Thesis" })), "Codex on this computer: Thesis",
+    "an older server's row: its title");
+  assert.equal(taskTitle(turn({ params: { ...params, computer: "TIM-PC" } })), "Codex on TIM-PC: Thesis · draft",
+    "a turn the computer that keeps another server's work folder runs");
+  assert.equal(taskInfo(turn({ progress: { phase: "asking" } })), "Waiting for you");
+  assert.equal(taskInfo(turn()), "Working…");
+  assert.equal(taskInfo(turn({ state: "queued" })), "Waiting for its turn…");
+  assert.equal(kindOf(turn()).open, "computer");
+  assert.equal(canOpen(turn()), true);
+  assert.deepEqual(taskActions(turn()), ["stop"]);
+  assert.equal(stopPath(turn()), "/local-agents/chat/turns/t1/stop?ws=w1", "in the workspace the turn runs in");
+  assert.equal(stopPath(turn({ workspace: "", params: { turn: "a b" } })), "/local-agents/chat/turns/a%20b/stop");
+  assert.equal(stopPath(job({})), "", "other jobs stop through their cancel");
+  assert.equal(stopPath({ local: true, kind: "computer-turn" }), "");
 });

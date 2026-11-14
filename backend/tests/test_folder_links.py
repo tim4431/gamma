@@ -11,8 +11,10 @@ a vault of another server pushing: test_vault_http.py."""
 import io
 import json
 import os
+import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -342,6 +344,62 @@ def test_a_path_must_be_a_full_one_of_its_own_outside_the_data_directory(owner, 
     assert not (kept / gamma_sync.STATE).exists()
     for l in owner.get("/api/folder-links").json()["links"]:
         owner.delete(f"/api/folder-links/{l['id']}", params={"files": "trash"}).raise_for_status()
+
+
+@pytest.fixture
+def home(disk, monkeypatch):
+    """A home directory of the test's own (``Path.home``), below ``disk``."""
+    place = disk / "home" / "u"
+    place.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: place))
+    return place
+
+
+def test_a_place_no_vault_may_have_is_said_in_one_order_and_one_text(home, monkeypatch):
+    refusal = folder_links.place_refusal
+    assert refusal(Path(home.anchor)) == folder_links.ROOT_REFUSED == "Pick a directory, not the root of a drive."
+    assert folder_links.HOME_REFUSED == ("Pick a project directory: Gamma does not sync your whole home directory or a "
+                                         "directory around it.")
+    for place in (home, home.parent, home.parent.parent):
+        assert refusal(place) == folder_links.HOME_REFUSED, place
+    assert refusal(home / "paper") == "" and refusal(home / "Documents" / "paper") == ""
+    data = config.DATA_DIR.resolve()
+    for place in (data, data / "workspaces"):
+        assert refusal(place) == folder_links.DATA_REFUSED, place
+    assert refusal(data / "users.db", directory=False) == folder_links.DATA_FILE_REFUSED
+    assert refusal(home / "x.tex", directory=False) == "" and refusal(home, directory=False) == ""
+    whole, _itself = folder_links._system_places()
+    if whole:                                                          # this platform's own
+        assert refusal(whole[0]) == f"Pick a project directory: {whole[0]} is the operating system's."
+        assert refusal(whole[0] / "share" / "x") == f"Pick a project directory: {whole[0] / 'share' / 'x'} is the operating system's."
+    # home comes before the data directory: a data directory inside home says home's words for home
+    monkeypatch.setattr(config, "DATA_DIR", home / ".config" / "Gamma")
+    assert refusal(home) == folder_links.HOME_REFUSED and refusal(home / ".config") == folder_links.DATA_REFUSED
+
+
+def test_inside_a_mount_or_temporary_directory_is_allowed_but_not_the_directory_itself(monkeypatch):
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: Path("/no-such-top/u")))    # around none of them
+    if not sys.platform.startswith("linux"):
+        monkeypatch.setitem(folder_links.SYSTEM_PLACES, sys.platform, folder_links.SYSTEM_PLACES["linux"])
+    for allowed in ("/run/media/u/disk/paper", "/opt/projects/x", "/media/u/stick/paper", "/mnt/data/paper"):
+        assert folder_links.clean_path(allowed) == str(Path(allowed).resolve()), allowed
+    for refused in ("/run", "/run/media", "/opt", "/media", "/mnt", "/tmp", "/var", "/usr", "/usr/share/doc", "/etc/x"):
+        target = Path(refused).resolve()
+        if folder_links._in_data_dir(target):        # the tests' data directory is in a temporary one: that rule first
+            continue
+        with pytest.raises(folder_links.LinkError, match="is the operating system's"):
+            folder_links.clean_path(refused)
+
+
+def test_making_previewing_and_relinking_a_vault_say_the_same_words(owner, disk, home):
+    link = _create(owner, folder=make_folder(owner, "FL refused places"), path=str(home / "paper"))  # inside home
+    for place in (home, home.parent):
+        for route, body in (("/api/folder-links", {"path": str(place), "new_folder": True}),
+                            ("/api/folder-links/preview", {"path": str(place)}),
+                            (f"/api/folder-links/{link['id']}/relink", {"path": str(place)})):
+            r = owner.post(route, json=body)
+            assert r.status_code == 400 and r.json()["detail"] == folder_links.HOME_REFUSED, (route, r.text)
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 
 def test_root_links_the_whole_library(owner, disk):

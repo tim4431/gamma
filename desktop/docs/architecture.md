@@ -151,6 +151,7 @@ word that lets a path through, and the ways in:
 | a library folder's right-click *Sync with this computer…* (`frontend/src/app/App.jsx`) | a directory | `addFolderVault(ws, folder)` |
 | the sync panel's *Sync a folder of <workspace> with this computer…* (below, "The sync panel") | a folder, then a directory | `addFolderVault(ws, folder)` |
 | *Add a synced vault…* in the launcher's buttons and at the panel's end | a directory | `addDirectoryVault()` |
+| *Open with Gamma* on a folder in the file manager ("Opening files and folders") | the folder, or a Markdown file's project | `newWorkFolder(dir, tick)` |
 | a page's Document menu, *Push from a file on this computer…* | a PDF | `addFileVault(ws, page)` |
 
 **A page's asks.** Gamma's page never names a path. It posts `{source:
@@ -164,13 +165,34 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 | `follow-file-on-disk {ws, page}` (*Push from a file on this computer…*) | `shell:push-file-from-page` | `addFileVault` |
 | `reveal-on-disk {ws, page}` (the vault chip's *Show in folder*) | `shell:reveal-from-page` | `revealOnDisk` |
 | `relocate-file {ws, page}` (the banner's *Locate…*) | `shell:relocate-from-page` | `relocateFile` |
-| `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening PDF files") |
+| `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening files and folders") |
+| `continue-in-terminal {ws, page}` (the chat's computer side, *Continue in a terminal*) | `shell:terminal-from-page` | `terminalFromPage` |
+| `tracked {link, cancelled}` (the host's tracking dialog of a work folder of another server, saved or cancelled) | `shell:tracked-from-page` | `trackedFromPage` |
+
+*Continue in a terminal* takes no command from the page: `terminalFromPage`
+asks the open server, which must be one on this computer (a remote's page
+is refused with a notice), `GET /api/local-agents/chat/terminal?page=<id>`
+through the shell's own `localServer(...).api` with the workspace header,
+checks the answer (an absolute `cwd` that is a directory here, an argv of
+non-empty strings, no control character, nothing a terminal would read as
+its own syntax), and opens a terminal in `cwd` running that argv
+(`lib/terminal.js` `terminalCommand`): Windows Terminal (`wt.exe -d <cwd>
+-- <argv>`) when found on PATH and no part holds a `;` (its command
+separator, wherever it stands), else a new console through `cmd.exe /d /c
+start … cmd.exe /d /k call …` with every part quoted (`"`, `%`, `!` and `^`
+refused); macOS Terminal through `osascript`, each argument shell-quoted
+then escaped for AppleScript, a backslash or `!` refused (the person's
+login shell may be fish or csh, which read them within single quotes);
+Linux `x-terminal-emulator -e`, else the first of
+`gnome-terminal`, `konsole` and `xterm` found. Each is spawned as an argv
+array, detached. A notice says what it opened ("Opened Codex's
+conversation in a terminal.") or why not (the route's detail as it is).
 
 The first two keep the names they had before synced vaults, so that a
 desktop app released before them, which passes on only those, still
 forwards them from an updated server's page. `sync-folder-on-disk` and
 `push-file-on-disk` reach the same channels as spare names; no page sends
-them. The other three are new: an older app ignores them. The shell takes a message only from the content
+them. The others are new: an older app ignores them. The shell takes a message only from the content
 view's page of the open server (its frame's origin), with plain ids
 (`[\w-]{1,64}`), and only while nothing else runs: no action in the bar,
 no vault dialog up, no other ask (`fromPage`). It takes at most one a
@@ -212,15 +234,43 @@ the host runs).
    vault on the host with `remote_url`, `workspace`, `token` and
    `token_id`; a vault that fails to be made revokes the token.
 
-**A directory's vault** (`addDirectoryVault`): the picked directory
-becomes a work folder (below) in a new folder named after it
-(`new_folder`). It needs no open server. It lands (`vaultPlace`,
+**A directory's vault** (`addDirectoryVault`, `workFolderOf`): the
+directory becomes a work folder (below) in a new folder named after it
+(`new_folder`). It comes three ways: the picker of *Add a synced vault…*,
+a directory already chosen (`oneByOne`'s *Sync the folder…*), and a folder
+opened with Gamma from the file manager, or a Markdown file's project
+(`newWorkFolder`, "Opening files and folders"), which may name a file to
+tick in its dialog. It needs no open server. It lands (`vaultPlace`,
 `openFiles.readerPlace`) on the open local server, through the window's
 session, in the workspace the window shows when the account writes there,
 it is no clone and no one else sees it, or else in the account's own
 workspace there; otherwise on the host, started and signed into in its own
 session, in the account's personal workspace. A shared workspace takes a
-directory through its folder's *Sync with this computer…*, which names it.
+directory through its folder's *Sync with this computer…*, which names it,
+and is never asked: the notice names where the work folder went.
+
+**The broad-place question** (`broadOk`). A directory that is the Desktop,
+Documents, Downloads, Music, Pictures or Videos (`app.getPath`), a
+OneDrive root (`OneDrive`, `OneDriveConsumer`, `OneDriveCommercial`) or,
+on macOS, the iCloud Drive (`knownPlaces`) holds a person's loose files
+rather than a project, so before a vault takes one the shell asks: *Make
+all of Downloads a work folder?*, detail *<dir> is your Downloads folder.
+Gamma would write a hidden .gamma folder there, read the folder while it
+runs, and ask which of its files to track. For one project, open that
+project's folder instead.*, buttons *Make it a work folder* and *Cancel*
+(the default, and the test harness's answer). A folder's *Sync with this
+computer…* and *Locate…*, which need not make a work folder, ask *Sync all
+of Downloads with Gamma?* instead, with *Use it* and *Cancel* (`broadOk(dir,
+false)`). The place itself only, as
+`openFiles.broadPlace` compares it (without case on Windows and macOS, no
+trailing separator): `Documents/paper` is a project. Every way the shell
+gives a vault a directory asks it: `workFolderOf` (the three above), a
+folder's *Sync with this computer…* after its picker, and *Locate…* of a
+folder's vault. The server refuses a drive's root, the home directory and
+the directories around it, the data directory and the system's own places
+for every way a vault is made or moved, in its own words
+([synced_vaults.md](../../docs/dev/synced_vaults.md#rules-that-keep-files-safe)
+"Refused places").
 
 **A work folder** (`makeWorkFolder`; [docs/dev/work_folders.md](../../docs/dev/work_folders.md))
 is a vault of a local server's folder that pushes everything, whose files
@@ -232,12 +282,18 @@ adopt}` with the shell's word, which makes the vault paused and *choosing*,
 its marker written and no round run. Then it hands over: the server's window
 (opened when another shows) goes to the vault's folder with its dialog,
 `openGammaWorkspace(ws, {folder, track: <link id>})`, which loads
-`?ws=…&folder=…&track=…`. That is all the shell gives the page: the dialog
-lists, previews and saves through the server's routes, which take the link
-by its id and never a path, so still nothing passes from the shell to the
-page. Its Save writes the `.gammaignore` and runs the first round; its
-Cancel removes the vault and what making it made. The panel's *Choose
-files…* (`choose`) navigates the same way for a work folder there is.
+`?ws=…&folder=…&track=…`. A file opened with Gamma that the work folder
+does not track yet adds `&tick=<rel>`, its path relative to the work
+folder (`/`-separated), which the dialog ticks; the page reads it with
+`track` and drops both from the address at once, so neither stays in its
+history or in a link copied from it. That is all the shell gives the page:
+the dialog lists, previews and saves through the server's routes, which
+take the link by its id and never a disk path, so still no disk path
+passes from the shell to the page. Its Save writes the `.gammaignore` and
+runs the first round; its Cancel removes the vault and what making it
+made. The panel's *Choose
+files…* (`choose`, `chooseFiles`) navigates the same way for a work folder
+there is.
 
 **A file's vault** (`addFileVault`) pushes, never pulls: each new version
 of the file becomes the page's PDF, as *Replace the PDF…* makes it, and the
@@ -303,7 +359,44 @@ by then.
 **host**, the first local server, which `ensureHost` makes, starts and
 signs into when needed (the clones' host too), and reads the folder over
 HTTP with the token: only that folder's files come down. From the shell it
-pulls, and pushes PDFs at most for now. The vaults of a remote workspace
+pulls, and pushes PDFs at most (`keeping.REMOTE_RULE`), unless it is a
+**work folder of that server**: an empty folder there (`remotePages` 0)
+with a directory of notes or PDFs (`firstPush`, as for a local one), on a
+server that says `work_folders` in `GET /api/sync/whoami` to an account
+that may write there (`remoteWorkRefusal`, else the vault dialog asks as
+before, push off, the reason in a notice, as it does when the host or that
+server refuses one: `keeping.remoteWorkRefused`), goes to
+`makeRemoteWorkFolder`, which mints a write token there with the
+window's session, posts the host `{folder, path, notes, pull: true, push:
+"everything", choose: true, remote_url, workspace, token, token_id}` with
+the shell's word, shows the computer there (`showComputer`), and opens
+**the host's own window** at its own workspace with `?track=<link id>`:
+the tracking dialog is the host's, so no directory listing goes through
+that server ([work_folders.md](../../docs/dev/work_folders.md) "Work
+folders of another server"). The minted token's id is remembered
+(`tracking`, by the link's id) until the dialog's page ask `tracked`
+answers: saved, the window goes back to that server with the folder open;
+cancelled (the dialog deleted the link), the token is revoked and the
+computer hidden there when no other vault of that server and workspace
+stays (`releaseRemote`); a cancel the host refused (that server not
+reached) leaves the link choosing and the token kept, and the bar says
+so. Removing one whose server the removal's question could not reach
+asks only whether to remove it anyway (`force=1`). *Choose files…* on such a folder opens the
+host's window the same way. Its push stays everything and its pull on
+(`REMOTE_WORK_RULE`), its agent row stays local-only (`item.agentHere`),
+and removing it while that server cannot be reached asks first (*Remove
+anyway* forgets it with `force=1`, the folder staying a work folder there
+until the workspace's owner lets go of it). Once this computer is shown
+there (`item.agentHere`), its agent row is offered as a local work
+folder's ([local_agents.md](../../docs/dev/local_agents.md) "A work folder
+of another server"): turning it on asks with the local sentence, then
+*Whoever can sign in to NAS as tim, and whoever runs NAS, can send work
+to Codex here. Codex reads your files and its answers are stored on
+NAS.*, and, for a server reached over plain `http:` that is not this
+computer (127.0.0.1, localhost, ::1), *NAS is reached without encryption:
+someone on your network could read what is sent and pose as NAS.*; no
+waiting count is asked (those Sends wait on the NAS); *What it may run*
+stays hidden (`FAR_RUNS_RULE`). The vaults of a remote workspace
 are the host's links with that origin and workspace (`listLinks`; the
 chooser lists only the folders'). `settings.folderHost` remembers the host
 so it starts at launch like the clones' hosts (`startBackgroundHosts`), and
@@ -318,6 +411,33 @@ click while one runs is ignored, so a double click never mints two write
 tokens. Turning push off keeps the write token until the vault is removed,
 which revokes it (`releaseRemote`, with the window's session, signed into
 the remote).
+
+**The computer shown there.** Right after a vault of another server is
+made, `showComputer` mints on that server, with the window's session and
+the workspace header, a token of the `computer` scope (`{name: "Gamma
+desktop: <host name>", scope: "computer", expires_in_days: 365}`), which
+opens nothing there but the computer's channel, and hands it to the host's
+`POST /api/computer-links` with the shell's word; the host announces this
+computer to that server and keeps a long-poll open to it, so the vault's
+maker sees there, in any window, that the vault is kept on this computer
+and whether it is online ([computers.md](../../docs/dev/computers.md)). A
+replaced token is revoked there. It is skipped when the host already has
+a link for that server and workspace whose account is the one signed in
+there (unless that link was refused), and never handed to another account
+signed in there (the notice says so; the host refuses it too); a failure
+revokes the minted token and is added to the vault's notice, the vault
+staying made. The sync
+panel's view of such a vault says *Shown on NAS as TIM-PC · connected* (or
+*connecting*, *refused this computer's token*, *older than this app*, *not
+reachable*) with *Stop showing*, or *Not shown on NAS* with *Show this
+computer there*: the two actions `show-computer` and `hide-computer`, the
+first minting and handing over as above, the second deleting the host's
+link (`DELETE /api/computer-links/{id}`) and revoking its token there
+(`revokedToken`: when that server answers `revoked: false` or cannot be
+reached, the notice names the connection left to remove in its Settings).
+`releaseRemote` does the second when the last vault of that server and
+workspace goes, the removal's notice saying when the token was left. `refreshKeeping` reads each running local server's `GET
+/api/computer-links` for the line.
 
 In the Mac App Store build the pick is also the app's access to the
 directory or the file, kept as a bookmark (`lib/folderAccess.js`; at
@@ -445,6 +565,7 @@ keep their rows, where their words warn. Each goes through
 | *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
 | the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
 | the agent row | a work folder of its maker, on a server that runs agents | `setAgent`: turning one on asks first, then `PATCH {agent}` with the shell's word; off is `PATCH {agent: ""}` |
+| *What it may run* | under the agent row, while an agent is on | `setAgentRuns`: *Ask me in the chat* asks first (`keeping.runsAsk`), then `PATCH {agent_runs: "ask"}` with the shell's word; *Nothing more* is `PATCH {agent_runs: "never"}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
 now*, the switches and the agent row) leave the panel open on the new
@@ -465,7 +586,20 @@ shell's word, which `vaultOn`'s headers alone do not carry, while the bar
 reads *Checking Codex…* (the server asks the agent afresh and refuses one
 not ready with why), and a notice says what came of it
 (`keeping.agentSaid`: "Codex now answers the Sends on thesis; 2 waiting
-were handed to it."). Turning it off asks nothing. *Remove the vault…* offers *Remove, keep the files* and
+were handed to it."). Turning it off asks nothing.
+
+**Letting it ask** (`setAgentRuns`, the row *What it may run* under the
+agent's) is the computer's decision too: *Let Codex ask to run more in
+D:\Papers\thesis?*, what it may then ask for in the chat (Codex: a command
+with the network or a change outside the folder; Claude Code: a command
+such as the build), that nothing runs until allowed there, and that an
+allowed command runs as the person, with their files and the network; then
+`PATCH {agent_runs: "ask"}` with the shell's word and a notice
+(`keeping.runsSaid`). *Nothing more* asks nothing
+([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Asking in the
+chat").
+
+*Remove the vault…* offers *Remove, keep the files* and
 *Remove, move them to the trash* (the files the sync wrote go to
 `.gamma/trash`; files the user added or changed stay). A vault of one file,
 a vault whose directory is not there and a stopped one (its marker gone or
@@ -707,52 +841,187 @@ this is safe against someone else's sign-in link, is
 [cloud_accounts.md](../../docs/dev/cloud_accounts.md) "The desktop app's
 sign-in".
 
-### Opening PDF files
+### Opening files and folders
 
-Every build registers Gamma as a PDF app. It is listed under *Open with*,
-and the user can make it the default. No build makes itself the default;
-the user picks it: *Open with → Choose another app → Always* or Settings →
-Default apps on Windows, *Get Info → Open with → Change All* on macOS, the
-desktop's default-applications setting on Linux. The registration differs
-per target (`electron-builder.cjs`):
+The file manager hands the app a file (*Open with → Gamma*, Gamma chosen
+as a type's app, a file dropped on the app's icon) or a folder (*Open with
+Gamma* on a folder or on the empty background of an open one, a folder
+dropped on the Dock icon, `gamma <dir>` from a terminal). A folder opens
+the vault Gamma already has there, or becomes a work folder of this
+computer's server with its tracking dialog open. A file opens its vault's
+page, or is read where it is under *Opened files*; a Markdown file outside
+every vault asks first whether to edit it in Gamma. The shell's words, the
+installer's and the OS entries' are English: the shell has no catalog, the
+installer is not localized, and the Store package is `en-US`.
 
-- The **NSIS installer** runs `assets/installer.nsh`. It writes the ProgID
-  `Gamma.pdf` (open command `"Gamma.exe" "%1"`), adds it to `.pdf`'s
-  `OpenWithProgids`, and registers Gamma's capabilities under
-  `RegisteredApplications`, which puts Gamma in Default apps. It never
-  writes the `.pdf` key's default value. electron-builder's own
-  `fileAssociations` does, and its uninstaller then leaves `.pdf` pointing
-  at a ProgID that is gone, so the config has no top-level
-  `fileAssociations`. The keys go under HKCU or HKLM as the install did;
-  the uninstaller removes them and an update keeps them, so Gamma stays
-  the default where the user made it so.
-- The **Store package** adds a `windows.fileTypeAssociation` extension from
-  `assets/appx-extensions.xml` (`appx.customExtensionsPath`).
-- **macOS** declares the type in `Info.plist` with `LSHandlerRank`
-  *Alternate* (`mac.fileAssociations`).
-- The **.deb**'s desktop entry lists `application/pdf` (`linux.mimeTypes`).
-  A `fileAssociations` entry with a MIME type would also install its own
-  definition of `application/pdf`.
+**What each target registers.** The file types are one table,
+`tests/shared/openwith.json`: PDF, Markdown (`.md`, `.markdown`), LaTeX
+(`.tex`), BibTeX (`.bib`) and Typst (`.typ`), the paper loop's sources.
+`scripts/openwith.cjs` writes the NSIS script, the Store manifest and the
+Linux folder entries from it ([release.md](release.md#package-locally)
+says how to change it and what each target registers):
 
-A file arrives on the command line (Windows, Linux) or as an `open-file`
-event (macOS, before `ready` at a launch too). The app runs once per
-profile (`app.requestSingleInstanceLock`, keyed on the userData dir): a
-second start hands its command line to the running app (`second-instance`)
-and quits, and without a PDF it only brings the window forward. A second
-app would run a second server on the same data directories.
-`lib/openFiles.js` reads the arguments. It skips switches (Chromium adds
-its own to a second start's), reads a `file://` URL as its path, and keeps
-existing files ending in `.pdf`. A start that names a file never goes
-hidden into the tray.
+| Target | Files | Folders | Cannot |
+|---|---|---|---|
+| NSIS installer (`assets/installer.nsh`) | every type of the table, in *Open with* and Default apps | *Open with Gamma* on `Directory` and `Directory\Background` | the verb in Windows 11's first menu (under *Show more options*); several folders selected run it once each |
+| Store package (`assets/appx-extensions.xml`) | every type | none | a folder verb (it needs a COM extension) |
+| macOS dmg/zip (`mac`) | every type, rank *Alternate* | `public.folder`: a folder dropped on the Dock icon, `open -a Gamma <dir>` | an entry in Finder |
+| Mac App Store | PDFs only | none | anything else (the sandbox) |
+| `.deb` | PDFs only (`linux.mimeTypes`) | a Dolphin service menu and a Nemo action | a GNOME Files entry |
 
-*Server → Open a PDF…* asks for one with the native picker
-(`openPdfDialog`) and hands it over the same way.
+No build makes itself the default of any type; the user may: *Open with →
+Choose another app → Always* or Settings → Default apps on Windows, *Get
+Info → Open with → Change All* on macOS, the desktop's default-applications
+setting on Linux. The NSIS installer writes each ProgID (`Gamma.pdf`,
+`Gamma.markdown`…, open command `"Gamma.exe" "%1"`), adds it to its
+extensions' `OpenWithProgids` and lists it under Gamma's capabilities in
+`RegisteredApplications`, never the extension key's default value. electron-builder's own `fileAssociations` writes that
+value, and its uninstaller then leaves `.pdf` pointing at a ProgID that is
+gone, so the config has no top-level `fileAssociations`. The keys go under
+HKCU or HKLM as the install did; the uninstaller removes exactly what the
+installer wrote, a key it made for an extension (`.typ`, `.bib`, under
+HKCU) once that is empty, and an update keeps them, so Gamma stays the
+default where the user made it so. An extension taken out of the table
+goes in the generator's `dropped` list (`{ext, progid}`), and
+`customInstall` of the version that drops it deletes its `OpenWithProgids`
+value, then `<ext>\OpenWithProgids` and `<ext>` with `/ifempty`, and its
+`Capabilities\FileAssociations` value, so an update leaves nothing behind.
+macOS declares each type with `LSHandlerRank` *Alternate*, which never
+outranks an app that claims it; where no app claims a type, a double click
+opens Gamma, read-only. The `.deb`'s desktop entry lists `application/pdf`
+alone (`linux.mimeTypes`; a `fileAssociations` entry with a MIME type
+would also install its own definition of it): listing `text/markdown`
+could take the double click from the text editor.
 
-Each file is **read where it is**, one at a time (`openPdfFiles` →
-`readPdf` in `main.js`): a page of the app's own local server reads it in
-place, so nothing is copied, and the file is never sent to a remote server
-(at most its hash, step 2).
-A paper opened on a train does not go to the NAS.
+**How a path arrives.** On the command line (Windows, Linux) or as an
+`open-file` event (macOS, before `ready` at a launch too).
+`lib/openFiles.js` reads the arguments: `launchArgs` leaves out the
+executable, and in a dev start (`process.defaultApp`, `electron .`) the
+app's own directory, the first argument that is no switch (Playwright puts
+its own switches before it); `openedPaths` skips switches, reads a
+`file://` URL as its path, on Windows repairs an argument ending in `"`
+(`"%V"` of `D:\` arrives as `D:"`), and keeps the files and directories
+that exist, as absolute paths, once each, with no extension filter: the
+server says what it can show. The app runs once per profile
+(`app.requestSingleInstanceLock`, keyed on the userData dir): a second
+start parses its own arguments and passes them as the lock's
+`additionalData` (`{paths}`), then quits; the running app's
+`second-instance` takes `data.paths` (or, from an older start, parses the
+command line itself), and a start that names nothing only brings the
+window forward. A start that names a file or a folder never goes hidden
+into the tray (`bootHidden`). *Server → Open a PDF…* asks for a PDF with
+the native picker (`openPdfDialog`) and hands it over the same way.
+
+**One queue.** `openWithGamma(paths, cwd)` takes every hand-over. Before
+the boot the paths wait (`early`); after, each hand-over is one run on
+`openQueue`, after the ones before it, and handles its paths in order: the
+window comes forward (`surfaceWindow`, an open in flight awaited), then a
+directory goes to `openFolderWithGamma`, a file to `openFileWithGamma`. A
+failure is an error box, "Could not open <name> in Gamma." with the
+reason, and the next path goes on. Explorer runs the folder verb once per
+selected item, each a second start, so twelve folders are twelve runs and
+the window ends on the last. Each run answers `[{path, workspace, page |
+folder, track?, tick?, error?}]` (the e2e reads it).
+
+**What a path is: `whereIs`.** The shell asks the servers, never guesses:
+`POST /api/folder-links/where {path}` with the shell's word and no
+workspace header ([synced_vaults.md](../../docs/dev/synced_vaults.md#which-path-is-what)).
+Every local server of the registry that runs is asked, the window's
+first, and the first answer that is not `none` wins (`vault`, `hidden`,
+`around`, `file_vault`). Before a path is taken as nobody's, each local
+server that does not run is started and asked too (a second local server
+costs its start, rarely); one that does not start is named in the notice
+that follows (`Gamma could not check <server>'s synced vaults: it did not
+start.`) and the open goes on. Each server has 10 s (`WHERE_MS`); an older
+server without the route (404, 405), a refusal, a timeout or a server that
+stopped is logged and skipped. Nobody's is the host's `none`, with its
+`refusal`. A remote server is never asked: no disk path goes to one, and
+only ids come back to the window. The account each server is asked as is
+the one that would navigate:
+
+- the server the window shows, while the window is signed in there: the
+  window's session, so the answer, `hidden` included, is that account's;
+- every other local server: the shell's seeded account in its own
+  partition (`localServer`), the account `openServer` signs the window in
+  with when it opens that server;
+- the window's server while the window is signed out there: `localServer`
+  too, only to learn what the path is. An answer that would take the window
+  there stops with `Sign in to <server>, then open <name> again.`
+  (`landOn`); `none` goes on, the new work folder's place and the lone
+  file's choosing their own. A 401 through the window (signed out since
+  its session was read) is asked once more this way.
+
+**A folder** (`openFolderWithGamma`):
+
+| What `where` says | What happens |
+|---|---|
+| a work folder of this server, still choosing | its maker: the tracking dialog (`chooseFiles`), *“W” waits for its files to be chosen.*; anyone else: `Only the account that made the work folder “W” chooses what it tracks.` |
+| inside a vault of this server | the window on that server (opened when another shows), `?ws=&folder=` of the directory's folder: the list view there. `never`: *Gamma never tracks <rel>: <why>. “W” opened.*; not `exact`: *Nothing in <rel> is tracked yet: “W” opened at “<nearest>”.* (and *Choose files… picks what it tracks.* for a work folder). A paused vault opens as it is; a kept folder is never raised to a work folder here; a whole library's vault opens the library |
+| inside a vault of another server | the registry's remote at its origin, `?ws=&folder=` by that server's ids (its maker's work folder still choosing: the host's dialog, as *Choose files…*); a remote the registry lacks: `<dir> is synced with <host>: add that server to Gamma to open it here.` |
+| `hidden` | `<dir> is kept by another account on this computer.` |
+| `around` one vault | that vault, as above, and *<dir> holds the work folder “W”, which opened: a work folder is never inside or around another.* |
+| `around` several | *<dir> holds 3 synced vaults (“A”, “B”, “C”): open one of their folders with Gamma, or pick it in the sync panel.*, nothing opened |
+| `none` with a `refusal` | the refusal (a drive's root, home or a directory around it, the data directory, a system place) |
+| `none`, a work folder made this run still choosing | *Choose the files of “W” first, then open <dir> with Gamma again.*, nothing made |
+| `none` | `newWorkFolder`: a work folder as *Add a synced vault…* makes one (`workFolderOf`: the broad-place question, `vaultPlace`, the preview, `makeWorkFolder`, "A directory's vault"), its dialog open; *“<name>” is a work folder of <workspace> on <server> now: choose the files it tracks.* A preview's refusal and the server's (`MAX_LINKS`, a clone or a Zotero-linked workspace) are said as for any work folder |
+
+**One new work folder at a time.** The shell keeps the work folders the
+verb made in this run (`waiting`: server, workspace, link id, name).
+Before it makes another, it reads each (`GET /api/folder-links/<id>`
+through `localServer`) and drops those no longer choosing (saved,
+cancelled, gone, or that cannot be read). While one still chooses, no new
+work folder is made, so twelve folders selected by mistake write one
+marker and never reach a workspace's cap; an existing vault's folder still
+opens.
+
+**A file** (`openFileWithGamma`):
+
+| What `where` says | What happens |
+|---|---|
+| in a vault, `never` | `Gamma never tracks <name>: <why>.` |
+| in a vault of this server, a `page` | the window on that server, `?ws=&page=`: the page's viewer follows its format (`documents/viewers.js`). No new page, nothing copied |
+| … `trashed` | `<name> is a file of “W”, whose page is in Recently deleted: restore it there.` |
+| … a work folder choosing, or not tracking it | its maker: the tracking dialog with the file ticked (`chooseFiles(srv, link, rel)`: `&tick=<rel>`), *<name> is not tracked by “W” yet: tick it and save to open it.*; anyone else: `Only the account that made the work folder “W” chooses what it tracks: ask it to track <name>.` |
+| … a work folder tracking it, no page yet | paused: `“W” is paused: resume it in the sync panel, then open <name> again.`; else `POST /api/folder-links/open` on that server in the vault's workspace (its round reads the file) and the page it answers |
+| … a kept folder, the file not its own | a lone file (below): the vault does not read it |
+| in a vault of another server, a `page` | that server, `?ws=&page=` by its ids |
+| … a work folder not tracking it | the host's dialog with the file ticked (its Save uploads the file there, which the dialog says) |
+| … a work folder tracking it, no page | `<name> has not reached <host> yet: it opens there after the work folder's next round.` |
+| … a kept folder, the file not its own | a lone file: that server's round never reads it |
+| `file_vault` | its page |
+| `none`, a `.md` or `.markdown` | the question below |
+| `hidden` or `none` | a lone file: `readFile`. A hidden Markdown file is never asked about: its directory is another account's vault |
+
+**A Markdown file outside every vault** (`editOrView`). A note is edited
+only through a work folder, whose pull writes Gamma's edits back to the
+file and settles a change made in another editor meanwhile; Gamma never
+writes a lone file. So each time such a file is opened the shell asks
+first. The project is `openFiles.projectDir`: the first directory up from
+the file's own that holds `.git` (a directory, or a worktree's file),
+never the home directory, a drive's root or a broad place; else the
+file's own directory. It must be nobody's (`where` says `none` with no
+`refusal`), else the file's own directory is tried. When neither can be a
+work folder (a refused place, a directory holding a vault), the file is
+read as a lone file and the notice adds why; while a work folder made
+this run still chooses its files, nothing opens (*Choose the files of “W”
+first, then open <name> again.*). Otherwise the native question: *Edit
+notes.md in Gamma?*, detail *notes.md is in no work folder. Edit in Gamma
+makes <dir> a work folder: Gamma writes a hidden .gamma folder there, asks
+which of its files to track, and saves your edits back to notes.md. Just
+view it opens the file read-only.* (and *<dir> is the repository notes.md
+is in.* for a repository), buttons *Edit in Gamma* (the default) and *Just
+view it* (Esc). *Edit in Gamma* is `newWorkFolder(dir, rel)`, a folder
+opened with Gamma with the file ticked; after Save the dialog lands on the
+note. Whatever stops it on the way (the broad-place question's Cancel, a
+refusal) opens nothing: the person asked to edit, not to read. *Just view
+it* reads the file (`readFile`), a text document in the code view, and the
+bar adds *To edit it as a note, open it with Gamma again and pick Edit in
+Gamma.* No answer is remembered.
+
+**A file read where it is** (`readFile`, of any format the server can
+show): a page of the app's own local server reads it in place, so nothing
+is copied, and the file is never sent to a remote server (at most a PDF's
+hash, step 2). A paper opened on a train does not go to the NAS.
 
 1. The window comes forward. With no server open, the host opens (the
    first local server, made when there is none).
@@ -760,40 +1029,59 @@ A paper opened on a train does not go to the NAS.
    local server, the workspace the window shows (`?ws=`, else the
    account's default) when the account writes there and it is no clone.
    Otherwise, a remote server open or no such workspace, a page of the
-   workspace the window shows that carries the file's bytes opens there
+   workspace the window shows that carries a PDF's bytes opens there
    first, as an added file's page does (`openCarried`: the file hashed here,
    `openFiles.docIdOf`, and only the hash asked, `GET
    /api/blocks/by-doc/<hash>`, so a paper annotated on the NAS, in a clone
    or in a workspace the account only reads opens its page); a remote's
    session is not read for it, so a NAS out of reach still lets the file
-   be read here. No such page, the window moves to the host and the file
-   goes into the account's personal workspace there; signed out, a dialog
-   says to sign in. A workspace others see
-   (other members, or public) asks first, since every member could read the
-   file through the page while Gamma runs: *Open in <personal workspace>*,
-   the default, *Open in <workspace>* and *Cancel*.
+   be read here. No other format is looked for so. No such page, the
+   window moves to the host and the file goes into the account's personal
+   workspace there; signed out, a dialog says to sign in. A workspace
+   others see (other members, or public) asks first, since every member
+   could read the file through the page while Gamma runs: *Open in
+   <personal workspace>*, the default, *Open in <workspace>* and *Cancel*.
 3. `POST /api/folder-links/open {path}` with the shell's word ("Synced
    vaults"), on the server's own origin, answers `{workspace, page,
-   created, title}`. The server opens a file inside a synced vault as that
-   vault's page, bytes a page of the workspace stores as that page, and a
-   file opened before as its page again; anything else
-   is a new page inside the one page *Opened files* (a page inside a page
-   stays out of the library's list), titled with the file's stem, its PDF
-   read from the path (the page's `doc` at `path`).
-4. For a new page the annotations another reader saved in the file become
+   created, title, format}`. The server opens a file inside a synced vault
+   as that vault's page, bytes a page of the workspace stores as that page,
+   and a file opened before as its page again; anything else is a new page
+   inside the one page *Opened files* (a page inside a page stays out of
+   the library's list), titled with the file's stem, its document read
+   from the path (the page's `doc` at `path`), in the viewer of its
+   format. A Markdown file is a text document there (`format: text`, `ext:
+   .md`). It refuses a program, a binary and a file past the keep limit,
+   with words the error box shows.
+4. For a new PDF the annotations another reader saved in the file become
    Gamma's (`POST /api/import/pdf-annotations` with the hash of the page's
    `doc`, read from `GET /api/blocks/<id>`, as below).
 5. The bar says where the file is read ("main is read from this computer,
    under Opened files in Personal on Local."), every time, a page that was
    there already too, and the window loads `<origin>/?ws=<id>&page=<id>`.
 
-The page shows *On this computer* in its header, and *Add to library…*
-stores the bytes and files the page where the user asks, in this workspace
-or another this account edits on the server, with *Keep pushing from the
-file* to make it a vault of one file (`POST
-/api/folder-links/opened/<id>/add`, the page's own). Its *Another server…*
-posts `carry-to-server`, and `carryToServer` adds the page to the library
-of another server of the registry (`carryPage`):
+**The Mac App Store build** reaches a directory only once the picker
+granted it, and a file from Finder only for one run: a folder handed over
+opens the picker at it (`pickDirectory(…, dir)`, *Choose this folder to
+let Gamma read it…*), whose choice becomes a work folder
+(`addDirectoryVault`, its `reachFolder` restarting the server with the new
+bookmark); a PDF is added to the library (`addPdf`, below); any other file
+is refused (`This build of Gamma opens PDFs only.`).
+
+Under the test harness the Markdown question takes *Just view it* and the
+broad-place question *Cancel* unless a test queued another answer
+(`answers`); `openWithGamma`, `readFile` and `whereIs` are on the test
+hook.
+
+**An opened PDF to another server.** The page shows *On this computer* in
+its header, and *Add to library…* stores the bytes and files the page where
+the user asks, in this workspace or another this account edits on the
+server, with *Keep pushing from the file* to make it a vault of one file
+(a PDF only; `POST /api/folder-links/opened/<id>/add`, the page's own; an
+opened Markdown file is not added, it joins the library as a note when
+dropped on it). Its *Another server…* posts `carry-to-server`, and
+`carryToServer` adds the page to the library of another server of the
+registry (`carryPage`), a PDF's page only (another format is refused
+before anything is asked: `Only a PDF is carried to another server.`):
 
 1. It checks the page: it reads a file here that is there
    (`GET /api/folder-links/page/<id>`'s `reader`), the window's account
@@ -859,7 +1147,7 @@ goes on none of these calls.
 **Added instead.** When the account set *Add opened PDFs to the library*
 (`openAddsToLibrary` in `GET /api/prefs/profile` on the open server), and
 always in the Mac App Store build, whose servers reach only the folders the
-app held when they started, a file is added as an upload in Gamma adds it
+app held when they started, a PDF is added as an upload in Gamma adds it
 (`addPdf`), through the content session:
 
 1. The window comes forward. With no server open, the last one opens, else
@@ -885,9 +1173,8 @@ app held when they started, a file is added as an upload in Gamma adds it
    as it is.
 6. The window loads `<origin>/?ws=<id>&page=<id>`.
 
-A PDF dropped on the window is Gamma's own upload, into the place the drop
-names. Under the test harness the question takes its first answer, and
-`openPdfFiles` is on the test hook.
+A file dropped on the window is Gamma's own upload, into the place the drop
+names.
 
 ### The microphone
 
@@ -963,7 +1250,7 @@ alone ([the survey](../../docs/research/test-windows.md)):
 - On Windows `setFocusable(false)` comes before `minimize()`: minimizing a
   window never shown takes the foreground otherwise. The call also drops
   the taskbar button.
-- A PDF handed over and a sign-in come back go through `surfaceWindow`,
+- A file or a folder handed over and a sign-in come back go through `surfaceWindow`,
   which leaves the window down. `showWindow` (*Show Gamma*, the Dock icon)
   brings it back with `showInactive`, unfocused, and the background step
   that tests this puts it down again. The restore and focus a user gets run
@@ -1083,8 +1370,11 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   workspace switcher, the clone and synced-vault flows over the server's
   API with the vault dialog and the shell's word ("Synced vaults"), the
   focus hint, the tray and background mode, one app per profile and the
-  PDFs the system hands it, read where they are or added, and an opened
-  PDF carried to another server ("Opening PDF files"), `--smoke` self-test,
+  files and folders the system hands it (what each local server says a
+  path is, `whereIs`; a folder's vault or a new work folder, a file's page
+  or the file read where it is, the question about a lone Markdown file),
+  and an opened PDF carried to another server ("Opening files and
+  folders"), `--smoke` self-test,
   sidecar cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
 - `preload.js` — exposes the `gammaShell` IPC bridge **only in the main
   frame of the bundled launcher and bar URLs** supplied by the main process;
@@ -1137,14 +1427,16 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   listener, the verifier and its challenge, the tab's last page, the claim
   request ("Gamma Cloud sign-in"); no Electron, unit tested by
   `test/cloudSignIn.test.js`.
-- `lib/openFiles.js` — the PDFs a command line names, the workspace a file
-  goes into, added or read where it is (and a directory's vault with it),
-  and the workspaces of another server an opened PDF may be carried to
-  ("Opening PDF files"); no Electron, unit tested by
+- `lib/openFiles.js` — the files and directories a command line names
+  (`launchArgs`, `openedPaths`), the broad places (`broadPlace`), a
+  Markdown file's project (`projectDir`), the workspace a file goes into,
+  added or read where it is (and a directory's vault with it), and the
+  workspaces of another server an opened PDF may be carried to ("Opening
+  files and folders"); no Electron, unit tested by
   `test/openFiles.test.js`.
 - `lib/zipNames.js` — the entry names of a zip, read from its central
   directory: whether a page's Gamma export holds its PDF before it is
-  carried to another server ("Opening PDF files"); no Electron, unit tested
+  carried to another server ("Opening files and folders"); no Electron, unit tested
   by `test/zipNames.test.js`.
 - `lib/loadPage.js` — `webContents.loadURL` without its false alarms. Its
   promise takes any `did-stop-loading` or `did-navigate-in-page` for the end of
@@ -1173,9 +1465,14 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   direction (the shell bar, above); no Electron, unit tested by
   `test/windowControls.test.js`.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
-  secret-gated signing, the update feed's `publish` block, the PDF
-  registration per target). `assets/installer.nsh` — the NSIS installer's
-  PDF registration; `assets/appx-extensions.xml` — the Store package's.
+  secret-gated signing, the update feed's `publish` block, the file and
+  folder registration per target). `scripts/openwith.cjs` — reads
+  `tests/shared/openwith.json` and writes the registration the targets
+  take: `assets/installer.nsh` (the NSIS installer's file types and
+  folder verb), `assets/appx-extensions.xml` (the Store package's file
+  types) and `assets/linux/` (the `.deb`'s Dolphin and Nemo folder
+  entries); `npm run openwith`, checked by `test/openWith.test.js`
+  ("Opening files and folders").
   `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS
   build made without a certificate ([release.md](release.md)).
 - `electron-builder.mas.cjs` — the Mac App Store build, extending the
@@ -1218,8 +1515,11 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   round followed to its end with no request held open, the shell's word on
   the routes that take a path and on no other, a directory's vault made
   with no server open, the dialog's answers, the focus hint's pace, the
-  hint about a third file, the carry to another server and its refusals
-  (`npm test`).
+  hint about a third file, the carry to another server and its refusals,
+  and a file or a folder opened with Gamma: `whereIs` and the account each
+  server is asked as, each answer's navigation, notice or error, the
+  question about a lone Markdown file, one new work folder at a time, the
+  broad places, a file read where it is (`npm test`).
 - `test/e2e.js` — the Playwright-driven end-to-end suite (see
   [checklist.md](checklist.md)). `test/security.e2e.js` — the Electron
   boundary against a fake remote server, no backend ("Invariants").

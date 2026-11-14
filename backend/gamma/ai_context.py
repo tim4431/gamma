@@ -20,10 +20,10 @@ from .blocks_store import (FOLDERS, LABELS, PATH_SEP, fetch_subtree, filed_folde
                            page_ancestors, page_for_doc, page_root_id, sub_pages)
 from .db import connect_data_db, connect_pages_db, page_now, safe_doc_id
 from .documents import formats, text as doc_text
-from .documents.model import (is_listed, is_pdf, page_document, parse_upload_url, pdf_file_hash, source_address,
-                              stored_name)
+from .documents.model import (file_hash, is_listed, is_pdf, page_document, parse_upload_url, pdf_file_hash,
+                              source_address, stored_name)
 from .feedback import anchors
-from .highlights import is_highlight, is_ink, page_of
+from .highlights import is_highlight, is_ink, page_of, text_span
 from .logbuf import log
 from .net_guard import guarded_urlopen
 from .notebook import is_sheet
@@ -86,6 +86,11 @@ MESSAGE_CONTEXT_INTRO = (
 # head excerpt is in the document context already, so a selection adds only
 # its windows, not a second copy of the start of the paper.
 SELECTION_WINDOW_CHARS = 10_000
+# A selection in a text file's code view names its lines (at most
+# MAX_SELECTION_LINE); the window around it reads SELECTION_WINDOW_LINES
+# lines on either side, within the same characters.
+MAX_SELECTION_LINE = 10_000_000
+SELECTION_WINDOW_LINES = 20
 
 
 def canonical_tool(name: str) -> str:
@@ -120,11 +125,22 @@ def _selection_box(value):
     return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
 
 
+def _selection_lines(item: dict) -> list[int] | None:
+    """A selection's ``[line, end]`` in a text file (1-based, inclusive;
+    ``end`` defaults to ``line``), None when it names none that reads."""
+    line, end = item.get("line"), item.get("end", item.get("line"))
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in (line, end)):
+        return None
+    return [line, end] if 1 <= line <= end <= MAX_SELECTION_LINE else None
+
+
 def request_selections(payload) -> list[dict]:
-    """The PDF passages a chat message is about, as ``{text, page, box}``:
-    ``page`` is the 1-based PDF page the viewer saw the selection start on
-    (0 = unknown) and ``box`` its region on that page (None = unknown), read
-    from the request's ``selections``."""
+    """The passages of the page's document a chat message is about, as
+    ``{text, page, box}``: ``page`` is the 1-based PDF page the viewer saw
+    the selection start on (0 = unknown, or a text file) and ``box`` its
+    region on that page (None = unknown), read from the request's
+    ``selections``; a selection in a text file's code view adds ``lines``,
+    its ``[first, last]`` line (``_selection_lines``)."""
     passages = []
     for item in getattr(payload, "selections", None) or []:
         if not isinstance(item, dict):
@@ -133,8 +149,11 @@ def request_selections(payload) -> list[dict]:
         page = item.get("page")
         page = page if isinstance(page, int) and 0 < page <= MAX_PAGES else 0
         if text:
-            passages.append({"text": text, "page": page,
-                             "box": _selection_box(item.get("box")) if page else None})
+            passage = {"text": text, "page": page, "box": _selection_box(item.get("box")) if page else None}
+            lines = None if page else _selection_lines(item)
+            if lines:
+                passage["lines"] = lines
+            passages.append(passage)
     # Whole: what the question quotes of each is final_prompt's to cut
     # (quoted_shares), and locating one needs only its start.
     return passages[:MAX_SELECTIONS]
@@ -177,13 +196,19 @@ def quoted_shares(payload, budget: int | None = None) -> tuple[list[int], list[i
 def passage_cuts(payload, budget: int | None = None) -> list[dict]:
     """The quoted passages the budget cuts short, as the chat reports them:
     ``{kind: "pdf" | "note", n, of, kept, total}`` (``n`` 1-based among the
-    ``of`` passages of its kind)."""
+    ``of`` passages of its kind), a selection of a text file's lines with
+    its ``lines`` too."""
     passages, notes = request_selections(payload), request_note_selections(payload)
     pdf_kept, note_kept = quoted_shares(payload, budget)
-    return [{"kind": kind, "n": n, "of": len(texts), "kept": kept, "total": len(text)}
-            for kind, texts, shares in (("pdf", [p["text"] for p in passages], pdf_kept),
-                                        ("note", [s["text"] for s in notes], note_kept))
-            for n, (text, kept) in enumerate(zip(texts, shares), start=1) if kept < len(text)]
+    cuts = []
+    for kind, items, shares in (("pdf", passages, pdf_kept), ("note", notes, note_kept)):
+        for n, (item, kept) in enumerate(zip(items, shares), start=1):
+            if kept < len(item["text"]):
+                cut = {"kind": kind, "n": n, "of": len(items), "kept": kept, "total": len(item["text"])}
+                if item.get("lines"):
+                    cut["lines"] = item["lines"]
+                cuts.append(cut)
+    return cuts
 
 
 def _quoted(text: str, kept: int) -> str:
@@ -197,11 +222,14 @@ def _quoted(text: str, kept: int) -> str:
 
 
 def _passage_heading(index: int, count: int, where: dict) -> str:
-    """"Passage 2 (PDF page 7; section "3.2 Noise model"):" — where a
-    selected passage sits, as far as it is known."""
+    """"Passage 2 (PDF page 7; section "3.2 Noise model"):" or "Selected
+    passage (lines 118–120):" — where a selected passage sits, as far as it
+    is known."""
     bits = []
     if where.get("page"):
         bits.append(f"PDF page {where['page']}")
+    elif where.get("lines"):
+        bits.append(anchors.line_words(*where["lines"]))
     if where.get("section"):
         bits.append(f'section "{where["section"]}"')
     if where.get("crop"):
@@ -216,22 +244,24 @@ def final_prompt(payload, located: list | None = None, budget: int | None = None
     current prompt, each within its share of ``budget`` (``quoted_shares``;
     the request's own by default). ``located`` is what the context builder
     learned about each passage (``selection_context``: page, section,
-    attached picture); without it a passage is labelled with the page the
-    viewer reported."""
+    attached picture; ``text_selection_context``: lines, and ``secret`` for
+    a passage of a secrets file, whose text is not quoted); without it a
+    passage is labelled with the page, or the lines, the viewer reported."""
     prompt = payload.prompt
     passages = request_selections(payload)
     pdf_kept, note_kept = quoted_shares(payload, budget)
     if passages:
         blocks = []
         for i, passage in enumerate(passages):
-            where = located[i] if located and i < len(located) else {"page": passage["page"]}
-            blocks.append(f'{_passage_heading(i, len(passages), where)}\n"""\n'
-                          f'{_quoted(passage["text"], pdf_kept[i])}\n"""')
+            where = (located[i] if located and i < len(located)
+                     else {"page": passage["page"], "lines": passage.get("lines")})
+            text = SECRET_TEXT if where.get("secret") else _quoted(passage["text"], pdf_kept[i])
+            blocks.append(f'{_passage_heading(i, len(passages), where)}\n"""\n{text}\n"""')
         several = len(passages) > 1
         prompt = (
             f"{prompt}\n\n"
             f"The user has selected the following passage{'s' if several else ''} from the "
-            f"page's PDF attachment. Answer specifically about {'them' if several else 'it'}:"
+            f"page's document. Answer specifically about {'them' if several else 'it'}:"
             "\n\n" + "\n\n".join(blocks)
         )
     selected = request_note_selections(payload)
@@ -1274,6 +1304,43 @@ def text_window(ws: str, view: dict, *, budget: int, from_line: int = 1,
     return text, _text_cover(window.total, last, len(text), next_line is not None), next_line
 
 
+def text_selection_context(ws: str, view: dict, name: str, passages: list[dict],
+                           budget: int) -> tuple[str, list[dict]]:
+    """The lines around each passage selected in a text file
+    (``request_selections``' ``lines``): ``SELECTION_WINDOW_LINES`` before
+    and after it, numbered (``text_window``), the windows sharing
+    ``budget`` evenly, each headed "lines a–b of <name>" — a selection far
+    past the head the page's section shows reaches the model with its
+    surroundings; a share too small for the lines before it starts at the
+    selection. ``(text, located)``: located has one entry per passage,
+    ``{"lines", "window": [a, b]}`` (no ``window`` when none was read: a
+    ``budget`` of 0, a file not shown), or the page the viewer reported
+    for a passage that names no lines. Every passage of a secrets file is
+    ``secret``: ``final_prompt`` quotes none of its text."""
+    share = budget // max(1, sum(1 for p in passages if p.get("lines")))
+    secret = doc_text.is_secret(view["name"])
+    sections, located = [], []
+    for passage in passages:
+        if not passage.get("lines"):
+            located.append({"page": passage["page"], **({"secret": True} if secret else {})})
+            continue
+        first, last = passage["lines"]
+        where = {"lines": [first, last], **({"secret": True} if secret else {})}
+        start = max(1, first - SELECTION_WINDOW_LINES)
+        if share > 0:
+            text, cover, _ = text_window(ws, view, budget=share, from_line=start,
+                                         to_line=last + SELECTION_WINDOW_LINES)
+            if text not in TEXT_SENTENCES and start < first and cover["lines_shown"] < last:
+                start = first
+                text, cover, _ = text_window(ws, view, budget=share, from_line=start,
+                                             to_line=last + SELECTION_WINDOW_LINES)
+            if text not in TEXT_SENTENCES and cover["lines_shown"] >= start:
+                where["window"] = [start, cover["lines_shown"]]
+                sections.append(f"[{anchors.line_words(start, cover['lines_shown'])} of {name}]\n{text}")
+        located.append(where)
+    return "\n\n".join(sections), located
+
+
 def _size_text(size) -> str:
     """A file's size in words: "940 bytes", "212 KB", "3.1 MB", "1.2 GB"."""
     if size is None:
@@ -1479,7 +1546,8 @@ def threads_section(connection, page_id: str, budget: int, *, file_page: bool = 
     """The open comment threads on a page (``comments.threads_for``), each
     with its id, its place — from the thread's stored root anchor, which
     alone carries the ``source`` line a build recorded, else the anchor its
-    block gives now (feedback.entries' rule) — and its comments; at most
+    block gives now (feedback.entries' rule); a range of a text file by the
+    lines its block holds now — and its comments; at most
     MAX_CONTEXT_THREADS, within ``budget`` characters. ``file_page``: a
     work folder's file, whose threads the feedback tools list (named only
     with ``tools``). "" for a page without open threads."""
@@ -1494,7 +1562,7 @@ def threads_section(connection, page_id: str, budget: int, *, file_page: bool = 
         for thread in threads[:MAX_CONTEXT_THREADS]:
             anchor = anchors.parse(stored.get(thread["id"])) or anchors.anchor_of(connection, page_id,
                                                                                   thread["block_id"])
-            place = anchors.place_words(anchor)
+            place = anchors.place_words(anchors.following(connection, page_id, anchor))
             source = anchor.get("source")
             if isinstance(source, dict) and isinstance(source.get("file"), str) and source.get("line"):
                 end = source.get("end")
@@ -1942,6 +2010,27 @@ def placed_label(properties: dict, on_sheet: bool = False, above: bool = False) 
     return f"({kind}, not placed on a page)"
 
 
+def range_words(properties: dict, current: str = "") -> str:
+    """Where a range of a text file sits, as the model is told of it beside
+    its quote: "lines 118–120", "line 118", with "; not found in the current
+    file" when the last change took its text away, "; placed roughly" when
+    it was found unlike (gamma/documents/text_anchors.py), or "; lines of an
+    earlier version of the file" while it is measured on another version
+    than ``current``, the page's file (the run has not placed it yet) — the
+    lines to read with read_page(from_line=). "" for any other block, and
+    for a range whose place does not read."""
+    span = text_span(properties)
+    if not span:
+        return ""
+    pos = properties["text_position"]
+    measured = pos.get("hash") if isinstance(pos.get("hash"), str) else ""
+    state = ("; not found in the current file" if pos.get("lost") is True
+             else "; placed roughly" if pos.get("approx") is True
+             else "; lines of an earlier version of the file" if current and measured and measured != current
+             else "")
+    return anchors.line_words(span[0], span[2]) + state
+
+
 def picture_text(properties: dict, content: str | None) -> str:
     """A picture block's text as the model reads it: its ``![caption](url)``
     line (``picture.markdown_of``), the url what view_image looks at; "" for
@@ -2140,6 +2229,7 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
     tree = Tree.read(connection) if work_folder_of(properties) else None
     name = ((work_paths.page_path(tree, properties) if tree else "")
             or (view["name"] if view else "") or root[3] or "Untitled")
+    current, kept = file_hash(view) or "", anchors.text_kept(view)
     highlights: list[str] = []
     notes: list[str] = []
     areas: list = []  # (page, box) of the area highlights whose picture goes along
@@ -2154,7 +2244,11 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
             area = area_highlight(child_properties)
             shown_as = None
             if quote:
-                entry = f'- Highlighted: "{quote}"'
+                place = range_words(child_properties, current)
+                if kept and place:
+                    entry = f"- Highlighted ({place}; {SECRET_TEXT[1:-1]})"
+                else:
+                    entry = f'- Highlighted: "{quote}"' + (f" ({place})" if place else "")
                 if content:
                     entry += f"\n  User note: {content}"
                 highlights.append(entry)
@@ -2393,7 +2487,23 @@ def gather_inputs(ws: str, payload, allow_native: bool,
                 document_text = text_document(view, name, head, tools=tools)
                 cover = head.cover
                 with_notes = bool(payload.include_notes)
-                report(title, page_id, view["hash"], False, cover, notes=with_notes, view=view)
+                passages = request_selections(payload) if single or page_id == payload.page_id else []
+                selected = {}
+                if passages:
+                    # As a PDF's: the lines around each selection go with
+                    # THIS message unless the head shows the whole file.
+                    whole = head.next_line is None
+                    around = min(text_budget, SELECTION_WINDOW_CHARS * len(passages))
+                    if quoted is not None and not whole:
+                        quoted["wanted"] = max(quoted["wanted"], around)
+                    windows, located = text_selection_context(
+                        ws, view, name, passages, 0 if whole else min(around, quote_budget))
+                    selected = {"selection": {"passages": located}}
+                    if windows:
+                        message_sections.append(
+                            f'Text around the selected passage{"s" if len(passages) > 1 else ""} of '
+                            f'"{title}" (Gamma page ID: {page_id}):\n{windows}')
+                report(title, page_id, view["hash"], False, {**cover, **selected}, notes=with_notes, view=view)
             if doc_id and attach:
                 data = load_pdf_b64(ws, doc_id)
                 if data and total_b64 + len(data) < 20_000_000:

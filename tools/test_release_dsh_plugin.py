@@ -36,11 +36,11 @@ class DshInstallerTest(unittest.TestCase):
             self.assertEqual(names, ["dsh-gamma-1.2.3.tgz", "dsh-gamma.tgz", "install-gamma-dsh.ps1", "install-gamma-dsh.sh"])
 
     def run_installer(self, root, assets, *, code=None, bad_download=False, fail_dsh=False, fail_claim=False,
-                      desktop=True, remove=False):
+                      desktop=True, remove=False, open_app=False):
         """Exercise the real script; substitute only downloads, Gamma's replies (a
         sign-in that waits once, then is allowed; an older Gamma's claim of
         ``code``), the browser and the dsh CLI. ``fail_claim``: the sign-in is
-        cancelled, the code refused."""
+        cancelled, the code refused. ``open_app``: the desktop app is running."""
         log = root / "calls.txt"
         for done in (log, root / "calls.txt.polled"):
             if done.exists():
@@ -55,7 +55,8 @@ class DshInstallerTest(unittest.TestCase):
         bundle = next(p for p in assets if p.name.startswith("dsh-gamma-"))
         env = {**os.environ, "DSH_HOME": str(home), "GAMMA_TEST_BUNDLE": str(bundle), "GAMMA_TEST_LOG": str(log),
                "GAMMA_TEST_BAD": "1" if bad_download else "", "GAMMA_TEST_DSH_FAIL": "1" if fail_dsh else "",
-               "GAMMA_TEST_CLAIM_FAIL": "1" if fail_claim else "", "GAMMA_TEST_VERSION": "1.2.3"}
+               "GAMMA_TEST_CLAIM_FAIL": "1" if fail_claim else "", "GAMMA_TEST_VERSION": "1.2.3",
+               "GAMMA_TEST_OPEN": "1" if open_app else ""}
         if POWERSHELL:
             env = {key: value for key, value in env.items() if key.upper() != "PSMODULEPATH"}
             env["LOCALAPPDATA"] = str(root / "user data")
@@ -104,6 +105,7 @@ function Invoke-RestMethod {
     [pscustomobject]@{ token = 'gamma_testtoken' }
 }
 function Start-Process { param($FilePath) Add-Content -LiteralPath $env:GAMMA_TEST_LOG -Value "open|$FilePath" }
+function Get-Process { param($Name, $ErrorAction) if ($env:GAMMA_TEST_OPEN) { [pscustomobject]@{ ProcessName = $Name } } }
 if ($args[1] -eq '--remove') { & $args[0] -Remove }
 elseif ($args.Count -gt 2) { & $args[0] -ServerUrl $args[1] -SetupCode $args[2] }
 else { & $args[0] -ServerUrl $args[1] }
@@ -148,6 +150,7 @@ mkdir -p "$DSH_HOME/profiles/$3/node_modules/dsh-gamma"
 printf '{"version": "%s"}\\n' "$GAMMA_TEST_VERSION" > "$DSH_HOME/profiles/$3/node_modules/dsh-gamma/package.json"
 printf '{"dependencies": {"dsh-gamma": "file"}}\\n' > "$DSH_HOME/profiles/$3/package.json"
 ''')
+            (bin_dir / "pgrep").write_text('#!/bin/sh\n[ -n "$GAMMA_TEST_OPEN" ]\n')
             for opener in ("open", "xdg-open"):
                 (bin_dir / opener).write_text('#!/bin/sh\nprintf \'open|%s\\n\' "$1" >> "$GAMMA_TEST_LOG"\n')
             for file in bin_dir.iterdir():
@@ -242,6 +245,20 @@ printf '{"dependencies": {"dsh-gamma": "file"}}\\n' > "$DSH_HOME/profiles/$3/pac
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("expired", result.stdout + result.stderr)
             self.assertFalse((home / "gamma.json").exists())
+
+    def test_an_open_app_stops_it_before_anything(self):
+        """The app reads the plugin and the connection only when it starts, so
+        one left open would go on without them: nothing is installed, asked
+        or removed while it runs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            assets = release(root / "release", "1.2.3")
+            for remove in (False, True):
+                result, calls, home, _ = self.run_installer(root, assets, remove=remove, open_app=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("DeepSeek Harness is open", result.stdout + result.stderr)
+                self.assertEqual(calls, [])
+                self.assertFalse((home / "gamma.json").exists())
 
     @unittest.skipUnless(POWERSHELL, "the desktop app's profile")
     def test_desktop_profile_must_exist(self):

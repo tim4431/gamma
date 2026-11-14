@@ -283,10 +283,10 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     near(moved.x, before.x + 60 / k, "moved right as far as the drag");
     near(moved.y, before.y + 40 / k, "and down");
     assert(await page.$(`[data-picture-id="${firstId}"].selected`), "still selected after the drag");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.x === before.x && p.y === before.y, "the move undone");
     assert((await status()).includes("Undone"), `the pill says so (${await status()})`);
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await storedWhen(firstId, (p) => p.x === moved.x && p.y === moved.y, "the move redone");
     await pause();
     await page.keyboard.press("ArrowLeft");
@@ -309,9 +309,9 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     near(sized.w, before.w * f, "as much larger as the pointer went out", 1.5);
     near(sized.w / sized.h, 2, "its aspect kept", 0.02);
     near(sized.x + sized.w / 2, before.x + before.w / 2, "about its centre");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.w === before.w && p.h === before.h, "the resize undone");
-    await page.keyboard.press("Control+Shift+z");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
     await storedWhen(firstId, (p) => p.w === sized.w, "the resize redone");
     await pause();
     const grip = centre(await page.locator(".pictureHandle.inkTransform-resize").boundingBox());
@@ -321,7 +321,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     const stretched = await storedWhen(firstId, (p) => p.w !== sized.w, "the stretched picture on the server");
     near(stretched.w, sized.w + 60 / k, "wider by the drag on either side", 1.5);
     near(stretched.h, sized.h, "as tall as it was");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.w === sized.w, "the stretch undone");
     assertNoProblems(page);
   });
@@ -345,11 +345,11 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     assertEq(turned.angle, 90, "snapped to the quarter turn");
     assert((await picEl(firstId).getAttribute("style")).includes("rotate(90deg)"), "the frame turned on the page");
     await shot("picture-turned");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.angle === 0, "the turn undone");
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await storedWhen(firstId, (p) => p.angle === 90, "the turn redone");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.angle === 0, "and undone again");
     assertNoProblems(page);
   });
@@ -360,11 +360,11 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     await storedWhen(firstId, (p) => p.flip_h === true, "the flip on the server");
     const flip = () => picEl(firstId).locator(".pagePictureFlip").evaluate((el) => el.style.transform);
     await until(async () => (await flip()) === "scale(-1, 1)", { what: "the picture mirrored on the page" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.flip_h === false, "the flip undone");
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await storedWhen(firstId, (p) => p.flip_h === true, "the flip redone");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.flip_h === false, "and undone again");
     assertNoProblems(page);
   });
@@ -398,9 +398,9 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     near(cropped.w, before.w * cropped.crop.w, "the frame shrinks to the part kept, at the same scale");
     near(cropped.x, before.x, "its left edge where it was");
     near(cropped.y, before.y, "its top too");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.crop.w === 1 && p.w === before.w, "the crop undone");
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await storedWhen(firstId, (p) => p.crop.w === cropped.crop.w, "the crop redone");
     assertNoProblems(page);
   });
@@ -433,10 +433,10 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     near(reset.x + reset.w / 2, before.x + before.w / 2, "about the same centre", 0.02);
     near(reset.y + reset.h / 2, before.y + before.h / 2, "down too", 0.02);
     assert((await picEl(firstId).getAttribute("style")).indexOf("rotate(") < 0, "upright on the page");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => JSON.stringify(p) === JSON.stringify(before), "the reset undone: cropped, flipped and turned again");
     assert((await status()).includes("Undone: picture change"), `the pill names it (${await status()})`);
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await storedWhen(firstId, (p) => JSON.stringify(p) === JSON.stringify(reset), "the reset redone");
     await pause();
     await (await menuButton("Fit to page")).click();
@@ -453,9 +453,9 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     const [x0, y0, x1, y1] = turnedBox(tilted);
     assert(x0 > -0.02 && y0 > -0.02 && x1 < 612.02 && y1 < 792.02, `its turned frame on the page: ${[x0, y0, x1, y1]}`);
     assert(tilted.w < fit.w, "shrunk to fit");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => JSON.stringify(p) === JSON.stringify(fit), "the turn undone");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => JSON.stringify(p) === JSON.stringify(reset), "the fit undone");
     assertNoProblems(page);
   });
@@ -505,7 +505,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
       .getAttribute("data-picture-id")) === dropped.id, { what: "drawn under the others" });
     await page.keyboard.press("Delete");
     await until(async () => !(await stored(dropped.id)), { what: "the dropped picture deleted" });
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await until(async () => !!(await stored(dropped.id)), { what: "and back with Ctrl+Z" });
     await account.api(`/api/blocks/${dropped.id}`, { method: "DELETE" });
     assertNoProblems(page);
@@ -606,10 +606,10 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     await stacked(ids, "the copy brought to the front");
     await storedWhen(copy.id, (p) => p.z === 1, "its z over the others' on the server");
     assertEq(await onTop(), copy.id, "the copy over it again");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await stacked([copy.id, firstId, pastedId], "Bring to front undone");
     assert((await status()).includes("Undone: picture order change"), `the pill names it (${await status()})`);
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await stacked(ids, "and redone");
     assert(await page.$(`[data-picture-id="${copy.id}"].selected`), "still selected");
     // A picture pasted now goes over them all, the copy brought to the front
@@ -669,11 +669,11 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     assert(!(await page.$(".pictureCrop")), "no crop mode");
     assertEq(JSON.stringify((await stored(pastedId)).properties.picture), JSON.stringify(locked), "not moved, nudged nor deleted");
     assert(await page.$(`[data-picture-id="${pastedId}"].selected.locked`), "still selected");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(pastedId, (p) => !("locked" in p), "the lock undone, the key left out");
     assert((await status()).includes("Undone: picture lock"), `the pill names it (${await status()})`);
     await page.waitForSelector(".pictureHandle", { timeout: 5000 });
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await storedWhen(pastedId, (p) => p.locked === true, "the lock redone");
     assert((await status()).includes("Redone: picture lock"), `the redo's pill names it (${await status()})`);
     const row = page.locator(`.blockRowWrap[data-block-id="${pastedId}"]`);
@@ -730,10 +730,10 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
       return a < 200 ? a : null; // the clipboard held the first picture, opaque, before
     }), { what: "the faded copy on the clipboard" });
     near(alpha, 128, "the copy's alpha half", 3);
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(pastedId, (p) => !("opacity" in p), "the opacity undone, the key left out");
     assert((await status()).includes("Undone: picture opacity change"), `the pill names it (${await status()})`);
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await storedWhen(pastedId, (p) => p.opacity === 0.5, "the opacity redone");
     assert((await status()).includes("Redone: picture opacity change"), `the redo's pill names it (${await status()})`);
     await pause();
@@ -782,9 +782,9 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     near(turned.angle, 30, "turned as far as the stylus went round", 1);
     assertEq(await page.locator(paths).count(), paths0, "no stroke drawn");
     assertEq(await groups(), groups0, "no ink group made");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.angle === 0, "the turn undone");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.x === before.x && p.y === before.y, "the move undone");
     await cdp.detach();
     assertNoProblems(page);
@@ -862,7 +862,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     assert(sized.w > pic.w, "larger");
     assert(await page.$(`[data-picture-id="${firstId}"].selected`) && !(await page.$(`[data-box-id="${boxId}"]:is(.selected, .editing)`)),
       "the picture still selected, the box not");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(firstId, (p) => p.w === pic.w, "the resize undone");
     await account.api(`/api/blocks/${boxId}`, { method: "DELETE" });
     await until(async () => !(await page.$(`[data-box-id="${boxId}"]`)), { what: "the box gone" });
@@ -1163,9 +1163,9 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     await dragBy(picEl(id), 50, 30);
     const moved = await storedWhen(id, (p) => p.x !== p0.x, "the move on the sheet", nbId);
     near(moved.x, p0.x + 50 / k, "moved with the drag");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await storedWhen(id, (p) => p.x === p0.x, "the move undone", nbId);
-    await page.keyboard.press("Control+y");
+    await page.keyboard.press("ControlOrMeta+y");
     await storedWhen(id, (p) => p.x === moved.x, "the move redone", nbId);
     await page.reload();
     await page.waitForSelector(`.nbViewer .nbSheet [data-picture-id="${id}"]`, { timeout: 15000 });
@@ -1294,7 +1294,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
       }, { what: `the picture where alice put it, cropped as bob did, on ${who}'s screen` });
     }
     // alice's Ctrl+Z (her picture is selected) takes her move back, not bob's crop or caption
-    await A.keyboard.press("Control+z");
+    await A.keyboard.press("ControlOrMeta+z");
     const p2 = await until(async () => {
       const p = (await shared()).properties.picture;
       return p.x === pic0.x ? p : null;
@@ -1460,12 +1460,12 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     await until(async () => Math.abs((await strokeBox())[0] - strokeMoved[0]) < 0.01, { what: "and the stroke's, by the same redo" });
     // with the strip closed Ctrl+Z is the block history's, whose step of the pictures takes the strokes' half too
     await L.click(".pdfInkBar button[aria-label='Close the markup tools']");
-    await L.keyboard.press("Control+z");
+    await L.keyboard.press("ControlOrMeta+z");
     await until(async () => (await pictureOf("picLasso")).x === free0.x, { what: "Ctrl+Z: the picture's move undone" });
     await until(async () => Math.abs((await strokeBox())[0] - before[0]) < 0.01, { what: "Ctrl+Z: and the stroke's" });
     await until(async () => (await L.locator(".statusPill").allInnerTexts()).join(" | ").includes("Undone: selection move."),
       { what: "Ctrl+Z's pill naming the step as the strip's does" });
-    await L.keyboard.press("Control+y");
+    await L.keyboard.press("ControlOrMeta+y");
     await until(async () => (await pictureOf("picLasso")).x === moved.x, { what: "Ctrl+Y: the picture's move redone" });
     await until(async () => Math.abs((await strokeBox())[0] - strokeMoved[0]) < 0.01, { what: "Ctrl+Y: and the stroke's" });
     // the lasso's row: Pictures off, remembered on this browser, and the lasso takes the strokes alone
@@ -1552,7 +1552,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
 
   await step("picture: Select all with the lasso takes the page's unlocked pictures with its strokes, Ctrl+A and More's alike; with the lasso's Pictures off, the strokes alone", async () => {
     const { free, held, lctx, L, lassoTool, selBox, menu } = await lassoPaper("Select all with pictures", "selAll");
-    await L.keyboard.press("Control+a");
+    await L.keyboard.press("ControlOrMeta+a");
     await menu.waitFor();
     const box = await until(selBox, { what: "the selection's box" });
     near(box[1], free.y, "from the picture's top");
@@ -1573,7 +1573,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     if (!(await pictures.count())) await lassoTool.click();
     await pictures.click();
     assertEq(await pictures.getAttribute("aria-pressed"), "false");
-    await L.keyboard.press("Control+a");
+    await L.keyboard.press("ControlOrMeta+a");
     const strokesOnly = await until(selBox, { what: "the strokes' selection" });
     assert(strokesOnly[1] > 320 && strokesOnly[2] < 165, `the box round the stroke alone: ${strokesOnly}`);
     await L.keyboard.press("Escape");
@@ -1622,11 +1622,11 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     const copies = async (id = paper.id) => (await picturesOn(id)).filter((b) => ![freeId, heldId].includes(b.id));
     const pastedStrokes = async (id = paper.id) => (await strokesOn(id)).filter((s) => s.id !== "over");
     const original = strokeBounds((await strokesOn(paper.id)).find((s) => s.id === "over"));
-    await L.keyboard.press("Control+a");
+    await L.keyboard.press("ControlOrMeta+a");
     await menu.waitFor();
-    await L.keyboard.press("Control+c");
+    await L.keyboard.press("ControlOrMeta+c");
     await until(async () => (await pill()).includes("Copied 1 stroke and 1 picture."), { what: "the copy's pill" });
-    await L.keyboard.press("Control+v");
+    await L.keyboard.press("ControlOrMeta+v");
     const [copy] = await until(async () => {
       const got = await copies();
       return got.length && (await pastedStrokes()).length ? got : null;
@@ -1650,7 +1650,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     await L.click(".pdfInkBar button[aria-label='Redo ink']");
     await until(async () => (await copies()).length === 1 && (await pastedStrokes()).length === 1, { what: "the paste redone, both halves" });
     // the original selected and cut: both go as one step, and come back as one
-    await L.keyboard.press("Control+a");
+    await L.keyboard.press("ControlOrMeta+a");
     await menu.waitFor();
     const cut = menu.getByRole("button", { name: "Cut", exact: true });
     if (!(await cut.count())) await menu.getByRole("button", { name: "More", exact: true }).click();
@@ -1666,7 +1666,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     assert((await blocksOf()).find((b) => b.id === freeId).children.some((c) => c.id === noteId), "the note under the picture again");
     assert((await pill()).includes("Undone: selection cut"), `the pill names the step: ${await pill()}`);
     // the other paper, opened in the tab: the paste names the same upload, which it shows
-    await L.keyboard.press("Control+p");
+    await L.keyboard.press("ControlOrMeta+p");
     const palette = L.getByRole("dialog", { name: "Open a page" });
     await palette.waitFor();
     await palette.getByRole("textbox", { name: "Search pages, files, folders and labels" }).fill("Another paper for the paste");
@@ -1674,7 +1674,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     await until(() => new URL(L.url()).searchParams.get("block") === other.id, { what: "the other paper open" });
     await L.locator('[data-page="1"] .textLayer span', { hasText: "Another paper" }).waitFor({ timeout: 15000 });
     await L.keyboard.press("l");
-    await L.keyboard.press("Control+v");
+    await L.keyboard.press("ControlOrMeta+v");
     const [there] = await until(async () => {
       const got = await picturesOn(other.id);
       return got.length && (await strokesOn(other.id)).length === 2 ? got : null;

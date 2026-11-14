@@ -11,7 +11,9 @@
 // (work_folders/selection.py) evaluate the same list, and add a page's
 // other file to one ticked alone and the files a file vault inside follows.
 // An entry is the tree route's: {path, directory, format, language,
-// selected, never, locked, walked, …}. Pure: tests/trackSelection.test.mjs.
+// selected, never, locked, walked, …}. A file opened with Gamma that the
+// work folder does not track is ticked as the dialog opens (tickChange).
+// Pure: tests/trackSelection.test.mjs.
 
 export const FORMATS = ["pdf", "markdown", "latex", "image"];
 
@@ -58,6 +60,32 @@ export function toggleAll(state, entries, on) {
 // change of the same format gives way.
 export function toggleFormat(state, format, on) {
   return { ...state, changes: [...state.changes.filter((change) => change.format !== format), { format, on }] };
+}
+
+// The file the dialog opens with ticked (`tick`, its path: a work folder's
+// file opened with Gamma that the folder does not track yet) over the
+// entries read so far (by path, as boxOf's): {read, state, entry, why}.
+// `read` is the folder on its way the listing has but has not read yet,
+// to read before anything else ("" once none is left). Then `entry` is
+// the file's row and `state` ticks it unless something ticks it already
+// (its base, a change, being locked); or `why` says why it is not ticked,
+// `state` left as it was: "never", a row on its way that is never tracked
+// (`entry` that row, its `never` the code), or "gone", the listing has no
+// such file.
+export function tickChange(state, entries, tick) {
+  const byPath = new Map([...entries.values()].map((entry) => [bare(entry.path), entry]));
+  const parts = bare(tick).split("/");
+  const result = (fields) => ({ read: "", state, entry: null, why: "", ...fields });
+  for (let i = 1; i < parts.length; i++) {
+    const folder = byPath.get(parts.slice(0, i).join("/"));
+    if (!folder?.directory) return result({ why: "gone" });
+    if (folder.never) return result({ entry: folder, why: "never" });
+    if (folder.walked === false) return result({ read: bare(folder.path) });
+  }
+  const entry = byPath.get(parts.join("/"));
+  if (!entry || entry.directory) return result({ why: "gone" });
+  if (entry.never) return result({ entry, why: "never" });
+  return result({ entry, state: isSelected(state, entry) ? state : toggle(state, entry, true) });
 }
 
 // Whether a file entry is chosen: its base value, then each change that

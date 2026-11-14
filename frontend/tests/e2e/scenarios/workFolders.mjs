@@ -11,8 +11,9 @@ import { Account, Server, makePdf, wanted } from "../harness.mjs";
 // One paper directory: the dialog's preset, the folder's list view, the
 // library gate (a file is no paper until it is added), Add to library,
 // Remove and Save a copy, the one-place rule, a change of selection, notes
-// that follow Gamma, Cancel of a fresh work folder, and a file in the tabs,
-// recents and pins the listing does not carry.
+// that follow Gamma, Cancel of a fresh work folder, a file opened from the
+// computer ticked in the dialog (?tick=) and landed on after Save, and a
+// file in the tabs, recents and pins the listing does not carry.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 const HEADER = "# What Gamma tracks in this folder";
@@ -141,7 +142,9 @@ export async function workFolderScenarios(env) {
         // the folder's list view: its directory first with what it holds, then the files
         await page.locator(".workList").waitFor({ timeout: 15000 });
         await folderRow(page, "figures").waitFor({ timeout: 15000 });
-        assertEq((await folderRow(page, "figures").locator(".fileRowFormat").innerText()).trim(), "1 file", "figures holds one file");
+        // the row's count follows the page's own read of the folder, after the API's
+        await until(async () => (await folderRow(page, "figures").locator(".fileRowFormat").innerText()).trim() === "1 file",
+          { timeout: 15000, what: "figures holds one file" });
         await fileRow(page, "main.pdf").waitFor();
         await fileRow(page, "notes.md").waitFor();
         const names = (await page.locator(".workList .fileRowName, .workList .folderName").allInnerTexts()).map((s) => s.trim());
@@ -290,7 +293,7 @@ export async function workFolderScenarios(env) {
         const title = page.locator(".titleText");
         await title.waitFor({ timeout: 15000 });
         await title.click();
-        await page.keyboard.press("Control+A");
+        await page.keyboard.press("ControlOrMeta+A");
         await page.keyboard.type("Plan");
         await page.keyboard.press("Enter");
         await until(async () => (await user.api(`/api/blocks/${ids.notes}`)).content === "Plan", { what: "the title saved" });
@@ -328,6 +331,59 @@ export async function workFolderScenarios(env) {
         assert(!(await allFolders()).some((f) => f.id === fresh.folder_id), "its folder is gone");
         assert(!fs.existsSync(path.join(other, ".gamma")), "its .gamma is gone");
         assert(fs.existsSync(path.join(other, "a.md")), "the directory's own file stays");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    });
+
+    await step("work-folders: a file opened from the computer is ticked in Choose files… and opens after Save; left unticked, the status says so", async () => {
+      // the shell's hand-over for a file of a work folder it does not track (?tick=, docs/dev/work_folders.md "The tracking dialog")
+      const thesis = path.join(disk, "Thesis");
+      write(path.join(thesis, "notes.md"), "# Thesis\n\nThe plan.\n");
+      write(path.join(thesis, "sub", "a.tex"), "\\section{Intro}\nThe first chapter.\n");
+      write(path.join(thesis, "sub", "b.tex"), "\\section{Method}\nThe second chapter.\n");
+      // drafts/ is git-ignored, so the tree lists it unread: the dialog reads it to reach the file
+      write(path.join(thesis, ".gitignore"), "drafts/\n");
+      write(path.join(thesis, "drafts", "old.tex"), "\\section{Old}\nAn old draft.\n");
+      const made = await make(thesis);
+      const ticking = (rel) => `${home}&folder=${made.folder_id}&track=${made.id}&tick=${encodeURIComponent(rel)}`;
+      const pageOf = async (rel) => (await user.api(`/api/folder-links/${made.id}/page?path=${encodeURIComponent(rel)}`)).page;
+      const ctx = await desktop();
+      const page = await openPage(ctx, ticking("sub/a.tex"));
+      try {
+        let dialog = page.getByRole("dialog", { name: "Choose files" });
+        await treeFile(dialog, "sub/a.tex").waitFor({ timeout: 15000 });
+        const address = new URL(page.url()).searchParams;
+        assert(!address.has("track") && !address.has("tick"), "the hand-over leaves the address");
+        await dialog.getByText("Opened from your computer: a.tex is ticked. Save to track it and open it.", { exact: true }).waitFor();
+        await until(() => treeBox(dialog, "sub/a.tex").isChecked(), { what: "a.tex ticked" });
+        assert(await treeFile(dialog, "sub/a.tex").evaluate((row) => row.classList.contains("linked")), "its row is marked");
+        assert(!(await treeBox(dialog, "sub/b.tex").isChecked()), "the folder's other source is not");
+        assert(await treeBox(dialog, "notes.md").isChecked(), "the preset stands beside it");
+        await until(async () => /^2 files,/.test((await dialog.locator(".trackSummary").innerText()).trim()),
+          { timeout: 10000, what: "the summary counts 2 files" });
+        await dialog.getByRole("button", { name: "Save", exact: true }).click();
+        await dialog.waitFor({ state: "detached", timeout: 15000 });
+        const a = await until(() => pageOf("sub/a.tex"), { timeout: 30000, what: "the round made a.tex's page" });
+        await until(() => {
+          const u = new URL(page.url()).searchParams;
+          return u.get("block") === a || u.get("page") === a;
+        }, { timeout: 30000, what: "the window lands on a.tex's page" });
+        await page.locator(".docTextView .cm-content").waitFor({ timeout: 20000 });
+
+        // once more, for a file in the git-ignored directory, unticked before the Save
+        await page.goto(ticking("drafts/old.tex"));
+        dialog = page.getByRole("dialog", { name: "Choose files" });
+        await treeFile(dialog, "drafts/old.tex").waitFor({ timeout: 15000 });
+        await dialog.getByText("Opened from your computer: old.tex is ticked. Save to track it and open it.", { exact: true }).waitFor();
+        await until(() => treeBox(dialog, "drafts/old.tex").isChecked(), { what: "old.tex ticked" });
+        await treeBox(dialog, "drafts/old.tex").uncheck();
+        await until(async () => /^2 files,/.test((await dialog.locator(".trackSummary").innerText()).trim()),
+          { timeout: 10000, what: "the summary back at 2 files" });
+        await dialog.getByRole("button", { name: "Save", exact: true }).click();
+        await dialog.waitFor({ state: "detached", timeout: 15000 });
+        await page.locator(".statusPill", { hasText: "old.tex was left unticked, so it is not a page of this work folder." })
+          .waitFor({ timeout: 10000 });
+        assertEq(await pageOf("drafts/old.tex"), "", "no page of it");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });

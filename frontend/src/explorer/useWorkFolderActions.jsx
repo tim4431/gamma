@@ -4,7 +4,8 @@
 // status; the open page as a file; Add to library, Remove from library and
 // Save a copy to library, one request a page; the library rows of a menu;
 // the vault chip's file rows and the add dialog; Choose files… of a work
-// folder this desktop app keeps. App hands in its page rows, the open page,
+// folder this desktop app keeps; Let go of one no vault of this server
+// keeps. App hands in its page rows, the open page,
 // the vault (vault/useVault.js) and the few commands the answers reach.
 // Pure parts: workFolderActions.js.
 import { pageDocument, isPdf } from "../documents/pageDocument.js";
@@ -15,15 +16,18 @@ import { API, apiJson } from "../shared/lib/utils";
 import { useStableActions } from "../shared/lib/stableActions.js";
 import { CopyIcon, FolderMinusIcon, FolderPlusIcon } from "../shared/ui/Icons";
 import { MenuItem } from "../shared/ui/Menus";
-import { fileRow, foldersMoveRefused, libraryRequest, libraryRows, librarySaid, libraryTask, openFile, refusesFiles } from "./workFolderActions.js";
+import {
+  fileRow, foldersMoveRefused, letGoSaid, libraryRequest, libraryRows, librarySaid, libraryTask, mayLetGo, openFile, refusesFiles,
+} from "./workFolderActions.js";
 import { refusalText } from "./workFolders.js";
 
 // `tree`: the folder tree as the rules read it (treeOf); `pages`: App's page
 // rows by id; `focusedId`, `focusedBlock`: the open page; `vault`: its
 // owner's; `setStatus`; `confirm(box)`, App's confirmation box; `openPage`;
 // `tasks`, Background tasks; `reload(ids)`, the listing and the open page
-// read again once `ids` changed.
-export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vault, setStatus, confirm, openPage, tasks, reload }) {
+// read again once `ids` changed; `owner`, whether the account owns the
+// workspace.
+export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vault, setStatus, confirm, openPage, tasks, reload, owner = false }) {
   const open = openFile(pages.get(focusedId), focusedBlock, tree);
 
   // An action on pages that names a work folder's file the rule refuses
@@ -100,6 +104,27 @@ export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vau
     return link ? () => vault.track(link.id) : null;
   };
 
+  // Let go of the work folder `folderId` (POST /api/folders/{id}/let-go),
+  // asked first: its files outside the library go to Recently deleted, the
+  // rest stay as library pages, and the mark comes off, so the computer
+  // that kept it stops syncing it. For the workspace's owner when no vault
+  // of this server keeps it (mayLetGo); null where it is not offered.
+  const letGo = (folderId) => (mayLetGo(tree, folderId, { owner, kept: vault.kept }) ? () => confirm({
+    title: T("Let go of this work folder?"),
+    message: t("The files outside your library go to Recently deleted; your notes and papers stay in the folder. The computer that kept it stops syncing it."),
+    confirmLabel: t("Let go"),
+    danger: true,
+    onConfirm: async () => {
+      try {
+        const answer = await apiJson(`${API}/folders/${encodeURIComponent(folderId)}/let-go`, { method: "POST" });
+        setStatus(letGoSaid(answer?.trashed || 0));
+      } catch (err) {
+        setStatus(t("Could not let go of the work folder: {message}", { message: err.message || err }));
+      }
+      await reload(focusedId ? [focusedId] : []);
+    },
+  }) : null);
+
   // The vault chip's rows for the open page: Add to library… (a file's, or
   // an opened PDF's), and for a file Remove from library, Save a copy to
   // library… and Choose files….
@@ -119,7 +144,7 @@ export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vau
     onClose: () => vault.setAddingFile(null),
   } : null;
 
-  const commands = useStableActions({ refused, foldersRefused, libraryRoute, libraryItems, chooser, linkOf,
+  const commands = useStableActions({ refused, foldersRefused, libraryRoute, libraryItems, chooser, linkOf, letGo,
     fileOf: (id) => fileRow(pages, id) });
   return { ...commands, open, chip, addDialog };
 }

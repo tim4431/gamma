@@ -42,12 +42,12 @@ does not show comes in chunks of its own, through `lazySurface` and
 | Share popover | while open | nothing |
 | Thread popover (comments) | while open | nothing |
 | Properties popover (`editor/BlockProperties.jsx`, `blockProperties.css`) | while open | nothing |
-| PDF margin cards (comments) | beside a page with room and an open thread | nothing |
+| Margin cards (comments) | beside a PDF's page, a picture or a text file's code view with room and an open thread | nothing |
 | Comments window | with its dock window | the window's frame (`DockWindow`), body empty |
 | Files window (`explorer/FilesWindow.jsx` with `FileTree.jsx`, `fileTree.js` and `filesWindow.css`; App imports nothing of them, and its owners `useFilesWindow.js`, `useFilesTree.js`, `useDirectoryRows.js`, `directoryRows.js` and `workPaths.js` are small and in the App chunk) | with its dock window or its phone overlay; fetched at startup when it is open on a desktop, else on the View menu's hover | the window's frame (`DockWindow`), body empty |
 | Inbox panel | while open | nothing |
 | A vault page's Edit the file (`vault/FileSourceDialog.jsx`) and an opened PDF's Add to library… (`vault/FolderPickerDialog.jsx`) | while open | nothing |
-| The code view (`documents/viewers/TextViewer.jsx`, with `@codemirror/search` and `@codemirror/language-data`; each grammar a chunk of its own, fetched when a file of it opens) and the picture, the player and the file pane (`documents/viewers/FileViews.jsx`) | with a page whose document is of their format (`documents/DocumentPane.jsx`); App fetches the chunk as the page starts to open (`preloadViewer`) | the pane's empty shell (`.docViewSkeleton`) |
+| The code view (`documents/viewers/TextViewer.jsx`, with `@codemirror/search` and `@codemirror/language-data`; each grammar a chunk of its own, fetched when a file of it opens; its marks, popup and margin layers, `textMarks.js`, `TextTip.jsx` and `TextOverlay.jsx`, come with it, and it imports nothing of pdf.js: the popup's frame is `shared/ui/TipFrame.jsx`, the marks' tools `pdf/MarkTools.jsx` and `pdf/selectionTip.js`, none of which loads it) and the picture, the player and the file pane (`documents/viewers/FileViews.jsx`) | with a page whose document is of their format (`documents/DocumentPane.jsx`); App fetches the chunk as the page starts to open (`preloadViewer`) | the pane's empty shell (`.docViewSkeleton`) |
 | pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
 
 Mermaid was already loaded this way (`shared/lib/mermaidRenderer.js`).

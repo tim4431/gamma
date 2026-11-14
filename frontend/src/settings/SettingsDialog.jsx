@@ -28,6 +28,7 @@ import { WorkspacesSettings } from "./SettingsWorkspace";
 import { SyncSettings } from "./SettingsSync";
 import { WorkspaceBackups } from "./SettingsBackups";
 import { ServerSettings } from "./SettingsServer";
+import { ProxySettings } from "./SettingsProxy";
 import { dotTone } from "../app/notices";
 import { resolveSettingsPane, settingsSection } from "./settingsNavigation";
 import { hostCaps, searchSettings } from "./settingsSearch.js";
@@ -110,6 +111,7 @@ const LIBRARY_NAV = [
 const ADMIN_NAV = [
   ["users", T("Users"), UsersIcon],
   ["server", T("Server"), ServerIcon],
+  ["proxy", T("Network proxy"), GlobeIcon],
 ];
 const HELP_NAV = ["diagnostics", T("Help & diagnostics"), BugIcon];
 
@@ -1181,7 +1183,7 @@ export default function SettingsDialog({
     if (id === "integrations") return !!users && !users.isGuest;
     if (["account", "users"].includes(id)) return !!users && (id !== "users" || users.isAdmin);
     if (["workspaces", "backups"].includes(id)) return !!workspace;
-    if (id === "server") return !!server;
+    if (id === "server" || id === "proxy") return !!server;
     return true;
   };
   const allNav = [ACCOUNT_NAV, ...PREFERENCE_NAV, ...AI_NAV, ...LIBRARY_NAV, ...ADMIN_NAV, HELP_NAV];
@@ -1391,6 +1393,7 @@ export default function SettingsDialog({
                   onAccount={() => navigate("account", t("Zotero"))} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
                 {pane === "server" ? <ServerSettings value={server} /> : null}
+                {pane === "proxy" ? <ProxySettings setStatus={server.setStatus} /> : null}
                 {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} /> : null}
               </>}
             </main>

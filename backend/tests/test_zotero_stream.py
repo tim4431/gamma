@@ -12,6 +12,7 @@ links are Live, and the clock and the engine's hooks are recorders."""
 import asyncio
 import json
 import logging
+import socket
 import threading
 import time
 
@@ -565,3 +566,31 @@ def test_stop_closes_the_connection_and_a_new_start_opens_another(server, clock)
     assert not zotero_stream.running() and stream_threads() == []
     zotero_stream.start()
     server.wait_subscribed(1, [K1])
+
+
+def test_a_dial_given_up_on_closes_the_socket_it_delivers_late(monkeypatch):
+    """The dial and the opening share HELLO_S; a socket the dial's thread
+    delivers after that is closed, not left to the garbage collector."""
+    delivered = []
+
+    def slow_dial(url, timeout):
+        time.sleep(0.3)
+        sock, other = socket.socketpair()
+        other.close()
+        delivered.append(sock)
+        return sock
+
+    async def open_one():
+        async with zotero_stream.connect("ws://stream.example/"):
+            pytest.fail("no connection opens")
+
+    monkeypatch.setattr(zotero_stream.net_proxy, "socket_for", slow_dial)
+    monkeypatch.setattr(zotero_stream, "HELLO_S", 0.05)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        asyncio.run(open_one())
+    assert time.monotonic() - started < 0.25
+    deadline = time.monotonic() + 5
+    while not (delivered and delivered[0].fileno() == -1) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert delivered and delivered[0].fileno() == -1

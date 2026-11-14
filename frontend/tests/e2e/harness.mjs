@@ -12,8 +12,24 @@ import { promisify } from "node:util";
 import { chromium, firefox, webkit } from "playwright";
 import headed from "../../../tools/headed.cjs";
 import { WEBKIT_TOUCH_NOTE, cancelledLoad, clickAfterCancelledTap, touchPoints } from "./webkit.mjs";
+import { chordLabel, chordParts } from "../../src/shared/lib/hotkeys.js";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+// The browser runs on this machine's platform, so the page is on a Mac when
+// the suite is: Mod is ⌘ there and the page labels keys as a Mac does. A
+// step presses the page's Mod as "ControlOrMeta" (Playwright's Meta on a Mac,
+// Control elsewhere) and keeps "Control" for the Ctrl key itself, as a
+// pinch's Ctrl+wheel is on every platform. keyLabel is a chord as the page
+// labels it here: "Mod-v" reads Ctrl+V on Windows and Linux and ⌘V on a Mac.
+// keyParts is its key caps: ["Ctrl", "Shift", "K"], or ["⇧", "⌘", "K"].
+export const MAC = process.platform === "darwin";
+export const keyLabel = (chord) => chordLabel(chord, MAC);
+export const keyParts = (chord) => chordParts(chord, MAC);
+// The key that puts a text field's caret at the end of its line: End, and
+// ⌘→ on a Mac, where End scrolls and leaves the caret where it is. The
+// notes' editor binds End itself on every platform.
+export const FIELD_END = MAC ? "Meta+ArrowRight" : "End";
 const BACKEND = path.join(ROOT, "backend");
 // A private build keeps concurrent development builds from replacing assets
 // while a browser scenario is reloading the application.
@@ -137,12 +153,17 @@ export class Server {
     throw new Error(`backend did not come up:\n${this.log().slice(-2000)}`);
   }
   log() { try { return fs.readFileSync(this.logPath, "utf8"); } catch { return ""; } }
-  async stop() {
+  // The process ended, its data dir kept: start() again runs the same Gamma
+  // on another port (a computer gone and back, remoteSends.mjs).
+  async halt() {
     if (this.proc && this.proc.exitCode == null) {
       if (process.platform === "win32") { try { execFileSync("taskkill", ["/pid", String(this.proc.pid), "/t", "/f"], { stdio: "ignore" }); } catch {} }
       else this.proc.kill("SIGTERM");
       await sleep(300);
     }
+  }
+  async stop() {
+    await this.halt();
     // The temp dir survives on --keep and after any failure (its failures/
     // folder holds the screenshots and log tails), a failure's without the
     // copy of the build, which says nothing about it.

@@ -170,10 +170,10 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
     const samples = decodeStroke(line);
     assertEq(samples.length, 2, "two samples");
     // its history entry is a straight line's: undone and redone by name (each step saved before the next)
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await page.getByText("Undone: ink straight line (page 1).", { exact: true }).waitFor();
     await until(async () => !(await savedStrokes()).some((s) => s.id === line.id), { what: "the ruler line undone" });
-    await page.keyboard.press("Control+Shift+z");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
     await page.getByText("Redone: ink straight line (page 1).", { exact: true }).waitFor();
     await until(async () => (await savedStrokes()).some((s) => s.id === line.id), { what: "the ruler line back" });
     assertNoProblems(page);
@@ -386,7 +386,7 @@ export async function inkShapesScenarios({ server, browser, alice, makePdf, step
     assertEq(JSON.stringify([edited.ch, edited.pen, edited.brush, edited.t0, samples.at(-1).t]), JSON.stringify(["xyt", false, "monoline", 1000, 400]),
       "its look and its timing kept");
     // one undo entry
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await page.locator(".statusPill").getByText(/ink shape edit/).waitFor();
     await until(async () => (await savedStrokes()).find((st) => st.id === "box")?.shape.params.w === 120, { what: "the rectangle as it was" });
     assertNoProblems(page);

@@ -123,9 +123,9 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     const blk = await aliceT.api("/api/blocks", { method: "POST", body: { parent_id: pageId, content: ["head line", "middle line", "tail line"].join("\n") } });
     await bodyHas(A, "tail line"); await bodyHas(B, "tail line");
     await editRow(A, "tail line");
-    await A.keyboard.press("Control+Home");
+    await A.keyboard.press("ControlOrMeta+Home");
     await editRow(B, "tail line");
-    await B.keyboard.press("Control+End");
+    await B.keyboard.press("ControlOrMeta+End");
     await A.keyboard.type("AA ", { delay: 30 });
     await B.keyboard.type(" BB", { delay: 30 });
     const want = ["AA head line", "middle line", "tail line BB"].join("\n");
@@ -159,9 +159,9 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await bodyHas(A, "last line"); await bodyHas(B, "last line");
     // Alice keeps the editor open at the very end; bob types at the end of line 1.
     await editRow(A, "last line");
-    await A.keyboard.press("Control+End");
+    await A.keyboard.press("ControlOrMeta+End");
     await editRow(B, "last line");
-    await B.keyboard.press("Control+Home");
+    await B.keyboard.press("ControlOrMeta+Home");
     await B.keyboard.press("End");
     await until(async () => JSON.stringify(await remoteCaret(A)) === JSON.stringify({ line: 1, col: 15 }), { what: "bob's caret at the end of line 1 on alice's side" });
     await B.keyboard.type("xyz", { delay: 40 });
@@ -190,7 +190,7 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await closeEditor(B);
     await serverHas("(bob) later");
     await bodyHas(A, "(bob) later");
-    await A.keyboard.press("Control+z");
+    await A.keyboard.press("ControlOrMeta+z");
     await closeEditor(A);
     const want = [{ content: alpha, children: [] }, { content: "beta from bob (bob) later", children: [] }];
     await until(async () => same(await tree(aliceT, pageId), want), { what: `after undo ${JSON.stringify(want)}` });
@@ -200,7 +200,7 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
   await step("collab: renaming the page in one tab updates the other's title and tab", async () => {
     await A.click("h3.titleText");
     await A.waitForSelector(".titleEdit");
-    await A.keyboard.press("Control+a");
+    await A.keyboard.press("ControlOrMeta+a");
     await A.keyboard.type("Team notes renamed");
     await A.keyboard.press("Enter");
     await until(async () => (await B.textContent("h3.titleText")) === "Team notes renamed", { what: "bob's title" });
@@ -255,7 +255,7 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await serverHas(`${text} undoable`);
     await moveIn("a note moved in");
     await bodyHas(A, "a note moved in");
-    await A.keyboard.press("Control+z");
+    await A.keyboard.press("ControlOrMeta+z");
     await sleep(800);
     assert(JSON.stringify(await tree(aliceT, pageId)).includes("a note moved in"), "the moved note survives the undo");
     await bodyHas(A, "a note moved in");
@@ -288,9 +288,9 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await B.keyboard.type(" and bob wrote this");
     await closeEditor(B);
     await bodyHas(A, "alice made this and bob wrote this");
-    await A.keyboard.press("Control+z");
+    await A.keyboard.press("ControlOrMeta+z");
     await until(async () => same(await texts(), ["existing block", " and bob wrote this"]), { what: "alice's typing taken out, bob's kept" });
-    await A.keyboard.press("Control+z"); // would delete the note bob wrote in
+    await A.keyboard.press("ControlOrMeta+z"); // would delete the note bob wrote in
     await until(async () => (await pill(A)).includes("Can't undo: someone else changed this since"), { what: "the undo says why it stops" });
     await sleep(500);
     assert(same(await texts(), ["existing block", " and bob wrote this"]), "bob's text is never deleted");
@@ -417,7 +417,7 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
   });
 
   await step("collab: two people's Backspace merges never lose a block's text, whichever lands first", async () => {
-    const atStart = async (p, text) => { await editRow(p, text); await p.keyboard.press("Control+Home"); };
+    const atStart = async (p, text) => { await editRow(p, text); await p.keyboard.press("ControlOrMeta+Home"); };
     const texts = async (pg) => (await pg.tree()).map((b) => b.content);
     const stored = (pg, want) => until(async () => same(await texts(pg), want), { what: `the server holds ${JSON.stringify(want)}` });
     const shown = (p, text) => until(async () => (await p.$$eval(".blockRow", (rows) => rows.map((r) => r.textContent))).some((t) => t.includes(text)), { what: `"${text}" on a row` });
@@ -511,7 +511,7 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
 
     // One undo step, as without a race: the block she merged comes back, and
     // nothing bob wrote goes with the step.
-    await A.keyboard.press("Control+z");
+    await A.keyboard.press("ControlOrMeta+z");
     await until(async () => (await texts(joined)).length === 3, { what: "alice's undo brings her block back" });
     const after = (await texts(joined)).join("|");
     assert(after.includes("two") && after.includes("three of bob's") && after.endsWith("tail"), `after the undo: ${after}`);
@@ -692,7 +692,7 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await A.mouse.up();
     const alicePaths = () => A.$$eval('[data-page="1"] .inkLayer path', (els) => els.length);
     await until(async () => (await alicePaths()) === 2, { what: "the new stroke on alice's page", timeout: 600, every: 20 });
-    await A.keyboard.press("Control+z");   // within the 700 ms before the first flush
+    await A.keyboard.press("ControlOrMeta+z");   // within the 700 ms before the first flush
     const undoneAt = Date.now();
     await until(async () => (await alicePaths()) === 1, { what: "the stroke undone on alice's page" });
     await until(async () => (await wetOn(B)) === 0 && await B.evaluate(() => window.__inkDropLog.some((n) => n > 0)),

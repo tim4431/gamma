@@ -63,14 +63,19 @@ def changes(conn, since: str, limit: int) -> dict:
 @router.get("/sync/whoami")
 def sync_whoami(request: Request):
     """Who the credential is and what it may do here: ``{user, workspace:
-    {id, name}, role, scope}`` — ``scope`` is the integration token's
-    (``read`` / ``write``), ``session`` for a signed-in browser. A mirror
-    checks this before it is created and at the start of every round."""
+    {id, name}, role, scope, work_folders}`` — ``scope`` is the integration
+    token's (``read`` / ``write``), ``session`` for a signed-in browser;
+    ``work_folders`` (1) says this server keeps work folders and holds a
+    vault's mark to its rule (gamma/ops.py ``mark_rule``), which a computer
+    asks before it makes a work folder of a folder here (one older takes the
+    mark as a plain property). A mirror checks this before it is created
+    and at the start of every round."""
     ws = require_ws(request)
     info = workspaces.get(ws) or {}
     return {"user": request.state.user, "workspace": {"id": ws, "name": info.get("name", "")},
             "role": ws_role(request),
-            "scope": request.state.token_scope if getattr(request.state, "auth", "") == "token" else "session"}
+            "scope": request.state.token_scope if getattr(request.state, "auth", "") == "token" else "session",
+            "work_folders": 1}
 
 
 @router.get("/sync/changes")

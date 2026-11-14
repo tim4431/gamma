@@ -1,12 +1,48 @@
-        <!-- The Store package's PDF registration (electron-builder.cjs,
+        <!-- Written by scripts/openwith.cjs from tests/shared/openwith.json: edit those, then `npm run openwith`.
+             The Store package's file types (electron-builder.cjs,
              appx.customExtensionsPath, appended inside <Extensions>): Gamma in
              "Open with" and Default apps, the default only when the user
-             chooses it; the file's path arrives on the command line. -->
+             chooses it; the file's path arrives on the command line. No
+             ContentType: Windows types a file by its extension. No folder
+             verb: a packaged app has none without a COM extension. -->
         <uap:Extension Category="windows.fileTypeAssociation">
           <uap:FileTypeAssociation Name="pdf">
             <uap:DisplayName>PDF document</uap:DisplayName>
             <uap:SupportedFileTypes>
-              <uap:FileType ContentType="application/pdf">.pdf</uap:FileType>
+              <uap:FileType>.pdf</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="markdown">
+            <uap:DisplayName>Markdown document</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.md</uap:FileType>
+              <uap:FileType>.markdown</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="latex">
+            <uap:DisplayName>LaTeX source</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.tex</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="bibtex">
+            <uap:DisplayName>BibTeX database</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.bib</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="typst">
+            <uap:DisplayName>Typst source</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.typ</uap:FileType>
             </uap:SupportedFileTypes>
           </uap:FileTypeAssociation>
         </uap:Extension>

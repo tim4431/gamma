@@ -39,11 +39,41 @@ know the floor, so the release notes name it.
 The Mac App Store's `.pkg` is a build of its own, made by hand on a Mac
 that holds the App Store team's certificates: *Mac App Store* below.
 
-Every target registers Gamma as a PDF app, in *Open with* and as a
-default the user may choose, without taking `.pdf` over: the NSIS
-installer through `assets/installer.nsh`, the Store package through
-`assets/appx-extensions.xml`, macOS and the `.deb` through their blocks in
-the config ([architecture.md](architecture.md) "Opening PDF files").
+Every target registers Gamma for files, in *Open with* and as a default
+the user may choose, without taking a type over from the app that opens it
+([architecture.md](architecture.md) "Opening files and folders"). The file
+types are one table, `tests/shared/openwith.json`: PDF, Markdown (`.md`,
+`.markdown`), LaTeX (`.tex`), BibTeX (`.bib`) and Typst (`.typ`).
+`scripts/openwith.cjs` reads it and writes four files that are committed:
+`assets/installer.nsh`, `assets/appx-extensions.xml`,
+`assets/linux/gamma-open.desktop` and `assets/linux/gamma.nemo_action`.
+Change the table, then run `npm run openwith`; `test/openWith.test.js`
+fails while a committed file differs from what it writes, and
+`backend/tests/test_openwith_fixture.py` fails while the table and the
+format registry disagree. An extension taken out of the table goes in the
+generator's `dropped` list, so the NSIS update that drops it deletes what
+an earlier version wrote. What each target registers:
+
+- **NSIS installer** (`assets/installer.nsh`): every type of the table, and
+  *Open with Gamma* on a folder and on the empty background of an open one
+  (on Windows 11 under *Show more options*). The uninstaller removes
+  exactly what the installer wrote; an update keeps every entry.
+- **Store package** (`assets/appx-extensions.xml`): every type of the
+  table, no folder verb (a packaged app needs a COM extension for one).
+- **macOS dmg/zip** (`mac` in the config): every type of the table as an
+  alternate viewer, and folders (`public.folder`): a folder dropped on the
+  Dock icon or `open -a Gamma <dir>` opens it. Finder has no entry.
+- **Mac App Store**: PDFs only, no folder type
+  (`electron-builder.mas.cjs`): the sandbox gives a file from Finder for
+  one run only, and a work folder needs the picker's bookmark.
+- **`.deb`**: PDFs only as a file type (`linux.mimeTypes`): listing
+  `text/markdown` or `text/x-tex` could take the double click from the
+  text editor. For folders the package installs two plain files through
+  `deb.fpm`, a service menu for KDE's Dolphin (under
+  `/usr/share/kio/servicemenus` and `/usr/share/kservices5/ServiceMenus`)
+  and an action for Cinnamon's Nemo (`/usr/share/nemo/actions`), which
+  add *Open with Gamma* to a folder's context menu and claim no default.
+  GNOME's Files has none.
 
 ## The `desktop` workflow
 

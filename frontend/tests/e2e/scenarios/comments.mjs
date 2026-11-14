@@ -23,7 +23,7 @@
 // card keeping its right-click, Enter and Escape from the strip.
 import { editRow } from "./notes.mjs";
 import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
-import { Account, arrived, assertOpensInPlace, settingsPane, sleep, wanted } from "../harness.mjs";
+import { Account, arrived, assertOpensInPlace, keyLabel, settingsPane, sleep, wanted } from "../harness.mjs";
 
 export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   if (!wanted("comments")) return;
@@ -129,7 +129,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await replyStepsIn(popover(A).locator(".commentThread").first(), "the reply steps in under the first comment");
     // The emptied field's history starts afresh: an undo brings back none of the sent text.
     await until(async () => (await fieldText(replyB)) === "", { what: "the reply field empties" });
-    await B.keyboard.press("Control+Z");
+    await B.keyboard.press("ControlOrMeta+Z");
     assertEq(await fieldText(replyB), "", "an undo after sending restores nothing");
     await closePopover(B);
     assertNoProblems(A); assertNoProblems(B);
@@ -163,7 +163,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
 
   await step("comments: Ctrl+Shift+M from an open editor starts a thread; Escape closes it and gives the control the focus", async () => {
     await editRow(A, "The second claim");
-    await A.keyboard.press("Control+Shift+M");
+    await A.keyboard.press("ControlOrMeta+Shift+M");
     await focused(field(popover(A).locator(".commentNew")), "the field takes the focus");
     await A.keyboard.press("Escape");
     await popover(A).waitFor({ state: "detached" });
@@ -209,7 +209,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await edit.waitFor();
     await focused(edit, "the edit field takes the focus");
     assertEq(await fieldText(edit), "Ann's remark, with a tpyo", "the field holds the comment's text");
-    await A.keyboard.press("Control+A");
+    await A.keyboard.press("ControlOrMeta+A");
     await A.keyboard.type("Ann's remark, with a typo fixed");
     await mine.getByRole("button", { name: "Save", exact: true }).click();
     await until(async () => (await threads()).some((th) => th.comments.some((c) => c.body === "Ann's remark, with a typo fixed")), { what: "the edit is stored" });
@@ -287,7 +287,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     // a thread holding a draft shows its field without a press
     assertEq(await fieldText(reply), "Half a thought", "the draft is back");
     await reply.click();
-    await A.keyboard.press("Control+A");
+    await A.keyboard.press("ControlOrMeta+A");
     await A.keyboard.press("Backspace");
     await closePopover(A);
     await openControl(A, "The first claim");
@@ -414,7 +414,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await focused(box, "the new field takes the focus");
     // its own undo: Ctrl+Z takes back the field's typing, not a note's
     await A.keyboard.type("Oops");
-    await A.keyboard.press("Control+Z");
+    await A.keyboard.press("ControlOrMeta+Z");
     assertEq(await fieldText(box), "", "the typing is undone");
     assertEq(await rowOf(A, "The second claim").count(), 1, "the notes are as they were");
     // [[ and part of a title: the note's link picker, at the "[["
@@ -475,7 +475,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const box = field(popover(A).locator(".commentNew"));
     await focused(box, "the new field takes the focus");
     const send = popover(A).locator(".commentNew .commentSend");
-    assertEq(await send.getAttribute("title"), "Comment (Shift+Enter)", "the title names the key");
+    assertEq(await send.getAttribute("title"), `Comment (${keyLabel("Shift-Enter")})`, "the title names the key");
     assertEq(await send.getAttribute("aria-label"), "Comment", "the name is the plain action");
     await arrived(send);
     const size = await send.evaluate((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height, el.querySelector("svg").getBoundingClientRect().width]);
@@ -519,7 +519,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await shot(A, "w9-send-button");
       await A.evaluate(() => document.getElementById("e2eTitle")?.remove());
       await box.click();
-      await A.keyboard.press("Control+End");
+      await A.keyboard.press("ControlOrMeta+End");
     }
     // Enter breaks the line; a list continues, an empty item ends it
     await A.keyboard.press("Enter");
@@ -557,7 +557,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     // a reply's button names its key too, once its thread is pressed
     const replyBox = (await openReply(popover(A))).first();
     const reply = popover(A).locator(".commentThread .commentSend").first();
-    assertEq(await reply.getAttribute("title"), "Send reply (Shift+Enter)");
+    assertEq(await reply.getAttribute("title"), `Send reply (${keyLabel("Shift-Enter")})`);
     // a pasted \( \) formula comes in as the field's $ math, as in a note
     await replyBox.evaluate((el) => {
       const dt = new DataTransfer();
@@ -565,7 +565,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     });
     assertEq(await replyBox.evaluate((el) => el.cmTile.root.view.state.doc.toString()), "where $x^2$ holds", "the pasted formula with dollars");
-    await A.keyboard.press("Control+A");
+    await A.keyboard.press("ControlOrMeta+A");
     await A.keyboard.press("Backspace");
     await closePopover(A);
     assertNoProblems(A);
@@ -751,10 +751,10 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     assertEq((await marks()).sort().join(), kept.sort().join(), "the same highlights as before");
     // Nor any undo step: the first Ctrl+Z takes back the commented
     // highlight made before it, not an empty one; redo brings that back.
-    await A.keyboard.press("Control+z");
+    await A.keyboard.press("ControlOrMeta+z");
     await until(async () => !(await marks()).includes(hl), { what: "the undo takes back the commented highlight" });
     assertEq((await marks()).length, kept.length - 1, "no empty highlight comes back");
-    await A.keyboard.press("Control+Shift+z");
+    await A.keyboard.press("ControlOrMeta+Shift+z");
     await until(async () => (await marks()).includes(hl), { what: "the redo brings it back" });
     assertEq((await marks()).sort().join(), kept.sort().join(), "the highlights as before the undo");
     assertNoProblems(A);
@@ -1109,7 +1109,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await menu.waitFor({ timeout: 5000 });
     };
     await lasso();
-    await A.keyboard.press("Control+c");
+    await A.keyboard.press("ControlOrMeta+c");
     await A.getByText("Copied 1 stroke.", { exact: true }).first().waitFor({ timeout: 5000 });
     await A.keyboard.press("Escape"); // (the selection menu's: the selection goes)
     await menu.waitFor({ state: "detached" });
@@ -1135,7 +1135,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       window.e2eCopied = null;
       document.addEventListener("copy", () => { window.e2eCopied = String(window.getSelection()); }, { once: true });
     });
-    await A.keyboard.press("Control+c");
+    await A.keyboard.press("ControlOrMeta+c");
     await until(async () => (await A.evaluate(() => window.e2eCopied))?.includes("Top of page two"),
       { what: "Ctrl+C copies the card's text" });
     // and Backspace on one of its controls deletes no handwriting

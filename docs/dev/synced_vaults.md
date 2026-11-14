@@ -18,11 +18,12 @@ tick does nothing; such a server only answers the routes a vault kept
 elsewhere reads and writes through. A computer without the app runs the
 gamma-sync client ("The client"), which pulls a folder and pushes PDFs.
 
-Besides vaults, the same server reads a PDF where it lies on this computer
-(*Open with*, *Open a PDF…*), the page reading the file in place instead of
-a stored copy ("A file read where it is"). A vault's PDFs are read the same
-way, and so is every file of a work folder, whatever its format ("The
-classes").
+Besides vaults, the same server reads a file where it lies on this
+computer (*Open with Gamma*, *Open a PDF…*), a PDF or any other file Gamma
+can show, the page reading the file in place instead of a stored copy ("A
+file read where it is"), and says what a path of this computer is to Gamma
+("Which path is what"). A vault's PDFs are read the same way, and so is
+every file of a work folder, whatever its format ("The classes").
 
 The design and its reasons are in the research notes
 [vaults.md](../research/vaults.md) (the synced vault, the lens, the
@@ -58,7 +59,7 @@ Code:
   - `upgrade.py`: a folder kept on disk before synced vaults, taken onto
     the engine.
 - `gamma/md_lens.py`: the lens between a Markdown file and a page's blocks.
-- `gamma/linked_files.py`: PDFs read where they are, *Opened files*.
+- `gamma/linked_files.py`: files read where they are, *Opened files*.
 - `gamma/storage.py` `open_path`, `readable`, `is_linked`, `linked_stat`,
   `linked_moved`: a stored name served from a file on this computer.
 - `gamma/markdown_import.py` `md_to_blocks(spans=True)`: the one parser, in
@@ -97,7 +98,9 @@ Tests:
   class `file` of a work folder), `test_vault_routes.py` (the routes),
   `test_vault_upgrade.py` (kept folders), `test_vault_http.py` (a vault of
   another server).
-- `backend/tests/test_linked_files.py` (PDFs read where they are),
+- `backend/tests/test_linked_files.py` (files read where they are, of any
+  format), `test_open_with.py` (which path is what, `where_is`, and the page
+  of a work folder's file),
   `test_folder_links.py` (vaults' rows, refusals, the tick, Sync now
   answered with its round running, `running` read from the round's lock,
   a round's progress),
@@ -271,8 +274,10 @@ a blocked one as `.bin`), its hash the SHA-256 prefix the bytes would get if
 stored; a `linked_files` row says which path holds that name
 (`linked_files._put_row` with the document's `ext`). Nothing is copied, and
 nothing is ever written into the file or beside it. *Opened files* and the
-follow worker below are PDFs' alone; a vault's round reads any file so
-(`linked_files.hash_any`: the hash and the first bytes, no header check).
+follow worker below take a file of any format Gamma can show, and so does a
+vault's round (`linked_files.hash_any`: the hash and the first bytes, no
+header check; a PDF opened or followed has its header checked too,
+`hash_file`).
 
 **The read.** `storage.open_path` answers a name from the uploads directory,
 else from a linked file (`linked_path`, only where vaults are kept): the
@@ -292,20 +297,26 @@ thread with it, for many seconds.
 thread (`follow`). A file of the recorded size is hashed at once: the same
 bytes, only touched, refresh the row's stat. Other bytes wait until they
 have settled (`gamma_sync.settled`: written at least `SETTLE_S`, 3 s, ago,
-open for reading, `%%EOF` in the last kilobyte), so that a LaTeX build's
-half-written PDF is never a page's; a file still being written is looked
-at again after `LOOK_AGAIN_S` (1 s). Settled new bytes become the page's
-PDF (`_take_bytes`): the row under the new name first, so the relocation
-run reads the new file, then the replacement a PDF push makes
-(`LocalSink.replace` with `check_held=False`: bytes another page holds are
-no refusal, the disk is what it is), as the row's `actor`, or the
+open for reading, and for a PDF `%%EOF` in the last kilobyte; a file of
+another format has no end to wait for, as a work folder's file), so that a
+LaTeX build's half-written PDF is never a page's; a file still being
+written is looked at again after `LOOK_AGAIN_S` (1 s). A file of another
+format than PDF past the keep limit is left as it is (`_look`). Settled new
+bytes become the page's document, of the format and extension it had
+(`_take_bytes`, from the page's `doc`: a `.tex` stays a text document): the
+row under the new name first, so the relocation run reads the new file,
+then the replacement a PDF push makes (`LocalSink.replace` with
+`check_held=False`, and for another format its `format`, `ext` and `size`,
+which `replace_attachment` would otherwise take for a PDF's: bytes another
+page holds are no refusal, the disk is what it is), as the row's `actor`, or the
 workspace's first owner when that account may no longer edit there
 (`_sink`); the new row names the opener still, so keeping the file pushing
 and taking it elsewhere stay that account's. The
 highlights are placed again, the open viewers switch on the ops, and a
 replacement whose relocation run could not start keeps the reason on the
-row for the page's card. A page in Recently deleted waits; a row whose page
-now carries another PDF goes. A vault's file (its page has a `vault_files`
+row for the page's card. A PDF's metadata lookup is scheduled (`pdf_meta`),
+no other format's. A page in Recently deleted waits; a row whose page now
+carries another document goes. A vault's file (its page has a `vault_files`
 row of a class read in place, `pdf` or `file`) is its round's alone: one
 replacer per file (`_in_vault`). The round also refreshes the row of a file
 touched with the same bytes (`linked_files.restat`, from
@@ -322,7 +333,8 @@ FileResponse's ETag of its size and time: unlike a stored name, which is
 `immutable`, its path can hold other bytes tomorrow.
 
 **A version kept while its comments are open.** A page read in place
-that has an open comment thread keeps the bytes it shows stored
+whose PDF or picture has an open comment thread keeps the bytes it shows
+stored
 (`uploads/<hash>.pdf`, the name a `linked_files` row holds too), and the
 version each thread was opened on is held until the thread is resolved:
 the relocation run and the feedback reader go on reading it after the
@@ -331,7 +343,9 @@ stores the current bytes, a replacement while a thread is open stores the
 incoming ones first (`feedback.kept.keeps_bytes`, the one predicate with a
 library file's versions, "A work folder's round"), and the sweep below
 stores what was left unstored ([feedback.md](feedback.md) "The commented
-version kept").
+version kept"). A text file keeps no version: its ranges carry their own
+context and are placed again in the round itself, from the new bytes
+alone ([highlight_relocation.md](highlight_relocation.md#text-files)).
 
 **The sweep** (`linked_files.sweep`, from each tick): the opened pages to
 forget (below), the bytes of a page with an open thread not stored yet
@@ -355,29 +369,78 @@ cannot read now, so the pending count comes down. An error a job or a
 round reports says what went wrong without the path an `OSError` or MuPDF
 names (`jobs.error_text`): the path is the person's own.
 
-**Opened files.** *Open with* and *Open a PDF…* go to `POST
-/api/folder-links/open` (`linked_files.open_pdf`). The path is checked as
-a file vault's is (`folder_links.clean_file_path`), then, in this order: a
-file inside a directory vault opens that vault's page (a vault that pushes
-everything runs a round first for a file it has not read yet), a file that
-is a vault of one file opens that page (either may be in another
-workspace), bytes a page of the workspace stores open that page, and the
-page that holds the path opens, whatever became of it: back from Recently
-deleted, its PDF replaced when the bytes changed, moved to the top of
-*Opened files*. Otherwise a new page is made inside *Opened files*, a page
-found by its property (`opened_files: true`) and made on demand, newest
-first: a sub-page is the one way a page stays out of the library's list
-that server and client share. The new page is titled by the file's stem,
-with no `auto_title` (a lookup fills fields and never renames), and its
+**Opened files.** *Open with Gamma* and *Open a PDF…* go to `POST
+/api/folder-links/open` (`linked_files.open_file`), for a file of any
+format. The path is checked as a file vault's is, of any extension
+(`folder_links.clean_file_path` with `pdf_only=False`), a program is refused
+(`formats.BLOCKED_EXTENSIONS`: `Gamma does not open programs (.exe).`), then,
+in this order: a file inside a directory vault opens that vault's page (a
+vault that pushes everything runs a round first for a file it has not read
+yet; refusals below), a file that is a vault of one file opens that page
+(either may be in another workspace), bytes a page of the workspace stores
+open that page (`page_for_file`, by hash and extension), and the page that
+holds the path opens, whatever became of it: back from Recently deleted,
+its document replaced when the bytes changed, moved to the top of *Opened
+files*. Otherwise a new page is made inside *Opened files*, a page found by
+its property (`opened_files: true`) and made on demand, newest first: a
+sub-page is the one way a page stays out of the library's list that server
+and client share. The new page is titled by the file's stem, with no
+`auto_title` (a lookup fills fields and never renames), and a PDF's
 metadata lookup is scheduled. A clone's workspace takes no new page. One
-open or locate runs at a time, so a path has one page.
+open or locate runs at a time, so a path has one page. The route answers
+`{workspace, page, created, title, format}`, `format` the page's
+document's ("" for a page with none, a work folder's note).
+
+The file is read once (`linked_files._read`) for its format
+(`formats.format_of`, the name first, else its first bytes): a PDF (header
+checked, stored name `.pdf` whatever the file is called), text, an image,
+audio or video, each in the viewer of its format; any other format is
+stored under its own extension (`formats.vault_extension`: `Makefile` text
+as `.bin`, as a work folder stores it) and its document names its size. A
+Markdown file outside every vault is a text document (`format: text`,
+`ext: .md`), read-only in the code view: only a work folder edits a note
+where it is, its pull writing Gamma's edits back and settling a change made
+meanwhile in another editor, and Gamma never writes a lone file (the
+desktop app asks first whether to make its project a work folder,
+desktop/docs/architecture.md "Opening files and folders"). Refused, before
+anything is made: a binary (`Gamma cannot show <name>: open it in another
+app.`), and a file of another format than PDF past the keep limit
+(`config.vault_keep_bytes`, 64 MB unless `GAMMA_VAULT_KEEP_MB` says
+otherwise: `<name> is too large for Gamma to show here (over <n> MB).`),
+measured before it is read through; a PDF has no limit.
+
+Inside a vault (`_directory_vault_page`), each refused before any round: a
+work folder whose files are not chosen yet; a file whose page is in
+Recently deleted (`<path> is a file of “<folder>”, whose page is in Recently
+deleted: restore it there.`: never restored from here, the round put it
+there); in a vault that pushes everything, a file with no page yet that its
+scan never tracks (`Gamma never tracks <path>: <why>.`, the words of
+`selection.never_reason`), a work folder's file it does not track (`tick it
+in Choose files…`), and a file of a paused vault (`<path> is in
+“<folder>”, which is paused: resume it in the sync panel, then open the
+file again.`: no round runs a paused vault from here). Any row of the vault
+with a page opens it, whatever its class: a paired paper's PDF and notes
+name one page. A file of a vault of another server that the asking account
+made, and that the vault reads (its row has a page, or it is a work folder
+that tracks the file and whose scan may), is refused: `<path> is kept on
+<host>: open it there.`, a backstop for the desktop app, which asks `POST
+/where` first. Any other file there (a kept folder's source it does not
+push, another account's vault) opens as a lone file, as a file a local kept
+folder does not read does: it has one reader.
 
 - **Add to library…** (`POST /opened/{id}/add`, `add_to_library`): the
-  bytes are stored (the same hash, so the page's document keeps its hash
-  and name), the page leaves *Opened files* for a folder or the library's
-  top, and it no longer reads the file (its document at `store`,
-  `document_at`). `keep_pushing` makes the file a vault of one file,
-  made before the page moves, so that a refusal leaves the page as it was.
+  bytes are stored under the document's extension (the same hash, so the
+  page's document keeps its hash and name), the page leaves *Opened files*
+  for a folder or the library's top, and it no longer reads the file (its
+  document at `store`, `document_at`). `keep_pushing` makes the file a vault
+  of one file, made before the page moves, so that a refusal leaves the
+  page as it was; a vault of one file is a PDF's, so it is refused for any
+  other format (`Only a PDF keeps pushing from its file.`). A Markdown file
+  read as text is refused outright (`A Markdown file joins the library as a
+  note: drop it on the library, or open its folder with Gamma to edit it
+  where it is.`): every `.md` of the library is a note, and a text document
+  named `.md` would be the one exception, which a pulling vault would write
+  back as a file its next scan calls a note.
   With `workspace`, another workspace of this server the account edits,
   the page goes there with everything on it (`_carry`): exported as a Gamma
   export is and merged in as an import is
@@ -416,8 +479,9 @@ open or locate runs at a time, so a path has one page.
   that account's computer, and another editor stores its bytes here at most
   (400).
 - **To another server** (the desktop app's `carry-to-server`, only for the
-  opener, `reader.mine`): the same rule, with the export and the merge made
-  by the shell over HTTP. It reads the digest first (`GET
+  opener, `reader.mine`, and only for a PDF: both routes answer 400 `Only a
+  PDF is carried to another server.` for another format): the same rule,
+  with the export and the merge made by the shell over HTTP. It reads the digest first (`GET
   /opened/{id}/carried`, `carry_digest`, `{digest, pages}`: the ids of the
   page and the pages inside it, the page first; 400 when a page inside reads
   a file that is gone or changed, `_inside_at_hand`, as for another
@@ -433,27 +497,79 @@ open or locate runs at a time, so a path has one page.
   the shell says so. Both routes are the opener's alone (400 for anyone
   else).
 - **Locate…** (`POST /opened/{id}/locate`, `locate`): the file found at a
-  new path. The same bytes are the page's as they stand, others replace its
-  PDF; a path another opened page reads is refused, even from Recently
-  deleted. Opening the file again or locating it as another account keeps
-  the rows naming the opener (`_opener`); only a page a crash left with no
-  row takes the caller.
+  new path, read as `/open` reads one, of the format of the page's document
+  (else `Pick a text file: this page reads one.`, with that format's name).
+  The same bytes are the page's as they stand, others replace its document;
+  a path another opened page reads is refused, even from Recently deleted.
+  Opening the file again or locating it as another account keeps the rows
+  naming the opener (`_opener`); only a page a crash left with no row takes
+  the caller.
 - **Missing** (`missing`): no copy of the bytes is stored here and none of
   the page's paths holds a file. `reader(ws, page, actor)` gives a page's
-  `{path, missing, mine, relocation_error?}` for its chip, `mine` whether
-  the asking account opened the file.
+  `{path, missing, mine, format, ext, relocation_error?}` for its chip,
+  `mine` whether the asking account opened the file, `format` and `ext`
+  its document's, by which the client hides what a page of another format
+  cannot do (keep pushing, a carry to another server) and *Add to library…*
+  for a Markdown file read as text.
 - **Forgetting**: a page inside *Opened files* with no mark, comment or
   chat, untouched for `FORGET_DAYS` (90) and open nowhere, goes for good at
   a sweep, looked at again under the write lock; nothing of it is lost, the
   file is where it was. A page in Recently deleted keeps its row, for a
   restore.
 
-In the page, *Move to library* and *Move into page…* on an opened PDF go
+In the page, *Move to library* and *Move into page…* on an opened file go
 to *Add to library…*, since its bytes must be stored before it leaves
-(`vaultState.isOpenedPdf`), and *Move to folder ▸* is hidden while an
-opened PDF is among the pages acted on. The account preference `openAddsToLibrary`
-(Reading, off by default), and the Mac App Store build, make *Open with*
-add the file to the library instead.
+(`vaultState.isOpenedFile`), and *Move to folder ▸* is hidden while an
+opened file is among the pages acted on. The account preference
+`openAddsToLibrary` (Reading, off by default), and the Mac App Store build,
+make *Open with* add a PDF to the library instead.
+
+## Which path is what
+
+`POST /api/folder-links/where` (`folder_links.where_is`) says what a file or
+a directory of this computer is to Gamma, for the asking account, read only:
+no round, no page, nothing written. The desktop app's *Open with Gamma*
+asks each local server before it opens anything, then goes by the ids the
+answer names: no disk path reaches a remote server or an address. The path
+is taken as the file manager named it (absolute, normalized, links not
+followed) and resolved; it must exist (400 `There is no file or directory
+<path>.`). The answer, the first that applies:
+
+- `vault`: inside a folder vault's directory, of this server or of another
+  one (by the path as named, else resolved, so a link on the Desktop to a
+  file inside a vault is that file; the deepest vault). `link` names the
+  vault (`{id, kind, workspace, folder, remote_url, work, choosing, paused,
+  mine, name}`, `name` its folder's), `rel` the path in it ("" its
+  directory), `never` why its scan never tracks the path, in words, read
+  on the unresolved path, so a link or junction on the way is one
+  (`selection.never_reason` over the tracking dialog's own listing,
+  `selection._read`: a dot directory, `node_modules`, a link, a name
+  Windows refuses, two names alike but for case, a name that is no UTF-8,
+  and a name the scan lists nowhere). A directory has `folder`, the folder
+  its round recorded for it (`folder_links.dir_folder`, vaults.db
+  `vault_dirs`), else the nearest directory above it's, else the vault's
+  own, and `exact`. A file has `page` (its row's, of any class: "" for none
+  and for a page in Recently deleted, then with `trashed`; a vault of
+  another server's is its id there, unchecked) and `tracked` (a page, or a
+  vault that pushes everything whose `.gammaignore` tracks it and whose
+  scan may).
+- `hidden`: such a vault the account may not see (no role in its
+  workspace; for a vault of another server, not its maker), or a directory
+  around vaults none of which it may.
+- `around`: a directory holding the directories of vaults it may see,
+  `vaults` with each one's `rel` in it. A vault of one file inside does not
+  count: a work folder made there takes it in.
+- `file_vault`: a file that is a vault of one file, `{workspace, page}`.
+- `none`: nothing of Gamma's, with `refusal`, why no vault may have the
+  directory ("Refused places" below; for a file only the data directory),
+  "" when one may.
+
+`GET /api/folder-links/{id}/page?path=<rel>` gives the page of a work
+folder's file from its row, `{page}` ("" before a round read it, and for a
+page in Recently deleted): what the tracking dialog lands on after a Save
+that ticked a file opened from this computer. `rel` is checked as the
+dialog's routes check theirs (relative, inside the vault, below no link),
+and the route is the vault maker's alone (`_chooser`).
 
 ## The lens
 
@@ -880,7 +996,9 @@ are never measured, by the stat its read takes, not the scan's) is
 listed, size}` ([documents.md](documents.md) "The listed state"); one that
 crosses the limit either way, or is listed with a new size, takes one
 `set_doc`. New bytes replace the document (`replace_doc`, the versions
-stored where `feedback.kept.keeps_bytes` says); the same bytes under a new
+stored where `feedback.kept.keeps_bytes` says; a text file's highlight
+ranges placed again in that call, from the bytes at the path, when the
+file is at most 512 KiB, [highlight_relocation.md](highlight_relocation.md#text-files)); the same bytes under a new
 stat refresh the row and its linked row (`restat_doc`). A move relinks and
 refiles, the title and `file_name` following the new leaf; a new name that
 says another format or extension (`notes.txt` to `notes.log`, `a.txt` to
@@ -1230,10 +1348,12 @@ unmarked folder gets the round above, unchanged. In a work folder:
   their documents, and a kept folder's round meets no row of a class it does
   not compare.
 - **A library file's versions** are stored as they come (`LocalSink.store`
-  before `replace_attachment`), its document still at `path`; so are any
-  file's while a comment thread on it is open (`feedback.kept.keeps_bytes`,
-  the one predicate at the replacement; [feedback.md](feedback.md) "The
-  commented version kept").
+  before `replace_attachment`), its document still at `path`; so are a
+  PDF's or a picture's while a comment thread on it is open
+  (`feedback.kept.keeps_bytes`, the one predicate at the replacement;
+  [feedback.md](feedback.md) "The commented version kept"). A text file's
+  ranges are placed again inside the round instead
+  ([highlight_relocation.md](highlight_relocation.md#text-files)).
 - **The feedback files.** After its sync a whole round writes the work
   folder's `.gamma/feedback/` (`folder_links._vault_round`, the summary in
   `status.feedback`; [feedback.md](feedback.md) "The files"), a held round
@@ -1576,9 +1696,9 @@ As built:
   to overlap the older goes on. A mirror or a Zotero link is refused for a
   workspace a vault pushes everything into (`pushing_vault`), and *Publish*
   for a page a vault keeps.
-- **Making a vault**: the path is a full one (`clean_path`: not relative,
-  not a drive's root; `clean_file_path`: a `.pdf` that is there), unique
-  among the links ignoring case. A workspace has at most `MAX_LINKS` (10)
+- **Making a vault**: the path is a full one (`clean_path`, refusing the
+  places below; `clean_file_path`: a `.pdf` that is there), unique among the
+  links ignoring case. A workspace has at most `MAX_LINKS` (10)
   folder vaults and `MAX_FILE_LINKS` (50) file vaults. A vault made from a
   folder that pushes everything refuses a folder with pages and a directory
   with notes or PDFs both (`_merges`): make it from an empty side. A vault
@@ -1592,6 +1712,31 @@ As built:
   first in the folder of its file's directory, its other filings kept, its
   file the vault's PDF row, and its own link goes. The folder and the marker
   a vault makes are taken back when its row cannot be stored.
+- **Refused places** are one function, `folder_links.place_refusal`, whose
+  words every way a vault is made or moved says (create, preview, relink,
+  through `clean_path`) and `where_is` answers in `none`'s `refusal`; it is
+  never asked of a vault that exists, so a vault made before goes on. For a
+  directory, the first that applies: a drive or filesystem root (`Pick a
+  directory, not the root of a drive.`); the home directory or a directory
+  around it, `/home`, `/Users`, `C:\Users` (`Pick a project directory: Gamma
+  does not sync your whole home directory or a directory around it.`);
+  Gamma's data directory, inside it or around it (`_in_data_dir`, by
+  spelling or identity); and a place of the operating system's (`Pick a
+  project directory: <path> is the operating system's.`), this platform's
+  only (`SYSTEM_PLACES`, resolved): the system's trees with everything
+  inside them (Windows `%SystemRoot%`, `%ProgramFiles%`,
+  `%ProgramFiles(x86)%`, `%ProgramData%`; macOS `/System`, `/Library`,
+  `/Applications`, `/usr`, `/bin`, `/sbin`, `/etc`; Linux `/usr`, `/bin`,
+  `/sbin`, `/lib*`, `/etc`, `/boot`, `/dev`, `/proc`, `/sys`), and the mount
+  and temporary directories themselves only, never what is inside them (a
+  mounted disk, a share, an app's tree: macOS `/Volumes`, `/private`,
+  `/private/tmp`, `/private/var`; Linux `/run`, `/run/media`, `/run/user`,
+  `/media`, `/mnt`, `/opt`, `/srv`, `/var`, `/tmp`, `/snap`), so
+  `/run/media/u/disk/paper` or `/opt/projects/x` stays allowed. Home comes
+  before the data directory, which is inside it on every desktop, so the
+  words fit. Desktop, Documents, Downloads and a cloud drive's root are
+  allowed here; the desktop app asks first (desktop/docs/architecture.md
+  "A directory's vault"). For a file, only the data directory is refused.
 - **The maker**: what changes what reaches the disk or leaves it (`pull`,
   `push`, `notes`, a token, a force, a confirmation, a relink, a removal) is
   the account that made the vault's alone, since the directory is on its
@@ -1712,9 +1857,18 @@ writes of routes with no client in their body as the vault's (a file's
 upload and download go without it); and one route of its
 own, a page's plan (`POST /api/pages/{id}/plan`, `ops.commit_plan`). A
 token that may read pulls; pushing takes one that may write, of an editor.
-A vault of another server is never a work folder itself (it writes no
-mark), but one that pushes everything into a folder there that carries a
-mark runs a work folder's round, as the op rule there asks.
+A vault of another server is a work folder only when it was made one of
+an empty folder there ([work_folders.md](work_folders.md) "Work folders
+of another server": it writes the mark through its token, and that server
+refuses a mark in a clone, a Zotero-linked workspace or around another
+work folder); one that pushes everything into a folder there that carries
+a mark runs a work folder's round, as the op rule there asks.
+
+The computer also announces itself to that server over a channel of its
+own (a token of the `computer` scope, which opens nothing else): the
+vault's maker sees there, in any window, that the folder or file is kept
+on this computer, whether it is online, and which assistants are here
+([computers.md](computers.md)).
 
 What differs from a vault of this server:
 
@@ -1819,12 +1973,14 @@ also counts the names the scan refused among those not synced, and says
 *push turned off* (`push_off`) and *n in another vault* (`shared`), with
 the reasons, titles and `upgraded_at` in its tooltip. A window's focus
 posts `/hint` to the running local servers. A folder of another server is
-kept on the host with a token the shell mints there. *Open with* and
-*Server → Open a PDF…* go to `POST /open` on a local server (`readPdf`),
-never a remote one; where the window's workspace takes no reader page (a
-remote server, a clone, one the account only reads), the shell first
-hashes the file and asks that workspace for a page of those bytes (`GET
-/api/blocks/by-doc/<hash>`, only the hash sent), and opens it there.
+kept on the host with a token the shell mints there. *Open with Gamma*
+first asks each local server what the path is (`POST /where`, `whereIs`)
+and goes by the ids it answers; a file of no vault, and *Server → Open a
+PDF…*, go to `POST /open` on a local server (`readFile`), never a remote
+one; where the window's workspace takes no reader page (a remote server, a
+clone, one the account only reads), the shell first hashes a PDF and asks
+that workspace for a page of those bytes (`GET /api/blocks/by-doc/<hash>`,
+only the hash sent), and opens it there.
 *Another server…* (`carry-to-server`) is the opener's alone: the shell
 refuses it unless `reader.mine`. Once the page is there, the page here goes
 to Recently deleted by the digest the shell read before its export, never
@@ -1848,7 +2004,9 @@ deleted for good ("To another server" above).
 | `GET /page/{id}` | a page's standing: `{vault, reader}` |
 | `GET`, `PUT /page/{id}/file` | the page's notes file, for Gamma's file editor |
 | `POST /hint` | a tick now |
-| `POST /open` **P**, `POST /opened/{id}/add`, `POST /opened/{id}/locate` **P** | the reader |
+| `POST /where` **P** | what a path is to Gamma, read only ("Which path is what") |
+| `POST /open` **P**, `POST /opened/{id}/add`, `POST /opened/{id}/locate` **P** | the reader, a file of any format |
+| `GET /{id}/page?path=` | the page of a work folder's file, for the tracking dialog's landing |
 | `GET`, `POST /opened/{id}/carried` | the digest of an opened page before a carry to another server; the page let go here after it (409 when it changed) |
 
 A signed-in account's session only, never an integration token or the
@@ -1880,11 +2038,12 @@ engine gives it, a pushing one first), `problem` the vault's own reason
 first (`_halted`, in fixed words: it stopped, its directory is not there,
 it is held, its last round did not finish, its followed file is gone),
 else why the page's file was not written or read, which the chip shows as
-*Not written to disk: …*; `reader` is `{path, missing, mine,
-relocation_error?}` for a PDF read where it is, `mine` whether the asking
-account opened the file. `path` is empty for a member who is no editor,
-but the vault's maker. The page reads it as it opens and on its socket's
-`{t: "vault"}` (`useVault.js`). `mine` decides what *Add to library…*
+*Not written to disk: …*; `reader` is `{path, missing, mine, format, ext,
+relocation_error?}` for a file read where it is, `mine` whether the asking
+account opened the file, `format` and `ext` its document's. `path` is
+empty for a member who is no editor, but the vault's maker. The page reads
+it as it opens and on its socket's `{t: "vault"}` (`useVault.js`). `mine`
+decides what *Add to library…*
 offers (`vaultState.openedHere`, `carriesToServer`): for another account's
 opened file, neither another workspace, another server nor keeping it
 pushing (`FolderPickerDialog`'s `opener`). A folder vault that pushes

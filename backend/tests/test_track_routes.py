@@ -6,7 +6,10 @@ selection and its save; who may use them. And the link's side of work
 folders (gamma/folder_links.py): the push that comes down only with its
 files in the library, the library switch and the pull in the mark, the
 whole library that pushes everything nowhere, a file's vault by its stamp,
-and a file the work folder does not track opened from this computer."""
+and a work folder's files opened from this computer: a file it does not
+track, its tracked files of any format, and what is refused with no round
+(a paused vault's file not read yet, a file its scan never tracks, a page
+in Recently deleted)."""
 
 import hashlib
 import json
@@ -22,7 +25,7 @@ from gamma.vault import disk as vault_disk, store as vault_store, sync as vault_
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page, new_block_id
 from gamma.db import connect_pages_db
-from gamma.ops import commit_ops
+from gamma.ops import SYNC_CLIENT, commit_ops, trash_page
 from gamma.work_folders import ignore_rules, selection
 from test_vault_routes import _create, _page_of, _pdf, _put, _sync, _vault, disk  # noqa: F401: the disk fixture
 
@@ -127,11 +130,13 @@ def test_a_work_folder_made_to_choose_its_files_runs_no_round_until_they_are_cho
 def test_only_a_work_folder_chooses_its_files_and_the_whole_library_pushes_everything_nowhere(owner, disk):
     f = _put(disk / "one.pdf", _pdf("one"))
     (disk / "Pdfs").mkdir()
-    for body in ({"path": str(disk / "Pdfs"), "new_folder": True, "push": "pdfs"},
-                 {"path": str(disk / "Far"), "folder": "f", "remote_url": "http://nas", "token": "t"},
-                 {"kind": "file", "page": make_page(owner, "TR followed")["id"], "path": str(f)}):
+    for body, said in (({"path": str(disk / "Pdfs"), "new_folder": True, "push": "pdfs"}, folder_links.CHOOSES_ONLY),
+                       ({"path": str(disk / "Far"), "folder": "f", "remote_url": "http://nas", "token": "t"},
+                        folder_links.REMOTE_WORK),     # of another server: a folder there, pushing everything, pulling
+                       ({"kind": "file", "page": make_page(owner, "TR followed")["id"], "path": str(f)},
+                        folder_links.CHOOSES_ONLY)):
         r = owner.post("/api/folder-links", json={**body, "choose": True})
-        assert r.status_code == 400 and r.json()["detail"] == folder_links.CHOOSES_ONLY, body
+        assert r.status_code == 400 and r.json()["detail"] == said, body
     (disk / "Whole").mkdir(parents=True)
     r = owner.post("/api/folder-links", json={"folder": "root", "path": str(disk / "Whole"), "push": "everything"})
     assert r.status_code == 400 and "whole library cannot push everything" in r.json()["detail"]
@@ -438,6 +443,44 @@ def test_a_file_its_work_folder_does_not_track_opens_from_no_page(owner, disk, r
     _put(root / "later.pdf", _pdf("tracked, not read yet"))
     r = owner.post("/api/folder-links/open", json={"path": str(root / "later.pdf")})
     assert r.status_code == 200 and r.json()["page"] == _page_of(link, "later.pdf")
+
+
+def test_a_work_folders_tracked_files_of_any_format_open_their_pages(owner, disk, rounds):
+    root = disk / "Opening"
+    link = _choosing(owner, root, {"notes.md": "n\n", "src/main.tex": "\\section{Main}\n", "paper.pdf": _pdf("p")})
+    assert _save(owner, link, "preset", [{"format": "latex", "on": True}]).status_code == 200
+    assert _sync(owner, link["id"])["last_error"] == ""
+    for rel, fmt in (("notes.md", ""), ("src/main.tex", "text"), ("paper.pdf", "pdf")):
+        r = owner.post("/api/folder-links/open", json={"path": str(root / rel)})
+        assert r.status_code == 200, r.text
+        assert (r.json()["page"], r.json()["created"], r.json()["format"]) == (_page_of(link, rel), False, fmt), rel
+
+
+def test_a_paused_vaults_new_file_a_never_tracked_file_and_a_trashed_page_open_nothing(owner, disk, rounds,
+                                                                                       monkeypatch):
+    root = disk / "Refusing"
+    link = _vault(owner, root, {"a.md": "a\n"})
+    for rel in (".cache/x.md", "node_modules/m.md", "later.md"):
+        _put(root / rel, "x\n")
+    owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True}).raise_for_status()
+    monkeypatch.setattr(folder_links, "run_link", lambda *a, **kw: pytest.fail("a round ran"))
+
+    def opened(rel):
+        r = owner.post("/api/folder-links/open", json={"path": str(root / rel)})
+        assert r.status_code == 400, r.text
+        return r.json()["detail"]
+    at = {rel: (root / rel).resolve() for rel in (".cache/x.md", "node_modules/m.md", "later.md", "a.md")}
+    assert opened(".cache/x.md") == f"Gamma never tracks {at['.cache/x.md']}: it is inside a dot directory."
+    assert opened("node_modules/m.md") == f"Gamma never tracks {at['node_modules/m.md']}: it is inside node_modules."
+    assert opened("later.md") == (f"{at['later.md']} is in “Refusing”, which is paused: resume it in the sync "
+                                  "panel, then open the file again.")
+    ws, page = link["workspace_id"], _page_of(link, "a.md")
+    with connect_pages_db(ws) as conn:
+        trash_page(ws, conn, page, actor=link["created_by"], client=SYNC_CLIENT)
+    assert opened("a.md") == f"{at['a.md']} is a file of “Refusing”, whose page is in Recently deleted: restore it there."
+    with connect_pages_db(ws) as conn:                                   # never restored from here
+        assert conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page,)).fetchone()[0] == "trash"
+    assert set(vault_store.files(link["id"])) == {"a.md"}
 
 
 # --- who may -------------------------------------------------------------------------------------------

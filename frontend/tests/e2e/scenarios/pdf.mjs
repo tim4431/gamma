@@ -1180,13 +1180,13 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       const viewport = page.viewportSize();
       const x0 = box.x + 60, y0 = Math.max(box.y + 80, 120);
       assert(y0 + 140 < viewport.height, `page 2 is in view (${JSON.stringify(box)})`);
-      await page.keyboard.down("Control");
+      await page.keyboard.down("ControlOrMeta");
       await page.mouse.move(x0, y0);
       await page.mouse.down();
       await page.mouse.move(x0 + 100, y0 + 60, { steps: 8 });
       await page.mouse.move(x0 + 200, y0 + 120, { steps: 8 });
       await page.mouse.up();
-      await page.keyboard.up("Control");
+      await page.keyboard.up("ControlOrMeta");
       await until(async () => await thumbs.count() === 2, { what: "the region joins the pictures" });
       const region = await thumbs.nth(1).getAttribute("src");
       assert(region.includes("/api/ai/page-image/") && region.includes("page=2") && region.includes("box="), `a region URL: ${region}`);
@@ -1453,7 +1453,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       { what: "the area thumbnail", timeout: 15000 });
     const switchTo = async (p, title, note) => {
       await p.keyboard.press("Escape"); // nothing else open, focus back on the page
-      await p.keyboard.press("Control+p");
+      await p.keyboard.press("ControlOrMeta+p");
       const dialog = p.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
       const input = dialog.getByRole("textbox", { name: "Search pages, files, folders and labels" });
@@ -1954,7 +1954,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(await headOf(card2), `Matched roughly: ${Math.round(rough2Pos.match * 100)}%`, "the card as it was before the steps");
       assert(!(await pressed(card2, "accept")) && await stepOf(card2, "accept").isEnabled(), "Accept takes the place the move gave it");
       await until(async () => (await stored(rough2Id)).quote === "replaced the old one", { what: "the move saved" });
-      await p.keyboard.press("Control+z");
+      await p.keyboard.press("ControlOrMeta+z");
       await until(async () => {
         const { pdf_position: pos, quote } = await stored(rough2Id);
         return JSON.stringify(pos.rects) === JSON.stringify(accepted.rects) && !("approx" in pos) && quote.includes("Ramsey [33]");
@@ -1962,7 +1962,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await until(() => pressed(card2, "accept"), { what: "the card on the acceptance after Ctrl+Z" });
       assert(!(await pressed(card2, "move")) && await stepOf(card2, "move").isEnabled(), "Move… again after Ctrl+Z");
       assertEq(await countOf(card2), "3 of 3", "the count stays after Ctrl+Z");
-      await p.keyboard.press("Control+y");
+      await p.keyboard.press("ControlOrMeta+y");
       await until(() => pressed(card2, "move"), { what: "Moved again after Ctrl+Y" });
       await until(async () => (await stored(rough2Id)).quote === "replaced the old one", { what: "the redo saved" });
       await stepOf(card2, "move").click();
@@ -2134,13 +2134,13 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       const box = await pageEl.boundingBox();
       const x0 = box.x + 80, y0 = box.y + box.height / 2 - 60;
       assert(y0 > 0 && y0 + 140 < p.viewportSize().height, `page 2's middle is in view (${JSON.stringify(box)})`);
-      await p.keyboard.down("Control");
+      await p.keyboard.down("ControlOrMeta");
       await p.mouse.move(x0, y0);
       await p.mouse.down();
       await p.mouse.move(x0 + 100, y0 + 60, { steps: 8 });
       await p.mouse.move(x0 + 200, y0 + 120, { steps: 8 });
       await p.mouse.up();
-      await p.keyboard.up("Control");
+      await p.keyboard.up("ControlOrMeta");
       await p.waitForSelector(".plainTip .tipMoveBtn", { timeout: 5000 });
       await p.locator(".plainTip .tipMoveBtn").click();
       await p.waitForSelector(".attachModeBanner[data-move-highlight]", { state: "detached", timeout: 5000 });

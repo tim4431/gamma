@@ -638,7 +638,7 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   - Ink is never placed again after its PDF is rebuilt
     ([highlight_relocation.md](highlight_relocation.md)). A thread on a
     group drawn on another build than the one the page shows says "Drawn
-    on an earlier build" under its first comment.
+    on an earlier version" under its first comment.
   - A sheet's groups have no Comment: their threads are a note's, from the
     row's control. A viewer or a share visitor has no lasso: they open an
     ink thread's card in the margin.

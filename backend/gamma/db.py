@@ -558,13 +558,55 @@ USERS_SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id, owner)",
+    # computers = what a computer announced over its channel to this server
+    # (gamma/computers/registry.py), one row per integration token of the
+    # ``computer`` scope (token_id): its account and that token's
+    # workspace, the computer's id for this server and its name, the
+    # folders and pages it keeps there (JSON [{kind, folder_id | page_id,
+    # paused}], ids only), its assistants (JSON [{name, label, found, ready,
+    # version, code}]), the app's version, and when it was last seen. Never
+    # a path. Whether it is online now is in memory. Additive: no step.
+    """CREATE TABLE IF NOT EXISTS computers (
+        token_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        computer TEXT NOT NULL,
+        name TEXT NOT NULL,
+        vaults TEXT NOT NULL DEFAULT '[]',
+        assistants TEXT NOT NULL DEFAULT '[]',
+        app TEXT NOT NULL DEFAULT '',
+        seen_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_computers_user ON computers(user_id, workspace_id)",
+    # computer_links = this computer's channel to another Gamma server
+    # (gamma/computers/channel.py), kept by the desktop app's own server:
+    # one per server, workspace there and local account (created_by), with
+    # the ``computer`` token of that server (Fernet-encrypted, as
+    # folder_links keeps a vault's) and its id for whoever revokes it, the
+    # account there the server named (its id and username), and the
+    # channel's status as JSON ({state: connecting | connected | refused |
+    # older | unreachable, error, at}). Additive: no step.
+    """CREATE TABLE IF NOT EXISTS computer_links (
+        id TEXT PRIMARY KEY,
+        remote_url TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        token TEXT NOT NULL,
+        token_id TEXT NOT NULL,
+        account TEXT NOT NULL DEFAULT '',
+        username TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(remote_url, workspace_id, created_by)
+    )""",
 ]
 
 
 # vaults.db: what this computer knows, never migrated (additive statements,
-# like a workspace's data.db). linked_files = PDFs read where they are
+# like a workspace's data.db). linked_files = files read where they are
 # (gamma/linked_files.py): the workspace, the stored name a page reads them by
-# (<doc_id>.pdf), the path and what the file was when last read (size, time,
+# (<doc_id><ext>, .pdf for a PDF), the path and what the file was when last read (size, time,
 # file id), the page, '' for a vault's picture, the account a change of the
 # file is made as, and why that file's replacement placed no highlights. One
 # name may have several paths; a path has one page. vault_files = a vault's
@@ -593,7 +635,12 @@ USERS_SCHEMA = [
 # and the directory: what its next turn resumes; agent_turns = one row a
 # turn of that chat, its state (queued, running, done, failed, stopped),
 # its process and ``error``, this computer's record (the whole error, the
-# stderr tail), never written in the conversation.
+# stderr tail), never written in the conversation; agent_policies = what a
+# vault's agent may run (``ask``: its chat's turns may ask the person; no
+# row is ``never``), who set it and when; agent_grants = a command a person
+# allowed in a conversation of that chat, exactly as asked, the directory it
+# runs in (``.`` the folder) and the network host it reaches ("" none), and
+# its vault.
 VAULTS_SCHEMA = [
     """CREATE TABLE IF NOT EXISTS linked_files (
         ws TEXT NOT NULL,
@@ -706,6 +753,21 @@ VAULTS_SCHEMA = [
         pid INTEGER
     )""",
     "CREATE INDEX IF NOT EXISTS idx_agent_turns_open ON agent_turns(ended_at) WHERE ended_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS agent_policies (
+        link_id TEXT PRIMARY KEY,
+        runs TEXT NOT NULL,
+        set_by TEXT NOT NULL,
+        set_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_grants (
+        conversation_id TEXT NOT NULL,
+        command TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        host TEXT NOT NULL,
+        link_id TEXT NOT NULL,
+        at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, command, cwd, host)
+    )""",
 ]
 
 # unified_blocks' typed hot fields, after the seven columns blocks always
@@ -907,6 +969,37 @@ COMPUTER_CHATS_SCHEMA = [
         archived_at TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS idx_computer_chats_page ON computer_chats(page_id, user_id, archived_at)",
+    # computer_chat_runs = a turn of such a conversation that runs on another
+    # computer (step 4d: a page of a work folder of this server kept on a
+    # computer of its maker's with an agent there, gamma/computers/registry.py
+    # ``agent_of``; local_agents/chats.py, routers/computers.py): `state`
+    # queued until a run of a computer of `user_id`'s claims it (`holder` its
+    # token id, `run` the id it minted, `started_at`), running, then done,
+    # failed or stopped; `seq` the last write taken from that run, so a retry
+    # or a late one never goes back; `stop` set by the person's Stop of a
+    # running turn, which the computer is told; `agent` the turn's own (its
+    # reply's: only a computer keeping the folder with that agent takes it);
+    # `computer` the name of the computer last known to take it (the one
+    # keeping the folder at its begin, then the one that claimed it), so
+    # its row names one after that computer is gone. Goes with its
+    # conversation deleted. Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS computer_chat_runs (
+        turn_id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        page_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        agent TEXT NOT NULL DEFAULT '',
+        computer TEXT NOT NULL DEFAULT '',
+        holder TEXT NOT NULL DEFAULT '',
+        run TEXT NOT NULL DEFAULT '',
+        seq INTEGER NOT NULL DEFAULT 0,
+        stop INTEGER NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT 'queued',
+        queued_at TEXT NOT NULL,
+        started_at TEXT NOT NULL DEFAULT ''
+    ) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chat_runs_user ON computer_chat_runs(user_id, state)",
+    "CREATE INDEX IF NOT EXISTS idx_computer_chat_runs_holder ON computer_chat_runs(holder, state)",
 ]
 # comments = the threads people leave on a note, a page (its root block) or
 # a highlight (its block) — gamma/comments.py, docs/dev/comments.md. A
@@ -1008,6 +1101,25 @@ FEEDBACK_SCHEMA = [
     ) WITHOUT ROWID""",
     "CREATE INDEX IF NOT EXISTS idx_feedback_waiting ON feedback_request_threads(thread_id) "
     "WHERE answered_at IS NULL",
+    # feedback_request_runs = the run of a computer that holds a request
+    # (gamma/routers/computers.py, a work folder of this server kept on that
+    # computer with an agent): `holder` the computer's token id, `run` the
+    # id the computer minted for the run (its claim's key, so a retry is
+    # told it holds it), `agent`, `seen_at` this server's clock when the run
+    # read its entries and `read` the comment ids it read by thread (JSON),
+    # `ended` '' while it runs, then the state its answers wrote, or
+    # `stopped` once it was withdrawn or refused. Swept with its request.
+    # Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS feedback_request_runs (
+        request_id TEXT PRIMARY KEY,
+        holder TEXT NOT NULL,
+        run TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        seen_at TEXT NOT NULL,
+        read TEXT NOT NULL DEFAULT '{}',
+        ended TEXT NOT NULL DEFAULT ''
+    ) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_runs_holder ON feedback_request_runs(holder, ended)",
 ]
 _CHAT_COLUMNS = {"chats": "bucket, messages, updated_at, title",
                  "chat_history": "id, bucket, title, messages, created_at, updated_at"}
@@ -1927,7 +2039,8 @@ def restamp_pref(user_id: str, key: str, old: str, new: str, ws: str = "") -> bo
 def delete_workspace_prefs(ws: str, user_id: str) -> int:
     """Delete the account's prefs kept in the workspace (``workspace_prefs``),
     the pages it follows there (``page_follows``) and its conversations with
-    the agent on this computer (``computer_chats``, its alone): its
+    the agent on this computer (``computer_chats``, its alone, and their
+    turns run on another, ``computer_chat_runs``): its
     membership ended, or the account is deleted. Returns how many prefs
     went; a workspace without a pages.db has none (none is created)."""
     if not os.path.isfile(ws_db_path(ws, "pages.db")):
@@ -1935,6 +2048,7 @@ def delete_workspace_prefs(ws: str, user_id: str) -> int:
     with connect_pages_db(ws) as db:
         db.execute("DELETE FROM page_follows WHERE user_id = ?", (user_id,))
         db.execute("DELETE FROM computer_chats WHERE user_id = ?", (user_id,))
+        db.execute("DELETE FROM computer_chat_runs WHERE user_id = ?", (user_id,))
         return db.execute("DELETE FROM workspace_prefs WHERE user_id = ?", (user_id,)).rowcount
 
 

@@ -653,9 +653,12 @@ agent), and a token cannot move them.
 | 1. An agent on this computer answers a Send | the host on the desktop app's own server (`gamma/local_agents/`: finding the agents, the two drivers, the claim and the run, the answers), the folder's agent switched on in the sync panel, "Send to Codex" in the Feedback dialog, the agent's progress, summary and changed files on the request | built: [dev/local_agents.md](../dev/local_agents.md), "As built (step 1)" below |
 | 2. `@codex` in a comment | the mention as a Send of its thread or of the file's open threads, the @ menu's agent row, a follow-up resuming the session that answered, the names settled without reserving them | built: [dev/local_agents.md](../dev/local_agents.md) "A mention in a comment", "As built (step 2)" below |
 | 3a. The chat's computer side | the switch and the strip, the agent's turns in the chat (its reply, its steps, what it changed), a selected passage sent with its source line, Stop, a turn that outlives its tab, its own conversations and History | built: [dev/local_agents.md](../dev/local_agents.md) "The chat's computer side", "As built (step 3a)" below |
-| 3b. Approvals | approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), what the agent may run set on the computer | plan: "The chat window gets a second side", "On the computer" |
-| 3c. The rest of the side | *Continue in a terminal*, the selection's source line as a chip, a Background tasks row, View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, the model and effort, a folder's computer chat, text as it is typed | plan: "The chat window gets a second side" |
-| 4. The remote | the computer announced to the servers its vaults name, presence in any window of the maker, work folders of another server, their requests and the chat relayed through the computer's channel | plan: "How the server sees a vault" |
+| 3b. Approvals | approval cards relayed from Codex's app-server and Claude Code's permission prompts (so Claude Code may ask to build), what the agent may run set on the computer | built: [dev/local_agents.md](../dev/local_agents.md) "Asking in the chat", "As built (step 3b)" below |
+| 3c. The rest of the side | *Continue in a terminal* and *Show in folder*, the agent's model and effort, the reply as it is typed, the selection's source line as a chip, a Background tasks row | built: [dev/local_agents.md](../dev/local_agents.md) "Its model, its typing, a terminal, the sources, Background tasks", "As built (step 3c)" below; later: View diff and Revert, *Open comments on this page (n)*, *Attach what I see*, a folder's computer chat |
+| 4a. The channel and presence | the computer announced to the servers its vaults name over a channel of its own (a `computer` token, an announce and a held poll), presence kept by the server and shown to the vault's maker in any window, the sync panel's line | built: [dev/computers.md](../dev/computers.md), "As built (step 4a)" below |
+| 4b. Work folders of another server | a vault of another server that pushes everything into an empty folder it marks there, the tracking dialog on the host, that server's rules for the mark and its owner's *Let go* | built: [dev/work_folders.md](../dev/work_folders.md) "Work folders of another server", "As built (step 4b)" below |
+| 4c. Their Sends and mentions | run on the computer over the channel: the server's claim, the entries, the answers written by the server | built: [dev/local_agents.md](../dev/local_agents.md) "A work folder of another server", [dev/computers.md](../dev/computers.md) "The Sends", "As built (step 4c)" below |
+| 4d. The chat relayed | the chat's computer side on another server's page, in any window of the maker there | built: [dev/local_agents.md](../dev/local_agents.md) "The chat on another server's page", "As built (step 4d)" below; later: *Ask on this computer* (asks answered on the computer itself), *Show in folder* and *Continue in a terminal* from the desktop window there |
 | Later | the `acp` driver, delivery to an open session, a co-author's use of the maker's computer, one Inbox item per finished request | |
 
 ### As built (step 1)
@@ -766,6 +769,173 @@ side can take; where 3a went otherwise than planned:
   (file-explorer.md, decision 3), so it would be a turn asking the agent to
   undo, or the agent's own checkpoint (Claude Code's `rewind_files`).
 
+### As built (step 3b)
+
+[dev/local_agents.md](../dev/local_agents.md) "Asking in the chat" is the
+reference; where it went otherwise than planned:
+
+- **Asking is the chat's, never a Send's.** Nobody watches a Send, so it
+  keeps refusing. The panel's *Never | Ask in the chat | Ask on this
+  computer* is built as *Nothing more | Ask me in the chat*: the third,
+  a card on the computer's own screen, waits.
+- **Not `POST /api/ai/approvals/{id}`.** That route takes any token of the
+  account, keeps its approvals in a window's stream and offers *Always
+  allow*. The asks are the turn's, held by the runner, written in the
+  agent's message so any of the maker's windows draws the card from its
+  poll, and answered through their own maker-only route; the card is the
+  approval card's look, not its component, and has no *Always allow*.
+- **Allowed in this chat is Gamma's record.** Codex's `acceptForSession`
+  lives in one app-server process and Claude Code's session rules in one
+  CLI process, while a turn is one process; and an agent's own rule could
+  be a prefix (`Bash(latexmk *)`, a shell). Gamma keeps the exact
+  commands allowed per conversation and answers them itself.
+- **Claude Code asks through `--permission-prompt-tool stdio`**, the
+  control protocol the Agent SDK speaks (hidden from `--help`), with an ask
+  rule in `--settings` making every Bash call a prompt; a run that asks is
+  stream-json both ways. Every other prompt (an edit of a protected file,
+  any other tool) Gamma denies itself.
+- **Checked against the real CLIs** (Codex 0.167.0, Claude Code 2.1.318)
+  before the merge: a Claude Code Bash call asked through Gamma's handler
+  and run once allowed; its Edit of `.git/config` refused by Gamma with no
+  card; Codex asking to run `curl` outside its sandbox (its request id an
+  integer), allowed and run with the network. Still not run for real: a
+  Codex file-change approval, `untrusted`, and Claude Code's interrupt with
+  a prompt waiting.
+
+### As built (step 3c)
+
+[dev/local_agents.md](../dev/local_agents.md) "Its model, its typing, a
+terminal, the sources, Background tasks" is the reference. Five of the
+plan's pieces were built; where they went otherwise:
+
+- **The terminal is the shell's, never the page's.** The page asks the
+  shell with the page's id alone; the shell asks its own server for the
+  session and the agent's command line and builds the terminal's command
+  itself, refusing anything a terminal would read as its own syntax.
+  Checked for real before building: `codex resume` and `claude --resume`
+  in the folder take up a session Gamma's driver made, with its context.
+  The terminal session is the person's own (their settings, MCP servers
+  and trust prompts), not Gamma's confinement.
+- **The models come from the agents themselves**, with no model use:
+  Codex's `model/list` and Claude Code's `initialize`, read with the probe.
+  Claude Code needs `--model` and `--effort` on its command line, since
+  `--restricted` reads none of the person's settings.
+- **Typed text is the poll's**, not a stream to the window: the drivers
+  stream deltas into the message, which the window reads every 1.5 s while
+  a turn runs.
+- **Left for later, each needing more than building:** *View diff* and
+  *Revert* (Gamma writes no file the disk made: a turn asking the agent to
+  undo, or the agent's own checkpoint, is a decision first); *Open
+  comments on this page (n)* (context for the chat, or a Send: undecided);
+  *Attach what I see* (pictures for Claude Code must sit under `.gamma/`);
+  a folder's computer chat.
+
+### As built (step 4a)
+
+[dev/computers.md](../dev/computers.md) is the reference. Where it went
+otherwise than "How the server sees a vault":
+
+- **A credential of its own.** The channel speaks with a token of a new
+  `computer` scope, minted on that server by the shell with the window's
+  session and handed to the host with the shell's word, never with the
+  vault's sync token: a bearer is identity, and a sync token in a script
+  or a mirror's config must not pose as the computer. Such a token opens
+  the channel's two routes and nothing else, reads included, and no MCP
+  connection.
+- **The poll is the heartbeat.** One held `GET` (25 s, under a proxy's
+  idle limit, `async` so a hold takes no worker thread) both waits for
+  what the server asks and keeps the computer online; online lasts 45 s
+  past the last poll. The announce is a `POST` only when what the
+  computer keeps or finds changes.
+- **A small durable row.** Presence is in memory, but what the computer
+  last announced and when it was last seen is a users.db row per token,
+  so *offline since* survives a restart, and 4c can word a mention while
+  the computer is away.
+- **What the server learns** is the computer's id for it (an HMAC of the
+  install's id and the server's origin, so two servers cannot match one
+  computer by it), its host name, which folders and pages it keeps (ids;
+  the server names them), whether each is paused, and the assistants
+  with a problem's code, never its words and never a path.
+- **The nudge goes to the account** (`publish_account`), not the page's
+  room, so co-authors never learn when the maker's computer is on.
+- **One account there per link.** The host keeps one link per server,
+  workspace and local account, and never hands it to another account
+  signed in there (the shell says so, the host refuses it): the vaults it
+  announces were made with that account's tokens. The vaults themselves
+  record no account there yet, which 4c, whose runs answer as the maker,
+  needs (the survey's critic, C1).
+- **Not yet**: `here` (the desktop window on that server's page knowing
+  it is on the computer, for *Show in folder*) waits for 4d; nothing on
+  the computer acts on what the channel says, but to announce again.
+- **The open questions of trust** are answered as defaults for 4c and 4d:
+  a server the app did not start gets *Ask on this computer* as the only
+  asking form (a card answered on the computer itself, never relayed from
+  that server's sessions), and a window on a phone may start, follow and
+  stop the agent's work within its confinement but never widen it.
+
+### As built (step 4b)
+
+[dev/work_folders.md](../dev/work_folders.md) "Work folders of another
+server" is the reference. Where it went otherwise than planned:
+
+- **An explicit opt-in.** "A remote vault that pushes everything" would
+  have turned the kept folders of another server that already pushed
+  everything into work folders; a remote vault is one only once made one
+  (`work_vault`: its link's `TAKEN_OVER`).
+- **Empty folders only.** A work folder of another server is made of an
+  empty folder there, checked after the mark is written; a takeover over
+  HTTP (a folder with pages) is later.
+- **That server keeps its members safe**: it refuses a mark in a clone, a
+  Zotero-linked workspace or around another work folder, says it keeps
+  work folders (`whoami.work_folders`, so an older one gets no mark), and
+  its owner can *Let go* of a work folder whose computer is gone, so no
+  folder stays locked for every member; the computer whose mark is gone
+  stops instead of marking it again.
+- **The dialog stays on the computer** (the host's own window, the window
+  sent back to that server after), saying what is uploaded there and
+  which ticked files may hold secrets.
+
+### As built (step 4c)
+
+[dev/local_agents.md](../dev/local_agents.md) "A work folder of another
+server" and [dev/computers.md](../dev/computers.md) "The Sends" are the
+reference. Where it went otherwise than "How the server sees a vault":
+
+- **Not a relay of the local routes.** The page's server decides whose
+  Send it is and keeps the request, its claim and its answers; the
+  computer pulls the Sends meant for it on the channel (woken by the
+  held poll), claims each for a run it names, and posts its answers. A
+  claim or an answer retried writes nothing twice; a withdraw is never
+  overwritten.
+- **The server writes the agent's replies** (signed `local:<agent>`,
+  with its own clock as `seen`): the computer's token writes no comment.
+- **The computer computes what needs its disk**: the source lines, from
+  the PDF and the sources there; the pictures are fetched from the server.
+- **The binding is announced** with the vault, so the server words the
+  agent and refuses a token's Send while the computer is away; a Send
+  made then waits for it.
+- **Asking stays local**: a server the app did not start gets Sends and
+  mentions, which never ask; the chat (4d) is next.
+
+### As built (step 4d)
+
+[dev/local_agents.md](../dev/local_agents.md) "The chat on another
+server's page" is the reference. As for Sends (4c): the NAS keeps the
+conversation and the turn's row, the computer claims the turn for a run it
+names and writes the agent's message back, each write newer than the last
+(`seq`), so a retry or a late write never goes backwards. Where it went
+otherwise than "The chat window gets a second side":
+
+- **No asking there yet.** A remote turn runs confined as a Send does;
+  *Ask on this computer* (a card answered on the computer itself, never
+  from that server's sessions) is a later step, so the trust question of a
+  server the app did not start stays where "Still open" left it.
+- **What needs the window to be the computer** (*Continue in a
+  terminal*, *Show in folder*, the passage chip's source line) is not
+  offered there; the turn's prompt still gets the source lines.
+- **The composer stays open while the computer is off**: a message waits
+  and runs when it connects, as a Send does.
+
 ### Declined
 
 - **A webhook from the server to the PC.** A computer behind a router
@@ -797,9 +967,12 @@ side can take; where 3a went otherwise than planned:
   per assistant, and whether a page under a folder vault shares the
   folder's (the agent learns the paper once, the context grows; Codex
   already sends 64k input tokens for a one-line fix).
-- The server's part in the trust: is *Ask on this computer* the default
-  for a server the app did not start, and may a window on a phone drive
-  the computer at all.
+- The server's part in the trust, taken as defaults in "As built (step
+  4a)": *Ask on this computer* the only asking form for a server the app
+  did not start, and a phone driving the computer within its confinement
+  only. Whether an agent may be on at all for a server reached over plain
+  http outside this computer (the token travels in clear on the LAN)
+  is for 4c.
 - Whether "these" on a page also means highlights that carry a note and
   no thread. A note has no resolved state to say it is done; a work
   folder's feedback counts threads only (file-explorer.md, "Still to

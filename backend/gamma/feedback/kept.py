@@ -33,6 +33,15 @@ feedback reader draws the region as it was commented on
 A highlight made on a build replaced before its thread was opened is placed
 by its quote, as any highlight on a file read in place is: nothing is stored
 at the first highlight.
+
+Only a PDF's and a picture's versions are kept (``KEPT_FORMATS``): a range
+of a text file carries its own context (gamma/highlights.py), so its run
+reads nothing of the old version and no picture is drawn of it; a text
+file's thread stores nothing at its open nor at a replacement, and a
+range's (``lines``) anchor holds no file (``anchors.held_file``). A
+``file`` or ``note`` thread on a text page still names the page's version,
+which holds a stored library text document's old version while the thread
+is open (docs/dev/feedback.md "Known gaps").
 """
 
 import json
@@ -50,6 +59,8 @@ from ..logbuf import log
 from ..work_folders.library import work_folder_of
 from . import anchors
 
+KEPT_FORMATS = ("pdf", "image")  # the formats whose threads need the version they were opened on
+
 _waiting: dict = {}             # (ws, page id, thread id) the worker has yet to take, oldest first
 _guard = threading.Condition()  # ``_waiting`` and ``_working``; told when the worker stops
 _working = False                # the worker is running
@@ -61,7 +72,7 @@ def keeps_bytes(ws: str, page_id: str, props: dict | None = None) -> bool:
     place is stored as it comes (``props`` its properties, when the caller
     has them): a work folder's file in the library (docs/dev/work_folders.md
     "The round in a work folder"), or a page with an open thread
-    (``comments.has_open_thread``)."""
+    (``comments.has_open_thread``) whose document is of ``KEPT_FORMATS``."""
     if props is not None and work_folder_of(props) and props.get("library") is True:
         return True
     with connect_pages_db(ws) as conn:
@@ -70,7 +81,8 @@ def keeps_bytes(ws: str, page_id: str, props: dict | None = None) -> bool:
             props = load_props(row[0]) if row else {}
             if work_folder_of(props) and props.get("library") is True:
                 return True
-        return comments.has_open_thread(conn, page_id)
+        view = page_document(props)
+        return bool(view) and view["format"] in KEPT_FORMATS and comments.has_open_thread(conn, page_id)
 
 
 def held_files(conn, pages=None) -> set[str]:
@@ -154,8 +166,10 @@ def wait(timeout: float = 10.0) -> bool:
 
 def _unstored(ws: str, view) -> bool:
     """Whether the document ``view`` is read in place with no stored copy of
-    its bytes (a listed file has none to store)."""
-    return in_place(view) and bool(view["file"]) and not storage.exists(ws, view["file"])
+    its bytes and is of ``KEPT_FORMATS`` (a listed file has none to store, a
+    text file nothing to keep)."""
+    return (in_place(view) and view["format"] in KEPT_FORMATS and bool(view["file"])
+            and not storage.exists(ws, view["file"]))
 
 
 def _queue(key: tuple) -> None:

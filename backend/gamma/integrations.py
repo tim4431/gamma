@@ -1,8 +1,10 @@
 """Revocable credentials for one account: ``read`` tokens (an assistant's
 MCP connection, the HTTP API's reads), ``write`` tokens (a mirror pushing
-its edits, docs/dev/mirror.md) and ``feedback`` tokens (a read token that
+its edits, docs/dev/mirror.md), ``feedback`` tokens (a read token that
 may also reply to and resolve the comment threads on a work folder's files,
-docs/dev/feedback.md).
+docs/dev/feedback.md) and ``computer`` tokens (a computer's channel to this
+server, gamma/computers/: they open the channel's routes and nothing else,
+``auth.CHANNEL_PREFIX``, and no MCP connection).
 
 A token belongs to one workspace, ``workspace_id``, the one the HTTP API
 reads. A read or feedback token's MCP connection may read more
@@ -35,7 +37,9 @@ def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-SCOPES = ("read", "write", "feedback")
+SCOPES = ("read", "write", "feedback", "computer")
+ONE_WORKSPACE = {"write": "A read and write token is for one workspace.",   # the scopes of exactly one workspace
+                 "computer": "A computer's token is for one workspace."}
 ALL = "*"
 EDITING_ROLES = ("owner", "editor")
 DISPLAY_NAME_CHARS = 80
@@ -78,10 +82,10 @@ def display_name(name: str) -> str:
 def grant(user_id: str, workspaces, scope: str = "read") -> tuple[str, str]:
     """``(workspace_id, workspaces)`` to store for the workspaces a token
     may read: ``"*"`` or a list of ids, each one the account can open (a
-    write token: exactly one). HTTPException 400/403 otherwise."""
+    write or computer token: exactly one). HTTPException 400/403 otherwise."""
     if workspaces == ALL:
-        if scope == "write":
-            raise HTTPException(400, "A read and write token is for one workspace.")
+        if scope in ONE_WORKSPACE:
+            raise HTTPException(400, ONE_WORKSPACE[scope])
         opened = [w for w in list_for_user(user_id) if not w["deleting"]]
         if not opened:
             raise HTTPException(403, "You have no workspace to connect.")
@@ -89,8 +93,8 @@ def grant(user_id: str, workspaces, scope: str = "read") -> tuple[str, str]:
     ids = list(dict.fromkeys(w for w in workspaces or () if isinstance(w, str) and w))
     if not ids:
         raise HTTPException(400, "Choose at least one workspace.")
-    if scope == "write" and len(ids) > 1:
-        raise HTTPException(400, "A read and write token is for one workspace.")
+    if scope in ONE_WORKSPACE and len(ids) > 1:
+        raise HTTPException(400, ONE_WORKSPACE[scope])
     if len(ids) > 200 or not all(role_of(w, user_id) for w in ids):
         raise HTTPException(403, "You cannot connect this workspace.")
     return ids[0], json.dumps(ids) if len(ids) > 1 else ""
@@ -146,7 +150,7 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
     made (``""``: it changes nothing), ``asks`` whether each change waits
     for the person's yes."""
     if scope not in SCOPES:
-        raise HTTPException(400, "scope must be read, write or feedback")
+        raise HTTPException(400, "scope must be read, write, feedback or computer")
     now = int(time.time())
     token = ("gamma_oauth_" if oauth_resource else "gamma_") + secrets.token_urlsafe(32)
     item = {"id": secrets.token_hex(16), "name": name, "workspace_id": ws, "scope": scope,
@@ -161,7 +165,8 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
         conn.execute("INSERT INTO integration_tokens (id, token_hash, user_id, workspace_id, name, "
                      "created_at, expires_at, scope, workspaces, edits, asks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (item["id"], token_digest(token), user_id, ws, name, item["created_at"],
-                      item["expires_at"], scope, workspaces, edits if scope != "write" else "", int(bool(asks))))
+                      item["expires_at"], scope, workspaces, edits if scope not in ONE_WORKSPACE else "",
+                      int(bool(asks))))
         if oauth_resource:
             conn.execute("INSERT INTO mcp_oauth VALUES ('access', ?, ?, ?)",
                          (token_digest(token), json.dumps({"resource": oauth_resource}), item["expires_at"]))
@@ -177,8 +182,8 @@ def set_workspaces(user_id: str, token_id: str, workspaces, edits=()) -> tuple[s
                            (token_id, user_id)).fetchone()
     if not row:
         raise HTTPException(404, "This connection is gone.")
-    if row[0] == "write":
-        raise HTTPException(400, "A read and write token is for one workspace.")
+    if row[0] in ONE_WORKSPACE:
+        raise HTTPException(400, ONE_WORKSPACE[row[0]])
     ws, value = grant(user_id, workspaces, row[0])
     changes = edit_grant(user_id, ws, value, edits)
     with connect_users_db() as conn:
@@ -199,8 +204,14 @@ def set_asks(user_id: str, token_id: str, asks: bool) -> None:
 
 def forget_workspace(conn, ws: str) -> None:
     """A deleted workspace leaves every token, in the caller's transaction:
-    one that read it alone goes, one that reads others too keeps them."""
+    one that read it alone goes, one that reads others too keeps them; what
+    the computers of its tokens announced goes too (gamma/computers/)."""
+    from .computers import registry  # local: the registry imports workspaces
+
     conn.execute("DELETE FROM integration_tokens WHERE workspace_id = ? AND workspaces = ''", (ws,))
+    gone = [token_id for token_id, in conn.execute("SELECT token_id FROM computers WHERE workspace_id = ?", (ws,))]
+    conn.execute("DELETE FROM computers WHERE workspace_id = ?", (ws,))
+    registry.drop(gone)
     rows = conn.execute("SELECT id, workspace_id, workspaces FROM integration_tokens WHERE workspaces LIKE '[%' "
                         "AND EXISTS (SELECT 1 FROM json_each(workspaces) WHERE value = ?)", (ws,)).fetchall()
     for token_id, primary, value in rows:
@@ -264,9 +275,10 @@ def resolve_connection(token: str, resource: str | None = None) -> Connection | 
     account can still open, its own first (the default for a call that
     names none), with the token's scope, id and name, the account's
     username, those of them it may edit that the account still edits and
-    whether each change asks first; None when it reads none."""
+    whether each change asks first; None when it reads none, and for a
+    computer's token, which opens its channel alone."""
     row = _row(token, resource)
-    if not row:
+    if not row or row[3] == "computer":
         return None
     user_id, username, primary, scope, value, token_id, name, edits, asks = row
     wanted = granted(primary, value)

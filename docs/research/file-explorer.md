@@ -11,10 +11,9 @@ local agents (Claude Code, Codex) as structured documents. The owner
 offered a rewrite from the bottom up and asked first whether the idea is
 possible at all.
 
-Status: **a plan; steps 0 to 5 are built** ("As built (step 0)" to
-"As built (step 5)" under "In steps"), the rest is not. This note surveys
-what
-the stored model and the code assumed before step 0, weighs three shapes a
+Status: **a plan; steps 0 to 6 are built** ("As built (step 0)" to
+"As built (step 6)" under "In steps"), the rest is not. This note surveys
+what the stored model and the code assumed before step 0, weighs three shapes a
 file could take, and lays the chosen one out in layers from the bottom,
 with the steps, the decisions still open and the risks. It was revised on
 2026-11-11 after the owner's answers ("Decided" below). The mechanics as
@@ -22,8 +21,10 @@ built live in [dev/documents.md](../dev/documents.md) (a page's document),
 [dev/work_folders.md](../dev/work_folders.md) (work folders),
 [dev/block_centric.md](../dev/block_centric.md),
 [dev/user_db.md](../dev/user_db.md), [dev/home_library.md](../dev/home_library.md),
-[dev/synced_vaults.md](../dev/synced_vaults.md) and
-[dev/comments.md](../dev/comments.md).
+[dev/synced_vaults.md](../dev/synced_vaults.md),
+[dev/comments.md](../dev/comments.md) and
+[dev/highlight_relocation.md](../dev/highlight_relocation.md) (a text
+file's ranges placed again).
 
 ## The answer in one paragraph
 
@@ -715,7 +716,9 @@ thread as a PDF highlight does.
 When a text file changes, each anchor is found again by its quote:
 exactly near its old line, then word by word, then marked lost and kept,
 the rule set for PDFs. A picture replaced keeps its regions where they
-were, marked as made on another version.
+were, marked as made on another version. Regions were built in step 3
+(As built (step 3)), ranges of a text file in step 6 (As built (step 6)):
+a range carries the text around it, so its run reads no old file.
 
 ## What does not change
 
@@ -816,7 +819,7 @@ is for" works at the end of step 2.
 | 4. Text in search and the chat | The extractor, text files in the index, `source: "file"` hits with lines, the chat's context and `read_page` by lines. | A question about a `.tex` file answered with a link to its line. |
 | 5. The explorer | The Files window, quick open's Files group, paths in crumbs and links. | The browser suite's new group. |
 | 6. Anchors in text | `text_position`, highlights and threads from a selection, relocation after a change. | A file rewritten under ten comments keeps the ones whose text survived and marks the rest. |
-| Later | Work folders of another server from the dialog; editing a text file in Gamma; notebook and table viewers; building LaTeX ([latex-projects.md](latex-projects.md), parts 4 and 5, on a work folder's files). | |
+| Later | Work folders of another server from the dialog (made of an empty folder there: [agent-collab.md](agent-collab.md) step 4b; a folder with pages still later); editing a text file in Gamma; notebook and table viewers; building LaTeX ([latex-projects.md](latex-projects.md), parts 4 and 5, on a work folder's files); opening files and folders from the file manager: [open-with.md](open-with.md). | |
 
 Step 0 and the first half of step 3 are refactors with nothing to show,
 and they carry most of the risk; each is small enough to review alone for
@@ -1239,7 +1242,10 @@ Where it differs from the plan above, the whole list:
     (`ai_context.area_highlight` stays PDF); exports writing a work
     folder's file at its path; a region crop in the readable exports (a
     region exports as a note); editing a text file; Opened files of
-    formats other than PDF; a listed file's head as text; a region's own
+    formats other than PDF (built since by [open-with.md](open-with.md),
+    which also decided that a Markdown file outside every vault asks
+    whether to become a note of a work folder, else opens read-only in the
+    code view, and is never added to the library); a listed file's head as text; a region's own
     rows in the highlight menu (the PDF's rows show); the AI title for a
     non-PDF document (`docId` is the PDF's); an admin setting for the keep
     limit.
@@ -1586,6 +1592,196 @@ plan above, the whole list:
     path term with no leaf or a query with no ASCII run (both read every
     name, about 50 ms at 20,000 files); a read around an id for the reveal
     past 500 rows.
+
+**As built (step 6).** Built as its row says
+([dev/api.md](../dev/api.md) "The highlight shape" and the
+`PUT /pages/{page_id}/attachment` row,
+[dev/highlight_relocation.md](../dev/highlight_relocation.md) "Text files",
+[dev/feedback.md](../dev/feedback.md) "The anchor", "An entry" and "The
+Markdown", [dev/documents.md](../dev/documents.md) "Viewers",
+[dev/comments.md](../dev/comments.md) "Threads" and "The margin",
+[dev/ai_context.md](../dev/ai_context.md): a selection of lines, a
+range's words). A highlight in a
+text file is a block with `text_position`: `{line, col, end, end_col}`
+(lines 1-based, the end inclusive; columns 0-based code points of the
+decoded line), `prefix` and `suffix` (40 code points either side) and
+`hash`, the version it was measured on, always written; its text is the
+block's `quote`, as a PDF highlight's is. The quote and context of a span
+are `highlights.span_text` on the server and
+`documents/viewers/textAnchors.js` `contextOf` on the client, held to one
+another by `tests/shared/textposition.json`. When the page's stored file
+changes, by a work folder's round or by `PUT /attachment`,
+`gamma/documents/text_anchors.py` places each range again from its own
+quote and context, with no old file: exactly near its old line, the lines
+compared under a fold of whitespace (NFC, case kept), then word by word at
+or above `relocateMinMatch`, else lost and kept with its best place under
+the threshold as `closest`. The flags, the thresholds, the words and the
+compare-and-set write are the PDF run's (`highlight_relocate._write(…,
+key=)`). A file of at most 512 KiB is placed in the replacement's own
+request, a larger one by the `relocate-highlights` job. A thread on a range
+is a `lines` anchor, and its feedback entry names the file's own lines
+(`where.line`, `end`, `was`; `source` the file). The code view draws the
+ranges over their text, a selection's popup makes a highlight or a thread,
+the cards stand in a column beside the text, a phone shows badges, and a
+selection reaches the chat by its lines. No migration: `text_position` was
+the kind column's since step 55. The browser group is `text-anchors`.
+Where it differs from the plan above, the whole list:
+
+1. The run reads no old file. The plan says "the rule set for PDFs", whose
+   run reads its reference from the stored old version; a text range
+   carries its `prefix` and `suffix` (the W3C `TextQuoteSelector`'s idea),
+   so the ladder needs only the new text. The two runs share the flags,
+   the thresholds, the write, the words and the client's looks, not the
+   reading. [highlight-anchoring.md](highlight-anchoring.md)'s open item on
+   storing the context is closed for text.
+2. No version is kept for a text file's thread (`kept.KEPT_FORMATS =
+   ("pdf", "image")`): the plan's "the version a comment was made on is
+   kept" serves the PDF run and the pictures, and text needs neither.
+   `held_file` is `""` for a `lines` anchor, and a text page under an open
+   thread stores none of its rebuilds, so the run reads the linked path. A
+   `file` or `note` anchor on a text page still names `<hash>.tex`, which is
+   never stored for it ([dev/feedback.md](../dev/feedback.md) "Known
+   gaps"). A page without a document keeps no bytes, whatever its
+   threads.
+3. `hash`, not `doc_id`, names the version a range was measured on, always
+   written and never held, as a region's is: a replacement stamps nothing
+   on text ranges, and "pending" is read (`hash` not the page's file, and
+   neither `lost` nor `approx`).
+4. Columns are code points, which the plan left without a unit. A span
+   never ends in a line break: an end at column 0 of a later line is moved
+   back to the end of the line before, again past empty lines; the quote is
+   cut at 10,000 code points.
+5. The run is in the request up to `TEXT_INLINE_BYTES` (512 KiB), the job
+   above it, where the plan has one job: a formatter run over a repository
+   would meet the 20 jobs an account may run, and the pending window goes.
+   The cost sits on the vault's round: fifty files of 1,000 lines with ten
+   ranges each, placed in their rounds, take about 1.3 s against a budget
+   of 1.5 s, and the ladder alone places 100 ranges in a 50,000-line file
+   in about 0.5 s against 1.0 ([dev/debugging.md](../dev/debugging.md)
+   "Performance budgets"). The choice reads the new document's `size` (a
+   document without one is placed in the request). Its counts go back as
+   `relocation` on `PUT /attachment`'s answer, which the replacement's
+   status reads ("File replaced." and `relocationSummary`); the vault's
+   path logs them under `[relocate]`. A refusal of the run is answered as
+   `relocation_error`, any other failure logged and answered as "the
+   highlights could not be placed: …", since the replacement is committed
+   and the vault's round must not fail on it. The job records `format` in
+   its params, a PDF run's too.
+6. The run hashes the bytes it read and refuses ("the file changed while
+   it was read") when they are not the version it was asked to place; the
+   ranges stay pending until the next change. A PDF run reads a stored
+   file, whose bytes cannot change under it.
+7. The fold: whitespace runs are one space and the ends trimmed, NFC is
+   applied a character and its marks at a time (equal to NFC except across
+   two base characters, Hangul's conjoining jamo), no case folding: a
+   re-indentation or a CRLF rewrite leaves a range exact, a renamed
+   identifier does not. The exact step treats a quote's first and last
+   lines as parts of lines unless the selection took them whole, and
+   bounds itself (the 500 copies nearest the old line ranked, 32 lines
+   either side of the old line per seed word); a solid placement takes the
+   new file's context, a dashed one keeps the stored one. A pending range
+   found nowhere goes back to its reference (`prev`'s lines, which store no
+   columns); a lost range whose version came back with its quote standing
+   is written bare and counted kept.
+8. No review card for text (the PDF's hangs on rectangles): a dashed range
+   is accepted from its menu or by the Document menu's Accept all; a lost
+   one is placed by hand through "Move to a selection…" or "Use the closest
+   match ({n}%)", the review card's step as a menu row, shown for a lost
+   text range that has a `closest`. Accept and the closest match are keyed
+   by the block's own position (`placeKeyOf`), where they read
+   `pdf_position` before; `closestPlacement` takes the block's quote too,
+   since a text position stores none and its `prev` needs it. The Document
+   menu's Review row stays the PDF's; "Find highlights in this file" runs
+   the job by hand, and its route answers a page of another format "the
+   page has no PDF or text file" (it said "no PDF"), a text page without
+   ranges "the page has no highlights placed on its file" and a listed one
+   "the file is listed without its bytes".
+9. A lost range is drawn as a dashed tag at the start of its old first
+   line, not as a hollow mark over its old lines: for text the old line
+   number holds other text now. The line cue stays on its old lines, and
+   its card stands at that line.
+10. No `estimate` and no `earlier` for a text range's `placed`: `exact`,
+    `rough`, `lost` and `pending` serve.
+11. The viewer surface keeps step 3's names `onRegionJump`,
+    `onRegionContext` and `onRegionThread` for a range, and gains
+    `onAnchor`, `onChatSelection` and `onHighlightAction` (the bar over a
+    range the highlighter just made). The viewer flag was not renamed:
+    App reads `regions` as "a region drawn with a finger", and the margin
+    flag already existed as `margin`, which `text` now carries beside
+    `tools: ["highlighter"]`. One gate in App, `takesHighlights` (the
+    viewer's tools name the highlighter; a PDF needs its address too),
+    serves the highlighters, their strip, the command and the notes' Move
+    button; `highlight.created` names a range's kind `lines`.
+12. A selection reaching the chat is a labelled item (`line`, `end`,
+    `file`; the chip "Line 33 · main.tex"), not a new path: the page-0 path
+    existed. App's own selection readers skip the code view, a plain click
+    there clears the set, and a click on a range adds its quote with the
+    file's name. On the server a selection with lines is headed `lines
+    118–120` and read with 20 lines either side through `text_window`, the
+    same budget as the PDF's windows; a cut one carries its `lines`, so the
+    shortened pill names it "Lines 118–120" where it said "PDF passage".
+13. `TipFrame` is lifted to `shared/ui/TipFrame.jsx`, its layer the
+    `--z-tip` token; the code view has its own small `TextTip` (the marks,
+    Copy where the host's menu is off, Comment on this passage), and no
+    Link, Translate or Move; the highlight menu leaves the Link rows out
+    for a text range alone. The selection takes a highlighter's tint only
+    while one is armed, and a linked range is drawn in the accent.
+14. The column's tops come from the viewer (`CommentMarginSlot`'s
+    `topOf`), not from rectangles. It stands beside CodeMirror's scroller,
+    moved with its vertical scroll alone, when the view has room for
+    360 px of text beside it, never on a phone; with Wrap off a long line
+    scrolled sideways passes under its gap. Its tops and a phone's badges
+    are read in CodeMirror's measure phase, the badges from the drawn
+    marks, so a badge exists only while its line is drawn, and a press on
+    one jumps to its range and opens its threads (the PDF's and the
+    picture's badges do), where the plan had it open the bar over the range. A jump to a range not yet loaded waits
+    until the whole file is read, and scrolls only when the range is out
+    of view. comments.md's "The PDF margin" is "The margin".
+15. The anchor's `lines` key is written on `lines` anchors alone, so the
+    other kinds' key order stands. `place_words` names one as `lines
+    118–120, “quote…”`. The chat's thread lines, the feedback tools'
+    answers (`anchors.following`), the entries and the agent's prompt name
+    the lines the block holds now, not those the anchor was opened on. A
+    malformed `text_position` places nothing, so a thread on it reads as a
+    note.
+16. One vocabulary for the place words, client and Markdown, every format:
+    "moved in the new version", "not found in the current version", "drawn
+    on an earlier version", where the PDF's said "build".
+17. A rough entry carries `was`, the quote the comment was made on (from
+    `prev`): the text twin of a PDF entry's `before` picture. The local
+    agents' prompt carries it too. An entry's order puts a page's notes
+    after its placed threads, and a text file's threads by line.
+18. The AI's words for a text range's highlight are its lines and state
+    (`line 52`, `line 47; not found in the current file`, `line 23; placed
+    roughly`), after the quote of the page section's `- Highlighted:` line
+    and of `read_block`'s, so the model reads on with
+    `read_page(from_line=)`.
+19. The client's model: a block with a `pdf_position` and a
+    `text_position` is placed by the PDF's (`placeKeyOf`, as the server's
+    `_placed`), and a kind is read region, then range, then PDF. A range's
+    Properties row reads "Lines 118–120" with its chips (To check, Lost,
+    "Measured on an older version of the file"), which the status line
+    shows too. A range is drawn pending only when both its `hash` and the
+    page's file are known and differ; a span ending at the start of a cut
+    line stops before it, and a line break alone makes none.
+20. The browser group makes ten of its threads through the API on whole
+    lines (a highlight and a thread come from selections in the view). The
+    replaced last sentence keeps a closest match above `CLOSEST_MIN`, so
+    the group takes it from the menu and accepts it, where the plan
+    expected none; the deleted paragraph's has none. Stacked cards are not
+    level with their lines, so only the first card's place is measured.
+    `select.mjs` names `text-anchors` beside the viewers, the comments, the
+    editor, the chat, the feedback reader, the vault, `documents/text.py`
+    and `highlight_relocate.py`.
+21. Not built in step 6: placing a range whose `hash` never was the page's
+    file before the next change (it waits for it); a real long press in the
+    browser group (the phone step sets its selection by script); a review
+    card for text; Link and Translate on a text selection; a format-aware
+    hold for a `file` or `note` anchor on a text page; a check on a touch
+    device of the code view's selection and of the column keeping pace
+    with the scroll; a measured cost of the inline run for a quote of
+    thousands of characters over hundreds of lines (the perf cases place
+    two-line quotes).
 
 ## Still to decide
 

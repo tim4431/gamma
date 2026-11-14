@@ -4,7 +4,7 @@
 // one per page load, never with "Suggest tours" off, and the card never
 // takes the caret or closes the popover it points into. A fresh account, so
 // no earlier scenario has seen these offers.
-import { Account, FAKE_AI_MODELS, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, keyLabel, wanted } from "../harness.mjs";
 import { closeEditor, editRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { TOURS } from "../../../src/guide/tours/index.js";
@@ -455,7 +455,7 @@ export async function triggeredGuideScenarios(env) {
       await line([box.x + 180, box.y + 120], [box.x + 180, box.y + 200]);
       assertEq(await page.locator('[data-guide-overlay="ink-erase"] .guideCard').count(), 1, "erasing does not move the card on");
       // The erase card's promise: Ctrl+Z brings the drawing back.
-      await page.keyboard.press("Control+z");
+      await page.keyboard.press("ControlOrMeta+z");
       await page.waitForSelector('[data-guide="notes.ink"] svg.blockInkCard');
       await page.click('[data-guide="ink.lasso"]');
       await primary(page).click();
@@ -702,7 +702,7 @@ export async function triggeredGuideScenarios(env) {
       await page.getByRole("button", { name: "New chat", exact: true }).click();
       await page.waitForSelector('[data-guide-offer="new-chat"] .guideCard');
       assertEq(await page.locator('[data-guide="chat.history"][data-guide-active]').count(), 1, "it points at History");
-      assert((await page.textContent(".guideCard")).includes("Alt"), "and names the Alt+click");
+      assert((await page.textContent(".guideCard")).includes(keyLabel("Alt")), "and names the Alt+click");
       await page.getByRole("button", { name: "Got it" }).click();
       assertEq(await progress(page, "new-chat"), "done");
       assertEq((await user.api(`/api/chat-history?bucket=${pg.id}`)).sessions.length, 1, "the conversation went into History");
@@ -720,7 +720,7 @@ export async function triggeredGuideScenarios(env) {
       await page.keyboard.press("End");
       await page.keyboard.press("Enter");
       await page.waitForSelector('[data-guide-offer="new-note-key"] .guideCard');
-      assertEq(await page.locator(".guideCard kbd", { hasText: "Shift" }).count() > 0, true, "it shows Shift+Enter as keys");
+      assertEq(await page.locator(".guideCard kbd", { hasText: keyLabel("Shift") }).count() > 0, true, "it shows Shift+Enter as keys");
       await page.keyboard.type("same note");
       assert((await page.locator(".blockEditorCm .cm-content").textContent()).includes("same note"), "typing goes on in place");
       await page.getByRole("button", { name: "Got it" }).click();

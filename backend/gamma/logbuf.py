@@ -33,6 +33,13 @@ _SCRUB_RULES = (
     (re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/-]{8,}={0,2}"), "Bearer ***"),
     # OpenAI/Anthropic-style keys (sk-, sk-proj-, sk-ant-…)
     (re.compile(r"\bsk-[A-Za-z0-9_-]{8,}"), "sk-***"),
+    # A sign-in in a URL (a proxy's: http://user:pass@host:port), up to the
+    # last @ of the address, and a Basic (Proxy-)Authorization, which the
+    # key=value rule below would leave half shown. The scheme is bounded:
+    # unbounded, a long a.a.a… line (a request path anyone can send) costs
+    # time quadratic in its length
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^\s/?#'\"]+@"), r"\1***@"),
+    (re.compile(r"(?i)\b(authorization['\"]?\s*[=:]\s*['\"]?)basic\s+[A-Za-z0-9+/=]+"), r"\1Basic ***"),
     # key=value / key: value shapes (query strings, exception messages that
     # echo request bodies or headers)
     (re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key|authorization)(\s*[=:]\s*)[^\s&'\"]+"),
@@ -118,23 +125,28 @@ def setup_logging():
 
 
 # A page's op-log read, as uvicorn's access log writes the path: with its
-# query string (?since=…, and ?ws= or ?share=).
+# query string (?since=…, and ?ws= or ?share=); and a computer's channel's
+# poll (?v=…&wait=…).
 _OP_LOG_READ = re.compile(r"/api/pages/[^/?]+/ops(\?|$)")
+_CHANNEL_POLL = re.compile(r"/api/computers/poll(\?|$)")
 
 
 class _QuietPolls(logging.Filter):
     """Drops answered polls from uvicorn's access log: the Background tasks
     tray's ``GET /api/jobs``, which comes every 1.5 s while a job runs, and
     a page's op-log read ``GET /api/pages/{id}/ops?since=``, which a tab
-    whose socket never connects sends every 2 s (collabSession.js). A
-    failed or slow poll still has its ``[http]`` line (auth.py)."""
+    whose socket never connects sends every 2 s (collabSession.js), and a
+    computer's channel's ``GET /api/computers/poll``, which its computer
+    sends again as soon as one is answered (gamma/computers/). A failed
+    poll still has its ``[http]`` line (auth.py), and so does a slow one,
+    the channel's aside, which is held on purpose."""
 
     def filter(self, record):
         args = record.args
         if isinstance(args, tuple) and len(args) == 5:  # client, method, path, http version, status
             _, method, path, _, status = args
             if method == "GET" and isinstance(status, int) and status < 400 and isinstance(path, str) \
-                    and (path == "/api/jobs" or _OP_LOG_READ.match(path)):
+                    and (path == "/api/jobs" or _OP_LOG_READ.match(path) or _CHANNEL_POLL.match(path)):
                 return False
         return True
 

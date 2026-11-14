@@ -1873,7 +1873,7 @@ def test_replacing_the_pdf_starts_a_job_that_moves_the_highlights(guest):
     body = r.json()
     assert body["properties"]["doc"]["hash"] == new_doc and "relocation_error" not in body
     job = body["job"]
-    assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": new_doc, **DEFAULTS}
+    assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": new_doc, "format": "pdf", **DEFAULTS}
     assert job["title"] == "Placing the highlights of “Replaced paper”"
     assert _done(guest, job) == {**NOTHING, "highlights": 2, "moved": 1, "lost": 1}
     a = _props(guest, hl_a)
@@ -1939,12 +1939,12 @@ def test_a_run_goes_by_its_owner_s_thresholds_as_they_were_when_it_started(guest
         _set_profile(guest, relocateMinMatch=100, relocateExactChars=12)
         new_doc, body = _replace(guest, page_id, new)
         first = body["job"]
-        assert first["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": new_doc, **strict}
+        assert first["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": new_doc, "format": "pdf", **strict}
         assert _done(guest, first) == {**NOTHING, "highlights": 2, "lost": 2, **strict}
         # looser, by hand: the citation from 80%, and the short passage matched roughly too
         _set_profile(guest, relocateMinMatch=80, relocateExactChars=0)
         job = guest.post("/api/jobs/relocate-highlights", json={"page_id": page_id}).json()
-        assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": new_doc, **loose}
+        assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": new_doc, "format": "pdf", **loose}
         assert _done(guest, job) == {**NOTHING, "highlights": 2, "approx": 2, **loose}
         cooled = _props(guest, hl_cooling)
         assert cooled["quote"] == "5 K cooling" and cooled["pdf_position"]["approx"] is True
@@ -1997,7 +1997,7 @@ def test_a_replacement_names_each_highlight_s_file_and_says_when_its_run_cannot_
         assert r.status_code == 429, r.text
     # by hand later: A read from the file its rects name, B (whose file is not stored) by its quote
     job = guest.post("/api/jobs/relocate-highlights", json={"page_id": page_id}).json()
-    assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": doc2, **DEFAULTS}
+    assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": doc2, "format": "pdf", **DEFAULTS}
     assert _done(guest, job) == {**NOTHING, "highlights": 3, "moved": 2, "lost": 1}
     for hl, y in ((hl_a, 300), (hl_b, 314)):
         pos = _props(guest, hl)["pdf_position"]
@@ -2294,7 +2294,7 @@ def test_the_manual_run_places_by_the_stored_quotes(guest):
     pdf = _pdf([[(72, 100, LINE_A), (72, 114, LINE_B)]])
     page_id, doc, (hl,) = _page_with(guest, pdf, [(LINE_B, _position(1, _line_rect(72, 300, LINE_B)))])
     job = guest.post("/api/jobs/relocate-highlights", json={"page_id": page_id}).json()
-    assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": doc, **DEFAULTS}
+    assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": doc, "format": "pdf", **DEFAULTS}
     assert _done(guest, job) == {**NOTHING, "highlights": 1, "moved": 1}
     pos = _props(guest, hl)["pdf_position"]
     assert 99 < pos["rects"][0]["y1"] < pos["rects"][0]["y2"] < 119 and "lost" not in pos

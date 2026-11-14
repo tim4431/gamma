@@ -9,25 +9,35 @@ services the box can see but the internet can't.
 
 The transport resolves and validates all addresses immediately before opening
 a socket, then connects to that numeric address without resolving again. The
-original hostname remains the HTTP Host and TLS certificate/SNI name. These
-fetches bypass environment proxies, whose DNS resolution we cannot validate.
+original hostname remains the HTTP Host and TLS certificate/SNI name.
+
+These fetches take the route every connection of the server takes
+(gamma/net_proxy.py: the admin's network proxy and its bypass list, never a
+proxy a member chooses), and stay pinned through the proxy: the host is
+resolved and checked here, and the proxy is asked for the checked address
+(CONNECT or SOCKS5 to it, an http URL's too: a proxy sent the URL in full
+would forward the Host it names), the hostname kept for Host and TLS. Only
+with the admin's ``proxy_dns`` ("Let the proxy look up names", for networks
+where only the proxy resolves names, or a VPN answering fake addresses) is
+the proxy asked for the name, once the name passed the checks it allows
+(``_proxy_resolvable``): the proxy then decides which addresses such a
+fetch reaches.
 """
 
 import ipaddress
-import http.client
 import socket
 import urllib.parse
 from contextlib import contextmanager
 from contextvars import ContextVar
 from urllib.error import URLError
-from urllib.request import (
-    BaseHandler, HTTPCookieProcessor, HTTPHandler, HTTPRedirectHandler,
-    HTTPSHandler, ProxyHandler, build_opener,
-)
+from urllib.request import BaseHandler, HTTPCookieProcessor, HTTPRedirectHandler
 
+from . import net_proxy
 from .publisher_sessions import browser_profile
 
 _ALLOWED_SCHEMES = ("http", "https")
+# Names only a local network knows, which a proxy must never be asked for.
+_LOCAL_SUFFIXES = (".localhost", ".local", ".internal", ".home.arpa", ".lan")
 
 
 class BlockedUrlError(URLError):
@@ -51,20 +61,28 @@ def _ip_is_blocked(ip: str) -> bool:
     )
 
 
-def validate_public_url(url: str) -> str:
-    """Return the URL unchanged if it is an http(s) URL whose host resolves only
-    to public addresses; otherwise raise BlockedUrlError."""
+def validate_public_url(url: str, policy=None) -> str:
+    """Return the URL unchanged if it is an http(s) URL whose host may be
+    fetched on its route under ``policy`` (the saved one by default): one
+    that resolves only to public addresses, or with ``proxy_dns`` through
+    the proxy, one ``_proxy_resolvable`` passes; otherwise raise
+    BlockedUrlError."""
     try:
         parsed = urllib.parse.urlparse(url)
-        host = parsed.hostname
-        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        host, named = parsed.hostname, parsed.port
+        port = named or (443 if parsed.scheme.lower() == "https" else 80)
     except ValueError as exc:
         raise BlockedUrlError("invalid URL host or port") from exc
     if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
         raise BlockedUrlError(f"blocked URL scheme: {parsed.scheme or '(none)'}")
     if not host:
         raise BlockedUrlError("URL has no host")
-    _public_addresses(host, port)
+    policy = policy or net_proxy.current()
+    route = net_proxy.route(host, parsed.scheme, policy, named)
+    if route.kind == "direct":
+        _public_addresses(host, port)
+    else:
+        _target(policy, route, host, port)
     return url
 
 
@@ -108,34 +126,64 @@ def _public_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_a
     raise last_error
 
 
-class _PublicHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._create_connection = _public_connection
+def _target(policy, route, host, port) -> str:
+    """What the proxy of ``route`` is asked for (net_proxy's ``pin``): an
+    address ``host`` resolves to here, the whole answer checked like a
+    direct fetch's (an IPv4 one when there is one: a proxy may have no IPv6
+    route); with ``proxy_dns``, the host itself, without a trailing dot,
+    once ``_proxy_resolvable`` passed it."""
+    if policy.proxy_dns:
+        return _proxy_resolvable(host, port)
+    addresses = [info[4][0] for info in _public_addresses(host, port)]
+    return next((ip for ip in addresses if ":" not in ip), addresses[0])
 
 
-class _PublicHTTPSConnection(http.client.HTTPSConnection):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._create_connection = _public_connection
-
-
-class _PublicHTTPHandler(HTTPHandler):
-    def http_open(self, req):
-        return self.do_open(_PublicHTTPConnection, req)
-
-
-class _PublicHTTPSHandler(HTTPSHandler):
-    def https_open(self, req):
-        return self.do_open(_PublicHTTPSConnection, req, context=self._context)
+def _proxy_resolvable(host, port) -> str:
+    """``host`` without a trailing dot, the proxy being asked for it by
+    name; BlockedUrlError for what it may not be asked for: a blocked
+    address (written any way a proxy reads as one: ``10.0.0.5.``,
+    ``127.1``, ``0x7f.1``), a name only a local network knows (localhost, a
+    name without a dot, _LOCAL_SUFFIXES), or a name that resolves here to a
+    blocked address outside net_proxy.FAKE_IP. A name that does not
+    resolve here is the proxy's to resolve."""
+    bare = host.rstrip(".")
+    try:
+        ip = str(ipaddress.ip_address(bare))
+    except ValueError:
+        try:
+            ip = socket.inet_ntoa(socket.inet_aton(bare))  # 127.1, 0x7f.1, 10.1: what a proxy reads as IPv4
+        except (OSError, UnicodeError, ValueError):
+            ip = None
+    if ip is not None:
+        if _ip_is_blocked(ip):
+            raise BlockedUrlError(f"blocked internal address: {host}")
+        return bare
+    name = bare.lower()
+    if name == "localhost" or "." not in name or name.endswith(_LOCAL_SUFFIXES):
+        raise BlockedUrlError(f"blocked internal name: {host}")
+    try:
+        infos = socket.getaddrinfo(bare, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return bare
+    for info in infos:
+        ip = info[4][0]
+        try:
+            if _ip_is_blocked(ip) and not net_proxy.is_fake_ip(ipaddress.ip_address(ip)):
+                raise BlockedUrlError(f"blocked internal address for {host}: {ip}")
+        except ValueError:
+            raise BlockedUrlError(f"unparseable address for {host}: {ip}")
+    return bare
 
 
 class _GuardedRedirectHandler(HTTPRedirectHandler):
     """Re-validate every redirect target so a public URL can't 302 to an
     internal one."""
 
+    def __init__(self, policy=None):
+        self.policy = policy
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        validate_public_url(newurl)
+        validate_public_url(newurl, self.policy)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -171,9 +219,11 @@ def browsing_session():
         _session.reset(token)
 
 
-def guarded_urlopen(req, timeout=30):
+def guarded_urlopen(req, timeout=30, policy=None):
     """Drop-in for urllib.request.urlopen that validates the URL (and every
-    redirect) against the SSRF guard first. ``req`` may be a str or a Request.
+    redirect) against the SSRF guard first. ``req`` may be a str or a Request;
+    ``policy`` the proxy setting to route by (net_proxy), the saved one by
+    default (the Test of an unsaved one passes it).
 
     Keep publisher cookies through this fetch's redirects (e.g. Nature's
     institutional-access handshake). Each call gets a fresh, in-memory jar
@@ -182,11 +232,11 @@ def guarded_urlopen(req, timeout=30):
     user's explicitly connected publisher sessions.
     """
     url = req.full_url if hasattr(req, "full_url") else req
-    validate_public_url(url)
+    validate_public_url(url, policy)
     jar, agents = _session.get() or browser_profile()
-    opener = build_opener(
-        ProxyHandler({}), _PublicHTTPHandler(), _PublicHTTPSHandler(),
-        _GuardedRedirectHandler, HTTPCookieProcessor(jar), _BrowserAgent(agents),
+    opener = net_proxy.build_opener(
+        _GuardedRedirectHandler(policy), HTTPCookieProcessor(jar), _BrowserAgent(agents),
+        policy=policy, direct=_public_connection, pin=_target,
     )
     try:
         return opener.open(req, timeout=timeout)

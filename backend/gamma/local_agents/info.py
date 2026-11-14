@@ -1,10 +1,12 @@
 """What a work folder's vault says of its agent on this computer, for the
 folder-links API's links (``_info``) and a page's chip
-(``folder_links.page_vault``): ``{name, label, ready, problem, running}``,
-``running`` what it works on now, ``{kind: "send", request_id, detail}``
-for a Send or ``{kind: "chat", request_id: null, detail}`` for a turn of
-the chat's computer side, or null; and null for a vault with no agent, one
-that is no work folder, and on a server that runs no agents.
+(``folder_links.page_vault``): ``{name, label, ready, problem, running,
+runs}``, ``running`` what it works on now, ``{kind: "send", request_id,
+detail}`` for a Send or ``{kind: "chat", request_id: null, detail}`` for a
+turn of the chat's computer side, or null, ``runs`` what it may run
+(``never`` or ``ask``, ``store.runs_of``); and null for a vault with no
+agent, one that is no work folder (of this server or another,
+``folder_links.agent_folder``), and on a server that runs no agents.
 
 A read path: nothing here runs a process. Whether the agent is ready is
 ``catalog.cached``'s (a stale answer starts one probe in the background), a
@@ -35,9 +37,10 @@ def listing(links, *, can_act=lambda link: True) -> dict[str, dict | None]:
     out: dict[str, dict | None] = {link["id"]: None for link in links}
     if not enabled():
         return out
-    work = [link for link in links if folder_links.work_folder_link(link)]
+    work = [link for link in links if folder_links.agent_folder(link)]
     rows = store.agents_of([link["id"] for link in work]) if work else {}
     runs = runner.at_work(rows) if rows else {}
+    policies = store.policies_of(rows) if rows else {}
     for link in work:
         row = rows.get(link["id"])
         if row is None:
@@ -48,10 +51,12 @@ def listing(links, *, can_act=lambda link: True) -> dict[str, dict | None]:
         if run is not None and run["kind"] == runner.CHAT:
             running = {"kind": runner.CHAT, "request_id": None, "detail": run["detail"] if can_act(link) else ""}
         elif run is not None:
-            running = {"kind": runner.SEND, "request_id": run["id"],
-                       "detail": _detail(run["ws"], run["id"]) if can_act(link) else ""}
+            # A Send of another server's work folder: the progress its run wrote there last.
+            detail = run["detail"] if run["remote"] else _detail(run["ws"], run["id"])
+            running = {"kind": runner.SEND, "request_id": run["id"], "detail": detail if can_act(link) else ""}
         out[link["id"]] = {"name": row["agent"], "label": catalog.label(row["agent"]), "ready": found["ready"],
-                           "problem": found["problem"], "running": running}
+                           "problem": found["problem"], "running": running,
+                           "runs": policies.get(link["id"], "never")}
     return out
 
 

@@ -75,6 +75,56 @@ test("a region's keys fill the highlight section: its colour, and its place on t
   assert.equal(blockKind(block({ text_position: { from: 1 } })), "highlight", "a range of a text file, defined before its writer");
 });
 
+const range = { line: 118, col: 4, end: 120, end_col: 37, prefix: "the ", suffix: " and", hash: "f2" };
+
+test("a text file's range: its lines as a row with the place's chips, prev and closest beneath", () => {
+  assert.equal(kindLabel(block({ text_position: range })), "Lines of the file");
+  assert.equal(kindLabel(block({ text_position: range, pdf_position: pos })), "Highlight", "a place on the PDF first");
+  assert.equal(kindLabel(block({ text_position: range, link_url: "https://x" })), "Link region");
+  const r = block({ color: "#ffe5648c", quote: "the loss", text_position: range });
+  const here = (b) => (id) => (id === "b1" ? b : null);
+  const sections = propertySections(r, { ctx: { now: NOW, lookupBlock: here(r), pageFileHash: "f2" } });
+  assert.equal(section(sections, "highlight").title, "Lines of the file");
+  assert.deepEqual(section(sections, "highlight").rows.map((x) => x.key), ["color", "quote", "text_position"]);
+  const lines = row(sections, "text_position");
+  assert.equal(lines.type, "json");
+  assert.equal(lines.label, "Lines");
+  assert.equal(lines.display.preview, "Lines 118–120");
+  assert.equal(lines.copy, jsonText(range));
+  assert.equal(lines.tags, undefined, "measured on the file the page shows: no chip");
+  assert.equal(lines.nav.action, "showOnPage");
+  const one = propertySections(block({ text_position: { ...range, end: 118 } }), { ctx: { now: NOW } });
+  assert.equal(row(one, "text_position").display.preview, "Line 118");
+  // the chips: to check with its match, lost, and pending on the open page's file
+  const tags = (pos, ctx = {}) => {
+    const b = block({ quote: "q", text_position: pos });
+    return (row(propertySections(b, { ctx: { now: NOW, lookupBlock: here(b), ...ctx } }), "text_position").tags || []).map((x) => x.text);
+  };
+  assert.deepEqual(tags({ ...range, approx: true, match: 0.86, prev: { hash: "f1", line: 110, end: 112, quote: "the los" } }, { pageFileHash: "f2" }),
+    ["To check · 86% match"]);
+  assert.deepEqual(tags({ ...range, lost: true }, { pageFileHash: "f3" }), ["Lost"]);
+  assert.deepEqual(tags({ ...range, hash: "f1" }, { pageFileHash: "f2" }), ["Measured on an older version of the file"]);
+  assert.deepEqual(tags({ ...range, hash: "f1" }), [], "no open file to tell it by");
+  const elsewhere = block({ quote: "q", text_position: { ...range, hash: "f1" } });
+  assert.equal(row(propertySections(elsewhere, { ctx: { now: NOW, pageFileHash: "f2" } }), "text_position").tags, undefined,
+    "a block not on the open page is not measured against its file");
+  // prev and closest as rows of their own
+  const prev = { hash: "f1", line: 110, end: 112, quote: "the los" };
+  const closest = { line: 40, col: 0, end: 40, end_col: 9, match: 0.6, quote: "the loss", hash: "f2" };
+  const moved = propertySections(block({ quote: "q", text_position: { ...range, approx: true, match: 0.9, prev, closest } }), { ctx: { now: NOW } });
+  assert.deepEqual(section(moved, "highlight").rows.map((x) => x.key), ["color", "quote", "text_position", "text_position.prev", "text_position.closest"]);
+  assert.equal(row(moved, "text_position.prev").label, "Before the change");
+  assert.equal(row(moved, "text_position.closest").label, "Closest match");
+  // the status line's chips too
+  const pending = block({ quote: "q", text_position: { ...range, hash: "f1" } });
+  assert.deepEqual(statusChips(pending, null, null, { pageFileHash: "f2" }).map((c) => c.text), ["Measured on an older version of the file"]);
+  for (const key of ["text_position", "text_position.line", "text_position.col", "text_position.end", "text_position.end_col",
+    "text_position.prefix", "text_position.suffix", "text_position.hash", "text_position.lost", "text_position.approx",
+    "text_position.match", "text_position.prev", "text_position.closest"]) {
+    assert.ok(CATALOG[key]?.label && CATALOG[key].hint && CATALOG[key].section === "kind", key);
+  }
+});
+
 test("a highlight's keys fill its section, Timing, Block and Technical", () => {
   const hl = block({ color: "#ffe5648c", quote: "the coherence", pdf_position: { ...pos, rects: [rect, rect, rect] }, t0: NOW - 3600e3 });
   const sections = propertySections(hl, { ctx: { now: NOW, lookupBlock: (id) => (id === "b1" ? hl : null) } });

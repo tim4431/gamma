@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from .. import ratelimit
 from ..auth import SESSION_COOKIE, require_personal_user_id, require_ws, ws_role
+from ..computers import registry
 from ..db import connect_users_db
 from ..integrations import (ALL, create_token, edit_grant, editing, grant, granted, set_asks, set_workspaces,
                             token_digest)
@@ -66,8 +67,9 @@ class TokenCreate(Access):
     name: str = Field(default="Codex", min_length=1, max_length=80)
     expires_in_days: int = Field(default=90, ge=1, le=365)
     # write: a mirror's push credential; feedback: a read token that also
-    # answers the comments on a work folder's files
-    scope: str = Field(default="read", pattern="^(read|write|feedback)$")
+    # answers the comments on a work folder's files; computer: a computer's
+    # channel to this server, which opens nothing else (gamma/computers/)
+    scope: str = Field(default="read", pattern="^(read|write|feedback|computer)$")
 
 
 def _access(primary: str, value: str, edits: str = "") -> dict:
@@ -108,6 +110,10 @@ def new_token(payload: TokenCreate, request: Request, response: Response):
         if ws_role(request) == "viewer":
             raise HTTPException(403, "You can only view this workspace, so a write token cannot be made for it.")
         return {**create_token(user_id, ws, name, payload.expires_in_days, scope="write"), **_access(ws, "")}
+    if payload.scope == "computer":
+        # The desktop app's, for its channel to this server: the workspace open, a viewer's too (it only
+        # shows that the account's vaults are kept on that computer).
+        return {**create_token(user_id, ws, name, payload.expires_in_days, scope="computer"), **_access(ws, "")}
     # A read or feedback token, a viewer's too (viewers comment): the workspaces it was given.
     primary, value = grant(user_id, payload.wanted(ws), payload.scope)
     edits = edit_grant(user_id, primary, value, payload.edits())
@@ -129,8 +135,12 @@ def change_access(token_id: str, payload: AccessChange, request: Request):
 def revoke_token(token_id: str, request: Request):
     user_id, _ws = _owner(request)
     with connect_users_db() as conn:
-        conn.execute("DELETE FROM integration_tokens WHERE id = ? AND user_id = ?", (token_id, user_id))
-    return {"ok": True}
+        gone = conn.execute("DELETE FROM integration_tokens WHERE id = ? AND user_id = ?",
+                            (token_id, user_id)).rowcount
+    if gone:
+        registry.forget(token_id)  # a computer's token: its presence goes with it
+    # ``revoked``: whether the account had such a token (the desktop app says when one was left)
+    return {"ok": True, "revoked": bool(gone)}
 
 
 # --- a setup command's sign-in --------------------------------------------------------

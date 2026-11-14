@@ -829,6 +829,19 @@ def test_a_pdf_inside_a_vault_opens_the_vaults_page(owner, disk):
     assert r.status_code == 400 and "open its page" in r.json()["detail"]
 
 
+def test_a_loose_tex_in_a_pull_only_vault_opens_as_a_lone_file(owner, disk):
+    pulled = _vault(owner, disk / "Pulled sources", {"n.md": "a note\n"}, push="off")
+    f = _put(disk / "Pulled sources" / "draft.tex", "\\section{Loose}\n")
+    r = owner.post("/api/folder-links/open", json={"path": str(f)})
+    assert r.status_code == 200, r.text
+    assert r.json()["created"] is True and r.json()["format"] == "text" and r.json()["workspace"] == pulled["workspace_id"]
+    assert "draft.tex" not in vault_store.files(pulled["id"])
+    with connect_pages_db(pulled["workspace_id"]) as conn:
+        props = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
+                                        (r.json()["page"],)).fetchone()[0])
+    assert (props["doc"]["format"], props["doc"]["ext"], props["doc"]["at"]) == ("text", ".tex", "path")
+
+
 def test_a_directory_vault_takes_in_the_file_vaults_inside_it(owner, disk):
     root = disk / "Taking"
     f = _put(root / "papers" / "Followed.pdf", _pdf("followed then taken in"))
@@ -1192,6 +1205,7 @@ def test_the_routes_that_take_a_path_take_the_shells_secret(owner, disk, monkeyp
                        ("/api/folder-links/preview", {"path": str(disk / "x")}),
                        (f"/api/folder-links/{link['id']}/relink", {"path": str(disk / "Secret")}),
                        ("/api/folder-links/open", {"path": str(disk / "x.pdf")}),
+                       ("/api/folder-links/where", {"path": str(disk / "Secret")}),
                        ("/api/folder-links/opened/p/locate", {"path": str(disk / "x.pdf")})):
         assert owner.post(path, json=body).status_code == 403, path
         assert owner.post(path, json=body, headers={"X-Gamma-Shell": "wrong"}).status_code == 403, path
@@ -1200,6 +1214,8 @@ def test_the_routes_that_take_a_path_take_the_shells_secret(owner, disk, monkeyp
     r = owner.post(f"/api/folder-links/{link['id']}/relink", json={"path": str(disk / "Secret")},
                    headers={"X-Gamma-Shell": "the-secret"})
     assert r.status_code == 200
+    r = owner.post("/api/folder-links/where", json={"path": str(disk / "Secret")}, headers={"X-Gamma-Shell": "the-secret"})
+    assert r.status_code == 200 and r.json()["is"] == "vault"
     # no path, no secret
     assert owner.get(f"/api/folder-links/page/{page}").status_code == 200
     assert owner.get(f"/api/folder-links/{link['id']}/removal").status_code == 200

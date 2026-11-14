@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment,
+  abandonedCommentHighlight, addComment, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, cardedAnchors,
   commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, isWithdrawn, keepThreads,
   laterComments, mentionHint, popoverThreads, resolveThread, sendRefusal, sentChip, shortCount, threadLink, threadPlace, threadsIn, upsertThread,
 } from "../src/comments/comments.js";
@@ -192,6 +192,16 @@ test("the Send chip: Sent while the request waits, the agent at work, Failed wit
   assert.equal(sentChip(page()[0]), null);
 });
 
+test("the Send chip names the computer that keeps the folder: waiting for it, its own label while it is offline", () => {
+  const on = (state) => ({ ...page()[0], sent: { request_id: "r1", state, at: "2026-11-10T13:59:00.000000Z", detail: "" } });
+  const there = { name: "codex", label: "Codex", ready: true, problem: "", computer: "TIM-PC", online: true };
+  assert.deepEqual(sentChip(on("sent"), there), { state: "sent", label: "Sent", title: "Waiting for TIM-PC", tone: "pending" });
+  assert.deepEqual(sentChip(on("sent"), { ...there, ready: null, online: false }),
+    { state: "sent", label: "Waiting for TIM-PC", title: "TIM-PC is offline: this runs when it connects.", tone: "pending" });
+  assert.equal(sentChip(on("running"), { ...there, online: false }).label, "The agent is working", "taken: the computer is back");
+  assert.equal(sentChip(on("sent"), { name: "codex", label: "Codex", ready: true, problem: "" }).title, "Waiting for the agent", "this computer's own");
+});
+
 test("a field naming the agent on this computer says what sending does: the thread, or the file's open comments", () => {
   const agent = { name: "codex", label: "Codex", ready: true, problem: "" };
   const sends = (text) => ({ text, warn: false });
@@ -210,6 +220,18 @@ test("a field naming the agent on this computer says what sending does: the thre
   assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "closed" }), warns("Reopen this thread to send it to Codex again."));
   assert.equal(mentionHint({ agent, text: "go on", initial: "go", refused: "closed" }), null, "no mention, nothing to say");
   assert.equal(mentionHint({ agent: null, text: "@codex go" }), null);
+});
+
+test("a field naming the agent of the computer that keeps the folder names that computer, and says a Send waits while it is offline", () => {
+  const agent = { name: "codex", label: "Codex", ready: true, problem: "", computer: "TIM-PC", online: true };
+  assert.deepEqual(mentionHint({ agent, text: "@codex go" }), { text: "Sends this thread to Codex on TIM-PC.", warn: false });
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", file: true }), { text: "Sends this file's open comments to Codex on TIM-PC.", warn: false });
+  assert.deepEqual(mentionHint({ agent: { ...agent, ready: null, online: false }, text: "@codex go" }),
+    { text: "Sends this thread to Codex on TIM-PC. TIM-PC is offline: this runs when it connects.", warn: false });
+  assert.deepEqual(mentionHint({ agent: { ...agent, ready: false, problem: "Codex is not signed in on TIM-PC." }, text: "@codex go" }),
+    { text: "Codex is not signed in on TIM-PC.", warn: true });
+  assert.deepEqual(mentionHint({ agent, text: "@codex go", initial: "go", refused: "closed" }),
+    { text: "Reopen this thread to send it to Codex again.", warn: true });
 });
 
 test("a mention the server did not send to the agent says why, worded here by its code, else in the server's words", () => {
@@ -242,6 +264,27 @@ test("what became of a thread's place after a rebuild: a highlight moved or lost
   assert.equal(threadPlace({ made_on: "a" }, ink, ""), "", "a page that shows no file");
   assert.equal(threadPlace({ made_on: "a" }, { id: "n", content: "a note", properties: {} }, "b"), "", "a note");
   assert.equal(threadPlace({ made_on: "a" }, undefined, "b"), "", "a block the page no longer shows");
+});
+
+test("a text file's range: moved or lost by its flags, nothing while pending; its lines when it has no words", () => {
+  const range = (extra = {}) => ({ id: "t", content: "", properties: { quote: "q",
+    text_position: { line: 14, col: 0, end: 16, end_col: 3, prefix: "", suffix: "", hash: "f1", ...extra } } });
+  assert.equal(threadPlace({ made_on: "f0" }, range(), "f1"), "", "placed exactly");
+  assert.equal(threadPlace({ made_on: "f0" }, range({ approx: true, match: 0.86, hash: "f2" }), "f2"), "moved");
+  assert.equal(threadPlace({ made_on: "f0" }, range({ lost: true }), "f2"), "lost");
+  assert.equal(threadPlace({ made_on: "f0" }, range({ hash: "f0" }), "f2"), "", "pending says nothing, as a PDF's does");
+  assert.equal(anchorWords(range()), "q");
+  const bare = (span) => ({ id: "t", content: "", properties: { text_position: { prefix: "", suffix: "", hash: "f1", ...span } } });
+  assert.equal(anchorWords(bare({ line: 14, col: 0, end: 16, end_col: 3 })), "Lines 14–16 of the file");
+  assert.equal(anchorWords(bare({ line: 14, col: 0, end: 14, end_col: 3 })), "Line 14 of the file");
+  assert.equal(anchorWords(bare({ line: 0 })), "", "a malformed one names no lines");
+});
+
+test("the cards a margin draws: anchors with threads and the one being written on, each at its top", () => {
+  const anchors = [{ id: "a", threadCount: 2, position: { line: 3 } }, { id: "b", threadCount: 0, position: { line: 9 } },
+    { id: "c", threadCount: 0, position: { line: 12 } }];
+  assert.deepEqual(cardedAnchors(anchors, "c", (a) => a.position.line * 20), [{ id: "a", top: 60 }, { id: "c", top: 240 }]);
+  assert.deepEqual(cardedAnchors(anchors, "", () => 0), [{ id: "a", top: 0 }]);
 });
 
 test("who may report: anyone but the author, a link visitor too; a tombstone no one", () => {

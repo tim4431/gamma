@@ -1,7 +1,8 @@
 """The feedback reader (docs/dev/feedback.md "The entry and the document"):
 the comment threads on a work folder's files as entries an agent can act
-on, each with its file, its place, the source line SyncTeX maps it to, a
-picture of its region and its comments.
+on, each with its file, its place, the source line SyncTeX maps it to (a
+range of a text file names its own lines), a picture of its region and its
+comments.
 
 A scope (``resolve_scope``) is a work folder W, a directory below it or one
 of its files. ``entries`` reads the scope's threads (``comments``' readers:
@@ -36,6 +37,7 @@ MAX_NOTE = 1000         # characters of a note's text in ``where.note``
 STATES = comments.STATES
 PLACED = ("passage", "area", "ink")         # the kinds that have a page
 REGION = "region"                           # the kind that has a place on a picture
+LINED = ("lines",)                          # the kinds that have lines in a text file
 ON_THIS_BUILD = ("exact", "rough", "estimate")  # a place on the page's current file
 
 # How to answer, the same in every document (and in a request's file, with
@@ -171,15 +173,19 @@ def _number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _placed(kind: str, pos, recorded: dict | None, current: str, gone: bool) -> str:
-    """How the place stands on the page's current file (``where.placed``)."""
+def _placed(kind: str, pos, recorded: dict | None, current: str, gone: bool, *, measured: str = "doc_id") -> str:
+    """How the place stands on the page's current file (``where.placed``):
+    ``pos`` the block's position, ``measured`` its key naming the file it
+    was measured on (a PDF position's ``doc_id``, absent when the current
+    one; a text range's ``hash``, always written). A text run never writes
+    ``approx`` without ``match``, so a range is never ``estimate``."""
     if kind == "ink":
         return "earlier" if recorded and recorded.get("doc_id", "") != current else "exact"
     if gone or not isinstance(pos, dict):
         return "exact" if recorded and recorded.get("doc_id", "") == current else "lost"
     if pos.get("lost"):
         return "lost"
-    measured = pos.get("doc_id") if isinstance(pos.get("doc_id"), str) and pos["doc_id"] else current
+    measured = pos.get(measured) if isinstance(pos.get(measured), str) and pos[measured] else current
     if measured != current:
         return "pending"    # whatever else it carries: an area the run could not place keeps its rectangles there
     if pos.get("approx"):
@@ -211,7 +217,36 @@ def _frame(pos) -> tuple[list, list] | None:
 
 
 def _has_place(kind: str) -> bool:
-    return kind in PLACED or kind == REGION
+    return kind in PLACED or kind == REGION or kind in LINED
+
+
+def _lines_where(pos, source: dict, recorded: dict | None, placed: str, *, kept: bool) -> dict:
+    """A range's ``where``: its lines now while it is placed on the page's
+    current file (``source`` the live anchor), else the ones it was
+    commented on; the quote; and, placed roughly, how alike it read and the
+    text the comment was made on (``was``: the quote the thread's anchor
+    recorded, when the range reads otherwise now; for a thread without one,
+    its ``prev``'s quote, the text last confirmed there). ``kept``: the
+    file's text is kept from the model (``anchors.text_kept``), so neither
+    quote is given, only the lines."""
+    first, last = anchors.lines_of(source if placed in ON_THIS_BUILD else recorded or source) or (None, None)
+    where: dict = {}
+    if first:
+        where["line"] = first
+        if last != first:
+            where["end"] = last
+    quote = "" if kept else source["quote"]
+    if quote:
+        where["quote"] = quote
+    where["placed"] = placed
+    if placed == "rough":
+        where["match"] = pos["match"]
+        prev = highlights.valid_text_prev(pos.get("prev"))
+        was = (recorded.get("quote") if recorded else (prev or {}).get("quote")) or ""
+        was = was[:highlights.PREV_MAX_QUOTE]
+        if was and was != quote and not kept:
+            where["was"] = was
+    return where
 
 
 class _Item(NamedTuple):
@@ -242,9 +277,11 @@ def _item(conn, thread: dict, stored: str | None, title: str, props: dict, tree:
         # An area, ink or a region keeps the anchor's place (page, box,
         # rectangles) while the file is the anchor's, as its picture does
         # (pictures.now): a block dragged on the same build does not move the
-        # thread. A passage follows its highlight, and every kind on a PDF the
-        # relocation on a new build; a region is never placed again.
-        kept = recorded is not None and (gone or (kind != "passage" and live["doc_id"] == recorded["doc_id"]))
+        # thread. A passage and a range follow their highlight, and every kind
+        # on a PDF or a text file the relocation on a new version; a region is
+        # never placed again.
+        follows = kind == "passage" or kind in LINED
+        kept = recorded is not None and (gone or (not follows and live["doc_id"] == recorded["doc_id"]))
         source = recorded if kept else live
         row = None if gone else conn.execute("SELECT properties FROM unified_blocks WHERE id = ?",
                                              (live["block"],)).fetchone()
@@ -260,6 +297,10 @@ def _item(conn, thread: dict, stored: str | None, title: str, props: dict, tree:
             if frame:
                 where["rect"], where["size"] = frame
             where["placed"] = _region_placed(pos, source, current, view)
+        elif kind in LINED:
+            pos = block.get("text_position")
+            placed = _placed(kind, pos, recorded, current, gone, measured="hash")
+            where.update(_lines_where(pos, source, recorded, placed, kept=anchors.text_kept(view)))
         else:
             pos = block.get("pdf_position")
             placed = _placed(kind, pos, recorded, current, gone)
@@ -284,13 +325,15 @@ def _item(conn, thread: dict, stored: str | None, title: str, props: dict, tree:
 def _order(item: _Item) -> tuple:
     """Files by name; in a file the whole file's threads first, then by page,
     top and left edge, the threads without a page after: a picture's regions
-    by top and left edge, then the notes; then by when."""
+    by top and left edge, a text file's ranges by line, then the notes; then
+    by when."""
     page = item.where.get("page")
     place = item.place or {}
     box = place.get("box")
     left = box[0] if box else min((min(r[0], r[2]) for r in place.get("rects") or ()), default=0.0)
     return (item.file.casefold(), item.file, item.kind != "file", page is None, page or 0, item.kind == "note",
-            anchors.top(place) if place else 0.0, left, item.thread["created_at"], item.thread["id"])
+            item.where.get("line") or 0, anchors.top(place) if place else 0.0, left, item.thread["created_at"],
+            item.thread["id"])
 
 
 # --- the entry -----------------------------------------------------------------------
@@ -298,8 +341,17 @@ def _order(item: _Item) -> tuple:
 def _source(ws, conn, item: _Item, live_sources: bool) -> dict | None:
     """The source of the place: live when it is on the page's current file
     (and this computer holds its vault and its SyncTeX), else the one
-    recorded when the thread was opened."""
+    recorded when the thread was opened. A range of a text file is its own
+    source, never SyncTeX's: its lines now while it is placed on the
+    current file, else the ones it was commented on (``where``)."""
     place = item.place
+    if item.kind in LINED:
+        if not item.where.get("line"):
+            return None
+        out = {"file": item.file, "line": item.where["line"]}
+        if item.where.get("end"):
+            out["end"] = item.where["end"]
+        return {**out, "version": "current" if item.where["placed"] in ON_THIS_BUILD else "commented"}
     if (live_sources and item.kind in PLACED and place and item.where.get("placed") in ON_THIS_BUILD
             and place["doc_id"] == item.current):
         from . import sources  # local: it reaches the vaults (folder_links), loaded where a source is asked for
@@ -355,15 +407,21 @@ def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[
     return picture, before
 
 
-def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions: dict | None, memo: dict) -> dict:
+def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions: dict | None, memo: dict,
+           places: bool = False) -> dict:
     thread, view = item.thread, item.view
     picture, before = _pictures(ws, conn, item, regions, memo)
-    return {"id": thread["id"], "file": item.file, "format": view["format"] if view else "markdown",
+    out = {"id": thread["id"], "file": item.file, "format": view["format"] if view else "markdown",
            "page_id": thread["page_id"], "block_id": thread["block_id"], "kind": item.kind, "where": item.where,
            "source": _source(ws, conn, item, live_sources), "picture": picture, "before": before,
            "state": "resolved" if thread["resolved_at"] else "open", "sent": _sent(thread.get("sent")),
            "link": f"{link_base}?ws={ws}&page={thread['page_id']}&block={thread['block_id']}&thread={thread['id']}",
            "comments": [_comment(c) for c in thread["comments"]]}
+    if places and item.kind in PLACED and item.place:
+        place = item.place
+        out["place"] = {"page": place.get("page"), "box": place.get("box"), "rects": place.get("rects") or [],
+                        "doc_id": place.get("doc_id") or ""}
+    return out
 
 
 def _comment(c: dict) -> dict:
@@ -386,8 +444,8 @@ def _sent(sent: dict | None) -> dict | None:
 
 
 def _entries(ws, conn, scope: Scope, *, state: str, paths, link_base: str, sources: bool, threads=None,
-             regions: dict | None = None, limit: int | None = None,
-             tree: Tree | None = None) -> tuple[list[dict], int, list[dict]]:
+             regions: dict | None = None, limit: int | None = None, tree: Tree | None = None,
+             places: bool = False) -> tuple[list[dict], int, list[dict]]:
     """The scope's entries in their order, the first ``limit`` of them, with
     how many there were and the threads they were made of."""
     _check_state(state)
@@ -402,13 +460,13 @@ def _entries(ws, conn, scope: Scope, *, state: str, paths, link_base: str, sourc
                    key=_order)
     kept = items if limit is None else items[:limit]
     memo: dict = {}
-    out = [_entry(ws, conn, item, link_base=link_base, live_sources=sources, regions=regions, memo=memo)
-           for item in kept]
+    out = [_entry(ws, conn, item, link_base=link_base, live_sources=sources, regions=regions, memo=memo,
+                  places=places) for item in kept]
     return out, len(items), [item.thread for item in kept]
 
 
 def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None = None, link_base: str = "",
-            sources: bool = True, threads=None, regions: dict | None = None) -> list[dict]:
+            sources: bool = True, threads=None, regions: dict | None = None, places: bool = False) -> list[dict]:
     """The entries of the scope's threads in ``state`` (open, resolved or
     all), in the document's order (files by name; in a file the whole
     file's threads, then by page and place, a picture's regions, the notes
@@ -418,10 +476,14 @@ def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None =
     that is its query alone); ``sources`` false leaves the live SyncTeX
     lookup out (the recorded source stays); ``threads``: only those ids;
     ``regions`` gains ``{key: (page id, Region)}`` for each picture named,
-    for whoever draws them (``pictures.cached``). FeedbackError 400 for
-    another state."""
+    for whoever draws them (``pictures.cached``); ``places``: an entry on a
+    PDF page (a passage, an area, ink) gains ``place: {page, box, rects,
+    doc_id}``, its place now as its anchor has it (the rects fractions of
+    the page, ``doc_id`` the file they were measured on), for a computer
+    that finds its source line itself (gamma/routers/computers.py).
+    FeedbackError 400 for another state."""
     return _entries(ws, conn, scope, state=state, paths=paths, link_base=link_base, sources=sources,
-                    threads=threads, regions=regions)[0]
+                    threads=threads, regions=regions, places=places)[0]
 
 
 def document(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None = None, owner: str = "",

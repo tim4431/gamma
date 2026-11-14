@@ -59,8 +59,10 @@ function useNotifyLevel(pageId, enabled, onStatus) {
 // `notify`: the reader has an Inbox (a signed-in account, no guest), so the
 // header has the page's Notify me; onStatus(text) says a choice the server
 // refused. onFeedback(), when given (a work folder's file, a reader who may
-// edit), is the header's Feedback.
-export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, onFeedback, ...common }) {
+// edit), is the header's Feedback. `agent`: the agent that answers the
+// reader's Sends (App's commentAgent), so a waiting Send's chip reads as its
+// thread's card does ("Waiting for TIM-PC" while that computer is offline).
+export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, onFeedback, agent = null, ...common }) {
   const [filter, setFilter] = useState("open");
   const [level, setLevel] = useNotifyLevel(pageId, notify, onStatus);
   const list = threadsIn(threads || [], filter);
@@ -92,7 +94,7 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
             const who = first ? authorLabel(first) : "";
             const replies = th.comments.length - 1;
             const anchor = th.block_id === pageId ? t("This page") : anchorSnippet(anchorText(th.block_id), 80, labelOf) || t("A note");
-            const chip = sentChip(th);
+            const chip = sentChip(th, agent);
             return (
               <button key={th.id} type="button" className={`commentsPanelRow${filter === "resolved" ? " resolved" : ""}`}
                 data-motion-key={th.id} data-thread-id={th.id} onClick={() => onOpen(th)}>

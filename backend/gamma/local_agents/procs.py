@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 
+from .. import net_proxy
 from ..logbuf import log
 
 STDERR_TAIL = 8 * 1024   # characters of a child's stderr kept for the run's record
@@ -46,7 +47,7 @@ _DROP = {"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_AGENT_SDK_VERSION"
          "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ATTENDED",
          "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SSE_PORT",
          "CLAUDE_CODE_EMIT_STARTUP_TIMING", "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "CLAUDE_CODE_ENABLE_TASKS",
-         "CLAUDE_CODE_QUESTION_PREVIEW_FORMAT", "CODEX_THREAD_ID"}
+         "CLAUDE_CODE_QUESTION_PREVIEW_FORMAT", "CLAUDE_CODE_STARTUP_FAILURE_RESULTS", "CODEX_THREAD_ID"}
 _DROP_PREFIXES = ("GAMMA_", "CODEX_SANDBOX", "CODEX_MANAGED_BY_")
 
 _live: set = set()
@@ -57,8 +58,9 @@ def child_env() -> dict:
     """The environment an agent runs in: this server's minus every GAMMA_*
     variable (the shell secret, the data directory: the server's, never the
     agent's) and minus the parent's agent-session variables, with
-    ``NO_COLOR=1``. A frozen Linux build gives back the library path its
-    bootloader replaced (or none), so the CLI loads the system's."""
+    ``NO_COLOR=1`` and the proxy variables of the server's network proxy
+    (``net_proxy.agent_env``). A frozen Linux build gives back the library
+    path its bootloader replaced (or none), so the CLI loads the system's."""
     env = {name: value for name, value in os.environ.items()
            if name.upper() not in _DROP and not name.upper().startswith(_DROP_PREFIXES)}
     env["NO_COLOR"] = "1"
@@ -68,7 +70,7 @@ def child_env() -> dict:
             env["LD_LIBRARY_PATH"] = original
         else:
             env.pop("LD_LIBRARY_PATH", None)
-    return env
+    return net_proxy.agent_env(env)
 
 
 # --- Windows: no window, a Job object ---------------------------------------------
@@ -252,11 +254,12 @@ class Child:
             return None
 
 
-def spawn(argv: list[str], *, cwd: str) -> Child:
+def spawn(argv: list[str], *, cwd: str, env: dict | None = None) -> Child:
     """Start ``argv`` in ``cwd`` with pipes for all three streams (UTF-8
     text, line buffered), in a Job object on Windows, and register it for
-    ``stop_all``. OSError when it cannot start."""
-    proc = subprocess.Popen(argv, cwd=cwd, env=child_env(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    ``stop_all``; ``env``, variables of a driver's own added to
+    ``child_env``. OSError when it cannot start."""
+    proc = subprocess.Popen(argv, cwd=cwd, env={**child_env(), **(env or {})}, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1,
                             **_popen_flags())
     job = None

@@ -11,7 +11,10 @@ folder's directory, with ``/``, its first line and, over several, its last.
   shows (``storage.linked_path``: its size and time are the recorded
   ones). Another server, a rebuild Gamma has not taken yet, a file gone:
   no source. A place measured on another file (its ``doc_id``) is never
-  mapped against this one.
+  mapped against this one. A work folder of another server kept on this
+  computer (``source_in_vault``, its agent's run) finds the PDF through the
+  vault's rows instead: the page's PDF there, the hash it was pushed with
+  the place's ``doc_id``, its size and time the ones the vault read.
 - **The SyncTeX file** (``find``) is the first of ``<stem>.synctex.gz`` and
   ``<stem>.synctex`` beside it (the newer first), then in the build
   directories beside it (``BUILD_DIRS``) and the ``$out_dir`` / ``$aux_dir``
@@ -325,10 +328,48 @@ def source_for(ws: str, conn, page_id: str, props: dict, place: dict) -> dict | 
                        (page_id,)).fetchone()
     link = folder_links.vault_of_page(ws, page_id) if row and row[0] else None
     pdf = storage.linked_path(ws, view["file"]) if link else None
-    stx = find(pdf, Path(link["path"])) if pdf else None
+    return _looked_up(pdf, Path(link["path"]), place, page, position) if pdf else None
+
+
+def source_in_vault(rows: dict, root: Path, place: dict) -> dict | None:
+    """``source_for`` of a work folder of another server (step 4c of
+    docs/research/agent-collab.md), whose pages.db is not here: ``place``
+    (``{"page_id", "kind", "page", "rects", "doc_id"}``, as that server
+    gave the entry's) on the PDF of its page in the vault's rows on this
+    computer (``rows``: ``vault.store.files``, its paths below ``root``),
+    when the file there is the version the place was measured on (the row's
+    hash its ``doc_id``) and has not changed since the vault read it (a
+    rebuild not pushed yet); None when there is no answer."""
+    from ..vault import disk, kinds  # local: the vault engine is loaded where its rows are read
+
+    page = place.get("page")
+    if not place.get("page_id") or not place.get("doc_id") or not highlights._is_page(page):
+        return None
+    position = _position(place)
+    if position is None:
+        return None
+    found = [(path, row) for path, row in sorted(rows.items()) if row.get("page_id") == place["page_id"]
+             and row.get("kind") == kinds.PDF.name and not row.get("was")]
+    if len(found) != 1 or found[0][1].get("hash") != place["doc_id"]:
+        return None
+    path, row = found[0]
+    try:
+        pdf = disk.path(Path(root), path)
+        st = pdf.stat()
+    except OSError:
+        return None
+    if (st.st_size, st.st_mtime_ns) != (row.get("size"), row.get("mtime_ns")):
+        return None
+    return _looked_up(pdf, Path(root), place, page, position)
+
+
+def _looked_up(pdf: Path, root: Path, place: dict, page: int, position: dict) -> dict | None:
+    """The answer for ``position`` on the page ``page`` of ``pdf``, the work
+    folder's directory ``root``: through its SyncTeX file (``find``), kept
+    by the files' stats and the place (``MEMO``)."""
+    stx = find(pdf, root)
     if stx is None:
         return None
-    root = Path(link["path"])
     try:
         pdf_st, stx_st = pdf.stat(), stx.stat()
     except OSError:

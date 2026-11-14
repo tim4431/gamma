@@ -34,14 +34,21 @@
 //   why the unpacked dir under dist/linux-unpacked needs --no-sandbox to run
 //   (test/smoke.js and test/e2e.js add it).
 //
-// PDFs: every build registers Gamma as a PDF app, so it shows in "Open
-// with" and can be made the default — by the user; no build takes .pdf
-// over from the reader they have (docs/architecture.md "Opening PDF
-// files"). Hence no top-level `fileAssociations`: electron-builder's NSIS
-// association makes itself .pdf's handler and leaves that pointing nowhere
-// after an uninstall. The NSIS installer registers through
-// assets/installer.nsh, the Store package through assets/appx-extensions.xml,
-// macOS as an alternate viewer, the .deb's desktop entry by MIME type.
+// Files and folders: every build registers Gamma for the file types of
+// tests/shared/openwith.json (PDF, Markdown, LaTeX, BibTeX, Typst; the Mac
+// App Store build and the .deb's desktop entry PDFs only), so it shows in
+// "Open with" and can be made the default — by the user; no build takes a
+// type over from the app that opens it (docs/architecture.md "Opening files
+// and folders"). Hence no top-level `fileAssociations`: electron-builder's
+// NSIS association makes itself the type's handler and leaves that pointing
+// nowhere after an uninstall. scripts/openwith.cjs reads the table and
+// writes assets/installer.nsh (the NSIS installer's file types and its
+// "Open with Gamma" on folders), assets/appx-extensions.xml (the Store
+// package's file types) and assets/linux/ (the .deb's folder entries for
+// Dolphin and Nemo); macOS takes the file types and public.folder from it
+// below. Edit the table, then `npm run openwith`.
+
+const { debFpm, macFileAssociations, MAC_FOLDER_TYPE } = require('./scripts/openwith.cjs');
 
 const env = process.env;
 const has = (...keys) => keys.every((k) => env[k] && env[k].trim());
@@ -82,7 +89,7 @@ module.exports = {
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
-    include: 'installer.nsh', // assets/: the PDF registration (top of file)
+    include: 'installer.nsh', // assets/, generated: the file types and folder verbs (top of file)
   },
   // Microsoft Store package (docs/release.md, "Microsoft Store"). The three
   // identity values are copied verbatim from Partner Center → Product
@@ -102,7 +109,7 @@ module.exports = {
     // upload form let it through as a legacy .appx, the msstore CLI does
     // not). Windows 10 1809 is also Electron's own floor.
     minVersion: '10.0.17763.0',
-    customExtensionsPath: 'assets/appx-extensions.xml', // the PDF file type (top of file)
+    customExtensionsPath: 'assets/appx-extensions.xml', // generated: the file types (top of file)
   },
 
   mac: {
@@ -117,9 +124,14 @@ module.exports = {
       // What macOS shows when it asks whether Gamma may use the microphone
       // (lib/microphone.js); the Mac App Store build inherits it.
       NSMicrophoneUsageDescription: 'Gamma uses the microphone when you record audio into a note or dictate to the assistant.',
+      // Folders, as an alternate viewer: one dropped on the Dock icon, or
+      // `open -a Gamma <dir>`, arrives as open-file. electron-builder adds
+      // the file types' entries below to this list.
+      CFBundleDocumentTypes: [MAC_FOLDER_TYPE],
     },
-    // An alternate viewer: listed under Open With, the default only when chosen.
-    fileAssociations: [{ ext: 'pdf', name: 'PDF document', role: 'Viewer', rank: 'Alternate' }],
+    // An alternate viewer per file type of the table: listed under Open
+    // With, the default only when chosen or where no other app claims it.
+    fileAssociations: macFileAssociations(),
   },
 
   linux: {
@@ -132,6 +144,13 @@ module.exports = {
     synopsis: 'PDF annotation and notes',
     // The desktop entry's MimeType. Not a fileAssociations entry: one with
     // a mimeType would install a definition of application/pdf of its own.
+    // PDFs only, though Gamma opens the table's other types: where no app
+    // names a default for a type, GLib prefers an app that lists it exactly
+    // over one that lists its parent, so listing text/markdown or
+    // text/x-tex (or inode/directory) could take the double click from the
+    // text editor (or the file manager). Open With → Other Application and
+    // `gamma <file or directory>` open them; folders get the plain service
+    // menu and Nemo action of deb.fpm below, which claim no default.
     mimeTypes: ['application/pdf'],
     description: 'Gamma: highlight PDFs, keep notes as nested outliner blocks, share annotated copies. Opens local workspaces and remote Gamma servers.',
     // dpkg requires a maintainer; electron-builder otherwise wants
@@ -142,5 +161,10 @@ module.exports = {
     // electron-updater picks its DebUpdater from resources/package-type,
     // which this target writes; updates then run `dpkg -i` via pkexec/sudo.
     packageCategory: 'editors',
+    // "Open with Gamma" on folders in Dolphin and Nemo: two plain files
+    // (assets/linux/, generated by scripts/openwith.cjs), mapped into the
+    // package by absolute path so fpm finds them whatever its directory;
+    // dpkg removes them with the package.
+    fpm: debFpm(),
   },
 };

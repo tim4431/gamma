@@ -2,7 +2,8 @@
 step 4's gate (docs/research/file-explorer.md, "In steps" row 4): the sample
 paper read in place, its ``sections/method.tex`` in a chat's context as
 numbered lines beside its open thread, read by lines and by path, found by
-search at its line, and cited with a line link over MCP."""
+search at its line, and cited with a line link over MCP; and step 6's ranges
+of ``main.tex`` and a selection of its lines as the model is told of them."""
 
 import json
 import shutil
@@ -12,17 +13,18 @@ from pathlib import Path
 import pytest
 
 from conftest import account_of, login, make_folder, make_user, mark_work_folder, thread_on, workspace_of
-from gamma import ai_context, folder_links, gamma_sync, pdf_meta, storage
+from gamma import ai_context, folder_links, gamma_sync, highlights, mcp_export, pdf_meta, storage
 from gamma.ai_tools import run_agent_tool
-from gamma.db import connect_data_db
+from gamma.db import connect_data_db, connect_pages_db
 from gamma.documents import text as doc_text
 from gamma.documents.model import page_document
+from gamma.feedback import agent as feedback_agent, entries as feedback_entries
 from gamma.search import indexer
 from gamma.search.index import as_doc, store_docs
 from gamma.vault import disk as vault_disk, kinds, store as vault_store
 from gamma.vault.local_remote import LocalRemote
 from test_mcp import call
-from test_vault_sync import Vault
+from test_vault_sync import Vault, insert
 
 from ai_fixtures import FakeResp, folder
 
@@ -125,6 +127,103 @@ def test_a_chat_on_a_work_folders_tex_file_holds_its_lines_and_threads(owner, pa
     assert cover["format"] == "text" and cover["lines"] == 13 and cover["partial"] is False
     _chat(owner, monkeypatch, method, history=[{"role": "user", "text": "first"}, {"role": "ai", "text": "ok"}])
     assert len(reads) == 1  # the second turn reads the kept head
+
+
+def _range(lines, line, needle, hash, **flags) -> tuple[dict, str]:
+    """The ``text_position`` and quote of ``needle`` on ``line`` of the file."""
+    col = lines[line - 1].index(needle)
+    span = (line, col, line, col + len(needle))
+    quote, prefix, suffix = highlights.span_text(lines, span)
+    return {**highlights.text_position(*span, hash=hash, prefix=prefix, suffix=suffix), **flags}, quote
+
+
+def test_ranges_of_main_tex_and_a_selection_of_its_lines_reach_the_model(owner, paper, monkeypatch):
+    """Step 6: the page's ranges are told with their lines and how the last
+    change left them (the context, read_block), a thread on one by the lines
+    it holds now and its state, and a selection in the code view far past
+    the head the context shows arrives with the lines around it, its
+    heading naming them."""
+    main = paper.page_of("main.tex")
+    hash = page_document(paper.blocks(main)[main]["props"])["hash"]
+    lines = (PAPER / "main.tex").read_text("utf-8").split("\n")
+    placed = {key: _range(lines, line, needle, hash, **flags) for key, line, needle, flags in (
+        ("H", 16, "Weight decay is the oldest remedy", {}),
+        ("R", 23, "Training and test loss per epoch", {"approx": True, "match": 0.9}),
+        ("L", 47, "validation loss was lowest.", {"lost": True}),
+        ("P", 31, "fifth epoch the test loss", {}))}
+    placed["P"][0]["hash"] = "e" * 32     # measured on another version: the run has not placed it yet
+    ids = {key: f"aitx{key}{uuid.uuid4().hex[:6]}" for key in placed}
+    paper.edit(main, *(insert(main, "", {"text_position": pos, "quote": quote}, ids[key])
+                       for key, (pos, quote) in placed.items()))
+    thread = thread_on(owner, main, ids["H"], "is it really the oldest?")
+    lost = thread_on(owner, main, ids["L"], "say which epoch")
+    pending = thread_on(owner, main, ids["P"], "which loss?")
+    # the range moved since the thread opened: it is named by the lines it holds now
+    paper.edit(main, {"op": "set", "id": ids["H"], "props": {"text_position": _range(
+        lines, 52, "Weight decay is a simple", hash)[0], "quote": "Weight decay is a simple"}})
+
+    selected = "Weight decay is a simple and reliable way to keep a small model from"
+    seen, (cover,) = _chat(owner, monkeypatch, main, include_notes=True, context_char_limit=2500,
+                           selections=[{"text": selected, "page": 0, "line": 52, "end": 52}])
+    content = seen["messages"][-1]["content"]
+    assert '- Highlighted: "Weight decay is a simple" (line 52)' in content
+    assert '- Highlighted: "Training and test loss per epoch" (line 23; placed roughly)' in content
+    assert '- Highlighted: "validation loss was lowest." (line 47; not found in the current file)' in content
+    assert '- Highlighted: "fifth epoch the test loss" (line 31; lines of an earlier version of the file)' in content
+    assert f'- thread {thread["id"]} on line 52, “Weight decay is a simple”: ' in content
+    # a lost range's lines no longer hold its text, a pending one's are another version's: each says so
+    assert f'- thread {lost["id"]} on line 47 (not found in the current version), “validation loss was lowest.”: ' in content
+    assert f'- thread {pending["id"]} on line 31 of an earlier version, “fifth epoch the test loss”: ' in content
+    assert cover["partial"] is True and cover["lines_shown"] < 32     # the head stops well before line 52
+    [where] = cover["selection"]["passages"]
+    assert where["lines"] == [52, 52] and where["window"][0] == 32 and where["window"][1] >= 52
+    assert f"[lines 32–{where['window'][1]} of main.tex]\n    32\t" in content
+    assert "    52\tWeight decay is a simple and reliable" in content
+    assert "from the page's document. Answer specifically about it:" in content
+    assert f'Selected passage (line 52):\n"""\n{selected}\n"""' in content
+
+    text, _ = run_agent_tool(paper.ws, folder(paper.folder), "read_block", {"block_id": main})
+    assert f'[{ids["H"]}] (highlight: "Weight decay is a simple"; line 52)' in text
+    assert f'[{ids["L"]}] (highlight: "validation loss was lowest."; line 47; not found in the current file)' in text
+
+
+def test_a_range_on_a_secrets_file_is_named_by_its_lines_alone(owner, paper, monkeypatch):
+    """A secrets file's text is kept from the model, and so is the text of
+    a range or a selection in it: the chat's context, read_block, read_page,
+    a thread's place and the feedback entries name its lines, never its
+    quote."""
+    secret = "OPENAI_API_KEY=sk-live-abcdef0123456789"
+    paper.write(".env", f"# keys\n{secret}\nOTHER=1\n".encode(), age=10)
+    paper.sync()
+    env = paper.page_of(".env")
+    hash = page_document(paper.blocks(env)[env]["props"])["hash"]
+    pos, quote = _range(["# keys", secret, "OTHER=1"], 2, secret, hash)
+    bid = f"aitxS{uuid.uuid4().hex[:6]}"
+    paper.edit(env, insert(env, "rotate it soon", {"text_position": pos, "quote": quote}, bid))
+    thread = thread_on(owner, env, bid, "rotate this key")
+    seen, (cover,) = _chat(owner, monkeypatch, env, include_notes=True,
+                           selections=[{"text": secret, "page": 0, "line": 2, "end": 2}])
+    content = seen["messages"][-1]["content"] + str(seen.get("system"))
+    assert "sk-live" not in content
+    assert "- Highlighted (line 2; its text is kept from the model: a secrets file)\n  User note: rotate it soon" in content
+    assert f'- thread {thread["id"]} on line 2: ' in content
+    assert 'Selected passage (line 2):\n"""\n(its text is kept from the model: a secrets file)\n"""' in content
+    assert cover["selection"]["passages"] == [{"lines": [2, 2], "secret": True}]
+    for tool, args in (("read_block", {"block_id": env}), ("read_page", {"page_id": env})):
+        text, _ = run_agent_tool(paper.ws, folder(paper.folder), tool, args)
+        assert "sk-live" not in text, tool
+    text, _ = run_agent_tool(paper.ws, folder(paper.folder), "read_block", {"block_id": env})
+    assert f"[{bid}] (highlight on line 2; its text is kept from the model: a secrets file)" in text
+    with connect_pages_db(paper.ws) as conn:
+        [entry] = [e for e in feedback_entries.entries(paper.ws, conn, feedback_entries.resolve_scope(conn, env))
+                   if e["id"] == thread["id"]]
+        named = feedback_agent._named(conn, {"page_id": env, "id": thread["id"], "block_id": bid})
+    assert entry["where"] == {"line": 2, "placed": "exact"} and named == ".env, line 2"
+    # MCP's export hands the model a page as Markdown or its notes as a PDF: no quote of the range
+    text, _ = mcp_export.export_page(paper.ws, "http://gamma.test", account_of(OWNER),
+                                     {"page_id": env, "format": "markdown"})
+    assert "sk-live" not in text and "the highlights of 1 secrets file are left out" in text
+    assert "rotate it soon" in text
 
 
 def test_the_tools_read_search_and_link_a_line_of_the_file(owner, paper, client):

@@ -76,7 +76,7 @@ export async function explorerScenarios(env) {
     };
     const palette = async (page) => {
       await page.evaluate(() => document.activeElement?.blur?.());
-      await page.keyboard.press("Control+p");
+      await page.keyboard.press("ControlOrMeta+p");
       const dialog = page.getByRole("dialog", { name: "Open a page" });
       await dialog.waitFor();
       return { dialog, input: dialog.getByRole("textbox", { name: PLACEHOLDER }) };

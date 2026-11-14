@@ -1,14 +1,22 @@
 """Exercise real urllib cookie/redirect handling with a fake HTTPS transport."""
 
+import functools
 import io
 import socket
 from email.message import Message
-from urllib.request import HTTPHandler, HTTPSHandler, ProxyHandler, build_opener
+from urllib.request import HTTPSHandler, ProxyHandler, build_opener
 from urllib.response import addinfourl
 
 import pytest
 
-from gamma import net_guard
+from gamma import net_guard, net_proxy
+
+
+@pytest.fixture(autouse=True)
+def fresh_routes(monkeypatch):
+    """Each test reads the environment's proxies anew."""
+    monkeypatch.setattr(net_proxy, "_system", (0.0, {}))
+    monkeypatch.setattr(net_proxy, "_routes", {})
 
 
 @pytest.fixture
@@ -27,9 +35,8 @@ def transport(monkeypatch):
             response.msg = "Found" if status == 302 else "OK"
             return response
 
-    monkeypatch.setattr(net_guard, "build_opener", lambda *handlers: build_opener(
-        ProxyHandler({}), *(h for h in handlers if not isinstance(
-            h, (HTTPHandler, HTTPSHandler, ProxyHandler))), FakeHTTPS()))
+    monkeypatch.setattr(net_guard.net_proxy, "build_opener", lambda *handlers, **routing: build_opener(
+        ProxyHandler({}), *handlers, FakeHTTPS()))
     # Fake public DNS only; private redirect targets must still be refused.
     monkeypatch.setattr(net_guard.socket, "getaddrinfo", lambda host, port, **kw: [
         (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
@@ -105,38 +112,71 @@ def test_dns_rebinding_is_refused_at_connect(monkeypatch, scheme):
         net_guard.guarded_urlopen(f"{scheme}://rebind.example/secret")
 
 
-@pytest.mark.parametrize("scheme,port", [("http", 80), ("https", 443)])
-def test_transport_pins_address_preserves_host_and_ignores_proxy(monkeypatch, scheme, port):
-    resolutions, connected, sent, tls_hosts = [], [], [], []
-    def resolve(host, port, **kw):
-        resolutions.append(host)
-        assert host == "publisher.example"
-        assert len(resolutions) <= 2  # URL check + validated transport, no third lookup
-        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", port))]
+@pytest.fixture
+def wire(monkeypatch):
+    """A fake network under the transport: publisher.example resolves to
+    8.8.8.8 (at most twice: the URL check and the transport, no third
+    lookup), 127.0.0.1 is the environment's proxy, which answers a CONNECT,
+    and every socket records where it connected and what it sent."""
+    seen = {"resolved": [], "connected": [], "sent": [], "tls": []}
+
+    def resolve(host, port, *args, **kw):
+        if host != "127.0.0.1":
+            seen["resolved"].append(host)
+            assert host == "publisher.example"
+            assert len(seen["resolved"]) <= 2
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "",
+                 (host if host == "127.0.0.1" else "8.8.8.8", port))]
+
     class FakeSocket:
-        def __init__(self, *args): pass
+        def __init__(self, *args): self.tunnel = io.BytesIO(b"HTTP/1.1 200 Connection established\r\n\r\n")
         def settimeout(self, timeout): pass
         def setsockopt(self, *args): pass
-        def connect(self, address): connected.append(address)
-        def sendall(self, data): sent.append(data)
+        def connect(self, address): seen["connected"].append(address)
+        def sendall(self, data): seen["sent"].append(data)
+        def recv(self, n): return self.tunnel.read(n)
         def makefile(self, *args):
             return io.BytesIO(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\npdf")
         def close(self): pass
+
     class FakeTLS:
         def wrap_socket(self, sock, server_hostname):
-            tls_hosts.append(server_hostname)
+            seen["tls"].append(server_hostname)
             return sock
-    handler = net_guard._PublicHTTPSHandler(context=FakeTLS())
-    monkeypatch.setattr(net_guard, "_PublicHTTPSHandler", lambda: handler)
+
+    monkeypatch.setattr(net_proxy, "RoutedHTTPSHandler",
+                        functools.partial(net_proxy.RoutedHTTPSHandler, context=FakeTLS()))
     monkeypatch.setattr(net_guard.socket, "getaddrinfo", resolve)
     monkeypatch.setattr(net_guard.socket, "socket", FakeSocket)
+    for name in ("no_proxy", "NO_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("http_proxy", "http://127.0.0.1:9999")
     monkeypatch.setenv("https_proxy", "http://127.0.0.1:9999")
+    return seen
+
+
+@pytest.mark.parametrize("scheme,port", [("http", 80), ("https", 443)])
+def test_the_environments_proxy_is_asked_for_the_validated_address(monkeypatch, wire, scheme, port):
+    """A tunnel to the address, http too: a proxy sent the URL in full
+    would forward the Host it names. Host and TLS name the host."""
+    monkeypatch.setattr(net_proxy, "current", lambda: net_proxy.Policy("system"))
     with net_guard.guarded_urlopen(f"{scheme}://publisher.example/paper.pdf") as response:
         assert response.read() == b"pdf"
-    assert connected == [("8.8.8.8", port)]
-    assert b"Host: publisher.example\r\n" in b"".join(sent)
-    assert tls_hosts == (["publisher.example"] if scheme == "https" else [])
+    sent = b"".join(wire["sent"])
+    assert wire["connected"] == [("127.0.0.1", 9999)] and wire["resolved"] == ["publisher.example"] * 2
+    assert wire["sent"][0] == f"CONNECT 8.8.8.8:{port} HTTP/1.1\r\nHost: 8.8.8.8:{port}\r\n\r\n".encode()
+    assert b"GET /paper.pdf HTTP/1.1\r\n" in sent and b"Host: publisher.example\r\n" in sent
+    assert wire["tls"] == (["publisher.example"] if scheme == "https" else [])
+
+
+@pytest.mark.parametrize("scheme,port", [("http", 80), ("https", 443)])
+def test_no_proxy_mode_pins_the_address_and_ignores_the_environment(monkeypatch, wire, scheme, port):
+    monkeypatch.setattr(net_proxy, "current", lambda: net_proxy.Policy("none"))
+    with net_guard.guarded_urlopen(f"{scheme}://publisher.example/paper.pdf") as response:
+        assert response.read() == b"pdf"
+    assert wire["connected"] == [("8.8.8.8", port)]
+    assert b"Host: publisher.example\r\n" in b"".join(wire["sent"])
+    assert wire["tls"] == (["publisher.example"] if scheme == "https" else [])
 
 
 def test_transport_refuses_mixed_dns_answers_before_any_connect(monkeypatch):

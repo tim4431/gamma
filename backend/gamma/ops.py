@@ -49,8 +49,9 @@ by (gamma/blocks_store.py ``filing``).
 A work folder's files and folders are held to the work-folder rule
 (gamma/work_folders/filing.py; docs/dev/work_folders.md "The op rule"), by
 the writer the batch's op client names: the mirror (``sync``) passes it,
-the vault (``disk``) is held to the shape a file keeps, anyone else is a
-person. A person changes no file's stamps, document or directory (a note
+the vault (``disk``) is held to the shape a file keeps, its mark to no
+folder of a clone or a Zotero-linked workspace nor inside or around another
+work folder (``mark_rule``), anyone else is a person. A person changes no file's stamps, document or directory (a note
 of a work folder that pulls follows: its title and directory move its
 file), files no page of the library in a work folder, and changes no
 folder inside one (its directories follow the disk); trashing and restoring
@@ -118,7 +119,7 @@ from .documents.model import document_props, own_hash, page_document
 from .logbuf import log
 from .search import index as text_index
 from .storage import content_digest, store_file, upload_refs
-from .work_folders import filing as work_filing, marks
+from .work_folders import elsewhere, filing as work_filing, marks
 from .work_folders.library import STAMPS, work_folder_of
 
 SYNC_CLIENT = "sync"  # the mirror's own writes, here and on its remote (sync_engine.CLIENT reads it)
@@ -456,17 +457,41 @@ class _Batch:
 
     def tree_rule(self, op: dict) -> None:
         """A person's op on the folder tree, held to the work-folder rule
-        (``filing.tree_op``: inside a work folder the tree is the disk's).
-        A move, an insert or a delete changes the tree the next op is judged
-        by (W moved under a folder that the batch then deletes), so the tree
-        is read again after one."""
-        if self.page_id == FOLDERS and self.writer == "person":
+        (``filing.tree_op``: inside a work folder the tree is the disk's),
+        and a vault's mark to ``mark_rule``. A move, an insert or a delete
+        changes the tree the next op is judged by (W moved under a folder
+        that the batch then deletes), so the tree is read again after one."""
+        if self.page_id != FOLDERS:
+            return
+        if self.writer == "person":
             try:
                 work_filing.tree_op(self.work_tree(), op, self.writer)
             except work_filing.Refused as e:
                 raise locked(e) from None
-            if op["op"] != "set":
-                self._work_tree = None
+        elif self.writer == "vault":
+            self.mark_rule(op)
+        if op["op"] != "set":
+            self._work_tree = None
+
+    def mark_rule(self, op: dict) -> None:
+        """A vault's ``set`` or ``insert`` of a folder that carries a mark
+        (``props.vault`` not null; taking one off always passes), refused
+        403 ``locked`` with why: in a clone or a Zotero-linked workspace,
+        which write it too (``elsewhere.kept_elsewhere``; a computer of
+        another server is not asked there), and for a folder inside another
+        work folder or around one, which would split a work folder or have
+        two vaults keep one (W(f) is the nearest mark)."""
+        props = op.get("props")
+        if op["op"] not in ("set", "insert") or not isinstance(props, dict) or props.get("vault") is None:
+            return
+        refusal = elsewhere.kept_elsewhere(self.ws) if self.ws else ""
+        if refusal:
+            raise OpError(403, refusal, conflict=LOCKED)
+        tree, folder = self.work_tree(), op.get("id")
+        parent = op.get("parent") if op["op"] == "insert" else tree.parent.get(folder)
+        below = tree.subtree(folder)
+        if tree.work_of(parent) or any(w != folder and w in below for w in tree.roots()):
+            raise OpError(403, "A work folder is never inside another work folder, nor around one.", conflict=LOCKED)
 
     def work_patch(self, page_id: str, before: dict, patch: dict | None, content: str | None) -> dict | None:
         """A page root's ``set`` held to the work-folder rule
@@ -1359,6 +1384,7 @@ def _purge(conn, page_id: str, actor: str) -> list:
     conn.execute("DELETE FROM chats WHERE bucket = ?", (page_id,))
     conn.execute("DELETE FROM chat_history WHERE bucket = ?", (page_id,))
     conn.execute("DELETE FROM computer_chats WHERE page_id = ?", (page_id,))
+    conn.execute("DELETE FROM computer_chat_runs WHERE page_id = ?", (page_id,))
     if not trashed:
         touch_page(conn, page_id, actor, "deleted")
     return rows

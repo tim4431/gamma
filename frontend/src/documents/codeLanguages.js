@@ -14,6 +14,7 @@ export const CODE_LANGUAGE = {
   c: "C", cpp: "C++", rust: "Rust", go: "Go", java: "Java", kotlin: "Kotlin", swift: "Swift", ruby: "Ruby", php: "PHP",
   shell: "Shell", r: "R", julia: "Julia", lua: "Lua", sql: "SQL", perl: "Perl", haskell: "Haskell", scala: "Scala",
   diff: "diff", matlab: "Octave", mathematica: "Mathematica", dockerfile: "Dockerfile", cmake: "CMake",
+  markdown: "Markdown",
 };
 
 // The description name for a document: its language (the view's, from its

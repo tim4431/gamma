@@ -9,41 +9,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson, makeId } from "../../shared/lib/utils";
 import { t } from "../../shared/i18n/i18n.js";
-import { POLL_MS, chatPath, liveTurn, turnBody } from "./computerChat.js";
+import {
+  AWAY_POLL_MS, POLL_MS, SOURCES_MAX, answerBody, askPath, awayFrom, chatPath, liveTurn, sourcesBody, turnBody,
+} from "./computerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const post = (body) => ({ method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
 
-// Which side each page's chat shows, for the tab's life: "computer" for a
-// page switched to it, else Gamma AI's.
-const sides = new Map();
-
-// [side, setSide] for the page's chat: "ai" or "computer", the latter only
-// while the page has a computer side (`available`).
-export function useChatSide(pageId, available) {
-  const [, redraw] = useState(0);
-  const side = available && pageId && sides.get(pageId) === "computer" ? "computer" : "ai";
-  const setSide = useCallback((next) => {
-    if (!pageId) return;
-    if (next === "computer") sides.set(pageId, next);
-    else sides.delete(pageId);
-    redraw((n) => n + 1);
-  }, [pageId]);
-  return [side, setSide];
-}
-
 // The side's state for the page `pageId` ("" while the side is not shown:
-// nothing is read). `{computer, conversation, read, busy, send, stop,
-// newChat, history, readHistory, openHistory, deleteHistory}`:
+// nothing is read). `{computer, conversation, read, busy, send, answer,
+// stop, newChat, history, readHistory, openHistory, deleteHistory}`:
 //   computer      the strip's facts as the server read them ({agent, label,
-//                 ready, problem, folder, paused, turn}), null until read
+//                 ready, problem, folder, paused, turn, models}, and for
+//                 another computer's agent {computer, online, since,
+//                 remote: true}), null until read; `models` the agent's
+//                 [{id, label, efforts, effort, default}]
 //   conversation  the page's active conversation ({id, title, agent,
 //                 messages, version}) or null; both are kept with the page
 //                 they are of, so a page switched to never shows the last
 //                 page's
 //   read          whether the page's conversation has been read (or failed)
 //   busy          an action is on its way
-//   send(text, selections) → whether the turn was made; stop(turnId),
+//   send(text, selections, choice) → whether the turn was made, `choice`
+//   the conversation's {model, effort} (computerChat.modelChoice); answer(turnId,
+//   askId, decision, note) answers what the turn asks, throwing a
+//   refusal for the card to say; stop(turnId),
 //   newChat(), openHistory(id), deleteHistory(id) do what they say and read
 //   the conversation again; `history` the archived conversations
 //   ([{id, title, agent, updated_at, turns}], null until readHistory())
@@ -101,11 +91,13 @@ export function useComputerChat(pageId, setStatus, known = "") {
 
   const state = held.pageId === pageId ? held : { computer: null, conversation: null, read: false };
   const live = !!pageId && (!!state.computer?.turn || !!liveTurn(state.conversation));
+  // A turn waiting for another computer that is away is read less often.
+  const every = awayFrom(state.computer) ? AWAY_POLL_MS : POLL_MS;
   useEffect(() => {
     if (!live) return undefined;
-    const timer = setInterval(load, POLL_MS);
+    const timer = setInterval(load, every);
     return () => clearInterval(timer);
-  }, [live, load]);
+  }, [live, every, load]);
   useEffect(() => {
     const again = () => { if (document.visibilityState !== "hidden") load(); };
     window.addEventListener("focus", again);
@@ -135,12 +127,23 @@ export function useComputerChat(pageId, setStatus, known = "") {
   }, [load]);
 
   const label = state.computer?.label || known;
-  const send = useCallback((text, selections) => act(async (page) => {
+  const send = useCallback((text, selections, choice = null) => act(async (page) => {
     if (!turnId.current) turnId.current = makeId();
-    const answer = await apiJson(`${API}/local-agents/chat/turns`, post(turnBody(turnId.current, page, text, selections)));
+    const answer = await apiJson(`${API}/local-agents/chat/turns`, post(turnBody(turnId.current, page, text, selections, choice)));
     turnId.current = "";
     keep(page, answer.conversation || null);
   }, (message) => t("Couldn't send to {agent}: {message}", { agent: label, message })), [act, keep, label]);
+
+  // The person's answer to what the turn asks: the card says a refusal
+  // itself (an ask answered already, or a turn that ended), and the
+  // conversation is read again either way, the ask leaving it.
+  const answer = useCallback(async (id, askId, decision, note = "") => {
+    try {
+      await apiJson(`${API}${askPath(id, askId)}`, post(answerBody(decision, note)));
+    } finally {
+      load();
+    }
+  }, [load]);
 
   const stop = useCallback((id) => act(async () => {
     await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/stop`, post({}));
@@ -183,6 +186,49 @@ export function useComputerChat(pageId, setStatus, known = "") {
 
   return {
     computer: state.computer, conversation: state.conversation, read: state.read, busy,
-    send, stop, newChat, history, readHistory, openHistory, deleteHistory,
+    send, answer, stop, newChat, history, readHistory, openHistory, deleteHistory,
   };
+}
+
+// The source lines of the passages selected, as the chips note them: one
+// entry a passage, in order, its {file, line, end?}, or null while it is
+// not known or has none. Asked (POST /api/local-agents/chat/sources) a
+// moment after the passages change, those not known yet, and kept a
+// minute, and only until a turn of the conversation ends (`ended`, its
+// last ending: the agent may have moved the lines); a failed ask is asked
+// again once the passages change.
+const sourcesKnown = new Map(); // passage key → {source or null, at}
+const SOURCES_WAIT_MS = 400;
+const SOURCES_FRESH_MS = 60_000;
+const SOURCES_KEPT = 500;
+const passageKey = (page, s, ended) => JSON.stringify([page, s.text, s.page || null, s.box || null, ended || null]);
+const knownSource = (key) => {
+  const known = sourcesKnown.get(key);
+  return known && Date.now() - known.at < SOURCES_FRESH_MS ? known : null;
+};
+
+export function usePassageSources(pageId, selections, ended = null) {
+  const [, redraw] = useState(0);
+  const shown = (selections || []).filter((s) => s?.text);
+  const missing = pageId ? shown.filter((s) => !knownSource(passageKey(pageId, s, ended))).slice(0, SOURCES_MAX) : [];
+  const wanted = missing.map((s) => passageKey(pageId, s, ended)).join("\n");
+  const missingRef = useRef(missing);
+  missingRef.current = missing;
+  useEffect(() => {
+    if (!wanted) return undefined;
+    let left = false;
+    const timer = setTimeout(async () => {
+      const asked = missingRef.current;
+      try {
+        const answer = await apiJson(`${API}/local-agents/chat/sources`, post(sourcesBody(pageId, asked)));
+        if (sourcesKnown.size > SOURCES_KEPT) sourcesKnown.clear();
+        const at = Date.now();
+        asked.forEach((s, i) => sourcesKnown.set(passageKey(pageId, s, ended), { source: answer.sources?.[i] || null, at }));
+        if (!left) redraw((n) => n + 1);
+      } catch { /* the chips keep their page numbers */ }
+    }, SOURCES_WAIT_MS);
+    return () => { left = true; clearTimeout(timer); };
+  }, [pageId, wanted, ended]);
+  // One kept over a minute is shown while it is asked again.
+  return (selections || []).map((s) => (pageId && s?.text ? sourcesKnown.get(passageKey(pageId, s, ended))?.source || null : null));
 }

@@ -49,7 +49,7 @@ def _pids(child) -> tuple[int, int]:
 def test_child_env_drops_the_server_and_the_parent_session(monkeypatch):
     session = ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_CODE_ENTRYPOINT",
                "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
-               "CLAUDE_CODE_CHILD_SESSION", "CODEX_THREAD_ID")
+               "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_STARTUP_FAILURE_RESULTS", "CODEX_THREAD_ID")
     for name in ("GAMMA_SHELL_SECRET", "GAMMA_DATA_DIR", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_MANAGED_BY_NPM",
                  *session):
         monkeypatch.setenv(name, "x")

@@ -1,9 +1,9 @@
 {
   "startupJsBrotli": {
-    "max": 841000,
-    "set": "2026-11-08",
-    "measured": 763853,
-    "why": "Reset on the merged learn-from-oleafly build over dev fd6f9104: React 19.2 adds about 12 KB Brotli to the entry, and search qualifiers, model checks and plan mode add their parts to the App chunk."
+    "max": 926000,
+    "set": "2026-11-13",
+    "measured": 841160,
+    "why": "The merge of dev's chat computer side (agent-collab steps 3a and 3b) with the file-explorer plan's step 6 (text ranges in blockModel and the margin's text tops): together 160 bytes over the startup ceiling"
   },
   "startupJsRaw": {
     "max": 3123000,

@@ -1,9 +1,10 @@
-"""Synced vaults and PDFs read where they are (docs/dev/synced_vaults.md
+"""Synced vaults and files read where they are (docs/dev/synced_vaults.md
 "The routes"): the folders of a workspace the desktop
 app's own server keeps as directories on this computer and the pages that
 follow a PDF file on it (gamma/folder_links.py), of its own workspaces or of
-another Gamma server reached with a token of it, and the PDFs opened from
-this computer (gamma/linked_files.py). Only that server answers
+another Gamma server reached with a token of it, the files opened from
+this computer (gamma/linked_files.py), and what a path of it is to Gamma
+(``POST /where``, for the desktop app's *Open with Gamma*). Only that server answers
 (``config.folder_links_enabled``); any other answers 404. A signed-in
 account's session only: an integration token is refused as for backups, and
 so is the guest. Making, changing, syncing or removing a link of this
@@ -27,9 +28,11 @@ from pydantic import BaseModel, Field
 
 from .. import config, folder_links, linked_files, workspaces
 from ..auth import require_personal_user_id, require_ws, ws_role
+from ..documents.model import page_document
 from ..logbuf import log
 from ..markdown_import import MAX_MARKDOWN_BYTES
 from ..ops import OpError
+from ..vault import disk as vault_disk
 from ..work_folders import selection
 
 router = APIRouter(prefix="/api/folder-links", tags=["folder-links"])
@@ -74,6 +77,8 @@ class LinkPatch(BaseModel):
     # A work folder's agent on this computer: "codex" or "claude" on, "" off
     # (docs/dev/local_agents.md).
     agent: str | None = Field(default=None, max_length=32)
+    # What that agent may run: "never", or "ask" (its chat's turns may ask).
+    agent_runs: str | None = Field(default=None, max_length=16)
     # A new token of the other server for a link to one, kept in place of the
     # link's own once that server takes it (one that may write to push).
     token: str = Field(default="", max_length=400)
@@ -81,7 +86,11 @@ class LinkPatch(BaseModel):
 
 
 class OpenFile(BaseModel):
-    path: str = Field(min_length=1, max_length=400)   # a PDF's full path on this computer, from the shell's dialog
+    path: str = Field(min_length=1, max_length=400)   # a file's full path on this computer, from the shell
+
+
+class WherePath(BaseModel):
+    path: str = Field(min_length=1, max_length=400)   # a file's or a directory's full path, from the file manager
 
 
 class Preview(BaseModel):
@@ -196,13 +205,15 @@ def _made(request: Request, link_id: str) -> dict:
 
 def _chooser(request: Request, link_id: str) -> dict:
     """The link, for the tracking dialog's routes: a vault of a folder of this
-    server, paused or choosing too, answered to the account that made it
-    alone, as ``_made`` (its listing names files Gamma never reads, on that
-    account's computer): another editor of its workspace 403, anyone else
-    404, and 404 for a file's vault and a vault of another server."""
+    server, or a work folder of another server (``folder_links.work_vault``),
+    paused or choosing too, answered to the account that made it alone, as
+    ``_made`` (its listing names files Gamma never reads, on that account's
+    computer): another editor of its workspace 403, anyone else 404, and
+    404 for a file's vault and a kept folder of another server."""
     user_id = _account(request)
     link = folder_links.get_link(link_id)
-    if link is None or link["kind"] != "folder" or link["remote_url"] or not _acts(link, user_id):
+    if (link is None or link["kind"] != "folder" or (link["remote_url"] and not folder_links.work_vault(link))
+            or not _acts(link, user_id)):
         raise HTTPException(status_code=404, detail="no such link")
     if link["created_by"] != user_id:
         raise HTTPException(status_code=403, detail=MAKER_ONLY)
@@ -219,18 +230,20 @@ def _not_chosen(e: selection.SelectionError):
 
 def _info(link: dict, can_act: bool = True, agents: dict | None = None) -> dict:
     """The link as the API answers it: its direction in words, of a file
-    link's state only the page's title and whether a work folder waits for
-    its files to be chosen (``choosing``; and never a token: a link is read
-    here without it), and a work folder's ``agent`` on this computer
+    link's state only the page's title, whether it keeps a work folder, of
+    this server or of another (``work``: ``folder_links.work_vault``), and
+    whether a work folder waits for its files to be chosen (``choosing``;
+    and never a token: a link is read here without it), and a work folder's
+    ``agent`` on this computer
     (``local_agents.info``, null for none; ``agents`` a listing's, asked
     once for every link). For a member who cannot act on it (``_acts``) no
     place on this computer: no path, of its status no text a round wrote,
     which may name one, and no detail of its agent's run."""
     from ..local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
 
-    info = {k: v for k, v in link.items() if k != "state"}
+    info = {k: v for k, v in link.items() if k not in ("state", "token")}
     info.update(dest=str(folder_links.dest_of(link)), pull=bool(link["pull"]), push=folder_links.push_word(link["push"]),
-                choosing=folder_links.choosing(link))
+                choosing=folder_links.choosing(link), work=folder_links.work_vault(link))
     info["agent"] = agents[link["id"]] if agents is not None else agent_info.agent_info(link, can_act=can_act)
     if link["kind"] == "file":
         info["title"] = link["state"].get("title", "")
@@ -260,14 +273,16 @@ def _refused(e: folder_links.LinkError, status: int = 400) -> HTTPException:
 def list_links(request: Request):
     """``{links: [{id, kind, workspace_id, folder_id, page_id, path, notes,
     pull (a bool), push ("off" | "pdfs" | "everything"), library, choosing,
-    created_at, cursor, status, dest, remote_url, token_id, title?}]}``
+    work, created_at, cursor, status, dest, remote_url, token_id, title?}]}``
     — every link the account may see, whatever workspace the request names:
     those of this server's workspaces it has a role in (``remote_url``
     empty), and its own to another server (``remote_url`` the other server,
     ``workspace_id`` the workspace there). A folder link (``kind``
     ``folder``) has its ``folder_id``, a file link (``file``) its
     ``page_id`` and the page's ``title``; ``dest`` is the directory or the
-    file. ``library`` is a work folder's switch, ``choosing`` whether its
+    file. ``work`` says the link keeps a work folder, of this server or of
+    another (``folder_links.work_vault``), ``library`` is a work folder's
+    switch, ``choosing`` whether its
     files wait for its tracking dialog, ``mine`` whether the account made
     the link (the tracking dialog's routes are its maker's alone), ``agent``
     a work folder's agent on this computer, ``{name, label, ready, problem,
@@ -302,17 +317,24 @@ def create_link(payload: LinkCreate, request: Request):
     dialog saves (``PUT /{id}/selection``). With ``remote_url`` and ``token`` the
     folder or page is one of another Gamma server's, reached there with the
     token (``workspace``, when given, must be the token's; a file link, or a
-    folder link that pushes, takes a token that may write). 400 for a folder
-    or page that does not exist, a path that is not a full one (of a PDF
-    that is there, for a file link) or another link's, a directory holding
-    another folder's files or a vault marker not to be adopted, or one of
-    ``folder_links.check_vault``'s refusals, or a server that refuses the
-    token."""
+    folder link that pushes, takes a token that may write); with ``choose``
+    too it is a work folder there (``folder_links.create_remote_link``: a
+    folder that is not the library's top, pushing everything and pulling,
+    on a server whose whoami says ``work_folders``, into a folder that is
+    empty once marked), made paused and choosing as one of this server.
+    400 for a folder or page that does not exist, a path that is not a full
+    one (of a PDF that is there, for a file link) or another link's, a
+    directory holding another folder's files or a vault marker not to be
+    adopted, or one of ``folder_links.check_vault``'s refusals, or a server
+    that refuses the token; for a work folder of another server, 409 for
+    its folder there as it stands (a work folder already, inside or around
+    one, not empty, a mark that server refuses: a clone, a Zotero link) and
+    502 for a server that does not answer."""
     user_id = _from_shell(request)
     try:
         if payload.remote_url and (payload.new_folder or payload.adopt):
             raise folder_links.LinkError("A vault of another server is made from its folder.")
-        if payload.choose and (payload.remote_url or payload.kind == "file"):
+        if payload.choose and payload.kind == "file":
             raise folder_links.LinkError(folder_links.CHOOSES_ONLY)
         if payload.remote_url and payload.kind == "file":
             link = folder_links.create_remote_file_link(payload.remote_url, payload.token, payload.token_id,
@@ -320,7 +342,7 @@ def create_link(payload: LinkCreate, request: Request):
         elif payload.remote_url:
             link = folder_links.create_remote_link(payload.remote_url, payload.token, payload.token_id, payload.workspace,
                                                    payload.folder, payload.path, payload.notes, user_id, payload.push,
-                                                   payload.pull)
+                                                   payload.pull, choose=payload.choose, library=payload.library)
         elif payload.kind == "file":
             link = folder_links.create_file_link(require_ws(request, write=True), payload.page, payload.path, user_id)
         else:
@@ -329,7 +351,7 @@ def create_link(payload: LinkCreate, request: Request):
                                             payload.pull, new_folder=payload.new_folder, adopt=payload.adopt,
                                             choose=payload.choose, library=payload.library)
     except folder_links.LinkError as e:
-        raise _refused(e)
+        raise _refused(e, e.status)
     if not folder_links.choosing(link):
         folder_links.run_in_background(link["id"])
     return _info(link)
@@ -359,35 +381,65 @@ def hint(request: Request):
     return {"ok": True}
 
 
+@router.post("/where")
+def where(payload: WherePath, request: Request):
+    """What a file or a directory of this computer is to Gamma, for the
+    asking account (``folder_links.where_is``): ``{path}`` → ``{is: "vault"
+    | "hidden" | "around" | "file_vault" | "none", …}``, read only (no
+    round, no page, nothing written). The desktop app's *Open with Gamma*
+    asks each local server, then goes by the ids it answers. No workspace:
+    the answer names the workspace a vault is in. 400 for a path that is
+    not a full one or names nothing; a place no vault may have is no 400
+    but ``none``'s ``refusal``."""
+    user_id = _from_shell(request)
+    try:
+        return folder_links.where_is(payload.path, user_id)
+    except folder_links.LinkError as e:
+        raise _refused(e)
+
+
 @router.post("/open")
 def open_file(payload: OpenFile, request: Request):
-    """A PDF of this computer opened where it is (``linked_files.open_pdf``):
-    ``{path}`` → ``{workspace, page, created, title}``, the page's id and
-    the workspace it is in, which is the request's unless the file belongs to
-    a vault of another. 400 for a path that is not a full one, a file that
-    is no PDF, is not there or cannot be read, one inside the data directory,
-    or a clone's workspace."""
+    """A file of this computer opened where it is
+    (``linked_files.open_file``), of any format Gamma can show: ``{path}``
+    → ``{workspace, page, created, title, format}``, the page's id, the
+    workspace it is in, which is the request's unless the file belongs to a
+    vault of another, and the format of the page's document (``pdf``,
+    ``text`` (a Markdown file outside every vault among them), ``image``,
+    ``audio``, ``video``; "" for a page with none, a work folder's note).
+    400 for a path that is not a full one, a file that is not there or
+    cannot be read, a program, a binary, a file of another format than PDF
+    past the keep limit, a ``.pdf`` that is no PDF, one inside the data
+    directory, or a clone's workspace; and inside a vault for a work folder
+    whose files are not chosen yet, a file its scan never tracks, a work
+    folder's file it does not track, a file with no page yet of a paused
+    vault, a file whose page is in Recently deleted, and a file a vault of
+    another server that the account made reads (``kept on <host>: open it
+    there``)."""
     user_id = _from_shell(request)
     ws = require_ws(request, write=True)
     try:
-        opened = linked_files.open_pdf(ws, payload.path, user_id)
+        opened = linked_files.open_file(ws, payload.path, user_id)
     except folder_links.LinkError as e:
         raise _refused(e)
+    view = page_document(opened["page"].get("properties"))
     return {"workspace": opened["workspace"], "page": opened["page"]["id"], "created": opened["created"],
-            "title": opened["page"]["content"]}
+            "title": opened["page"]["content"], "format": view["format"] if view else ""}
 
 
 @router.post("/opened/{page_id}/add")
 def add_opened(page_id: str, payload: AddToLibrary, request: Request):
-    """An opened PDF goes into the library of its workspace, or with
+    """An opened file goes into the library of its workspace, or with
     ``workspace`` of another of this server the account may edit, there with
     its notes, highlights and chats, the opened page gone
     (``linked_files.add_to_library``): ``{folder?, keep_pushing?,
     workspace?}`` → the page, ``folder`` one of the workspace it goes to. 400
-    for a page that reads no file here, a folder that does not exist, a file
-    that is gone or changed, a workspace that takes no such page, or
-    ``keep_pushing`` or ``workspace`` asked by any account but the one that
-    opened the file; 507 past the quota."""
+    for a page that reads no file here, a Markdown file read as text (it
+    joins the library as a note, dropped there), ``keep_pushing`` for a file
+    that is no PDF, a folder that does not exist, a file that is gone or
+    changed, a workspace that takes no such page, or ``keep_pushing`` or
+    ``workspace`` asked by any account but the one that opened the file;
+    507 past the quota."""
     user_id = _account(request)
     ws = require_ws(request, write=True)
     try:
@@ -404,7 +456,9 @@ def carried(page_id: str, request: Request):
     pages}``, their digest and their ids, the page first. The desktop app
     reads it before its export, looks for each page there first, and hands
     the digest back to ``POST`` once the page is there. 400 for a page that
-    reads no file here, or any account but the one that opened the file."""
+    reads no file here, one whose document is no PDF (``Only a PDF is
+    carried to another server.``), or any account but the one that opened
+    the file."""
     user_id = _account(request)
     ws = require_ws(request, write=True)
     try:
@@ -434,9 +488,10 @@ def let_go(page_id: str, payload: Carried, request: Request):
 
 @router.post("/opened/{page_id}/locate")
 def locate_opened(page_id: str, payload: OpenFile, request: Request):
-    """The file of an opened PDF found again (``linked_files.locate``):
-    ``{path}`` → the page. 400 as for ``/open``, or for a page that reads
-    no file here."""
+    """The file of an opened page found again (``linked_files.locate``):
+    ``{path}`` → the page. 400 as for ``/open``, for a file of another
+    format than the page's document, or for a page that reads no file
+    here."""
     user_id = _from_shell(request)
     ws = require_ws(request, write=True)
     try:
@@ -452,10 +507,11 @@ def page_state(page_id: str, request: Request):
     work_folder, choosing, library, mine, page: {library, file_name}}`` for
     a page a synced vault keeps (``folder_links.page_vault``: ``mine``
     whether the asking account made the vault, ``page`` the page's own
-    stamps as a work folder's file), else null; ``reader`` is ``{path, missing, mine, relocation_error?}`` for a
-    PDF read where it is, else null, ``mine`` whether the asking account
-    opened the file (what keeps it pushing or takes it elsewhere is that
-    account's alone). A ``path`` is empty for a member who cannot act on it,
+    stamps as a work folder's file), else null; ``reader`` is ``{path,
+    missing, mine, format, ext, relocation_error?}`` for a file read where
+    it is, else null, ``mine`` whether the asking account opened the file
+    (what keeps it pushing or takes it elsewhere is that account's alone),
+    ``format`` and ``ext`` its document's. A ``path`` is empty for a member who cannot act on it,
     but the vault's maker: where the file lies is the reading of whoever made
     the vault or opened the file."""
     user_id = _account(request)
@@ -541,15 +597,27 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
     ``claude`` turns it on, which the desktop app asks with its shell's
     word (``_from_shell``: an agent that edits a directory is the
     computer's decision), and the answer's ``queued`` says how many waiting
-    Sends it took; ``""`` turns it off, the maker's alone. 404 on a server
-    that runs no agents, 400 for a vault that is no work folder, an agent
-    Gamma does not know or one not ready (its problem). A resume hands the
-    agent the Sends made since it was turned on that wait."""
+    Sends it took; ``""`` turns it off, the maker's alone. A work folder of
+    another server takes one too (step 4c: its Sends made there run here),
+    once this computer is shown there (400 "Show this computer on NAS
+    first."); its channel asks that server for the Sends that wait
+    (``queued`` 0). 404 on a server that runs no agents, 400 for a vault
+    that is no work folder, an agent Gamma does not know or one not ready
+    (its problem). ``agent_runs`` is what that agent may run
+    (``folder_links.set_agent_runs``): ``ask`` lets its chat's turns ask
+    the person, which the desktop app asks with its shell's word (403
+    without), for a work folder of this server only (409), ``never`` the
+    maker's alone; the gate of ``agent``, then 400 for another value or a
+    folder with no agent on (after the PATCH's own ``agent``). A resume
+    hands the agent the Sends made since it was turned on that wait."""
     changes = (payload.notes is not None or payload.push is not None or payload.pull is not None
-               or payload.library is not None or bool(payload.token) or payload.agent is not None)
+               or payload.library is not None or bool(payload.token) or payload.agent is not None
+               or payload.agent_runs is not None)
     link = _made(request, link_id) if changes else _kept(request, link_id)
     if payload.agent is not None:
         _agent_allowed(request, link, payload.agent)
+    if payload.agent_runs is not None:
+        _runs_allowed(request, link, payload.agent_runs, payload.agent)
     try:
         if payload.notes is not None:
             link = folder_links.set_notes(link_id, payload.notes) or link
@@ -566,6 +634,8 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
         if payload.agent is not None:
             queued = folder_links.set_agent(link_id, payload.agent, by=_account(request))
             link = folder_links.get_link(link_id) or link
+        if payload.agent_runs is not None:
+            folder_links.set_agent_runs(link_id, payload.agent_runs, by=_account(request))
     except folder_links.LinkError as e:
         raise _refused(e)
     if payload.paused is False:
@@ -578,7 +648,8 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
 
 def _agent_allowed(request: Request, link: dict, agent: str) -> None:
     """The PATCH's gate for ``agent``, in order, past ``_made``: a server
-    that runs agents (404), a work folder (400); for an agent turned on or
+    that runs agents (404), a work folder, of this server or of another
+    (``folder_links.agent_folder``; 400); for an agent turned on or
     changed, the shell's word (403), an agent Gamma knows (400) and one
     ready now (400 with its problem: this asks it afresh, a process or two).
     Turning it off needs nothing more."""
@@ -587,7 +658,7 @@ def _agent_allowed(request: Request, link: dict, agent: str) -> None:
 
     if not local_agents.enabled():
         raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
-    if not folder_links.work_folder_link(link):
+    if not folder_links.agent_folder(link):
         raise HTTPException(status_code=400, detail="Only a work folder can have an agent.")
     if not agent:
         return
@@ -600,14 +671,42 @@ def _agent_allowed(request: Request, link: dict, agent: str) -> None:
                             detail=found["problem"] or f"{found['label']} is not ready on this computer.")
 
 
+def _runs_allowed(request: Request, link: dict, runs: str, agent: str | None) -> None:
+    """The PATCH's gate for ``agent_runs``, in order, past ``_made``: a
+    server that runs agents (404), a work folder (400), ``never`` or
+    ``ask`` (400), an agent on once the PATCH's ``agent`` is set (400);
+    for ``ask``, a work folder of this server (409: asking is in the chat,
+    which a work folder of another server has not here) and the shell's
+    word (403: letting an agent ask to run commands is the computer's
+    decision). ``never`` needs nothing more."""
+    from .. import local_agents
+    from ..local_agents import store
+
+    if not local_agents.enabled():
+        raise HTTPException(status_code=404, detail="Agents run on the desktop app's own server.")
+    if not folder_links.agent_folder(link):
+        raise HTTPException(status_code=400, detail="Only a work folder can have an agent.")
+    if runs not in store.RUNS:
+        raise HTTPException(status_code=400, detail="What an agent may run is never or ask.")
+    if not (agent if agent is not None else (store.agent_of(link["id"]) or {}).get("agent")):
+        raise HTTPException(status_code=400, detail="Turn an agent on first.")
+    if runs == "ask":
+        if not folder_links.work_folder_link(link):
+            raise HTTPException(status_code=409, detail="Asking in the chat is for a work folder of this computer's "
+                                                        "server.")
+        _from_shell(request, "Only the desktop app may let an agent ask to run commands in this folder.")
+
+
 def _hand_waiting(link: dict) -> None:
     """A work folder that writes its directory again (resumed, its files
-    chosen): its agent takes the Sends that wait for it (``runner.waiting``).
-    An error is logged; the change it follows stands."""
+    chosen): its agent takes the Sends that wait for it (``runner.waiting``;
+    one of another server, those that server hands it, which its channel
+    asks for: ``runner.queue_folder``). An error is logged; the change it
+    follows stands."""
     from .. import local_agents
     from ..local_agents import runner, store
 
-    if not local_agents.enabled() or not folder_links.work_folder_link(link):
+    if not local_agents.enabled() or not folder_links.agent_folder(link):
         return
     try:
         if store.agent_of(link["id"]) is not None:
@@ -682,11 +781,33 @@ def _forget_agent(link_id: str) -> None:
 @router.get("/{link_id}/removal")
 def removal(link_id: str, request: Request):
     """What removing the link would do, to say before it is asked: ``{pages,
-    in_place, bytes, files, in_library}`` — its pages, of which a work
-    folder's files not in the library (``files``) go to Recently deleted
-    and the others (``in_library``) stay, and the PDFs read in place that
-    are stored first, with their size."""
+    in_place, bytes, files, in_library, unreachable?}`` — its pages, of
+    which a work folder's files not in the library (``files``) go to
+    Recently deleted and the others (``in_library``) stay, and the PDFs read
+    in place that are stored first, with their size; ``unreachable`` for a
+    work folder of another server that cannot be asked now, whose removal
+    is refused until it can (``DELETE``'s ``force``)."""
     return folder_links.removal(_kept(request, link_id))
+
+
+@router.get("/{link_id}/page")
+def vault_file_page(link_id: str, request: Request, path: str = Query(min_length=1, max_length=1000)):
+    """The page of the work folder's file ``path`` (its path in the vault,
+    ``/`` between names), from the vault's row of it
+    (``linked_files.vault_page``) → ``{page}``: its id, "" while no round has
+    read the file yet and for a page in Recently deleted (a work folder of
+    another server's id there, unchecked). What the tracking dialog lands
+    on after a Save that ticked a file opened from this computer. 400 for a
+    ``path`` outside the vault or below a link; the rest as ``GET
+    /{id}/tree`` (``_chooser``)."""
+    link = _chooser(request, link_id)
+    rel = path.strip().strip("/")
+    try:
+        vault_disk.path(folder_links.dest_of(link), rel)
+    except vault_disk.Outside as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    page, _trashed = linked_files.vault_page(link, rel)
+    return {"page": page}
 
 
 @router.get("/{link_id}/tree")
@@ -705,8 +826,8 @@ def selection_tree(link_id: str, request: Request, dir: str = Query("", max_leng
     outside the vault, below a link or below what the scan never tracks;
     409 for a directory that is not there or is another vault's, or a
     ``.gammaignore`` that cannot be read; 403 but for the vault's maker, 404
-    for anyone who cannot act on it, a file's vault and a vault of another
-    server."""
+    for anyone who cannot act on it, a file's vault and a kept folder of
+    another server (``_chooser``)."""
     link = _chooser(request, link_id)
     try:
         return selection.listing(link, dir, base)
@@ -720,8 +841,11 @@ def preview_selection(link_id: str, payload: SelectionPreview, request: Request)
     (``selection.preview``) → ``{files, bytes, by_format: {pdf, markdown,
     image, other}, unread, over_cap, cap, leaving: [{path, page, title,
     notes, open_comments}], joined: [{path, with}], text, rules_ours}``,
-    ``text`` the ``.gammaignore`` it writes. Nothing is written. The
-    refusals of ``GET /{id}/tree``."""
+    ``text`` the ``.gammaignore`` it writes; for a work folder of another
+    server ``uploads: {files, bytes}`` too, what goes to that server and is
+    stored there, and ``secrets``, the ticked files whose names say they
+    hold secrets (``notes`` and ``open_comments`` null from a server older
+    than this app). Nothing is written. The refusals of ``GET /{id}/tree``."""
     link = _chooser(request, link_id)
     try:
         return selection.preview(link, payload.selection.model_dump())
@@ -755,7 +879,7 @@ def save_selection(link_id: str, payload: SelectionSave, request: Request):
 
 
 @router.delete("/{link_id}")
-def delete_link(link_id: str, request: Request, files: Literal["keep", "trash"] = "keep"):
+def delete_link(link_id: str, request: Request, files: Literal["keep", "trash"] = "keep", force: int = 0):
     """Remove the link; its pages stay, the PDFs a vault read in place
     stored first, but a work folder's files not in the library, which go to
     Recently deleted. A folder's directory stays as it is with
@@ -764,16 +888,20 @@ def delete_link(link_id: str, request: Request, files: Literal["keep", "trash"] 
     on disk and files the rounds never wrote stay). A followed file is never
     touched. A work folder whose files were never chosen is cancelled: its
     marker, its ``.gamma/`` and its folder go when they were made for it.
-    409 when a PDF read in place could not be stored, or another program
-    holds the state file a folder kept before left: nothing was removed;
-    403 but for the link's maker. Its agent on this computer is turned off."""
+    → ``{ok, mark_stays?}``. 409 when a PDF read in place could not be
+    stored, another program holds the state file a folder kept before left,
+    or the other server of a work folder there, removed or cancelled,
+    cannot let go of it now (``force=1``: removed all the same,
+    ``mark_stays`` true, for a workspace owner's Let go there, as when that
+    server stopped answering midway): nothing was removed; 403 but for the
+    link's maker. Its agent on this computer is turned off."""
     _made(request, link_id)
     try:
-        folder_links.delete_link(link_id, files=files)
+        out = folder_links.delete_link(link_id, files=files, force=bool(force))
     except folder_links.LinkError as e:
         raise _refused(e, 409)
     _forget_agent(link_id)
-    return {"ok": True}
+    return out or {"ok": True}
 
 
 @router.get("/{link_id}/conflicts")

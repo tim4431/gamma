@@ -3,14 +3,19 @@ pdf_position — the page and its size once, the rects bare — written by
 every writer that places a block on a PDF page (the annotation and Logseq
 importers, ink), the block id as the highlight's id, and a page's PDF URL
 derived from its doc rather than stored (attach, by-doc, the op path,
-page creation, the clip and its lookup)."""
+page creation, the clip and its lookup). A range of a text file's
+text_position: its test, its span read defensively, its prev and closest,
+and its quote and context cut from the lines (tests/shared/textposition.json
+holds the client to the same, test_shared_fixtures.py)."""
 
 import io
 
 import pytest
 
 from conftest import doc_props, login, make_page, make_user
-from gamma.highlights import PREV_MAX_QUOTE, PREV_MAX_RECTS, from_scaled, is_highlight, page_of, position, previous_place
+from gamma.highlights import (CONTEXT_CHARS, PREV_MAX_QUOTE, PREV_MAX_RECTS, TEXT_QUOTE_MAX, clamp_span, from_scaled,
+                              is_highlight, is_region, is_text_range, page_of, position, previous_place, span_text,
+                              text_position, text_span, valid_text_closest, valid_text_prev)
 from gamma.pdf_export import annotate_pdf
 from test_pdf_export import PAGE_H, PAGE_W, _blank_pdf
 
@@ -145,6 +150,113 @@ def test_a_prev_is_its_position_measured_as_fractions_of_its_page():
     assert len(previous_place(many, "v1")["rects"]) == PREV_MAX_RECTS
     # a position without a frame has no measure for its rects
     assert previous_place({k: v for k, v in pos.items() if k not in ("width", "height")}, "v1")["rects"] == []
+
+
+# --- a range of a text file ----------------------------------------------------------------
+
+RANGE = {"line": 2, "col": 4, "end": 3, "end_col": 6, "prefix": "a", "suffix": "b", "hash": "9f2c"}
+
+
+def test_a_text_range_is_its_own_kind_beside_the_other_two():
+    assert is_text_range({"text_position": RANGE}) and is_text_range({"text_position": {}, "link_url": "x"})
+    assert is_text_range({"text_position": RANGE, "pdf_position": {"pageNumber": 1}})
+    assert not any(is_text_range(p) for p in (
+        None, {}, {"text_position": None}, {"text_position": "1-3"}, {"text_position": [1, 3]},
+        {"ink_url": "", "text_position": RANGE}, {"text_box": {}, "text_position": RANGE},
+        {"picture": {}, "text_position": RANGE}, {"sheet": {}, "text_position": RANGE}))
+    # a range is on no PDF page and no region
+    assert page_of({"text_position": RANGE}) is None
+    assert not is_highlight({"text_position": RANGE}) and not is_region({"text_position": RANGE})
+
+
+def test_a_text_span_reads_only_a_well_formed_range():
+    assert text_span({"text_position": RANGE}) == (2, 4, 3, 6)
+    assert text_span({"text_position": {**RANGE, "end": 2, "end_col": 5}}) == (2, 4, 2, 5)
+    assert text_span({"text_position": {**RANGE, "end_col": 0}}) == (2, 4, 3, 0)  # a later line's start, before the trim
+    # a whole number written with a point, which a browser reads as one (blockModel.textSpan)
+    assert text_span({"text_position": {**RANGE, "line": 2.0}}) == (2, 4, 3, 6)
+    for bad in ({**RANGE, "line": 0}, {**RANGE, "line": True}, {**RANGE, "col": -1}, {**RANGE, "end": 1},
+                {**RANGE, "end_col": -1}, {**RANGE, "end": 2, "end_col": 4}, {**RANGE, "end": 2, "end_col": 3},
+                {**RANGE, "line": 2.5}, {**RANGE, "end": float("nan")}, {**RANGE, "col": "4"}, {**RANGE, "end_col": None},
+                {k: v for k, v in RANGE.items() if k != "end"}, {}):
+        assert text_span({"text_position": bad}) is None, bad
+    assert text_span({"text_box": {}, "text_position": RANGE}) is None and text_span(None) is None
+
+
+def test_a_text_position_is_its_span_context_and_version():
+    pos = text_position(118, 4, 120, 37, hash="9f2c", prefix="p", suffix="s")
+    assert list(pos) == ["line", "col", "end", "end_col", "prefix", "suffix", "hash"]
+    assert pos == {"line": 118, "col": 4, "end": 120, "end_col": 37, "prefix": "p", "suffix": "s", "hash": "9f2c"}
+    assert text_span({"text_position": pos}) == (118, 4, 120, 37)
+
+
+def test_a_text_range_s_prev_and_closest_only_in_their_own_form():
+    prev = {"hash": "v1", "line": 3, "col": 4, "end": 5, "end_col": 2, "quote": "where it was"}
+    assert valid_text_prev(prev) == prev and valid_text_prev({**prev, "end": 3, "end_col": 9, "extra": 1}) == {
+        **prev, "end": 3, "end_col": 9}
+    # a range's whole quote, not a PDF's first PREV_MAX_QUOTE characters: a later run matches it by this
+    assert valid_text_prev({**prev, "quote": "x" * 5000})["quote"] == "x" * 5000
+    assert valid_text_prev({**prev, "quote": "x" * (TEXT_QUOTE_MAX + 5)})["quote"] == "x" * TEXT_QUOTE_MAX
+    for bad in (None, "prev", [prev], {**prev, "hash": None}, {**prev, "hash": 7}, {**prev, "line": 0},
+                {**prev, "line": True}, {**prev, "end": 2}, {**prev, "end": "5"}, {**prev, "quote": None},
+                {**prev, "end": 3, "end_col": 4}, {k: v for k, v in prev.items() if k != "col"},
+                {k: v for k, v in prev.items() if k != "quote"}):
+        assert valid_text_prev(bad) is None, bad
+    closest = {"line": 9, "col": 0, "end": 9, "end_col": 12, "match": 0.71, "quote": "most alike", "hash": "v2"}
+    assert valid_text_closest(closest) == closest and list(valid_text_closest({**closest, "lost": True})) == list(closest)
+    assert valid_text_closest({**closest, "match": 0, "quote": ""}) == {**closest, "match": 0, "quote": ""}
+    assert valid_text_closest({**closest, "quote": "y" * (TEXT_QUOTE_MAX + 5)})["quote"] == "y" * TEXT_QUOTE_MAX
+    for bad in (None, [closest], {**closest, "line": 0}, {**closest, "end": 8}, {**closest, "end_col": 0},
+                {**closest, "col": -1}, {**closest, "match": 1.5}, {**closest, "match": -0.1},
+                {**closest, "match": "0.7"}, {**closest, "match": True}, {**closest, "quote": 7},
+                {**closest, "hash": None}, {k: v for k, v in closest.items() if k != "hash"}):
+        assert valid_text_closest(bad) is None, bad
+
+
+def test_a_span_s_text_is_cut_from_the_lines_by_code_points():
+    lines = ["def f(x):", "    return x", "", "f(1)"]
+    assert span_text(lines, (2, 4, 2, 10)) == ("return", "def f(x):\n    ", " x\n\nf(1)")
+    assert span_text(lines, {"line": 1, "col": 4, "end": 2, "end_col": 12}) == ("f(x):\n    return x", "def ", "\n\nf(1)")
+    # an end at column 0 of a later line, past an empty one too, ends at the line before
+    assert clamp_span(lines, (2, 4, 4, 0)) == (2, 4, 2, 12)
+    assert span_text(lines, (2, 4, 4, 0)) == span_text(lines, (2, 4, 2, 12)) == ("return x", "def f(x):\n    ", "\n\nf(1)")
+    # columns past their lines clamped, an end past the file at its last line, a start at its line's end
+    # on the next line; a line break alone is nothing
+    assert clamp_span(lines, (1, 40, 2, 99)) == (2, 0, 2, 12) and clamp_span(lines, (2, 0, 9, 3)) == (2, 0, 4, 4)
+    assert clamp_span(lines, (2, 12, 4, 2)) == (4, 0, 4, 2), "past the empty line too"
+    assert clamp_span(lines, (1, 9, 2, 0)) is None and span_text(lines, (1, 9, 2, 0)) == ("", "", "")
+    assert clamp_span(lines, (5, 0, 5, 1)) is None and clamp_span([], (1, 0, 1, 1)) is None
+    # the context is 40 code points either side, line breaks kept; an astral character is one
+    long = ["\U0001F600" * 45 + "name" + "\U0001F680" * 45]
+    assert span_text(long, (1, 45, 1, 49)) == ("name", "\U0001F600" * CONTEXT_CHARS, "\U0001F680" * CONTEXT_CHARS)
+    # a quote at the cap is its first TEXT_QUOTE_MAX code points, never ending in a line break, its suffix after them
+    big = ["x" * (TEXT_QUOTE_MAX - 1), "y" * 50, "tail"]
+    quote, prefix, suffix = span_text(big, (1, 0, 3, 4))
+    assert quote == "x" * (TEXT_QUOTE_MAX - 1) and prefix == "" and suffix == ("\n" + "y" * 50)[:CONTEXT_CHARS]
+    quote, _, suffix = span_text(["x" * TEXT_QUOTE_MAX + "z", "w"], (1, 0, 2, 1))
+    assert quote == "x" * TEXT_QUOTE_MAX and suffix == "z\nw"
+
+
+def test_the_highlight_shape_leaves_a_text_position_alone():
+    """Step 30's rewrite (run on a restore too) reshapes ``pdf_position``
+    alone: a range's position comes through untouched, beside a page
+    number it drops."""
+    import json
+    import sqlite3
+
+    from gamma.normalize import highlight_shape
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE unified_blocks (id TEXT PRIMARY KEY, page_id TEXT, properties TEXT)")
+    ranged = {"text_position": {**RANGE, "approx": True, "match": 0.8, "prev": {"hash": "v0", "line": 1, "end": 1,
+                                                                                "quote": "q"}}, "pdf_page": 2, "quote": "q"}
+    scaled = {"pdf_position": {"boundingRect": {"x1": 1, "y1": 1, "x2": 2, "y2": 2, "width": 10, "height": 10},
+                               "rects": [], "pageNumber": 1}, "text_position": RANGE}
+    conn.executemany("INSERT INTO unified_blocks VALUES (?, 'p', ?)",
+                     [("r", json.dumps(ranged)), ("s", json.dumps(scaled))])
+    assert highlight_shape(conn)
+    got = {bid: json.loads(raw) for bid, raw in conn.execute("SELECT id, properties FROM unified_blocks")}
+    assert got["r"] == {k: v for k, v in ranged.items() if k != "pdf_page"}
+    assert got["s"]["text_position"] == RANGE and got["s"]["pdf_position"]["width"] == 10
 
 
 # --- the writers -------------------------------------------------------------------------

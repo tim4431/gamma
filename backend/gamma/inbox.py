@@ -427,12 +427,16 @@ def _agent_of(ws: str, page_id: str, said: list[tuple[str, set, bool]]) -> dict 
     a thread's earlier comments (``said``: ``(author, names, a person's
     session wrote it)``) mention an agent's name, None otherwise: in its
     maker's own comments (not a token's) that name is the agent, as the
-    switch is now, and no member of that name hears of it."""
+    switch is now, and no member of that name hears of it (on a server
+    whose computers keep the folder, each such author's own computer is
+    asked: ``mention.agent_of_page``'s ``user_id``)."""
     from .local_agents import catalog, mention  # local: they import the comments, which import this module
 
-    if not any(names & set(catalog.AGENTS) for _, names, own in said if own):
-        return None
-    return mention.agent_of_page(ws, page_id)
+    for author in dict.fromkeys(author for author, names, own in said if own and names & set(catalog.AGENTS)):
+        found = mention.agent_of_page(ws, page_id, author)
+        if found is not None and found["maker"] == author:
+            return found
+    return None
 
 
 def forget(ws: str, comment_ids) -> None:

@@ -19,6 +19,8 @@ const ROWS = 300;
 // sub, n }) is the row of this column to show — each new `n` opens the
 // folders on its `path`, makes its list (and for a sub-page, `sub`, each
 // list of pages inside down to it) long enough to hold it and scrolls to it.
+// The tracking dialog (explorer/TrackDialog.jsx) uses the same `link` for
+// the file opened from the computer: its one row lit and shown.
 // A page's sub-pages (`file.inside`, importReview.js buildImportTree) are a
 // list under its row.
 //

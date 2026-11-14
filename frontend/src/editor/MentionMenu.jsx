@@ -12,7 +12,7 @@ import { AlarmClockIcon, BotIcon, ClockIcon, FileGlyph, UserPlusIcon } from "../
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import {
-  MENTION_SECTIONS, NO_MENTIONS, dateLabel, dayDelta, localMoment, mentionChip, mentionChipClass, scanMentions,
+  MENTION_SECTIONS, NO_MENTIONS, agentAway, agentWhere, dateLabel, dayDelta, localMoment, mentionChip, mentionChipClass, scanMentions,
 } from "./mentions.js";
 
 export const MentionContext = createContext(NO_MENTIONS);
@@ -52,9 +52,10 @@ function RowText({ row, query, now }) {
   if (row.kind === "person") {
     return <><MarkedText text={row.user} query={query} />{row.you ? <span className="mentionAside">{t("(You)")}</span> : null}</>;
   }
-  // The work folder's agent: where it runs, or why it cannot.
+  // The work folder's agent: where it runs (this computer, or the one that
+  // keeps the folder, saying when that one is offline), or why it cannot.
   if (row.kind === "agent") {
-    const aside = row.ready === false && row.problem ? row.problem : t("on this computer");
+    const aside = row.ready === false && row.problem ? row.problem : agentAway(row) || agentWhere(row);
     return <><MarkedText text={row.label} query={query} /><span className="mentionAside">{aside}</span></>;
   }
   if (row.kind === "invite") return t("Invite…");

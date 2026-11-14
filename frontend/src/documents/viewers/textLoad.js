@@ -4,7 +4,8 @@
 // UTF-8 with replacement; a head cut at its last whole line and every line
 // at a width a view can draw; a NUL, or too many bytes that are no text,
 // meaning the file is no text after all (the server's rule too:
-// gamma/documents/text.py decode, tests/shared/textdecode.json). Pure but
+// gamma/documents/text.py decode, tests/shared/textdecode.json); and which
+// lines the cap cut (cutLinesOf), which no highlight may touch. Pure but
 // for `loadText`'s fetch, so node tests the decoding
 // (tests/textLoad.test.mjs).
 
@@ -97,6 +98,23 @@ function capLines(text) {
     if (parts[i].length > LINE_CAP) { parts[i] = `${parts[i].slice(0, LINE_CAP)}…`; cut = true; }
   }
   return { text: cut ? parts.join("") : text, cut };
+}
+
+// The lines of `text` (1-based) that capLines cuts, or cut already: those
+// past LINE_CAP characters, whose shown "…" the file has not. A selection
+// touching one makes no highlight (textAnchors.js spanOf).
+export function cutLinesOf(text) {
+  const out = new Set();
+  if (text.length <= LINE_CAP) return out;
+  const breaks = /\r\n?|\n/g;
+  let start = 0, n = 1;
+  for (let m = breaks.exec(text); ; m = breaks.exec(text)) {
+    const end = m ? m.index : text.length;
+    if (end - start > LINE_CAP) out.add(n);
+    if (!m) return out;
+    start = m.index + m[0].length;
+    n++;
+  }
 }
 
 // The file's whole size from a response: a 206's Content-Range total, else

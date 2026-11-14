@@ -457,6 +457,11 @@ model, one the text only names goes to its check (`_ai_pick`).
 Institutional subscriptions apply to the **backend's outbound network**, not
 the browser opening Gamma. Run the backend on the subscribing institution's
 network (or its supported full-tunnel VPN) to fetch subscribed PDFs directly.
+With a network proxy set ([network_proxy.md](network_proxy.md)), the
+publisher sees the proxy's exit, so a proxy abroad loses the campus
+address: add the publishers to "Don't use the proxy for", or give them a
+direct rule in the proxy client, as for the browser. That setting is a
+network proxy, not a library proxy (EZproxy), which Gamma does not speak.
 There is no publisher allowlist: direct PDF links and article pages advertising
 `citation_pdf_url` use the same resolution path. APS article pages use their
 direct `/pdf/` route before the advertised legacy `link.aps.org` URL, which

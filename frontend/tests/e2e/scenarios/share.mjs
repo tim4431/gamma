@@ -505,7 +505,7 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await page.locator(".blockList").first().waitFor();
     const pop = page.locator(".sharePopover");
     const shareFromPalette = async () => {
-      await page.keyboard.press("Control+Shift+p");
+      await page.keyboard.press("ControlOrMeta+Shift+p");
       const dialog = page.getByRole("dialog", { name: "Command palette" });
       await dialog.getByRole("textbox", { name: "Type a command" }).fill(">share this page");
       await until(async () => /Share this page/.test(await dialog.locator('[role="option"][aria-selected="true"]').textContent()), { what: "the Share command is selected" });
@@ -517,7 +517,7 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await page.keyboard.press("Escape");
     await pop.waitFor({ state: "detached" });
     // Another page, opened in place: the popover is that page's, unshared.
-    await page.keyboard.press("Control+p");
+    await page.keyboard.press("ControlOrMeta+p");
     await page.getByRole("dialog", { name: "Open a page" }).getByRole("option", { name: /Palette plain/ }).click();
     await until(async () => (await page.locator(".pageTitleRow .titleText").textContent()).includes("Palette plain"), { what: "the second page open" });
     await shareFromPalette();

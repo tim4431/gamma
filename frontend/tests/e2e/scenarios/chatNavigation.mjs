@@ -516,7 +516,7 @@ export async function chatNavigationScenarios(env) {
       await until(() => box.evaluate((el) => el === document.activeElement));
       // Ctrl+F from a checkbox comes back to the picker's box, not find-in-chat.
       await page.keyboard.press("ArrowDown");
-      await page.keyboard.press("Control+f");
+      await page.keyboard.press("ControlOrMeta+f");
       await until(() => box.evaluate((el) => el === document.activeElement));
       assertEq(await page.locator(".chatFindRow").count(), 0);
       // Enter on an empty box is Done.

@@ -1,7 +1,7 @@
 // The feedback view's pure part (feedback/FeedbackDialog.jsx, docs/dev/
 // feedback.md "In the app"): which scope the dialog reads, the entries
 // grouped by their file, the requests it lists and what a person may do
-// with one, what the Send says of an agent on this computer, and a Send's
+// with one, what the Send says of the folder's agent, and a Send's
 // body. Node tests it (tests/feedbackView.test.mjs).
 //
 // The dialog is opened on a scope, {kind: "file" | "folder", id}
@@ -54,7 +54,7 @@ export const canWithdraw = (request, me) => !!me && request?.by === me
   && (request.state === "sent" || request.state === "running") && !isWithdrawn(request);
 
 // An entry's picture to show: the region as it is now, else as it was
-// commented on (handwriting on an earlier build has only that one).
+// commented on (handwriting on an earlier version has only that one).
 export const pictureOf = (entry) => entry?.picture_url || entry?.before_url || "";
 
 // An entry's first comment, {who, body, deleted}: the agent that wrote it
@@ -69,28 +69,41 @@ export function firstComment(entry) {
 // (the server's runner fails a larger one).
 export const AGENT_MAX = 100; // the server's local_agents/runner.py MAX_THREADS: change both
 
-// What the Send says of an agent on this computer (docs/dev/local_agents.md),
-// read from the document's `agent` ({name, label, ready, problem, takes,
-// why} or null) and `agents_found`: {mode, label, problem, why}. `mode` is
-// "ready" (the folder's agent takes this person's Send), "not_ready" (it
-// takes it but cannot run: `problem` says why), "checking" (not known yet),
-// "other" (the folder has an agent that does not take this Send: `why`),
-// "offer" (no agent, but one was found and the folder is kept here, `kept`,
-// so the sync panel can turn it on) or "" for nothing to say.
+// What the Send says of the folder's agent (docs/dev/local_agents.md), read
+// from the document's `agent` and `agents_found`: {mode, label, problem,
+// why, computer, online}. The agent is one on this computer ({name, label,
+// ready, problem, takes, why}) or, for a work folder of this server that a
+// computer keeps, the agent there, told to its maker alone ({name, label,
+// computer, online, problem?}: `computer` that computer's name, `online`
+// whether it is connected). `mode` is "ready" (the folder's agent takes
+// this person's Send), "not_ready" (it takes it but cannot run: `problem`
+// says why), "checking" (not known yet), "away" (its computer is offline:
+// the Send waits for it), "other" (the folder has an agent that does not
+// take this Send: `why`), "offer" (no agent, but one was found and the
+// folder is kept here, `kept`, so the sync panel can turn it on) or "" for
+// nothing to say. `computer` is "" for this computer's own agent.
 export function sendAgent(doc, kept = false) {
   const agent = doc?.agent && typeof doc.agent === "object" ? doc.agent : null;
   if (agent) {
     const label = agent.label || agent.name || "";
-    if (!agent.takes) return { mode: "other", label, problem: "", why: agent.why || "" };
-    if (agent.ready == null) return { mode: "checking", label, problem: "", why: "" };
-    return { mode: agent.ready ? "ready" : "not_ready", label, problem: agent.ready ? "" : agent.problem || "", why: "" };
+    const computer = typeof agent.computer === "string" ? agent.computer : "";
+    const online = !computer || agent.online !== false;
+    const plan = { label, problem: "", why: "", computer, online };
+    // Another computer's agent is told to the person whose Sends it takes;
+    // it is ready unless its problem says otherwise.
+    const takes = computer ? agent.takes !== false : agent.takes;
+    const ready = computer && agent.ready === undefined ? !agent.problem : agent.ready;
+    if (!takes) return { ...plan, mode: "other", why: agent.why || "" };
+    if (!online) return { ...plan, mode: "away" };
+    if (ready == null) return { ...plan, mode: "checking" };
+    return { ...plan, mode: ready ? "ready" : "not_ready", problem: ready ? "" : agent.problem || "" };
   }
-  return { mode: doc?.agents_found && kept ? "offer" : "", label: "", problem: "", why: "" };
+  return { mode: doc?.agents_found && kept ? "offer" : "", label: "", problem: "", why: "", computer: "", online: true };
 }
 
-// Whether the Send goes to the folder's agent on this computer, so it is
-// named on the button and its limit holds.
-export const namesAgent = (plan) => plan.mode === "ready" || plan.mode === "not_ready" || plan.mode === "checking";
+// Whether the Send goes to the folder's agent, so it is named on the
+// button and its limit holds.
+export const namesAgent = (plan) => ["ready", "not_ready", "checking", "away"].includes(plan.mode);
 
 // How many entries were opened by someone other than `me`: their comments
 // are context to the agent, not instructions.

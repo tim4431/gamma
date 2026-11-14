@@ -9,7 +9,10 @@ computer. Its state is set by an agent (a feedback or write token) or, to
 withdraw it, by its requester. On the desktop app's own server a work
 folder's vault may have an agent on this computer (docs/dev/local_agents.md):
 it takes the Sends its maker makes in Gamma, so a token's Send there is
-refused, and so is a token's change of a request it is answering. Every
+refused, and so is a token's change of a request it is answering. On any
+server the same holds for a work folder a computer keeps with an agent
+there (gamma/computers/registry.py ``agent_of``): its maker's Sends run
+on that computer, taken over its channel (gamma/routers/computers.py). Every
 handler is a sync ``def``: it reads the pages.db, and the pictures are
 drawn, off the event loop.
 """
@@ -78,7 +81,10 @@ def read_feedback(request: Request, scope: str = "", state: str = "open", format
     404 for no such folder or live page. On a server that runs agents the
     JSON has ``agent``, the work folder's agent on this computer for the
     Feedback dialog (``_agent_of``), and ``agents_found``, whether this
-    computer has any; never the files' document, which stays as it is."""
+    computer has any; on any server, for a work folder its reader keeps on
+    a computer with an agent there, ``agent`` is that one
+    (``_computer_agent``). Never the files' document, which stays as it
+    is."""
     ws = _member(request)
     _format(format)
     with connect_pages_db(ws) as conn, _refusals():
@@ -92,6 +98,10 @@ def read_feedback(request: Request, scope: str = "", state: str = "open", format
 
         doc["agent"] = _agent_of(ws, doc["work_folder"]["id"], request.state.user_id)
         doc["agents_found"] = any(catalog.cached(name)["found"] for name in catalog.AGENTS)
+    if not doc.get("agent"):
+        far = _computer_agent(ws, doc["work_folder"]["id"], request.state.user_id)
+        if far is not None:
+            doc["agent"] = far
     return doc
 
 
@@ -118,16 +128,52 @@ def _agent_of(ws: str, w: str, user_id: str) -> dict | None:
             "takes": not why, "why": why}
 
 
-def _entry(request: Request, thread_id: str, regions: dict | None = None) -> tuple[str, dict]:
-    """The thread's entry in the request's workspace; with ``regions`` (a
-    picture's read) its pictures' regions, and no SyncTeX lookup. 404 for
-    a thread hidden, gone or on no work folder's file."""
-    ws = _member(request)
+def _computer_agent(ws: str, w: str, user_id: str) -> dict | None:
+    """The agent of the computer that keeps the work folder ``w`` with one
+    (gamma/computers/registry.py ``agent_of``: a work folder of this server
+    whose Sends run on that computer), as the dialog says it to that
+    computer's account alone (``user_id``'s own computer: another
+    account's never answers for it): ``{name, label, computer, online,
+    ready, problem, takes, why}``, ``computer`` its name, ``ready`` as the
+    computer last said, ``problem`` while it is offline (a Send then waits
+    for it) or, online, while the agent there is not ready (``_problem``),
+    ``takes`` false with ``why`` while the folder is paused there; None for
+    none."""
+    from ..computers import registry
+
+    found = registry.agent_of(ws, w, user_id)
+    if found is None:
+        return None
+    label, computer = found["label"], found["computer"]
+    why = f"The work folder is paused on {computer}: {label} starts once it syncs again." if found["paused"] else ""
+    problem = _problem(found) if found["online"] else f"{computer} is offline: this runs when it connects."
+    return {"name": found["agent"], "label": label, "computer": computer, "online": found["online"],
+            "ready": found["ready"], "problem": problem, "takes": not why, "why": why}
+
+
+def _problem(found: dict) -> str:
+    """Why the online computer's agent (``registry.agent_of``) cannot take
+    a Send now, in the words the @ menu says it; "" while it is ready or
+    not known to be otherwise."""
+    if found["ready"] is not False:
+        return ""
+    label, computer = found["label"], found["computer"]
+    if found["code"] == "signed_out":
+        return f"{label} is not signed in on {computer}."
+    if found["code"] == "missing":
+        return f"{label} is not on {computer}."
+    return f"{label} is not ready on {computer}."
+
+
+def _entry(ws: str, thread_id: str, regions: dict | None = None) -> dict:
+    """The thread's entry in ``ws``; with ``regions`` (a picture's read)
+    its pictures' regions, and no SyncTeX lookup. 404 for a thread hidden,
+    gone or on no work folder's file."""
     with connect_pages_db(ws) as conn:
         found = entries.entry(ws, conn, thread_id, regions=regions, sources=regions is None)
     if found is None:
         raise HTTPException(status_code=404, detail="no feedback item has that id")
-    return ws, found
+    return found
 
 
 @router.get("/threads/{thread_id}")
@@ -135,8 +181,7 @@ def read_thread(thread_id: str, request: Request, format: str = "json"):
     """One thread's entry in any state → ``{entry}``, or its Markdown. 404
     for a thread hidden, gone or not on a work folder's file."""
     _format(format)
-    _, found = _entry(request, thread_id)
-    found = entries.with_urls(found)
+    found = entries.with_urls(_entry(_member(request), thread_id))
     if format == "md":
         return Response(f"## {found['file']}\n\n" + markdown.render_entry(found, pictures="urls"), media_type=MARKDOWN)
     return {"entry": found}
@@ -150,8 +195,18 @@ def thread_picture(thread_id: str, request: Request, at: str = "now", v: str = "
     cannot be drawn now."""
     if at not in ("now", "before"):
         raise HTTPException(status_code=400, detail="at is now or before")
+    return picture_of(_member(request), thread_id, at)
+
+
+def picture_of(ws: str, thread_id: str, at: str) -> Response:
+    """The JPEG of the region of the thread ``thread_id`` of ``ws``
+    (``thread_picture``, and a computer's channel's for a thread of a
+    request it holds, gamma/routers/computers.py). 400 for another ``at``,
+    404 for no such entry or picture, or one that cannot be drawn now."""
+    if at not in ("now", "before"):
+        raise HTTPException(status_code=400, detail="at is now or before")
     regions: dict = {}
-    ws, found = _entry(request, thread_id, regions)
+    found = _entry(ws, thread_id, regions)
     key = entries.key_of(found["picture" if at == "now" else "before"])
     if not key or key not in regions:
         raise HTTPException(status_code=404, detail="this feedback item has no such picture")
@@ -169,7 +224,8 @@ def create_request(payload: RequestCreate, request: Request):
     account, answered as stored). A member who may edit, or a write token.
     400 for a scope outside a work folder, nothing to send or a thread that
     is no open one in the scope; 403 for a token's Send to a work folder an
-    agent on this computer answers (it takes the Sends made in Gamma); 404
+    agent on this computer answers, or a computer keeps with an agent (it
+    takes the Sends made in Gamma); 404
     for no such scope; 409 for another account's id; 413 for a longer
     note."""
     ws = _member(request, write=True)
@@ -180,6 +236,13 @@ def create_request(payload: RequestCreate, request: Request):
 
             if runner.folder_agent(ws, scope.work_folder) is not None:
                 raise FeedbackError(403, "An agent on this computer takes Sends made in Gamma, not with a token.")
+        if is_token(request):
+            from ..computers import registry
+
+            far = registry.agent_of(ws, scope.work_folder, request.state.user_id)   # the token's account's computer
+            if far is not None:
+                raise FeedbackError(403, f"{far['label']} on {far['computer']} takes Sends made in Gamma, "
+                                         "not with a token.")
         out = requests.create(ws, conn, scope, by=request.state.user_id,
                               by_name=request.state.user or "", note=payload.note, threads=payload.threads,
                               request_id=payload.id, via=requests.TOKEN if is_token(request) else requests.SESSION)
@@ -228,16 +291,27 @@ def read_request(request_id: str, request: Request):
 
 
 def _not_answering_here(ws: str, request_id: str) -> None:
-    """409 while an agent on this computer works on the request: its run
-    writes the request's state, no one else's agent."""
-    if not local_agents.enabled():
-        return
-    from ..local_agents import catalog, runner, store
+    """409 while an agent on this computer works on the request, or a
+    computer's run holds it (gamma/routers/computers.py): that run writes
+    the request's state, no one else's agent."""
+    from ..local_agents import catalog
 
-    if runner.running(ws, request_id):
-        run = store.run_of(ws, request_id)
-        label = catalog.label(run["agent"]) if run else "An agent"
-        raise HTTPException(status_code=409, detail=f"{label} on this computer is answering this request.")
+    if local_agents.enabled():
+        from ..local_agents import runner, store
+
+        if runner.running(ws, request_id):
+            run = store.run_of(ws, request_id)
+            label = catalog.label(run["agent"]) if run else "An agent"
+            raise HTTPException(status_code=409, detail=f"{label} on this computer is answering this request.")
+    with connect_pages_db(ws) as conn:
+        run = requests.run_of(conn, request_id)
+        state = conn.execute("SELECT state FROM feedback_requests WHERE id = ?",
+                             (request_id,)).fetchone() if run and not run["ended"] else None
+    if state and state[0] == "running":
+        from ..computers import registry
+
+        name = registry.computer_name(run["holder"]) or "a computer"
+        raise HTTPException(status_code=409, detail=f"{catalog.label(run['agent'])} on {name} is answering this request.")
 
 
 @router.post("/requests/{request_id}/state")

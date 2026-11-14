@@ -76,12 +76,13 @@ def _thread(conn, args: dict) -> dict:
 def _named(conn, thread: dict) -> str:
     """The file and the place the thread is on, as an answer names them:
     "main.pdf, page 3, “the loss is defined…”", "fig.png, a region of the
-    picture"."""
+    picture", "main.tex, lines 118–120, “for step in…”" (the lines the range
+    holds now, ``anchors.following``)."""
     row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ?", (thread["page_id"],)).fetchone()
     where = file_path(Tree.read(conn), load_props(row[1]), page_id=thread["page_id"], title=row[0] or "")
     row = conn.execute("SELECT anchor FROM comments WHERE id = ?", (thread["id"],)).fetchone()
     anchor = anchors.parse(row[0] if row else None) or anchors.anchor_of(conn, thread["page_id"], thread["block_id"])
-    return f"{where}, {anchors.place_words(anchor)}"
+    return f"{where}, {anchors.place_words(anchors.following(conn, thread['page_id'], anchor))}"
 
 
 def _link(base: str, ws: str, thread: dict) -> str:
@@ -147,3 +148,34 @@ def resolve(connection: Connection, ws: str, base: str, args: dict, *, seen: str
     said = (f"Resolved the feedback item {thread['id']} on {named}" if out["event"]
             else f"The feedback item {thread['id']} on {named} was resolved already")
     return f"{said}: {url}", {"thread_id": thread["id"], "page_id": thread["page_id"], "url": url}
+
+
+def answer_run(connection: Connection, ws: str, replies: list[dict], *, seen: str, read: dict) -> tuple[list[str], str]:
+    """The answers of a computer's run, written here as its agent's
+    (gamma/routers/computers.py; ``connection`` signed ``local:<agent>``
+    with its label, as an agent on this computer's are): each of
+    ``replies`` (``{id, thread_id, text, resolve}``, the threads its
+    request names) written as a reply with the id the computer minted for
+    it, so a retry writes none twice, and the thread resolved when asked,
+    unless a person said in it what the run did not read (its ``seen``,
+    this server's clock at the claim, and the comment ids it ``read`` by
+    thread: the thread stays open for that word) → ``(the ids of the
+    replies that stand written, now or before; the first refusal's
+    words)``."""
+    from . import requests  # local: the requests reach the comments' listeners, which reach this module
+
+    written, refusal = [], ""
+    for item in replies:
+        thread_id = item["thread_id"]
+        try:
+            _, out = reply(connection, ws, "", {"thread_id": thread_id, "body": item["text"], "id": item["id"]},
+                           seen=seen)
+            written.append(out["comment_id"])
+            if item["resolve"]:
+                with connect_pages_db(ws) as conn:
+                    unread = requests.spoken_after(conn, thread_id, seen, read.get(thread_id))
+                if not unread:
+                    resolve(connection, ws, "", {"thread_id": thread_id}, seen=seen)
+        except ValueError as e:
+            refusal = refusal or str(e)
+    return written, refusal

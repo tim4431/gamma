@@ -26,7 +26,7 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import account_of, fresh_client, login, make_user, thread_on, token_for
-from fake_agents import gone, read_log, requests_in, script_agent, use_fakes
+from fake_agents import gone, read_log, requests_in, script_agent, settle_probes, turns_in, use_fakes
 from gamma import folder_links, gamma_sync, pdf_meta, storage, workspaces
 from gamma.db import connect_pages_db, connect_vaults_db
 from gamma.feedback import entries, files, requests
@@ -85,6 +85,7 @@ def disk(tmp_path, monkeypatch):
         files._folders.clear()
     yield SimpleNamespace(root=tmp_path / "disk", log=tmp_path / "agent.log", seen=seen, tmp=tmp_path)
     runner.reset()
+    settle_probes()
     catalog.forget()
     left = list(procs._live)
     procs.stop_all(timeout=1)
@@ -99,6 +100,8 @@ def disk(tmp_path, monkeypatch):
         conn.execute("DELETE FROM agent_threads")
         conn.execute("DELETE FROM agent_conversations")
         conn.execute("DELETE FROM agent_turns")
+        conn.execute("DELETE FROM agent_policies")
+        conn.execute("DELETE FROM agent_grants")
     with folder_links._dirty_guard:
         folder_links._dirty.clear()
     assert not left, f"children left running: {[c.proc.pid for c in left]}"
@@ -218,8 +221,7 @@ def test_a_makers_send_is_answered(lab, disk, monkeypatch):
     assert [Path(p).resolve() for p in turn["sandboxPolicy"]["writableRoots"]] == [f.root.resolve()]
     text = turn["input"][0]["text"]
     assert '"fix these"' in text and "lambda is never introduced" in text and f'"thread_id": "{f.threads[1]}"' in text
-    assert [Path(e["cwd"]).resolve() for e in read_log(disk.log) if e.get("argv") == ["app-server"]] == [
-        f.root.resolve()]
+    assert [Path(e["cwd"]).resolve() for e in turns_in(disk.log)] == [f.root.resolve()]
 
 
 def test_a_reply_loads_nothing_by_itself(lab, disk, monkeypatch):
@@ -256,10 +258,10 @@ def test_a_withdraw_during_the_probe(lab, disk, monkeypatch):
     f = _folder(lab, disk)
     probe = catalog.probe
 
-    def withdrawn_meanwhile(name, *, fresh=False):
+    def withdrawn_meanwhile(name, **kw):
         with connect_pages_db(lab.ws) as conn:
             requests.set_state(lab.ws, conn, "larProbeWithdraw", "failed", by_name=OWNER, writer="requester")
-        return probe(name, fresh=fresh)
+        return probe(name, **kw)
 
     monkeypatch.setattr(catalog, "probe", withdrawn_meanwhile)
     sent = _send(lab.owner, f, id="larProbeWithdraw")
@@ -267,7 +269,7 @@ def test_a_withdraw_during_the_probe(lab, disk, monkeypatch):
     got = _request(lab, sent["id"])
     assert (got["state"], got["detail"]) == ("failed", "withdrawn")
     assert store.run_of(lab.ws, sent["id"])["state"] == "stopped"
-    assert not [e for e in read_log(disk.log) if e.get("argv") == ["app-server"]]
+    assert not turns_in(disk.log)
     assert all(len(t["comments"]) == 1 for t in _threads(lab, f).values())
 
 
@@ -311,7 +313,7 @@ def test_an_agent_not_ready_fails_the_request(lab, disk, monkeypatch):
     got = _request(lab, sent["id"])
     assert (got["state"], got["detail"], got["state_by"]) == ("failed", catalog.NOT_SIGNED_IN["codex"], "Codex")
     assert store.run_of(lab.ws, sent["id"])["state"] == "failed"
-    assert not [e for e in read_log(disk.log) if e.get("argv") == ["app-server"]]
+    assert not turns_in(disk.log)
 
 
 def test_a_turn_that_takes_too_long(lab, disk, monkeypatch):
@@ -360,7 +362,7 @@ def test_nothing_new_since_the_last_answers(lab, disk):
     got = _request(lab, sent["id"])
     assert (got["state"], got["detail"]) == ("done", "Nothing new since the last answers.")
     assert store.run_of(lab.ws, sent["id"])["state"] == "done"
-    assert not [e for e in read_log(disk.log) if e.get("argv") == ["app-server"]]
+    assert not turns_in(disk.log)
 
 
 def test_too_many_comments_at_once(lab, disk, monkeypatch):
@@ -584,9 +586,26 @@ def test_the_prompt(tmp_path):
                                     "text": "", "deleted": True}
     assert blocks[1]["source"] is None and blocks[1]["pictures"] == []
     assert prompt.picture_paths(entries, root) == [str(root / ".gamma/feedback/img/aaaaaaaaaaaaaaaa.jpg")]
+    assert "was" not in first and "was" not in blocks[1]
     one = prompt.build(agent="claude", owner="tim", work_folder="p", note="", entries=entries[1:], root=root)
     assert "hands you 1 comment on" in one and "(no instruction: address the comments)" in one
     assert "You cannot run commands" in one and "rebuild" not in one
+
+
+def test_the_prompt_of_a_range_of_a_source_file(tmp_path):
+    """A thread on lines of ``main.tex`` placed roughly after the agent's own
+    edit: its lines through ``source`` (the file itself), the text as it
+    stands as ``quote`` and the text the comment was made on as ``was``."""
+    entry = _entry("t1", ("tim", "", "name the dataset", False), file="main.tex", kind="lines", picture=None,
+                   where={"line": 26, "end": 27, "quote": "per epoch,\nwithout any decay", "placed": "rough",
+                          "match": 0.91, "was": "per epoch,\nwithout decay"},
+                   source={"file": "main.tex", "line": 26, "end": 27, "version": "current"})
+    text = prompt.build(agent="codex", owner="tim", work_folder="p", note="", entries=[entry], root=tmp_path)
+    [block] = [json.loads(part.split("```", 1)[0]) for part in text.split("```json\n")[1:]]
+    assert (block["file"], block["place"], block["page"], block["quote"], block["was"]) == (
+        "main.tex", "lines", None, "per epoch,\nwithout any decay", "per epoch,\nwithout decay")
+    assert block["source"] == {"file": "main.tex", "line": 26, "end": 27, "as": "current"}
+    assert block["pictures"] == [] and "A `was` is the text the comment was made on" in text
 
 
 def test_the_answers():

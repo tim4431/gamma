@@ -92,14 +92,17 @@ What differs from the Windows commands elsewhere in these docs and in
   `⇧⌘O` where CI's Linux reads `Ctrl+Shift+O`. A test that compares a
   chord's label takes the label from `chordLabel()` or passes `mac`
   itself.
-- **The browser suite assumes a Windows or Linux keyboard.** Chromium on
-  a Mac reports a Mac too, so the app expects ⌘ where a scenario presses
-  `Control+…` (about 190 presses; only `diagrams.mjs` uses Playwright's
-  `ControlOrMeta`), and labels chords `⌥`, `⌘` and `⌦`. macOS also moves no caret on Home
-  and End, draws overlay scrollbars that take no room, and falls back to
-  other fonts. On 2026-11-12, 133 of the suite's 811 steps failed on a
-  Mac for these reasons. CI's Linux run is the reference: on a Mac, run
-  the groups a change reaches on `main` and on the branch, and compare.
+- **The browser suite runs on a Mac.** Chromium on a Mac reports a Mac
+  too, so the page takes ⌘ for Mod and labels keys as a Mac does, and the
+  scenarios press and read keys by the rules in
+  [Browser end-to-end suite](#browser-end-to-end-suite) (`ControlOrMeta`,
+  `keyLabel`, `FIELD_END`, `MAC`). A step that presses `Control+…` for
+  Mod, or checks a label such as `"Ctrl+V"` written out, passes on Linux
+  and fails on a Mac. On 2026-11-13, 811 of its 812 steps passed on a
+  Mac. The one left, `translation: a paragraph justified…`, catches the
+  overlay setting a translation in the paper's own font when that font
+  lacks its letters: there `pdf/paperFace.js` `hasGlyph` reads every
+  font as holding CJK.
 - **A directory symlink is removed with `os.unlink`**, not with
   `os.rmdir`, which removes only a Windows junction. A test that links a
   directory through its helper removes it by the platform
@@ -194,7 +197,10 @@ comes from the environment and the pane shows them read-only:
 `GAMMA_OFFSITE_KEEP` (default 7).
 
 **The bucket.** Only the server talks to it, so it needs no CORS rule and
-no public access. The key must be allowed to list, read, write and delete
+no public access. It is reached on the server's network route: through
+the HTTP proxy when one applies, else directly, since boto3 cannot use a
+SOCKS5 proxy ([network_proxy.md](network_proxy.md)). The key must be
+allowed to list, read, write and delete
 under the prefix (pruning deletes). Two servers that share a bucket need a
 prefix each.
 
@@ -243,9 +249,10 @@ prefix each.
   in the data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied.
   It encrypts the shared AI entries' keys and sign-ins (an account's own
   are stored unencrypted), the Gamma Cloud grants, the mirrors' tokens, the
-  publisher sessions and the off-site secret key in users.db, so keep it
+  publisher sessions, the off-site secret key and the network proxy's
+  password ([network_proxy.md](network_proxy.md)) in users.db, so keep it
   somewhere else, or a restored server cannot read those (the secret key
-  can be typed in again).
+  and the proxy's password can be typed in again).
 
 **Restore**, with the server stopped. The command uses the bucket the
 settings name. After a lost disk the saved settings went with users.db, so
@@ -547,8 +554,10 @@ files of every format as pages), `test_vault_upgrade.py` (a folder kept
 before synced vaults taken onto the engine), `test_vault_http.py` (a vault of another server, over a
 TestClient standing in for it), `test_vault_routes.py` (the routes, the
 refusals, the hot loop, the page's own routes, the shell's secret) and
-`test_linked_files.py` (PDFs read where they are, and a server that keeps
-no links never making vaults.db); `test_folder_links.py` and
+`test_linked_files.py` (files read where they are, of any format Gamma can
+show, and a server that keeps no links never making vaults.db),
+`test_open_with.py` (which vault, page or refusal a path opened from the
+file manager is: `POST /api/folder-links/where`); `test_folder_links.py` and
 `test_disk_push.py` keep the links' API and the PDFs pushed from disk. On
 the frontend, `vaultState.test.mjs` (a page's standing with this computer)
 and `notesLock.test.mjs` (what a vault that does not pull and pushes
@@ -583,7 +592,11 @@ passage budget (`passages.json`: `ai_context.fair_shares` ↔
 backend's rewrite of older rows and the client's copy of a duplicated
 page; [documents.md](documents.md#fixtures)), a file's format by its name
 (`formats.json`: `gamma/documents/formats.py` ↔ `documents/formats.js`,
-with the backend's media types and first-bytes rule), sibling keys
+with the backend's media types and first-bytes rule), a range of a text
+file's quote and context (`textposition.json`: `highlights.span_text` and
+`clamp_span` ↔ `documents/viewers/textAnchors.js` `contextOf`, with the
+code-point and UTF-16 columns; [api.md](api.md) "The highlight shape"),
+sibling keys
 (`fractionalkeys.json`: the npm and PyPI fractional-indexing libraries) and
 pasted math (`pastemath.json`: `gamma/paste_math.py` ↔
 `editor/pasteMath.js`). The kinds are run against the column by
@@ -826,6 +839,19 @@ running (2026-11):
 | `GET /api/folders/{W}/at?path=big/file-01234.bin` (one seek of `idx_ub_file_name`) | 11 ms |
 | `POST /pages/summaries`' lookup of 40 ids, on the connection (`+parent_id`; ~11 ms without) | 2 ms |
 
+A text file's ranges placed after a change
+([highlight_relocation.md](highlight_relocation.md#text-files)) are timed
+by two cases, each one total held to its budget rather than a p95:
+`backend/tests/test_text_anchors.py -m perf -p no:xdist` (the pure ladder,
+the job path's size) and `backend/tests/test_text_relocation.py -m perf -p
+no:xdist` (the inline run a replacement and the vault's round wait for, its
+read, ladder and write timed around `text_anchors.relocate`):
+
+| Case | Budget |
+|---|---|
+| `prepare` + `place_all` of a 50,000-line file (3 MB) with 100 ranges (~0.5 s) | 1.0 s |
+| fifty inline runs, each a 1,000-line file with ten ranges replaced once (~1.3 s, about 25 ms a file) | 1.5 s |
+
 The budgets are about 5x the p95 an idle Ryzen 9 9950X3D measured (Node
 22.23, Python 3.12, November 2026), rounded up. Cases near a millisecond
 have about 6 to 8x (the warm eraser flush, a restyle, the one-set
@@ -1020,6 +1046,19 @@ until the new one's reads are in ([settings.md](settings.md#what-a-pane-reads)),
 and a locator taken in that moment can match there (the Server pane's
 shared workspaces have a Manage of their own).
 
+The browser runs on the machine's own platform, so on a Mac the page's
+Mod is ⌘ and it labels keys as a Mac does. A step presses Mod as
+`ControlOrMeta` (Playwright's Meta on a Mac, Control elsewhere), in a
+chord, a held key or a click's `modifiers`, and keeps `Control` for the
+Ctrl key itself, as in a pinch's Ctrl+wheel, which is Ctrl on every
+platform. A key label a step checks comes from the harness, never a
+literal: `keyLabel(chord)` (`"Mod-v"` reads Ctrl+V, or ⌘V on a Mac) and
+`keyParts(chord)` for key caps, which are the page's own `chordLabel` and
+`chordParts` (`shared/lib/hotkeys.js`). `FIELD_END` puts a text field's
+caret at the end of its line: End, or ⌘→ on a Mac, where End scrolls.
+`MAC` leaves out what a Mac has no part in, as its overlay scrollbars
+take no room and have no track to press.
+
 A git worktree has no `backend/venv` of its own, and the harness looks for
 the interpreter there, so run the suite in one with `GAMMA_E2E_PYTHON`
 naming the main checkout's (`<checkout>/backend/venv/Scripts/python.exe`
@@ -1196,7 +1235,7 @@ The scenarios live in `tests/e2e/scenarios/`:
   log and settings (cadence, detach, reattach), a same-block conflict
   resolved on its row chip, Remove origin ([mirror.md](mirror.md)).
   `--only mirror`.
-- `vaults.mjs`: synced vaults and PDFs read where they are, as a page of
+- `vaults.mjs`: synced vaults and files read where they are, as a page of
   the desktop app shows them ([synced_vaults.md](synced_vaults.md)). A
   second Gamma keeps vaults (`GAMMA_FOLDER_LINKS=1`, no shell secret) and
   the browser says it is the desktop app (an Electron user agent); real
@@ -1206,6 +1245,20 @@ The scenarios live in `tests/e2e/scenarios/`:
   that does not pull and pushes everything, a PDF opened through `/open` added to the library
   from its tab menu, and the folder and Document menu items, whose
   messages to the shell an init script records. `--group vaults`.
+- `textAnchors.mjs`: highlights and threads in a text file
+  ([highlight_relocation.md](highlight_relocation.md#text-files),
+  [comments.md](comments.md) "The margin"), the vaults recipe over the
+  SyncTeX sample paper with a `.gammaignore` that tracks its `.tex`. A
+  highlight and a thread made from a selection in `main.tex`'s code view
+  (`dragSelectCodeText`, exported for other scenarios), the card beside
+  the text level with its line and the entry in `open.json` by its lines;
+  ten threads on whole lines made through the API, the file rewritten and
+  synced, the survivors moved, two dashed with `was`, two lost as tags at
+  their old lines, in the column, the Comments window and the feedback
+  files; a lost range's closest match taken from its menu and accepted; a
+  selection as the chat's chip by its line, a Ctrl+selection adding the
+  next; on a phone a scripted selection's popup, the popover and the
+  badge. `--group text-anchors`.
 - `zotero-link.mjs`: a Zotero link on the clone's surfaces. A second Gamma
   talks to the fake Zotero (`backend/tests/zotero_fake.py --port 0`, over
   HTTP, serving `zotero_fixtures.standard_library`) through

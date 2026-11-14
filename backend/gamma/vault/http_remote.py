@@ -51,8 +51,15 @@ What a vault over HTTP does otherwise than one of this server:
   and a server that keeps its pages in another shape than this one
   (``_check_format``, before any other request), ``Refused``: the vault waits, never a file's problem. Any
   other refusal is the file's, a proxy's page in place of JSON among them (a
-  413 on a body past its limit), and a new file the server refused is sent
-  again once it changes.
+  413 on a body past its limit), the work-folder rule's 403 ``locked`` too
+  (never planned again as a page that moved), and a new file the server
+  refused is sent again once it changes.
+- **A work folder there** (gamma/folder_links.py ``work_vault``) is marked,
+  let go and its files unstamped through the same routes (``stamp``: one
+  quiet ``set`` a page against one listing; ``work_pages``, ``strangers``
+  and ``drop_folders`` from one listing too), and its mark is read from the
+  folder tree alone while no listing is (``work_tree``), so a round of push
+  alone with nothing to push reads no listing there.
 """
 
 import json
@@ -67,7 +74,7 @@ from ..blocks_store import with_sub_pages
 from ..documents import formats
 from ..documents.model import document_at, own_hash, page_document, stored_name
 from ..folder_sync import ROOT
-from ..ops import MAX_OPS, OpError
+from ..ops import LOCKED, MAX_OPS, OpError
 from ..sync_engine import FormatMismatch
 from ..sync_tree import snapshot_from_tree
 from ..work_folders import marks
@@ -78,6 +85,7 @@ from .remote import (CLIENT, PLAN_TRIES, Changed, Edit, Gone, Info, Layout, Page
                      info_stamps, left_out, set_doc, set_page)
 
 FEED_LIMIT = 2000      # the change feed's entries a request reads (routers/sync.py MAX_LIMIT)
+MAX_SUMMARIES = 500    # the pages one POST /api/pages/summaries names (routers/pages.py MAX_SUMMARIES)
 _aliases: dict = {}    # (server, workspace, page) -> (its seq, its aliases): a page's own block read once a seq
 
 
@@ -111,10 +119,11 @@ def _refusal(status: int, answer: dict, path: str, method: str = "GET") -> Excep
     """What a refusal is to a round: the token's (``Refused``), the server's
     on a read the round needs (``Unreachable``: a 5xx, the vault waits) or
     the request's (``OpError``, its ``conflict`` and ``index`` as ops raise
-    them: that file's problem). A 413 with no word of its own is a body too
+    them: that file's problem, the work-folder rule's 403 ``locked`` among
+    them, as on this server). A 413 with no word of its own is a body too
     large for the other server (a proxy's limit)."""
     detail = str(answer.get("detail") or ("too large for the other server (413)" if status == 413 else f"{path}: {status}"))
-    if status in (401, 403):
+    if status in (401, 403) and not (status == 403 and answer.get("conflict") == LOCKED):
         return Refused(f"the other server refused the link's token: {detail}")
     if status >= 500 and method == "GET":
         return Unreachable(f"the other server answered {status}: {detail}")
@@ -185,6 +194,7 @@ class HttpRemote:
         self._writer = None     # whether the token may write there: asked once (``may_write``)
         self._format_ok = False  # the server's pages have this one's shape: asked once (``_check_format``)
         self._listed = None     # the listing, until this remote writes
+        self._tree = None       # the folder tree alone, read for the mark while no listing is, until a write
         self._sent = set()      # the files this remote uploaded
         self._held_by = {}      # block id -> its page, as read: a note's links ask it of each block they name
 
@@ -261,7 +271,7 @@ class HttpRemote:
 
     def _wrote(self, page_id: str = "") -> None:
         """What this remote read of the library is read again after its write."""
-        self._listed = None
+        self._listed = self._tree = None
         self._held_by.clear()
         if page_id:
             self.touched.add(page_id)
@@ -361,13 +371,50 @@ class HttpRemote:
         return Layout(pages, below, listed["cursor"], listed["labels_seq"], shared, self.mark())
 
     def mark(self) -> dict | None:
-        """The mark the vault's folder carries there, from the listing's
-        folder tree."""
-        return None if self.folder == ROOT else self._listing()["tree"].mark(self.folder)
+        """The mark the vault's folder carries there (``work_tree``)."""
+        return None if self.folder == ROOT else self.work_tree().mark(self.folder)
 
     def work_tree(self):
-        """The folder tree there as the work-folder rules read it."""
-        return self._listing()["tree"]
+        """The folder tree there as the work-folder rules read it: the
+        listing's when it is read, else the folder tree alone (``GET
+        /api/blocks/folders/subtree``, once until this remote writes), so a
+        round of push alone with nothing to push reads no listing."""
+        if self._listed is not None:
+            return self._listed["tree"]
+        if self._tree is None:
+            node = self._call("GET", f"/api/blocks/{FOLDERS}/subtree").get("block") or {}
+            self._tree = marks.Tree.of(_tree_rows(node))
+        return self._tree
+
+    def work_pages(self) -> dict:
+        """``LocalRemote.work_pages`` from the listing: ``{page id:
+        properties}`` of the live files of the vault's work folder, their
+        properties as the listing carries them (the stamps, the filing, the
+        document)."""
+        return {p["id"]: p.get("properties") or {} for p in self._listing()["pages"]
+                if not p.get("parent") and work_folder_of(p.get("properties")) == self.folder}
+
+    def strangers(self) -> list:
+        """The pages filed in the vault's folder or below (their sub-pages
+        too) that are no file of its work folder, from the listing: what a
+        work folder made of a folder there must not find
+        (gamma/folder_links.py ``_empty_there``)."""
+        listed = self._listing()
+        parents = {p["id"]: p["parent"] for p in listed["pages"] if p.get("parent")}
+        filed = set(_filed(listed["pages"], _below(listed["folders"], self.folder), parents))
+        return [p["id"] for p in listed["pages"]
+                if p["id"] in filed and work_folder_of(p.get("properties")) != self.folder]
+
+    def summaries(self, ids) -> dict:
+        """``{page id: summary}`` of the live pages among ``ids``, as that
+        server's ``POST /api/pages/summaries`` answers them (the listing's
+        row, with ``notes`` and ``open_comments`` from a server as new as
+        this one), ``MAX_SUMMARIES`` a request."""
+        ids, out = list(ids), {}
+        for i in range(0, len(ids), MAX_SUMMARIES):
+            answer = self._call("POST", "/api/pages/summaries", {"ids": ids[i:i + MAX_SUMMARIES]})
+            out.update({p["id"]: p for p in answer.get("pages") or () if p.get("id")})
+        return out
 
     def page(self, page_id: str) -> Page | None:
         """The page's seq and its blocks, read together; one in Recently
@@ -490,7 +537,7 @@ class HttpRemote:
                 seq = self._send_plan(page_id, edit.ops, token, now.seq)
                 break
             except OpError as e:
-                if not e.conflict:
+                if not e.conflict or e.conflict == LOCKED:     # the work-folder rule's: the file's, never stale
                     raise
                 if built is not None or attempt == PLAN_TRIES - 1:
                     raise Changed(page_id) from e
@@ -565,6 +612,32 @@ class HttpRemote:
         place, which nothing is there), a listed one as it is."""
         return set_doc(self, page_id, _stored({"doc": doc})["doc"])
 
+    def stamp(self, ids, plan) -> dict:
+        """``LocalRemote.stamp`` over HTTP: each live page of ``ids`` that
+        ``plan(page id, properties)`` gives a patch (its properties as the
+        listing carries them, read once: one snapshot of the seqs, never a
+        listing a page) patched by one quiet ``set`` of its root (``POST
+        /api/pages/{id}/ops``, the vault's client: no ``updated_at``). A page
+        the work-folder rule refuses is ``OpError`` (``locked``). → ``{page
+        id: (seq before, seq after)}`` of the pages written."""
+        self.may_write()
+        listed = self._listing()
+        props = {p["id"]: p.get("properties") or {} for p in listed["pages"]}
+        seqs, out = listed["seqs"], {}
+        try:
+            for page_id in ids:
+                patch = plan(page_id, props[page_id]) if page_id in props else None
+                if not patch:
+                    continue
+                answer = self._call("POST", f"/api/pages/{_q(page_id)}/ops",
+                                    {"client": CLIENT, "ops": [{"op": "set", "id": page_id, "props": patch, "quiet": True}]})
+                out[page_id] = (seqs.get(page_id, 0), int(answer.get("seq") or 0))
+                self.touched.add(page_id)
+        finally:
+            if out:
+                self._wrote()
+        return out
+
     def label_ids(self, names) -> list:
         """The labels of ``names``' ids, made there where missing."""
         node = self._call("GET", f"/api/blocks/{LABELS}/subtree").get("block") or {}
@@ -629,6 +702,25 @@ class HttpRemote:
             raise _refusal(status, answer, f"/api/folders/{folder_id}", "DELETE")
         self._wrote()
         return True
+
+    def drop_folders(self, folder_ids) -> None:
+        """``drop_folder`` of each of ``folder_ids``, in their order (the
+        deepest first), against one listing read before the first: deleting
+        a folder no page is filed in or below files no page anew, so the
+        listing stays true of the rest, and none is read again a folder."""
+        self.may_write()
+        listed = self._listing()
+        roots = [p for p in listed["pages"] if not p.get("parent")]
+        for folder_id in folder_ids:
+            if folder_id not in listed["folders"]:
+                continue
+            inside = _below(listed["folders"], folder_id)
+            if any(inside & set(filing(p.get("properties"), FOLDERS)) for p in roots):
+                continue
+            status, answer = self._ask("DELETE", f"/api/folders/{_q(folder_id)}")
+            if status != 404 and not 200 <= status < 300:
+                raise _refusal(status, answer, f"/api/folders/{folder_id}", "DELETE")
+        self._wrote()
 
     # --- files -------------------------------------------------------------------------------
 
