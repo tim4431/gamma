@@ -42,9 +42,9 @@ codex mcp add gamma --url https://gamma.example.com/mcp
 
 Codex opens the browser. If sign-in is interrupted, run `codex mcp login gamma`
 to retry. Sign in with your Gamma account, tick the workspaces, mark any
-whose notes it may also edit **Edit** ("Editing notes"), and approve, or tick
-**Also let it answer my comments on work-folder files** to let it reply to
-and resolve them ("Answering feedback").
+whose notes it may also edit **Edit** ("Editing notes"), and approve, or turn
+on **Answer my comments on work-folder files** to let it reply to and
+resolve them ("Answering feedback").
 Start a new Codex chat. There is no token to copy
 and no environment variable to set. This works with local browser-based Gamma
 and self-hosted servers; the Gamma desktop app is not required. Local installations
@@ -140,7 +140,12 @@ and runs it with that URL. The script:
    installed, `web` where that profile exists, else `web` (`-Profiles` / extra
    arguments name others). The desktop profile belongs to the app: only its own
    CLI manages it, after the app has initialized it once and while the app is
-   fully quit (dsh refuses otherwise; the script says so);
+   fully quit (dsh refuses otherwise; the script says so). The script stops at
+   once while the app runs (a process named `DeepSeek Harness`; `pgrep -f`
+   on macOS and Linux, where its path names it), before it installs, asks or
+   removes anything: the app reads the plugin and `gamma.json` only when it
+   starts, and one left open went on without Gamma's tools while the skill
+   it had loaded before said nothing was wrong;
 3. adds the plugin to each profile whose `node_modules/dsh-gamma` is missing or
    another version: the release's pinned `dsh-gamma-X.Y.Z.tgz`, checked against
    its SHA-256 and saved as `$DSH_HOME/dsh-gamma.tgz`, the one file every
@@ -549,11 +554,16 @@ way and not the client's own prompt or a step-up sign-in:
 - **The question** (`GammaMCP._ask`). The call is planned first with the
   tool's approval preview (`ai_tools.approval_preview`, the chat card's), in
   a worker thread; a call that could change nothing gets its answer and asks
-  nobody. Then `elicit_form` sends the client the question (`_question`):
-  who asks, what and where ("Codex wants to add a note to “Paper”, under
-  “Methods”:"), the change as a word diff (`[-removed-]{+added+}`) and the
-  page's URL, with one field, `remember` ("Don't ask again for this
-  connection"). Accept runs the call with the preview's digest
+  nobody. Then `elicit_form` sends the client the question (`_question`),
+  plain text, since that is what a client shows: who asks to do what where
+  and how much ("Codex wants to remove text from a note in “test”. It
+  removes 2 lines."), the change line by line as a terminal shows one
+  (`_lines`, from the preview's word diff: a removed line after `− `, an
+  added one after `+ `, one kept line beside each run of them with its
+  links as their text, "…" for the rest, at most 24 lines of 240
+  characters), and "Open in Gamma:" with the page's URL. Its one field,
+  `remember`, is "Don't ask again for this connection" ("You can turn
+  asking back on in Gamma: Settings → AI → Integrations"). Accept runs the call with the preview's digest
   (`run_agent_tool(approved=)`), as the chat's gate does; accept with
   `remember` also turns asking off for the connection (`set_asks`). Decline
   or cancel, or no answer within the chat card's ten minutes
@@ -574,10 +584,21 @@ way and not the client's own prompt or a step-up sign-in:
   show a question, or it connected before the connection could edit) gets
   `CANNOT_ASK`: nothing changed, and the steps to restart it or to turn
   asking off. So does one whose `elicit_form` fails.
-- **Where it is set.** On the consent page, **Ask me before each change it
-  makes** under the workspaces once one is Edit (ticked; its summary says
-  which way); in a connection's **Choose workspaces**, the same box; the
-  connection's row adds "changes without asking" once it is off.
+- **Where it is set.** On the consent page, the switch **Ask me before each
+  change it makes** under Permissions once a workspace is Edit (on; its
+  summary says which way); in a connection's **Choose workspaces**, the same
+  `Toggle`; the connection's row adds "changes without asking" once it is
+  off.
+
+**The consent page** (`auth/McpConsent.jsx`, an MCP client's sign-in and a
+setup command's) is `AuthShell`'s card, wider (`.loginCard.mcpConsent`),
+built from the settings' own widgets: the headline "Connect Codex" over who
+is signed in, with **Use another account** beside it; a setup command's code
+in a box of its own; `Section`s for the workspaces (the `WorkspacePicker`
+rows with View / Edit), the Permissions (`Toggle` rows: asking first, once a
+workspace is Edit; answering feedback) and what it may do (one icon line
+each, the section named Read-only access, Read and edit notes or Read and
+answer feedback); the footnotes; then the primary Allow and Cancel.
 
 ## Self-hosted and remote connections
 
@@ -628,9 +649,9 @@ Two scopes exist, `gamma:read` and `gamma:feedback` (`mcp_oauth.SCOPES`): a
 client may register with and ask for either or both, every client is stored
 with both, and the 401 challenge still names `gamma:read` alone, so a client
 that reads it asks to read. What the connection may do is decided on the
-consent page, not by the request: its checkbox **Also let it answer my
-comments on work-folder files** is ticked when the client asked for
-`gamma:feedback`, and the person may tick or untick it either way. Ticked,
+consent page, not by the request: its switch **Answer my comments on
+work-folder files** is on when the client asked for `gamma:feedback`, and
+the person may turn it on or off either way. Ticked,
 the code carries both scopes, the token is made with the `feedback` scope
 and the token response says `gamma:read gamma:feedback`; unticked, a read
 token as before. `gamma:write` is refused at registration
@@ -838,6 +859,12 @@ Official references: [Codex MCP configuration](https://learn.chatgpt.com/docs/ex
 
 ## Troubleshooting
 
+- **DeepSeek Harness has the gamma skill but no `mcp__gamma__*` tools:** it was
+  open when the setup ran, so it still holds the plugin and the connection it
+  read when it started. Quit it completely, also from its tray icon, start it
+  again and open a new conversation. The setup script now stops while the app
+  runs, so this comes only from an older script or a connection replaced by
+  hand.
 - **Marketplace root does not contain a supported manifest:** run
   `codex plugin marketplace list` and check whether the registered source still
   contains `.agents/plugins/marketplace.json`. If a temporary source was deleted,

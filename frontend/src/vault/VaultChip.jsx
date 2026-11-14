@@ -130,8 +130,8 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
 
 // The chip of a page another computer keeps (vaultState.js computerChip):
 // a dot on its icon for whether the computer is online, its card the
-// computer's name, its state, the folder or file it keeps and the
-// assistants there. Nothing to do from here yet: Show in folder needs a
+// computer's name, its state, the folder or file it keeps, the
+// assistants there and the agent that runs the folder's Sends. Nothing to do from here yet: Show in folder needs a
 // window on that computer.
 function ComputerChip({ computers, open, onOpenChange }) {
   const chip = computerChip(computers);
@@ -154,6 +154,7 @@ function ComputerChip({ computers, open, onOpenChange }) {
           {chip.vault ? <div className="popoverHint">{chip.vault}</div> : null}
           {chip.paused ? <div className="popoverHint">{chip.paused}</div> : null}
           {chip.assistants ? <div className="popoverHint vaultAgent">{chip.assistants}</div> : null}
+          {chip.agent ? <div className="popoverHint vaultAgent">{chip.agent}</div> : null}
         </Popover>
       ) : null}
     </span>

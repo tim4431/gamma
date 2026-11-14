@@ -41,8 +41,9 @@ must not be able to read or write the library.
   only shows where the account's vaults are kept).
 - **What it opens: its channel and nothing else.** `auth.session_middleware`
   answers a `computer` token 403 "This token is a computer's channel; it
-  opens nothing else." on every path but `auth.CHANNEL_PATHS`
-  (`/api/computers/announce`, `/api/computers/poll`), reads included;
+  opens nothing else." on every path but those below `auth.CHANNEL_PREFIX`
+  (`/api/computers/`: the announce, the poll, and the Sends of 4c), reads
+  included;
   `integrations.resolve_connection` gives it no MCP connection. The
   channel's routes in turn refuse a session and every other token (403
   "Only a computer's token opens its channel.").
@@ -97,6 +98,39 @@ A server older than the scope refuses to mint it (an unknown scope is
 null while the computer is still checking, `code` one of `""` (ready),
 `missing`, `signed_out`, `not_ready`, `checking`, worded by the client in
 its language; never the computer's English problem.
+
+### The Sends (step 4c)
+
+A computer that announces a work folder with an agent (the vault's
+`agent`) takes its maker's Sends there ([local_agents.md](local_agents.md)
+"A work folder of another server"). The routes answer only the token's
+own account's Sends, in the work folders that token announced with an
+agent:
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/computers/sends` | `{sends: [{id, folder_id, page_id?, at}], withdrawn: [{id, run}]}`: the Sends waiting (`sent`, `via: session`, by the token's account, in its agent folders but paused ones, oldest first, at most 50; none while the account cannot edit), and the runs of this computer whose request is no longer running (each listed once). |
+| POST | `/api/computers/sends/{id}/claim` | `{run, agent}` (`run` 1-64 of `[A-Za-z0-9_-]`) → `{request, entries, seen, threads}`: `sent → running` in one locked write, signed with the agent's label; the same run again gets it back; 409 another run holds it, it is no longer sent, another agent is named, or the folder is paused; 404 not this computer's; 403 the account cannot edit. Each entry on a PDF has `place: {page, box, rects, doc_id}`; `seen` is this server's clock; `threads` `[{id, by_agent, at, comment_id, people: [{id, at}]}]` for the resume rule. |
+| POST | `/api/computers/sends/{id}/progress` | `{run, detail}` → `{ok}`: the running detail, one line, 300 characters; 409 from another run or once it is no longer running. |
+| GET | `/api/computers/threads/{id}/picture?at=now\|before` | the region picture of a thread of a request this computer's run holds; 404 otherwise. |
+| POST | `/api/computers/sends/{id}/answers` | `{run, replies: [{id, thread_id, text, resolve}], state: done\|failed, summary, changed, error?}` → `{ok, written}`: the replies written by this server signed `local:<agent>` (a reply id already there is skipped; the same answers again write nothing), a thread resolved only when no person wrote in it after the run read it, then the end (`done`: the summary and the changed files named; `failed`: the error). 400 a thread the request does not name, or a changed path that is absolute or climbs; 409 another run or a withdrawn request. |
+
+The claim's key, `seen` and the comments the run read are a pages.db
+`feedback_request_runs` row (additive). An agent's binding is kept only
+for a folder that carries a work folder's mark itself and an account that
+may edit there, and read per account: a member's computer serves only
+that member's Sends. An agent that takes a request that is not running
+ends the open runs of it (their next write refused), and a computer whose
+token goes fails the Sends its runs hold. An older server's 401/403 on
+`/sends` is asked again only after 180 s. The page route's `vault` gains
+`agent: {name, label} | null`; the Feedback document's `agent`, for the
+maker alone, comes from the binding (`{name, label, computer, online,
+ready, problem, takes, why}`); a token's Send to such a folder is refused
+(403, a token of the account whose computer keeps it), and while a
+computer's run holds a request a token's state change is refused (409
+"Codex on TIM-PC is answering this request."), the maker's withdraw
+passing; the document's `problem` says why an online computer's agent is
+not ready (*Codex is not signed in on TIM-PC.*).
 
 ## The host
 
@@ -180,7 +214,9 @@ hold ends, at most 25 s later.
   than this app*, *not reachable*, the error in the tooltip, the first two
   in red), with *Stop showing*; without a link, *Not shown on
   NAS* with *Show this computer there*, which mints and hands over as
-  above. *Stop showing* deletes the host's link and revokes its token;
+  above. *Stop showing* deletes the host's link and revokes its token,
+  and turns off the agent of each work folder of that server it
+  announced (turned on again only with the shell's question);
   when that server did not revoke it (not reached, signed out, another
   account signed in there: the revoke route answers `revoked: false`),
   the notice says so and names the connection to remove in that server's

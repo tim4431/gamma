@@ -15,6 +15,7 @@
 // {id, rev, work_folder, scope, by, at, note, state ("sent" | "running" |
 // "done" | "failed"), state_at, state_by, detail, threads: [{id, answered}]}.
 import { anchorSnippet, isWithdrawn } from "../comments/comments.js";
+import { agentAway } from "../editor/mentions.js";
 import { formatRelativeTime } from "../library/libraryUtils.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { AGENT_MAX, namesAgent } from "./feedbackView.js";
@@ -99,7 +100,9 @@ export function sourceText(source) {
 // the agent's own words beside it, its line of progress, its summary or
 // the reason it failed ("" for none), shown on a line of its own; `kind`
 // the state's name ("sent", "running", "done", "failed", "withdrawn").
-export function requestLine(request, now = Date.now()) {
+// `computer`, the computer that keeps the folder and runs the reader's
+// Sends (sendAgent's), names what a Send of theirs waits for.
+export function requestLine(request, now = Date.now(), computer = "") {
   const n = request.threads?.length || 0;
   const line = tn("Sent {when} · {n} comment", "Sent {when} · {n} comments", n, { when: formatRelativeTime(request.at, now) });
   const { state, state_by: agent } = request;
@@ -110,7 +113,8 @@ export function requestLine(request, now = Date.now()) {
   }
   if (state === "done") return { line, state: agent ? t("Done by {agent}", { agent }) : t("Done"), detail, kind: state };
   if (state === "failed") return { line, state: t("Failed"), detail, kind: state };
-  return { line, state: t("Waiting for the agent"), detail: "", kind: "sent" };
+  const waiting = computer ? t("Waiting for {computer}", { computer }) : t("Waiting for the agent");
+  return { line, state: waiting, detail: "", kind: "sent" };
 }
 
 // The Withdraw button's title: on a request an agent on this computer is
@@ -126,11 +130,13 @@ export function withdrawTitle(request) {
 // What the Send block says (feedbackView.js sendAgent's `plan`, `n` the
 // entries sent, `others` how many of them someone else opened): {button,
 // notes: [{tone ("hint" | "warn"), text}], blocked}. A Send the folder's
-// agent on this computer takes names it on the button, says where it works,
-// warns while it cannot run and is blocked past AGENT_MAX comments; the
-// server's own sentences (`problem`, `why`) are English and shown as they are.
+// agent takes names it on the button, says where it works (this computer,
+// or the computer that keeps the folder, `plan.computer`, and that the Send
+// waits while that one is offline), warns while it cannot run and is
+// blocked past AGENT_MAX comments; the server's own sentences (`problem`,
+// `why`) are English and shown as they are.
 export function sendWords(plan, n, others = 0) {
-  const agent = plan.label;
+  const agent = plan.label, computer = plan.computer || "";
   const notes = [];
   if (!namesAgent(plan)) {
     if (plan.mode === "other" && plan.why) notes.push({ tone: "hint", text: plan.why });
@@ -141,7 +147,10 @@ export function sendWords(plan, n, others = 0) {
   }
   if (plan.mode === "checking") notes.push({ tone: "hint", text: t("Checking {agent}…", { agent }) });
   else if (plan.mode === "not_ready") notes.push({ tone: "warn", text: [plan.problem, t("This Send fails until then.")].filter(Boolean).join(" ") });
-  else notes.push({ tone: "hint", text: t("{agent} works on this computer, in this folder's directory, and answers each comment.", { agent }) });
+  else if (plan.mode === "away") notes.push({ tone: "hint", text: agentAway(plan) });
+  else if (computer) {
+    notes.push({ tone: "hint", text: t("{agent} works on {computer}, in this folder's directory there, and answers each comment.", { agent, computer }) });
+  } else notes.push({ tone: "hint", text: t("{agent} works on this computer, in this folder's directory, and answers each comment.", { agent }) });
   const blocked = n > AGENT_MAX;
   if (blocked) {
     notes.push({ tone: "warn", text: t("{agent} takes at most {max} comments at a time: send a file or a directory of this work folder.", { agent, max: AGENT_MAX }) });

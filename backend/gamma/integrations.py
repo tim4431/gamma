@@ -4,7 +4,7 @@ its edits, docs/dev/mirror.md), ``feedback`` tokens (a read token that
 may also reply to and resolve the comment threads on a work folder's files,
 docs/dev/feedback.md) and ``computer`` tokens (a computer's channel to this
 server, gamma/computers/: they open the channel's routes and nothing else,
-``auth.CHANNEL_PATHS``, and no MCP connection).
+``auth.CHANNEL_PREFIX``, and no MCP connection).
 
 A token belongs to one workspace, ``workspace_id``, the one the HTTP API
 reads. A read or feedback token's MCP connection may read more

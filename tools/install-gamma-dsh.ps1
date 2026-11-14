@@ -59,6 +59,12 @@ function Test-HasGamma([string]$ProfileName) {
 
 $quitHint = 'If DeepSeek Harness is open, quit it completely, also from its tray icon, then run this command again.'
 
+# The app reads its plugins and Gamma's connection only when it starts: one
+# left open goes on without them, and its profile is not to be changed under it.
+if (Get-Process -Name 'DeepSeek Harness' -ErrorAction SilentlyContinue) {
+    throw 'DeepSeek Harness is open. Quit it completely, also from its tray icon, then run this command again: it reads the Gamma plugin and connection only when it starts.'
+}
+
 if ($Remove) {
     if (-not $Profiles) {
         $Profiles = @(Get-ChildItem -Directory -LiteralPath (Join-Path $dshHome 'profiles') -ErrorAction SilentlyContinue |

@@ -25,9 +25,11 @@ read them all (``_targets``)."""
 
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from difflib import SequenceMatcher
 import base64
 import json
 from pathlib import Path
+import re
 import threading
 
 import anyio
@@ -75,8 +77,14 @@ EDITING = {name: ToolAnnotations(readOnlyHint=False, destructiveHint=name == "ed
 # Accept and Decline): whether to stop asking for this connection.
 REMEMBER = {"type": "object", "properties": {"remember": {
     "type": "boolean", "title": "Don't ask again for this connection", "default": False,
-    "description": "Its later changes go through without asking. Turn asking back on in Gamma: "
-                   "Settings → AI → Integrations."}}}
+    "description": "You can turn asking back on in Gamma: Settings → AI → Integrations."}}}
+# How much of a change the question shows (``_lines``): its lines at most,
+# the kept lines beside each run of changed ones, and one line's characters.
+QUESTION_LINES = 24
+QUESTION_CONTEXT = 1
+QUESTION_WIDTH = 240
+# A Markdown link or picture, which a kept line shows by its text alone.
+_LINK = re.compile(r"(!?)\[([^\]]*)\]\([^)\s]*\)")
 # What the model hears when a change was not allowed, as the chat's agent
 # does (ai_agent.DECLINED, UNANSWERED), or could not be asked about.
 DECLINED = ("declined: the user did not allow this change when Gamma asked, so nothing was changed. Do not "
@@ -372,30 +380,78 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
                           structuredContent=structured or None)
 
 
-def _words(diff) -> str:
-    """A preview's word diff (ai_tools.text_diff) as plain text: what goes
-    as [-removed-], what comes as {+added+}."""
-    return "".join(text if kind == "ctx" else f"[-{text}-]" if kind == "del" else f"{{+{text}+}}"
-                   for kind, text in diff or ())
+def _shown(line: str, kept: bool = False) -> str:
+    """One line of the question, cut to ``QUESTION_WIDTH``; a kept line's
+    links read as their text, a picture as [picture: its caption]."""
+    if kept:
+        line = _LINK.sub(lambda m: f"[picture: {m.group(2)}]" if m.group(1) else m.group(2), line)
+    line = line.rstrip()
+    return line if len(line) <= QUESTION_WIDTH else line[:QUESTION_WIDTH - 1] + "…"
+
+
+def _lines(diff) -> tuple[list[str], int, int]:
+    """A preview's word diff (ai_tools.text_diff) as whole lines, the way a
+    terminal shows a change, since a question is plain text: a removed line
+    after "− ", an added one after "+ ", ``QUESTION_CONTEXT`` kept lines
+    beside each run of them and "…" for the rest; blank lines left out.
+    With the counts of the lines removed and added."""
+    old = "".join(text for kind, text in diff or () if kind != "ins").split("\n")
+    new = "".join(text for kind, text in diff or () if kind != "del").split("\n")
+    ops = SequenceMatcher(None, old, new, autojunk=False).get_opcodes()
+    out, removed, added = [], 0, 0
+    for n, (op, i1, i2, j1, j2) in enumerate(ops):
+        if op == "equal":
+            kept = [line for line in old[i1:i2] if line.strip()]
+            if len(ops) == 1:
+                break
+            first, last = n == 0, n == len(ops) - 1
+            head = kept if not first and not last and len(kept) <= 2 * QUESTION_CONTEXT \
+                else [] if first else kept[:QUESTION_CONTEXT]
+            tail = [] if last or len(head) == len(kept) else kept[-QUESTION_CONTEXT:]
+            out += ["  " + _shown(line, kept=True) for line in head]
+            if len(kept) > len(head) + len(tail):
+                out.append("  …")
+            out += ["  " + _shown(line, kept=True) for line in tail]
+            continue
+        gone = [line for line in old[i1:i2] if line.strip()]
+        came = [line for line in new[j1:j2] if line.strip()]
+        out += ["− " + _shown(line) for line in gone] + ["+ " + _shown(line) for line in came]
+        removed, added = removed + len(gone), added + len(came)
+    if len(out) > QUESTION_LINES + 2:
+        out = out[:QUESTION_LINES] + [f"  … and {len(out) - QUESTION_LINES} more lines"]
+    return out, removed, added
+
+
+def _count(n: int) -> str:
+    return f"{n} line" if n == 1 else f"{n} lines"
 
 
 def _question(connection: Connection, name: str, preview: dict, link: str) -> str:
     """Gamma's question about one change, from what the chat's approval card
-    shows (the tool's ``preview``): who asks, what and where, the change."""
+    shows (the tool's ``preview``), as plain text, which is what a client
+    shows: who asks to do what where, how much it changes, the change line
+    by line (``_lines``), and the page's address."""
     who = display_name(connection.name)
     where = f"“{preview.get('title') or 'Untitled'}”"
     under = f", under “{preview['parent']}”" if preview.get("parent") else ""
+    lines, removed, added = _lines(preview.get("diff"))
     if name == "edit_block":
-        head = f"{who} wants to change a note in {where}:"
+        verb = "remove text from" if removed and not added else "add text to" if added and not removed else "change"
+        head = f"{who} wants to {verb} a note in {where}."
     elif name == "create_block":
-        head = f"{who} wants to add a note to {where}{under}:"
+        head = f"{who} wants to add a note to {where}{under}."
     elif name == "move_block":
         source = f" from “{preview['src_title']}”" if preview.get("src_title") else ""
-        head = f"{who} wants to move a note{source} to {where}{under}:"
+        head = f"{who} wants to move a note{source} to {where}{under}."
+        moved = [line for part in preview.get("diff") or () for line in part[1].split("\n") if line.strip()]
+        lines = ["  " + _shown(line, kept=True) for line in moved[:QUESTION_CONTEXT * 4]]
     else:  # clip_region: a picture stored for a note to embed
         page = f", page {preview['pdf_page']}" if preview.get("pdf_page") else ""
-        head = f"{who} wants to store a picture of {preview.get('what') or 'part of a page'} from {where}{page}."
-    return "\n\n".join(part for part in (head, _words(preview.get("diff")), link and f"Page: {link}") if part)
+        head = f"{who} wants to save a picture of {preview.get('what') or 'part of a page'} from {where}{page}."
+    if name in ("edit_block", "create_block") and (removed or added):
+        head += " It " + " and ".join(part for part in (removed and "removes " + _count(removed),
+                                                         added and "adds " + _count(added)) if part) + "."
+    return "\n\n".join(part for part in (head, "\n".join(lines), link and f"Open in Gamma: {link}") if part)
 
 
 def _change(connection: Connection, base: str, name: str, arguments: dict):

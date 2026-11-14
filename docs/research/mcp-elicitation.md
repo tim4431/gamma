@@ -64,9 +64,12 @@ somewhere, and its `initialize` says it can show a form question
 (`capabilities.elicitation` empty or with `form`). A session answers only
 the token that opened it, and is gone after 30 idle minutes.
 
-- **The question.** Asked from the tool's own approval preview (the word
-  diff as `[-…-]{+…+}`), with one field, "Don't ask again for this
-  connection". Declined or unanswered after the chat card's 10 minutes,
+- **The question.** Asked from the tool's own approval preview, with one
+  field, "Don't ask again for this connection". The message is plain text
+  (Codex shows it as is, bold, `##` and Markdown links included), so the
+  change goes line by line, `− ` and `+ ` as in a terminal, with a summary
+  first. A first try showed the word diff inline (`[-…-]{+…+}`), which
+  opened a bracket mid-line and closed it paragraphs later. Declined or unanswered after the chat card's 10 minutes,
   nothing changes and the model hears so, as it does in the chat.
 - **Who is asked.** A connection asks by default (`integration_tokens.asks`).
   The person can turn that off on the consent page, in Settings, or with the

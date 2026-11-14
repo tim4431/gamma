@@ -66,7 +66,7 @@ export async function mcpScenarios(env) {
       code_challenge_method: "S256", state: "browser-test", scope });
     return { url: `${server.base}/oauth/authorize?${params}`, client, redirect, verifier };
   }
-  const FEEDBACK_BOX = "Also let it answer my comments on work-folder files (reply and resolve)";
+  const FEEDBACK_BOX = "Answer my comments on work-folder files";
 
   await step("mcp: browser login, workspace approval, token exchange and revocation", async () => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
@@ -245,8 +245,8 @@ export async function mcpScenarios(env) {
       };
       const allowed = await change("Asked note", { action: "accept", content: { remember: false } });
       assert(allowed.question, "Gamma asks first");
-      assert(allowed.question.message.includes("Asked agent wants to add a note to “Asked page”"), allowed.question.message);
-      assert(allowed.question.message.includes("{+Asked note+}"), "the question shows the change");
+      assert(allowed.question.message.startsWith("Asked agent wants to add a note to “Asked page”. It adds 1 line."), allowed.question.message);
+      assert(allowed.question.message.includes("\n+ Asked note"), "the question shows the change line by line");
       assert(allowed.question.requestedSchema.properties.remember, "and offers not asking again");
       assert(!allowed.result.isError, JSON.stringify(allowed.result));
       const declined = await change("Declined note", { action: "decline" });

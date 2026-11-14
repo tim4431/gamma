@@ -28,6 +28,17 @@ them, ``catalog.known``: a probe only when none was ever made), announces it whe
 announced or the server asked, then polls (held up to ``POLL_S``). A vault
 added, paused or removed nudges the threads (``nudge``), which see it at
 the end of the poll they hold, at most ``POLL_S`` later. Never a path.
+
+A work folder of that server kept here with an agent on (step 4c,
+``agent_folders``) is announced with its ``agent``, and its Sends run here:
+after each announce, on a poll answered ``{wake: ["sends"]}``, when a vault
+takes Sends again (``ask_sends``) and at least every ``SENDS_EVERY_S``, the
+thread asks that server for the Sends that wait (``_sends``), queues each for
+its vault (gamma/local_agents/runner.py ``queue_remote``) and stops the runs
+whose request was withdrawn there; each run speaks to that server with this
+channel's token (``of_vault``, gamma/local_agents/home.py). Each announce
+that succeeds fails there the runs of its vaults left open while that server
+was not reached (``_settle``); a channel deleted turns their agents off.
 """
 
 import base64
@@ -55,6 +66,7 @@ OLDER_S = 3600           # a server without the channel is asked again after thi
 RETRY_FIRST_S = 5        # an unreachable server is tried again after this, doubling
 RETRY_MAX_S = 300        # up to this
 QUICK_S = 1.0            # a poll answered at once with nothing: the next waits this long
+SENDS_EVERY_S = 180      # the Sends that wait there are asked for at least this often (a wake lost)
 STATES = ("connecting", "connected", "refused", "older", "unreachable")
 
 _COLS = "id, remote_url, workspace_id, created_by, token, token_id, account, username, created_at, status"
@@ -90,6 +102,17 @@ def get(link_id: str, *, with_token: bool = False) -> dict | None:
     with connect_users_db() as conn:
         r = conn.execute(f"SELECT {_COLS} FROM computer_links WHERE id = ?", (link_id,)).fetchone()
     return _row(r, with_token) if r else None
+
+
+def of_vault(vault: dict) -> dict | None:
+    """The channel, with its token, that the vault ``vault`` of another
+    server is announced on (its server, workspace and local account's),
+    None for none: what a run of its agent speaks to that server with
+    (gamma/local_agents/home.py)."""
+    with connect_users_db() as conn:
+        r = conn.execute(f"SELECT {_COLS} FROM computer_links WHERE remote_url = ? AND workspace_id = ? AND "
+                         "created_by = ?", (vault["remote_url"], vault["workspace_id"], vault["created_by"])).fetchone()
+    return _row(r, True) if r else None
 
 
 def clean_url(url: str) -> str:
@@ -147,15 +170,23 @@ def make(url: str, workspace: str, token: str, token_id: str, user_id: str) -> t
 
 
 def delete(link_id: str, user_id: str) -> str | None:
-    """The account's channel ``link_id`` stops and is forgotten: its token's
+    """The account's channel ``link_id`` stops and is forgotten, and the
+    agent of each work folder it announced is turned off (its run stopped),
+    so showing this computer there again, maybe as another account there,
+    never brings an agent back without the shell's question: its token's
     id there (the desktop app revokes it), None when it is no channel of
     that account."""
+    from ..local_agents import store
+
     link = get(link_id)
     if link is None or link["created_by"] != user_id:
         return None
     stop(link_id)
     with connect_users_db() as conn:
         conn.execute("DELETE FROM computer_links WHERE id = ?", (link_id,))
+    vaults = _vaults_of(link)
+    for vault_id in store.agents_of([vault["id"] for vault in vaults]):
+        folder_links.set_agent(vault_id, "", by=user_id)
     return link["token_id"]
 
 
@@ -202,18 +233,43 @@ def assistants() -> list[dict]:
     return there
 
 
+def _vaults_of(link: dict) -> list[dict]:
+    """The vaults of the channel ``link``'s server, workspace and account."""
+    return [vault for vault in folder_links.all_links()
+            if (vault["remote_url"], vault["workspace_id"], vault["created_by"])
+            == (link["remote_url"], link["workspace_id"], link["created_by"])]
+
+
+def agent_folders(link: dict, vaults: list[dict] | None = None) -> dict[str, tuple[dict, str]]:
+    """``{folder id: (vault, agent)}``: the work folders of the channel
+    ``link``'s server that a vault here keeps with an agent on
+    (``folder_links.work_vault``, ``local_agents.store``), paused or not;
+    none where agents do not run (``local_agents.enabled``)."""
+    from .. import local_agents
+    from ..local_agents import store
+
+    if not local_agents.enabled():
+        return {}
+    work = [vault for vault in (_vaults_of(link) if vaults is None else vaults)
+            if vault["remote_url"] and folder_links.work_vault(vault)]
+    rows = store.agents_of([vault["id"] for vault in work]) if work else {}
+    return {vault["folder_id"]: (vault, rows[vault["id"]]["agent"]) for vault in work if vault["id"] in rows}
+
+
 def state_of(link: dict) -> dict:
     """What this computer announces on the channel ``link``: its id for
     that server and its name, the app's version, the vaults of that server,
     workspace and account (``{kind, folder_id | page_id, paused}``, the
-    pause as the sync panel shows it) and the assistants."""
-    vaults = []
-    for vault in folder_links.all_links():
-        if (vault["remote_url"], vault["workspace_id"], vault["created_by"]) != \
-                (link["remote_url"], link["workspace_id"], link["created_by"]):
-            continue
+    pause as the sync panel shows it; a folder's ``agent``, the one that
+    answers its Sends from this computer, ``codex`` or ``claude``, null for
+    none: ``agent_folders``) and the assistants."""
+    vaults, kept = [], _vaults_of(link)
+    agents = {vault["id"]: agent for vault, agent in agent_folders(link, kept).values()}
+    for vault in kept:
         key, target = ("folder_id", vault["folder_id"]) if vault["kind"] == "folder" else ("page_id", vault["page_id"])
         vaults.append({"kind": vault["kind"], key: target, "paused": bool(vault["status"].get(folder_links.PAUSED))})
+        if vault["kind"] == "folder":
+            vaults[-1]["agent"] = agents.get(vault["id"])
     name = device()[1].strip()[:64]
     return {"computer": {"id": computer_id(link["remote_url"]), "name": name if name.isprintable() and name
                          else "This computer"},
@@ -253,6 +309,8 @@ class _Channel:
         self.announced = None       # the state last announced, None to announce again
         self.version = ""           # that announce's version, which the polls name
         self.backoff = RETRY_FIRST_S
+        self.sends_due = True       # the Sends that wait there are asked for at the next turn (``_sends``)
+        self.sends_at = 0.0         # time.monotonic() when they were last asked for
         self.thread: threading.Thread | None = None
 
     def run(self) -> None:
@@ -281,6 +339,10 @@ class _Channel:
                 self.announced, self.version = state, str(answer.get("version") or "")
                 self._account(link, answer.get("account") or {})
                 self._said(link, "connected", "", 0)   # shown there now, before the poll's hold
+                self.sends_due = True                  # what waited for this computer while it was away
+                self._settle(link)
+            if self.sends_due or time.monotonic() - self.sends_at >= SENDS_EVERY_S:
+                self._sends(server, link)
             started = time.monotonic()
             got = _call(server, "GET", "/api/computers/poll?" + urlencode({"v": self.version, "wait": POLL_S}))
         except gamma_sync.Denied as e:
@@ -297,8 +359,66 @@ class _Channel:
         self._said(link, "connected", "", 0)
         if got.get("announce"):
             self.announced = None
+        elif isinstance(got.get("wake"), list) and "sends" in got["wake"]:
+            self._sends(server, link)
         # A poll answered at once (nothing, or announce again: a server that always asks so) rests a moment.
         return max(0.0, QUICK_S - (time.monotonic() - started))
+
+    def _sends(self, server: gamma_sync.Server, link: dict) -> None:
+        """The Sends that wait there for this computer's agents (``GET
+        /api/computers/sends``: that server decides whose they are), each
+        queued for the vault of its work folder unless it is paused or
+        choosing its files (``runner.queue_remote``), and the runs whose
+        request was withdrawn there meanwhile stopped
+        (``runner.withdraw_remote``). Asked only where a vault of that
+        server has an agent; a server without the route (older), or one not
+        reached, is asked again at a later turn. Never raises."""
+        from ..local_agents import runner
+
+        self.sends_due, self.sends_at = False, time.monotonic()
+        folders = agent_folders(link)
+        if not folders:
+            return
+        try:
+            got = _call(server, "GET", "/api/computers/sends")
+        except (Older, gamma_sync.Denied):
+            # A server from before agents ran there (404, or 403: its
+            # channel opens only the announce and the poll): asked again
+            # after SENDS_EVERY_S; a token it refuses fails the poll anyway.
+            return
+        except gamma_sync.SyncError as e:
+            self.sends_due = True
+            log.info(f"[computers] the Sends of channel {link['id']}: {e}")
+            return
+        try:
+            for send in got.get("sends") if isinstance(got.get("sends"), list) else []:
+                kept = folders.get(send.get("folder_id")) if isinstance(send, dict) else None
+                if kept is None or not isinstance(send.get("id"), str) or not send["id"]:
+                    continue
+                vault = kept[0]
+                if not vault["status"].get(folder_links.PAUSED) and not folder_links.choosing(vault):
+                    runner.queue_remote(vault["id"], send["id"])
+            ids = [vault["id"] for vault, _agent in folders.values()]
+            for gone in got.get("withdrawn") if isinstance(got.get("withdrawn"), list) else []:
+                if isinstance(gone, dict) and isinstance(gone.get("id"), str) and gone["id"]:
+                    runner.withdraw_remote(ids, gone["id"], str(gone.get("run") or ""))
+        except Exception:  # noqa: BLE001 — a Send never stops the channel
+            log.exception(f"[computers] queueing the Sends of channel {link['id']}")
+
+    def _settle(self, link: dict) -> None:
+        """That server reached again: the runs of its vaults left open while
+        it was not (an end or a claim never answered) fail there now
+        (``runner.fail_remote_of``), not only at the next start. Never
+        raises."""
+        from .. import local_agents
+        from ..local_agents import runner
+
+        if not local_agents.enabled():
+            return
+        try:
+            runner.fail_remote_of([vault["id"] for vault in _vaults_of(link)])
+        except Exception:  # noqa: BLE001 — a run left open never stops the channel
+            log.exception(f"[computers] the runs left open of channel {link['id']}")
 
     def _said(self, link: dict, state: str, error: str, rest: float) -> float:
         """The channel's status, written when it changed (and while the
@@ -373,4 +493,15 @@ def nudge() -> None:
     with _guard:
         running = list(_channels.values())
     for channel in running:
+        channel.nudged.set()
+
+
+def ask_sends() -> None:
+    """A work folder of another server takes Sends again here (its agent
+    turned on, the vault resumed or its files chosen): each channel asks
+    its server for the Sends that wait once its poll ends."""
+    with _guard:
+        running = list(_channels.values())
+    for channel in running:
+        channel.sends_due = True
         channel.nudged.set()

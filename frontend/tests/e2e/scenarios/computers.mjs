@@ -93,7 +93,8 @@ export async function computerScenarios(env) {
       }, { timeout: 20000, what: "the page's computer, online with Codex" });
       name = seen.name;
       assertEq(name.toLowerCase(), os.hostname().slice(0, 64).toLowerCase(), "the computer's host name");
-      assertEq(JSON.stringify(seen.vault), JSON.stringify({ kind: "folder", name: "Cavity", paused: false }), "the folder it keeps, named by the NAS");
+      assertEq(JSON.stringify(seen.vault), JSON.stringify({ kind: "folder", name: "Cavity", paused: false, agent: null }),
+        "the folder it keeps, named by the NAS, with no agent there");
       assertEq(seen.since, null, "online: no offline time");
       assert(!JSON.stringify(seen).includes(disk), "no path of the computer reaches the NAS");
     });

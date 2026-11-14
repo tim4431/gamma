@@ -10,7 +10,10 @@ so ``listing(after=…)`` shows a new request and a state change alike. Its
 state goes ``sent`` → ``running`` → ``done`` or ``failed``, set by an agent
 (an integration token of the feedback or write scope) or, to withdraw it,
 by its requester (``TRANSITIONS``); an agent on this computer takes a
-sent one with ``claim`` (docs/dev/local_agents.md). A thread it names is answered once a
+sent one with ``claim`` (docs/dev/local_agents.md), and the run of a
+computer that keeps the work folder with an agent there with
+``claim_run``, keyed by its run, which alone then writes its state
+(``run_state``; gamma/routers/computers.py). A thread it names is answered once a
 token or another account replies to it or resolves it after the request
 (``answered``, a comment listener): it shows as sent until then
 (``comments._sent``). After every write the pages of its threads hear
@@ -57,7 +60,9 @@ TRANSITIONS = {("sent", "running"): {"agent"}, ("sent", "done"): {"agent"}, ("se
 # What follows every committed write of a request (``_changed``): ``fn(ws,
 # request_id)``, each called in turn, an error logged and never raised
 # (gamma/local_agents/runner.py appends its own: it claims the Sends an
-# agent on this computer answers, and stops a run its request withdrew).
+# agent on this computer answers, and stops a run its request withdrew;
+# ``_wake_computers``, on every server, wakes the computer that keeps a
+# work folder of this server with an agent).
 change_listeners: list = []
 
 # How a Send was made (``feedback_requests.via``): a person in Gamma, an
@@ -136,16 +141,17 @@ def listing(conn, *, after: int = 0, scope: str = "", state: str = "", limit: in
 
 
 def entries_of(ws, conn, record: dict, *, paths: dict | None = None, link_base: str = "",
-               regions: dict | None = None) -> list[dict]:
+               regions: dict | None = None, places: bool = False) -> list[dict]:
     """The entries of the request's threads as they are now, in any state
     (``entries.entries``; a thread gone since is left out): what its file
-    holds."""
+    holds. ``places``: each placed on a PDF page says where
+    (``entries.entries``)."""
     try:
         scope = entries.resolve_scope(conn, record["work_folder"]["id"])
     except FeedbackError:
         return []
     return entries.entries(ws, conn, scope, state="all", paths=paths, link_base=link_base,
-                           threads=[t["id"] for t in record["threads"]], regions=regions)
+                           threads=[t["id"] for t in record["threads"]], regions=regions, places=places)
 
 
 def document_of(ws, conn, request_id: str, *, paths: dict | None = None, regions: dict | None = None) -> dict | None:
@@ -268,7 +274,10 @@ def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_nam
     A write takes the next ``rev``. Commits, then tells the threads' pages
     and the work folder's files. FeedbackError 404 for no request, 400 for
     another state, 413 for a longer detail, 409 for a stored state outside
-    ``only_from`` or a change the writer may not make (``TRANSITIONS``)."""
+    ``only_from`` or a change the writer may not make (``TRANSITIONS``).
+    An agent taking a request that is not running (``running`` from
+    ``sent`` or ``failed``) ends a computer's run of it still open
+    (``STOPPED``), in the same write: that run is refused from then on."""
     if writer not in WRITERS:
         raise ValueError(f"writer is one of {', '.join(WRITERS)}")
     if state not in STATES:
@@ -290,6 +299,9 @@ def set_state(ws, conn, request_id: str, state: str, *, detail: str = "", by_nam
             raise FeedbackError(409, f"A {row[0]} request cannot become {state}.")
         conn.execute("UPDATE feedback_requests SET state = ?, state_at = ?, state_by = ?, detail = ?, rev = ? "
                      "WHERE id = ?", (state, page_now(), by_name or "", detail, _next_rev(conn), request_id))
+        if state == "running" and row[0] != "running":   # taken again: a computer's earlier run holds it no more
+            conn.execute("UPDATE feedback_request_runs SET ended = ? WHERE request_id = ? AND ended = ''",
+                         (STOPPED, request_id))
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -327,6 +339,18 @@ def _tell(ws: str, request_id: str) -> None:
         except Exception as e:  # noqa: BLE001 — a listener never fails the write it hears of
             log.warning(f"[feedback] request listener {getattr(listener, '__name__', listener)} on "
                         f"{request_id} in workspace {ws}: {e}")
+
+
+def _wake_computers(ws: str, request_id: str) -> None:
+    """A Send made or withdrawn in a work folder a computer keeps with an
+    agent wakes that computer's held poll (gamma/computers/registry.py
+    ``heard``)."""
+    from ..computers import registry  # local: the registry reaches the workspaces, which reach the comments
+
+    registry.heard(ws, request_id)
+
+
+change_listeners.append(_wake_computers)
 
 
 def _files_due(ws: str, w: str, request_id: str = "") -> None:
@@ -394,6 +418,219 @@ def answered(ws: str, event: dict) -> None:
         _files_due(ws, w)
 
 
+# --- a computer's runs ---------------------------------------------------------------------
+# A work folder of this server kept on a computer with an agent: the
+# computer's runs take its maker's Sends over its channel
+# (gamma/routers/computers.py), and this server writes what they answer.
+# Each run is keyed by the id the computer minted for it
+# (``feedback_request_runs``): its claim and its writes are told apart from
+# another taker's, and a retry of either is answered as it was.
+
+STOPPED = "stopped"      # a run's ``ended`` once it was withdrawn or refused
+MAX_WAITING = 50         # Sends one listing gives a computer at most
+
+
+def waiting_for(conn, by: str, folders) -> list[dict]:
+    """The Sends of the account ``by`` made in Gamma (``via`` session) in
+    the work folders ``folders`` that wait for an agent, oldest first, at
+    most ``MAX_WAITING``: ``[{id, folder_id, page_id?, at}]``, ``page_id``
+    for a file's Send."""
+    rows = conn.execute("SELECT id, work_folder, scope, scope_kind, at FROM feedback_requests WHERE state = 'sent' "
+                        "AND via = ? AND by = ? AND work_folder IN (SELECT value FROM json_each(?)) ORDER BY rev "
+                        "LIMIT ?", (SESSION, by, json.dumps(sorted(folders)), MAX_WAITING)).fetchall()
+    return [{"id": request_id, "folder_id": w, **({"page_id": scope} if kind == "file" else {}), "at": at}
+            for request_id, w, scope, kind, at in rows]
+
+
+def run_of(conn, request_id: str) -> dict | None:
+    """The computer's run that holds the request or held it: ``{holder,
+    run, agent, seen_at, read, ended}``, None for none."""
+    row = conn.execute("SELECT holder, run, agent, seen_at, read, ended FROM feedback_request_runs "
+                       "WHERE request_id = ?", (request_id,)).fetchone()
+    if not row:
+        return None
+    try:
+        read = json.loads(row[4] or "{}")
+    except ValueError:
+        read = {}
+    return {"holder": row[0], "run": row[1], "agent": row[2], "seen_at": row[3],
+            "read": read if isinstance(read, dict) else {}, "ended": row[5]}
+
+
+def claim_run(ws, conn, request_id: str, *, holder: str, run: str, agent: str, by_name: str, detail: str,
+              seen: str, read: dict) -> dict:
+    """Take a sent request for the run ``run`` of the computer ``holder``:
+    ``running`` with ``detail``, set by ``by_name``, and the run recorded
+    with when it read the entries (``seen``, this server's clock) and the
+    comments it read (``read``, ids by thread), in one step under the write
+    lock → the request. The same run taking it again (a retry) is answered
+    as holding it, its ``seen`` and ``read`` those of this read. Commits,
+    then tells the threads' pages. FeedbackError 404 for no request, 409
+    when another run holds it or it is no longer sent."""
+    detail = (detail or "")[:MAX_DETAIL]
+    write_lock(conn)
+    try:
+        row = conn.execute("SELECT state FROM feedback_requests WHERE id = ?", (request_id,)).fetchone()
+        if not row:
+            raise FeedbackError(404, "no such request")
+        held = conn.execute("SELECT holder, run FROM feedback_request_runs WHERE request_id = ?",
+                            (request_id,)).fetchone()
+        if held and tuple(held) == (holder, run) and row[0] == "running":
+            conn.execute("UPDATE feedback_request_runs SET seen_at = ?, read = ? WHERE request_id = ?",
+                         (seen, json.dumps(read), request_id))
+            conn.commit()
+            return get(conn, request_id)
+        if row[0] != "sent":
+            raise FeedbackError(409, "Another run holds this request." if held and row[0] == "running"
+                                else f"The request is {row[0]} now.")
+        conn.execute("UPDATE feedback_requests SET state = 'running', state_at = ?, state_by = ?, detail = ?, rev = ? "
+                     "WHERE id = ?", (page_now(), by_name or "", detail, _next_rev(conn), request_id))
+        conn.execute("INSERT OR REPLACE INTO feedback_request_runs (request_id, holder, run, agent, seen_at, read, "
+                     "ended) VALUES (?, ?, ?, ?, ?, ?, '')", (request_id, holder, run, agent, seen, json.dumps(read)))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    _changed(ws, conn, request_id)
+    return get(conn, request_id)
+
+
+def run_state(ws, conn, request_id: str, *, holder: str, run: str, state: str, detail: str = "",
+              by_name: str) -> dict:
+    """What the run ``run`` of the computer ``holder`` writes of the
+    request it holds: its progress (``running`` with ``detail``) or its end
+    (``done``, ``failed``), only while it is running → the request. The
+    same detail again changes nothing, and the end the run wrote, written
+    again (a retry), is answered as stored. Commits, then tells the
+    threads' pages. FeedbackError 400 for another state, 404 when no run of
+    ``holder`` holds or held it, 409 when another run holds it or it is no
+    longer running (withdrawn: the run is ``STOPPED`` from then on)."""
+    if state not in ("running", "done", "failed"):
+        raise FeedbackError(400, "state is running, done or failed")
+    detail = (detail or "")[:MAX_DETAIL]
+    write_lock(conn)
+    try:
+        row = conn.execute("SELECT state, detail FROM feedback_requests WHERE id = ?", (request_id,)).fetchone()
+        held = conn.execute("SELECT holder, run, ended FROM feedback_request_runs WHERE request_id = ?",
+                            (request_id,)).fetchone()
+        if not row or not held or held[0] != holder:
+            raise FeedbackError(404, "no such request")
+        if held[1] != run:
+            raise FeedbackError(409, "Another run holds this request.")
+        if held[2] and held[2] == state == row[0]:
+            conn.rollback()
+            return get(conn, request_id)
+        if row[0] != "running" or held[2]:
+            conn.execute("UPDATE feedback_request_runs SET ended = ? WHERE request_id = ? AND ended = ''",
+                         (STOPPED, request_id))
+            conn.commit()
+            raise FeedbackError(409, f"The request is {row[0]} now.")
+        if (row[0], row[1]) == (state, detail):
+            conn.rollback()
+            return get(conn, request_id)
+        conn.execute("UPDATE feedback_requests SET state = ?, state_at = ?, state_by = ?, detail = ?, rev = ? "
+                     "WHERE id = ?", (state, page_now(), by_name or "", detail, _next_rev(conn), request_id))
+        if state != "running":
+            conn.execute("UPDATE feedback_request_runs SET ended = ? WHERE request_id = ?", (state, request_id))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    _changed(ws, conn, request_id)
+    return get(conn, request_id)
+
+
+def withdrawn_runs(conn, holder: str) -> list[dict]:
+    """The runs of the computer ``holder`` still at work on a request that
+    is no longer running (withdrawn, failed or gone meanwhile): ``[{id,
+    run}]``, each ``STOPPED`` from then on, so it is told once (a run that
+    missed it is refused at its next write)."""
+    rows = conn.execute("SELECT r.request_id, r.run FROM feedback_request_runs r LEFT JOIN feedback_requests q "
+                        "ON q.id = r.request_id WHERE r.holder = ? AND r.ended = '' "
+                        "AND (q.state IS NULL OR q.state != 'running') ORDER BY r.request_id", (holder,)).fetchall()
+    if not rows:
+        return []
+    write_lock(conn)
+    try:
+        conn.execute("UPDATE feedback_request_runs SET ended = ? WHERE ended = '' "
+                     "AND request_id IN (SELECT value FROM json_each(?))", (STOPPED, json.dumps([r[0] for r in rows])))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return [{"id": request_id, "run": run} for request_id, run in rows]
+
+
+def fail_runs(ws, conn, holder: str, *, words) -> list[str]:
+    """The computer ``holder`` went (its token revoked, replaced or
+    expired: gamma/computers/registry.py ``forget``), so none of its runs
+    can write again: each request one of them still holds ``running``
+    fails, ``words(agent)`` giving ``(by_name, detail)``, and every run of
+    it still open is ``STOPPED``, in one write → the ids failed. Commits,
+    then tells each one's pages and files."""
+    write_lock(conn)
+    try:
+        rows = conn.execute("SELECT r.request_id, r.agent, q.state FROM feedback_request_runs r "
+                            "LEFT JOIN feedback_requests q ON q.id = r.request_id WHERE r.holder = ? AND r.ended = '' "
+                            "ORDER BY r.request_id", (holder,)).fetchall()
+        if not rows:
+            conn.rollback()
+            return []
+        failed, now = [], page_now()
+        for request_id, agent, state in rows:
+            if state == "running":
+                by_name, detail = words(agent)
+                conn.execute("UPDATE feedback_requests SET state = 'failed', state_at = ?, state_by = ?, detail = ?, "
+                             "rev = ? WHERE id = ?", (now, by_name, detail[:MAX_DETAIL], _next_rev(conn), request_id))
+                failed.append(request_id)
+        conn.execute("UPDATE feedback_request_runs SET ended = ? WHERE holder = ? AND ended = ''", (STOPPED, holder))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    for request_id in failed:
+        _changed(ws, conn, request_id)
+    return failed
+
+
+def held_by(conn, holder: str, thread_id: str) -> bool:
+    """Whether a run of the computer ``holder`` works on a request that
+    names the thread ``thread_id``."""
+    return bool(conn.execute("SELECT 1 FROM feedback_request_runs r JOIN feedback_request_threads t "
+                             "ON t.request_id = r.request_id WHERE r.holder = ? AND r.ended = '' AND t.thread_id = ?",
+                             (holder, thread_id)).fetchone())
+
+
+def last_speakers(conn, thread_ids) -> list[dict]:
+    """Who spoke last in each of the threads ``thread_ids`` (their live
+    comments): ``[{id, by_agent, at, comment_id, people: [{id, at}]}]``,
+    ``by_agent`` whether a token or an agent wrote the last comment, ``at``
+    when it was last written, ``people`` the comments a person's session
+    wrote (their ids and when each was last written): what a run's resume
+    rule reads (gamma/local_agents/runner.py ``_spoken_after``)."""
+    out: dict = {}
+    for thread_id, comment_id, agent_id, updated in conn.execute(
+            "SELECT thread_id, id, agent_id, updated_at FROM comments WHERE thread_id IN (SELECT value FROM json_each(?)) "
+            "AND deleted_at IS NULL AND orphaned_at IS NULL ORDER BY created_at, id",
+            (json.dumps(sorted(set(thread_ids))),)):
+        said = out.setdefault(thread_id, {"id": thread_id, "people": []})
+        said.update(by_agent=bool(agent_id), at=updated, comment_id=comment_id)
+        if not agent_id:
+            said["people"].append({"id": comment_id, "at": updated})
+    return [out[t] for t in sorted(out)]
+
+
+def spoken_after(conn, thread_id: str, seen: str, read) -> bool:
+    """Whether a person (a session: no token, no agent) has a live comment
+    in the thread that a run which read it at ``seen`` (the ids ``read``)
+    did not read, or edited one after it read: words it never saw. By the
+    ids, not the times, since a comment is stamped before its commit."""
+    known = set(read or ())
+    return any(comment_id not in known or updated > seen for comment_id, updated in conn.execute(
+        "SELECT id, updated_at FROM comments WHERE thread_id = ? AND agent_id = '' AND deleted_at IS NULL "
+        "AND orphaned_at IS NULL", (thread_id,)))
+
+
 # --- the sweep --------------------------------------------------------------------------
 
 # What the last sweep learned per workspace: ``(the files' stamp, when its
@@ -435,6 +672,8 @@ def sweep(*, now: datetime | None = None) -> dict[str, dict]:
 
 
 def _sweep(ws: str, now: datetime) -> tuple[dict, datetime | None]:
+    """One workspace's sweep: the old requests, the rows of threads gone
+    and the computers' runs of requests gone."""
     cutoff = format_stamp(now - timedelta(days=KEEP_DAYS))
     with connect_pages_db(ws) as conn:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'feedback_requests'").fetchone():
@@ -449,6 +688,7 @@ def _sweep(ws: str, now: datetime) -> tuple[dict, datetime | None]:
             threads = conn.execute(
                 "DELETE FROM feedback_request_threads WHERE request_id NOT IN (SELECT id FROM feedback_requests) "
                 "OR NOT EXISTS (SELECT 1 FROM comments c WHERE c.id = feedback_request_threads.thread_id)").rowcount
+            conn.execute("DELETE FROM feedback_request_runs WHERE request_id NOT IN (SELECT id FROM feedback_requests)")
             oldest = conn.execute("SELECT MIN(state_at) FROM feedback_requests "
                                   "WHERE state IN ('done', 'failed')").fetchone()[0]
             conn.commit()

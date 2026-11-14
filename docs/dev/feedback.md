@@ -956,6 +956,17 @@ token's Send to it is refused (403), and so is a token's change of a
 request a run holds (409); the requests it has taken read `state_by`
 `Codex` or `Claude Code`, and an outside agent leaves them alone.
 
+A work folder of another server (a NAS) whose keeping computer
+announces an agent for it works the same way from that server: the
+maker's Sends and mentions made there, in any window, are taken by that
+computer over its channel and answered there, a token of the maker's Send is refused
+(403 "Codex on TIM-PC takes Sends made in Gamma, not with a token."),
+and a token's change of a request the computer's run holds too (409
+"Codex on TIM-PC is answering this request."); the maker's Feedback
+document names the agent with the computer and whether it is online
+([local_agents.md](local_agents.md) "A work folder of another server",
+[computers.md](computers.md) "The Sends").
+
 Anywhere else, and for a folder with no agent on this computer, Gamma
 starts no process. The owner builds the part that starts an agent (a
 watcher, a timer, a shell hook), and what it finds here is:

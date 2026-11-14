@@ -7,8 +7,9 @@
 // again and its source line, its first comment and the chip of a Send
 // waiting on it, a click opening the thread on its page; the line of
 // instruction and Send, which posts a request with an id this tab minted,
-// so a retry writes it once, naming the folder's agent on this computer
-// when one answers the person's Sends (the document's `agent`,
+// so a retry writes it once, naming the folder's agent on this computer,
+// or on the computer that keeps it, when one answers the person's Sends
+// (the document's `agent`,
 // docs/dev/local_agents.md), with its lines under it; and the work folder's
 // requests below, the newest first, with what became of each and Withdraw
 // on the person's own.
@@ -25,8 +26,8 @@ import { PersonAvatar } from "../collaboration/Presence";
 import { anchorSnippet, sentChip } from "../comments/comments.js";
 import { entryHeading, placedText, requestLine, sendWords, sourceText, withdrawTitle } from "./feedbackText.js";
 import {
-  NOTE_MAX, POLL_MS, canWithdraw, firstComment, groupByFile, hasChoice, newestRequests, othersCount, pictureOf, readScope, sendAgent,
-  sendBody,
+  NOTE_MAX, POLL_MS, canWithdraw, firstComment, groupByFile, hasChoice, namesAgent, newestRequests, othersCount, pictureOf, readScope,
+  sendAgent, sendBody,
 } from "./feedbackView.js";
 import "./feedback.css";
 
@@ -36,9 +37,11 @@ const JSON_POST = (body) => ({ method: "POST", headers: { "Content-Type": "appli
 // One entry's row: a click opens its thread on its page. The picture is an
 // <img> request, which carries no workspace header, so its URL names the
 // workspace (withWorkspace, as every API picture drawn by the browser).
-function Entry({ entry, onOpen }) {
+// `answers`: the agent that takes the reader's Sends, whose computer the
+// chip of one waiting names (sendAgent's plan; null for none).
+function Entry({ entry, answers, onOpen }) {
   const Icon = KIND_ICONS[entry.kind] || MessageSquareIcon;
-  const chip = sentChip(entry);
+  const chip = sentChip(entry, answers);
   const first = firstComment(entry);
   const picture = pictureOf(entry);
   const meta = [placedText(entry.where, entry.kind), sourceText(entry.source)].filter(Boolean).join(" · ");
@@ -67,9 +70,10 @@ function Entry({ entry, onOpen }) {
 // One request's row: when it was sent and how many comments, what became
 // of it with the agent's own words on a line under the note (its progress,
 // summary or reason, at most three lines, whole in its title), and Withdraw
-// on the person's own while it waits or runs.
-function RequestRow({ request, me, busy, onWithdraw }) {
-  const { line, state, detail, kind } = requestLine(request);
+// on the person's own while it waits or runs, which names the computer
+// that runs them (`computer`, "" for this one) while it waits.
+function RequestRow({ request, me, computer, busy, onWithdraw }) {
+  const { line, state, detail, kind } = requestLine(request, Date.now(), request.by === me ? computer : "");
   return (
     <li className="feedbackRequest" data-request-id={request.id} data-state={kind}>
       <span className="feedbackRequestLine">
@@ -168,9 +172,13 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
   const entries = doc?.entries || [];
   const n = entries.length;
   const paused = !!(w && links?.get(w)?.paused);
-  // Who answers the Send: the folder's agent on this computer, as the
-  // document says, or an agent the person runs (the generic button).
-  const words = sendWords(sendAgent(doc, !!(w && links?.get(w))), n, othersCount(entries, me));
+  // Who answers the Send: the folder's agent on this computer or on the
+  // computer that keeps the folder, as the document says, or an agent the
+  // person runs (the generic button).
+  const plan = sendAgent(doc, !!(w && links?.get(w)));
+  const words = sendWords(plan, n, othersCount(entries, me));
+  // Where another computer keeps the folder, what a Send of the person's waits for.
+  const answers = namesAgent(plan) && plan.computer ? plan : null;
   const choices = hasChoice(scope, workFolder) ? [
     ["scope", scope.kind === "file" ? t("This file") : t("This folder")],
     ["work_folder", workFolder.name || t("Work folder")],
@@ -190,7 +198,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
           {n ? groupByFile(entries).map((group) => (
             <section key={group.file} className="feedbackFile">
               <h3 className="feedbackFileName">{group.file}</h3>
-              {group.entries.map((entry) => <Entry key={entry.id} entry={entry} onOpen={open} />)}
+              {group.entries.map((entry) => <Entry key={entry.id} entry={entry} answers={answers} onOpen={open} />)}
             </section>
           )) : <p className="feedbackEmpty">{t("No open comments here.")}</p>}
           {doc.truncated ? <p className="reportModalHint">{t("{n} more are not shown.", { n: doc.truncated })}</p> : null}
@@ -219,7 +227,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
         <div className="feedbackRequests">
           <h3 className="feedbackFileName">{t("Sent to the agent")}</h3>
           <ul>{newestRequests(requests).map((request) => (
-            <RequestRow key={request.id} request={request} me={me} busy={busy} onWithdraw={withdraw} />
+            <RequestRow key={request.id} request={request} me={me} computer={answers?.computer || ""} busy={busy} onWithdraw={withdraw} />
           ))}</ul>
         </div>
       ) : null}

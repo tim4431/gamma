@@ -257,7 +257,9 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // and whether its files wait to be chosen in Gamma (`choosing`). A work
 // folder of another server, made from an empty folder there, pushes
 // everything and pulls, both locked (REMOTE_WORK_RULE). `agentHere`: a work
-// folder of the server's own, the only one an agent works in, for now.
+// folder an agent on this computer may answer, one of the server's own or
+// one of another server this computer is shown on (`computer`), whose Sends
+// and mentions made there run here.
 //
 // `roles` is the workspaces the server's account may open, as its `GET
 // /api/session` lists them (`[{id, role}]`; null: not read). The server
@@ -309,7 +311,9 @@ function vault(server, link, servers, roles = null, agents = null, computers = n
       && (typeof link.work === 'boolean' ? link.work : !link.remote_url && pushWord(link.push) === 'everything'),
     library: Boolean(link.library), choosing: Boolean(link.choosing), mine: Boolean(link.mine),
   };
-  item.agentHere = item.work && !link.remote_url;
+  item.computer = link.remote_url && !item.seen && computers && Array.isArray(computers.links)
+    ? computerLine(item, link, computers) : null;
+  item.agentHere = item.work && (!link.remote_url || Boolean(item.computer && item.computer.state !== 'none'));
   const agent = link.agent || null;
   const run = agent && agent.running;
   Object.assign(item, {
@@ -319,8 +323,6 @@ function vault(server, link, servers, roles = null, agents = null, computers = n
     agentRuns: agent && agent.runs === 'ask' ? 'ask' : 'never',
     agents: item.agentHere && Array.isArray(agents) ? agentChoices(agents) : null,
   });
-  item.computer = link.remote_url && !item.seen && computers && Array.isArray(computers.links)
-    ? computerLine(item, link, computers) : null;
   const stated = scope === 'file' ? fileState(item, s) : folderState(item, s, left);
   return item.seen ? { ...stated, title: `${stated.title} ${SEEN}` } : stated;
 }
@@ -348,22 +350,22 @@ const COMPUTER_STATES = {
 // account, username, status: {state, error, at}}`), whose channel tells that
 // server, for the vault's maker alone, that the vault is kept on this
 // computer (`computers.name`), whether it is online and which assistants are
-// here, never a path. `{ state, text, title, action, button }`: the line, its
-// tooltip, and the view's action, `hide-computer` (Stop showing) with a link,
-// `show-computer` (Show this computer there) with none; `state` is the
-// link's, or `none`.
+// here, never a path. `{ state, text, title, action, button, who }`: the line,
+// its tooltip, and the view's action, `hide-computer` (Stop showing) with a
+// link, `show-computer` (Show this computer there) with none; `state` is the
+// link's, or `none`; `who` the account there it is shown to ("" for none).
 function computerLine(item, link, computers) {
   const name = computers.name || 'this computer';
   const shown = computers.links.find((c) => c && originOf(c.remote_url) === originOf(link.remote_url) && c.workspace_id === link.workspace_id);
   if (!shown) {
-    return { state: 'none', text: `Not shown on ${item.remote}`, action: 'show-computer', button: 'Show this computer there',
+    return { state: 'none', text: `Not shown on ${item.remote}`, action: 'show-computer', button: 'Show this computer there', who: '',
       title: `Show this computer there, and you see on ${item.remote}, in any window, that this vault is kept on ${name}, whether it is online, and which assistants are here. No path is sent.` };
   }
   const s = shown.status || {};
   const state = Object.prototype.hasOwnProperty.call(COMPUTER_STATES, s.state) ? s.state : 'connecting';
   const [words, why] = COMPUTER_STATES[state];
   const who = shown.username || 'your account';
-  return { state, text: `Shown on ${item.remote} as ${name} · ${words}`, action: 'hide-computer', button: 'Stop showing',
+  return { state, text: `Shown on ${item.remote} as ${name} · ${words}`, action: 'hide-computer', button: 'Stop showing', who: shown.username || '',
     title: `${why(item.remote, name, who)}${s.error && state !== 'connected' ? ` ${said(String(s.error))}` : ''}` };
 }
 
@@ -718,17 +720,47 @@ const AGENT_DOES = {
   claude: 'it edits files in this directory and runs no commands',
 };
 
+// Whether a server is reached over plain http:// from outside this computer
+// (loopback is this computer's own).
+const plainFar = (url) => {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' && !['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+  } catch {
+    return false;
+  }
+};
+
+// What turning an agent on in a work folder of another server lets that
+// server do (item.remote; the account there the computer is shown to,
+// `item.computer.who`): whoever signs in there as that account, and whoever
+// runs it, sends work to the agent here, which reads the files, its answers
+// stored there; over plain http from outside this computer, also that the
+// network sees it.
+function farAgentWords(item, label) {
+  const remote = item.remote;
+  const who = (item.computer && item.computer.who) || 'your account';
+  return ` Whoever can sign in to ${remote} as ${who}, and whoever runs ${remote}, can send work to ${label} here. ${label} reads your files and its answers are stored on ${remote}.` +
+    (plainFar(item.remoteUrl) ? ` ${remote} is reached without encryption: someone on your network could read what is sent and pose as ${remote}.` : '');
+}
+
 // The question before agent `name` works in a work folder's directory, the
 // computer's decision (main.js setAgent), with the Sends of the folder that
-// wait now (`waiting`, handed to it once it is on; null: not counted):
+// wait now (`waiting`, handed to it once it is on; null: not counted), and
+// for a work folder of another server what that server can then do:
 // `{ message, detail, buttons }`, button 0 turning it on.
 function agentAsk(item, name, waiting = null) {
   const label = AGENT_LABELS[name] || name;
   const handed = waiting ? ` ${waiting === 1 ? '1 waiting Send' : `${waiting} waiting Sends`} will be handed to it.` : '';
   return { message: `Let ${label} work in ${item.dest}?`,
-    detail: `${label} will answer the Sends you make on this folder: ${AGENT_DOES[name] || 'it edits files in this directory'}.${handed}`,
+    detail: `${label} will answer the Sends you make on this folder: ${AGENT_DOES[name] || 'it edits files in this directory'}.` +
+      `${item.remoteUrl ? farAgentWords(item, label) : ''}${handed}`,
     buttons: [`Turn on ${label}`, 'Cancel'] };
 }
+
+// Why a work folder of another server lets its agent ask nothing in the
+// chat (the chat there stays on this computer's server, for now).
+const FAR_RUNS_RULE = 'Asking in the chat is for a work folder of this computer\'s server.';
 
 // What turning a work folder's agent on (`name`, with the `queued` Sends
 // handed to it) or off ("": `item.agentLabel` was on) came to, for the bar.
@@ -782,5 +814,5 @@ function roundSaid(item, status) {
 }
 
 module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, REMOTE_WORK_RULE, remoteWorkRefused, WHOLE_RULE, firstRound, removalAsk, farRemovalAsk, forceAsk,
-  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid, computerLine, computerFailed, computerSaid,
+  goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, FAR_RUNS_RULE, runsAsk, runsSaid, computerLine, computerFailed, computerSaid,
   computerStranded, computerOtherAccount };

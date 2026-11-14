@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, isOpenedPdf,
-  libraryWorkspaces, mentionAgent, notesLocked, openedHere, readComputers, readVault, sinceText, vaultBanner, vaultChip, vaultConflictsPath,
+  keeperAgent, libraryWorkspaces, mentionAgent, notesLocked, openedHere, readComputers, readVault, sinceText, vaultBanner, vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
@@ -285,4 +285,35 @@ test("the assistants there: by their code, never the computer's own words; none 
   assert.equal(line([{ ...codexThere, found: false, ready: false, code: "missing" }]), "");
   assert.equal(line([]), "");
   assert.equal(line(undefined), "");
+});
+
+test("the computer's chip names the agent there that runs the work folder's Sends", () => {
+  const work = (agent) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent } });
+  const chip = computerChip([work({ name: "codex", label: "Codex" })]);
+  assert.equal(chip.agent, "Agent: Codex on TIM-PC");
+  assert.equal(chip.title, "Connected\nFolder: cavity\nAssistants there: Codex\nAgent: Codex on TIM-PC");
+  assert.equal(computerChip([work({ name: "claude" })]).agent, "Agent: Claude Code on TIM-PC", "no label: its name's");
+  assert.equal(computerChip([work(null)]).agent, "");
+  assert.equal(computerChip([pc()]).agent, "", "an announce without the field");
+});
+
+test("the agent a comment names where this computer has none: the first computer's whose work folder has one", () => {
+  const work = (over = {}, agent = { name: "codex", label: "Codex" }) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent }, ...over });
+  assert.deepEqual(keeperAgent([work()]), { name: "codex", label: "Codex", ready: true, problem: "", computer: "TIM-PC", online: true });
+  assert.deepEqual(keeperAgent([work({ online: false, since: "2026-11-13T14:02:00Z" })]),
+    { name: "codex", label: "Codex", ready: null, problem: "", computer: "TIM-PC", online: false }, "offline: it waits, nothing known of it");
+  assert.equal(keeperAgent([pc({ id: "c0", name: "LAPTOP" }), work()]).computer, "TIM-PC", "the first with an agent");
+  assert.equal(keeperAgent([work({}, null)]), null, "no agent on");
+  assert.equal(keeperAgent([pc()]), null, "an announce without the field");
+  assert.equal(keeperAgent([]), null);
+  assert.equal(keeperAgent(undefined), null);
+  // as its assistant there says, by its code
+  const as = (assistant) => keeperAgent([work({ assistants: [{ ...codexThere, ...assistant }] })]);
+  assert.equal(as({ ready: false, code: "signed_out" }).ready, false);
+  assert.equal(as({ ready: false, code: "signed_out" }).problem, "Codex is not signed in on TIM-PC.");
+  assert.equal(as({ ready: false, code: "not_ready" }).problem, "Codex is not ready on TIM-PC.");
+  assert.equal(as({ found: false, ready: false, code: "missing" }).problem, "Codex is not on TIM-PC.");
+  assert.equal(as({ ready: null, code: "checking" }).ready, null);
+  assert.equal(as({ ready: null, code: "checking" }).problem, "");
+  assert.equal(keeperAgent([work({ assistants: [] })]).ready, null, "not announced: not known");
 });

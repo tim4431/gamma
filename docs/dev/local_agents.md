@@ -440,6 +440,92 @@ agent no longer has is started afresh once (step 4 of the run). The rows
 of a vault go when it is removed (`vault.store.forget_link`), relinked
 (`store.forget_threads`) or found gone (`store.forget_links`).
 
+## A work folder of another server
+
+A work folder of another Gamma server (a NAS: [work_folders.md](work_folders.md)
+"Work folders of another server") can have an agent on this computer too:
+its maker turns it on in the sync panel, as for a local one, once this
+computer is shown on that server ([computers.md](computers.md)); from then
+on the maker's Sends and `@codex` mentions **made on the NAS, in any
+window**, run here, and the answers go back there. This is step 4c of
+the research note; the chat's computer side stays local (4d).
+
+- **Turning it on.** `set_agent` and the panel's routes admit a remote
+  work folder (`folder_links.work_vault`), with the shell's word as
+  locally; it is refused (400 "Show this computer on <host> first.")
+  while this computer has no channel to that server and workspace, and
+  asking (`agent_runs: ask`) stays refused for it (409 "Asking in the
+  chat is for a work folder of this computer's server."). The shell's
+  confirm says what a server someone else runs can then do, and that a
+  server reached over plain `http://` outside this computer is reached
+  without encryption ([desktop architecture](../../desktop/docs/architecture.md)).
+- **The binding.** The channel's announce names each folder vault's agent
+  (`agent`: `codex`, `claude` or null); the NAS keeps it with the
+  computer's row, so it knows the folder has an agent while the computer
+  is away, but only for a folder that carries a work folder's mark itself
+  and an account that may edit there, and **per account**
+  (`registry.agent_of(ws, folder, user_id)`): one member's computer
+  announcing another's work folder never changes that member's binding,
+  and only ever serves its own account's Sends.
+- **Who decides, who runs.** The NAS decides "ours": only a Send made in
+  Gamma (`via: session`) by the computer token's account, in a work
+  folder that computer announced with an agent, reaches it; a token of
+  that account's Send there is refused (403 "Codex on TIM-PC takes Sends
+  made in Gamma, not with a token."), and anyone else's mention is plain
+  text. The NAS
+  wakes the computer's held poll (`{wake: ["sends"]}`) when such a Send
+  lands or is withdrawn; a wake while no poll is held answers the next
+  poll at once.
+- **Hearing them.** The channel thread asks `GET /api/computers/sends`
+  after each announce, on a wake, when the agent is turned on, the vault
+  resumes or its files are chosen, and at least every 180 s, while a
+  vault of that server has an agent; each new Send is queued for its link
+  under `(link_id, "send", request_id)`, so a remote run never reads as a
+  local workspace's request, and the runs listed `withdrawn` stop.
+- **The run, through a seam** (`local_agents/home.py`): `home_for(ws, link_id)`
+  gives a local run `LocalHome`, today's calls unchanged, and a remote
+  one `HttpHome`, which speaks the channel's routes with the link's
+  computer token: the claim (`sent → running`, one locked write on the
+  NAS keyed by the run id minted here, so the same run claiming again
+  holds it and another is refused), the entries (each with its PDF
+  place's page, box, rects and document), the server's `seen`, the
+  threads' last speakers for the resume rule, the progress lines, the
+  region pictures (fetched, at most 16 MiB each, into the directory's
+  `.gamma/feedback/img/` as locally), and the end: the replies (each with
+  an id derived from the run and its thread, so a retry writes nothing
+  twice), the summary and the changed files the vault tracks (relative),
+  in one `answers` call. The NAS writes the replies itself, signed
+  `local:<agent>` with the agent's label (`feedback.agent.answer_run`,
+  with the `seen` it stamped at the claim), resolves a thread only when no
+  person wrote in it after the run read it, and ends the request (only
+  from that run while it holds it, so a withdraw is never overwritten).
+  The claim and the end are retried for up to 180 s while the NAS cannot
+  be reached; a progress line that cannot be delivered is dropped.
+- **Source lines** are computed here (`feedback/sources.source_in_vault`):
+  the page's one PDF row in the vault's files, its hash the place's
+  document and its size and time unchanged, and the sources on disk, as a
+  local run's.
+- **After the run** a push round starts at once when files changed
+  (remote vaults get no fast rounds), so the NAS sees the rebuilt PDF;
+  none while the vault is paused, choosing its files or gone (the next
+  round after resume pushes).
+- **Recovery.** An open remote run is failed through its home ("Gamma
+  stopped before Codex finished.") at start and again whenever that
+  channel's announce succeeds, so one left open while the NAS was away is
+  failed once it is back; a claim whose answer never came is recorded
+  open for that. A computer's token that goes (revoked, replaced, expired)
+  fails on the NAS the Sends its runs held ("The computer's channel was
+  taken back before Codex finished."), and *Stop showing* turns the
+  agents of that server's work folders off, so showing the computer again
+  (perhaps to another account there) asks again before any runs. A
+  request whose computer never comes back stays running there until its
+  maker withdraws it.
+- **What the NAS keeps** of a run: a pages.db `feedback_request_runs` row
+  per claim (the request, the holding token, the run, the agent, the
+  `seen` time, the comment ids the run read, its end), additive, so the
+  claim's key and what the run read survive a restart; the sweep removes
+  rows whose request is gone.
+
 ## The chat's computer side
 
 On a page that is a file of a work folder whose vault the account made,
@@ -1264,11 +1350,15 @@ and the network), then `PATCH {agent_runs: "ask"}` with the shell's word
 - A run resumes a session only when every thread it answers was answered
   last in that one session; a Send of a file or a folder whose threads
   came from several starts a new one.
-- Comments on another server (the NAS, a clone) never reach this computer's
-  agent, as they never reach its files (feedback.md "Known gaps"). That
-  server now sees the computer ([computers.md](computers.md): its channel
-  and presence, step 4a of the research note); its work folders, Sends,
-  mentions and chat over that channel are the next steps.
+- Comments on a clone never reach this computer's agent, as they never
+  reach its files (feedback.md "Known gaps"). A work folder of another
+  server does ("A work folder of another server"); its chat over the
+  channel is the next step (4d), and asking stays local.
+- A remote run's region pictures stay in the directory's
+  `.gamma/feedback/img/` (the cleanup runs for local work folders only).
+- On the NAS, another member's waiting Send in the maker's work folder
+  reads *Waiting for TIM-PC* on the maker's page too (a thread's `sent`
+  does not say who sent it).
 - The chat's computer side: Claude Code builds only where the folder lets
   it ask; no diff or Revert of what it changed (Gamma writes no file the
   disk made: a decision first), no *Attach what I see*, no *Open comments

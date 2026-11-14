@@ -407,15 +407,21 @@ def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[
     return picture, before
 
 
-def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions: dict | None, memo: dict) -> dict:
+def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions: dict | None, memo: dict,
+           places: bool = False) -> dict:
     thread, view = item.thread, item.view
     picture, before = _pictures(ws, conn, item, regions, memo)
-    return {"id": thread["id"], "file": item.file, "format": view["format"] if view else "markdown",
+    out = {"id": thread["id"], "file": item.file, "format": view["format"] if view else "markdown",
            "page_id": thread["page_id"], "block_id": thread["block_id"], "kind": item.kind, "where": item.where,
            "source": _source(ws, conn, item, live_sources), "picture": picture, "before": before,
            "state": "resolved" if thread["resolved_at"] else "open", "sent": _sent(thread.get("sent")),
            "link": f"{link_base}?ws={ws}&page={thread['page_id']}&block={thread['block_id']}&thread={thread['id']}",
            "comments": [_comment(c) for c in thread["comments"]]}
+    if places and item.kind in PLACED and item.place:
+        place = item.place
+        out["place"] = {"page": place.get("page"), "box": place.get("box"), "rects": place.get("rects") or [],
+                        "doc_id": place.get("doc_id") or ""}
+    return out
 
 
 def _comment(c: dict) -> dict:
@@ -438,8 +444,8 @@ def _sent(sent: dict | None) -> dict | None:
 
 
 def _entries(ws, conn, scope: Scope, *, state: str, paths, link_base: str, sources: bool, threads=None,
-             regions: dict | None = None, limit: int | None = None,
-             tree: Tree | None = None) -> tuple[list[dict], int, list[dict]]:
+             regions: dict | None = None, limit: int | None = None, tree: Tree | None = None,
+             places: bool = False) -> tuple[list[dict], int, list[dict]]:
     """The scope's entries in their order, the first ``limit`` of them, with
     how many there were and the threads they were made of."""
     _check_state(state)
@@ -454,13 +460,13 @@ def _entries(ws, conn, scope: Scope, *, state: str, paths, link_base: str, sourc
                    key=_order)
     kept = items if limit is None else items[:limit]
     memo: dict = {}
-    out = [_entry(ws, conn, item, link_base=link_base, live_sources=sources, regions=regions, memo=memo)
-           for item in kept]
+    out = [_entry(ws, conn, item, link_base=link_base, live_sources=sources, regions=regions, memo=memo,
+                  places=places) for item in kept]
     return out, len(items), [item.thread for item in kept]
 
 
 def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None = None, link_base: str = "",
-            sources: bool = True, threads=None, regions: dict | None = None) -> list[dict]:
+            sources: bool = True, threads=None, regions: dict | None = None, places: bool = False) -> list[dict]:
     """The entries of the scope's threads in ``state`` (open, resolved or
     all), in the document's order (files by name; in a file the whole
     file's threads, then by page and place, a picture's regions, the notes
@@ -470,10 +476,14 @@ def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None =
     that is its query alone); ``sources`` false leaves the live SyncTeX
     lookup out (the recorded source stays); ``threads``: only those ids;
     ``regions`` gains ``{key: (page id, Region)}`` for each picture named,
-    for whoever draws them (``pictures.cached``). FeedbackError 400 for
-    another state."""
+    for whoever draws them (``pictures.cached``); ``places``: an entry on a
+    PDF page (a passage, an area, ink) gains ``place: {page, box, rects,
+    doc_id}``, its place now as its anchor has it (the rects fractions of
+    the page, ``doc_id`` the file they were measured on), for a computer
+    that finds its source line itself (gamma/routers/computers.py).
+    FeedbackError 400 for another state."""
     return _entries(ws, conn, scope, state=state, paths=paths, link_base=link_base, sources=sources,
-                    threads=threads, regions=regions)[0]
+                    threads=threads, regions=regions, places=places)[0]
 
 
 def document(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None = None, owner: str = "",

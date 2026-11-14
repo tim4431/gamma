@@ -239,9 +239,11 @@ def granted(conversation_id: str, command: str, *, link_id: str, cwd: str = ".",
 
 # --- the runs ------------------------------------------------------------------------------
 
-def start_run(*, ws: str, link_id: str, request_id: str, agent: str) -> str:
-    """A run of ``agent`` on the request ``request_id`` begins → its id."""
-    run_id = new_block_id()
+def start_run(*, ws: str, link_id: str, request_id: str, agent: str, run_id: str = "") -> str:
+    """A run of ``agent`` on the request ``request_id`` begins → its id
+    (``run_id``, one the run minted before it claimed the request of
+    another server, else a new one)."""
+    run_id = run_id or new_block_id()
     with connect_vaults_db() as conn:
         conn.execute("INSERT INTO agent_runs (id, ws, link_id, request_id, agent, state, started_at) "
                      "VALUES (?, ?, ?, ?, ?, 'running', ?)", (run_id, ws, link_id, request_id, agent, page_now()))
