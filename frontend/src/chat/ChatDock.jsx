@@ -61,7 +61,8 @@ import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
 import { UsageRing } from "../shared/ui/UsageRing";
 import ComputerChat, { ChatSides, ComputerHeader } from "./computer/ComputerChat.jsx";
-import { useChatSide, useComputerChat } from "./computer/useComputerChat.js";
+import { useChatSide } from "./computer/chatSide.js";
+import { useComputerChat } from "./computer/useComputerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 // A conversation this tab has nothing of yet (one array, never written).

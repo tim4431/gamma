@@ -10,7 +10,7 @@ import { t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
 import { guideEvents } from "../guide/events.js";
-import { showComputerSide } from "../chat/computer/useComputerChat.js";
+import { showComputerSide } from "../chat/computer/chatSide.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 

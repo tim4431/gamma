@@ -1234,7 +1234,9 @@ either agent.
   `computer`. ChatDock draws the switch (`ChatSides`, `Segmented`: *Gamma
   AI | Codex*) first in its header, outside the Gamma AI gate, so an
   account with no AI provider still gets the computer side; the side is
-  remembered per page for the tab's life (`useChatSide`). On the computer
+  remembered per page for the tab's life (`useChatSide`, in
+  `chatSide.js` beside the Background tasks row's `showComputerSide`, so
+  the first screen does not load the side's state). On the computer
   side ChatDock renders the same window with the side's History and New
   chat (`ComputerHeader`) and its body (`ComputerChat`): the strip in the
   provider health strip's slot, neutral, amber when the agent cannot run

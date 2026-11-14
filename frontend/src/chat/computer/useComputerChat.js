@@ -16,38 +16,6 @@ import {
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const post = (body) => ({ method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
 
-// Which side each page's chat shows, for the tab's life: "computer" for a
-// page switched to it, else Gamma AI's; each shown chat hears a change.
-const sides = new Map();
-const sideHeard = new Set();
-
-// The page's chat on the computer side from outside it (a Background tasks
-// row of a turn), before or while the chat shows the page.
-export function showComputerSide(pageId) {
-  if (!pageId) return;
-  sides.set(pageId, "computer");
-  for (const heard of sideHeard) heard();
-}
-
-// [side, setSide] for the page's chat: "ai" or "computer", the latter only
-// while the page has a computer side (`available`).
-export function useChatSide(pageId, available) {
-  const [, redraw] = useState(0);
-  useEffect(() => {
-    const heard = () => redraw((n) => n + 1);
-    sideHeard.add(heard);
-    return () => { sideHeard.delete(heard); };
-  }, []);
-  const side = available && pageId && sides.get(pageId) === "computer" ? "computer" : "ai";
-  const setSide = useCallback((next) => {
-    if (!pageId) return;
-    if (next === "computer") sides.set(pageId, next);
-    else sides.delete(pageId);
-    redraw((n) => n + 1);
-  }, [pageId]);
-  return [side, setSide];
-}
-
 // The side's state for the page `pageId` ("" while the side is not shown:
 // nothing is read). `{computer, conversation, read, busy, send, answer,
 // stop, newChat, history, readHistory, openHistory, deleteHistory}`:
