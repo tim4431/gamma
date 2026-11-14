@@ -569,6 +569,32 @@ Preferences:
 
 AI:
 
+- **Agents** ([SettingsAgents.jsx](../../frontend/src/settings/SettingsAgents.jsx),
+  above Connections, a signed-in account's): who the chat talks to, the
+  same list the chat's picker and the comment fields read
+  ([local_agents.md](local_agents.md) "The client"). **Gamma AI**, with the
+  connection it uses ("Uses ChatGPT", or *Not connected*). On the desktop
+  app's own server (`GET /api/local-agents` says `here`, read afresh as
+  the pane opens), a section **This computer: TIM-PC**: each agent found,
+  its version and whether it is signed in (its problem, by its code, else
+  this computer's own sentence), its switch (SettingsKit's `Toggle`), and once it is on and the
+  account's, **What Codex may run** (*Only in its sandbox* or *Asks before
+  more*, a `Segmented`); then the directories it offers (name, path) and
+  *Offer a directory…*. In the desktop app the controls ask the shell
+  (`askShell`: `set-agent`, `set-agent-runs`, `agent-dirs` "new" or an
+  id), which asks its own question and acts with its word; the pane then
+  reads the listing again each second for a minute until it changed. A
+  directory is renamed in place and removed with its trash button
+  (`PUT /api/local-agents/dirs`, no shell's word needed by an account
+  with an agent on here), and *Move…* asks the shell for another path. An
+  agent another account turned on says so, and in the desktop app its
+  switch still turns it off (the shell's word). In any other window the rows are
+  read-only under "Change these in Gamma on TIM-PC.", but the owner's
+  switch, which turns the agent off with the session (`PATCH`
+  `{enabled: false}`). Last, one section per computer of the account's
+  shown to this server (`GET /api/computers`, one of the pane's reads):
+  connected or offline since when, and its agents as it last announced
+  them, read-only ("Change this in Gamma on TIM-PC.").
 - **Connections**: the provider list (empty state: one sentence and the Add
   button, which opens the connect dialog, "Connect an AI service": service
   tiles (`IconChoices`: ChatGPT, Anthropic, OpenAI API, Other — Other opens

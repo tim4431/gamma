@@ -80,7 +80,7 @@ export const AGENT_MAX = 100; // the server's local_agents/runner.py MAX_THREADS
 // says why), "checking" (not known yet), "away" (its computer is offline:
 // the Send waits for it), "other" (the folder has an agent that does not
 // take this Send: `why`), "offer" (no agent, but one was found and the
-// folder is kept here, `kept`, so the sync panel can turn it on) or "" for
+// folder is kept here, `kept`, and Settings → AI turns it on) or "" for
 // nothing to say. `computer` is "" for this computer's own agent.
 export function sendAgent(doc, kept = false) {
   const agent = doc?.agent && typeof doc.agent === "object" ? doc.agent : null;

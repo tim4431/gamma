@@ -84,7 +84,7 @@ const label = (ask) => shown(oneLine(ask.label, 40) || 'The agent')[0];
 // mono]`: In, Network, Files, From, As), `diff`, `says` (the agent's
 // reason, marked as the agent's), `notes` (the marks, the background, the
 // risk, a replaced card, the time it is declined by itself), `stop` (the
-// footer's link), `folder` (the directory's name, for a notification) and
+// footer's link: what the agent may run set back to never), `folder` (the directory's name, for a notification) and
 // `marked` (how many characters Gamma marked: the bar draws ⟨U+…⟩ as a mark
 // only then, since the agent may write the same letters itself).
 // `replaced`: the id of an ask main.js shows in place of one that went
@@ -130,7 +130,7 @@ function cardOf(queue, servers, replaced = '') {
     lines: !files && lines ? `${lines} lines` : '', box: files ? '' : inner || command,
     through: !files && inner ? `Through ${mark(ask.shell)}: ${command}` : '',
     rows, diff: files ? mark(ask.diff) : '', says: reason ? `${name} says: “${reason}”` : '', notes,
-    stop: `Stop ${name} asking from ${from.name}`, folder: mark(baseName(ask.folder)), expires: at,
+    stop: `Stop ${name} asking`, folder: mark(baseName(ask.folder)), expires: at,
     marked: marks,
   };
 }
@@ -139,7 +139,7 @@ function cardOf(queue, servers, replaced = '') {
 // stop), and around it.
 function notice(card, decision) {
   if (decision === 'once') return `Allowed once: ${card.label} goes on.`;
-  if (decision === 'stop') return `Declined, and ${card.label} no longer asks on this computer for ${card.from.name}.`;
+  if (decision === 'stop') return `Declined, and ${card.label} no longer asks to run more, here or in the chat.`;
   return `Declined: ${card.label} goes on without it.`;
 }
 const stale = (card) => `${card.label} no longer waits for that: nothing was allowed.`;

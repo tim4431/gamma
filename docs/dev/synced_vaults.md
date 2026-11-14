@@ -1687,8 +1687,10 @@ As built:
   id of the path and each directory above it, so a `\\?\` device path or
   an administrative share `\\host\C$\…` counts); a directory vault inside
   or around another's; a file vault inside a directory vault (open the
-  page from there instead); a marker another live link holds (a copied
-  directory); pushing everything into a clone or a workspace with a Zotero
+  page from there instead); a vault inside a directory offered to the
+  agents, or a directory vault around one (`_apart_from_agents`,
+  [local_agents.md](local_agents.md) "Who turns it on"); a marker another
+  live link holds (a copied directory); pushing everything into a clone or a workspace with a Zotero
   link (pulling, and pushing PDFs, are allowed there); and a folder that
   holds pages another vault of the workspace pushes into, when both push.
   For vaults of this server the folders overlap by the folder tree; for two

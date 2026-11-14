@@ -160,7 +160,7 @@ def test_a_move_takes_the_vaults_the_channel_and_the_copies_to_the_new_address(o
     # the channel's check announces what the channel does, its vaults included: at the same server (this
     # upgrade) the token's row is updated, and one naming no vault would end its work folders' agents
     announced = [body for at, path, body in nas["bodies"] if path == "/api/computers/announce"]
-    assert announced[-1]["vaults"] == [{"kind": "folder", "folder_id": folder, "paused": False, "agent": None}]
+    assert announced[-1]["vaults"] == [{"kind": "folder", "folder_id": folder, "paused": False}]
     assert announced[-1]["computer"]["id"] == before
     assert folder_links.get_link(vault["id"])["remote_url"] == MOVED
     assert channel.get(link["id"])["remote_url"] == MOVED and nas["started"][-1] == link["id"]

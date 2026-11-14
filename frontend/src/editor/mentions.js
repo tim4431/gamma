@@ -119,10 +119,10 @@ export function dateLabel({ date, time }, now = new Date()) {
 // Who a note can mention (App's MentionContext): {me: the signed-in
 // username ("" in a share view), people: the workspace's [{username,
 // role}], known: the Set of usernames a person chip is drawn for}. A
-// comment field and the maker's own comments add `agents`, the work
-// folder's agent on this computer or on the computer that keeps it
-// ([{name, label, computer?}], vaultState.js mentionAgent, keeperAgent),
-// never a note.
+// comment field and the account's own comments add `agents`, the agent a
+// comment there names: the account's on this computer, or on the computer
+// that keeps the work folder ([{name, label, computer?}], chat/agents.js
+// mentionAgent), never a note.
 export const NO_MENTIONS = Object.freeze({ me: "", people: [], known: new Set() });
 
 // Where an agent a comment names works, in the words that name it: "on

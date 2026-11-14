@@ -29,13 +29,16 @@ ones whose row went stop), stopped at shutdown (``stop_all``). Each turn
 builds the state (``state_of``: this computer's id for that server and its
 name, the app's version, the vaults of that server, workspace and account
 with whether each is paused, and the assistants as the catalog last found
-them, ``catalog.known``: a probe only when none was ever made), announces it when it differs from what was last
-announced or the server asked, then polls (held up to ``POLL_S``). A vault
-added, paused or removed nudges the threads (``nudge``), which see it at
-the end of the poll they hold, at most ``POLL_S`` later. Never a path.
+them, ``catalog.known``: a probe only when none was ever made, each with
+whether it is on for the channel's account and what it may run), announces
+it when it differs from what was last announced or the server asked, then
+polls (held up to ``POLL_S``). A vault added, paused or removed, or an
+agent turned on or off, nudges the threads (``nudge``), which see it at the
+end of the poll they hold, at most ``POLL_S`` later. Never a path.
 
-A work folder of that server kept here with an agent on (step 4c,
-``agent_folders``) is announced with its ``agent``, and its Sends run here:
+The work folders of that server kept here, while an agent of the channel's
+account is on here (step 4c, ``agent_folders``: the first of its agents,
+which the announce says as the first assistant ``enabled``), run its Sends:
 after each announce, on a poll answered ``{wake: ["sends"]}``, when a vault
 takes Sends again (``ask_sends``) and at least every ``SENDS_EVERY_S``, the
 thread asks that server for the Sends that wait (``_sends``), queues each for
@@ -43,7 +46,7 @@ its vault (gamma/local_agents/runner.py ``queue_remote``) and stops the runs
 whose request was withdrawn there; each run speaks to that server with this
 channel's token (``of_vault``, gamma/local_agents/home.py). Each announce
 that succeeds fails there the runs of its vaults left open while that server
-was not reached (``_settle``); a channel deleted turns their agents off.
+was not reached (``_settle``).
 
 The chat's computer side on a page of such a work folder (step 4d) runs here
 too: after each announce, on a poll answered ``{wake: ["chat"]}`` and at
@@ -195,23 +198,16 @@ def make(url: str, workspace: str, token: str, token_id: str, user_id: str) -> t
 
 
 def delete(link_id: str, user_id: str) -> str | None:
-    """The account's channel ``link_id`` stops and is forgotten, and the
-    agent of each work folder it announced is turned off (its run stopped),
-    so showing this computer there again, maybe as another account there,
-    never brings an agent back without the shell's question: its token's
+    """The account's channel ``link_id`` stops and is forgotten: its token's
     id there (the desktop app revokes it), None when it is no channel of
-    that account."""
-    from ..local_agents import store
-
+    that account. The agents stay the computer's: that server, no longer
+    told of this computer, gives it no work."""
     link = get(link_id)
     if link is None or link["created_by"] != user_id:
         return None
     stop(link_id)
     with connect_users_db() as conn:
         conn.execute("DELETE FROM computer_links WHERE id = ?", (link_id,))
-    vaults = _vaults_of(link)
-    for vault_id in store.agents_of([vault["id"] for vault in vaults]):
-        folder_links.set_agent(vault_id, "", by=user_id)
     return link["token_id"]
 
 
@@ -228,37 +224,30 @@ def computer_id(remote_url: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:22]
 
 
-def _code(name: str, found: dict) -> str:
-    """An assistant's state as a code, never the catalog's words."""
-    from ..local_agents import catalog
-
-    if found["found"] is None or found["ready"] is None:
-        return "checking"
-    if not found["found"]:
-        return "missing"
-    if found["ready"]:
-        return ""
-    return "signed_out" if found["problem"] == catalog.NOT_SIGNED_IN.get(name) else "not_ready"
-
-
-def assistants() -> list[dict]:
+def assistants(user_id: str) -> list[dict]:
     """The agents on this computer as the catalog last found them
     (``catalog.known``: one probe when none was ever made, never one to
     refresh it, so a channel keeps no agent probed), each with the models
     it offers (``[{id, label, efforts, effort, default}]``, at most
-    ``MAX_MODELS``: what a chat turn there may ask for), ``[]`` where agents
-    do not run (``local_agents.enabled``)."""
+    ``MAX_MODELS``: what a chat turn there may ask for), whether it is on
+    for the account ``user_id`` (``enabled``: on, and that account turned
+    it on; another account's agent is not that server's to use) and what it
+    may run then (``runs``, ``never`` or ``ask``); ``[]`` where agents do
+    not run (``local_agents.enabled``)."""
     from .. import local_agents
-    from ..local_agents import catalog
+    from ..local_agents import catalog, store
 
     if not local_agents.enabled():
         return []
+    rows = store.enabled_agents()
     there = []
     for name in catalog.AGENTS:
         found = catalog.known(name)
+        on = name in rows and rows[name]["set_by"] == user_id
         there.append({"name": name, "label": found["label"], "found": found["found"], "ready": found["ready"],
-                      "version": (found["version"] or "")[:64], "code": _code(name, found),
-                      "models": list(found.get("models") or [])[:MAX_MODELS]})
+                      "version": (found["version"] or "")[:64], "code": catalog.code(name, found),
+                      "models": list(found.get("models") or [])[:MAX_MODELS], "enabled": on,
+                      "runs": rows[name]["runs"] if on else "never"})
     return there
 
 
@@ -269,40 +258,43 @@ def _vaults_of(link: dict) -> list[dict]:
             == (link["remote_url"], link["workspace_id"], link["created_by"])]
 
 
-def agent_folders(link: dict, vaults: list[dict] | None = None) -> dict[str, tuple[dict, str]]:
+def agent_folders(link: dict) -> dict[str, tuple[dict, str]]:
     """``{folder id: (vault, agent)}``: the work folders of the channel
-    ``link``'s server that a vault here keeps with an agent on
-    (``folder_links.work_vault``, ``local_agents.store``), paused or not;
-    none where agents do not run (``local_agents.enabled``)."""
+    ``link``'s server that a vault here keeps (``folder_links.work_vault``),
+    paused or not, each with the agent that works there, the first of the
+    channel's account's on here (``store.agent_for``); none while it has
+    none, and where agents do not run (``local_agents.enabled``)."""
     from .. import local_agents
     from ..local_agents import store
 
     if not local_agents.enabled():
         return {}
-    work = [vault for vault in (_vaults_of(link) if vaults is None else vaults)
-            if vault["remote_url"] and folder_links.work_vault(vault)]
-    rows = store.agents_of([vault["id"] for vault in work]) if work else {}
-    return {vault["folder_id"]: (vault, rows[vault["id"]]["agent"]) for vault in work if vault["id"] in rows}
+    agent = store.agent_for(link["created_by"])
+    if agent is None:
+        return {}
+    return {vault["folder_id"]: (vault, agent["agent"]) for vault in _vaults_of(link)
+            if vault["remote_url"] and folder_links.work_vault(vault)}
 
 
 def state_of(link: dict) -> dict:
     """What this computer announces on the channel ``link``: its id for
     that server and its name, the app's version, the vaults of that server,
     workspace and account (``{kind, folder_id | page_id, paused}``, the
-    pause as the sync panel shows it; a folder's ``agent``, the one that
-    answers its Sends from this computer, ``codex`` or ``claude``, null for
-    none: ``agent_folders``) and the assistants."""
-    vaults, kept = [], _vaults_of(link)
-    agents = {vault["id"]: agent for vault, agent in agent_folders(link, kept).values()}
-    for vault in kept:
+    pause as the sync panel shows it) and the assistants, each with
+    whether it is on for the channel's account (``assistants``): that
+    server reads the agent of the work folders kept here from them
+    (gamma/computers/registry.py). A work folder's vault also names its
+    agent (``agent``) for an older server, which reads it from there."""
+    vaults, agents = [], agent_folders(link)
+    for vault in _vaults_of(link):
         key, target = ("folder_id", vault["folder_id"]) if vault["kind"] == "folder" else ("page_id", vault["page_id"])
         vaults.append({"kind": vault["kind"], key: target, "paused": bool(vault["status"].get(folder_links.PAUSED))})
-        if vault["kind"] == "folder":
-            vaults[-1]["agent"] = agents.get(vault["id"])
+        if vault["kind"] == "folder" and vault["folder_id"] in agents:
+            vaults[-1]["agent"] = agents[vault["folder_id"]][1]
     name = device()[1].strip()[:64]
     return {"computer": {"id": computer_id(link["remote_url"]), "name": name if name.isprintable() and name
                          else "This computer"},
-            "app": version.label()[:64], "vaults": vaults, "assistants": assistants()}
+            "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link["created_by"])}
 
 
 def _call(server: gamma_sync.Server, method: str, path: str, obj=None) -> dict:

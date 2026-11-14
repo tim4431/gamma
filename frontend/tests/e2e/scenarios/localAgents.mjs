@@ -6,12 +6,12 @@ import { waitForPdf } from "./pdf.mjs";
 
 // An agent on this computer answering a Send (docs/dev/local_agents.md): the
 // desktop app's own server, where Gamma itself starts Codex in a work
-// folder's directory with the comments its maker sent. The vaults recipe
+// folder's directory with the comments its owner sent. The vaults recipe
 // (GAMMA_FOLDER_LINKS, no shell secret, a desktop user agent) with local
 // agents on and the stand-ins of backend/tests/fake_agents/ in place of the
 // CLIs, so no real agent ever runs: the SyncTeX sample paper as a work
-// folder, two comments on its PDF, Codex turned on for the folder by its
-// maker, the Feedback dialog naming Codex before and after, Send, the
+// folder, two comments on its PDF, Codex turned on for the computer by the
+// vault's maker, the Feedback dialog naming Codex before and after, Send, the
 // request worked and done with what changed, the replies signed Codex on
 // the person's computer and the threads resolved, and the agent turned off.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
@@ -32,7 +32,7 @@ function areaOf([x1, y1, x2, y2]) {
 }
 
 export async function localAgentScenarios(env) {
-  const { browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
+  const { browser, step, openPage, assert, assertEq, assertNoProblems, until, makePdf } = env;
   if (!wanted("local-agents")) return;
   const disk = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-agents-"));
   const agentLog = path.join(disk, "agent.jsonl");
@@ -126,10 +126,23 @@ export async function localAgentScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The chat's Codex side, its strip saying the agent is there.
+    // The agents the composer's chip lists, by name, its menu closed again.
+    const agentsListed = async (page, dock) => {
+      await dock.locator(".chatModelChip .uiSelectBtn").click();
+      const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").allInnerTexts();
+      await page.keyboard.press("Escape");
+      return names.map((s) => s.trim());
+    };
+    // The chat's Codex side, picked in the composer's chip unless it shows
+    // already (no AI service: the agent is the chat's own), its strip saying
+    // the agent is there.
     const codexSide = async (page) => {
       const dock = await openChat(page);
-      await dock.locator(".segGroup").getByRole("button", { name: "Codex", exact: true }).click();
+      await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+      if (!(await dock.locator(".computerStrip").count())) {
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: "Codex", exact: true }).click();
+      }
       await dock.locator(".computerStrip").waitFor();
       return dock;
     };
@@ -144,7 +157,7 @@ export async function localAgentScenarios(env) {
       window.getSelection().addRange(range);
       span.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     }, [n, words]);
-    const conversation = async () => (await user.api(`/api/local-agents/chat?page=${main.id}`)).conversation;
+    const conversation = async () => (await user.api(`/api/local-agents/chat?bucket=${main.id}`)).conversation;
     // The request a mention made, once it is done.
     const doneRequest = (id) => until(async () => {
       const found = (await user.api("/api/feedback/requests?after=0")).requests.find((r) => r.id === id);
@@ -179,7 +192,7 @@ export async function localAgentScenarios(env) {
         const d = await openFeedback(page);
         await d.getByRole("button", { name: "Send 2 comments", exact: true }).waitFor();
         // the folder is kept here and an agent was found: the line offering one
-        await until(async () => (await notes(d)).some((s) => s.startsWith("To have Codex or Claude Code answer here, turn one on in the sync panel")),
+        await until(async () => (await notes(d)).some((s) => s === "To have Codex or Claude Code answer here, turn one on in Settings → AI."),
           { timeout: 15000, what: "the line saying where to turn an agent on" });
         await page.keyboard.press("Escape");
         await d.waitFor({ state: "detached" });
@@ -187,15 +200,15 @@ export async function localAgentScenarios(env) {
       } finally { await ctx.close(); }
     });
 
-    await step("local-agents: the vault's maker turns Codex on for the work folder, which nothing waits on yet", async () => {
-      const turned = await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent: "codex" } });
+    await step("local-agents: the vault's maker turns Codex on for the computer, which nothing waits on yet", async () => {
+      const turned = await user.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: true } });
       assertEq(turned.queued, 0, "no Send was waiting");
-      assertEq(turned.agent?.name, "codex", "the vault's agent");
-      assertEq(turned.agent.label, "Codex");
-      assertEq(turned.agent.ready, true, "ready, from the probe the PATCH ran");
-      assertEq(turned.agent.running, null, "nothing running");
+      assertEq(JSON.stringify([turned.name, turned.label, turned.enabled, turned.runs, turned.mine]),
+        JSON.stringify(["codex", "Codex", true, "never", true]), "on, the account's own");
+      assertEq(turned.ready, true, "ready, from the probe the PATCH ran");
       const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
-      assertEq(listed.agent?.name, "codex", "the listing carries it");
+      assertEq(listed.agent?.name, "codex", "the listing carries the agent that works in the vault");
+      assertEq(listed.agent.running, null, "nothing running");
       const doc = await user.api(`/api/feedback?scope=${link.folder_id}`);
       assertEq(JSON.stringify([doc.agent?.name, doc.agent?.takes, doc.agent?.ready]), JSON.stringify(["codex", true, true]), "the feedback document's agent takes the maker's Sends");
     });
@@ -393,9 +406,8 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
-        // Their names: a narrow window shows the sides' icons alone.
-        assertEq(await dock.locator(".segGroup button").evaluateAll((b) => b.map((x) => x.getAttribute("aria-label")).join("|")), "Gamma AI|Codex",
-          "the switch names Gamma AI and the folder's agent");
+        await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+        assertEq((await agentsListed(page, dock)).join("|"), "Gamma AI|Codex", "the chip lists Gamma AI and the agent turned on");
         await codexSide(page);
         await until(async () => (await dock.locator(".computerStrip").innerText()).trim() === "Codex on this computer · paper",
           { what: "the strip names the agent and the folder" });
@@ -419,7 +431,7 @@ export async function localAgentScenarios(env) {
       assertEq(turns.length, 1, "one turn");
       chatThread = turns[0].in.params.threadId;
       const prompt = turns[0].in.params.input.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-      assert(prompt.includes('"message": "tighten this sentence"') && prompt.includes("The penalty") && prompt.includes('"file": "main.pdf"'),
+      assert(prompt.includes('"message": "tighten this sentence"') && prompt.includes("The penalty") && prompt.includes('"path": "main.pdf"'),
         `the message, the passage and the file reach Codex: ${prompt.slice(0, 600)}`);
       assert(!turns[0].in.params.outputSchema, "a chat turn answers in prose, with no answer schema");
       const stored = await conversation();
@@ -466,7 +478,7 @@ export async function localAgentScenarios(env) {
         await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).click({ timeout: 10000 });
-        await dock.locator(".computerEnded", { hasText: "Stopped" }).waitFor({ timeout: 20000 });
+        await dock.locator(".chatBubble.ai", { hasText: "(stopped)" }).waitFor({ timeout: 20000 });
         await dock.getByRole("button", { name: "Send", exact: true }).waitFor();
         assertEq((await conversation()).messages.at(-1).state, "stopped", "stored as stopped");
         await dock.getByRole("button", { name: "New chat", exact: true }).click();
@@ -477,7 +489,7 @@ export async function localAgentScenarios(env) {
         await dock.locator(".chatBubble.user", { hasText: "rewrite the whole method" }).waitFor();
         assertNoProblems(page);
       } finally { await ctx.close(); }
-      assert(await user.api("/api/local-agents/chat/history?page=" + main.id).then((h) => h.conversations.length === 0),
+      assert(await user.api("/api/local-agents/chat/history?bucket=" + main.id).then((h) => h.conversations.length === 0),
         "the opened conversation is the active one again");
     });
 
@@ -493,10 +505,10 @@ export async function localAgentScenarios(env) {
         const dock = await codexSide(page);
         await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(message);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
-        const card = dock.locator(".computerAsk");
+        const card = dock.locator(".chatAsk");
         await card.waitFor({ timeout: 20000 });
         assertEq((await card.locator(".chatApprovalHead").innerText()).trim(), "Codex wants to run a command");
-        assertEq((await card.locator(".computerAskCommand").innerText()).trim(), BUILD, "the command, whole");
+        assertEq((await card.locator(".chatAskCommand").innerText()).trim(), BUILD, "the command, whole");
         assert((await card.innerText()).includes("The build fetches a font"), "its reason");
         assert((await card.innerText()).includes("It runs as you, with your files and the network."), "what allowing means");
         await until(async () => (await dock.locator(".computerStrip.asking").innerText().catch(() => "")).trim()
@@ -506,14 +518,14 @@ export async function localAgentScenarios(env) {
         const replies = (await conversation()).messages.filter((m) => m.role === "agent" && m.text === CHAT_REPLY).length;
         await until(async () => (await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).count()) === replies,
           { what: "the turn's reply in the window" });
-        assertEq(await dock.locator(".computerAsk").count(), 0, "no card left");
+        assertEq(await dock.locator(".chatAsk").count(), 0, "no card left");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     };
 
-    await step("local-agents: the maker lets Codex ask in the chat, and a command it asks to run waits on a card until allowed once", async () => {
-      const turned = await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "ask" } });
-      assertEq(turned.agent?.runs, "ask", "the folder lets its agent ask");
+    await step("local-agents: its owner lets Codex ask, and a command it asks to run in the chat waits on a card until allowed once", async () => {
+      const turned = await user.api("/api/local-agents/codex", { method: "PATCH", body: { runs: "ask" } });
+      assertEq(turned.runs, "ask", "the computer lets its agent ask");
       const before = decisions().length;
       await askAndAnswer("build it", (card) => card.getByRole("button", { name: "Allow once", exact: true }).click());
       assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["accept"]), "Codex heard accept");
@@ -534,12 +546,12 @@ export async function localAgentScenarios(env) {
       assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["acceptForSession"]), "allowed for the conversation");
       // the next turn asks the same command: answered by Gamma, no card
       before = decisions().length;
-      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { page: main.id, text: "and once more" } });
+      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { bucket: main.id, text: "and once more" } });
       await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 40000, what: "the turn ends unasked" });
       assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["accept"]), "Gamma answered the granted command");
       const last = (await conversation()).messages.at(-1);
       assert(!last.steps.some((s) => s.status === "asked") && !(last.asks || []).length, "nothing was put to the person");
-      await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "never" } });
+      await user.api("/api/local-agents/codex", { method: "PATCH", body: { runs: "never" } });
     });
 
     // Step 3c: the rest of the computer side.
@@ -605,8 +617,54 @@ export async function localAgentScenarios(env) {
       assertEq(JSON.stringify([thread?.model, turn?.effort]), JSON.stringify(["gpt-fake-mini", "medium"]), "the model and the effort chosen");
     });
 
+    // Step 2.8 of docs/research/agents-as-participants-plan.md: a chat with no AI service.
+    await step("local-agents: with no AI service, a library PDF's chat is Codex's, the setup card picks it again, and it answers in a directory offered", async () => {
+      const notesDir = path.join(disk, "notes");
+      fs.mkdirSync(path.join(notesDir, "sections"), { recursive: true });
+      fs.writeFileSync(path.join(notesDir, "sections", "method.tex"), "We fit it by gradient descent.\n");
+      const offered = await user.api("/api/local-agents/dirs", { method: "PUT", body: [{ path: notesDir, name: "Notes" }] });
+      assertEq(offered.dirs.map((d) => d.name).join(","), "Notes", "the directory offered");
+      const up = await user.upload("/api/uploads", makePdf([["A library paper for Codex"]]), "library.pdf", "application/pdf");
+      const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+        body: { default_title: "Library paper", source_url: up.source_url, original_filename: "library.pdf" } });
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(paper.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await openChat(page);
+        // no AI service connected: the chat's own agent is Codex, on a page of no synced folder
+        await dock.locator(".computerStrip").waitFor();
+        await dock.locator(".chatEmpty", { hasText: "Ask Codex anything" }).waitFor();
+        // Gamma AI picked shows the setup card, which offers Codex beside the AI services
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: "Gamma AI", exact: true }).click();
+        const card = dock.locator(".chatSetup");
+        await card.waitFor();
+        await card.getByRole("button", { name: /^Codex/ }).click();
+        await dock.locator(".computerStrip").waitFor();
+        // the header keeps what applies to Codex's conversation
+        await dock.getByRole("button", { name: "Chat history", exact: true }).waitFor();
+        // where it works: the directory offered, picked in the strip before the first turn
+        await dock.locator(".computerPlace .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: "Notes", exact: true }).click();
+        await dock.locator(".chatEmpty", { hasText: "it works in the directory you chose" }).waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("what is this paper about?");
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        // the reply in the chat's own transcript: its steps pill, its text, what it changed
+        await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor({ timeout: 40000 });
+        await until(async () => (await dock.locator(".chatSteps").last().innerText()).trim() === "1 step", { what: "the steps pill, done" });
+        await dock.locator(".chatFileChanges", { hasText: "sections/method.tex" }).waitFor();
+        await until(async () => (await dock.locator(".computerPlace").innerText()).trim() === "Notes", { what: "the strip names the directory" });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const stored = (await user.api(`/api/local-agents/chat?bucket=${paper.id}`)).conversation;
+      assertEq(stored.messages.at(-1).state, "done", "the turn ran");
+      assert(fs.readFileSync(path.join(notesDir, "sections", "method.tex"), "utf8").includes("weight decay"), "Codex edited the directory offered");
+      await user.api("/api/local-agents/dirs", { method: "PUT", body: [] });
+    });
+
     await step("local-agents: a running turn is a Background tasks row, whose Stop ends it", async () => {
-      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { page: main.id, text: "take your time" } });
+      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { bucket: main.id, text: "take your time" } });
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
@@ -621,9 +679,11 @@ export async function localAgentScenarios(env) {
       } finally { await ctx.close(); }
     });
 
-    await step("local-agents: turned off by its maker, the folder has no agent and the feedback document names none", async () => {
-      const off = await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent: "" } });
-      assertEq(off.agent ?? null, null, "no agent");
+    await step("local-agents: turned off by its owner, the folder has no agent and the feedback document names none", async () => {
+      const off = await user.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: false } });
+      assertEq(off.enabled, false, "off");
+      const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
+      assertEq(listed.agent ?? null, null, "no agent in the vault");
       const doc = await user.api(`/api/feedback?scope=${link.folder_id}`);
       assertEq(doc.agent, null, "the document says none");
       await user.api(`/api/folder-links/${link.id}`, { method: "DELETE" });

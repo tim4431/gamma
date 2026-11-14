@@ -394,6 +394,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(config, "VAULTS_DB", tmp_path / "vaults.db")
     monkeypatch.setattr(config, "WORKSPACES_DIR", tmp_path / "workspaces")
+    monkeypatch.setattr(config, "AGENTS_DIR", tmp_path / "agents")
     monkeypatch.setattr(config, "BACKUPS_DIR", tmp_path / "backups")
     monkeypatch.setattr(db_mod, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(db_mod, "VAULTS_DB", tmp_path / "vaults.db")

@@ -142,9 +142,6 @@
   .vaultBox .switch input:disabled + .switchTrack { opacity: 0.45; }
   .vaultBox .say { color: var(--text-secondary); line-height: 1.45; }
   .vaultBox .say.no { color: var(--danger); }
-  /* an agent that cannot run: amber, a warning, as Gamma's .agentProblem */
-  .vaultBox .say.warn { color: var(--warn); }
-  .vaultBox .agentRow { display: flex; flex-direction: column; gap: 5px; }
   .vaultBox .btns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
   .seg button { border: none; background: transparent; color: var(--text-secondary); font: inherit; font-size: var(--fs-2xs); padding: 3px 8px; cursor: pointer; }
@@ -648,8 +645,7 @@
   // A row's or a vault view's action (main.js keepingAction). Those that
   // change the vault or run a round leave the panel open on the new state;
   // the others ask first in a native dialog, or open something.
-  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'agent', 'agent-runs', 'check-agents',
-    'show-computer', 'hide-computer'];
+  const STAYS_OPEN = ['pause', 'resume', 'sync', 'pull-now', 'push-now', 'pull', 'push', 'library', 'show-computer', 'hide-computer'];
   function runKept(i, action, value) {
     if (!STAYS_OPEN.includes(action)) closeMenu();
     gammaShell.keepingAction(i.kind, i.server, i.id, action, value).catch(() => {});
@@ -781,117 +777,13 @@
 
   const pullSwitch = (id, on, onPick, shut) => switchOf(id, 'Pull', on, onPick, shut);
 
-  // A work folder's agent: Off / Codex / Claude Code, as three buttons
-  // (`agents`, keeping.js agentChoices); one not on this computer or not
-  // ready is shut, its problem in its tooltip.
-  function agentSeg(value, agents, onPick) {
-    const seg = document.createElement('span');
-    seg.className = 'seg';
-    seg.id = 'vaultAgent';
-    seg.setAttribute('role', 'group');
-    seg.setAttribute('aria-label', 'Agent in this folder');
-    for (const a of [{ name: '', label: 'Off' }, ...agents]) {
-      const b = document.createElement('button');
-      b.dataset.agent = a.name;
-      b.textContent = a.label;
-      b.setAttribute('aria-pressed', String(value === a.name));
-      if (a.name && (a.found === false || a.ready === false)) {
-        b.disabled = true;
-        b.title = a.problem || `${a.label} is not ready on this computer`;
-      }
-      b.onclick = (e) => { e.stopPropagation(); if (value !== a.name) onPick(a.name); };
-      seg.appendChild(b);
-    }
-    return seg;
-  }
-
-  // What the agent chosen does in the folder, under the agent row.
-  const AGENT_SAYS = {
-    '': 'Sends wait for an agent you run yourself.',
-    codex: 'Codex answers this folder\'s Sends: it edits the files here and runs commands in its sandbox, without network.',
-    claude: 'Claude Code answers this folder\'s Sends: it edits the files here and runs no commands.',
-  };
-
-  // What a work folder's agent may run beyond its confinement: Nothing more
-  // ('never') / Ask me in the chat ('ask') for a work folder of this
-  // computer's server, Nothing more / Ask on this computer ('computer') for
-  // one of another server, as two buttons; `shut`, why Ask on this computer
-  // cannot be chosen (that server reached over plain http).
-  const RUNS_HERE = [['never', 'Nothing more'], ['ask', 'Ask me in the chat']];
-  const RUNS_FAR = [['never', 'Nothing more'], ['computer', 'Ask on this computer']];
-  function runsSeg(value, choices, onPick, shut) {
-    const seg = document.createElement('span');
-    seg.className = 'seg';
-    seg.id = 'vaultRuns';
-    seg.setAttribute('role', 'group');
-    seg.setAttribute('aria-label', 'What it may run');
-    for (const [word, text] of choices) {
-      const b = document.createElement('button');
-      b.dataset.runs = word;
-      b.textContent = text;
-      b.setAttribute('aria-pressed', String(value === word));
-      if (word === 'computer' && shut && value !== word) {
-        b.disabled = true;
-        b.title = shut;
-      }
-      b.onclick = (e) => { e.stopPropagation(); if (value !== word) onPick(word); };
-      seg.appendChild(b);
-    }
-    return seg;
-  }
-
-  // What the agent on may run, and may ask for, under the row What it may
-  // run: in the chat here, or on this computer for a turn started on
-  // another server (`remote`, its name).
-  const RUNS_SAYS = {
-    codex: 'Codex runs commands in its sandbox, without network; with Ask, it can ask in the chat to go further (the network, files outside this folder).',
-    claude: 'Claude Code edits the files here and runs no commands; with Ask, it can ask in the chat to run one (your build).',
-  };
-  const RUNS_SAYS_FAR = {
-    codex: (remote) => `Codex keeps to its sandbox. With Ask on this computer it can ask to go further (the network, files outside this folder) in a turn started on ${remote}; the question shows in this window, never on ${remote}.`,
-    claude: (remote) => `Claude Code edits the files here and runs no commands. With Ask on this computer it can ask to run one (your build) in a turn started on ${remote}; the question shows in this window, never on ${remote}.`,
-  };
-
-  // A work folder's agent row (its maker's alone): the segment, then as
-  // visible lines the problem of the chosen agent (amber; one that cannot
-  // be chosen says why in its button's tooltip), what the chosen one does,
-  // and what it does now (Gamma's agentWorking words); with an agent on,
-  // the row What it may run and its line, for a work folder of another
-  // server Ask on this computer, shut while that server is reached over
-  // plain http, which an error line says when it is set.
-  function agentRow(i) {
-    const box = document.createElement('div');
-    box.className = 'agentRow';
-    box.appendChild(switchRow([['Agent in this folder', agentSeg(i.agent, i.agents, (name) => runKept(i, 'agent', name))]]));
-    const line = (text, warn) => {
-      const say = document.createElement('div');
-      say.className = `say${warn ? ' warn' : ''}`;
-      say.textContent = text;
-      box.appendChild(say);
-    };
-    if (i.agent && i.agentReady === false && i.agentProblem) line(i.agentProblem, true);
-    line(AGENT_SAYS[i.agent] || AGENT_SAYS[''], false);
-    if (i.agentRunning) {
-      const doing = i.agentRunning === 'Working' ? '' : i.agentRunning; // 'Working': a step of no name, or none told
-      line(doing ? `${i.agentLabel} is working: ${doing}` : `${i.agentLabel} is working…`, false);
-    }
-    if (i.agent && !i.remoteUrl) {
-      box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, RUNS_HERE, (word) => runKept(i, 'agent-runs', word))]]));
-      if (RUNS_SAYS[i.agent]) line(RUNS_SAYS[i.agent], false);
-    } else if (i.agent) {
-      const shut = i.secure ? '' : `Needs https: ${i.remote} is reached over plain http.`;
-      box.appendChild(switchRow([['What it may run', runsSeg(i.agentRuns, RUNS_FAR, (word) => runKept(i, 'agent-runs', word), shut)]]));
-      if (RUNS_SAYS_FAR[i.agent]) line(RUNS_SAYS_FAR[i.agent](i.remote), false);
-      if (i.agentRuns === 'computer' && !i.secure) {
-        line(`${i.remote} is reached over plain http now: whatever ${i.agentLabel || 'the agent'} asks is declined until it is reached over https.`, true);
-      }
-    }
-    return box;
-  }
+  // Where a work folder's agents are set: in Gamma, for this computer, not
+  // for one folder (docs/dev/local_agents.md "Who turns it on").
+  const AGENTS_SET = 'Codex and Claude Code work in this folder once they are turned on in Gamma\'s Settings → AI.';
 
   // A vault's switches, a row each, its name at the left and its control at
-  // the right edge: `[name, control]` pairs, Pull then Push, a work folder's
-  // library switch, its agent and what that may run.
+  // the right edge: `[name, control]` pairs, Pull then Push, and a work
+  // folder's library switch.
   function switchRow(pairs) {
     const sw = document.createElement('div');
     sw.className = 'switches';
@@ -956,12 +848,9 @@
     panel.appendChild(box);
   }
 
-  // A work folder's view of its maker looks for the agents on this computer
-  // again (main.js checkAgents), so its agent row offers what is there now.
   function openVault(i) {
     vaultView = i.key;
     renderSync();
-    if (i.agentHere && i.mine && i.agents) runKept(i, 'check-agents');
   }
 
   // A vault's own view: where it is and how it stands, its switches (a work
@@ -1004,14 +893,20 @@
           farWork ? '' : i.remoteUrl ? FAR_PUSH : i.whole && i.push !== 'everything' ? WHOLE_PUSH : '', farWork ? FAR_WORK : '')]])];
       // a work folder's switch: whether the PDFs and notes it finds are added to the library too
       if (i.work) rows.push(switchRow([['Add its PDFs and notes to the library', switchOf('vaultLibrary', 'Add its PDFs and notes to the library', i.library, (on) => runKept(i, 'library', on))]]));
-      // and its agent, its maker's choice on a server that runs agents (one of another server once this computer is shown there)
-      if (i.agentHere && i.mine && i.agents) rows.push(agentRow(i));
       for (const sw of rows) {
         if (shut) {
           sw.title = shut;
           for (const input of sw.querySelectorAll('input, button')) input.disabled = true;
         }
         box.appendChild(sw);
+      }
+      // and where its agents are set
+      if (i.work && i.mine) {
+        const say = document.createElement('div');
+        say.className = 'say';
+        say.id = 'vaultAgents';
+        say.textContent = AGENTS_SET;
+        box.appendChild(say);
       }
     }
     if (shut) {

@@ -2036,6 +2036,32 @@ def _v58_request_via(ws: str, pages: sqlite3.Connection, data) -> None:
         pages.execute("ALTER TABLE feedback_requests ADD COLUMN via TEXT NOT NULL DEFAULT ''")
 
 
+def _v59_computer_chat_buckets(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A computer agent's conversation is about any bucket, as an AI chat
+    is (docs/dev/local_agents.md "The chat's computer side"):
+    ``computer_chats``' ``page_id`` becomes ``bucket`` and it gains ``dir``,
+    where its agent works, and ``computer_chat_runs``' ``page_id`` becomes
+    ``bucket``. Every conversation so far is of a file of a work folder, so
+    its ``dir`` is that work folder (the page's ``work_folder``), "" for a
+    page that is none any more. The index on ``page_id`` goes; the schema
+    statements make the one on ``bucket``. Each table changes where
+    ``_columns()`` has it with ``page_id``, so a rerun changes nothing and a
+    copy without them gets them from the schema statements. Neither table
+    leaves a workspace's own copy (``LOCAL_STEPS``)."""
+    chats = _columns(pages, "computer_chats")
+    if "page_id" in chats:
+        pages.execute("DROP INDEX IF EXISTS idx_computer_chats_page")
+        pages.execute("ALTER TABLE computer_chats RENAME COLUMN page_id TO bucket")
+    if chats and "dir" not in chats:
+        pages.execute("ALTER TABLE computer_chats ADD COLUMN dir TEXT NOT NULL DEFAULT ''")
+        if _columns(pages, "unified_blocks"):
+            pages.execute("UPDATE computer_chats SET dir = COALESCE((SELECT json_extract(b.properties, "
+                          "'$.work_folder') FROM unified_blocks b WHERE b.id = computer_chats.bucket "
+                          "AND json_type(b.properties, '$.work_folder') = 'text'), '')")
+    if "page_id" in _columns(pages, "computer_chat_runs"):
+        pages.execute("ALTER TABLE computer_chat_runs RENAME COLUMN page_id TO bucket")
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -2084,6 +2110,7 @@ WORKSPACE_STEPS = [
     (54, "feedback", _v54_comment_agents),
     (55, "positions", _v55_positions),
     (58, "request_via", _v58_request_via),
+    (59, "computer_chat_buckets", _v59_computer_chat_buckets),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
@@ -2092,6 +2119,7 @@ WORKSPACE_STEPS = [
 DERIVED_STEPS = {47, 48, 53}
 
 # The workspace steps that change only tables no copy of the workspace keeps
-# in step with another (comments, the Inbox's rows, the Sends): a mirror
-# never sends them, so two copies on either side of one still agree.
-LOCAL_STEPS = {54, 58}
+# in step with another (comments, the Inbox's rows, the Sends, a computer
+# agent's conversations): a mirror never sends them, so two copies on either
+# side of one still agree.
+LOCAL_STEPS = {54, 58, 59}

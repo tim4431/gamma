@@ -12,9 +12,9 @@ shell is a thread of its own (``shell``) holding ``GET
 /api/local-agents/asks`` with the shell's word on the owner's session, as
 the desktop app's follower does, so this computer hears it throughout.
 
-The policy ``computer`` set with the shell's word for a work folder of
-another server alone, over https alone, and ``older`` from a server whose
-pages do not say a turn waits; an ask listed here with Gamma's reading of
+A turn there may ask while its agent may (``runs`` ``ask``, the
+computer's), over https alone and with the shell's secret; an ask listed
+here with Gamma's reading of
 it and none of it there, answered once or declined by the shell alone (the
 chat's routes refusing, here and there), declined by Gamma when nobody
 answers, when nobody is there to, over plain http, without a secret, too
@@ -23,10 +23,8 @@ Stop there declining what waits here; an answer never waiting on that
 server; a lost write of ``waiting`` written again, a refused one not; a turn's wait moving its
 deadline ten minutes at most; the read held until a change; no grant for a
 remote turn; the maker alone; Background tasks there; ``waiting`` false at
-every end; the card's file from this computer's rows alone; a vault moved
-unchecked losing its policy."""
+every end; the card's file from this computer's rows alone."""
 
-import io
 import json
 import os
 import subprocess
@@ -43,7 +41,6 @@ from fake_agents import read_log, requests_in, script_agent
 from gamma import config, folder_links, gamma_sync, remote_servers
 from gamma.db import connect_pages_db
 from gamma.local_agents import chats, home, runner, store
-from gamma.routers import folder_links as folder_links_api
 from test_remote_chat import (OWNER, PASSWORD, _chat, _reply, _run_there, _say, _sent, _stop, _turn_row,  # noqa: F401
                               lab, nas)  # the fixtures
 from test_remote_sends import SECRET, SHELL, _made, _until
@@ -81,14 +78,14 @@ def shell(lab, nas, monkeypatch):
 
 
 def _asking(lab, nas, name: str, monkeypatch, *ask, **script) -> SimpleNamespace:
-    """The paper as a work folder of the NAS whose agent may ask on this
-    computer, the stand-in Codex asking ``ask``; this computer announced."""
+    """The paper as a work folder of the NAS, its agent let ask (on this
+    computer, for a turn there), the stand-in Codex asking ``ask``; this
+    computer announced."""
     script_agent(monkeypatch, nas.log, ask=list(ask or [ASK]), **script)
     f = _made(lab, nas, name)
     f.turn.once()
-    r = lab.owner.patch(f"/api/folder-links/{f.id}", json={"agent_runs": "computer"}, headers=SHELL)
-    assert r.status_code == 200, r.text
-    assert (r.json()["agent"]["runs"], r.json()["older"]) == ("computer", False)
+    r = lab.owner.patch("/api/local-agents/codex", json={"runs": "ask"}, headers=SHELL)
+    assert r.status_code == 200 and r.json()["runs"] == "ask", r.text
     return f
 
 
@@ -120,67 +117,21 @@ def _steers(log) -> list[str]:
 
 # --- the policy --------------------------------------------------------------------------------------
 
-def test_ask_on_this_computer_is_set_with_the_shells_word_for_another_servers_work_folder_alone(lab, nas,
-                                                                                               monkeypatch):
+def test_a_turn_there_asks_while_its_agent_may_over_https_with_the_secret(lab, nas, monkeypatch):
     f = _made(lab, nas, "RA policy")
-    path = f"/api/folder-links/{f.id}"
-    r = lab.owner.patch(path, json={"agent_runs": "computer"}, headers=SHELL)  # http://testserver: plain http
-    assert (r.status_code, r.json()["detail"]) == (
-        409, "testserver is reached over plain http: Ask on this computer needs https.")
+    link = folder_links.get_link(f.id)
+    assert runner.ask_refusal(link, True, "codex") == runner.RUNS_NEVER     # never until it is let ask
+    r = lab.owner.patch("/api/local-agents/codex", json={"runs": "ask"}, headers=SHELL)
+    assert r.status_code == 200 and r.json()["runs"] == "ask", r.text
+    assert runner.ask_refusal(link, True, "codex") == runner.NOT_SECURE     # http://testserver: plain http
     monkeypatch.setattr(remote_servers, "plain", lambda url: "")
-    r = lab.owner.patch(path, json={"agent_runs": "computer"})
-    assert (r.status_code, r.json()["detail"]) == (403, "Only the desktop app may let an agent ask on this computer.")
-    monkeypatch.setenv("GAMMA_SHELL_SECRET", "")                           # no secret: refused, never unchecked
-    assert lab.owner.patch(path, json={"agent_runs": "computer"}, headers=SHELL).status_code == 403
+    assert runner.ask_refusal(link, True, "codex") == ""
+    assert runner.ask_refusal(link, True, "claude") == runner.RUNS_NEVER    # another agent's turn
+    monkeypatch.setenv("GAMMA_SHELL_SECRET", "")
+    assert runner.ask_refusal(link, True, "codex") == runner.NOBODY_HERE    # no window to ask in
     monkeypatch.setenv("GAMMA_SHELL_SECRET", SECRET)
-    r = lab.owner.patch(path, json={"agent_runs": "ask"}, headers=SHELL)
-    assert (r.status_code, r.json()["detail"]) == (409, "Asking in the chat is for a work folder of this computer's "
-                                                        "server: for one of another server, choose Ask on this "
-                                                        "computer.")
-    r = lab.owner.patch(path, json={"agent_runs": "always"}, headers=SHELL)
-    assert (r.status_code, r.json()["detail"]) == (400, "What an agent may run is never, ask or computer.")
-    on = lab.owner.patch(path, json={"agent_runs": "computer"}, headers=SHELL)
-    assert on.status_code == 200 and (on.json()["agent"]["runs"], on.json()["older"]) == ("computer", False)
-    listed = next(link for link in lab.owner.get("/api/folder-links").json()["links"] if link["id"] == f.id)
-    assert (listed["agent"]["runs"], listed["plain"]) == ("computer", "")
-    assert store.runs_of(f.id) == "computer"
-    # a local work folder: here the agent asks in the chat
-    local = {**folder_links.get_link(f.id), "remote_url": ""}
-    with pytest.raises(folder_links_api.HTTPException) as refused:
-        folder_links_api._runs_allowed(None, local, "computer", "codex")
-    assert (refused.value.status_code, refused.value.detail) == (
-        409, "Ask on this computer is for a work folder of another server: here the agent asks in the chat.")
-    # a NAS whose pages do not say a turn waits: older, the policy set all the same
-    opened = gamma_sync.default_open
-
-    def older(method, path_, headers, body=None):
-        status, answer_headers, data = opened(method, path_, headers, body)
-        if path_ == "/api/sync/whoami":
-            who = json.loads(data.read())
-            who.pop("computer_asks", None)
-            data = io.BytesIO(json.dumps(who).encode())
-        return status, answer_headers, data
-
-    monkeypatch.setattr(gamma_sync, "default_open", older)
-    again = lab.owner.patch(path, json={"agent_runs": "computer"}, headers=SHELL)
-    assert again.status_code == 200 and again.json()["older"] is True
-    nas.down.append(True)                                                  # not reached: no older, still set
-    assert lab.owner.patch(path, json={"agent_runs": "computer"}, headers=SHELL).json()["older"] is False
-    nas.down.clear()
-    assert lab.owner.patch(path, json={"agent_runs": "never"}).json()["agent"]["runs"] == "never"   # the maker's alone
-    store.set_runs(f.id, "computer", by=lab.user)
-    assert lab.owner.patch(path, json={"agent": ""}).status_code == 200    # the agent off forgets it
-    assert store.runs_of(f.id) == "never"
-
-
-def test_a_vault_moved_unchecked_no_longer_asks_on_this_computer(lab, nas):
-    f = _made(lab, nas, "RA moved", shown=False, agent="")
-    store.set_runs(f.id, "computer", by=lab.user)
-    remote_servers._unasked([f.id])
-    assert store.runs_of(f.id) == "never"
-    store.set_runs(f.id, "ask", by=lab.user)                               # another policy: not this move's
-    remote_servers._unasked([f.id])
-    assert store.runs_of(f.id) == "ask"
+    lab.owner.patch("/api/local-agents/codex", json={"runs": "never"}).raise_for_status()   # its owner's alone
+    assert runner.ask_refusal(link, True, "codex") == runner.RUNS_NEVER
 
 
 # --- the loop ------------------------------------------------------------------------------------------
@@ -424,7 +375,7 @@ def test_a_remote_turn_never_answers_from_a_grant(lab, nas, shell, monkeypatch):
     conversation = _run_there(lab, turn_id)["conversation_id"]
     _post(shell.client, card["id"], "deny")
     assert runner.wait_idle(60)
-    store.grant(conversation, CURL, link_id=f.id, host="example.org")      # a grant this computer would never keep
+    store.grant(conversation, CURL, agent="codex", dir=str(f.root), host="example.org")   # one it would never keep
     _started(lab, f, "Again.")
     _post(shell.client, _card(shell, {card["id"]})["id"], "deny")          # asked all the same
     assert runner.wait_idle(60)
@@ -484,8 +435,8 @@ def test_an_end_or_a_failure_left_open_leaves_waiting_false(lab, nas, monkeypatc
 def test_the_card_names_a_file_only_from_the_vaults_rows(lab, nas):
     f = _made(lab, nas, "RA file", shown=False, agent="")
     link = {"id": f.id}
-    assert home._vault_file(SimpleNamespace(page_id=f.page), link) == "main.pdf"
-    assert home._vault_file(SimpleNamespace(page_id="aPageThere"), link) == ""   # never the NAS's path or title
+    assert home._vault_file(SimpleNamespace(bucket=f.page), link) == "main.pdf"
+    assert home._vault_file(SimpleNamespace(bucket="aPageThere"), link) == ""   # never the NAS's path or title
 
 
 def test_the_shells_secret_is_off_the_environment_once_read(monkeypatch):

@@ -5,13 +5,13 @@ http may be used for is the session's to ask (``POST /check``: it says
 nothing the account does not see); moving the account's links to a server's
 new address, and the certificates the shell trusts (gamma/tls_trust.py), take
 the shell's word, with no secret configured refused too
-(routers/folder_links.py ``_shell_strict``)."""
+(routers/shell.py ``shell_strict``)."""
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import folder_links, remote_servers, tls_trust
-from .folder_links import _account, _shell_strict
+from .shell import account, shell_strict
 
 router = APIRouter(prefix="/api/remote-servers", tags=["remote-servers"])
 
@@ -55,7 +55,7 @@ def check(payload: Check, request: Request):
     for, ``workspace`` the channel's workspace there (none: a new vault or
     offline copy). 400 for an address that does not do."""
     try:
-        return remote_servers.check(payload.url, _account(request), vault=payload.vault, workspace=payload.workspace)
+        return remote_servers.check(payload.url, account(request), vault=payload.vault, workspace=payload.workspace)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -72,7 +72,7 @@ def move(payload: Move, request: Request):
     ``plain_ok``; 409 for a token refused there or another workspace
     there; 502 for a new address not reached as that server (not
     answering, redirected, blocked, its certificate not trusted)."""
-    user_id = _shell_strict(request, SHELL_ONLY)
+    user_id = shell_strict(request, SHELL_ONLY)
     try:
         if payload.dry_run:
             return remote_servers.plan(payload.frm, payload.to, user_id)
@@ -82,9 +82,9 @@ def move(payload: Move, request: Request):
 
 
 def _pins_kept_here(request: Request) -> str:
-    """``_shell_strict``, on a server that keeps pins (``tls_trust.enabled``:
+    """``shell_strict``, on a server that keeps pins (``tls_trust.enabled``:
     not a hosted one), else 404."""
-    user_id = _shell_strict(request, SHELL_ONLY)
+    user_id = shell_strict(request, SHELL_ONLY)
     if not tls_trust.enabled():
         raise HTTPException(status_code=404, detail="This server trusts no certificate by its fingerprint.")
     return user_id

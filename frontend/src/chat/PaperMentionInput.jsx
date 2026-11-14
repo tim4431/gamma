@@ -10,9 +10,12 @@ import { t } from "../shared/i18n/i18n.js";
 // The chat composer, with the picker "@" opens over it: quick open's page
 // list (rankLibraryPages' rows drawn by PageOption) for the text after the
 // "@". `tree`, `recentViews` and `openTabs` are what that ranking reads;
-// `selected` the attached page ids, checked in the list.
+// `selected` the attached page ids, checked in the list. `mentions` false
+// (a computer's agent, which takes no attached pages) opens no picker;
+// `label` names the field.
 export default function PaperMentionInput({
-  value, onChange, pages, tree, recentViews, openTabs, currentPageId, selected, onAttach, onSend, ...props
+  value, onChange, pages, tree, recentViews, openTabs, currentPageId, selected, onAttach, onSend, mentions = true, label = "",
+  ...props
 }) {
   const input = useRef(null);
   const list = useRef(null);
@@ -28,6 +31,7 @@ export default function PaperMentionInput({
   useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, [active]);
   useEffect(() => { if (!value) { setMention(null); dismissed.current = null; } }, [value]);
   const scan = (el) => {
+    if (!mentions) return;
     const next = mentionAt(el.value, el.selectionStart, el.selectionEnd);
     if (next?.start === dismissed.current) { setMention(null); return; }
     dismissed.current = null;
@@ -64,8 +68,9 @@ export default function PaperMentionInput({
       </div>
       <div className="chatMentionHint">{full ? t("Up to {MAX_CHAT_REFERENCES} attached pages. Remove one to add another.", { MAX_CHAT_REFERENCES }) : t("Adds paper details and text to chat context. Tools can read more.")}</div>
     </div>}
-    <AutoGrowTextarea {...props} ref={input} value={value} role="combobox" aria-label={t("Message AI")}
-      aria-autocomplete="list" aria-expanded={!!mention} aria-controls={mention ? listId : undefined}
+    <AutoGrowTextarea {...props} ref={input} value={value} aria-label={label || t("Message AI")}
+      {...(mentions ? { role: "combobox", "aria-autocomplete": "list", "aria-expanded": !!mention } : {})}
+      aria-controls={mention ? listId : undefined}
       aria-activedescendant={mention && results[active] ? `${listId}-${active}` : undefined}
       onChange={(e) => { onChange(e.target.value); scan(e.target); }}
       onSelect={(e) => scan(e.target)} onBlur={() => setMention(null)}

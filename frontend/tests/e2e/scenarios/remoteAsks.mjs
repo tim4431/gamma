@@ -11,9 +11,9 @@ import { waitForPdf } from "./pdf.mjs";
 // and a computer (the desktop app's own server with local agents on, a
 // shell secret and the stand-in Codex of backend/tests/fake_agents/, which
 // asks to fetch the bibliography in every turn). The computer's own account
-// makes a work folder of the NAS's folder "Paper", shows the computer there
-// and turns Codex on for it, and with the shell's word lets it ask on this
-// computer. The shell is that account with the word (`ShellAccount`), and it
+// makes a work folder of the NAS's folder "Paper", shows the computer there,
+// turns Codex on for the computer, and with the shell's word lets it ask: a
+// turn of the NAS asks on this computer. The shell is that account with the word (`ShellAccount`), and it
 // follows what waits on this computer from the setup to the end, as the
 // desktop app's main does (a held read of the asks, again and again), so the
 // computer hears its shell throughout. Alice's plain browser on the NAS then
@@ -120,7 +120,7 @@ export async function remoteAskScenarios(env) {
 
     let pdf = "", name = "", linkId = "";
     const at = () => `${nas.base}/?ws=${wsId}&page=${pdf}`;
-    const conversation = async () => (await alice.api(`/api/local-agents/chat?page=${pdf}`)).conversation;
+    const conversation = async () => (await alice.api(`/api/local-agents/chat?bucket=${pdf}`)).conversation;
     const lastMessage = async () => (await conversation())?.messages.at(-1);
     const openChat = async (page) => {
       const dock = page.locator(".dockWindow:has(.chatPanel)");
@@ -132,9 +132,15 @@ export async function remoteAskScenarios(env) {
       await dock.waitFor();
       return dock;
     };
+    // The chat's Codex side, picked in the composer's chip unless it shows
+    // already (no AI service: the agent is the chat's own).
     const codexSide = async (page) => {
       const dock = await openChat(page);
-      await dock.locator(".segGroup").getByRole("button", { name: "Codex", exact: true }).click();
+      await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+      if (!(await dock.locator(".computerStrip").count())) {
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: /^Codex on / }).click();
+      }
       await dock.locator(".computerStrip").waitFor();
       return dock;
     };
@@ -159,10 +165,10 @@ export async function remoteAskScenarios(env) {
         { timeout: 20000, every: 250, what: `the strip reads ${words}: ${await stripText(dock)}` });
       await until(async () => (await pillText(dock)) === `Codex is waiting for your answer on ${name}`,
         { what: `the turn's pill says it waits on the computer: ${await pillText(dock)}` });
-      assertEq(await dock.locator(".computerAsk").count(), 0, "no card on the NAS's page");
+      assertEq(await dock.locator(".chatAsk").count(), 0, "no card on the NAS's page");
     };
 
-    await step("remote-asks: Ask on this computer is set only with the shell's word, only for the NAS's work folder", async () => {
+    await step("remote-asks: letting Codex ask is set only with the shell's word", async () => {
       const token = await alice.api("/api/integrations/tokens", { method: "POST",
         body: { name: "Gamma desktop: Paper synced vault", scope: "write", expires_in_days: 365 } });
       const link = await shell.api("/api/folder-links", { method: "POST", body: { folder: folderId, path: dir, notes: true, pull: true,
@@ -182,27 +188,25 @@ export async function remoteAskScenarios(env) {
         body: { remote_url: nas.base, workspace: wsId, token: minted.token, token_id: minted.id } });
       await until(async () => (await shell.api("/api/computer-links")).links.find((l) => l.id === made.link.id)?.status?.state === "connected",
         { timeout: 45000, every: 500, what: "the channel connected" });
-      assertEq((await shell.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent: "codex" } })).agent?.name, "codex",
-        "Codex on for the work folder");
+      assertEq((await shell.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: true } })).enabled, true,
+        "Codex on for the computer");
 
-      const runs = (account, value) => account.api(`/api/folder-links/${link.id}`, { method: "PATCH", raw: true, body: { agent_runs: value } });
-      const plainly = await runs(owner, "computer");
+      const asks = (account) => account.api("/api/local-agents/codex", { method: "PATCH", raw: true, body: { runs: "ask" } });
+      const plainly = await asks(owner);
       assertEq(plainly.status, 403, `a session alone may not: ${await plainly.text()}`);
-      const inChat = await runs(shell, "ask");
-      assertEq(inChat.status, 409, `asking in the chat is for this computer's own work folders: ${await inChat.text()}`);
-      const set = await runs(shell, "computer");
+      const set = await asks(shell);
       const body = await set.json();
       assertEq(set.status, 200, `set with the shell's word: ${JSON.stringify(body)}`);
-      assertEq(body.agent?.runs, "computer", "the folder's agent asks on this computer");
-      assert(!body.older, "the NAS says that its pages show a turn that waits");
-      assertEq((await shell.api(`/api/folder-links/${link.id}`)).agent?.runs, "computer", "and the listing says so");
+      assertEq(body.runs, "ask", "Codex may ask: a turn of the NAS's folder asks on this computer");
+      assertEq((await shell.api("/api/local-agents")).agents.find((a) => a.name === "codex")?.runs, "ask",
+        "and the listing says so");
 
       const [seen] = await until(async () => {
         const list = (await alice.api(`/api/pages/${pdf}/computer`)).computers;
         return list.length && list[0].online && list[0].vault?.agent?.name === "codex" ? list : null;
       }, { timeout: 45000, every: 500, what: "the page's computer, online, its vault with Codex" });
       name = seen.name;
-      await until(async () => (await alice.api(`/api/local-agents/chat?page=${pdf}`)).computer?.ready === true,
+      await until(async () => (await alice.api(`/api/local-agents/chat?bucket=${pdf}`)).computer?.ready === true,
         { timeout: 30000, every: 500, what: "the chat's computer, ready" });
       assertEq(follower.seen.refused, "", "the shell reads what waits on the computer");
       assertEq(waiting().length, 0, "nothing waits yet");
@@ -305,7 +309,7 @@ export async function remoteAskScenarios(env) {
         await saysItWaits(dock);
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).click();
         await until(() => !waiting().some((a) => a.id === third.id), { timeout: 30000, every: 250, what: "the stopped turn's ask leaves the computer" });
-        await dock.locator(".computerEnded", { hasText: "Stopped" }).waitFor({ timeout: 30000 });
+        await dock.locator(".chatBubble.ai", { hasText: "(stopped)" }).waitFor({ timeout: 30000 });
         assertEq(await dock.locator(".computerStrip.asking").count(), 0, "the strip no longer waits");
         const late = await answer(third, "once");
         assert([404, 409].includes(late.status), `an answer after Stop allows nothing: ${late.status} ${await late.text()}`);

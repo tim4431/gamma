@@ -133,7 +133,7 @@ test("the Send block: the folder's agent named, its limit, its problem, others' 
   assert.equal(other.blocked, false);
   assert.equal(sendWords(plan("other"), 200).blocked, false, "an outside agent has no limit here");
   assert.equal(sendWords(plan("offer", { label: "" }), 2).notes[0].text,
-    "To have Codex or Claude Code answer here, turn one on in the sync panel: the sync button in the title bar, then ⋯ on this folder.");
+    "To have Codex or Claude Code answer here, turn one on in Settings → AI.");
   assert.deepEqual(sendWords(plan("", { label: "" }), 2), { button: "Send 2 comments", notes: [], blocked: false });
 });
 

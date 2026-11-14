@@ -197,12 +197,22 @@ export const RULES = [
   ["frontend/src/editor/pathLinkContext.js", ["sub-pages", "notes-pdf-share", "explorer"]],
   // (text-search: a note's line link is a pill; text-anchors: a text range's row, its dot and its title)
   ["frontend/src/editor/**", ["notes-pdf-share", "sub-pages", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link", "block-properties", "text-search", "text-anchors"]],
-  // the chat's computer side: the switch, the strip, a turn of the agent on this computer, Stop, New chat and History
+  // the chat's computer side: the strip, a turn of the agent on this computer, Stop, New chat and History
   // (remote-chat: the same on another server's page, run on the computer that keeps the work folder;
   // remote-asks: what it asks there, said to wait on that computer, no card)
   ["frontend/src/chat/computer/**", ["local-agents", "remote-chat", "remote-asks"]],
-  // the switch to that side; text-anchors: a selection of lines as the chat's chip
-  ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "text-anchors", "local-agents", "remote-chat"]],
+  // the agents the chat, the comment fields and Settings list, and the chip that picks one
+  // (remote-sends: the agent a comment names on another server's page)
+  ["frontend/src/chat/agents.js", [...CHAT, "local-agents", "remote-chat", "remote-asks", "remote-sends"]],
+  ["frontend/src/chat/useLocalAgents.js", [...CHAT, "local-agents", "settings"]],
+  ["frontend/src/chat/AgentChip.jsx", [...CHAT, "local-agents", "remote-chat", "remote-asks"]],
+  // the picker of that side; text-anchors: a selection of lines as the chat's chip
+  ["frontend/src/chat/ChatDock.jsx", [...CHAT, "ink-zoom", "text-search", "text-anchors", "local-agents", "remote-chat", "remote-asks"]],
+  // the one transcript, its cards and History, which draw a computer agent's conversation as Gamma AI's
+  ["frontend/src/chat/ChatTranscript.jsx", [...CHAT, "ink-zoom", "text-search", "text-anchors", "local-agents", "remote-chat", "remote-asks"]],
+  ["frontend/src/chat/ApprovalCard.jsx", [...CHAT, "local-agents", "remote-asks"]],
+  ["frontend/src/chat/AgentChanges.jsx", [...CHAT, "local-agents", "remote-chat"]],
+  ["frontend/src/chat/ChatHistoryPop.jsx", [...CHAT, "local-agents", "remote-chat"]],
   // ink-zoom: a selection's Transcribe reaches the chat's request; text-search: a reply's line link;
   // text-anchors: a selection of lines as the chat's chip
   ["frontend/src/chat/**", [...CHAT, "ink-zoom", "text-search", "text-anchors", "remote-chat"]],
@@ -227,8 +237,7 @@ export const RULES = [
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
   // (local-agents: the agent the maker's comments name and the chat's computer side talks to)
   // (computers: on any other server, the chip of the computer that keeps the page, read by usePageComputer.js)
-  // (remote-sends: the agent of the computer that keeps the page, keeperAgent, for the maker in any window;
-  // remote-chat: the chat's computer side from it, keeperComputer)
+  // (remote-sends, remote-chat: the agent of the computer that keeps the page, vaultAgent, read by chat/agents.js)
   ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents", "computers", "remote-sends", "remote-chat"]],
   ["frontend/src/vault/usePageComputer.js", ["computers", "remote-sends", "remote-chat"]],
   ["frontend/src/vault/**", ["vaults", "work-folders", "computers", "remote-sends", "remote-chat"]],

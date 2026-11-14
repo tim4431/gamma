@@ -58,8 +58,8 @@ const fieldKey = (e) => e.key === "F2"
 // block the thread is on, left out of the link picker's blocks. `links`:
 // App's {pages, rootId (the open page), lookupBlock, refCache, onCacheRef,
 // agent} for the pickers, `agent` the work folder's agent on this computer,
-// or on the computer that keeps it, that the maker can name (vaultState.js
-// mentionAgent or keeperAgent, null for none): the
+// or on the computer that keeps it, that the account can name
+// (chat/agents.js mentionAgent, null for none): the
 // @ menu lists it, the field chips it and says under the text what sending
 // does; `refused`: for an edit the server will not send to the agent, its
 // code (Thread.jsx), said there instead; `labelsFor(text)`: the labels of

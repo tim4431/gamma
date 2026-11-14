@@ -10,11 +10,15 @@
 //   (PAGE_ASKS): a folder's "Sync with this computer…", a page's "Push
 //   from a file on this computer…", its file shown in its folder, its
 //   missing file located, an opened PDF carried to another server's
-//   library, its computer chat continued in a terminal, and the tracking
+//   library, its computer chat continued in a terminal, the tracking
 //   dialog of a work folder of another server answered in the host's
-//   window (`tracked`: saved, or cancelled). The shell checks
-//   each and asks the user for the directory, the file or the server, or
-//   its own server for the terminal's command. Gamma stays a black box.
+//   window (`tracked`: saved, or cancelled), and Settings → AI's agents of
+//   this computer: one turned on or off (`set-agent`, `enabled`), let ask
+//   or not (`set-agent-runs`, `ask`), a directory offered to them
+//   (`agent-dirs`: `dir` "new", or the one moved). The shell checks each
+//   and asks the user for the directory, the file or the server, its own
+//   question before an agent is turned on or let ask, or its own server
+//   for the terminal's command. Gamma stays a black box.
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -109,6 +113,9 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     'carry-to-server': ['shell:carry-from-page', 'page'],
     'continue-in-terminal': ['shell:terminal-from-page', 'page'],
     tracked: ['shell:tracked-from-page', 'link', 'cancelled'],
+    'set-agent': ['shell:set-agent-from-page', 'agent', 'enabled'],
+    'set-agent-runs': ['shell:agent-runs-from-page', 'agent', 'ask'],
+    'agent-dirs': ['shell:agent-dirs-from-page', 'dir'],
   };
   window.addEventListener('message', (e) => {
     const d = e.data;

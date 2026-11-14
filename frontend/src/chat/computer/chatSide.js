@@ -1,36 +1,31 @@
-// Which side each page's chat shows, for the tab's life: "computer" for a
-// page switched to it, else Gamma AI's; each shown chat hears a change. A
-// module of its own, apart from useComputerChat.js, because the Background
-// tasks rows (tasks/useAppJobs.js) are on the first screen and the computer
-// side's state and its helpers are not: they load with ChatDock.
+// The agent each bucket's chat was picked with, for the tab's life, as the
+// computer agent's model and effort are (chat/agents.js `id`: "gamma",
+// "codex", "claude"); a bucket never picked shows chat/agents.js
+// pickAgent's. Each shown chat hears a change. A module of its own, apart
+// from useComputerChat.js, because the Background tasks rows
+// (tasks/useAppJobs.js) are on the first screen and a computer agent's
+// conversation state and its helpers are not: they load with ChatDock.
 import { useCallback, useEffect, useState } from "react";
 
-const sides = new Map();
-const sideHeard = new Set();
+const picked = new Map();
+const pickHeard = new Set();
 
-// The page's chat on the computer side from outside it (a Background tasks
-// row of a turn), before or while the chat shows the page.
-export function showComputerSide(pageId) {
-  if (!pageId) return;
-  sides.set(pageId, "computer");
-  for (const heard of sideHeard) heard();
+// The bucket's chat shown with `agent` from outside it (a Background tasks
+// row of a turn), before or while the chat shows the bucket.
+export function pickChatAgent(bucket, agent) {
+  if (!bucket || !agent) return;
+  picked.set(bucket, agent);
+  for (const heard of pickHeard) heard();
 }
 
-// [side, setSide] for the page's chat: "ai" or "computer", the latter only
-// while the page has a computer side (`available`).
-export function useChatSide(pageId, available) {
+// [agent id or "", setAgent] for the bucket's chat.
+export function useChatAgent(bucket) {
   const [, redraw] = useState(0);
   useEffect(() => {
     const heard = () => redraw((n) => n + 1);
-    sideHeard.add(heard);
-    return () => { sideHeard.delete(heard); };
+    pickHeard.add(heard);
+    return () => { pickHeard.delete(heard); };
   }, []);
-  const side = available && pageId && sides.get(pageId) === "computer" ? "computer" : "ai";
-  const setSide = useCallback((next) => {
-    if (!pageId) return;
-    if (next === "computer") sides.set(pageId, next);
-    else sides.delete(pageId);
-    redraw((n) => n + 1);
-  }, [pageId]);
-  return [side, setSide];
+  const setAgent = useCallback((agent) => pickChatAgent(bucket, agent), [bucket]);
+  return [picked.get(bucket) || "", setAgent];
 }

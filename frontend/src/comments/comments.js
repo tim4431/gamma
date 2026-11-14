@@ -259,8 +259,8 @@ export const isWithdrawn = (request) => request?.state === "failed" && request.d
 // failed), "" for none; `title` the tag's: the words behind the label,
 // and while the computer it waits for is offline, that it runs when that
 // one connects; `tone` the uiTag's; `live` while the agent works.
-// `answers`, the agent that answers the reader's Sends (vaultState.js
-// mentionAgent or keeperAgent, feedbackView.js sendAgent's plan; null
+// `answers`, the agent that answers the reader's Sends (chat/agents.js
+// mentionAgent, feedbackView.js sendAgent's plan; null
 // for none), names what a Send waits for.
 export function sendState(send, answers = null) {
   const { state, state_by: agent } = send;
@@ -291,9 +291,9 @@ export function sentChip(thread, answers = null) {
 }
 
 // What a comment field says under the text while it names the work
-// folder's agent (`agent`, vaultState.js mentionAgent on this computer, or
-// keeperAgent on the computer that keeps a work folder of this server,
-// `computer`) as the server reads it: a mention outside code that `initial`
+// folder's agent (`agent`, chat/agents.js mentionAgent: on this computer, or
+// on the computer that keeps a work folder of this server, `computer`) as
+// the server reads it: a mention outside code that `initial`
 // (an edit's text before) did not have. Sending it is a Send of the thread,
 // or of the file's open comments from the page's own thread (`file`),
 // waiting while the agent's computer is offline; an edit the server will

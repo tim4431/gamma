@@ -272,6 +272,19 @@ def known(name: str) -> dict:
     return dict(hit) if hit is not None else cached(name)
 
 
+def code(name: str, found: dict) -> str:
+    """How an agent stands, as a code for a reader that words it in its own
+    language, never these words: ``checking``, ``missing``, ``signed_out``,
+    ``not_ready``, or "" for ready."""
+    if found["found"] is None or found["ready"] is None:
+        return "checking"
+    if not found["found"]:
+        return "missing"
+    if found["ready"]:
+        return ""
+    return "signed_out" if found["problem"] == NOT_SIGNED_IN.get(name) else "not_ready"
+
+
 def probes(*, fresh: bool = False) -> list[dict]:
     return [probe(name, fresh=fresh) for name in AGENTS]
 

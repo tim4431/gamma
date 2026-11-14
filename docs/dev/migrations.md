@@ -39,9 +39,10 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    47, 48 and 53): copies on either side of it hold the same data, so
    `workspace_format()` passes it by and a mirror keeps syncing. So is a
    workspace part that changes only tables no copy of the workspace keeps in
-   step with another, such as the comments and the Sends
-   (`migrations.LOCAL_STEPS`, steps 54 and 58): a mirror never sends them,
-   so two copies on either side of it still agree.
+   step with another, such as the comments, the Sends and a computer
+   agent's conversations (`migrations.LOCAL_STEPS`, steps 54, 58 and 59):
+   a mirror never sends them, so two copies on either side of it still
+   agree.
    An additive table in a workspace's `pages.db` or `data.db` (a new
    table, nothing existing changed) needs its `CREATE ... IF NOT EXISTS`
    statement in `db.PAGES_SCHEMA` / `DATA_SCHEMA` only, with no workspace
@@ -210,6 +211,7 @@ has (rule 2).
 | 56 | `integration_edits` | A global part only. `integration_tokens` gains `edits` (`_v56_integration_edits`; [mcp.md](mcp.md#editing-notes)), the workspaces of those a read or feedback token's MCP connection reads whose notes it may also change: `''` (none, what every token so far gets), `'*'` (every one it reads, now and later) or a JSON list of ids. Nothing a token may do changes. Re-runnable: the column is added only where `_columns()` lacks it. No workspace is touched, so `workspace_format()` stays 55 and a mirror keeps syncing; `SCHEMA_VERSION` is 56. Tests: `tests/test_migrations.py` (`test_v56_*` and every upgrade path) |
 | 57 | `integration_asks` | A global part only. `integration_tokens` gains `asks` (`_v57_integration_asks`; [mcp.md](mcp.md#asking-first)), whether a connection that may edit notes asks the person before each change: 1 on every token so far. Re-runnable: the column is added only where `_columns()` lacks it. No workspace is touched, so `workspace_format()` stays 55; `SCHEMA_VERSION` is 57. Tests: `tests/test_migrations.py` (`test_v56_*`, which runs both, and every upgrade path) |
 | 58 | `request_via` | A workspace part only (`users.db` gains just its stamp, [local_agents.md](local_agents.md)). `feedback_requests` gains `via` (`TEXT NOT NULL DEFAULT ''`), how a Send was made: `session` (a person in Gamma) or `token` (an integration token), written by `POST /api/feedback/requests`; `''` on every Send so far, which nobody can tell apart now. An agent on this computer takes only a session's Send, so one a script holding the maker's token made never starts it, and a Send from before the step is never taken either. Added where `_columns()` has the table and lacks the column; a rerun changes nothing, and a copy without the table gets it from the schema statements. Requests never leave a workspace's own copy, so the step is in `LOCAL_STEPS`: `SCHEMA_VERSION` is 58, a workspace that ran it is stamped 58, and `workspace_format()` stays at 55. Tests: `tests/test_migrations.py` (`test_v58_*` and every upgrade path) |
+| 59 | `computer_chat_buckets` | A workspace part only (`users.db` gains just its stamp, [local_agents.md](local_agents.md) "The chat's computer side"). A computer agent's conversation is about any bucket, as an AI chat is: `computer_chats`' `page_id` becomes `bucket` (`ALTER TABLE … RENAME COLUMN`, its index `idx_computer_chats_page` dropped first; the schema statements make `idx_computer_chats_bucket` after the step) and it gains `dir` (`TEXT NOT NULL DEFAULT ''`), where its agent works; every conversation so far is of a file of a work folder, so its `dir` is that work folder, the page's `properties.work_folder`, "" for a page that is no file of one any more. `computer_chat_runs`' `page_id` becomes `bucket`. Each table changes where `_columns()` has it with `page_id`; a rerun changes nothing, and a copy without them gets them from the schema statements. Neither table leaves a workspace's own copy (`ws_backup.PRIVATE_TABLES`), so the step is in `LOCAL_STEPS`: `SCHEMA_VERSION` is 59, a workspace that ran it is stamped 59, and `workspace_format()` stays at 55. Tests: `tests/test_migrations.py` (`test_v59_*` on a pages.db of step 58, and every upgrade path) |
 
 ## Backups (`gamma/backups.py`)
 

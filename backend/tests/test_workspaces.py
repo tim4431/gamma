@@ -493,7 +493,7 @@ def test_a_member_who_goes_takes_their_prefs_there(boss, ann, ben):
     from gamma.db import connect_pages_db
     with connect_pages_db(room) as conn:
         for chat_id, who in (("cvAnn", a), ("cvBen", b)):
-            conn.execute("INSERT INTO computer_chats (id, page_id, user_id, agent, created_at, updated_at) "
+            conn.execute("INSERT INTO computer_chats (id, bucket, user_id, agent, created_at, updated_at) "
                          "VALUES (?, 'p1', ?, 'codex', 'x', 'x')", (chat_id, who))
 
     assert ann.delete(f"/api/workspaces/{room}/members/ws_ben").status_code == 200

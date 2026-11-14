@@ -180,10 +180,10 @@ export async function remoteSendScenarios(env) {
         body: { remote_url: nas.base, workspace: wsId, token: minted.token, token_id: minted.id } });
       await until(async () => (await owner.api("/api/computer-links")).links.find((l) => l.id === made.link.id)?.status?.state === "connected",
         { timeout: 45000, every: 500, what: "the channel connected" });
-      // the sync panel's agent row: Codex on, which nothing waits on yet
-      const turned = await owner.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent: "codex" } });
-      assertEq(JSON.stringify([turned.queued, turned.agent?.name]), JSON.stringify([0, "codex"]), "Codex on, no Send waiting");
-      // the next announce names the folder's agent, and the NAS tells the maker
+      // Settings' switch: Codex on for the computer, no Send of this server waiting
+      const turned = await owner.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: true } });
+      assertEq(JSON.stringify([turned.queued, turned.enabled]), JSON.stringify([0, true]), "Codex on, no Send waiting");
+      // the next announce says the computer's agent, and the NAS tells the maker
       const [seen] = await until(async () => {
         const list = await computersOf(alice);
         return list.length && list[0].online && list[0].vault?.agent?.name === "codex" ? list : null;
