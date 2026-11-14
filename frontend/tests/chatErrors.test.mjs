@@ -22,6 +22,15 @@ test("a rejected credential names the connection and asks for the right fix", ()
   assert.equal(failureCopy("unreachable", { provider: "ChatGPT", auth: "oauth" }).fix, undefined);
 });
 
+test("a refused network keeps the sign-in and points at the network proxy", () => {
+  for (const auth of ["key", "oauth"]) {
+    const copy = failureCopy("blocked", { provider: "ChatGPT", auth });
+    assert.equal(copy.headline, "ChatGPT refused this server's network");
+    assert.equal(copy.fix, "proxy");
+  }
+  assert.equal(fixLabel("proxy"), "Network proxy");
+});
+
 test("the server's classification rides on the thrown error and is saved on the reply", () => {
   const err = chatFailure("AI call failed: upstream 529: Overloaded",
     { kind: "overloaded", provider_name: "Anthropic", provider_id: "p1", provider_auth: "key" });

@@ -76,13 +76,69 @@ refresh token reached token validation both ways: Gamma's form body with
 the scope and Codex's JSON body both got `401 invalid_refresh_token`.
 The scope is left as it is; dropping it would be a separate change.
 
+## A network OpenAI refuses (November 2026)
+
+A second report, from mainland China, as a chat with the developer: the
+ChatGPT sign-in had to be made again every day, signing in now failed
+with 403, and an API key's model list failed too. ChatGPT in the same
+browser and Codex CLI's login worked. An AI the reporter asked said the
+IPv6 address the sign-in started from and the one after it differed.
+
+- **What a 403 from OpenAI can mean.** OpenAI refuses a country or region
+  it doesn't serve with `403 {"error": {"code":
+  "unsupported_country_region_territory", ...}}`, on api.openai.com and
+  on the sign-in's token endpoint. Codex CLI users see the same on login
+  as "token exchange failed: token endpoint returned status 403
+  Forbidden" ([developersdigest.tech](https://www.developersdigest.tech/errors/codex/token-exchange-failed-403),
+  [laozhang.ai](https://blog.laozhang.ai/en/posts/codex-token-exchange-failed-403)).
+  Cloudflare in front of chatgpt.com also answers 403 with its own page:
+  an [OpenAI forum report](https://community.openai.com/t/codex-desktop-windows-msix-hkg-edge-returns-403-reqwest-ua-not-overridden-empty-plugins-marketplace-slash-commands-gone-fast-mode-missing/1379677)
+  from Vietnam, served by the Hong Kong edge, had `reqwest/0.12.0` refused
+  with 403 where a Codex or browser User-Agent passed.
+- **The IP is not the cause, the route is.** OpenAI doesn't tie an
+  authorization code to the address it was issued to: the device code
+  flow and an SSH-forwarded Codex login redeem it from another machine.
+  The different IPv6 address shows that the server's requests leave by
+  another way than the browser's: directly, while the browser goes
+  through a proxy or VPN (a TUN that captures IPv4 only lets a native IPv6
+  connection out directly). From a mainland address, every OpenAI call of
+  the server is refused, the API key's included.
+- **Why it read as "sign in again".** The login check's ping, the Test
+  and the usage query read any 403 as `auth`, so the page load each day
+  said "The ChatGPT sign-in has expired". Signing in again then failed at
+  the token exchange, worded "token exchange failed: HTTP Error 403:
+  Forbidden", nothing pointing at the network. A refresh refused this way
+  was already kept as no verdict (`RefreshUnavailable`). A device code poll
+  read such a 403 as "not entered yet" and waited out its 15 minutes.
+- **Not reproducible here.** From the developer's network every probe
+  (bogus tokens, four User-Agents, auth.openai.com, chatgpt.com,
+  api.openai.com) got the services' own JSON 401, never a Cloudflare page.
+
+What changed: `net_proxy.refused_network` tells a 403 that refuses the
+network (the region code, or a Cloudflare challenge or page where the
+service answers JSON) from one about the credential. Such a failure is the
+kind `blocked` ([ai.md](../dev/ai.md#chat-endpoint)): the chat, the login
+check, the Test, usage, the model list and the sign-in say the network was
+refused and point at Settings → Network proxy, and the sign-in is kept. The
+network proxy's Test fails a line refused this way and tries chatgpt.com
+too. The proxy setting itself (on `dev`, not yet released when this was
+reported) is what lets such a server reach OpenAI.
+
+The User-Agent was left alone: the reporter's API key failed as well,
+which the User-Agent of the ChatGPT calls cannot explain. If a refusal
+still names Cloudflare once the server goes through the proxy, sending
+Codex CLI's User-Agent on the ChatGPT and sign-in requests is the next step
+(the usage query already sends `codex-cli`).
+
 ## Still open
 
 - The reporter's deployment, whether a proxy sits between it and OpenAI,
   and what the new `[chatgpt-oauth] refresh …` line says next time.
 - A chat's own 401 is not renewed, as Codex's is; the next login check,
   Test or usage query renews it.
-- A 403 challenge page from chatgpt.com on the ping still reads as `auth`.
+- What the reporter's server says once it goes through the network
+  proxy, and whether a Cloudflare refusal remains (see the User-Agent
+  above).
 - The Codex client's real access and refresh token lifetimes, and whether
   an always-on server whose AI goes unused needs a keep-alive refresh.
   Codex, too, renews only on use.

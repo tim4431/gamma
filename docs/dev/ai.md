@@ -53,14 +53,14 @@ model — the cheap utility model), else the entry's first model. With
 is instead the check of whether that model calls tools, and the result
 carries the stored verdict as `tools` ("Models that can't call tools"
 below). A failed probe carries the failure's `kind` (see "Chat endpoint";
-`no_model` when the entry has none picked) and an `auth` flag on 401/403, so
-the row renders the chat
+`no_model` when the entry has none picked) and an `auth` flag when the kind
+is `auth`, so the row renders the chat
 error card's headline and fix ("OpenAI rejected the API key — Update key"),
 the upstream body only on hover. For a ChatGPT sign-in a 401 first renews the
 token once, so `auth` means OpenAI refused the grant or the renewed token was
-refused too; a 403 (a challenge page included) still reads as `auth`. While
-OpenAI can't be reached to renew it, the kind is `unreachable` (see "The
-chatgpt protocol (OAuth)"). Upstream error
+refused too. A 403 that refuses the server's network, not the credential,
+is `blocked` (see "Chat endpoint"). While OpenAI can't be reached to renew
+it, the kind is `unreachable` (see "The chatgpt protocol (OAuth)"). Upstream error
 details are summarized before display everywhere (`upstream_detail` in
 `ai_client.py`): JSON bodies reduce to their message field, HTML error pages
 (a proxy's 502 page) to their `<title>`.
@@ -78,8 +78,10 @@ reached. The answer is always in-body
 (`{configured, ok, auth?, kind?, error?}`); a failure renders as a warning
 strip in the chat window with the chat error card's headline for its `kind`
 ("OpenAI rejected the API key"; see "Chat endpoint") and a Fix… button that
-opens that entry's form, dismissed or cleared by a passing Test / provider
-edit.
+opens that entry's form (Settings → Network proxy for `blocked`, for an
+admin), dismissed or cleared by a passing Test / provider edit. The usage
+query answers a `blocked` 403 in-body too, `auth: false`, its reason naming
+the proxy setting; the model list's error says the same.
 
 `ai_runtime(user)` in `gamma/ai_settings.py` builds the per-request config and
 model registry from the account's own entries followed by the server's shared
@@ -457,8 +459,19 @@ still the refused one, so any number of requests refused one token cause one
 refresh. A token a refresh got less than `REFRESH_BACKOFF_S` ago
 (`refreshed_at`) is not renewed again: a provider that refuses every token
 then costs one refresh per 5 minutes, not one per check, and its 401 reads
-as `auth`. A 403 is never renewed and reads as `auth`. A chat's 401 is not
-renewed; the next check, Test or usage query renews it.
+as `auth`. A 403 is never renewed: it reads as `auth`, or as `blocked` when
+it refuses the server's network. A chat's 401 is not renewed; the next
+check, Test or usage query renews it.
+
+A sign-in OpenAI refuses says why. `chatgpt_oauth.answer_error` words an
+error answer of the sign-in endpoints as "OpenAI answered 403
+unsupported_country_region_territory", and when the answer refuses the
+server's network (`net_proxy.refused_network`) adds the reason and the
+proxy setting (`net_proxy.REFUSED_HINT`). The code exchange raises it as a
+`ValueError`, so the caught redirect, the pasted address and the device code
+show it ("token exchange failed: …"). A device code poll answered by such a
+403 fails the sign-in at once: OpenAI's own 403 there means "not entered
+yet", and this one would only wait out the 15 minutes.
 
 Restoring users.db from a snapshot or an off-site copy brings back a refresh
 token OpenAI has since rotated. That sign-in must be made again: its first
@@ -537,6 +550,15 @@ wording:
 - `not_configured`: no usable connection (the 503).
 - `allowance`: the shared allowance is used up.
 - `auth`: 401/403. `rate`: 429 or a quota. `overloaded`: 5xx or 529.
+- `blocked`: a 403 that refuses the server's network, not the request or
+  its credential (`net_proxy.refused_network`): OpenAI's
+  `unsupported_country_region_territory` (a country or region it doesn't
+  serve), or Cloudflare's own 403, a `cf-mitigated` challenge or a page
+  where the service answers JSON. A browser behind a proxy or VPN then
+  works while the server, connecting another way, is refused, and calling it
+  `auth` sent people to sign in again, which fails the same way.
+  `UpstreamError.refused` carries the reason; the body is read once
+  (`net_proxy.error_body`) for both it and `upstream_detail`.
 - `unreachable`: no connection, a timeout, a cut-off stream. Also a
   sign-in's 401 while its renewal can't reach OpenAI: `open_ai` turns that
   401 into a `URLError` first (see "The chatgpt protocol (OAuth)").
@@ -561,7 +583,8 @@ and the fix. The login check's warning strip and the Test result on a
 Settings connection row show the same headlines.
 Update key / Sign in again / Edit connection open Settings → Connections on
 that entry's form (`openAiKeysEditor({entry})` in App). Connect AI and Add
-your own key open the pane; New chat starts over. On the latest reply,
+your own key open the pane; Network proxy (`blocked`, an admin's) opens
+Settings → Network proxy; New chat starts over. On the latest reply,
 Retry re-sends the question through the edit-and-resend path, and Switch
 model retries with the model picked. The provider's own text is folded
 under "Details from the provider".

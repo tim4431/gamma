@@ -36,7 +36,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import html_page
+from . import html_page, net_proxy
 from .logbuf import log
 
 AUTH_BASE = "https://auth.openai.com"
@@ -156,14 +156,18 @@ def _oauth_entry(tokens: dict, previous: dict | None = None) -> dict:
 
 
 def exchange_code(code: str, verifier: str, redirect_uri: str = REDIRECT_URI) -> dict:
-    """Redeem an authorization code; returns the dict stored on the entry."""
-    tokens = _token_request({
-        "grant_type": "authorization_code",
-        "code": code,
-        "redirect_uri": redirect_uri,
-        "client_id": CLIENT_ID,
-        "code_verifier": verifier,
-    })
+    """Redeem an authorization code; returns the dict stored on the entry.
+    Raises ValueError with what to tell the user when OpenAI refuses."""
+    try:
+        tokens = _token_request({
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": CLIENT_ID,
+            "code_verifier": verifier,
+        })
+    except urllib.error.HTTPError as e:
+        raise ValueError(f"token exchange failed: {answer_error(e)}") from e
     oauth = _oauth_entry(tokens)
     if not oauth["access_token"]:
         raise ValueError("token exchange returned no access token")
@@ -194,13 +198,24 @@ def _error_code(error: urllib.error.HTTPError) -> str:
     a string or an object's ``code``; "" when the body names none. Reads
     at most 8 KB."""
     try:
-        data = json.loads(error.read(8192))
+        data = json.loads(net_proxy.error_body(error))
     except Exception:
         return ""
     code = data.get("error") if isinstance(data, dict) else None
     if isinstance(code, dict):
         code = code.get("code")
     return code.strip() if isinstance(code, str) else ""
+
+
+def answer_error(error: urllib.error.HTTPError) -> str:
+    """An error answer of OpenAI's sign-in endpoints as the sign-in form
+    shows it: the status and OpenAI's code, and when the answer refuses
+    this server's network (net_proxy.refused_network), why and the proxy
+    setting that helps."""
+    code = _error_code(error)
+    said = f"OpenAI answered {error.code}{f' {code}' if code else ''}"
+    refused = net_proxy.refused_network(error)
+    return f"{said}: {refused}. {net_proxy.REFUSED_HINT}" if refused else said
 
 
 def refresh(oauth: dict) -> dict | None:
@@ -225,7 +240,7 @@ def refresh(oauth: dict) -> dict | None:
         if e.code == 401 or (e.code == 400 and code == "invalid_grant") or code in REFUSED_CODES:
             log.warning(f"[chatgpt-oauth] refresh refused: {e.code} {code or '(no code)'}")
             return None
-        reason = f"{e.code} {code}".strip()
+        reason = f"{e.code} {code or net_proxy.refused_network(e)}".strip()
         log.warning(f"[chatgpt-oauth] refresh failed, will retry: {reason}")
         raise RefreshUnavailable(reason) from e
     except Exception as e:
@@ -256,11 +271,14 @@ def request_device_code() -> dict:
 
 def poll_device(device: dict) -> dict | None:
     """The tokens once the user has entered the code; None while they have
-    not (OpenAI answers 403 or 404 until then)."""
+    not (OpenAI answers 403 or 404 until then, a 403 that refuses this
+    server's network aside: that one raises ValueError)."""
     try:
         data = _device_request("token", {"device_auth_id": device["device_auth_id"],
                                          "user_code": device["user_code"]})
     except urllib.error.HTTPError as e:
+        if net_proxy.refused_network(e):
+            raise ValueError(answer_error(e)) from e
         if e.code in (403, 404):
             return None
         raise
@@ -307,7 +325,8 @@ def begin(owner, *, local: bool = False, device: bool = False) -> dict:
             with _LOCK:
                 rec["device"] = {**code, "next_poll": now + code["interval"], "polling": False}
         except Exception as e:
-            log.info(f"[chatgpt-oauth] no device code: {e}")
+            log.info(f"[chatgpt-oauth] no device code: "
+                     f"{answer_error(e) if isinstance(e, urllib.error.HTTPError) else e}")
     shown = rec["device"]
     return {"auth_url": url, "state": state, "local": rec["local"],
             "device": {"user_code": shown["user_code"], "verification_url": DEVICE_PAGE} if shown else None}
@@ -390,6 +409,8 @@ def _capture(query: dict) -> tuple[bool, str]:
             with _LOCK:
                 rec["oauth"] = oauth
             return True, ""
+        except ValueError as e:
+            error = str(e)
         except Exception as e:
             error = f"token exchange failed: {e}"
     with _LOCK:
