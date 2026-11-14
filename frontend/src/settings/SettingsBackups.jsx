@@ -5,7 +5,12 @@
 // workspace keeps at most a fixed number of manual ones, and a replace
 // first keeps the current state as a "Before restore" snapshot. GUI for
 // /api/workspaces/{ws}/backups* (gamma/ws_backup.py). Between the task
-// table and the snapshots, admins get Off-site copies (OffsiteCopies.jsx).
+// table and the snapshots, admins get the Bucket (BackupBucket.jsx) that
+// tasks may copy their snapshots to; what it holds is listed with the
+// snapshots (/api/admin/offsite/snapshots, gamma/bucket_snapshots.py): a
+// snapshot also in the bucket is tagged so, a copy only there is a row of
+// its own (download, restore, delete), and the copies of a workspace this
+// server lacks (a lost disk) are restored as a new workspace.
 //
 // Also here: ServerBackups — the admin's whole-data-directory snapshots
 // (Settings → Server; /api/admin/backups*, gamma/backups.py). Restoring one
@@ -15,11 +20,11 @@ import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { saveUrl } from "../shared/lib/saveFile.js";
 import { BackupTasks } from "./BackupTasks";
-import { OffsiteCopies } from "./OffsiteCopies";
+import { BackupBucket, BUCKET_COPIES_READ, BUCKET_READ, bucketWhere } from "./BackupBucket";
 import { backupsOf, useSettingsRead, useSettingsReads } from "./settingsReads.js";
 import { ActionMenu } from "../shared/ui/Menus";
 import { PaneHead, Section, Empty } from "./SettingsKit";
-import { DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { CloudIcon, DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { TaskBlock } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
 import { useJobEnd } from "../tasks/useTasks";
@@ -58,6 +63,11 @@ export function WorkspaceBackups({ value }) {
   React.useEffect(() => {
     for (const w of mine || []) reads.read(backupsOf(w.id)).catch(() => {});
   }, [reads, mine]);
+  // The bucket (admins): where it is, and what it holds, by workspace.
+  const bucketAt = bucketWhere(useSettingsRead(isAdmin ? BUCKET_READ : null).data?.settings);
+  const copies = useSettingsRead(bucketAt ? BUCKET_COPIES_READ : null);
+  const copyGroups = (bucketAt && copies.data?.groups) || [];
+  const loadCopies = React.useCallback(() => { reads.read(BUCKET_COPIES_READ, { force: true }).catch(() => {}); }, [reads]);
 
   // Snapshots, restores and deletes run as background jobs
   // (tasks/useTasks.js): the one running for a workspace shows under its
@@ -68,8 +78,46 @@ export function WorkspaceBackups({ value }) {
   const busyIds = React.useMemo(() => new Set(running.flatMap(jobWorkspaces)), [running]);
   useJobEnd(tasks, WORKSPACE_JOBS, (job) => {
     if (job.kind === "workspace-delete") reads.read(minePath, { force: true }).catch(() => {});
+    else if (job.params?.into === "new") { reads.read(minePath, { force: true }).catch(() => {}); loadCopies(); }
     else jobWorkspaces(job).forEach(loadList);
   });
+
+  // A copy in the bucket: downloaded through a job whose file this tab
+  // saves, restored into its workspace or (`into` "new") into one made for it.
+  function fetchCopy(ws, c) {
+    return startJob("bucket-download", { ws, name: c.name }, { download: "auto", pill: true },
+      (message) => t("Download failed: {message}", { message }));
+  }
+  function restoreCopy(ws, label, c, mode) {
+    const into = mode === "new" ? "new" : "";
+    const b = when(c);
+    confirm({
+      title: into ? t("Restore as a new workspace") : mode === "merge" ? t("Merge backup") : t("Restore backup"),
+      message: into
+        ? t("Restore the copy of \"{name}\" from {b} as a new workspace? You become its owner; invite its members again afterwards.", { name: label, b })
+        : mode === "merge"
+          ? t("Merge the bucket's copy from {b} into \"{name}\"? Pages and chats it has that the workspace lacks are added; everything already there is kept.", { b, name: label })
+          : t("Restore \"{name}\" to the bucket's copy from {b}? ALL of its current pages and chats are REPLACED by the copy's. The current state is saved first as a \"Before restore\" snapshot, so you can go back.", { name: label, b }),
+      confirmLabel: into ? t("Restore") : mode === "merge" ? t("Merge") : t("Replace"),
+      danger: mode === "replace",
+      onConfirm: () => startJob("bucket-restore", { ws, name: c.name, mode: into ? "replace" : mode, into }, into ? {} : { restoreInto: ws },
+        (message) => t("Restore failed: {message}", { message })),
+    });
+  }
+  function removeCopy(ws, label, c) {
+    confirm({
+      title: T("Delete from the bucket"),
+      message: t("Delete the bucket's copy of \"{name}\" from {b} ({size_bytes})? This can't be undone.", { name: label, b: when(c), size_bytes: fmtBytes(c.size_bytes) }),
+      confirmLabel: t("Delete"), danger: true,
+      onConfirm: async () => {
+        try {
+          await apiJson(`${API}${BUCKET_COPIES_READ}/${encodeURIComponent(ws)}/${encodeURIComponent(c.name)}`, { method: "DELETE" });
+          setStatus(t("Deleted from the bucket."));
+          loadCopies();
+        } catch (e) { setStatus(t("Delete failed: {message}", { message: e.message })); }
+      },
+    });
+  }
 
   async function startJob(route, body, meta, failure) {
     try {
@@ -131,10 +179,62 @@ export function WorkspaceBackups({ value }) {
 
   const when = (b) => fmtWhen(b.created_at, b.name);
   const owned = (mine || []).filter((w) => w.role === "owner");
+  const copiesOf = (id) => copyGroups.find((g) => g.workspace === id)?.snapshots || [];
+
+  // One copy only the bucket holds. `here`: the server has its workspace,
+  // which it restores into; else it comes back as a new workspace.
+  function copyRow(ws, label, c, { here, busy }) {
+    return (
+      <div key={`bucket-${c.name}`} className="aiProvRow">
+        <span className="aiProvAvatar"><CloudIcon size={16} /></span>
+        <span className="aiProvMeta">
+          <span className="aiProvName">{when(c)}<span className="uiTag">{c.task ? t("Automatic") : t("backup")}</span></span>
+          <span className="aiProvDesc">{[fmtBytes(c.size_bytes), t("only in the bucket")].join(" · ")}</span>
+        </span>
+        <span className="aiProvActions">
+          <button className="uiBtn sm iconSq" title={t("Download as a zip")} aria-label={t("Download")} onClick={() => fetchCopy(ws, c)}>
+            <DownloadIcon size={16} />
+          </button>
+          {here ? (
+            <ActionMenu
+              label={t("Restore")} icon={ImportIcon} disabled={busy}
+              items={[
+                { icon: ImportIcon, label: T("Replace…"), title: T("Put the workspace back exactly as it was in this snapshot"), danger: true, onClick: () => restoreCopy(ws, label, c, "replace") },
+                { icon: PlusIcon, label: T("Merge…"), title: T("Add what the snapshot has and the workspace lacks"), onClick: () => restoreCopy(ws, label, c, "merge") },
+              ]}
+            />
+          ) : (
+            <button className="uiBtn sm" disabled={busy} title={t("Make a workspace of this copy, with you as its owner")}
+              onClick={() => restoreCopy(ws, label, c, "new")}><ImportIcon size={14} /> {t("Restore as new…")}</button>
+          )}
+          <button className="uiBtn sm iconSq" title={t("Delete this copy from the bucket")} aria-label={t("Delete")} onClick={() => removeCopy(ws, label, c)}>
+            <Trash2Icon size={16} />
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  // The bucket's copies of the workspaces this list has no group for: this
+  // server lacks them (a lost disk), or they are another account's.
+  function elsewhere(g) {
+    const label = g.name || t("Unnamed workspace");
+    const job = runningFor(g.workspace);
+    return (
+      <Section key={`bucket-${g.workspace}`} title={<>{label}<span className="uiTag">{g.here ? t("another account's") : t("not on this server")}</span></>}>
+        {job ? <TaskBlock task={job} tasks={tasks} /> : null}
+        {g.snapshots.map((c) => copyRow(g.workspace, label, c, { here: g.here, busy: Boolean(job) }))}
+      </Section>
+    );
+  }
 
   function group(w) {
     const list = listOf(w.id);
     const owner = w.role === "owner";
+    const inBucket = copiesOf(w.id);
+    const kept = new Set((list?.backups || []).map((b) => b.name));
+    const bucketOnly = list && !list.error ? inBucket.filter((c) => !kept.has(c.name)) : [];
+    const sent = new Set(inBucket.map((c) => c.name));
     const full = list && list.backups.filter((b) => !b.scheduled && !b.auto).length >= list.max;
     const job = runningFor(w.id);
     return (
@@ -162,7 +262,7 @@ export function WorkspaceBackups({ value }) {
         {job ? <TaskBlock task={job} tasks={tasks} /> : null}
         {!list ? <Empty icon={DatabaseIcon} loading>{t("Loading…")}</Empty> : null}
         {list?.error ? <div className="settingsPaneHint aiKeysError">{list.error}</div> : null}
-        {list && !list.error && !list.backups.length ? (
+        {list && !list.error && !list.backups.length && !bucketOnly.length ? (
           <div className="settingsPaneHint">{owner ? t("No snapshots yet.") : t("No snapshots yet — only an owner takes them.")}</div>
         ) : null}
         {(list?.backups || []).map((b) => (
@@ -174,6 +274,7 @@ export function WorkspaceBackups({ value }) {
               <span className="aiProvName">
                 {when(b)}
                 <span className="uiTag">{b.scheduled ? t("Automatic") : b.auto ? t("Before restore") : b.label || t("backup")}</span>
+                {sent.has(b.name) ? <span className="uiTag" title={t("A copy of this snapshot is in the bucket")}>{t("in the bucket")}</span> : null}
               </span>
               <span className="aiProvDesc">
                 {[fmtBytes(b.size_bytes), b.uploads ? tn("{n} upload", "{n} uploads", b.upload_files) : t("databases only"),
@@ -203,6 +304,7 @@ export function WorkspaceBackups({ value }) {
             </span>
           </div>
         ))}
+        {bucketOnly.map((c) => copyRow(w.id, w.name, c, { here: true, busy: Boolean(job) }))}
         {full ? <div className="settingsPaneHint">{t("This workspace holds its maximum of {max} manual snapshots — delete one to take another. Automatic backups have their own retention.", { max: list.max })}</div> : null}
       </Section>
     );
@@ -215,8 +317,8 @@ export function WorkspaceBackups({ value }) {
       {error ? <Empty icon={DatabaseIcon}>{t("Backups unavailable — {error}", { error: error })}</Empty> : null}
       {mine ? (
         <>
-          <BackupTasks workspaces={mine} confirm={confirm} onRefresh={loadList} />
-          {isAdmin ? <OffsiteCopies setStatus={setStatus} /> : null}
+          <BackupTasks workspaces={mine} bucket={bucketAt} confirm={confirm} onRefresh={loadList} onRan={bucketAt ? loadCopies : undefined} />
+          {isAdmin ? <BackupBucket setStatus={setStatus} /> : null}
           <Section title={t("Saved snapshots")} />
           <div className="reportModalBtns settingsAlignStart">
             <ActionMenu
@@ -228,7 +330,9 @@ export function WorkspaceBackups({ value }) {
               ]}
             />
           </div>
+          {copies.error ? <div className="settingsPaneHint aiKeysError">{t("The bucket could not be read: {error}", { error: copies.error })}</div> : null}
           {mine.map(group)}
+          {copyGroups.filter((g) => !mine.some((w) => w.id === g.workspace)).map(elsewhere)}
         </>
       ) : null}
     </>

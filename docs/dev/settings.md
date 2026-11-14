@@ -734,45 +734,56 @@ Library:
 - **Backups** ([SettingsBackups.jsx](../../frontend/src/settings/SettingsBackups.jsx)):
   the task table first ([BackupTasks.jsx](../../frontend/src/settings/BackupTasks.jsx):
   Add task opens the editor `SubDialog`; each row has an Enabled switch and
-  a Run now / Edit / Duplicate / Delete `ActionMenu`), then for admins
-  **Off-site copies** ([OffsiteCopies.jsx](../../frontend/src/settings/OffsiteCopies.jsx)),
+  a Run now / Edit / Duplicate / Delete `ActionMenu`), then for admins the
+  **Bucket** ([BackupBucket.jsx](../../frontend/src/settings/BackupBucket.jsx)),
   then the server-kept snapshots per workspace (Back up all, and per
   workspace: back up now, download, restore, delete). A row tags a task's snapshot "Automatic" and
   the one a replace restore keeps "Before restore", and says when files were
   missing or a database copy failed its check.
-  Off-site copies sends the server's databases and uploaded files to an
-  S3-compatible bucket, a backup target only: Gamma keeps running on its
-  local files. The section has three rows. The Copy to a bucket switch
-  saves at once; with no bucket saved, turning it on opens the set-up
-  instead. The summary row is named after the bucket ("No bucket yet"
-  before one is saved) and reads "s3://gamma-backups/prefix · every 1 h ·
-  7 kept", with the endpoint's host in place of `s3://` for R2 or MinIO.
-  Its Set up… or Edit… button opens the editor `SubDialog` ("Set up
-  off-site copies" / "Edit off-site copies"), laid out like the shared AI
-  key editor: the bucket, the endpoint (empty for AWS S3), the region, the
+  The Bucket is an S3-compatible bucket that backup tasks copy their
+  snapshots to, a backup target only: Gamma keeps running on its local
+  files. It has no schedule of its own, no switch and no count of copies:
+  a task's editor has a *Copy to the bucket* toggle (an admin's tasks,
+  while a bucket is set up; on for a new task then), whose hint names the
+  bucket and says the task's retention applies there too, and the task's
+  row says "copies to the bucket" and its Last run "in the bucket". The
+  section is one row, named after the bucket ("No bucket yet" before one
+  is saved), reading "s3://gamma-backups/prefix · backup tasks can copy
+  their snapshots here", with the endpoint's host in place of `s3://` for
+  R2 or MinIO. Its Set up… or Edit… button opens the editor `SubDialog`
+  ("Set up a bucket" / "Edit the bucket"), laid out like the shared AI key
+  editor: the bucket, the endpoint (empty for AWS S3), the region, the
   access key ID, the write-only secret key (the box reads "secret set —
   type to replace" while one is stored, and a secret is sent only when
-  typed), the prefix, how often (a `MenuSelect`: every 15 minutes, 1, 6 or
-  24 hours) and the copies kept per database, then Test connection, which
-  tries the dialog's values, saved or not, and answers beside its button.
-  Save (or Enter) closes the dialog once the server takes the values and
-  shows its refusal in the dialog otherwise. Saving the first bucket turns
-  the copies on, as connecting an AI service does; later edits leave the
-  switch as it is. Closing the dialog with unsaved edits asks first. While
-  the copies are on, Status reads "last round … · 12 databases · 340
-  uploads · 0 failed · next round …" (or "no round yet", with the round's
-  error under it) beside Copy now, which is disabled while a round runs.
-  A running round leads it with how far it is ("copying now… · databases
-  3 / 12", then "files 120 / 3,400 · 1.2 GB / 8.0 GB",
-  [offsiteRound.js](../../frontend/src/settings/offsiteRound.js)), read
-  every 3 s while it runs.
+  typed) and the prefix, then Test connection, which tries the dialog's
+  values, saved or not, and answers beside its button. Save (or Enter)
+  closes the dialog once the server takes the values and shows its refusal
+  in the dialog otherwise. Closing the dialog with unsaved edits asks
+  first.
+  What the bucket holds shows with the snapshots (`GET
+  /api/admin/offsite/snapshots`, read again after a task's run): a
+  snapshot also in the bucket is tagged "in the bucket", and a copy only
+  the bucket holds is a row of its own with a cloud icon, "only in the
+  bucket", and Download (a `bucket-download` job, saved when it ends),
+  Restore (Replace… / Merge…, a `bucket-restore` job) and Delete (from the
+  bucket). The copies of a workspace this list has no group for get a
+  group of their own after the others, named as the bucket recorded it and
+  tagged "not on this server" (or "another account's"), whose copies offer
+  Restore as new… in place of Restore: the way back after a lost disk.
   With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
-  switch is disabled, the summary says "Set by GAMMA_S3_BUCKET in the
-  server's environment" (the summary line is its hover title), and its one
-  button is Test, which tries the environment's bucket. `GET/PUT
-  /api/admin/offsite`, `POST /api/admin/offsite/test` and `…/run`; the
-  rounds themselves: [debugging.md](debugging.md) "Off-site copies in a
-  bucket".
+  summary says "Set by GAMMA_S3_BUCKET in the server's environment" (where
+  the bucket is, is its hover title), and its one button is Test, which
+  tries the environment's bucket. The environment's off-site rounds then
+  show under it while on or once one ran: Off-site rounds reads "every 1 h
+  · 7 kept · last round … · 12 databases · 340 uploads · 0 failed · next
+  round …" (or "no round yet", with the round's error under it) beside
+  Copy now, which is disabled while a round runs. A running round leads it
+  with how far it is ("copying now… · databases 3 / 12", then "files 120 /
+  3,400 · 1.2 GB / 8.0 GB",
+  [offsiteRound.js](../../frontend/src/settings/offsiteRound.js)), read
+  every 3 s while it runs. `GET/PUT /api/admin/offsite`, `POST
+  /api/admin/offsite/test` and `…/run`; the copies and the rounds
+  themselves: [debugging.md](debugging.md#snapshots-and-copies-in-a-bucket).
 - **Maintenance** (the pane's head says Library maintenance): workspace
   storage, rebuilding the search indexes (the notes index and the
   document text index of every PDF and text file) and the per-paper
@@ -973,7 +984,7 @@ hint (the row's own words) and English synonyms. A setting one level down
 pane itself that the jump focuses. Every query word must appear in the
 label, synonyms, hint or section. Entries whose label holds them all come
 first; inaccessible management pages are filtered out, and so is an
-admin-only section of a pane everyone has (Backups › Off-site copies,
+admin-only section of a pane everyone has (Backups › Bucket,
 marked `admin()` in the catalog) unless the Server pane is offered. So is
 a setting only a native host shows (Reading & editing › the pen section,
 Apple Pencil or Stylus, marked `hostOnly(flags, entry)`, a flag or a
@@ -1490,11 +1501,14 @@ Reset; a viewer tool hidden into the strip's ⋯ menu and its Customize…,
 the strip's order in the PDF and the notebook viewer; Customize top bar…
 from a right-click on the bar's empty space),
 shared chat settings, mobile layout, administrator account separation, and
-Backups › Off-site copies: an admin's alone, set up in its dialog and read
-back there with its write-only secret, the unsaved-edit question on Cancel,
-Test against an unreachable endpoint, Copy now against a stand-in bucket
-that refuses, and the read-only summary of a second server started with
-`GAMMA_S3_BUCKET`; and Administration › Network proxy: no pane or search
+Backups › Bucket: an admin's alone, set up in its dialog (an endpoint
+pasted with the bucket's name on it taken off) and read back there with
+its write-only secret, the unsaved-edit question on Cancel, Test against a
+stand-in bucket on loopback, a backup task that copies its snapshots
+there, the snapshots tagged "in the bucket", a copy only the bucket holds
+restored in place, another workspace's restored as a new one, a copy
+deleted from the bucket, and the read-only summary of a second server
+started with `GAMMA_S3_BUCKET`; and Administration › Network proxy: no pane or search
 match for a member, an admin's search landing on it, an `https://` proxy
 refused with nothing saved and the refusal gone once the address is
 corrected, a Test of the unreachable proxy

@@ -176,7 +176,8 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `import` | `import` (`routers/imports.py`) | the import review's Import to library | the import report |
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
-| `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page or folder imported by link | the restore report |
+| `restore` | `restore` (an uploaded zip), `restore-snapshot`, `bucket-restore` (`params.source` `bucket`; `into: "new"` makes the workspace) | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore (Restore as new… for a copy in the bucket), a shared page or folder imported by link | the restore report |
+| `bucket-download` | `bucket-download` (`routers/ws_backups.py`, admins) | Settings → Backups → a copy only the bucket holds → Download | the zip |
 | `metadata` | `metadata` (`routers/metadata.py`) | Settings → Maintenance → Fetch needed / Fetch selected / Refetch; an upload of several PDFs | `{papers, fetched, failed}` |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
 | `indexing` | — (`gamma/search/indexer.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{documents}`; progress in documents, written in batches, a stopped run storing what it read |

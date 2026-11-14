@@ -1,7 +1,7 @@
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
-import { ClockIcon, DatabaseIcon, HardDriveIcon, MoreIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { ClockIcon, CloudUploadIcon, DatabaseIcon, HardDriveIcon, MoreIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { DialogButtons, Empty, Field, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
@@ -57,8 +57,8 @@ const took = (s) => (s < 60 ? t("{n}s", { n: s < 10 ? s.toFixed(1) : Math.round(
 
 // The table's Last run cell: the state, when that run started (a queued
 // run has not yet), and what a finished one made (last_result,
-// backup_schedule.py) — "2 snapshots · 14.2 MB · 3.1s", a run under a
-// second without its time.
+// backup_schedule.py) — "2 snapshots · 14.2 MB · 3.1s · in the bucket", a
+// run under a second without its time.
 function LastRun({ task }) {
   const [tone, word] = STATES[task.state] || ["muted", task.state];
   const result = task.state === "finished" ? task.last_result : null;
@@ -67,15 +67,19 @@ function LastRun({ task }) {
       <i className="setDot" />{t(word)}</span>
     {task.last_run && task.state !== "queued" ? <span className="settingDesc">{date(task.last_run)}</span> : null}
     {result ? <span className="settingDesc">
-      {[tn("{n} snapshot", "{n} snapshots", result.snapshots), fmtBytes(result.bytes), result.seconds >= 1 ? took(result.seconds) : ""].filter(Boolean).join(" · ")}
+      {[tn("{n} snapshot", "{n} snapshots", result.snapshots), fmtBytes(result.bytes), result.seconds >= 1 ? took(result.seconds) : "",
+        result.bucket != null ? t("in the bucket") : ""].filter(Boolean).join(" · ")}
     </span> : null}
   </>;
 }
 
-function TaskEditor({ initial, workspaces, onClose, onSaved }) {
+// `bucket`: where the bucket set up in Settings → Backups is (BackupBucket's
+// bucketWhere), "" without one or for an account that is no admin. A new
+// task copies to it when there is one.
+function TaskEditor({ initial, workspaces, bucket, onClose, onSaved }) {
   const [draft, setDraft] = React.useState(() => initial || ({
     name: "", enabled: true, scope: "all_owned", workspaces: [], cron: "0 3 * * *", uploads: true,
-    retention_mode: "days", retention_value: 30,
+    bucket: !!bucket, retention_mode: "days", retention_value: 30,
   }));
   // Daily, weekly and hourly times are the browser's; monthly stays UTC.
   const [parsed] = React.useState(() => (initial?.cron ? fromUtcCron(initial.cron, OFFSET)
@@ -154,6 +158,10 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
           </Field>}
         <Toggle icon={HardDriveIcon} label={t("Include uploaded files")} checked={draft.uploads} onChange={(uploads) => patch({ uploads })}
           hint={t("Include PDFs and images alongside notes and chats.")} />
+        {bucket || draft.bucket ? <Toggle icon={CloudUploadIcon} label={t("Copy to the bucket")} checked={!!draft.bucket}
+          onChange={(on) => patch({ bucket: on })}
+          hint={bucket ? t("Each snapshot also goes to {where}, and this task’s retention applies there too.", { where: bucket })
+            : t("No bucket is set up: set one up under Bucket below, or turn this off.")} /> : null}
         <Section title={t("When to run")} />
         <div className="backupTaskGrid">
           <Field label={t("Frequency")}><MenuSelect block label={t("Frequency")} value={preset} onChange={choosePreset} options={FREQUENCIES} /></Field>
@@ -213,7 +221,8 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
 // The tasks are the Backups pane's read (settingsReads.js), read again
 // every 5 s while the pane is open; a task that succeeded since the last
 // read reloads the snapshot lists.
-export function BackupTasks({ workspaces, confirm, onRefresh }) {
+// `onRan`, when given, hears it once too (the bucket's copies are read again).
+export function BackupTasks({ workspaces, bucket = "", confirm, onRefresh, onRan }) {
   const { data, error: readError, reload } = useSettingsRead("/backup-tasks", { poll: 5000 });
   const tasks = data?.tasks ?? null;
   const [editor, setEditor] = React.useState(null);
@@ -225,7 +234,10 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
   React.useEffect(() => {
     if (!tasks) return;
     const signature = JSON.stringify(tasks.map((task) => [task.id, task.last_success]));
-    if (previous.current && previous.current !== signature) workspaces.forEach((w) => onRefresh(w.id));
+    if (previous.current && previous.current !== signature) {
+      workspaces.forEach((w) => onRefresh(w.id));
+      onRan?.();
+    }
     previous.current = signature;
   }, [tasks]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -260,7 +272,8 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
             : tn("keeps {n} day", "keeps {n} days", task.retention_value);
           return <tr key={task.id}>
             <td><strong>{task.name}</strong><span className="settingDesc" title={names}>
-              {[names, keeps, task.uploads ? t("includes files") : t("databases only")].join(" · ")}</span></td>
+              {[names, keeps, task.uploads ? t("includes files") : t("databases only"), task.bucket ? t("copies to the bucket") : ""]
+                .filter(Boolean).join(" · ")}</span></td>
             <td><span>{when}</span>{whenUtc ? <span className="settingDesc">{whenUtc}</span> : null}</td>
             <td>{task.requested ? t("Queued") : task.enabled ? date(task.next_run) : t("Paused")}</td>
             <td><LastRun task={task} /></td>
@@ -277,6 +290,6 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
     </div>}
     {full ? <p className="settingsPaneHint">{limitHint}</p> : null}
     {tasks?.filter((t) => t.last_error).map((it) => <p key={it.id} className="settingsPaneHint aiKeysError" role="status"><strong>{it.name}:</strong> {it.last_error}{it.enabled ? t(" Next attempt: {next_run}.", { next_run: date(it.next_run) }) : ""}</p>)}
-    {editor !== null ? <TaskEditor initial={editor.name !== undefined ? editor : null} workspaces={workspaces} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); load(); }} /> : null}
+    {editor !== null ? <TaskEditor initial={editor.name !== undefined ? editor : null} workspaces={workspaces} bucket={bucket} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); load(); }} /> : null}
   </>;
 }

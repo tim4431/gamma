@@ -52,11 +52,23 @@ export const TASK_KINDS = {
       if (params.source === "snapshot") {
         return params.mode === "merge" ? t("Merge a snapshot into “{name}”", args) : t("Restore “{name}” from a snapshot", args);
       }
+      if (params.source === "bucket") {
+        return params.into === "new" ? t("Restore “{name}” from the bucket as a new workspace", args)
+          : params.mode === "merge" ? t("Merge a copy from the bucket into “{name}”", args) : t("Restore “{name}” from the bucket", args);
+      }
       return params.mode === "merge" ? t("Merge {file} into “{name}”", args) : t("Restore “{name}” from {file}", args);
     },
-    // An uploaded zip is gone once its job ended; a stored snapshot is still there.
+    // An uploaded zip is gone once its job ended; a stored snapshot, and a copy in the bucket, are still there.
     retry: ({ params }) => (params.source === "snapshot"
-      ? ["restore-snapshot", { ws: params.ws, name: params.snapshot, mode: params.mode }] : null),
+      ? ["restore-snapshot", { ws: params.ws, name: params.snapshot, mode: params.mode }]
+      : params.source === "bucket" ? ["bucket-restore", { ws: params.ws, name: params.snapshot, mode: params.mode, into: params.into || "" }]
+        : null),
+  },
+  // A backup task's copy in the bucket, downloaded (Settings → Backups, admins).
+  "bucket-download": {
+    icon: "download", open: "settings:backups",
+    title: ({ params }) => t("Download of “{name}” from the bucket", { name: named(params.name) }),
+    retry: ({ params }) => ["bucket-download", { ws: params.ws, name: params.snapshot }],
   },
   import: {
     icon: "import", open: "import",

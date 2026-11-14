@@ -138,16 +138,82 @@ with the ngx_brotli module). It then also owns the backend's other static
 rules: `index.html` for any path that is no file, `/assets/*` cached
 `public, max-age=31536000, immutable`, everything else `no-cache`.
 
-### Off-site copies in a bucket
+### Snapshots and copies in a bucket
 
 Gamma always works on the files in its data directory. An S3-compatible
-bucket (AWS S3, Cloudflare R2, MinIO, Backblaze B2) can hold copies of the
-databases and the uploaded files, so a lost disk costs at most one interval
-of work (`gamma/offsite.py`, `gamma/s3.py`). The bucket is a backup target
-only: nothing reads from it except a restore. It needs boto3: the Docker
-image installs `requirements-s3.txt` beside `requirements.txt` (about
-23 MB, most of it botocore's service models), and a checkout runs `pip
-install -r requirements-s3.txt`. The desktop app does not include it.
+bucket (AWS S3, Cloudflare R2, MinIO, Backblaze B2) can hold copies of it,
+so a lost disk does not take the library with it (`gamma/s3.py`). The
+bucket is a backup target only: nothing reads from it except a restore. It
+is filled in one of two ways:
+
+- **By backup tasks** (`gamma/bucket_snapshots.py`): an admin sets up the
+  bucket in Settings → Backups → Bucket, and each backup task with *Copy to
+  the bucket* on sends it the workspace snapshots it takes. The bucket has
+  no schedule of its own.
+- **By the off-site rounds** (`gamma/offsite.py`): when the server's
+  environment sets the bucket (`GAMMA_S3_BUCKET`), the server also copies
+  every database and uploaded file to it every interval, with no account
+  and no task. This is how an operator or a hosted container backs up the
+  whole server.
+
+The bucket needs boto3: the Docker image and the desktop app's frozen
+backend (`desktop.yml`, with `build_backend.py` collecting botocore's and
+boto3's data) install `requirements-s3.txt` beside `requirements.txt`
+(about 23 MB, most of it botocore's service models), and a checkout runs
+`pip install -r requirements-s3.txt`.
+
+**Settings.** Admins set up the bucket in Settings → Backups → Bucket
+([settings.md](settings.md)): the bucket, the endpoint (empty for AWS; R2's
+`https://<account>.r2.cloudflarestorage.com`, MinIO's address; a bucket
+behind its own endpoint is addressed by path, and an endpoint pasted with
+the bucket's name on its end, as R2's dashboard shows its S3 API, has it
+taken off), the region (R2: `auto`), the access key and secret key (both
+empty: boto3's own chain, the `AWS_*` variables or an instance role) and
+the prefix (put before every key, for a bucket several servers share).
+Test lists the bucket once with the form's values, saved or not. The
+settings are stored in users.db under the `settings` key `offsite`, the
+secret key encrypted with the data directory's key like the shared AI
+provider keys. A task reads them as it copies.
+
+**From the environment.** When `GAMMA_S3_BUCKET` is set, every setting
+comes from the environment and the pane shows them read-only:
+`GAMMA_S3_BUCKET`, `GAMMA_S3_ENDPOINT`, `GAMMA_S3_REGION`,
+`GAMMA_S3_ACCESS_KEY`, `GAMMA_S3_SECRET_KEY`, `GAMMA_S3_PREFIX`,
+`GAMMA_OFFSITE` (the rounds, on unless `0`, `false`, `no` or `off`),
+`GAMMA_OFFSITE_INTERVAL` (seconds, default 3600, at least 60) and
+`GAMMA_OFFSITE_KEEP` (default 7). Backup tasks copy to that bucket too.
+
+#### The backup tasks' snapshots
+
+A task with *Copy to the bucket* on (only an admin's: the bucket is the
+server's) uploads each snapshot it takes, whole, to
+`<prefix>snapshots/<workspace>/<name>.zip`, the snapshot's own name, and
+writes `<prefix>snapshots/<workspace>/workspace.json` (`{id, name, kind}`)
+beside it, which names a workspace a new server does not have. The task's
+retention then prunes its copies in the bucket as it prunes its snapshots
+on the server (`bucket_snapshots.prune`): the newest are kept, the copies
+of other tasks are never touched. A copy that fails (the bucket refuses,
+or no bucket is set up any more) leaves the snapshots on the server and
+fails the run with the reason (`last_error`, the `backup-failed` notice);
+the task keeps its schedule rather than retrying an hour later, since the
+snapshots were taken.
+
+Settings → Backups › Saved snapshots lists what the bucket holds for an
+admin (`GET /api/admin/offsite/snapshots`, one listing of `snapshots/`): a
+snapshot also in the bucket is tagged *in the bucket*, and a copy only the
+bucket holds (its snapshot deleted or pruned here) is a row of its own,
+which is downloaded (the `bucket-download` job), restored into its
+workspace (`bucket-restore`, replace or merge, as a stored snapshot
+restores) or deleted from the bucket. The copies of a workspace this
+server does not have are listed under the name `workspace.json` recorded
+and come back as a new workspace (`bucket-restore` with `into: "new"`):
+the copy's own id when it is free, its name and kind from the copy's
+manifest, the admin its owner. That is the way back after a lost disk: set
+up the bucket on the new server and restore each workspace; its members
+are invited again. Deleting a task, or a workspace, leaves its copies in
+the bucket.
+
+#### The off-site rounds
 
 **What is copied.** A round runs at startup and then once per interval:
 
@@ -161,40 +227,23 @@ install -r requirements-s3.txt`. The desktop app does not include it.
   `<prefix>uploads/<workspace>/<name>`. A name is the file's content hash,
   so a file is sent once and has one copy.
 
-**Settings.** Admins set the copies in Settings → Backups → Off-site copies
-([settings.md](settings.md)): on or off, the bucket, the endpoint (empty
-for AWS; R2's `https://<account>.r2.cloudflarestorage.com`, MinIO's
-address; a bucket behind its own endpoint is addressed by path), the region
-(R2: `auto`), the access key and secret key (both empty: boto3's own chain,
-the `AWS_*` variables or an instance role), the prefix (put before every
-key, for a bucket several servers share), the interval (default 3600 s, at
-least 60) and the copies kept per database. Test lists the bucket once with
-the form's values, saved or not. Copy now starts a round at once. It is the
-server's own round, not a background job ([tasks.md](tasks.md)), and the
-section's status line follows it: how far a running round is, the last
-round, what it copied, what failed and why, and the next round. A running
-round counts the databases it has looked at of all of them, then the
-files it sends and their bytes (boto3's upload callback), each
-workspace's files compared with one listing of its objects before the
-first is sent, so the first round, which sends every file, counts the
-whole library from its start. The settings are stored in users.db
-under the `settings` key `offsite`, the secret key encrypted with the data
-directory's key like the shared AI provider keys. A round reads them as it
-starts, and the pause after a round is read as the round ends. So a change
-applies from the next round, and a new interval from the pause after it.
-On a hosted container the plan's `offsite` answer holds the interval and
-the copies kept to its own, from either source. Its values fill what the
-environment leaves unset, and otherwise win only where they are stricter:
-a shorter interval, more copies ([cloud_accounts.md](cloud_accounts.md)
-"Hosted containers").
-
-**From the environment.** When `GAMMA_S3_BUCKET` is set, every setting
-comes from the environment and the pane shows them read-only:
-`GAMMA_S3_BUCKET`, `GAMMA_S3_ENDPOINT`, `GAMMA_S3_REGION`,
-`GAMMA_S3_ACCESS_KEY`, `GAMMA_S3_SECRET_KEY`, `GAMMA_S3_PREFIX`,
-`GAMMA_OFFSITE` (on unless `0`, `false`, `no` or `off`),
-`GAMMA_OFFSITE_INTERVAL` (seconds, default 3600, at least 60) and
-`GAMMA_OFFSITE_KEEP` (default 7).
+**Status.** The Bucket section shows the environment's rounds below the
+bucket: how often and how many copies are kept, how far a running round
+is, the last round, what it copied, what failed and why, and the next
+round. Copy now starts a round at once. It is the server's own round, not a
+background job ([tasks.md](tasks.md)). A running round counts the
+databases it has looked at of all of them, then the files it sends and
+their bytes (boto3's upload callback), each workspace's files compared
+with one listing of its objects before the first is sent, so the first
+round, which sends every file, counts the whole library from its start. A
+round reads the settings as it starts, and the pause after a round is read
+as the round ends. So a change applies from the next round, and a new
+interval from the pause after it. On a hosted container the plan's
+`offsite` answer holds the interval and the copies kept to its own. Its
+values fill what the environment leaves unset, and otherwise win only
+where they are stricter: a shorter interval, more copies
+([cloud_accounts.md](cloud_accounts.md) "Hosted containers"). A bucket
+saved in the pane runs no rounds.
 
 **The bucket.** Only the server talks to it, so it needs no CORS rule and
 no public access. It is reached on the server's network route: through
@@ -204,7 +253,7 @@ allowed to list, read, write and delete
 under the prefix (pruning deletes). Two servers that share a bucket need a
 prefix each.
 
-**A round in detail.**
+**A round in detail.** (The rounds only.)
 
 - **A database copy.** Each database is copied with the SQLite backup API
   into `backups/.offsite/`, which is consistent while the server writes.
@@ -244,8 +293,9 @@ prefix each.
 - **What stays in the bucket.** A file deleted from a workspace, and the
   copies and files of a deleted workspace, stay in the bucket. Remove
   `offsite/<id>/` and `uploads/<id>/` by hand or with a lifecycle rule.
-- **What is not copied.** The job artifacts, the server snapshots and the
-  workspace snapshot zips stay on the node's disk. `publisher-sessions.key`
+- **What is not copied.** The job artifacts and the server snapshots stay
+  on the node's disk, and so do the workspace snapshot zips but for those a
+  backup task copies to the bucket (above). `publisher-sessions.key`
   in the data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied.
   It encrypts the shared AI entries' keys and sign-ins (an account's own
   are stored unencrypted), the Gamma Cloud grants, the mirrors' tokens, the
@@ -254,7 +304,9 @@ prefix each.
   somewhere else, or a restored server cannot read those (the secret key
   and the proxy's password can be typed in again).
 
-**Restore**, with the server stopped. The command uses the bucket the
+**Restore** of the rounds' copies, with the server stopped (a backup
+task's snapshots come back from Settings → Backups, above). The command
+uses the bucket the
 settings name. After a lost disk the saved settings went with users.db, so
 give the bucket in the `GAMMA_S3_*` variables for the command; the restored
 users.db brings the saved settings back for the server. `manage.py offsite
@@ -306,9 +358,10 @@ thing: whole-directory snapshots on the node's own disk.
 #### Litestream
 
 Litestream streams each database's WAL to a bucket within seconds of a
-write. The off-site rounds above are the simpler default; choose
-Litestream when seconds of loss matter. It copies no uploaded files, so
-keep the rounds on for those. It runs beside Gamma, not in the image.
+write. The off-site rounds and the backup tasks above are the simpler
+default; choose Litestream when seconds of loss matter. It copies no
+uploaded files, so keep the rounds (or tasks with their files) on for
+those. It runs beside Gamma, not in the image.
 `manage.py litestream-config [--out <path>]` writes a `litestream.yml`
 (Litestream 0.5 or later, one `replica` per database) for the off-site
 bucket, whether it was saved in the pane or set by the environment. It has

@@ -14814,7 +14814,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         } : null}
         backups={authUser?.user && !authUser.is_guest ? {
           workspace,
-          isAdmin: !!authUser?.is_admin, // Off-site copies
+          isAdmin: !!authUser?.is_admin, // the Bucket
           tasks,
           setStatus,
           confirm: setConfirmBox,

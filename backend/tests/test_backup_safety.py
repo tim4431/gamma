@@ -285,7 +285,7 @@ def test_a_task_saved_before_the_limits_fails_with_the_reason(task_store):
     assert ws_backup.list_backups(ws) == []
     assert any(n["id"] == "backup-failed" for n in notices.for_user(account_of("bs_tasks"), False))
     # the owner can still pause it
-    data = {k: legacy[k] for k in tasks_input_fields()}
+    data = {k: legacy[k] for k in tasks_input_fields() if k in legacy}  # a task from before `bucket` has none
     assert tasks.save(account_of("bs_tasks"), {**data, "enabled": False}, legacy["id"])["enabled"] is False
 
 
