@@ -410,14 +410,9 @@ def test_the_off_site_copies_follow_the_plan_where_it_is_stricter(plan, monkeypa
         monkeypatch.setenv("GAMMA_OFFSITE_INTERVAL", "7200")
         monkeypatch.setenv("GAMMA_OFFSITE_KEEP", "3")
         assert (offsite.settings()["interval_s"], offsite.settings()["keep"]) == (1800, 30)
-        # saved by the admin: the plan wins only where it is stricter
+        # a bucket the admin saved runs no rounds (the backup tasks copy to it), plan or not
         monkeypatch.delenv("GAMMA_S3_BUCKET")
-        _set_raw(offsite.SETTINGS_KEY, "")
-        assert (offsite.settings()["interval_s"], offsite.settings()["keep"]) == (1800, 30)  # over the defaults
-        _set_raw(offsite.SETTINGS_KEY, json.dumps({"bucket": "ho-saved", "interval_s": 600, "keep": 3}))
-        assert (offsite.settings()["interval_s"], offsite.settings()["keep"]) == (600, 30)
-        # off a hosted server the saved values stand
-        monkeypatch.delenv("GAMMA_HOSTED")
-        assert (offsite.settings()["interval_s"], offsite.settings()["keep"]) == (600, 3)
+        _set_raw(offsite.SETTINGS_KEY, json.dumps({"bucket": "ho-saved", "enabled": True, "interval_s": 600}))
+        assert offsite.settings()["bucket"] == "ho-saved" and offsite.settings()["enabled"] is False
     finally:
         _set_raw(offsite.SETTINGS_KEY, before)

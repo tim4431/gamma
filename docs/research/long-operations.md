@@ -232,7 +232,7 @@ the bytes within a file. To count the whole round from its start, the
 uploads now compare every workspace's files with its listing before the
 first is sent. Settings → Backups' status line reads "copying now… ·
 files 120 / 3,400 · 1.2 GB / 8.0 GB", read every 3 s while the round runs
-([dev/debugging.md](../dev/debugging.md#off-site-copies-in-a-bucket)). A
+([dev/debugging.md](../dev/debugging.md#snapshots-and-copies-in-a-bucket)). A
 folder link's `Round` took a `progress` callback in place of the `say`
 the server threw away: the files fetched of those to fetch and the PDFs'
 bytes by the manifest's `pdf_size`. Folder links have since become synced

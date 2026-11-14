@@ -31,8 +31,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, guests, hosted, integrity, jobs,
-                offsite, proxy_settings, workspaces)
+from .. import (ai_settings, backups, bucket_snapshots, chatgpt_oauth, cloud_auth, email_invites, guests, hosted,
+                integrity, jobs, offsite, proxy_settings, s3, workspaces)
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -376,22 +376,20 @@ def list_workspaces(request: Request):
     return {"workspaces": workspaces.all_workspaces(), "orphans": workspaces.orphan_dirs()}
 
 
-# --- off-site copies (gamma/offsite.py) --------------------------------------
-# Settings → Backups → Off-site copies. The secret key is write-only: a GET
-# says whether one is set, a PUT or a test without it keeps the saved one.
-# While GAMMA_S3_BUCKET is set the environment decides (``from_env``): a PUT
-# is refused with 409 and a test checks the environment's bucket.
+# --- the bucket (gamma/offsite.py, gamma/bucket_snapshots.py) ----------------
+# Settings → Backups → Bucket. The secret key is write-only: a GET says
+# whether one is set, a PUT or a test without it keeps the saved one. While
+# GAMMA_S3_BUCKET is set the environment decides (``from_env``): a PUT is
+# refused with 409, a test checks the environment's bucket, and the
+# environment's rounds run (``status``, Copy now).
 
 class OffsiteSettingsRequest(BaseModel):
-    enabled: bool | None = None
     bucket: str | None = None
     endpoint: str | None = None
     region: str | None = None
     access_key: str | None = None
     secret_key: str | None = None   # only when changing it: absent or "" keeps the saved one
     prefix: str | None = None
-    interval_s: int | None = None   # seconds between rounds, at least 60
-    keep: int | None = None         # copies kept per database, at least 1
 
 
 def _offsite_view() -> dict:
@@ -401,9 +399,9 @@ def _offsite_view() -> dict:
 
 @router.get("/offsite")
 def get_offsite(request: Request):
-    """``{settings: {enabled, bucket, endpoint, region, access_key,
-    secret_set, prefix, interval_s, keep}, from_env, status}`` —
-    ``status`` is ``offsite.status``."""
+    """``{settings: {bucket, endpoint, region, access_key, secret_set,
+    prefix}, from_env, status}`` — ``status`` is ``offsite.status``, the
+    environment's rounds."""
     require_admin(request)
     return _offsite_view()
 
@@ -435,11 +433,44 @@ def test_offsite(request: Request, payload: OffsiteSettingsRequest | None = None
 
 @router.post("/offsite/run")
 def run_offsite(request: Request):
-    """Copy now: ``{started: true}``, or ``{started: false, message}`` with
-    the copies off or a round running. The pane follows the round through
-    the GET's ``status.running``."""
+    """The environment's rounds' Copy now: ``{started: true}``, or
+    ``{started: false, message}`` with the rounds off or one running. The
+    pane follows the round through the GET's ``status.running``."""
     require_admin(request)
     return offsite.run_now()
+
+
+def _bucket_call(fn, *args):
+    """A call to the bucket: 400 when none can be used (none set up,
+    boto3 missing), 404 for a copy that is not there, 502 when the bucket
+    refuses or cannot be reached."""
+    try:
+        return fn(*args)
+    except s3.S3ConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:  # a name or a workspace id no copy has
+        raise HTTPException(status_code=404, detail=str(e))
+    except OSError as e:  # S3Error
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# Sync def: a listing of the bucket, network round trips.
+@router.get("/offsite/snapshots")
+def list_bucket_snapshots(request: Request):
+    """The backup tasks' copies in the bucket (``bucket_snapshots.listing``):
+    ``{groups: [{workspace, name, here, snapshots: [{name, size_bytes,
+    created_at, task}]}]}``."""
+    require_admin(request)
+    return {"groups": _bucket_call(bucket_snapshots.listing)}
+
+
+@router.delete("/offsite/snapshots/{ws}/{name}")
+def delete_bucket_snapshot(ws: str, name: str, request: Request):
+    require_admin(request)
+    _bucket_call(bucket_snapshots.delete, ws, name)
+    return {"ok": True}
 
 
 # --- the network proxy (gamma/proxy_settings.py) -----------------------------

@@ -1,12 +1,14 @@
-"""The S3-compatible bucket the off-site copies go to (gamma/offsite.py,
-docs/dev/debugging.md "Off-site copies in a bucket"): AWS S3, Cloudflare R2,
-MinIO, through boto3, which is imported only when a ``Client`` is made
-(``requirements-s3.txt``: the Docker image has it, the desktop app and a
-plain checkout do not).
+"""The S3-compatible bucket the backup tasks' snapshots and the off-site
+copies go to (gamma/bucket_snapshots.py, gamma/offsite.py,
+docs/dev/debugging.md "Snapshots and copies in a bucket"): AWS S3,
+Cloudflare R2, MinIO, through boto3, which is imported only when a
+``Client`` is made (``requirements-s3.txt``: the Docker image and the
+desktop app have it, a plain checkout does not).
 
 A ``Client`` keeps whole files under the bucket's prefix: ``put_object`` (a
 local file, streamed up by boto3's managed transfer, in parts past 8 MB),
-``get_object`` (down into a local file, written whole), ``list_objects``
+``get_object`` (down into a local file, written whole), ``put_bytes`` and
+``get_bytes`` (a small object in one request), ``list_objects``
 (``(key, size, mtime)`` under a prefix) and ``delete_object``. ``check``
 lists the prefix once and says why a bucket cannot work. Keys are relative
 to the prefix and checked by ``check_key``. A call the bucket refuses, or
@@ -186,6 +188,25 @@ class Client:
             tmp.unlink(missing_ok=True)
             raise
         return True
+
+    def put_bytes(self, key: str, data: bytes) -> None:
+        """Store ``data`` as ``key`` in one request (a small object)."""
+        try:
+            self.client.put_object(Bucket=self.bucket, Key=self.prefix + check_key(key), Body=data)
+        except (self._client_error, self._boto_error) as e:
+            raise S3Error(f"PUT {key} in {self.where}: {e}") from e
+
+    def get_bytes(self, key: str) -> bytes | None:
+        """A small object's bytes, read whole; None when there is no such
+        object."""
+        try:
+            return self.client.get_object(Bucket=self.bucket, Key=self.prefix + check_key(key))["Body"].read()
+        except self._client_error as e:
+            if self._missing(e):
+                return None
+            raise S3Error(f"GET {key} in {self.where}: {e}") from e
+        except self._boto_error as e:
+            raise S3Error(f"GET {key} in {self.where}: {e}") from e
 
     def list_objects(self, prefix: str) -> list[tuple[str, int, float]]:
         """``(key, size, mtime)`` of each object whose key starts with

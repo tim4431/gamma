@@ -1,22 +1,26 @@
-"""Off-site copies: the databases and the uploaded files copied to an
-S3-compatible bucket, so a lost disk costs at most one interval of work
-(docs/dev/debugging.md "Off-site copies in a bucket"). The app always works
-on its local files; the bucket is a backup target only, written by the
-rounds and read by a restore.
+"""The bucket, and the off-site rounds that copy the databases and the
+uploaded files to it (docs/dev/debugging.md "Snapshots and copies in a
+bucket"). The app always works on its local files; the bucket is a backup
+target only.
 
-The settings (``settings``, the one place that merges their two sources):
-an admin saves them in Settings → Backups (``save``: users.db ``settings``
-key ``offsite``, the secret key Fernet-encrypted with the data directory's
-key like the shared AI provider keys), unless ``GAMMA_S3_BUCKET`` is set:
-then every field comes from the environment (``config.offsite_env``) and
-the pane shows them read-only (``from_env``). On a hosted container the
-plan's ``offsite`` answer (gamma/hosted.py) holds both sources to its
-interval and copies kept: it fills an interval or keep the environment
-leaves unset, and otherwise wins only where it is stricter (a shorter
-interval, more copies) — ``_plan_offsite``.
+The bucket (``settings``, the one place that merges its two sources): an
+admin sets it up in Settings → Backups (``save``: users.db ``settings`` key
+``offsite``, the secret key Fernet-encrypted with the data directory's key
+like the shared AI provider keys): where it is and the keys, nothing more.
+That bucket has no schedule of its own: the backup tasks that copy to it
+send it their snapshots (gamma/bucket_snapshots.py). When
+``GAMMA_S3_BUCKET`` is set, every field comes from the environment instead
+(``config.offsite_env``), the pane shows them read-only (``from_env``), and
+the environment also runs the rounds below (``GAMMA_OFFSITE``, on by
+default, every ``GAMMA_OFFSITE_INTERVAL``): what an operator or a hosted
+container sets up, with no account to own a backup task. On a hosted
+container the plan's ``offsite`` answer (gamma/hosted.py) holds the rounds
+to its interval and copies kept: it fills an interval or keep the
+environment leaves unset, and otherwise wins only where it is stricter (a
+shorter interval, more copies) — ``_plan_offsite``.
 
 ``tick``, which the app's ``every()`` loop runs at startup and then after
-each pause of ``wait_s``, runs one round while the copies are on;
+each pause of ``wait_s``, runs one round while the rounds are on;
 ``run_now`` starts one in a thread (the pane's Copy now). One round runs at
 a time. A round reads the settings as it starts, and ``wait_s`` reads the
 interval as it ends, so a change applies from the next round, and a new
@@ -87,7 +91,7 @@ from .publisher_sessions import cipher
 from .server_settings import _peek_raw, _set_raw
 
 SETTINGS_KEY = "offsite"                 # users.db ``settings``: the saved settings, as JSON
-FIELDS = ("enabled", "bucket", "endpoint", "region", "access_key", "secret_key", "prefix", "interval_s", "keep")
+FIELDS = ("bucket", "endpoint", "region", "access_key", "secret_key", "prefix")  # what an admin saves
 DEFAULT_INTERVAL_S, INTERVAL_MIN_S, INTERVAL_MAX_S = 3600, 60, 30 * 24 * 3600
 DEFAULT_KEEP, KEEP_MAX = 7, 1000
 SPACE = "offsite"                        # the databases' copies in the bucket, beside uploads/
@@ -202,13 +206,14 @@ def _saved() -> dict:
 
 
 def settings() -> dict:
-    """The off-site settings in force: ``{enabled, bucket, endpoint, region,
-    access_key, secret_key, prefix, interval_s, keep, from_env}``. With
-    ``GAMMA_S3_BUCKET`` set, all from the environment (``GAMMA_S3_*``,
+    """The bucket and the rounds in force: ``{enabled, bucket, endpoint,
+    region, access_key, secret_key, prefix, interval_s, keep, from_env}``.
+    With ``GAMMA_S3_BUCKET`` set, all from the environment (``GAMMA_S3_*``,
     ``GAMMA_OFFSITE`` on unless 0/false/no/off, ``GAMMA_OFFSITE_INTERVAL``,
-    ``GAMMA_OFFSITE_KEEP``); else the saved ones, off until an admin turns
-    them on. The interval is 3600 s and the copies kept 7 by default. A
-    hosted plan holds both to its own (``_held_to_plan``)."""
+    ``GAMMA_OFFSITE_KEEP``; the interval is 3600 s and the copies kept 7 by
+    default, and a hosted plan holds both to its own, ``_held_to_plan``).
+    Else the saved bucket, with the rounds off (``enabled`` False): the
+    backup tasks copy to it."""
     env = config.offsite_env()
     if env["bucket"]:
         flag = env["enabled"].lower()
@@ -225,17 +230,15 @@ def settings() -> dict:
             value = saved.get(name)
             return value if isinstance(value, str) else ""
 
-        conf = {"enabled": saved.get("enabled") is True and bool(text("bucket")),
-                **{k: text(k) for k in ("bucket", "endpoint", "region", "access_key", "secret_key", "prefix")},
-                "interval_s": _number(saved.get("interval_s"), DEFAULT_INTERVAL_S, INTERVAL_MIN_S, INTERVAL_MAX_S),
-                "keep": _number(saved.get("keep"), DEFAULT_KEEP, 1, KEEP_MAX), "from_env": False}
-        conf = _held_to_plan(conf)
+        conf = {"enabled": False, **{k: text(k) for k in FIELDS},
+                "interval_s": DEFAULT_INTERVAL_S, "keep": DEFAULT_KEEP, "from_env": False}
     return conf
 
 
 def public(conf: dict) -> dict:
-    """The settings as the admin API answers them: the secret key never,
-    only whether one is set (``secret_set``)."""
+    """The bucket as the admin API answers it: the secret key never, only
+    whether one is set (``secret_set``). The rounds' interval and keep are
+    in ``status``."""
     return {**{k: conf[k] for k in FIELDS if k != "secret_key"}, "secret_set": bool(conf["secret_key"])}
 
 
@@ -243,7 +246,9 @@ def _checked(current: dict, fields: dict) -> dict:
     """``fields`` (any of FIELDS; ``secret_key`` absent or empty keeps
     ``current``'s, and goes with an access key cleared) laid over
     ``current`` and checked: ``{field: value}`` for every one of FIELDS.
-    ValueError with the reason a person can act on."""
+    ValueError with the reason a person can act on (also for a field that
+    is not one of FIELDS: the rounds' switch, interval and copies kept are
+    the environment's alone)."""
     unknown = sorted(set(fields) - set(FIELDS))
     if unknown:
         raise ValueError(f"Unknown setting: {', '.join(unknown)}.")
@@ -259,14 +264,10 @@ def _checked(current: dict, fields: dict) -> dict:
             raise ValueError(f"{what} must be one word of at most {most} characters.")
         return value
 
-    if not isinstance(conf["enabled"], bool):
-        raise ValueError("enabled must be true or false.")
     bucket = text("bucket", "The bucket")
     if bucket and not _BUCKET_RE.match(bucket):
         raise ValueError("The bucket's name must be 3 to 63 letters, digits, dots, hyphens or underscores, "
                          "starting and ending with a letter or digit.")
-    if conf["enabled"] and not bucket:
-        raise ValueError("Set a bucket before turning off-site copies on.")
     endpoint = text("endpoint", "The endpoint", 300).rstrip("/")
     if endpoint:
         try:
@@ -277,6 +278,8 @@ def _checked(current: dict, fields: dict) -> dict:
         if not ok or url.username is not None or url.query or url.fragment:
             raise ValueError("The endpoint must be an http or https address, like "
                              "https://<account>.r2.cloudflarestorage.com (leave it empty for AWS).")
+        if bucket and url.path.strip("/") == bucket:  # R2's dashboard shows its S3 API with the bucket's name on
+            endpoint = endpoint[:-len(url.path.rstrip("/"))]
     region = text("region", "The region", 64)
     if not _REGION_RE.match(region):
         raise ValueError("The region must be letters, digits and hyphens, like us-east-1 (R2: auto).")
@@ -298,22 +301,15 @@ def _checked(current: dict, fields: dict) -> dict:
         except ValueError:
             raise ValueError("The prefix must be names separated by /, without . or .. names or "
                              "backslashes.") from None
-    interval, keep = conf["interval_s"], conf["keep"]
-    if isinstance(interval, bool) or not isinstance(interval, int) or not INTERVAL_MIN_S <= interval <= INTERVAL_MAX_S:
-        raise ValueError(f"The interval must be a whole number of seconds from {INTERVAL_MIN_S} to "
-                         f"{INTERVAL_MAX_S}.")
-    if isinstance(keep, bool) or not isinstance(keep, int) or not 1 <= keep <= KEEP_MAX:
-        raise ValueError(f"The copies kept must be a whole number from 1 to {KEEP_MAX}.")
-    return {"enabled": conf["enabled"], "bucket": bucket, "endpoint": endpoint, "region": region,
-            "access_key": access_key, "secret_key": secret_key, "prefix": prefix, "interval_s": interval,
-            "keep": keep}
+    return {"bucket": bucket, "endpoint": endpoint, "region": region, "access_key": access_key,
+            "secret_key": secret_key, "prefix": prefix}
 
 
 def save(fields: dict) -> dict:
     """Store ``fields`` (any of FIELDS, ``_checked``) over the saved
     settings, the secret key encrypted; the new ``settings()``. FromEnvError
     while the environment sets the bucket, ValueError when a field is
-    wrong (nothing saved). The rounds read them as each starts."""
+    wrong (nothing saved). A backup task reads them as it copies."""
     if config.offsite_env()["bucket"]:
         raise FromEnvError("The off-site copies are set by GAMMA_S3_BUCKET and the other GAMMA_S3_* and "
                            "GAMMA_OFFSITE* variables in the server's environment.")
@@ -334,7 +330,7 @@ def test(fields: dict | None = None) -> dict:
     conf = settings()
     if fields and not conf["from_env"]:
         try:
-            conf = _checked(conf, {**fields, "enabled": False})
+            conf = {**conf, **_checked(conf, fields)}
         except ValueError as e:
             return {"ok": False, "message": str(e)}
     if not conf["bucket"]:
@@ -676,7 +672,8 @@ def run_now() -> dict:
     ``{"started": True}``, or ``{"started": False, "message": why}`` with
     the copies off or a round running."""
     if not settings()["enabled"]:
-        return {"started": False, "message": "off-site copies are off"}
+        return {"started": False, "message": "the rounds are off: they run only when the server's environment "
+                                             "sets them (GAMMA_S3_BUCKET, GAMMA_OFFSITE)"}
     if not _round_lock.acquire(blocking=False):
         return {"started": False, "message": "a round is running"}
     try:
@@ -935,7 +932,7 @@ def litestream_config() -> tuple[str, int]:
     lines = ["# Litestream's configuration for Gamma's databases, written by `manage.py litestream-config`",
              f"# at {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())} with an entry for each database there was.",
              "# Litestream does not watch this file: write it again and restart Litestream whenever a",
-             "# workspace is added or deleted. docs/dev/debugging.md \"Off-site copies in a bucket\"."]
+             "# workspace is added or deleted. docs/dev/debugging.md \"Snapshots and copies in a bucket\"."]
     if conf["access_key"]:
         lines += ["access-key-id: '${GAMMA_S3_ACCESS_KEY}'", "secret-access-key: '${GAMMA_S3_SECRET_KEY}'"]
     lines.append("dbs:")
