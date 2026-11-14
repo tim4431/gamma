@@ -8,12 +8,13 @@ import { Account, Server, makePdf, wanted } from "../harness.mjs";
 // dialog (Choose files…) and written as its .gammaignore. The same backend as
 // the vaults group (GAMMA_FOLDER_LINKS, no shell secret, so the API names
 // paths as the shell would) and a browser that says it is the desktop app.
-// One paper directory: the dialog's preset, the folder's list view, the
+// One paper directory: the dialog's preset, the folder view's tree, the
 // library gate (a file is no paper until it is added), Add to library,
 // Remove and Save a copy, the one-place rule, a change of selection, notes
 // that follow Gamma, Cancel of a fresh work folder, a file opened from the
-// computer ticked in the dialog (?tick=) and landed on after Save, and a
-// file in the tabs, recents and pins the listing does not carry.
+// computer ticked in the dialog (?tick=) and landed on after Save, a file
+// in the tabs, recents and pins the listing does not carry, and Detach from
+// the root's menu in the Files window, keeping the files as pages.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 const HEADER = "# What Gamma tracks in this folder";
@@ -60,8 +61,13 @@ export async function workFolderScenarios(env) {
       await target.click({ button: "right" });
       await page.locator(".ctxMenu .ctxMenuItem", { hasText: item }).click();
     };
-    const fileRow = (page, name) => page.locator(".workList .fileRow", { has: page.locator(`.fileRowName:text-is("${name}")`) });
+    // the folder view's rows (explorer/FolderTree.jsx), a file's or a directory's; a library folder's row in the listing
+    const viewRow = (page, kind, name) => page.locator(`.folderTree .fileTreeRow[data-kind="${kind}"]`,
+      { has: page.locator(`.fileTreeName:text-is("${name}")`) });
+    const fileRow = (page, name) => viewRow(page, "file", name);
+    const dirRow = (page, name) => viewRow(page, "folder", name);
     const folderRow = (page, name) => page.locator(".fileList .folderRow", { has: page.locator(`.folderName:text-is("${name}")`) });
+    const iconOf = (row) => row.locator("img.fileIcon").first().getAttribute("src", { timeout: 10000 });
     const treeFile = (dialog, rel) => dialog.locator(`.importTreeFile[title="${rel}"]`);
     const treeBox = (dialog, rel) => treeFile(dialog, rel).locator("input[type=checkbox]");
 
@@ -139,16 +145,27 @@ export async function workFolderScenarios(env) {
           figures: figures.id,
         };
 
-        // the folder's list view: its directory first with what it holds, then the files
-        await page.locator(".workList").waitFor({ timeout: 15000 });
-        await folderRow(page, "figures").waitFor({ timeout: 15000 });
+        // the folder view's tree: its directory first with what it holds, then the files
+        await page.locator(".folderTree").waitFor({ timeout: 15000 });
+        await dirRow(page, "figures").waitFor({ timeout: 15000 });
         // the row's count follows the page's own read of the folder, after the API's
-        await until(async () => (await folderRow(page, "figures").locator(".fileRowFormat").innerText()).trim() === "1 file",
+        await until(async () => (await dirRow(page, "figures").locator(".fileRowFormat").innerText()).trim() === "1 file",
           { timeout: 15000, what: "figures holds one file" });
         await fileRow(page, "main.pdf").waitFor();
         await fileRow(page, "notes.md").waitFor();
-        const names = (await page.locator(".workList .fileRowName, .workList .folderName").allInnerTexts()).map((s) => s.trim());
+        const names = (await page.locator(".folderTree .fileTreeName").allInnerTexts()).map((s) => s.trim());
         assertEq(names.join("|"), "figures|main.pdf|notes.md", "the directory, then the files by name");
+        // a directory opens in place, one level in, with its theme icon; a file's is its own
+        assert(/\/folder-images(_light)?\.svg$/.test(await iconOf(dirRow(page, "figures"))), "figures/ wears the theme's images folder");
+        assert(/\/pdf(_light)?\.svg$/.test(await iconOf(fileRow(page, "main.pdf"))), "main.pdf the theme's PDF");
+        await dirRow(page, "figures").click();
+        await fileRow(page, "fig1.pdf").waitFor({ timeout: 15000 });
+        assertEq(await dirRow(page, "figures").getAttribute("aria-expanded"), "true", "figures open");
+        assertEq(await fileRow(page, "fig1.pdf").getAttribute("aria-level"), "2", "fig1.pdf one level in");
+        assert(/\/folder-images-open(_light)?\.svg$/.test(await iconOf(dirRow(page, "figures"))), "an open folder's icon");
+        await dirRow(page, "figures").focus();
+        await page.keyboard.press("ArrowLeft");
+        await until(async () => (await fileRow(page, "fig1.pdf").count()) === 0, { what: "ArrowLeft closes it" });
         assertEq((await fileRow(page, "main.pdf").locator(".fileRowFormat").innerText()).trim(), "PDF", "its format");
         assert(/\d/.test(await fileRow(page, "main.pdf").locator(".fileRowSize").innerText()), "its size");
         assertEq((await fileRow(page, "notes.md").locator(".fileRowSize").innerText()).trim(), "—", "a note has no size");
@@ -228,7 +245,7 @@ export async function workFolderScenarios(env) {
         const items = await menuItems(page, row);
         for (const gone of ["Rename", "Move to folder", "Delete"]) assert(!items.includes(gone), `no ${gone} (${items.join(", ")})`);
         await page.goto(`${home}&folder=${link.folder_id}`);
-        const dir = folderRow(page, "figures");
+        const dir = dirRow(page, "figures");
         await dir.waitFor({ timeout: 15000 });
         const folderItems = await menuItems(page, dir);
         for (const gone of ["Rename", "Delete", "New subfolder", "Sync with this computer…"]) {
@@ -302,7 +319,7 @@ export async function workFolderScenarios(env) {
           { timeout: 20000, what: "Plan.md in place of notes.md" });
 
         await page.goto(`${home}&folder=${link.folder_id}`);
-        await page.locator(".workList").waitFor({ timeout: 15000 });
+        await page.locator(".folderTree").waitFor({ timeout: 15000 });
         await page.locator(".folderNewBtn", { hasText: "New page" }).click();
         await page.locator(".titleEdit").waitFor({ timeout: 10000 });
         await page.keyboard.type("Draft");
@@ -324,7 +341,7 @@ export async function workFolderScenarios(env) {
         const dialog = page.getByRole("dialog", { name: "Choose files" });
         await treeFile(dialog, "a.md").waitFor({ timeout: 15000 });
         await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-        await dialog.getByText("Cancel making this work folder?").waitFor();
+        await dialog.getByText("Cancel making this synced folder?").waitFor();
         await dialog.getByRole("button", { name: "Cancel it", exact: true }).click();
         await dialog.waitFor({ state: "detached", timeout: 15000 });
         await until(async () => !(await user.api("/api/folder-links")).links.some((l) => l.id === fresh.id), { what: "the link is gone" });
@@ -381,7 +398,7 @@ export async function workFolderScenarios(env) {
           { timeout: 10000, what: "the summary back at 2 files" });
         await dialog.getByRole("button", { name: "Save", exact: true }).click();
         await dialog.waitFor({ state: "detached", timeout: 15000 });
-        await page.locator(".statusPill", { hasText: "old.tex was left unticked, so it is not a page of this work folder." })
+        await page.locator(".statusPill", { hasText: "old.tex was left unticked, so it is not a page of this synced folder." })
           .waitFor({ timeout: 10000 });
         assertEq(await pageOf("drafts/old.tex"), "", "no page of it");
         assertNoProblems(page);
@@ -397,7 +414,8 @@ export async function workFolderScenarios(env) {
         await page.reload();
         const tab = page.locator(".tabStrip .tab", { hasText: main.content }).first();
         await tab.waitFor({ timeout: 15000 });
-        await tab.locator(".fileGlyph.pdf").waitFor({ timeout: 10000 });
+        // its kind by its file's name: the theme's PDF icon, once the file's row is known
+        await tab.locator('img.fileIcon[src$="/pdf.svg"], img.fileIcon[src$="/pdf_light.svg"]').waitFor({ timeout: 10000 });
         await page.getByRole("button", { name: "Home", exact: true }).click();
         await page.locator(".recentsCarousel .pageCard", { hasText: main.content }).first().waitFor({ timeout: 15000 });
         await user.api(`/api/blocks/${ids.main}`, { method: "PUT", body: { properties: { pinned: new Date().toISOString() } } });
@@ -405,6 +423,56 @@ export async function workFolderScenarios(env) {
         await page.locator(".pinnedStrip .pageCard", { hasText: main.content }).first().waitFor({ timeout: 15000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
+    });
+
+    await step("work-folders: its tree open, the synced folder's root in the Files window offers Detach from this computer; kept, its files stay pages and the directory stays but for .gamma/", async () => {
+      const ctx = await desktop();
+      const page = await openPage(ctx, `${home}&folder=${link.folder_id}`);
+      try {
+        await page.locator(".folderTree").waitFor({ timeout: 15000 });
+        await fileRow(page, "main.pdf").waitFor({ timeout: 15000 });
+        await page.goto(at(ids.main));
+        await page.locator(".titleText").first().waitFor({ state: "attached", timeout: 15000 });
+        await page.locator('[data-guide="header.view"]').click();
+        const view = page.locator(".menuPopover");
+        await view.getByRole("menuitemcheckbox", { name: "Files", exact: true }).click();
+        if (await view.isVisible()) await page.keyboard.press("Escape");
+        const root = page.locator('.filesPanel .fileTree [role="treeitem"]', { has: page.locator('.fileTreeName:text-is("Paper")') });
+        await root.waitFor({ timeout: 15000 });
+
+        // its menu asks GET …/detach as it opens: the row names the computer, once the answer is in
+        const plan = page.waitForResponse((r) => r.url().endsWith(`/api/folders/${link.folder_id}/detach`));
+        await root.click({ button: "right" });
+        const said = await (await plan).json();
+        assert(said.may && said.computer?.online, `the maker may, its computer online: ${JSON.stringify(said)}`);
+        const item = page.locator(".ctxMenu .ctxMenuItem", { hasText: `Detach from ${said.computer.name}…` });
+        await item.waitFor({ timeout: 10000 });
+        await item.click();
+        const dialog = page.locator(".detachDialog");
+        await dialog.waitFor();
+        const text = await dialog.innerText();
+        assert(text.includes(`Detach “Paper” from ${said.computer.name}?`)
+          && text.includes(`The directory on ${said.computer.name} stays as it is`), `the dialog says what it does: ${text}`);
+        assert(await dialog.getByLabel(/Keep the files in Gamma/).isChecked(), "keeping is the default");
+        const answered = page.waitForResponse((r) => r.url().endsWith(`/api/folders/${link.folder_id}/detach`) && r.request().method() === "POST");
+        await dialog.getByRole("button", { name: "Detach", exact: true }).click();
+        const answer = await (await answered).json();
+        assertEq(JSON.stringify({ ok: answer.ok, trashed: answer.trashed }), JSON.stringify({ ok: true, trashed: 0 }), "nothing sent to Recently deleted");
+        await dialog.waitFor({ state: "detached", timeout: 15000 });
+        await page.locator(".statusPill", { hasText: "Detached “Paper”: its files stay in Gamma as pages." }).waitFor({ timeout: 10000 });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+
+      assert(!(await user.api("/api/folder-links")).links.some((l) => l.id === link.id), "the vault is gone");
+      const folder = (await allFolders()).find((f) => f.id === link.folder_id);
+      assert(folder, "the folder stays");
+      assertEq(folder.properties?.vault ?? null, null, "its mark is gone");
+      const props = (await user.api(`/api/blocks/${ids.main}`)).properties;
+      assert(!props.work_folder && !props.file_name, `main.pdf is an ordinary page: ${JSON.stringify(props)}`);
+      for (const rel of ["main.pdf", "main.tex", ".gammaignore", path.join("figures", "fig1.pdf")]) {
+        assert(fs.existsSync(path.join(paperDir, rel)), `${rel} stays on disk`);
+      }
+      assert(!fs.existsSync(path.join(paperDir, ".gamma")), "Gamma's .gamma/ goes");
     });
   } finally {
     await server.stop();

@@ -9,6 +9,7 @@
 // work folder's file is a FileOption. The picker passes the option button's
 // own props (selection, hover, click).
 import React from "react";
+import FileIcon from "../shared/ui/FileIcon.jsx";
 import { CheckIcon, FileGlyph } from "../shared/ui/Icons";
 import { MarkedText } from "../search/SearchPanel";
 import { CardLabels } from "./FileBrowser";
@@ -31,7 +32,7 @@ function OptionEnd({ checked, current, time }) {
 }
 
 // A work folder's file as an option, one row whatever lists it (a recent, an
-// open tab, a title hit, a file GET /api/files found): the kind glyph, the
+// open tab, a title hit, a file GET /api/files found): its theme icon, the
 // file's name with the query's matches marked, under it its place
 // (explorer/workPaths.js filePlace, "W / a / b"), its library folders and
 // labels (filingChips: its directory is its place, no chip), then the end.
@@ -44,7 +45,7 @@ export function FileOption({ page, tree, query, time, currentPageId, checked, ..
   const chips = filingChips(tree, page.properties);
   return (
     <button title={[name, place.text].filter(Boolean).join("\n")} data-kind="file" {...props}>
-      <FileGlyph format={pageDocument(page)?.format} size={16} />
+      <FileIcon path={[place.work, ...place.dirs, name].filter(Boolean).join("/")} format={pageDocument(page)?.format} size={16} />
       <span>
         <strong>{found ? <MarkedText parts={fileParts(name, found.name)} /> : <MarkedText text={name} query={query} />}</strong>
         {place.text ? (

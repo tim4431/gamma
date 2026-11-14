@@ -3,8 +3,9 @@ folder let go (docs/dev/work_folders.md "The takeover"). Run by the round's
 caller under the link's lock (gamma/folder_links.py ``_vault_round``). A
 takeover runs on this server's workspace alone (``vault.local_remote.LocalRemote``):
 a work folder of another server is made of an empty folder there, and only
-let go through it (``vault.http_remote.HttpRemote``); a workspace owner of
-a server lets go of one whose vault it keeps no link of (``let_go``).
+let go through it (``vault.http_remote.HttpRemote``); a server detaches one
+whose vault it keeps no link of in place (``let_go``,
+gamma/work_folders/detach.py).
 
 ``take_over`` writes the mark on the vault's folder, then stamps each page
 the vault keeps (its layout, which leaves the pages of the vaults inside or
@@ -21,7 +22,8 @@ row records its directory's folder. The link's state with ``TAKEN_OVER`` is
 the commit point, written by the caller.
 
 ``release`` unstamps every live file of the work folder, the files not in
-the library sent to Recently deleted instead when the vault is removed,
+the library sent to Recently deleted instead when it is detached removing
+them,
 forgets the rows of its files of other formats (gamma/vault/kinds.py
 ``FILE``, a work folder's class alone) and then takes the mark off: they
 are library pages, filed where they were.
@@ -190,17 +192,19 @@ def take_over(link: dict, remote) -> dict:
     return {**(link.get("state") or {}), TAKEN_OVER: page_now(), "cap": max(MAX_FILES, len(rows), seen)}
 
 
-def release(link: dict, remote, *, trash_files: bool) -> None:
+def release(link: dict, remote, *, trash_files: bool) -> dict:
     """The work folder of ``link`` let go (the module doc): its live files
     unstamped, quietly, or, with ``trash_files``, those not in the library
     sent to Recently deleted; the rows of its files of other formats
     forgotten (a kept folder's round compares no such class, and would move
     a file a page in Recently deleted left behind: their pages keep their
     documents, stored where they were kept); then its mark taken off, and
-    the files swept once more (``_unmarked``)."""
-    _unstamp(remote, link["folder_id"], trash_files)
+    the files swept once more (``_unmarked``). → ``{kept, trashed}``, the
+    files kept as pages and those sent."""
+    kept, trashed = _unstamp(remote, link["folder_id"], trash_files)
     vault_store.forget_kind(link["id"], kinds.FILE.name)
-    _unmarked(remote, link["folder_id"], trash_files)
+    more_kept, more_trashed = _unmarked(remote, link["folder_id"], trash_files)
+    return {"kept": kept + more_kept, "trashed": trashed + more_trashed}
 
 
 def _unmarked(remote, w: str, trash_files: bool) -> tuple[int, int]:
@@ -255,24 +259,25 @@ def drop_directories(remote, tree, w: str) -> None:
     remote.drop_folders(sorted(tree.subtree(w), key=depth, reverse=True))
 
 
-def let_go(ws: str, w: str, user_id: str) -> dict:
+def let_go(ws: str, w: str, user_id: str, *, trash_files: bool) -> dict:
     """The work folder ``w`` of this server's workspace ``ws``, whose vault
-    is on no computer this server keeps a link of (another computer's,
-    gone, its token revoked, removed while this server did not answer), let
-    go by the workspace owner ``user_id`` as its removal lets it go
-    (gamma/folder_links.py ``_release_work``), in-process as the vault's
-    writer: its files not in the library to Recently deleted, the others
-    library pages filed where they were, its mark taken off (the files
-    swept again then, ``_unmarked``), then its directory folders that hold
-    no page deleted (``drop_directories``). No vault's rows are touched:
-    none is here. → ``{kept, trashed}``."""
+    is on no computer this server keeps a link of (another computer's, or
+    one gone, its token revoked, removed while this server did not answer),
+    detached by ``user_id`` (gamma/work_folders/detach.py) as its removal
+    lets it go (gamma/folder_links.py ``_release_work``), in-process as the
+    vault's writer: its files library pages filed where they were, or with
+    ``trash_files`` those not in the library to Recently deleted; its mark
+    taken off (the files swept again then, ``_unmarked``), then its
+    directory folders that hold no page deleted (``drop_directories``).
+    Nothing new is stored: the computer pushed every file's bytes here, and
+    a file too large to keep stays listed. No vault's rows are touched: none
+    is here. → ``{kept, trashed}``."""
     from ..vault.local_remote import LocalRemote  # local: it imports gamma/folder_links.py
 
     remote = LocalRemote(ws, w, user_id)
     tree = remote.work_tree()
-    kept, trashed = _unstamp(remote, w, trash_files=True)
-    more_kept, more_trashed = _unmarked(remote, w, trash_files=True)
-    kept, trashed = kept + more_kept, trashed + more_trashed
+    kept, trashed = _unstamp(remote, w, trash_files)
+    more_kept, more_trashed = _unmarked(remote, w, trash_files)
     drop_directories(remote, tree, w)
     remote.tell()
-    return {"kept": kept, "trashed": trashed}
+    return {"kept": kept + more_kept, "trashed": trashed + more_trashed}

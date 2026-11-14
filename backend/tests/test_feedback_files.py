@@ -270,7 +270,7 @@ def test_the_files_go_with_the_vault_and_when_it_stops_being_a_work_folder(owner
     link = _paper(owner, root)
     assert (_here(root) / "open.json").is_file()
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
-    assert not _here(root).exists() and (root / vault_disk.MARKER_DIR).is_dir() and not (root / vault_disk.MARKER).exists()
+    assert not _here(root).exists() and not (root / vault_disk.MARKER_DIR).exists()     # .gamma/ too, left empty
 
     # a work folder whose push came down, its files in the library: let go at its next round, its files with it
     other = disk / "library"

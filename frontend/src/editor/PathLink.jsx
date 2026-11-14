@@ -10,7 +10,7 @@
 // asked. Elsewhere it is the plain link it always was. A Ctrl/⌘ click is
 // left to the browser.
 import React, { useContext, useState } from "react";
-import { FileGlyph } from "../shared/ui/Icons";
+import FileIcon from "../shared/ui/FileIcon.jsx";
 import { formatOf } from "../documents/formats.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { PathLinkContext } from "./pathLinkContext.js";
@@ -83,8 +83,8 @@ export function PathLink({ href, children }) {
     }
   };
   return (
-    <InternalLinkChip href={href} className="pathLink" title={t("Open “{path}” in this work folder", { path })} busy={busy}
-      icon={<FileGlyph format={formatOf(path).format} size={14} />} onOpen={follow}>
+    <InternalLinkChip href={href} className="pathLink" title={t("Open “{path}” in this synced folder", { path })} busy={busy}
+      icon={<FileIcon path={path} format={formatOf(path).format} size={14} />} onOpen={follow}>
       {children}
     </InternalLinkChip>
   );

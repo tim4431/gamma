@@ -275,21 +275,13 @@ def test_a_folder_of_another_server_kept_before_is_taken_onto_the_engine_over_ht
     assert {path: d["folder_id"] for path, d in vault_store.dirs(link["id"]).items()} == {"Sub": lab["sub"]}
     assert "gamma_id" not in (dest / "UP paper.md").read_text(encoding="utf-8")
     _quiet(owner, link["id"])
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
-    assert _md(dest) == [] and not (dest / "UP paper.pdf").exists()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert (dest / "UP paper.md").is_file() and (dest / "UP paper.pdf").is_file()   # its files stay
+    assert not (dest / vault_disk.MARKER).exists()
 
 
-def test_removing_a_folder_kept_before_with_its_files_takes_what_the_client_wrote(owner, disk, over_http, settled):
-    lab, dest = _lab(owner, "UP removed"), disk / "Removed"
-    _kept(lab, dest, _token()["token"])
-    (dest / "mine.md").write_text("a person's note\n", encoding="utf-8")
-    link = _create(owner, folder=lab["folder"], path=str(dest))
-    owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).raise_for_status()
-    assert _md(dest) == ["mine.md"] and not (dest / "UP paper.pdf").exists()
-    assert not (dest / gamma_sync.STATE).exists() and not (dest / vault_disk.MARKER).exists()
-    assert sorted(p.name for p in (dest / ".gamma" / "trash").rglob("*.md")) == ["UP child.md", "UP deep.md", "UP paper.md",
-                                                                                "UP plain.md"]
-    kept = disk / "Kept as it is"                          # with its files kept, the directory stays as the client left it
+def test_removing_a_folder_kept_before_leaves_its_directory_as_the_client_left_it(owner, disk, over_http, settled):
+    kept = disk / "Kept as it is"
     _kept(_lab(owner, "UP kept"), kept, _token()["token"])
     state = (kept / gamma_sync.STATE).read_bytes()
     link = _create(owner, folder=make_folder(owner, "UP kept"), path=str(kept))

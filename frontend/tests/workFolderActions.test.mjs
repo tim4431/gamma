@@ -2,13 +2,13 @@
 // rules (explorer/workFolderActions.js), over workfiling.json's main tree:
 // the refusals, what filing leaves out, a page menu's rows, a copy's
 // properties, the library requests and their words, the directories'
-// counts, the list's rows and Let go.
+// counts and the list's rows.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  directoryMoves, emptyKind, fileName, fileRow, filingOf, foldersMoveRefused, letGoSaid, libraryCopy, libraryRequest, libraryRows, librarySaid,
-  keptFolders, libraryTask, listDirs, listRows, mayLetGo, openFile, pagesMenu, refusesFiles, workCounts,
+  directoryMoves, emptyKind, fileName, fileRow, filingOf, foldersMoveRefused, libraryCopy, libraryRequest, libraryRows, librarySaid,
+  libraryTask, listRows, openFile, pagesMenu, refusesFiles, workCounts,
 } from "../src/explorer/workFolderActions.js";
 import { refusalText, treeOf } from "../src/explorer/workFolders.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
@@ -73,7 +73,7 @@ test("filing leaves out a page inside another and a file not in the library", ()
   assert.deepEqual(filingOf(pages, ["page", "paper"]), { ids: ["page", "paper"], left: "", why: "" });
   const some = filingOf(pages, ["page", "inner", "figure"]);
   assert.deepEqual(some.ids, ["page"]);
-  assert.match(some.left, /^ Left out 1 page inside another page.* Left out 1 work folder's file/);
+  assert.match(some.left, /^ Left out 1 page inside another page.* Left out 1 synced folder's file/);
   assert.deepEqual(filingOf(pages, ["figure"]), { ids: [], left: "", why: refusalText("filed") });
   assert.deepEqual(filingOf(pages, ["inner"]), { ids: [], left: "", why: "A page inside another page is filed with it." });
   assert.deepEqual(filingOf(pages, ["gone"]).ids, ["gone"], "a row the app lacks goes with the write");
@@ -128,40 +128,15 @@ test("a work folder's folders count the files below them, the library's their pa
   assert.deepEqual(Object.fromEntries(counts), { D1: 5, D1a: 2, D2: 1, W1: 10, D4: 5, W3: 5 }, "never a library folder above W3");
 });
 
-test("the list: its directories by name, its known rows by the filter's name, what an empty list says", () => {
-  const named = { ...lib, folders: new Map([...lib.folders].map(([id, f]) => [id, { ...f, name: { D1: "b10", D2: "b9" }[id] || f.name }])) };
-  assert.deepEqual(listDirs(["D1", "D2"], named, { D1: { count: 5 } }), [{ id: "D2", name: "b9", count: 0 }, { id: "D1", name: "b10", count: 5 }]);
-  const rows = [{ id: "figure", open_comments: 2 }, { id: "gone" }, { id: "note" }];
-  assert.deepEqual(listRows(rows, pages, "").map((b) => [b.id, b.open_comments]), [["figure", 2], ["note", 0]]);
-  assert.deepEqual(listRows(rows, pages, " FIG ").map((b) => b.id), ["figure"]);
+test("the folder view: the pages of its file rows App knows, in their order, and what an empty view says", () => {
+  const row = (id, kind = "file", page = { id }) => ({ key: `${kind}:${id}`, kind, id, page });
+  const rows = [row("D1", "folder", null), row("figure", "file", { id: "figure", open_comments: 2 }), row("gone"), row("note"), row("D1", "more", null)];
+  assert.deepEqual([...listRows(rows, pages).values()].map((b) => [b.id, b.open_comments]), [["figure", 2], ["note", 0]]);
+  assert.equal(listRows(rows, pages).get("figure").content, pages.get("figure").content);
   assert.equal(fileName({ _fileName: "", content: "" }), "Untitled");
   assert.equal(emptyKind({ choosing: true, query: "x", loaded: 3 }), "choosing");
   assert.equal(emptyKind({ query: "x", loaded: 3, atTop: true }), "nomatch");
   assert.equal(emptyKind({ atTop: true }), "untracked");
   assert.equal(emptyKind({ query: "x" }), "nomatch");
   assert.equal(emptyKind({}), "none");
-});
-
-test("Let go: a work folder no vault of this server keeps, for the workspace's owner", () => {
-  assert.equal(mayLetGo(tree, "W1", { owner: true }), true);
-  assert.equal(mayLetGo(tree, "W3", { owner: true }), true, "a work folder inside a library folder");
-  assert.equal(mayLetGo(tree, "W1", { owner: false }), false, "an editor's menu has none");
-  assert.equal(mayLetGo(tree, "W1", { owner: true, kept: new Set(["W1"]) }), false, "a vault of this server keeps it: remove that instead");
-  assert.equal(mayLetGo(tree, "W1", { owner: true, kept: new Set(["W3"]) }), true, "another folder's vault");
-  assert.equal(mayLetGo(tree, "W1", { owner: true, kept: null }), false, "the desktop app's own server has not said yet");
-  const links = [
-    { kind: "folder", folder_id: "W1", remote_url: "", mine: false, workspace_id: "ws2" },
-    { kind: "folder", folder_id: "W2", remote_url: "", mine: true },
-    { kind: "folder", folder_id: "W3", remote_url: "https://nas.example/", mine: true },
-    { kind: "file", page_id: "p1", remote_url: "" },
-  ];
-  assert.deepEqual([...keptFolders(links)], ["W1", "W2"], "another member's vault counts; a vault of another server does not");
-  assert.equal(mayLetGo(tree, "W1", { owner: true, kept: keptFolders(links) }), false);
-  assert.deepEqual([...keptFolders(undefined)], []);
-  assert.equal(mayLetGo(tree, "D1", { owner: true }), false, "a directory carries no mark");
-  assert.equal(mayLetGo(tree, "L1", { owner: true }), false, "a library folder");
-  assert.equal(mayLetGo(tree, "", { owner: true }), false);
-  assert.equal(letGoSaid(0), "Let go of the work folder: its files stay in the folder.");
-  assert.equal(letGoSaid(1), "Let go of the work folder: 1 file went to Recently deleted.");
-  assert.equal(letGoSaid(3), "Let go of the work folder: 3 files went to Recently deleted.");
 });

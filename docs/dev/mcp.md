@@ -43,7 +43,7 @@ codex mcp add gamma --url https://gamma.example.com/mcp
 Codex opens the browser. If sign-in is interrupted, run `codex mcp login gamma`
 to retry. Sign in with your Gamma account, tick the workspaces, mark any
 whose notes it may also edit **Edit** ("Editing notes"), and approve, or turn
-on **Answer my comments on work-folder files** to let it reply to and
+on **Answer my comments on synced folders' files** to let it reply to and
 resolve them ("Answering feedback").
 Start a new Codex chat. There is no token to copy
 and no environment variable to set. This works with local browser-based Gamma
@@ -649,7 +649,7 @@ client may register with and ask for either or both, every client is stored
 with both, and the 401 challenge still names `gamma:read` alone, so a client
 that reads it asks to read. What the connection may do is decided on the
 consent page, not by the request: its switch **Answer my comments on
-work-folder files** is on when the client asked for `gamma:feedback`, and
+synced folders' files** is on when the client asked for `gamma:feedback`, and
 the person may turn it on or off either way. Ticked,
 the code carries both scopes, the token is made with the `feedback` scope
 and the token response says `gamma:read gamma:feedback`; unticked, a read

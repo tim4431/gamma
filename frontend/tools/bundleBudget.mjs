@@ -131,8 +131,11 @@ function sourceFiles(dir) {
 export const stripComments = (code) => code.replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, "").replace(/^[ \t]*\/\/.*$/gm, "");
 
 // The chunk [name] a module gets: its file name, a package's by the file it
-// resolves to (mermaid → mermaid.core.mjs).
+// resolves to (mermaid → mermaid.core.mjs), a plugin's virtual module's its
+// id as Rollup writes it in a file name ("\0virtual:file-icons" →
+// _virtual_file-icons, tools/fileIcons.mjs).
 function moduleName(spec) {
+  if (spec.startsWith("virtual:")) return `_${spec.replace(/:/g, "_")}`;
   let file = spec;
   if (!spec.startsWith(".")) {
     try { file = fileURLToPath(import.meta.resolve(spec)); } catch { /* not installed: its own name */ }

@@ -13,16 +13,19 @@ by hand, and a PDF in a work folder is no paper (no record looked up, no
 "one page per document") until it is. Every other folder vault (pull only,
 PDFs only, a vault of the whole library, a vault of another server) is a
 *kept folder* and behaves as before: notes and PDFs are its pages, and its
-pictures are read for its notes' links alone.
+pictures are read for its notes' links alone. The interface calls every
+folder vault, a work folder too, a *synced folder* (English and zh); this
+doc, the code and the API keep *work folder*.
 
 The plan is [research/file-explorer.md](../research/file-explorer.md)
 (step 1). Code: `gamma/work_folders/` (`library.py` the library rule,
 `marks.py` the folder tree as the rules read it, `filing.py` the op rule,
 `ignore_rules.py` the `.gammaignore` matcher and writer, `selection.py`
 the tracking dialog's tree, preview and file, `takeover.py` the vaults
-from before step 1, `paths.py` a file's path both ways, `file_search.py`
-quick open's rule for files), `gamma/folder_links.py` (which vaults are work
-folders; making, saving, cancelling and removing one), `gamma/db.py`
+from before step 1 and letting one go, `detach.py` its Detach, `paths.py`
+a file's path both ways, `file_search.py` quick open's rule for files),
+`gamma/folder_links.py` (which vaults are work folders; making, saving,
+cancelling and removing one), `gamma/db.py`
 (`BLOCK_HOT_COLUMNS`, `SQL_IN_LISTING`, `SQL_FILE_NAME`, `BLOCK_HOT_INDEXES`,
 `folder_links.library`), migration step 53, and on the client
 `frontend/src/documents/library.js` and `frontend/src/explorer/`. Tests:
@@ -34,12 +37,16 @@ and `workFolders.test.mjs` read too; the op path's
 `test_library_routes.py`), the matcher's (`test_ignore_rules.py`, held to
 git where git is on PATH), the round's (`test_work_folder_rounds.py`,
 `test_work_folder_takeover.py`), the dialog's routes
-(`test_track_routes.py`), the paths' and the files' reads
+(`test_track_routes.py`), Detach's (`test_vault_routes.py` on the desktop
+app's own server, keeping every format or removing; `test_remote_work_folders.py`
+for a folder a computer keeps, the wake and who may; `detach.test.mjs` its
+words), the paths' and the files' reads
 (`test_work_folder_paths.py` over `tests/shared/workpaths.json`, which
 `workPaths.test.mjs` reads too, and `test_work_folder_files.py`), the
-client's `knownPages.test.mjs`, `trackSelection.test.mjs` and the Files
-window's (`fileTree.test.mjs`, `directoryRows.test.mjs`,
-`useFilesWindow.test.mjs`, `fileSearch.test.mjs`), the scale check (`test_work_folder_scale.py`,
+client's `knownPages.test.mjs`, `trackSelection.test.mjs`, the trees'
+(`fileTree.test.mjs`, `directoryRows.test.mjs`,
+`useFilesWindow.test.mjs`, `fileSearch.test.mjs`), the icons'
+(`fileIcons.test.mjs`), the scale check (`test_work_folder_scale.py`,
 timing tests that run with `-m perf`) and the browser suite's
 `work-folders` group (`frontend/tests/e2e/scenarios/workFolders.mjs`) and
 its `viewers` group (`scenarios/viewers.mjs`: a work folder of eight
@@ -117,7 +124,7 @@ such a folder's Sends are its next steps.
   library)` (the host's `POST /api/folder-links` with `remote_url`,
   `choose: true`, push everything, pull on): that server must say
   `work_folders: 1` in `GET /api/sync/whoami` (an older one: "The other
-  server is older than this app and keeps no work folders: update it
+  server is older than this app and keeps no synced folders: update it
   first."); the folder must be no work folder already, nor inside one or
   around one (`HttpRemote.work_tree()`); the mark is written through the
   vault's token, then the folder's listing is read again and the mark
@@ -161,37 +168,30 @@ such a folder's Sends are its next steps.
   member of that workspace can read what is uploaded. The leaving files'
   counts come from that server's `POST /api/pages/summaries` (`notes`,
   `open_comments`), null when it cannot answer.
-- **Removing**, and cancelling one still choosing, reads the files from
-  that server (asked with the dialog's 15 s, not a round's 120 s); while
-  it cannot be reached either is refused (409 "The other server cannot be
-  reached: remove the vault when it can, or let go of the folder there."),
-  unless forced (`?force=1`: the link forgotten, `mark_stays: true`, which
-  also comes back when that server stopped answering or refused midway).
-  A mark written whose answer was lost is taken off again.
+- **Removing** (the sync panel's *Detach…*, with its choice, below), and
+  cancelling one still choosing, reads the files from that server (asked
+  with the dialog's 15 s, not a round's 120 s); while it cannot be reached
+  either is refused (409 "The other server cannot be reached: remove the
+  vault when it can, or detach the synced folder there."), unless forced
+  (`?force=1`: the link forgotten, `mark_stays: true`, which also comes
+  back when that server stopped answering or refused midway). A mark
+  written whose answer was lost is taken off again.
 - **A mark gone.** When that server let go of the folder (below) or the
   mark is gone otherwise, the round stops the vault (`MARK_GONE`: "the
-  other server let go of this work folder (its mark is gone there): remove
+  other server let go of this synced folder (its mark is gone there): remove
   this vault") and records it in the link's state (`let_go_there`): from
   then on the link never acts on that folder again, whatever marks it
   later (another computer's work folder made there included): its rounds
   stop at once without asking that server, it writes no mark (switching
   the library or pull marks nothing either, and for any remote link only
-  while the mark is there), and removing it only forgets it.
-- **Let go.** A computer that is gone, a token revoked or expired, or a
-  removal forced must never leave a folder locked for every member: `POST
-  /api/folders/{id}/let-go` (a session of the workspace's owner; 404 for a
-  folder with no mark; 409 "This work folder is kept by a synced vault on
-  this server: remove the vault instead." where this server keeps it, and
-  in a clone or a Zotero-linked workspace, whose mark is a copy: the
-  workspace it comes from lets go) releases it in place
-  (`takeover.let_go`), as the vault's writer: the files outside the
-  library go to Recently deleted, the others are unstamped and stay as
-  library pages, the mark comes off, and the empty directory folders go,
-  then the files are swept once more, so one stamped while the first sweep
-  ran is not left with a stamp no mark names; `{ok, kept, trashed}`. The
-  folder menu offers it to the owner as *Let go of this work folder…*,
-  confirmed, where no vault of this server keeps the folder (any member's;
-  in the desktop app only once its server's links are read).
+  while the mark is there), and removing it only forgets it. The list
+  says so (`let_go`), and the desktop app forgets such a vault itself
+  ([computers.md](computers.md) "The desktop shell").
+- **Detached there.** A computer that is gone, a token revoked or expired,
+  or a removal forced must never leave a folder locked for every member:
+  that server's Detach ("Detaching a work folder", below) lets it go in
+  place, and the computer that announced a vault of it is woken to find
+  the mark gone.
 
 ## Stored
 
@@ -607,12 +607,12 @@ AI tools and the client:
 
 | Kind | |
 |---|---|
-| `filed` | A work folder's file is filed by its directory: add it to the library to file it in library folders as well. |
-| `named` | A work folder's file is named by its file: rename it on disk. |
-| `trash` | A work folder's file leaves when its file is deleted or untracked: use Choose files…. |
+| `filed` | A synced folder's file is filed by its directory: add it to the library to file it in library folders as well. |
+| `named` | A synced folder's file is named by its file: rename it on disk. |
+| `trash` | A synced folder's file leaves when its file is deleted or untracked: use Choose files…. |
 | `restore` | It comes back when its file is tracked again. |
-| `directories` | A work folder's directories follow the disk. |
-| `remove` | Remove the synced vault to delete its folder. |
+| `directories` | A synced folder's directories follow the disk. |
+| `remove` | Detach the synced folder to delete its folder. |
 | `document` | That file's PDF is read where it is: it cannot be changed in Gamma. |
 
 S2, the folder tree's refusals and a person's new page filed in a work
@@ -877,30 +877,101 @@ deleted), says the file is tracked and its page opens once the work folder
 has read it. A work folder of another server hands the window back to the shell on
 Save, as it always does.
 
-## The folder's list view
+## The folder view
 
-Opening W or one of its directories shows `explorer/FolderList.jsx` in
+Opening W or one of its directories shows `explorer/FolderTree.jsx` in
 place of the library's grid or list ([home library](home_library.md)
-"Work folders", [UI design](ui-design.md#lists-that-change)): the
-directories first, by name, each counting the files below it (the
-listing's `work_counts`, summed down its subtree), then the files from
-`GET /api/folders/{id}/pages`, sorted on the server, 200 rows at a time
-(`explorer/useFolderRows.js`, read again whenever the listing is). The
-columns are Name (`file_name`, else the title of a note not written yet),
-Format (`libraryUtils.pageFormat`: its document's, else its name's, a
-text file by its language; `formatLabel` names a format or such a
-`{format, language}`), File size (`doc.size`; a note has none),
-Modified and Comments (its open threads). The sort is the list's own
-(name, format, size or modified), kept in this browser. The list draws
-its rows itself; what a row does (select, open, its menu, its pin, a
-rename, a drag) is the library's, which App hands in.
+"Work folders", [UI design](ui-design.md#trees)): a tree as VS Code's
+explorer draws one, of the rows the Files window draws
+(`explorer/fileTree.js` `folderRows`: the directory's own rows from level
+1, its directories by name, numeric, each opening in place, then the files
+of each open one in the server's order, a "Show {n} more files" row and
+the Files window's note rows), each a `TreeRow` with indent guides, a
+chevron and its theme icon ("File icons" below). After each name the
+columns the header names: Format (`libraryUtils.pageFormat`: its
+document's, else its name's, a text file by its language; `formatLabel`
+names a format or such a `{format, language}`; a directory's the files
+below it, the listing's `work_counts` summed down its subtree), File size
+(`doc.size`; a note has none), Modified and Comments (its open threads).
+The sort is the view's own (name, format, size or modified), kept in this
+browser, and the filter box keeps the files whose names hold its text.
+
+- **The state** is one explorer hook, `useFolderTree.js` (the sort, the
+  directories open in the view, this tab's, the row the keys are on), over
+  `useDirectoryRows.js` with the view's sort: the directory shown and each
+  open one below it (`fileTree.js` `openDirs`), read when first wanted and
+  again whenever the listing is (`version`), so the Comments column stays
+  the server's. Every row read is App's (`knownBlocks`), which the menus,
+  the selection and the tabs find.
+- **A press**: on a directory opens or closes it in place; on a file
+  selects it (Shift and Ctrl as the listing's, a tap opens), a
+  double-click opens it. What a file's row does (its menu, its pin, a
+  rename, a drag) is the library's, which App hands in; a directory's menu
+  is the folder menu. The keys are the Files window's ([ui-design.md](ui-design.md)
+  "Keyboard focus", `explorer/useTree.js`): Enter opens a file, Space
+  selects it.
+- **Empty**: "Nothing tracked yet." with Choose files… on the work folder
+  itself, "No tracked files here." in a directory, that no file matches the
+  filter, "Choosing files…" while the vault still waits for its first
+  choice; a read not in yet or failed is the tree's own note row.
+
+## File icons
+
+A work folder's files and directories are drawn with Material Icon Theme's
+icons (`material-icon-theme`, MIT, a dev dependency pinned exactly), picked
+as VS Code picks them; a library page keeps its `FileGlyph`, a library
+folder its `FolderIcon`.
+
+- **Shipped** by a Vite plugin, `frontend/tools/fileIcons.mjs`: the build
+  emits every SVG the theme's manifest names (`generateManifest()`, 1,256)
+  as `dist/assets/file-icons/<version>/<id>.svg`, with the theme's
+  `LICENSE` beside them, which the server caches as immutable
+  (`assets/`); the dev server answers the same paths from the package. The
+  map, the manifest's tables with their keys lowercased and the light
+  overlay (`compactMap`), is the virtual module `virtual:file-icons`, a lazy
+  chunk read the first time an icon is drawn (`shared/ui/fileIcons.js`).
+- **The rule** (`fileIcons.js` `iconFor(map, path, {dir, open, root,
+  light})`), VS Code's stylesheet ranking: the case ignored; a file's whole
+  name over any extension, the longest dotted extension over a shorter one
+  (`index.d.ts` is `typescript-def`), a key `parent/name` only under that
+  parent (`.config/graphqlrc`); then the language VS Code's built-in
+  associations give the path (`LANGUAGES`: twelve, `.gitignore`,
+  `tsconfig.*.json`, `Dockerfile.*`, `Jenkinsfile*`…), else the default; a
+  directory by its name, `open` its open icon; W itself always the theme's
+  root folder; the light theme's variants on a light scheme.
+- **Drawn** by `shared/ui/FileIcon.jsx`: an `<img>` of the icon's URL; a
+  name the theme has no icon for, a page with no file name and an icon that
+  fails to load draw `FileGlyph` (a directory `FolderIcon`). Where: the
+  Files window's rows and the folder view's, a file's tab, quick open's and
+  the chat picker's file rows (`FileOption`), search results, a path link in
+  a note, the `@` and `[[` pickers' page rows and Linked from, each by the
+  file's name (`file_name`) or path.
+- **The root**: W's card and row in the library, and its row in the Files
+  window, wear the root folder's icon and say the computer that keeps it
+  and how its sync stands (`vault/vaultState.js` `folderKeeper`, read by
+  `useWorkFolderActions.jsx` `keeperOf`): in the desktop app that keeps it,
+  "This computer" and its link's state (Synced, Syncing…, Paused, Not
+  syncing, Choosing files…); in any other window, to the account whose
+  computer keeps it, that computer's name and whether it is connected,
+  paused there or offline since when, from `GET /api/folders/computers`
+  (`registry.of_folders`, read again with the listing). A card nobody this
+  account knows keeps says "Synced folder".
+
+Tests: `frontend/tests/fileIcons.test.mjs` (the rule against the theme's
+own manifest: the cases VS Code was seen to draw, the languages, folders,
+the root, the light variants, the open ids derived), `fileTree.test.mjs`
+(the folder view's rows, the paths), `vaultState.test.mjs` (`folderKeeper`),
+`backend/tests/test_computers.py` (the route), and the browser suite's
+`work-folders` and `explorer` groups (the tree, a `.tex`'s, a `.py`'s and a
+`figures/` directory's icons, the root's computer).
 
 ## The Files window
 
 A dock window, Files, shows the library's folders and the work folders'
 files as a tree beside the open page (`explorer/FilesWindow.jsx`, a lazy
-chunk with `FileTree.jsx`, `fileTree.js` and `filesWindow.css`; App
-imports none of them). It is a view of the folders, which stay the model
+chunk with `FileTree.jsx` and `filesWindow.css`; its rows are the folder
+view's, `TreeRow.jsx` over `fileTree.js`, with their theme icons and the
+root's computer, "File icons" above). It is a view of the folders, which stay the model
 with the labels: no label nodes, no pages filed nowhere, no filter box
 (quick open is the search, "Files by name" above). View → Files and the
 command `app.toggleFiles` (unbound) show it; it starts closed, and its
@@ -943,8 +1014,9 @@ menu. A share view has none.
   listing's `work_changes` name a write to one of its files after the read
   (the read's `seq`; a file renamed on disk keeps the count, and the write
   to its page shows it), never because the listing was read again. A
-  directory closed keeps its rows. The home list view's open directory is
-  read twice while both show: two sorts, two page sizes.
+  directory closed keeps its rows. A directory open in both the window and
+  the folder view is read by each: the view reads in its sort, and again
+  with each listing.
 - **The reveal**: the open page, once per page, when its row is first known
   and the window shows (a page opened while it is hidden is revealed when
   it shows): its folders opened (none closed), its directory paged until
@@ -952,8 +1024,8 @@ menu. A share view has none.
   by title, the row selected and scrolled into view; a row not drawn once
   that is done (past 500 rows) is let go, never scrolled to later.
 - **A press**: on a folder opens or closes it; on a file selects and opens
-  it, one press for a mouse and a finger (the list view selects on a click
-  and opens on a second). The tree's selection is its own, not the home
+  it, one press for a mouse and a finger (the folder view selects a file on
+  a click and opens it on a second). The tree's selection is its own, not the home
   selection F2 and Delete act on; a row's menu, by a right-click, a held
   finger, its "⋯" or the keys, is the library's menu for that row, the
   home selection let go (a file's the page menu for that one page, a
@@ -961,7 +1033,7 @@ menu. A share view has none.
   that page alone. A library folder takes a dropped page as the library
   does; a directory takes none.
 - **The keys**, a WAI-ARIA tree ([ui-design.md](ui-design.md) "Keyboard
-  focus"): one row in the tab order (the row the keys are on, else the
+  focus", `useTree.js`, the folder view's too): one row in the tab order (the row the keys are on, else the
   selected one, else the first); ↑ and ↓ move a row, Home and End to the
   ends; → opens a closed folder or moves into an open one, ← closes an open
   folder or moves to the folder the row is in; Enter opens a file, opens
@@ -1126,26 +1198,85 @@ class), then removes the mark. A link that stops being a work folder (its
 push lowered) is released at its next round, its files library pages.
 Lowering the push is refused while a file is not in the library.
 
-## Removing a work folder
+## Detaching a work folder
 
-Removing the vault stores every PDF read in place (a trashed page's too, so
-a restore has its bytes) and nothing for a file of another format: Gamma
-copies nothing of a directory but what was asked to be kept, a library
-file's versions and a commented version, which are stored already, and
-every live page whose bytes are stored shows the stored copy from then on
-(its document at `store`, whatever its format); such a file's page in
-Recently deleted reads its file as missing. It releases W
-with `trash_files`: library files
-stay as library pages and every other file goes to Recently deleted. Then
-the directory folders below W that hold no live page are deleted, deepest
-first, and W with them when it is empty. A link that was a work folder and
-has not been let go yet is let go the same way. The feedback files
-(`.gamma/feedback/`) are deleted with the marker, whatever becomes of the
-other files, and when a work folder is let go at its round because its
-push came down: they are Gamma's own and regenerable, never trashed
-([feedback.md](feedback.md) "The files"). `removal(link)` says both
-numbers: the files that go to Recently deleted and those that stay in the
-library.
+Detach is the one way a work folder leaves Gamma; the interface calls it a
+synced folder (*Detach from TIM-PC…*). It stops the sync and leaves the
+directory as it is: only Gamma's own marker, its feedback files
+(`.gamma/feedback/`, regenerable: [feedback.md](feedback.md) "The files")
+and then `.gamma/`, when that leaves it empty, are taken away. It asks
+what becomes of the files (`pages`):
+
+- **keep**: every file stays in Gamma as an ordinary page, filed where it
+  was, its bytes stored first whatever its format (a PDF, a LaTeX source,
+  a figure, a data file); a file too large to keep stays listed, its page
+  without bytes. Nothing goes to Recently deleted.
+- **remove**: the files not in the library go to Recently deleted; the PDFs
+  read in place are stored first, a trashed page's too, so a restore has
+  its bytes, and a file of another format is stored by nothing (Gamma
+  copies nothing of a directory but what was asked to be kept); such a
+  file's page in Recently deleted reads its file as missing.
+
+Files in the library stay library pages either way. Then W is released
+(`takeover.release`), and the directory folders below W that hold no live
+page are deleted, deepest first, and W with them when it is empty: with
+keep they hold the files, so they stay. Every live page whose bytes are
+stored shows the stored copy from then on (its document at `store`).
+
+`gamma/work_folders/detach.py`, behind `GET` and `POST
+/api/folders/{id}/detach` on every server, so a page asks its own server
+in every window, the browser included. What it does depends on what keeps
+W:
+
+- **A synced vault of this server** (the desktop app's own server): the
+  vault is removed with the choice (`folder_links.delete_link`, the same
+  operation as the sync panel's *Detach…*, `DELETE
+  /api/folder-links/{id}?pages=`). A link that was a work folder and has
+  not been let go yet is let go the same way.
+- **A computer's vault over its channel** (a work folder of this server
+  kept on a PC), **or none any more**: W is let go in place as the vault's
+  writer (`takeover.let_go` with the choice; keep stores nothing new, since
+  the computer pushed every tracked file's bytes here, and a listed file
+  stays listed), the files swept once more after the mark is off, so one
+  stamped while the first sweep ran is not left with a stamp no mark
+  names. Then each computer that announced a vault of W is woken
+  (`let_go`, [computers.md](computers.md) "The server"): its round finds
+  the mark gone (`LET_GO_THERE`) and the desktop app forgets the vault as
+  *Remove the vault…* forgets one, its directory as it is but for
+  `.gamma/`. A computer offline finds it at its next round.
+- **A work folder of another server** kept here is detached through that
+  server from the sync panel (`_letting_go`, above), or on that server's
+  pages by its own Detach.
+
+**Who may**: the maker of the vault of this server that keeps W, alone,
+for its directory is on that account's computer (`_made`'s rule); where no
+vault of this server keeps W, the workspace's owner and the account of a
+computer that announced a vault of it, while it may edit the workspace (a
+viewer's computer token announces what it likes, so its announce is no
+authority); a member's session alone (403 for a token, a share link and
+anyone else); 423 while a delete holds the workspace; 404 for a folder
+that is no work folder's root; 409 in a clone or a
+Zotero-linked workspace, whose mark is a copy (the workspace it comes from
+detaches it), and when the vault here cannot be removed now (a file that
+cannot be stored, another program holding a file, the other server of its
+work folder not answering). `GET` answers `{may, files, in_library,
+too_large, bytes, computer: {name, online} | null}`: the files, those in
+the library already, those too large to keep, the bytes keep stores and
+the computer that keeps W, named to its own account alone ([computers.md](computers.md)
+"Trust"); `{may: false}` alone to a member who may not. `POST {pages}`
+answers `{ok, kept, trashed, mark_stays?}`. `removal(link)` says the same
+counts of a vault of this server for the sync panel's question.
+
+**The client** (`explorer/DetachDialog.jsx`, its words `explorer/detach.js`,
+its state `useWorkFolderActions.jsx`): the folder's menu, in the library
+and the Files window, reads `GET …/detach` as it opens on a work folder's
+root and shows *Detach from {computer}…* (*Detach…* with no computer
+named) once the answer says the account may; the vault chip's card offers
+the same for the open file's work folder. The dialog says the files and
+the bytes, offers *Keep the files in Gamma* and *Remove them from Gamma*,
+says that the directory on the computer stays as it is (and, for a
+computer offline, that it forgets the folder when it is next online), and
+posts the choice; the status says what happened.
 
 ## Add to library, Save a copy, Remove
 

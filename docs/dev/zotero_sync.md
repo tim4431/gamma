@@ -2411,8 +2411,9 @@ under one lock with the insert (two requests at once make one link):
 - a `workspace_id` that is not a personal workspace the owner owns, one
   with a `mirrors` row (a clone, a workspace that publishes pages, either
   detached included), one linked already, or one a synced vault of this
-  server pushes everything into (`folder_links.pushing_vault`: "let it push
-  only PDFs, or only pull, first"). The row a publication keeps
+  server pushes everything into (`folder_links.pushing_vault`: "that
+  workspace has a synced folder, kept on this computer or another: detach
+  it first"). The row a publication keeps
   once its last page was unpublished (`page_filter` `'[]'`) is no bar, as
   for `workspaces.update`: once the link's row is written, `create_link`
   forgets that publication under its round lock

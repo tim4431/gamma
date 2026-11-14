@@ -1,18 +1,16 @@
-// What App's menus, drops, open page and list view ask of the work-folder
+// What App's menus, drops, open page and folder view ask of the work-folder
 // rules (explorer/workFolders.js) about the pages and folders in hand
-// (docs/dev/work_folders.md "The op rule", "The folder's list view"): which
+// (docs/dev/work_folders.md "The op rule", "The folder view"): which
 // of them a rule refuses, what filing leaves out, the rows a page menu
 // offers, a copy's properties, the requests of Add to library, Remove from
-// library and Save a copy, and the rows of a directory's list. `pages` is
+// library and Save a copy, and the pages of a folder view's rows. `pages` is
 // App's page rows by id (libraryUtils.pageBlocksOf), `tree` the folder tree
 // as the rules read it (treeOf). The commands over them are
-// useWorkFolderActions.jsx's. Also whether the folder menu offers Let go
-// of a work folder and what it then says. Pure:
-// tests/workFolderActions.test.mjs.
+// useWorkFolderActions.jsx's. Pure: tests/workFolderActions.test.mjs.
 import { STAMPS, workFolderOf } from "../documents/library.js";
 import { folderChain } from "../library/libraryUtils.js";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { fileRules, folderRules, isWorkFile, markOf, refusalText, treeOf, workOf } from "./workFolders.js";
+import { fileRules, folderRules, isWorkFile, refusalText, treeOf, workOf } from "./workFolders.js";
 
 // The row of `id` when it is a work folder's file, else null.
 export function fileRow(pages, id) {
@@ -70,7 +68,7 @@ export function filingOf(pages, pageIds) {
   const inside = pageIds.length - tops.length, files = tops.length - ids.length;
   const left = [inside ? tn("Left out {n} page inside another page, filed with its top.",
     "Left out {n} pages inside other pages, filed with their tops.", inside) : "",
-  files ? tn("Left out {n} work folder's file, filed by its directory.", "Left out {n} work folders' files, filed by their directories.", files) : "",
+  files ? tn("Left out {n} synced folder's file, filed by its directory.", "Left out {n} synced folders' files, filed by their directories.", files) : "",
   ].map((s) => (s ? ` ${s}` : "")).join("");
   return { ids, left, why: "" };
 }
@@ -162,49 +160,21 @@ export function workCounts(tree) {
   return { inWork, counts };
 }
 
-// ---------- Let go ----------
-
-// The folders a vault of this server keeps, whoever made it, from GET
-// /api/folder-links' `links` (every local folder link the account sees, all
-// of a workspace's for its owner): a Set of folder ids.
-export const keptFolders = (links) => new Set((links || [])
-  .filter((l) => l.kind === "folder" && !l.remote_url && l.folder_id).map((l) => l.folder_id));
-
-// Whether the folder menu offers a workspace's owner (`owner`) Let go of
-// the work folder `folderId` (POST /api/folders/{id}/let-go): it carries the
-// mark and no vault of this server keeps it, whoever made that vault
-// (`kept`, the folders this server's vaults keep: useVault's, null while
-// the desktop app's own server has not said yet, when it is not offered),
-// so its vault is on a computer that may be gone, which would leave the
-// folder locked for every member.
-export const mayLetGo = (tree, folderId, { owner = false, kept = new Set() } = {}) =>
-  !!(owner && folderId && markOf(tree, folderId) && kept && !kept.has(folderId));
-
-// What the status says once the work folder was let go, `trashed` of its
-// files sent to Recently deleted.
-export const letGoSaid = (trashed) => (trashed
-  ? tn("Let go of the work folder: {n} file went to Recently deleted.", "Let go of the work folder: {n} files went to Recently deleted.", trashed)
-  : t("Let go of the work folder: its files stay in the folder."));
-
-// ---------- the list view (explorer/FolderList.jsx) ----------
+// ---------- the folder view (explorer/FolderTree.jsx) ----------
 
 // The name a file is listed by: its file's, else (a note made in Gamma whose
 // file the vault has not written yet) its title.
 export const fileName = (b) => b._fileName || b.content || t("Untitled");
 
-// The directories of the level shown (`ids`), by name, each with the files
-// below it (`meta`, App's folder rollup): [{id, name, count}].
-export const listDirs = (ids, tree, meta) => ids
-  .map((id) => ({ id, name: treeOf(tree).lib.folders.get(id).name, count: meta[id]?.count || 0 }))
-  .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-// The page rows of a directory's loaded files (`rows`, useFolderRows's),
-// those App knows, each with the read's `open_comments`, which the filter
-// box's text (`query`) keeps by name.
-export function listRows(rows, pages, query) {
-  const q = query.trim().toLowerCase();
-  const known = rows.filter((r) => pages.has(r.id)).map((r) => ({ ...pages.get(r.id), open_comments: r.open_comments || 0 }));
-  return q ? known.filter((b) => fileName(b).toLowerCase().includes(q)) : known;
+// The page rows of the files a folder view draws (`rows`, fileTree.js
+// folderRows'), those App knows (`pages`), each with its read's
+// `open_comments`: id → row, in the order they are drawn.
+export function listRows(rows, pages) {
+  const out = new Map();
+  for (const r of rows) {
+    if (r.kind === "file" && pages.has(r.id)) out.set(r.id, { ...pages.get(r.id), open_comments: r.page?.open_comments || 0 });
+  }
+  return out;
 }
 
 // What a list with no row says: "choosing" while Choose files… is open,

@@ -3,9 +3,10 @@
 // vaultState.js: the chip among the page header's buttons, one icon for how
 // the page stands (vaultState's `kind`), with its card (where the file is,
 // a work folder's agent on this computer and what it is at, Show in folder,
-// Add to library…, Feedback…, Edit the file); on any other server, the
-// computer that keeps the page in a synced vault of the account's, online
-// or since when not, and the assistants there (computerChip, no action yet);
+// Add to library…, Feedback…, Edit the file, Detach from {computer}…); on
+// any other server, the computer that keeps the page in a synced vault of
+// the account's, online or since when not, and the assistants there
+// (computerChip; Detach its one action);
 // and the banner over the page, in the missing-page notice's slot, for a
 // note the vault could not write and for an opened file whose file is gone
 // (Locate…, Remove). An opened Markdown file read as text (openedNote) is
@@ -14,7 +15,7 @@
 import React from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { AlertCircleIcon, BotIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, LocateIcon, MonitorIcon, PauseIcon, SquareCheckIcon,
-  SyncIcon, TrashIcon, UploadIcon } from "../shared/ui/Icons";
+  SyncIcon, TrashIcon, UnlinkIcon, UploadIcon } from "../shared/ui/Icons";
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
 import { StateDetail, StateTag } from "../shared/ui/StateTag";
@@ -36,14 +37,15 @@ const CHIP_ICONS = { sync: SyncIcon, push: UploadIcon, disk: HardDriveIcon, paus
 // in the library, `onRemove()` (Remove from library) while it is, and
 // `onCopy()` (Save a copy to library…) for its PDF while it is not (in the
 // library, the copy would be its own page); `onChoose()`, when
-// given, opens Choose files… of its work folder, and `onFeedback()`, when
-// given, the file's feedback view (docs/dev/feedback.md). `computers`: the
-// page's computers (usePageComputer.js), whose chip shows when the page
-// has no standing with this computer to show.
+// given, opens Choose files… of its work folder, `onFeedback()`, when
+// given, the file's feedback view (docs/dev/feedback.md), and `detach`,
+// when given ({label, start}: useWorkFolderActions.jsx), Detach of its
+// synced folder. `computers`: the page's computers (usePageComputer.js),
+// whose chip shows when the page has no standing with this computer to show.
 export function VaultChip({ state, computers = [], open, onOpenChange, onReveal, onAdd, onEdit, canAdd, file = null, onRemove, onCopy, onChoose,
-  onFeedback }) {
+  onFeedback, detach = null }) {
   const chip = vaultChip(state);
-  if (!chip) return <ComputerChip computers={computers} open={open} onOpenChange={onOpenChange} />;
+  if (!chip) return <ComputerChip computers={computers} open={open} onOpenChange={onOpenChange} detach={detach} />;
   const { vault, reader } = state;
   const agent = agentLine(state);
   const path = vault ? vault.path : reader.path;
@@ -58,7 +60,8 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
       </button>
       {open ? (
         <Popover as={MenuScope} className="addPopover vaultPopover" aria-label={chip.label}>
-          <div className="popoverTitle">{vault ? t("Synced vault: {name}", { name: vault.name }) : t("On this computer")}</div>
+          <div className="popoverTitle">{!vault ? t("On this computer") : vault.scope === "file" ? t("Synced vault: {name}", { name: vault.name })
+            : t("Synced folder: {name}", { name: vault.name })}</div>
           {path ? <div className="popoverHint vaultPath" title={path}>{path}</div> : null}
           {vault ? <div className="popoverHint">{directionText(vault)}</div> : null}
           {vault?.paused ? <div className="popoverHint">{t("The vault is paused: only a sync asked for in the sync panel runs.")}</div> : null}
@@ -76,8 +79,8 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
           ) : null}
           {file ? (
             <div className="popoverHint">{file.library
-              ? t("A work folder's file, in the library too: its name on disk and its directory follow the file.")
-              : t("A work folder's file, not in the library: its name and place follow the file.")}</div>
+              ? t("A synced folder's file, in the library too: its name on disk and its directory follow the file.")
+              : t("A synced folder's file, not in the library: its name and place follow the file.")}</div>
           ) : null}
           {agent ? (
             <div className="popoverHint vaultAgent" data-agent={vault.agent.name || ""}>
@@ -98,7 +101,7 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
             ) : null}
             {(file ? !file.library : addsToLibrary(state) && !openedNote(reader)) && canAdd ? (
               <MenuItem icon={FolderPlusIcon} onClick={() => { onOpenChange(false); onAdd(); }}
-                title={file ? t("Add the file's page to the library, filed in a library folder too: it stays in its work folder")
+                title={file ? t("Add the file's page to the library, filed in a library folder too: it stays in its synced folder")
                   : opensAsPdf(reader) ? t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")
                   : t("Store the file in the library and file the page in a folder: its notes and chat come with it")}>
                 {t("Add to library…")}
@@ -106,7 +109,7 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
             ) : null}
             {file?.library && canAdd ? (
               <MenuItem icon={FolderMinusIcon} onClick={() => { onOpenChange(false); onRemove(); }}
-                title={t("Take the file's page out of the library: it stays in its work folder, with its notes")}>
+                title={t("Take the file's page out of the library: it stays in its synced folder, with its notes")}>
                 {t("Remove from library")}
               </MenuItem>
             ) : null}
@@ -118,7 +121,7 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
             ) : null}
             {onChoose ? (
               <MenuItem icon={SquareCheckIcon} onClick={() => { onOpenChange(false); onChoose(); }}
-                title={t("Choose which files of its directory the work folder tracks")}>{t("Choose files…")}</MenuItem>
+                title={t("Choose which files of its directory the synced folder tracks")}>{t("Choose files…")}</MenuItem>
             ) : null}
             {onFeedback ? (
               <MenuItem icon={BotIcon} onClick={() => { onOpenChange(false); onFeedback(); }}
@@ -128,6 +131,7 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
               <MenuItem icon={CodeIcon} onClick={() => { onOpenChange(false); onEdit(); }}
                 title={t("Edit the Markdown file itself; the page takes what you save")}>{t("Edit the file")}</MenuItem>
             ) : null}
+            <DetachRow detach={detach} onOpenChange={onOpenChange} />
           </div>
         </Popover>
       ) : null}
@@ -135,12 +139,25 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
   );
 }
 
+// The card's Detach from {computer}… of the page's synced folder, when the
+// account may (`detach`, {label, start}).
+function DetachRow({ detach, onOpenChange }) {
+  if (!detach) return null;
+  return (
+    <MenuItem icon={UnlinkIcon} onClick={() => { onOpenChange(false); detach.start(); }}
+      title={t("Stop syncing this folder: its files stay in Gamma or go to Recently deleted, and its directory stays as it is")}>
+      {detach.label}
+    </MenuItem>
+  );
+}
+
 // The chip of a page another computer keeps (vaultState.js computerChip):
 // a dot on its icon for whether the computer is online, its card the
 // computer's name, its state, the folder or file it keeps, the
-// assistants there and the agent that runs the folder's Sends. Nothing to do from here yet: Show in folder needs a
-// window on that computer.
-function ComputerChip({ computers, open, onOpenChange }) {
+// assistants there and the agent that runs the folder's Sends, and Detach
+// of the folder (`detach`) where the page is a file of one; Show in folder
+// needs a window on that computer.
+function ComputerChip({ computers, open, onOpenChange, detach }) {
   const chip = computerChip(computers);
   if (!chip) return null;
   const state = chip.online ? "online" : "offline";
@@ -162,6 +179,7 @@ function ComputerChip({ computers, open, onOpenChange }) {
           {chip.paused ? <div className="popoverHint">{chip.paused}</div> : null}
           {chip.assistants ? <div className="popoverHint vaultAgent">{chip.assistants}</div> : null}
           {chip.agent ? <div className="popoverHint vaultAgent">{chip.agent}</div> : null}
+          {detach ? <div className="vaultActions"><DetachRow detach={detach} onOpenChange={onOpenChange} /></div> : null}
         </Popover>
       ) : null}
     </span>

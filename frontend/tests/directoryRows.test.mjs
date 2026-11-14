@@ -97,6 +97,18 @@ test("a directory written since its read is read again, its count the same: a fi
     { seq: 11, since: 0, dirs: { d: 11 } }), false, "read again: as the log stands");
 });
 
+test("the folder view reads again in another sort, and with each listing it is given", () => {
+  const listing = {};
+  const held = new Map([["d", entry(2, { sort: "name|asc", version: listing })]]);
+  const counts = { d: 2 };
+  assert.deepEqual(wantedReads(["d"], held, counts, CHANGES, true, { sort: "name|asc", version: listing }), [], "as it was read");
+  assert.deepEqual(wantedReads(["d"], held, counts, CHANGES, true, { sort: "size|asc", version: listing }), ["d"], "another sort");
+  assert.deepEqual(wantedReads(["d"], held, counts, CHANGES, true, { sort: "name|asc", version: {} }), ["d"], "the listing read again");
+  assert.deepEqual(wantedReads(["d"], held, counts, CHANGES, true), [], "the Files window: neither asked");
+  const kept = merged({ ...NONE, sort: "size|asc", version: listing }, { pages: rows(0, 1), total: 1, next: null, seq: 3 }, true);
+  assert.deepEqual([kept.sort, kept.version], ["size|asc", listing], "an answer keeps what it was asked in");
+});
+
 test("a closed directory is not read, and one in flight is not asked again", () => {
   const held = new Map([["d", entry(2)], ["e", { ...NONE, loading: true, count: 5 }]]);
   assert.deepEqual(wantedReads([], held, { d: 9 }, CHANGES, true), [], "closed: not read, whatever changed");
@@ -104,6 +116,15 @@ test("a closed directory is not read, and one in flight is not asked again", () 
   assert.deepEqual(wantedReads(["d"], held, { d: 2 }, { seq: 20, since: 0, dirs: { d: 20 } }, true), ["d"],
     "opened again after a write: read");
   assert.deepEqual(wantedReads(["e"], held, { e: 6 }, CHANGES, true), [], "in flight");
+});
+
+test("a read in flight in another sort or listing is read again", () => {
+  const listing = {};
+  const held = new Map([["d", { ...NONE, loading: true, count: 2, sort: "name|asc", version: listing }]]);
+  const counts = { d: 2 };
+  assert.deepEqual(wantedReads(["d"], held, counts, CHANGES, true, { sort: "name|asc", version: listing }), [], "the same: left alone");
+  assert.deepEqual(wantedReads(["d"], held, counts, CHANGES, true, { sort: "modified|desc", version: listing }), ["d"], "another sort");
+  assert.deepEqual(wantedReads(["d"], held, counts, CHANGES, true, { sort: "name|asc", version: {} }), ["d"], "another listing");
 });
 
 test("the reveal pages on until the row is held, the rows end, or MAX_ROWS are held", () => {

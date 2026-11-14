@@ -292,13 +292,13 @@ test("a rejected batch is dropped and the page reloads", async (t) => {
 });
 
 test("an op only a work folder's vault makes (locked) is dropped alone, and the server's words say why", async (t) => {
-  const words = "A work folder's file is named by its file: rename it on disk.";
+  const words = "A synced folder's file is named by its file: rename it on disk.";
   const bodies = [];
   const h = setup(t, async (url, init) => {
     const body = JSON.parse(init.body);
     bodies.push(body.ops);
     if (bodies.length === 1) {
-      const e = new Error("A work folder's file is named by its file: rename it on disk.");
+      const e = new Error("A synced folder's file is named by its file: rename it on disk.");
       e.status = 403;
       e.data = { detail: e.message, conflict: "locked", index: body.ops.findIndex((op) => op.op === "set" && op.id === "a") };
       throw e;

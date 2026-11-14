@@ -726,22 +726,33 @@ messages. It goes with the first page of the user's own. Its anchor is
 
 ## Work folders
 
-A work folder ([work_folders.md](work_folders.md)) is a folder whose files
-come from a directory on disk. The listing (`GET /api/blocks/root/children`)
+A work folder ([work_folders.md](work_folders.md)), a *synced folder* in
+the interface, is a folder whose files come from a directory on disk. The
+listing (`GET /api/blocks/root/children`)
 leaves its files out unless they are in the library (`properties.library`)
 or pinned, and answers `work_counts`, the files filed right in each of its
 directories (`libTree.workCounts`); `folderMeta` counts a folder in a work
 folder from those, summed down its subtree, in place of the library pages.
 
-- **The folder's list view.** Opening a folder in a work folder shows
-  `explorer/FolderList.jsx` in place of the grid or list: its directories
-  by name with their counts, then its files from
-  `GET /api/folders/{id}/pages`, sorted on the server, 200 rows at a time
-  with Load more (`explorer/useFolderRows.js`, read again whenever the
-  listing is). Columns: Name (the file's name, `file_name`), Format, File
-  size, Modified, Comments (open threads). The sort is its own (`workSort`,
-  name by default), the filter box filters the rows loaded by name, and
-  the view and kind toggles are hidden ([ui-design.md](ui-design.md#lists-that-change)).
+- **The root.** W's own card and row in the listing wear the theme's root
+  folder icon (`shared/ui/FileIcon.jsx`) and say the computer that keeps it
+  and how its sync stands, "This computer · Synced" in the desktop app that
+  keeps it, "TIM-PC · Connected" elsewhere to that computer's account
+  (`work.keeperOf`, [work_folders.md](work_folders.md) "File icons"): the
+  card in its kind's place ("Synced folder" when nobody this account knows
+  keeps it), the row after the name, which counts its files.
+- **The folder view.** Opening a folder in a work folder shows
+  `explorer/FolderTree.jsx` in place of the grid or list: a tree of the
+  Files window's rows (`TreeRow`, `fileTree.js` `folderRows`), its
+  directories by name with their counts, each opening in place, then the
+  files of each open one from `GET /api/folders/{id}/pages`, sorted on the
+  server, 200 rows at a time with a "Show {n} more files" row
+  (`explorer/useFolderTree.js`, read again whenever the listing is), each
+  with its theme icon. Columns: Name (the file's name, `file_name`),
+  Format, File size, Modified, Comments (open threads). The sort is its
+  own (`gamma-work-sort`, name by default), the filter box keeps the files
+  read by name, the keys are the Files window's, and the view and kind
+  toggles are hidden ([ui-design.md](ui-design.md#trees)).
   New page shows where the work folder pulls (the server stamps the page
   as the work folder's note, and pull writes it); New folder never. An
   upload while one is open goes to the library's root, and the status
@@ -774,10 +785,10 @@ folder from those, summed down its subtree, in place of the library pages.
   Nothing is read while it is hidden; an open directory is read again only
   when the listing's count for it changes or its `work_changes` name a
   write to one of its files since the read (a rename on disk),
-  not on every listing refresh, so the home list view's open directory is
-  read twice while both show (two sorts, two page sizes). A press on a
+  not on every listing refresh, so a directory open in the folder view too
+  is read by each (its sort, and with each listing). A press on a
   folder opens or closes it, a press on a file selects and opens it — one
-  press, where the list view selects on a click and opens on a second; the
+  press, where the folder view selects on a click and opens on a second; the
   tree's selection is its own, and a file row's menu is the page menu for
   that one page with the home selection let go (`openSubPageMenu`). The
   open page is revealed once, when its row is first known and the window

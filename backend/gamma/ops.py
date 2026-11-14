@@ -491,7 +491,7 @@ class _Batch:
         parent = op.get("parent") if op["op"] == "insert" else tree.parent.get(folder)
         below = tree.subtree(folder)
         if tree.work_of(parent) or any(w != folder and w in below for w in tree.roots()):
-            raise OpError(403, "A work folder is never inside another work folder, nor around one.", conflict=LOCKED)
+            raise OpError(403, "A synced folder is never inside another synced folder, nor around one.", conflict=LOCKED)
 
     def work_patch(self, page_id: str, before: dict, patch: dict | None, content: str | None) -> dict | None:
         """A page root's ``set`` held to the work-folder rule
