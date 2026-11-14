@@ -117,7 +117,7 @@ from urllib.parse import urlsplit
 from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 
-from . import collab, config, folder_sync, gamma_sync, md_lens, storage, workspaces
+from . import collab, config, folder_sync, gamma_sync, md_lens, remote_servers, storage, workspaces
 from .auth import DISK_CLIENT
 from .blocks_store import (FOLDERS, PARENT_PAGE, TREES, filing, folder_path, folder_paths, folder_subtree_ids,
                            live_pages, load_json, load_props, new_block_id, page_in_folder, page_root_id, pages_in_folder)
@@ -181,12 +181,15 @@ LET_GO_THERE = "let_go_there"
 class LinkError(ValueError):
     """A link refused, with why. ``status`` is what the route making a link
     answers it with: 400, 409 for the other server's folder as it stands
-    (not empty, a work folder already, a mark it refused), 502 for another
-    server that does not answer."""
+    (not empty, a work folder already, a mark it refused, a redirect), 502
+    for another server that does not answer, or not as that server
+    (``_refused_there``); ``fields`` what the refusal adds of that server's
+    failure (``gamma_sync.status_fields``: the certificate it served)."""
 
-    def __init__(self, message: str = "", status: int = 400):
+    def __init__(self, message: str = "", status: int = 400, fields: dict | None = None):
         super().__init__(message)
         self.status = status
+        self.fields = fields or {}
 
 
 class NoteMoved(LinkError):
@@ -737,6 +740,23 @@ def _vaults_changed() -> None:
     channel.nudge()
 
 
+def certificates_changed() -> None:
+    """The certificates the shell trusts were replaced (``PUT
+    /api/remote-servers/pins``): a vault whose last round failed on a
+    certificate runs at the next tick, not after ``RETRY_S`` (its status
+    without ``failed_at``), and this computer's channels, which rest
+    ``channel.RETRY_MAX_S`` after one, try again at once."""
+    from .computers import channel  # local: it imports this module
+
+    with _status_guard, connect_users_db() as conn:
+        for link_id, text in conn.execute("SELECT id, status FROM folder_links WHERE remote_url != ''").fetchall():
+            status = _object_of(text)
+            if status.get("error_kind") in ("certificate", "certificate_changed") and "failed_at" in status:
+                conn.execute("UPDATE folder_links SET status = ? WHERE id = ?",
+                             (json.dumps({k: v for k, v in status.items() if k != "failed_at"}), link_id))
+    channel.nudge()
+
+
 def _new(ws: str, path: str, user_id: str, **fields) -> dict:
     """A link not stored yet: a folder link unless ``fields`` say otherwise."""
     return {"id": uuid.uuid4().hex, "workspace_id": ws, "kind": "folder", "folder_id": "", "page_id": "", "path": path,
@@ -1037,21 +1057,40 @@ def _whole_library(link: dict) -> None:
         raise LinkError("A vault of the whole library cannot push everything: make one of a folder.")
 
 
-def _remote(url: str, token: str, workspace: str) -> tuple[gamma_sync.Server, dict]:
+def _refused_there(e: gamma_sync.SyncError) -> LinkError:
+    """What a request to another server that failed is to the link being
+    made or changed: a redirect 409 (``remote_servers.redirected``), a
+    server answering not as that server (a certificate, no HTTPS, a sign-in
+    or proxy in its way) 502, anything else 400; with its status fields."""
+    fields = gamma_sync.status_fields(e)
+    if isinstance(e, gamma_sync.Redirected):
+        return LinkError(remote_servers.redirected(e, "make the vault from there"), 409, fields)
+    if isinstance(e, (gamma_sync.CertificateRefused, gamma_sync.NotHttps, gamma_sync.Blocked)):
+        return LinkError(str(e), 502, fields)
+    return LinkError(str(e), fields=fields)
+
+
+def _remote(url: str, token: str, workspace: str, *, existing: bool = False) -> tuple[gamma_sync.Server, dict]:
     """The other Gamma server at ``url`` with ``token``, and what it says of
     the token (``/api/sync/whoami``: its ``workspace``, which must be
     ``workspace`` when one is given, and its ``scope``). Waits at most
-    ``ASK_TIMEOUT_S``."""
+    ``ASK_TIMEOUT_S``. Plain http to a host on the internet is refused
+    before any request, unless a link ``existing`` there takes a new token
+    (``remote_servers.refuse_plain_far``)."""
     url = str(url or "").strip().rstrip("/")
     if not re.match(r"^https?://[^\s/]+(/\S*)?$", url):
         raise LinkError("Give the other server's address as http(s)://host[:port].")
     if not token:
         raise LinkError("A token of the other server is needed.")
+    try:
+        remote_servers.refuse_plain_far(url, existing=existing)
+    except ValueError as e:
+        raise LinkError(str(e)) from e
     server = gamma_sync.Server(url, token, timeout=ASK_TIMEOUT_S)
     try:
         who = server.get_json("/api/sync/whoami")
     except gamma_sync.SyncError as e:
-        raise LinkError(str(e)) from e
+        raise _refused_there(e) from e
     remote_ws = (who.get("workspace") or {}).get("id") or ""
     if not remote_ws:
         raise LinkError("The other server did not say which workspace the token opens.")
@@ -1094,7 +1133,7 @@ def create_remote_link(url: str, token: str, token_id: str, workspace: str, fold
     try:
         tree = server.get_json("/api/sync/folders")
     except gamma_sync.SyncError as e:
-        raise LinkError(str(e)) from e
+        raise _refused_there(e) from e
     folders = {f["id"]: f["path"] for f in tree.get("folders", []) if f.get("id")}
     if folder_id != folder_sync.ROOT and folder_id not in folders:
         raise LinkError("That folder does not exist on the other server.")
@@ -1151,7 +1190,7 @@ def create_remote_file_link(url: str, token: str, token_id: str, workspace: str,
     try:
         page = gamma_sync.RemoteSink(server).current(page_id) if page_id else None
     except gamma_sync.SyncError as e:
-        raise LinkError(str(e)) from e
+        raise _refused_there(e) from e
     if page is None:
         raise LinkError("That page does not exist on the other server.")
     link = _new(who["workspace"]["id"], path, user_id, kind="file", page_id=page_id, pull=0, push=PUSH_PDFS,
@@ -1344,7 +1383,7 @@ def set_token(link_id: str, token: str, token_id: str = "") -> dict | None:
 def _check_token(link: dict, token: str, pushes: bool) -> None:
     """LinkError unless the link's other server takes ``token`` for the link's
     workspace (``_remote``) and, where the link ``pushes``, lets it write."""
-    _server, who = _remote(link["remote_url"], token, link["workspace_id"])
+    _server, who = _remote(link["remote_url"], token, link["workspace_id"], existing=True)
     if pushes and who.get("scope") != "write":
         raise LinkError("Pushing needs a token that may write.")
 
@@ -2519,8 +2558,12 @@ def keep_state(link_id: str, state: dict) -> None:
         conn.execute("UPDATE folder_links SET state = ? WHERE id = ?", (json.dumps(state), link_id))
 
 
-def _failed(link: dict, error: str) -> dict:
-    status = {**link["status"], "running": False, "last_error": error, "failed_at": time.time()}
+def _failed(link: dict, error: str, fields: dict | None = None) -> dict:
+    """A round that could not run: its status says why, ``fields`` what the
+    failure was when another server's (``gamma_sync.status_fields``), and
+    nothing of an earlier failure's."""
+    status = {k: v for k, v in link["status"].items() if k not in gamma_sync.STATUS_KEYS}
+    status = {**status, "running": False, "last_error": error, "failed_at": time.time(), **(fields or {})}
     _write_status(link["id"], status)
     log.warning(f"[folders] {link['path']}: {error}")
     return status
@@ -2568,7 +2611,7 @@ def _held(link_id: str, link: dict, started: float, asked: dict) -> dict:
             return _file_round(link, started)
         return _vault_round(link, started, **asked)
     except (gamma_sync.SyncError, LinkError, OSError) as e:
-        return _failed(link, error_text(e))
+        return _failed(link, error_text(e), gamma_sync.status_fields(e))
     except Exception as e:  # noqa: BLE001 — never leave the link "running" with no reason shown
         log.exception(f"[folders] {link['path']}: the round failed")
         return _failed(link, f"unexpected error: {e!r}")
@@ -2772,14 +2815,15 @@ def _vault_round(link: dict, started: float, *, force: str, direction: str, conf
         except (vault_disk.Offline, vault_disk.Stopped, vault_sync.Refused) as e:
             why = {"stopped": str(e)} if isinstance(e, vault_disk.Stopped) else {
                 "offline": True} if isinstance(e, vault_disk.Offline) else {}
-            return _failed({**link, "status": {**link["status"], "started_at": started, **why}}, str(e))
+            return _failed({**link, "status": {**link["status"], "started_at": started, **why}}, str(e),
+                           gamma_sync.status_fields(e))
     try:
         link = _work_turn(link)
     except (vault_disk.Offline, vault_disk.Stopped, vault_sync.Refused, OpError) as e:
         why = {"stopped": str(e)} if isinstance(e, vault_disk.Stopped) else {
             "offline": True} if isinstance(e, vault_disk.Offline) else {}
         return _failed({**link, "status": {**link["status"], "started_at": started, **why}},
-                       str(getattr(e, "detail", "") or e))
+                       str(getattr(e, "detail", "") or e), gamma_sync.status_fields(e))
     # kept in the state at the upgrade's commit point: a round that died after it, or failed, loses none of it
     upgraded = link["state"].get(vault_upgrade.UPGRADED) or link["status"].get("upgraded_at")
     result = vault_sync.sync(link, direction=direction, force=force, confirm=confirm, progress=_progress_writer(link))
@@ -2895,7 +2939,7 @@ def _remote_moved(link: dict) -> bool | None:
         keyed = get_link(link["id"], with_token=True) or link
         return gamma_sync.changed_since(remote_server(keyed, timeout=ASK_TIMEOUT_S), link["cursor"])
     except (gamma_sync.SyncError, LinkError) as e:
-        _failed(link, str(e))
+        _failed(link, str(e), gamma_sync.status_fields(e))
         return None
 
 
@@ -3071,7 +3115,8 @@ def run_page(link_id: str, page_id: str) -> bool:
         covered = not result.status["counts"].get("waiting")
         if result.status.get("last_error"):
             errors = {k: result.status[k] for k in ("stopped", "offline") if k in result.status}
-            _failed({**link, "status": {**link["status"], **errors}}, result.status["last_error"])
+            _failed({**link, "status": {**link["status"], **errors}}, result.status["last_error"],
+                    {k: result.status[k] for k in gamma_sync.STATUS_KEYS if k in result.status})
     except Exception:  # noqa: BLE001: the hot loop goes on; the whole round will say why
         log.exception(f"[folders] the round of page {page_id} failed")
     finally:

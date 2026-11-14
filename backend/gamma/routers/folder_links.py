@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import config, folder_links, linked_files, workspaces
+from .. import config, folder_links, linked_files, remote_servers, workspaces
 from ..auth import require_personal_user_id, require_ws, ws_role
 from ..documents.model import page_document
 from ..logbuf import log
@@ -163,6 +163,17 @@ def _from_shell(request: Request, refused: str = "Only the desktop app itself ma
     return user_id
 
 
+def _shell_strict(request: Request, refused: str) -> str:
+    """``_from_shell`` for a route that sends this computer's tokens on or
+    decides what it trusts (routers/remote_servers.py): a server started
+    with no secret refuses it too (403), so it never passes unchecked."""
+    user_id = _account(request)
+    secret = config.shell_secret()
+    if not secret or not secrets.compare_digest(request.headers.get(SHELL_HEADER, "").encode(), secret.encode()):
+        raise HTTPException(status_code=403, detail=refused)
+    return user_id
+
+
 def _mine(request: Request, link_id: str, write: bool = True) -> dict:
     """The link, when the request may see it: a remote source's by the
     account that made it, a local one by a member (editor, to change it)
@@ -243,7 +254,8 @@ def _info(link: dict, can_act: bool = True, agents: dict | None = None) -> dict:
 
     info = {k: v for k, v in link.items() if k not in ("state", "token")}
     info.update(dest=str(folder_links.dest_of(link)), pull=bool(link["pull"]), push=folder_links.push_word(link["push"]),
-                choosing=folder_links.choosing(link), work=folder_links.work_vault(link))
+                choosing=folder_links.choosing(link), work=folder_links.work_vault(link),
+                plain=remote_servers.plain(link["remote_url"]))
     info["agent"] = agents[link["id"]] if agents is not None else agent_info.agent_info(link, can_act=can_act)
     if link["kind"] == "file":
         info["title"] = link["state"].get("title", "")
@@ -273,11 +285,12 @@ def _refused(e: folder_links.LinkError, status: int = 400) -> HTTPException:
 def list_links(request: Request):
     """``{links: [{id, kind, workspace_id, folder_id, page_id, path, notes,
     pull (a bool), push ("off" | "pdfs" | "everything"), library, choosing,
-    work, created_at, cursor, status, dest, remote_url, token_id, title?}]}``
+    work, created_at, cursor, status, dest, remote_url, plain, token_id, title?}]}``
     — every link the account may see, whatever workspace the request names:
     those of this server's workspaces it has a role in (``remote_url``
     empty), and its own to another server (``remote_url`` the other server,
-    ``workspace_id`` the workspace there). A folder link (``kind``
+    ``workspace_id`` the workspace there; ``plain`` whether that address is
+    plain http, ``remote_servers.plain``, "" | "lan" | "name", no DNS asked). A folder link (``kind``
     ``folder``) has its ``folder_id``, a file link (``file``) its
     ``page_id`` and the page's ``title``; ``dest`` is the directory or the
     file. ``work`` says the link keeps a work folder, of this server or of
@@ -292,9 +305,12 @@ def list_links(request: Request):
     them all. A folder vault's ``status``: ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked?, refused?,
     capped?, held?, stopped?, offline?, shared?, upgraded_at?,
-    work_folder_at?, push_off?, paused_at?, folder_path}``
-    (``folder_links._vault_round``), ``shared`` the pages filed in it that a
-    vault beside it, made before it, keeps (``[{page, title}]``)."""
+    work_folder_at?, push_off?, paused_at?, error_kind?, move_to?, upgrade?,
+    cert?, blocked?, folder_path}`` (``folder_links._vault_round``),
+    ``shared`` the pages filed in it that a vault beside it, made before
+    it, keeps (``[{page, title}]``); ``error_kind`` and the rest what the
+    last failure of a vault of another server was
+    (``gamma_sync.status_fields``)."""
     from ..local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
 
     user_id = _account(request)
@@ -326,10 +342,14 @@ def create_link(payload: LinkCreate, request: Request):
     one (of a PDF that is there, for a file link) or another link's, a
     directory holding another folder's files or a vault marker not to be
     adopted, or one of ``folder_links.check_vault``'s refusals, or a server
-    that refuses the token; for a work folder of another server, 409 for
-    its folder there as it stands (a work folder already, inside or around
-    one, not empty, a mark that server refuses: a clone, a Zotero link) and
-    502 for a server that does not answer."""
+    that refuses the token, or plain http to a host on the internet; for a
+    work folder of another server, 409 for its folder there as it stands (a
+    work folder already, inside or around one, not empty, a mark that server
+    refuses: a clone, a Zotero link) and 502 for a server that does not
+    answer. For another server, 409 too for one that redirects, and 502 for
+    a certificate not trusted here, no HTTPS, or a sign-in or proxy in the
+    way, the answer carrying beside its ``detail`` what the status would
+    (``error_kind``, ``move_to``, ``upgrade``, ``cert``, ``blocked``)."""
     user_id = _from_shell(request)
     try:
         if payload.remote_url and (payload.new_folder or payload.adopt):
@@ -351,6 +371,8 @@ def create_link(payload: LinkCreate, request: Request):
                                             payload.pull, new_folder=payload.new_folder, adopt=payload.adopt,
                                             choose=payload.choose, library=payload.library)
     except folder_links.LinkError as e:
+        if e.fields:   # what the other server's failure was: the certificate it served, where it redirected
+            return JSONResponse({"detail": str(e), **e.fields}, status_code=e.status)
         raise _refused(e, e.status)
     if not folder_links.choosing(link):
         folder_links.run_in_background(link["id"])

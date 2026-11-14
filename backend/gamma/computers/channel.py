@@ -10,13 +10,18 @@ and handed over by the desktop app with the shell's word
 (routers/computer_links.py): one users.db ``computer_links`` row per server,
 workspace there and local account, the token sealed
 (``publisher_sessions.seal``, as a vault's is), the account there the
-server named, and the channel's ``status``, ``{state, error, at}``:
+server named, and the channel's ``status``, ``{state, error, at}`` and,
+for a server not reached as that server, what was in the way
+(``gamma_sync.status_fields``: ``error_kind`` and its fields):
 ``connecting`` until an announce succeeds (``connected``, while the polls
 do), then
 ``refused`` (the token: retried after ``REFUSED_S``), ``older`` (a server
 without the channel: after ``OLDER_S``) or ``unreachable`` (after
-``RETRY_FIRST_S``, doubling to ``RETRY_MAX_S``). It is written only when it
-changes.
+``RETRY_FIRST_S``, doubling to ``RETRY_MAX_S``; a redirect, a certificate
+or no HTTPS, which do not go away by themselves, after ``RETRY_MAX_S``).
+Refused and older are that server's own answers
+(``gamma_sync.is_gamma_refusal``): a sign-in or proxy page in its way is
+``unreachable``, ``blocked``. It is written only when it changes.
 
 One daemon thread per row (``_Channel``), started when the row is made and
 checked by ``folder_links.tick`` (``check``: the missing ones start, the
@@ -61,7 +66,7 @@ from urllib.parse import urlencode, urlsplit
 
 from cryptography.fernet import InvalidToken
 
-from .. import config, folder_links, gamma_sync, version
+from .. import config, folder_links, gamma_sync, remote_servers, version
 from ..cloud_auth import device
 from ..db import connect_users_db, page_now
 from ..logbuf import log
@@ -145,11 +150,20 @@ def make(url: str, workspace: str, token: str, token_id: str, user_id: str) -> t
     ``(link, {token_id} | None)``, the token it held (the desktop app's to
     revoke there) when another. ``gamma_sync.Denied`` for a refused token,
     ``Older`` for a server without the channel, ``gamma_sync.SyncError``
-    for one that cannot be reached, ValueError for an address or a
-    workspace that does not do."""
+    for one that cannot be reached (``Redirected``, ``CertificateRefused``,
+    ``NotHttps``, ``Blocked`` among them), ValueError for an address or a
+    workspace that does not do, or plain http to a host on the internet for
+    a new channel (``remote_servers.refuse_plain_far``; one kept there takes
+    its new token)."""
     url = clean_url(url)
     if not token:
         raise ValueError("A computer's token of the other server is needed.")
+    with connect_users_db() as conn:
+        kept = conn.execute("SELECT 1 FROM computer_links WHERE remote_url = ? AND workspace_id = ? AND created_by = ?",
+                            (url, workspace, user_id)).fetchone() is not None
+    remote_servers.refuse_plain_far(url, existing=kept)
+    if not kept:
+        remote_servers.fresh_id_origin(url)   # an address a server left: this computer's id there is a new one
     server = gamma_sync.Server(url, token, timeout=folder_links.ASK_TIMEOUT_S)
     # Checked with no vault named: whose token it is decides first whether it may name them (the thread does).
     answer = _call(server, "POST", "/api/computers/announce",
@@ -206,9 +220,10 @@ def delete(link_id: str, user_id: str) -> str | None:
 def computer_id(remote_url: str) -> str:
     """This computer's id for the server at ``remote_url``: the HMAC of the
     install's id (``cloud_auth.device``) and the server's origin, so two
-    servers cannot match one computer by its id."""
-    parts = urlsplit(remote_url)
-    origin = f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+    servers cannot match one computer by its id; for a server whose links
+    moved, the origin it was first shown at (``remote_servers.id_origin``),
+    so that server sees the same computer at its new address."""
+    origin = remote_servers.id_origin(remote_url)
     digest = hmac.new(device()[0].encode(), origin.encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:22]
 
@@ -292,12 +307,18 @@ def state_of(link: dict) -> dict:
 
 def _call(server: gamma_sync.Server, method: str, path: str, obj=None) -> dict:
     """The server's JSON answer to one channel request. ``gamma_sync.Denied``
-    for 401/403, ``Older`` for 404/405 (no such route there), else
+    for its own 401/403, ``Older`` for its own 404/405 (no such route there;
+    ``gamma_sync.is_gamma_refusal``), ``gamma_sync.Blocked`` for a refusal
+    by something in front of it (``gamma_sync.blocked``), else
     ``gamma_sync.Unreachable`` for anything but a JSON object."""
     status, data = server.ask(method, path, obj)
-    if status in (401, 403):
+    kind = gamma_sync.blocked(status, server.last_headers, data)
+    if kind:
+        raise gamma_sync.Blocked(server.host, status, kind)
+    own = gamma_sync.is_gamma_refusal(data)
+    if status in (401, 403) and own:
         raise gamma_sync.Denied("that server refused this computer's token")
-    if status in (404, 405):
+    if status in (404, 405) and own:
         raise Older("that server is older than this app: it cannot show this computer")
     if not 200 <= status < 300:
         raise gamma_sync.Unreachable(f"{path.split('?')[0]}: {status}")
@@ -369,6 +390,14 @@ class _Channel:
         except Older as e:
             self.announced = None
             return self._said(link, "older", str(e), OLDER_S)
+        except (gamma_sync.Redirected, gamma_sync.CertificateRefused, gamma_sync.NotHttps) as e:
+            # none goes away by itself: tried again after the longest rest, the status saying what it was
+            self.announced = None
+            return self._said(link, "unreachable", str(e), RETRY_MAX_S, **gamma_sync.status_fields(e))
+        except gamma_sync.Blocked as e:
+            self.announced, rest = None, self.backoff
+            self.backoff = min(self.backoff * 2, RETRY_MAX_S)
+            return self._said(link, "unreachable", str(e), rest, **gamma_sync.status_fields(e))
         except gamma_sync.SyncError as e:
             self.announced, rest = None, self.backoff
             self.backoff = min(self.backoff * 2, RETRY_MAX_S)
@@ -486,12 +515,13 @@ class _Channel:
         except Exception:  # noqa: BLE001 — a run left open never stops the channel
             log.exception(f"[computers] the runs left open of channel {link['id']}")
 
-    def _said(self, link: dict, state: str, error: str, rest: float) -> float:
-        """The channel's status, written when it changed (and while the
-        channel runs); ``rest`` passed through."""
-        said = (link["status"].get("state"), link["status"].get("error", ""))
-        if not self.stopped.is_set() and said != (state, error):
-            link["status"] = {"state": state, "error": error, "at": page_now()}
+    def _said(self, link: dict, state: str, error: str, rest: float, **fields) -> float:
+        """The channel's status, with ``fields`` (``gamma_sync.status_fields``:
+        what was in the way), written when it changed (and while the channel
+        runs); ``rest`` passed through."""
+        said = (link["status"].get("state"), link["status"].get("error", ""), link["status"].get("error_kind"))
+        if not self.stopped.is_set() and said != (state, error, fields.get("error_kind")):
+            link["status"] = {"state": state, "error": error, "at": page_now(), **fields}
             with connect_users_db() as conn:
                 conn.execute("UPDATE computer_links SET status = ? WHERE id = ?",
                              (json.dumps(link["status"]), link["id"]))

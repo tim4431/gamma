@@ -971,7 +971,13 @@ otherwise than "The chat window gets a second side":
   did not start, and a phone driving the computer within its confinement
   only. Whether an agent may be on at all for a server reached over plain
   http outside this computer (the token travels in clear on the LAN)
-  is for 4c.
+  is for 4c. Since step 5a ([https.md](../dev/https.md#plain-http)) a new
+  link to a public host over plain http is refused, and one of the local
+  network is asked about once per origin before its first token. Whether
+  *Ask on this computer* may run over LAN http stays for step 5b (critic
+  D3), with the rule that a page's ask is honoured only from a view whose
+  origin is the link's exactly and whose load was https that verified or
+  is pinned, or loopback ([desktop.md](../dev/desktop.md#addresses-and-certificates)).
 - Whether "these" on a page also means highlights that carry a note and
   no thread. A note has no resolved state to say it is done; a work
   folder's feedback counts threads only (file-explorer.md, "Still to

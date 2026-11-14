@@ -243,10 +243,11 @@ the proxy's refusal until `proxy_dns` is on.
   `ERR_PROXY_CONNECTION_FAILED` and its kin.
 - **PAC:** Python cannot run it. The shell could pass
   `session.resolveProxy()` answers to its local server.
-- **TLS-inspecting proxies:** a root kept only in the macOS Keychain is not
-  trusted by the server (certifi or OpenSSL's paths). `truststore` or a
-  "Custom CA certificate" field would close it; hosted servers must never
-  get the latter.
+- **TLS-inspecting proxies:** done with `truststore`: the server verifies
+  against the operating system's store, so a root kept only in the macOS
+  Keychain counts ([https.md](../dev/https.md) "One trust store"). A
+  "Custom CA certificate" field stays open, for Linux, where the store is
+  OpenSSL's paths; hosted servers must never get it.
 - **Fake-IP on the direct route:** a fake-IP answer is accepted only when
   the fetch goes through the proxy with `proxy_dns`. A guarded fetch the
   route sends direct on a machine with a TUN-mode VPN is still refused as

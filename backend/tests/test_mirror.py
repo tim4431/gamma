@@ -6,15 +6,17 @@ an in-process TestClient carrying the write token."""
 import io
 import json
 import sqlite3
+import threading
 import time
 from contextlib import closing
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from fastapi.testclient import TestClient
 from fractional_indexing import generate_key_between
 
 from conftest import account_of, doc_props, login, make_user
-from gamma import migrations, sync_engine
+from gamma import gamma_sync, migrations, sync_engine
 from gamma.db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from gamma.integrations import create_token
 
@@ -1648,3 +1650,90 @@ def test_a_redirect_off_the_remote_drops_its_credentials():
     assert there.has_header("Accept")
     here = handler.redirect_request(req, None, 302, "Found", {}, "https://gamma.example/api/uploads/b.pdf")
     assert here.get_header("Authorization") == "Bearer secret"
+
+
+class _Counted(BaseHTTPRequestHandler):
+    """A real server on loopback: ``redirect_to`` set, every request is
+    answered 302 to that address with its own path; else 200 and JSON.
+    ``seen`` counts the requests it got, whatever their method."""
+
+    redirect_to, seen = "", []
+
+    def _answer(self):
+        type(self).seen.append((self.command, self.path, self.headers.get("Authorization")))
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+        if self.redirect_to:
+            self.send_response(302)
+            self.send_header("Location", self.redirect_to + self.path)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_POST = do_PUT = do_DELETE = _answer
+
+    def log_message(self, *_args):
+        pass
+
+
+def _serving(handler):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def test_a_redirect_from_the_remote_is_never_followed(monkeypatch):
+    """The mirror's JSON requests and its uploads refuse a redirect
+    (``gamma_sync.opener``): the write token never reaches the address it
+    points at, which counts no request at all; the error names where it
+    pointed, for the status (``gamma_sync.status_fields``)."""
+    monkeypatch.setattr(sync_engine, "default_fetch", None)
+    target = type("Target", (_Counted,), {"redirect_to": "", "seen": []})
+    there, there_url = _serving(target)
+    front = type("Front", (_Counted,), {"redirect_to": there_url, "seen": []})
+    here, here_url = _serving(front)
+    try:
+        remote = sync_engine.Remote(here_url, "w1", "gamma_secret")
+        with pytest.raises(sync_engine.RemoteError) as e:
+            remote.get("/api/sync/whoami")
+        assert e.value.status == 0 and "now redirects to" in str(e.value)
+        assert gamma_sync.status_fields(e.value) == {"error_kind": "redirected", "move_to": there_url, "upgrade": False}
+        with pytest.raises(sync_engine.RemoteError):
+            remote.post_file("/api/uploads", "a.pdf", PDF)
+        assert [(method, path) for method, path, _auth in front.seen] == [("GET", "/api/sync/whoami"),
+                                                                          ("POST", "/api/uploads")]
+        assert target.seen == []                        # nothing went there: no body, no bearer
+    finally:
+        for server in (here, there):
+            server.shutdown()
+            server.server_close()
+
+
+def test_a_round_the_remote_redirects_says_where_and_a_clean_one_forgets_it(monkeypatch):
+    remote, local, mirror = _pair()
+    inner = sync_engine.default_fetch
+
+    def moved(method, path, body, headers):
+        try:
+            raise gamma_sync.Redirected("http://testserver", f"https://testserver{path}")
+        except gamma_sync.Redirected as e:
+            raise sync_engine.RemoteError(0, str(e)) from e
+
+    sync_engine._whoami_seen.pop(local.ws, None)
+    monkeypatch.setattr(sync_engine, "default_fetch", moved)
+    r = local.client.post(f"/api/mirrors/{local.ws}/sync?wait=1")
+    status = r.json()["status"]
+    assert status["last_error"].endswith("http://testserver now redirects to https://testserver"), status
+    assert (status["error_kind"], status["move_to"], status["upgrade"]) == ("redirected", "https://testserver", True)
+    listed = {m["workspace_id"]: m for m in local.client.get("/api/mirrors").json()["mirrors"]}
+    assert listed[local.ws]["status"]["move_to"] == "https://testserver"
+    monkeypatch.setattr(sync_engine, "default_fetch", inner)
+    status = _sync(local)
+    assert not set(gamma_sync.STATUS_KEYS) & set(status)

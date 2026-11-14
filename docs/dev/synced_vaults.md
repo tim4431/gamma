@@ -1457,7 +1457,9 @@ app counts and confirms first, and only the vault's maker may ask.
   nothing while the disk is quiet; a vault of one file when its file's stat
   moved (`gamma_sync.moved`). Never synced, or failed `RETRY_S` (5 minutes)
   ago or longer: a whole round. A link is resting, and left out, while
-  paused, while its round runs, or within `RETRY_S` of a failure. A
+  paused, while its round runs, or within `RETRY_S` of a failure (but for
+  a certificate's, whose wait ends when the shell replaces the pins:
+  `folder_links.certificates_changed`). A
   remote vault's round runs in a thread of its own, so a slow server holds
   up nothing else; a link whose workspace here is gone is forgotten, its
   directory as it is; then the linked files' sweep. One tick runs at a time,
@@ -1516,7 +1518,8 @@ never overwrites it.
 A folder vault's `status`: `{running, started_at, last_sync, last_error,
 failed_at?, counts, kept, untracked, refused?, held?, stopped?, offline?,
 shared?, capped?, upgraded_at?, work_folder_at?, too_many?, push_off?,
-feedback?, paused_at?, progress?, folder_path}`, with `counts` `{added, updated,
+feedback?, paused_at?, progress?, error_kind?, move_to?, upgrade?, cert?,
+blocked?, folder_path}`, with `counts` `{added, updated,
 renamed, removed, kept, unchanged, sent, waiting, read, conflicts}` and
 `kept` the first
 `KEPT_SHOWN` (50) files kept, `{path, why, force}` (`force`: a force pull
@@ -1524,7 +1527,9 @@ would replace it). `shared` lists the pages filed in it that an older
 vault beside it keeps. `feedback` is a work folder's feedback files as the
 round left them, `{open, left?, error?}`: the open threads, what waits for
 the next pass, or why nothing was written ([feedback.md](feedback.md) "The
-files").
+files"). `error_kind` and its fields say what was in the way of another
+server when its last round, or the change feed's question between rounds,
+failed (below, "A vault on another server").
 
 While it runs, a folder vault's round writes how far it is into the status
 as `progress` (`folder_links._progress_writer`, from `Round`'s `progress`
@@ -1910,9 +1915,33 @@ What differs from a vault of this server:
   success, a 5xx, a 404, 408 or 429 (a sign-in portal's page, a proxy with
   no server behind it), or a read with a 5xx in JSON, is `Unreachable`; the
   token refused, or no editor's where it writes, `Refused`: the vault
-  waits, never a file's problem. Any other refusal is the file's: a 404 in
+  waits, never a file's problem. A refusal that is not Gamma's own (a
+  sign-in or proxy page's 401/403/407, Cloudflare's, a gateway's
+  502/503/504: `gamma_sync.blocked`) is `Unreachable` too, never the
+  token's. Any other refusal is the file's: a 404 in
   JSON, a write's 5xx, a proxy's 413 on a body past its limit among them. A server's
   answer that echoes the token has it left out (`gamma_sync.scrubbed`).
+- **What was in the way.** No request follows a redirect, and a TLS
+  failure is named ([https.md](https.md)). The status keeps, beside
+  `last_error`, what the failure was (`gamma_sync.status_fields`, the same
+  keys as a channel's, [computers.md](computers.md)): `error_kind`
+  `redirected` with `move_to` and `upgrade` (a 3xx that keeps the
+  request's path), `blocked` with `blocked` (`signin` for a 3xx to another
+  path, `proxy`, `cloudflare`, `gateway`), `certificate` or
+  `certificate_changed` with `cert` (the certificate served: `{sha256,
+  subject, issuer, not_before, not_after}`), `not_https`. A round's status
+  is built afresh, so a round that runs clean has none; the change feed's
+  question, which fails first between rounds (`_remote_moved`), writes the
+  same through `folder_links._failed`, which drops an earlier failure's
+  keys first. The desktop app's sync panel words each, and moves a vault
+  whose server redirects to itself over https ([https.md](https.md)).
+- **Its address moves** with the server's (`POST
+  /api/remote-servers/move`, `gamma/remote_servers.py`): the shell's word,
+  after a dry run and the person's confirmation, the account's vaults,
+  channels and offline copies of that server re-pointed in one
+  transaction once the new address answered as that server and took each
+  token. A moved vault keeps its state, cursor and history; its status
+  loses the old address's failure, so its next round runs at once.
 - **The data format.** That server's pages must have this one's shape: its
   change feed names its workspace data format (`format`,
   `migrations.workspace_format`), and one that differs, an older or a newer
@@ -1928,7 +1957,13 @@ What differs from a vault of this server:
 **The token.** It is checked on creation (`/api/sync/whoami` names its
 workspace, which must be the request's `workspace` when one is given, and
 its scope; the folder must exist there, a page through the plain block
-read), waiting at most `ASK_TIMEOUT_S`. Read scope is enough for a vault
+read), waiting at most `ASK_TIMEOUT_S`. A new vault over http:// to a host
+on the internet is refused before that request
+(`remote_servers.refuse_plain_far`); one kept there takes a new token. A
+redirect is a 409 (the same host over https named: "…: open *to* in Gamma
+and make the vault from there."; any other address only told), a
+certificate not trusted here, no HTTPS, or a sign-in or proxy in the way a
+502, each answer carrying the status's fields beside its `detail`. Read scope is enough for a vault
 that does not push; a vault that pushes and a file vault take a write token.
 Turning push on (`PATCH {push, token, token_id}`) checks the write token
 given and keeps it in place of the link's own; without one, the stored token
@@ -1993,7 +2028,7 @@ deleted for good ("To another server" above).
 
 | Route | Does |
 |---|---|
-| `GET ""`, `GET /{id}` | the vaults the account may see, with their direction in words and status |
+| `GET ""`, `GET /{id}` | the vaults the account may see, with their direction in words and status, and `plain` for another server over http:// (`remote_servers.plain`, no DNS) |
 | `POST ""` **P** | a vault: of a folder, of a directory into a new folder, of one file, of another server's folder or page |
 | `POST /preview` **P** | what making a vault there would find and write, writing nothing |
 | `PATCH /{id}` | `notes`, `pull`, `push`, a token, `paused` |

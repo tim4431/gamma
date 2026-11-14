@@ -1690,6 +1690,16 @@ Only an iPad can show these, and none has been run yet:
 - **Moving data between servers.** Nothing moves a library from This iPad
   to another server or back, beyond clones and the web app's per-workspace
   Export and Import, as on the desktop.
+- **A NAS over HTTPS** ([https.md](https.md)). App Transport Security
+  allows only local networking (`NSAllowsLocalNetworking`): plain http to
+  a dotted name (`http://nas.example.com`, `http://x.ts.net`) is refused,
+  while `.local` names and names without a dot load. An authority
+  installed by a configuration profile, with Full Trust turned on in
+  Settings, works in WKWebView; the embedded Python verifies with
+  certifi's bundle, which matters only for this iPad's server reaching
+  another (a clone). A self-signed certificate trusted by its fingerprint,
+  as the desktop does, would go through WKWebView's `didReceive
+  challenge` delegate; not built.
 
 ## The installed web app
 

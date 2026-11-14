@@ -600,6 +600,34 @@ USERS_SCHEMA = [
         status TEXT NOT NULL DEFAULT '{}',
         UNIQUE(remote_url, workspace_id, created_by)
     )""",
+    # server_addresses = the other servers' addresses this computer's links moved
+    # (gamma/remote_servers.py): ``origin`` (scheme://host[:port], lowercased as
+    # channel.computer_id reads it) and the string this computer's id for that
+    # server is computed from (``id_origin``: the first address it was shown at,
+    # kept across moves; a fresh generation for a new server at an address a
+    # server left). ``moved_to``: '' for a current address, else the base URL its
+    # links went to; a left address's id_origin is never used again.
+    # Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS server_addresses (
+        origin TEXT PRIMARY KEY,
+        id_origin TEXT NOT NULL,
+        moved_to TEXT NOT NULL DEFAULT ''
+    )""",
+    # tls_pins = certificates the desktop app's shell was told to trust for one
+    # origin (gamma/tls_trust.py; docs/dev/https.md): the SHA-256 of the leaf
+    # certificate's DER (64 lowercase hex), what it said of itself when trusted
+    # (subject, issuer, validity, ISO 8601), and when. The shell keeps the list
+    # and replaces it whole (PUT /api/remote-servers/pins); never on a hosted
+    # server. Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS tls_pins (
+        origin TEXT PRIMARY KEY,
+        sha256 TEXT NOT NULL,
+        subject TEXT NOT NULL DEFAULT '',
+        issuer TEXT NOT NULL DEFAULT '',
+        not_before TEXT NOT NULL DEFAULT '',
+        not_after TEXT NOT NULL DEFAULT '',
+        pinned_at TEXT NOT NULL
+    )""",
 ]
 
 

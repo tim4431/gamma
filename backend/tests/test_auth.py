@@ -1,3 +1,5 @@
+import pytest
+
 from conftest import guest_name, login, make_user
 
 
@@ -83,3 +85,26 @@ def test_ai_disabled_without_keys(guest):
     assert data["default_prompt"]
     assert data["metadata_prompt"]
     assert data["cite_prompt"]
+
+
+@pytest.mark.parametrize("base_url, headers, hsts", [
+    ("https://nas.example.com", {}, "max-age=31536000"),
+    ("http://nas.example.com", {"X-Forwarded-Proto": "https"}, "max-age=31536000"),
+    ("https://192.168.1.5", {}, None),
+    ("https://nas", {}, None),
+    ("https://nas.lan", {}, None),
+    ("https://nas.local", {}, None),
+    ("https://localhost", {}, None),
+    ("http://nas.example.com", {}, None),
+])
+def test_hsts_only_over_https_on_a_public_name(base_url, headers, hsts):
+    """HSTS covers every port of a name, and a NAS's IP address or .lan name
+    often serves plain http beside its https one: one year on a public DNS
+    name over https, never includeSubDomains, never max-age=0 (it would
+    cancel the HSTS a TLS proxy in front adds), and nothing elsewhere."""
+    from fastapi.testclient import TestClient
+    from gamma.app import app
+
+    with TestClient(app, base_url=base_url, follow_redirects=False) as c:
+        r = c.get("/api/health", headers=headers)
+    assert r.headers.get("strict-transport-security") == hsts

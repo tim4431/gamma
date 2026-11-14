@@ -79,6 +79,9 @@ def main():
         "--collect-data", "latex2mathml",
         # MCP validates tool schemas against the bundled JSON Schema metaschemas.
         "--collect-data", "jsonschema_specifications",
+        # The system trust store (gamma/tls_trust.py): truststore's _api.py
+        # imports _windows, _macos or _openssl by platform when it loads.
+        "--collect-submodules", "truststore",
         str(DESKTOP / "backend_entry.py"),
     ]
     env = os.environ.copy()
