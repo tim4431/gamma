@@ -215,7 +215,7 @@ function shellEnv(userData, downloadDir) {
 const packagedArgs = process.platform === 'linux' ? ['--no-sandbox'] : [];
 
 // `files`: what the command line names after the app, as the file manager
-// passes a PDF opened with Gamma.
+// passes a file or a folder opened with Gamma.
 async function launch(userData, downloadDir, files = []) {
   const env = shellEnv(userData, downloadDir);
   const opts = packaged ? { executablePath: packagedBinary(), args: [...packagedArgs, ...files], env } : { args: [ROOT, ...files], env };
@@ -225,8 +225,8 @@ async function launch(userData, downloadDir, files = []) {
 }
 
 // A second start of the app on the same profile, as Explorer runs the
-// registered command for a PDF: it should hand its command line to the
-// running app and quit. Resolves to its exit code.
+// registered command for a file or a folder: it should hand what it names to
+// the running app and quit. Resolves to its exit code.
 function secondStart(userData, downloadDir, files) {
   const [bin, args] = packaged ? [packagedBinary(), [...packagedArgs, ...files]] : [require('electron'), [ROOT, ...files]];
   return new Promise((resolve, reject) => {
@@ -359,6 +359,31 @@ const shownPage = (content) => {
 // Both of the bar's dropdowns closed.
 const menuClosed = (bar) => waitFor(() => bar.evaluate(() => document.getElementById('menu').hidden && document.getElementById('syncPanel').hidden), 'menu closed');
 
+// The addresses `page` loads from now on, the shell's hand-over with them
+// (`?track=`, `&tick=`), which the page drops from its address as it boots;
+// `stop()` stops listening.
+function loadsOf(page) {
+  const seen = [];
+  const on = (frame) => { if (frame === page.mainFrame()) seen.push(frame.url()); };
+  page.on('framenavigated', on);
+  return { seen, stop: () => page.off('framenavigated', on) };
+}
+const loaded = (loads, pred) => loads.seen.some((u) => pred(new URL(u).searchParams));
+
+// Two names of one file or directory (links resolved, case ignored), as a
+// vault's `dest` and the path handed over may differ.
+const samePath = (a, b) => {
+  try {
+    return fs.realpathSync(a).toLowerCase() === fs.realpathSync(b).toLowerCase();
+  } catch {
+    return false;
+  }
+};
+
+// A work folder's tracking dialog in `page` (the web app's own words, in
+// either catalog).
+const trackDialog = (page) => page.getByRole('dialog', { name: /^(Choose files|选择文件)$/ });
+
 // The sync panel still shown a while after a press in it: open in the page,
 // and the bar view still grown over the content (else the panel is cut off).
 async function panelStaysOpen(app, bar) {
@@ -395,6 +420,7 @@ async function main() {
   const pids = {};
   let pageId, sourceUrl, alphaUploads;
   let openedPage = null; // the PDF a step opened where it is: { id, ws, doc }
+  let workFolder = null; // the work folder a folder opened with Gamma made: { id, folder, dir, ws }
   let backupZip;
 
   try {
@@ -665,7 +691,7 @@ async function main() {
       const kids = await serverCall(app, `/api/blocks/${page.id}/children`, { ws: lab });
       const blocks = JSON.stringify(kids);
       assert(blocks.includes('Saved in another reader'), 'the highlight the file carried was imported: ' + blocks.slice(0, 400));
-      const [again] = await hook(app, (s, f) => s.openPdfFiles([f]), pdf);
+      const [again] = await hook(app, (s, f) => s.openWithGamma([f]), pdf);
       assert.equal(again.page, page.id, 'the same page, not a second one: ' + JSON.stringify(again));
       const twice = await serverCall(app, `/api/blocks/${page.id}/children`, { ws: lab });
       assert.equal(JSON.stringify(twice).split('Saved in another reader').length, blocks.split('Saved in another reader').length, 'the highlight is not imported twice');
@@ -703,6 +729,140 @@ async function main() {
       assert((trash.pages || []).some((p) => p.id === id), 'in Recently deleted on Alpha, for a restore: ' + JSON.stringify(trash).slice(0, 400));
       openedPage = null;
       return `${id} → Beta, ${doc}.pdf stored there`;
+    });
+
+    await step('a folder opened with Gamma: a second start hands over a directory, which becomes a work folder of the workspace the window shows, paused and choosing, the window on its tracking dialog; opened again while choosing, the dialog comes back', async () => {
+      const ws = await waitFor(() => new URL(content.url()).searchParams.get('ws'), 'the window shows a workspace', 15_000);
+      const dir = path.join(profile, 'Paper');
+      fs.mkdirSync(path.join(dir, 'sub'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'main.tex'), '\\documentclass{article}\n\\begin{document}\nOpened from the file manager.\n\\end{document}\n');
+      fs.writeFileSync(path.join(dir, 'sub', 'idea.md'), '# Idea\n\n- a thought kept in a subdirectory\n');
+      fs.writeFileSync(path.join(dir, 'data.csv'), 'a,b\n1,2\n');
+      const loads = loadsOf(content);
+      try {
+        assert.equal(await secondStart(profile, downloads, [dir]), 0, 'the second start quits');
+        const link = await waitFor(async () => (await serverCall(app, '/api/folder-links')).links.find((l) => samePath(l.dest, dir)),
+          'the work folder at that path', 60_000);
+        assert.deepEqual([link.workspace_id, link.pull, link.push, link.choosing], [ws, true, 'everything', true], JSON.stringify(link));
+        assert(link.status && link.status.paused_at, 'paused until its files are chosen: ' + JSON.stringify(link.status));
+        const dialog = trackDialog(content);
+        await dialog.waitFor({ timeout: 30_000 });
+        assert(loaded(loads, (q) => q.get('track') === link.id && q.get('ws') === ws), 'the shell loaded its tracking dialog: ' + loads.seen.join(' '));
+        assert(!new URL(content.url()).searchParams.has('track'), 'the hand-over leaves the address');
+        const links = (await serverCall(app, '/api/folder-links')).links;
+        assert(!links.some((l) => samePath(l.dest, ROOT)), 'no work folder at the app\'s own directory, which a dev start names after Playwright\'s switches');
+        // away from the dialog, then the same folder again while it chooses: the dialog comes back, no second vault
+        await hook(app, (s, w) => s.openGammaWorkspace(w), ws);
+        await waitFor(async () => !(await dialog.isVisible()), 'the dialog gone', 15_000);
+        const [again] = await hook(app, (s, d) => s.openWithGamma([d]), dir);
+        assert.equal(again.track, link.id, JSON.stringify(again));
+        assert.equal(await hook(app, (s) => s.notice()), '“Paper” waits for its files to be chosen.');
+        await dialog.waitFor({ timeout: 30_000 });
+        assert.equal((await serverCall(app, '/api/folder-links')).links.filter((l) => samePath(l.dest, dir)).length, 1, 'still one vault there');
+        workFolder = { id: link.id, folder: link.folder_id, dir, ws };
+        return `${link.id} at ${link.dest} in ${ws}`;
+      } finally {
+        loads.stop();
+      }
+    });
+
+    await step('files of a work folder opened with Gamma: after Save a tracked .tex opens its page in the code view, a subdirectory opens its folder, an untracked .csv opens Choose files… with it ticked', async () => {
+      assert(workFolder, 'the step before made a work folder');
+      const { id, dir, ws } = workFolder;
+      // its Save, as the dialog sends it: the preset (PDFs and notes) and the LaTeX sources, which the preset leaves out
+      const saved = await serverCall(app, `/api/folder-links/${id}/selection`, {
+        ws, method: 'PUT', body: { selection: { base: 'preset', changes: [{ format: 'latex', on: true }] }, base_hash: '' },
+      });
+      assert.equal(saved.choosing, false, JSON.stringify(saved));
+      const tex = path.join(dir, 'main.tex');
+      await waitFor(() => hook(app, (s, f) => s.whereIs(f).then((a) => a.page || ''), tex), 'its first round read main.tex', 60_000, 500);
+      const loads = loadsOf(content);
+      try {
+        const [opened] = await hook(app, (s, f) => s.openWithGamma([f]), tex);
+        assert(opened.page && opened.workspace === ws, JSON.stringify(opened));
+        await waitFor(() => shownPage(content) === opened.page, 'the window on the .tex page', 30_000);
+        const doc = (await serverCall(app, `/api/blocks/${opened.page}`, { ws })).properties.doc || {};
+        assert.equal(doc.format, 'text', 'a text document, in the code view: ' + JSON.stringify(doc));
+        // its subdirectory: that directory's folder, not the work folder's
+        const [sub] = await hook(app, (s, d) => s.openWithGamma([d]), path.join(dir, 'sub'));
+        assert(sub.folder && sub.folder !== workFolder.folder, JSON.stringify(sub));
+        await waitFor(() => loaded(loads, (q) => q.get('folder') === sub.folder), 'the window at its folder', 15_000);
+        // a file it does not track: Choose files…, that file ticked there
+        const [csv] = await hook(app, (s, f) => s.openWithGamma([f]), path.join(dir, 'data.csv'));
+        assert.deepEqual([csv.track, csv.tick], [id, 'data.csv'], JSON.stringify(csv));
+        assert.equal(await hook(app, (s) => s.notice()), 'data.csv is not tracked by “Paper” yet: tick it and save to open it.');
+        await waitFor(() => loaded(loads, (q) => q.get('track') === id && q.get('tick') === 'data.csv'), 'the shell loaded track= with tick=', 15_000);
+        const dialog = trackDialog(content);
+        await dialog.waitFor({ timeout: 30_000 });
+        await waitFor(() => dialog.getByRole('checkbox', { name: /data\.csv/ }).isChecked(), 'data.csv ticked in the dialog', 30_000);
+        assert(!new URL(content.url()).searchParams.has('tick'), 'the tick leaves the address');
+        await hook(app, (s, w) => s.openGammaWorkspace(w), ws); // off the dialog, unsaved
+        await hook(app, (s, [server, l]) => s.removeVault(server, l, 'keep'), [ids.alpha, id]);
+        return `main.tex → ${opened.page}, sub/ → folder ${sub.folder}, data.csv ticked`;
+      } finally {
+        loads.stop();
+        workFolder = null;
+      }
+    });
+
+    await step('a Markdown file opened with Gamma outside any vault asks; Just view it reads it where it is under Opened files, a text document in the code view, and the bar says how to edit it', async () => {
+      const md = path.join(profile, 'loose', 'Lone notes.md');
+      fs.mkdirSync(path.dirname(md), { recursive: true });
+      fs.writeFileSync(md, '# Lone notes\n\nRead where it lies.\n');
+      await hook(app, (s) => { s.asked.length = 0; s.answers.length = 0; }); // the harness answers Just view it
+      const [got] = await hook(app, (s, f) => s.openWithGamma([f]), md);
+      assert(got.page, JSON.stringify(got));
+      assert(/To edit it as a note, open it with Gamma again and pick Edit in Gamma\.$/.test(await hook(app, (s) => s.notice())), 'the bar says how to edit it');
+      const question = (await hook(app, (s) => s.asked.slice())).find((q) => q.startsWith('Edit Lone notes.md in Gamma?'));
+      assert(question && question.includes(`Edit in Gamma makes ${path.dirname(md)} a work folder`), 'asked, naming its directory: ' + question);
+      await waitFor(() => shownPage(content) === got.page, 'the window on its page', 30_000);
+      const page = await serverCall(app, `/api/blocks/${got.page}`, { ws: got.workspace });
+      const doc = page.properties.doc || {};
+      assert.deepEqual([doc.format, doc.ext, doc.at], ['text', '.md', 'path'], 'read where it is, a text document: ' + JSON.stringify(doc));
+      const parent = await serverCall(app, `/api/blocks/${page.properties.parent_page}`, { ws: got.workspace });
+      assert.equal(parent.properties.opened_files, true, 'inside Opened files');
+      assert(!(await serverCall(app, '/api/folder-links')).links.some((l) => samePath(l.dest, path.dirname(md))), 'no work folder made');
+      return `${got.page} in ${got.workspace}: ${doc.format} ${doc.ext}`;
+    });
+
+    await step('Edit in Gamma makes a work folder of the Markdown file\'s repository, the dialog has the file ticked, and after Save the note opens', async () => {
+      const repo = path.join(profile, 'notes-repo');
+      fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+      const md = path.join(repo, 'docs', 'notes.md');
+      fs.mkdirSync(path.dirname(md), { recursive: true });
+      fs.writeFileSync(md, '# Notes\n\n- a first line\n');
+      const loads = loadsOf(content);
+      let link = null;
+      try {
+        await hook(app, (s) => { s.asked.length = 0; s.answers.length = 0; s.answers.push(0); }); // Edit in Gamma
+        const [got] = await hook(app, (s, f) => s.openWithGamma([f]), md);
+        await hook(app, (s) => { s.answers.length = 0; });
+        assert.equal(got.tick, 'docs/notes.md', JSON.stringify(got));
+        const question = (await hook(app, (s) => s.asked.slice())).find((q) => q.startsWith('Edit notes.md in Gamma?'));
+        assert(question && question.endsWith(`${repo} is the repository notes.md is in.`), 'asked, naming the repository: ' + question);
+        link = (await serverCall(app, '/api/folder-links')).links.find((l) => l.id === got.track);
+        assert(link && samePath(link.dest, repo) && link.choosing, 'a work folder at the repository\'s root, choosing: ' + JSON.stringify(link));
+        await waitFor(() => loaded(loads, (q) => q.get('track') === link.id && q.get('tick') === 'docs/notes.md'), 'the shell loaded tick=', 15_000);
+        const dialog = trackDialog(content);
+        await dialog.waitFor({ timeout: 30_000 });
+        assert(!new URL(content.url()).searchParams.has('tick'), 'the tick leaves the address');
+        await waitFor(() => dialog.getByRole('checkbox', { name: /notes\.md/ }).isChecked(), 'notes.md ticked in the dialog', 30_000);
+        const save = dialog.getByRole('button', { name: /^(Save|保存)$/ });
+        await waitFor(() => save.isEnabled(), 'Save, once the summary says what the choice comes to', 30_000);
+        await save.click();
+        const ws = link.workspace_id;
+        const note = await waitFor(() => serverCall(app, `/api/folder-links/${link.id}/page?path=${encodeURIComponent('docs/notes.md')}`, { ws })
+          .then((r) => r.page), 'the note\'s page', 60_000, 500);
+        await waitFor(() => shownPage(content) === note, 'the window lands on the note', 60_000);
+        // an edit made in Gamma reaches the file with the round
+        await serverCall(app, '/api/blocks', { ws, method: 'POST', body: { parent_id: note, content: 'An edit made in Gamma' } });
+        await hook(app, (s, [server, l]) => s.syncVault(server, l), [ids.alpha, link.id]);
+        await waitFor(() => fs.readFileSync(md, 'utf8').includes('An edit made in Gamma'), 'the edit in the file', 30_000, 500);
+        return `${link.id} at ${link.dest}: ${note}`;
+      } finally {
+        loads.stop();
+        if (link) await hook(app, (s, [server, l]) => s.removeVault(server, l, 'keep'), [ids.alpha, link.id]).catch(() => {});
+      }
     });
 
     await step('remote server: a URL, loads without auto-login', async () => {
@@ -1418,6 +1578,37 @@ async function main() {
       }, 'the window on the file\'s page', 90_000);
       assert.equal(new URL(content.url()).origin, urls.alpha, 'the last server');
       return `${page.id} in ${ws()}`;
+    });
+
+    await step('a directory named at a cold launch becomes a work folder once the app is up', async () => {
+      await app.close();
+      const dir = path.join(profile, 'Cold start');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'draft.md'), '# Draft\n');
+      // started as at login with the background on: a start that names a folder still shows the window
+      const servers = path.join(profile, 'servers.json');
+      const reg = JSON.parse(fs.readFileSync(servers, 'utf8'));
+      fs.writeFileSync(servers, JSON.stringify({ ...reg, settings: { ...(reg.settings || {}), background: true } }));
+      app = await launch(profile, downloads, [dir, '--hidden']);
+      try {
+        content = await findPage(app, (u) => u.startsWith('http://127.0.0.1'), 90_000);
+        assert(await hook(app, (s) => s.hasWindow()), 'the window shows');
+        const link = await waitFor(async () => (await serverCall(app, '/api/folder-links')).links.find((l) => samePath(l.dest, dir)),
+          'the work folder at that path', 90_000);
+        assert(link.choosing, JSON.stringify(link));
+        const shown = await waitFor(async () => {
+          for (const p of app.windows()) {
+            if (p.url().startsWith('http://127.0.0.1') && await trackDialog(p).isVisible()) return p;
+          }
+          return null;
+        }, 'the window on its tracking dialog', 60_000);
+        assert.equal(new URL(shown.url()).origin, urls.alpha, 'on the last server');
+        assert(!(await serverCall(app, '/api/folder-links')).links.some((l) => samePath(l.dest, ROOT)), 'no work folder at the app\'s own directory');
+        await hook(app, (s, id) => s.removeVault(s.current().id, id, 'keep'), link.id);
+        return `${link.id} at ${link.dest}`;
+      } finally {
+        await hook(app, (s) => s.setBackground(false)).catch(() => {});
+      }
     });
   } finally {
     try {

@@ -1,0 +1,9 @@
+# Written by scripts/openwith.cjs from tests/shared/openwith.json: edit those, then `npm run openwith`.
+# Nemo's action, installed by the .deb (electron-builder.cjs deb.fpm): a
+# context entry on a folder and an open folder's background, no default.
+[Nemo Action]
+Name=Open with Gamma
+Exec=gamma %F
+Icon-Name=gamma
+Selection=any
+Extensions=dir;

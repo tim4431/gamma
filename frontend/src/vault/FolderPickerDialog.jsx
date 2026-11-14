@@ -1,4 +1,4 @@
-// Add to library…: the workspace and the folder an opened PDF is filed in as
+// Add to library…: the workspace and the folder an opened file is filed in as
 // it joins a library (POST /api/folder-links/opened/{id}/add,
 // linked_files.add_to_library: its bytes are stored, it leaves *Opened
 // files*): a filter, the folders by path with the library's top first, Enter
@@ -7,7 +7,9 @@
 // (`folders`), then each other this account edits (vaultState.js
 // libraryWorkspaces), whose folders `readFolders(id)` reads when it is
 // chosen. The switch under them makes the file a vault of one file, whose new
-// versions keep coming (`keep_pushing`). `folders`: [{id, name}] ("" the top);
+// versions keep coming (`keep_pushing`), for PDFs alone (`pdf` false: an
+// opened file of another format, which a file vault does not read; the
+// server refuses it too). `folders`: [{id, name}] ("" the top);
 // `onPick(folder, keepPushing, workspace)`. `onCarry()`, when given (the
 // desktop app, one page), asks the app for the library of another Gamma
 // server it knows instead (its `carry-to-server`), which the page cannot
@@ -70,8 +72,10 @@ export default function FolderPickerDialog({ count = 1, workspaces: offered = []
               "The {n} PDFs are stored in the library and filed in the folder you pick; their pages stay in their work folder and follow their files.", count)
             : work ? tn("The page joins the library, filed in the folder you pick; it stays in its work folder and follows its file.",
               "The {n} pages join the library, filed in the folder you pick; they stay in their work folder and follow their files.", count)
-            : tn("The PDF is stored in the library and filed in the folder you pick, with its highlights, notes and chat.",
-              "The {n} PDFs are stored in the library and filed in the folder you pick, with their highlights, notes and chat.", count)}
+            : pdf ? tn("The PDF is stored in the library and filed in the folder you pick, with its highlights, notes and chat.",
+              "The {n} PDFs are stored in the library and filed in the folder you pick, with their highlights, notes and chat.", count)
+            : tn("The file is stored in the library and filed in the folder you pick, with its notes and chat.",
+              "The {n} files are stored in the library and filed in the folder you pick, with their notes and chat.", count)}
           {here ? null : ` ${tn("It leaves this workspace for {workspace}, and opens there.",
             "They leave this workspace for {workspace}, and the first opens there.", count, { workspace: name })}`}
         </div>
@@ -101,7 +105,7 @@ export default function FolderPickerDialog({ count = 1, workspaces: offered = []
             : !here && !read[ws] ? <div className="confirmMessage">{t("Reading the folders…")}</div>
             : !matches.length ? <div className="confirmMessage">{t("No matching folder.")}</div> : null}
         </div>
-        {work ? null : opener ? (
+        {work || (opener && !pdf) ? null : opener ? (
           <div className="folderPickerKeep">
             <Toggle label={t("Keep pushing from the file")}
               hint={t("Each new version of the file on this computer becomes the page's PDF")}

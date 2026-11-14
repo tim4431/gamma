@@ -1,0 +1,12 @@
+{
+  "about": "What the desktop app registers with the operating system (desktop/docs/architecture.md \"Opening files and folders\"): each kind is the extensions of gamma/documents/formats.py EXTENSIONS whose row has its format (and, for text, one of its languages), less its left_out, listed in the file manager's Open with and never made the default where another app opens the type. Read by backend/tests/test_openwith_fixture.py (the rule against the registry), desktop/scripts/openwith.cjs (the NSIS script, the Store manifest and the Linux folder entries it writes), desktop/electron-builder.cjs (macOS) and desktop/test/openWith.test.js.",
+  "left_out_why": "support files nobody opens by themselves from a file manager; .cls is also Visual Basic's class file",
+  "kinds": [
+    {"kind": "pdf",      "format": "pdf",      "languages": [],         "exts": [".pdf"],             "left_out": [],                       "progid": "Gamma.pdf",      "name": "PDF document"},
+    {"kind": "markdown", "format": "markdown", "languages": [],         "exts": [".md", ".markdown"], "left_out": [],                       "progid": "Gamma.markdown", "name": "Markdown document"},
+    {"kind": "latex",    "format": "text",     "languages": ["latex"],  "exts": [".tex"],             "left_out": [".ltx", ".cls", ".sty"], "progid": "Gamma.latex",    "name": "LaTeX source"},
+    {"kind": "bibtex",   "format": "text",     "languages": ["bibtex"], "exts": [".bib"],             "left_out": [],                       "progid": "Gamma.bibtex",   "name": "BibTeX database"},
+    {"kind": "typst",    "format": "text",     "languages": ["typst"],  "exts": [".typ"],             "left_out": [],                       "progid": "Gamma.typst",    "name": "Typst source"}
+  ],
+  "folder_verb": "Open with &Gamma"
+}

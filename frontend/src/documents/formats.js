@@ -103,10 +103,12 @@ export function formatOf(name) {
   return { format: "binary", language: null };
 }
 
-// The language a text document's name or extension says, else null.
+// The language a text document's name or extension says (a Markdown row's is
+// "markdown": an opened .md read in place as text), else null.
 export function languageOf(name, ext) {
   const named = own(NAMES, leafOf(name).toLowerCase());
   if (named) return named[1];
   const row = own(EXTENSIONS, ext);
+  if (row?.format === "markdown") return "markdown";
   return row?.format === "text" ? row.language : null;
 }

@@ -604,9 +604,9 @@ USERS_SCHEMA = [
 
 
 # vaults.db: what this computer knows, never migrated (additive statements,
-# like a workspace's data.db). linked_files = PDFs read where they are
+# like a workspace's data.db). linked_files = files read where they are
 # (gamma/linked_files.py): the workspace, the stored name a page reads them by
-# (<doc_id>.pdf), the path and what the file was when last read (size, time,
+# (<doc_id><ext>, .pdf for a PDF), the path and what the file was when last read (size, time,
 # file id), the page, '' for a vault's picture, the account a change of the
 # file is made as, and why that file's replacement placed no highlights. One
 # name may have several paths; a path has one page. vault_files = a vault's

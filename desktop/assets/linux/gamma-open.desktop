@@ -1,0 +1,13 @@
+# Written by scripts/openwith.cjs from tests/shared/openwith.json: edit those, then `npm run openwith`.
+# Dolphin's service menu, installed by the .deb (electron-builder.cjs deb.fpm):
+# a plain service, not an application entry, so it is no default for anything.
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=inode/directory;
+Actions=openGamma;
+
+[Desktop Action openGamma]
+Name=Open with &Gamma
+Icon=gamma
+Exec=gamma %F

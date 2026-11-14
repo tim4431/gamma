@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  FORMATS, body, boxOf, initial, isSelected, ofFormat, toggle, toggleAll, toggleFormat,
+  FORMATS, body, boxOf, initial, isSelected, ofFormat, tickChange, toggle, toggleAll, toggleFormat,
 } from "../src/explorer/trackSelection.js";
 
 // A paper's directory as the tree route lists it under the preset: build/
@@ -123,4 +123,57 @@ test("the format filters: PDFs, notes, LaTeX and BibTeX sources, pictures", () =
   assert.equal(ofFormat(at("notes.md"), "markdown"), true);
   assert.equal(ofFormat(at("figures"), "pdf"), false, "a folder is of no format");
   assert.equal(ofFormat({ path: "a.png", format: "image" }, "image"), true);
+});
+
+test("a file opened with Gamma is ticked as the dialog opens, unless something ticks it already", () => {
+  const start = initial("preset");
+  const step = tickChange(start, byPath, "main.tex");
+  assert.equal(step.why, "");
+  assert.equal(step.read, "");
+  assert.equal(step.entry, at("main.tex"));
+  assert.deepEqual(step.state.changes, [{ path: "main.tex", on: true }]);
+  assert.equal(isSelected(step.state, at("main.tex")), true);
+  assert.deepEqual(tickChange(start, byPath, "figures/plot.py").state.changes, [{ path: "figures/plot.py", on: true }], "in a folder read");
+  assert.equal(tickChange(start, entries, "main.tex").state.changes.length, 1, "the entries as a list too");
+  // ticked already: by its base, by a change, or always (locked)
+  assert.equal(tickChange(start, byPath, "notes.md").state, start, "the preset ticks it");
+  const unticked = toggle(start, at("notes.md"), false);
+  assert.deepEqual(tickChange(unticked, byPath, "notes.md").state.changes,
+    [{ path: "notes.md", on: true }], "a change of its own that unticked it gives way");
+  const latex = toggleFormat(start, "latex", true);
+  assert.equal(tickChange(latex, byPath, "refs.bib").state, latex, "a format change ticks it");
+  assert.equal(tickChange(start, byPath, "vendor.pdf").state, start, "a locked file");
+  assert.equal(tickChange(start, byPath, "vendor.pdf").why, "");
+});
+
+test("a file opened with Gamma that is never tracked, or gone, is not ticked", () => {
+  const start = initial("file");
+  const dot = new Map([...byPath, [".env", { path: ".env", directory: false, format: "text", selected: false, never: "dot" }]]);
+  const never = tickChange(start, dot, ".env");
+  assert.equal(never.why, "never");
+  assert.equal(never.entry.never, "dot", "its row's code says why");
+  assert.equal(never.state, start);
+  const inside = tickChange(start, byPath, ".git/config");
+  assert.deepEqual([inside.why, inside.entry?.path, inside.read], ["never", ".git", ""], "a folder on its way never tracked, not read");
+  assert.equal(tickChange(start, byPath, "gone.tex").why, "gone");
+  assert.equal(tickChange(start, byPath, "nowhere/a.tex").why, "gone", "a folder the listing does not have");
+  assert.equal(tickChange(start, byPath, "figures").why, "gone", "a folder is no file");
+  assert.equal(tickChange(start, byPath, "gone.tex").state, start);
+});
+
+test("the folders down to a file opened with Gamma are read first, one at a time", () => {
+  const start = initial("preset");
+  const first = tickChange(start, byPath, "build/out/main.log");
+  assert.deepEqual([first.read, first.why, first.entry], ["build", "", null], "build/ is listed, not read");
+  assert.equal(first.state, start, "nothing ticked yet");
+  const read = new Map([...byPath, ["build", { ...at("build"), walked: true }],
+    ["build/main.aux", { path: "build/main.aux", directory: false, format: "binary", selected: false }],
+    ["build/out", { path: "build/out", directory: true, walked: false, selected: false, git_ignored: true }]]);
+  assert.equal(tickChange(start, read, "build/out/main.log").read, "build/out", "then the folder below it");
+  const done = new Map([...read, ["build/out", { ...read.get("build/out"), walked: true }],
+    ["build/out/main.log", { path: "build/out/main.log", directory: false, format: "text", selected: false }]]);
+  const step = tickChange(start, done, "build/out/main.log");
+  assert.deepEqual([step.read, step.why], ["", ""]);
+  assert.deepEqual(step.state.changes, [{ path: "build/out/main.log", on: true }]);
+  assert.equal(tickChange(start, read, "build/gone.tex").why, "gone", "a read folder without it");
 });

@@ -208,7 +208,7 @@ All state is SQLite + files on disk under a data directory (env
 - `vaults.db` — global, and only on the desktop app's own server
   (`config.folder_links_enabled`; `db.connect_vaults_db` makes it, and every
   caller asks first): what this computer knows of its synced vaults and of
-  the PDFs read where they are ([synced_vaults.md](synced_vaults.md)). It
+  the files read where they are ([synced_vaults.md](synced_vaults.md)). It
   stays out of every workspace's files, so a workspace backup never carries
   a path that a restored server could be made to read; a server backup and
   the integrity check take it beside users.db, whose `folder_links` rows it

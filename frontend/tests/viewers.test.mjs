@@ -5,13 +5,17 @@
 // languages mapped to a description @codemirror/language-data has, or to
 // plain text.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { CODE_LANGUAGE, codeLanguageName } from "../src/documents/codeLanguages.js";
 import { EXTENSIONS, FORMATS, NAMES } from "../src/documents/formats.js";
+import { pageDocument } from "../src/documents/pageDocument.js";
 import { FORMAT_VIEWER, VIEWERS, viewerOf } from "../src/documents/viewers.js";
 import { VIEWER_TOOL_ITEMS } from "../src/app/viewerToolItems.js";
+
+const DOCUMENT_CASES = JSON.parse(readFileSync(new URL("../../tests/shared/document.json", import.meta.url), "utf8"));
 
 const PLAIN = new Set(["plaintext", "csv", "tsv", "bibtex", "typst", "rst", "makefile"]);
 
@@ -40,7 +44,8 @@ test("every format but markdown has a viewer, and every viewer a descriptor the 
 test("every text language of the registry maps to a language-data description, or to plain text", () => {
   const found = (name) => LanguageDescription.matchLanguageName(languages, name, false);
   const registry = new Set([...Object.values(EXTENSIONS).filter((row) => row.format === "text").map((row) => row.language),
-    ...Object.values(NAMES).filter(([format]) => format === "text").map(([, language]) => language)]);
+    ...Object.values(NAMES).filter(([format]) => format === "text").map(([, language]) => language),
+    "markdown"]); // languageOf's word for a Markdown file read as text (an opened .md)
   for (const language of registry) {
     const name = Object.hasOwn(CODE_LANGUAGE, language) ? CODE_LANGUAGE[language] : null;
     if (PLAIN.has(language)) assert.equal(name, null, `${language} is shown plain`);
@@ -60,4 +65,7 @@ test("every text language of the registry maps to a language-data description, o
   assert.equal(codeLanguageName({ language: "csv", name: "d.csv" }), null);
   assert.equal(codeLanguageName({ language: "constructor", name: "" }), null, "an object member is no language");
   assert.equal(codeLanguageName(null), null);
+  const opened = DOCUMENT_CASES.cases.find((c) => c.note.startsWith("a Markdown file read in place as text"));
+  assert.equal(codeLanguageName(pageDocument({ properties: opened.properties })), "Markdown", "an opened .md is coloured as Markdown");
+  assert.equal(codeLanguageName({ language: null, name: "README.md", ext: ".md" }), "Markdown", "by its name when the view has none");
 });

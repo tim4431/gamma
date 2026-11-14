@@ -2,14 +2,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, isOpenedPdf,
-  keeperAgent, libraryWorkspaces, mentionAgent, notesLocked, openedHere, readComputers, readVault, sinceText, vaultBanner, vaultChip, vaultConflictsPath,
+  addsToLibrary, agentLine, bannerKey, baseName, carriesToServer, computerAgent, computerChip, directionText, editsFile, isOpenedFile,
+  keeperAgent, libraryWorkspaces, mentionAgent, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultBanner,
+  vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
 const folder = (over = {}) => ({ vault: { id: "v1", name: "Papers", scope: "folder", path: "D:\\Papers\\Attention.md", pull: true,
   push: "everything", problem: "", conflicts: 0, paused: false, ...over }, reader: null });
-const opened = (over = {}) => ({ vault: null, reader: { path: "C:\\Downloads\\paper.pdf", missing: false, ...over } });
+const opened = (over = {}) => ({ vault: null, reader: { path: "C:\\Downloads\\paper.pdf", missing: false, format: "pdf", ext: ".pdf", ...over } });
+// an opened file of another format: a LaTeX source, a lone Markdown file read as text
+const openedText = (over = {}) => opened({ path: "C:\\Papers\\main.tex", format: "text", ext: ".tex", ...over });
 
 test("an answer with neither a vault nor a reader is no state", () => {
   assert.equal(readVault({ vault: null, reader: null }), null);
@@ -56,7 +59,20 @@ test("an opened PDF is on this computer, or its file is missing", () => {
   const gone = vaultChip(opened({ missing: true }));
   assert.equal(gone.label, "File missing");
   assert.equal(gone.kind, "alert");
+  assert.equal(gone.title, "The file this PDF was read from is gone");
+  assert.equal(vaultChip(opened({ path: "" })).title, "This PDF is read from a file on this computer, not stored in the library");
   assert.equal(vaultChip(null), null);
+});
+
+test("an opened file of another format says so in a file's words, not a PDF's", () => {
+  const chip = vaultChip(openedText());
+  assert.equal(chip.label, "On this computer");
+  assert.equal(chip.kind, "disk");
+  assert.equal(chip.title, "This file is read from C:\\Papers\\main.tex, not stored in the library");
+  assert.equal(vaultChip(openedText({ path: "" })).title, "This file is read where it lies on this computer, not stored in the library");
+  const gone = vaultChip(openedText({ missing: true }));
+  assert.deepEqual([gone.label, gone.kind, gone.title], ["File missing", "alert", "The file this page was read from is gone"]);
+  assert.equal(vaultChip(openedText({ format: "image", ext: ".png" })).title.startsWith("This file is read from"), true, "a picture too");
 });
 
 test("the banner: a note not written, else a file that is gone", () => {
@@ -110,6 +126,26 @@ test("Add to library… is an opened PDF's, and another server's library one who
   assert.equal(carriesToServer(opened({ mine: true })), true);
   assert.equal(carriesToServer(folder()), false);
   assert.equal(carriesToServer(null), false);
+  assert.equal(addsToLibrary(openedText()), true, "an opened file of any format is added to the library");
+  assert.equal(carriesToServer(openedText()), false, "only a PDF is carried to another server");
+  assert.equal(carriesToServer(openedText({ format: "image", ext: ".png" })), false);
+});
+
+test("what an opened file is: a PDF, or a Markdown file read as text that never joins the library", () => {
+  assert.equal(opensAsPdf({ format: "pdf", ext: ".pdf" }), true);
+  assert.equal(opensAsPdf(opened().reader), true, "the open page's reader carries its document's format");
+  assert.equal(opensAsPdf({ format: "text", ext: ".tex" }), false);
+  assert.equal(opensAsPdf({ format: "image", ext: ".png" }), false);
+  assert.equal(opensAsPdf(null), false);
+  assert.equal(openedNote({ format: "text", ext: ".md" }), true);
+  assert.equal(openedNote({ format: "text", ext: ".markdown" }), true);
+  assert.equal(openedNote({ format: "text", ext: ".MD" }), true);
+  assert.equal(openedNote(openedText({ ext: ".md" }).reader), true);
+  assert.equal(openedNote({ format: "text", ext: ".tex" }), false, "a LaTeX source joins the library");
+  assert.equal(openedNote({ format: "text", ext: ".txt" }), false);
+  assert.equal(openedNote({ format: "markdown", ext: ".md" }), false, "a note is no text document");
+  assert.equal(openedNote({ format: "pdf", ext: ".pdf" }), false);
+  assert.equal(openedNote(null), false);
 });
 
 
@@ -146,7 +182,7 @@ test("the direction in the switches' words", () => {
   assert.equal(directionText({ pull: true, push: "off" }), "Pull: on · Push: off");
 });
 
-test("an opened PDF is a page read in place inside Opened files", () => {
+test("an opened file is a page read in place inside Opened files, of any format", () => {
   const here = { _doc: { format: "pdf", at: "path" } };
   const rows = new Map([
     ["opened", { _opened: true }],
@@ -156,16 +192,18 @@ test("an opened PDF is a page read in place inside Opened files", () => {
     ["other", {}],
     ["plain", { _parentPage: "opened" }],
     ["stored", { _doc: { format: "pdf", at: "store" }, _parentPage: "opened" }],
+    ["source", { _doc: { format: "text", ext: ".tex", at: "path" }, _parentPage: "opened" }],
   ]);
-  assert.equal(isOpenedPdf("paper", rows), true);
-  assert.equal(isOpenedPdf("vaultPaper", rows), false);
-  assert.equal(isOpenedPdf("inside", rows), false);
-  assert.equal(isOpenedPdf("plain", rows), false);
-  assert.equal(isOpenedPdf("stored", rows), false);
-  assert.equal(isOpenedPdf("nowhere", rows), false);
+  assert.equal(isOpenedFile("paper", rows), true);
+  assert.equal(isOpenedFile("vaultPaper", rows), false);
+  assert.equal(isOpenedFile("inside", rows), false);
+  assert.equal(isOpenedFile("plain", rows), false);
+  assert.equal(isOpenedFile("stored", rows), false);
+  assert.equal(isOpenedFile("nowhere", rows), false);
+  assert.equal(isOpenedFile("source", rows), true, "a LaTeX source read where it lies");
 });
 
-test("App's page list (libraryUtils.pageBlocksOf) carries what isOpenedPdf reads", () => {
+test("App's page list (libraryUtils.pageBlocksOf) carries what isOpenedFile reads", () => {
   const doc = (at) => ({ format: "pdf", name: "paper.pdf", hash: "a1b2c3", ext: ".pdf", at });
   const listed = [
     { id: "opened", content: "Opened files", properties: { opened_files: true } },
@@ -176,9 +214,9 @@ test("App's page list (libraryUtils.pageBlocksOf) carries what isOpenedPdf reads
   const rows = new Map(pageBlocksOf(listed, libraryTree({})).map((b) => [b.id, b]));
   assert.equal(rows.get("opened")._opened, true);
   assert.equal(rows.get("paper")._doc.at, "path");
-  assert.equal(isOpenedPdf("paper", rows), true);
-  assert.equal(isOpenedPdf("stored", rows), false, "a page there whose PDF is stored");
-  assert.equal(isOpenedPdf("notes", rows), false, "a page there that reads no file of its own");
+  assert.equal(isOpenedFile("paper", rows), true);
+  assert.equal(isOpenedFile("stored", rows), false, "a page there whose PDF is stored");
+  assert.equal(isOpenedFile("notes", rows), false, "a page there that reads no file of its own");
 });
 
 test("a work folder's agent on this computer: named, its problem while it cannot run, what it is at while it works", () => {

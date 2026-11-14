@@ -42,7 +42,12 @@ changed and before each round (a refused round is ``status.stopped``), and
 by the mirror and Zotero when they would take a workspace a vault pushes
 everything into (``pushing_vault``). Vaults do not overlap on this computer
 or, when both push, in Gamma; a vault made from a directory takes in the
-vaults of one file inside it (``_take_in``).
+vaults of one file inside it (``_take_in``). The places no vault may have
+at all (a drive's root, home or a directory around it, the data directory,
+a system place) are ``place_refusal``'s, asked when a vault is made or
+moved (``clean_path``), never of one that exists. What a path of this
+computer is to Gamma (in a vault, around vaults, nothing) is
+``where_is``'s, for the desktop app's *Open with Gamma*.
 
 A **work folder** (``work_folder_link``; docs/dev/work_folders.md) is a vault
 of a folder of this server that pushes everything: its folder carries the
@@ -101,6 +106,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import threading
 import time
 import uuid
@@ -309,23 +315,30 @@ def _in_data_dir(target: Path) -> bool:
 
 def _under(target: Path, top: Path) -> bool:
     """Whether ``target`` or a directory above it is ``top`` by identity
-    (``os.stat``'s device and file id), so that another spelling of the same
-    place counts: a device path (``//?/C:/...``) or an administrative share
-    (``//host/C$/...``), which ``resolve`` keeps as given."""
+    (``_above``)."""
+    return _above(target, top) is not None
+
+
+def _above(target: Path, top: Path) -> Path | None:
+    """``target`` or the directory above it that is ``top`` by identity
+    (``os.stat``'s device and file id), None for none, so that another
+    spelling of the same place counts: a device path (``//?/C:/...``), an
+    administrative share (``//host/C$/...``), which ``resolve`` keeps as
+    given, or a link to it."""
     try:
         st = top.stat()
     except OSError:
-        return False
+        return None
     if not st.st_ino:   # a filesystem without file ids: the spelling is all there is
-        return False
+        return None
     for place in (target, *target.parents):
         try:
             here = place.stat()
         except OSError:
             continue   # not made yet (a directory a link will make), or not reachable
         if (here.st_dev, here.st_ino) == (st.st_dev, st.st_ino):
-            return True
-    return False
+            return place
+    return None
 
 
 def _within(path: str, parent: str) -> bool:
@@ -334,35 +347,111 @@ def _within(path: str, parent: str) -> bool:
     return inside(path, parent) or _under(Path(path), Path(parent))
 
 
+# The operating system's places no vault may have (``place_refusal``), per platform: those refused with everything
+# inside them, which hold only the system, and those refused themselves only, inside which a user's own things lie
+# (a mounted disk, a share, an app's tree). Windows' are environment variables, an unset one skipped.
+SYSTEM_PLACES = {
+    "win32": (("%SystemRoot%", "%ProgramFiles%", "%ProgramFiles(x86)%", "%ProgramData%"), ()),
+    "darwin": (("/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/etc"),
+               ("/Volumes", "/private", "/private/tmp", "/private/var")),
+    "linux": (("/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/libx32", "/etc", "/boot", "/dev", "/proc", "/sys"),
+              ("/run", "/run/media", "/run/user", "/media", "/mnt", "/opt", "/srv", "/var", "/tmp", "/snap")),
+}
+ROOT_REFUSED = "Pick a directory, not the root of a drive."
+HOME_REFUSED = "Pick a project directory: Gamma does not sync your whole home directory or a directory around it."
+DATA_REFUSED = "That directory is Gamma's data directory, inside it or around it; pick another."
+DATA_FILE_REFUSED = "That file is inside Gamma's data directory; pick another."
+
+
+def _system_places() -> tuple[list[Path], list[Path]]:
+    """``(whole, itself)``: this platform's ``SYSTEM_PLACES``, resolved (macOS's
+    ``/etc`` is ``/private/etc``, a merged ``/bin`` is ``/usr/bin``)."""
+    whole, itself = SYSTEM_PLACES.get(sys.platform, SYSTEM_PLACES["linux"])
+
+    def places(names):
+        out = []
+        for name in names:
+            name = os.path.expandvars(name)
+            if "%" not in name and name:
+                out.append(Path(name).resolve())
+        return out
+    return places(whole), places(itself)
+
+
+def _key(path) -> str:
+    """A place as this computer compares names: ``normcase``, and folded on
+    macOS too, whose disks ignore case."""
+    key = os.path.normcase(os.path.normpath(str(path)))
+    return key.casefold() if sys.platform == "darwin" else key
+
+
+def _home() -> Path | None:
+    try:
+        return Path.home().resolve()
+    except (RuntimeError, OSError):   # no home directory known
+        return None
+
+
+def place_refusal(target: Path, directory: bool = True) -> str:
+    """Why no vault may have ``target`` (resolved), "" when one may: the one
+    text of every way a vault is made or moved (``clean_path``) and of what
+    a path is (``where_is``); never asked of a vault that exists
+    (``check_vault``). For a directory, the first that applies of: a drive or
+    filesystem root; the home directory or a directory around it (``/home``,
+    ``C:\\Users``); Gamma's data directory, inside it or around it
+    (``_in_data_dir``); a place of the operating system's (``SYSTEM_PLACES``:
+    one of the system's trees or what is inside it, or a mount or temporary
+    directory itself, never what is inside that). Home comes before the data
+    directory, which is inside it on every desktop, so the words fit. For a
+    file (``directory`` false), the data directory alone: a file anywhere
+    else may be read."""
+    if not directory:
+        return DATA_FILE_REFUSED if _in_data_dir(target) else ""
+    if target.parent == target:
+        return ROOT_REFUSED
+    home, key = _home(), _key(target)
+    if home is not None and (key == _key(home) or any(key == _key(p) for p in home.parents) or _under(home, target)):
+        return HOME_REFUSED
+    if _in_data_dir(target):
+        return DATA_REFUSED
+    whole, itself = _system_places()
+    if any(key == _key(p) or key.startswith(_key(p).rstrip("\\/") + os.sep) for p in whole) \
+            or any(key == _key(p) for p in itself):
+        return f"Pick a project directory: {target} is the operating system's."
+    return ""
+
+
 def clean_path(text: str) -> str:
     """A directory as a link stores it: the full path the user picked, as
-    this computer resolves it. A relative path, a filesystem root, and
-    Gamma's data directory, anything inside it and anything around it are
+    this computer resolves it. A relative path, and a place no vault may
+    have (``place_refusal``: a drive's root, home or a directory around it,
+    Gamma's data directory, inside it or around it, a system place) are
     refused."""
     text = str(text or "").strip()
     if not _absolute(text):
         raise LinkError("Give the full path of a directory on this computer.")
     target = Path(text).expanduser().resolve()
-    if target.parent == target:
-        raise LinkError("Pick a directory, not the root of a drive.")
-    if _in_data_dir(target):
-        raise LinkError("That directory is Gamma's data directory, inside it or around it; pick another.")
+    refusal = place_refusal(target)
+    if refusal:
+        raise LinkError(refusal)
     return str(target)
 
 
-def clean_file_path(text: str) -> str:
-    """A followed file as a link stores it: the full path of a PDF the user
-    picked, as this computer resolves it. A relative path, another kind of
+def clean_file_path(text: str, *, pdf_only: bool = True) -> str:
+    """A file as a link or a reader stores it: the full path the user
+    picked, as this computer resolves it, of a PDF (``pdf_only``: a file
+    vault's; an opened file is any file). A relative path, another kind of
     file, a file that is not there, and anything inside Gamma's data
     directory are refused."""
     text = str(text or "").strip()
     if not _absolute(text):
-        raise LinkError("Give the full path of a PDF on this computer.")
+        raise LinkError(f"Give the full path of a {'PDF' if pdf_only else 'file'} on this computer.")
     target = Path(text).expanduser().resolve()
-    if target.suffix.lower() != ".pdf":
+    if pdf_only and target.suffix.lower() != ".pdf":
         raise LinkError("Pick a PDF file.")
-    if _in_data_dir(target):
-        raise LinkError("That file is inside Gamma's data directory; pick another.")
+    refusal = place_refusal(target, directory=False)
+    if refusal:
+        raise LinkError(refusal)
     if not target.is_file():
         raise LinkError(f"There is no file {target}.")
     return str(target)
@@ -1914,16 +2003,18 @@ def _release_work(link: dict, remote) -> bool:
 # --- reading and writing Gamma here -----------------------------------------------------------
 
 def _page(ws: str, page_id: str) -> dict | None:
-    """``{doc_id, filename, title}`` of a page of this server's workspace:
-    the hash of the document it owns and that document's name (``""`` for
-    no PDF or no file name); None when ``page_id`` is no page of the
+    """``{doc_id, filename, title, format, ext}`` of a page of this server's
+    workspace: the hash of the document it owns, that document's name
+    (``""`` for no document or no file name), its format and stored
+    extension (a PDF's for none); None when ``page_id`` is no page of the
     library: not there, a block inside a page, or in the trash."""
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     if not row or row[0] != "root":
         return None
     view = page_document(load_json(row[2] or "{}") or {})
-    return {"doc_id": own_hash(view), "filename": view["name"] if view else "", "title": row[1] or ""}
+    return {"doc_id": own_hash(view), "filename": view["name"] if view else "", "title": row[1] or "",
+            "format": view["format"] if view else "pdf", "ext": view["ext"] if view else ".pdf"}
 
 
 def may_edit(ws: str, user_id: str) -> bool:
@@ -1964,18 +2055,23 @@ class LocalSink:
             raise gamma_sync.SyncError(str(e.detail)) from e
         return doc_id
 
-    def replace(self, page_id: str, doc_id: str, filename: str, *, check_held: bool = True) -> dict:
+    def replace(self, page_id: str, doc_id: str, filename: str, *, check_held: bool = True, format: str = "pdf",
+                ext: str | None = None, size: int | None = None) -> dict:
         """The page takes the file ``doc_id``: stored, or still read in place
         on a page that reads its file in place (``replace_attachment``).
         ``check_held`` False: bytes
         another page carries are no refusal, for a page reading a file where
-        it is, whose bytes are whatever the disk holds (gamma/linked_files.py)."""
+        it is, whose bytes are whatever the disk holds (gamma/linked_files.py).
+        A file of another format than a PDF (an opened ``.tex``) names its
+        ``format``, stored extension ``ext`` and ``size``, so it stays a
+        document of its format; a file vault's is always a PDF."""
         from .routers.pages import replace_attachment, replaced_answer  # local: keep gamma.* free of the routers package
 
         self._may_write()
+        shape = {} if format == "pdf" else {"format": format, "ext": ext, "size": size}
         try:
             done = replace_attachment(self.ws, page_id, doc_id, "", filename, actor=self.user_id, owner=self.user_id,
-                                      check_held=check_held, keep_old_days=gamma_sync.KEEP_OLD_DAYS)
+                                      check_held=check_held, keep_old_days=gamma_sync.KEEP_OLD_DAYS, **shape)
         except OpError as e:   # the page gone, its Zotero PDF on its way, or the bytes another page's (HeldElsewhere)
             raise gamma_sync.SyncError(str(e.detail)) from e
         return replaced_answer(done)
@@ -2004,6 +2100,142 @@ def sink_of(link: dict):
     if link["remote_url"]:
         return gamma_sync.RemoteSink(remote_server(link))
     return LocalSink(link["workspace_id"], link["created_by"])
+
+
+# --- what a path is -------------------------------------------------------------------------
+
+def _rel_in(path: str, root: str) -> str | None:
+    """``path``'s place in the directory ``root``, ``/`` between its names
+    ("" for ``root`` itself), when it is there: by its spelling
+    (``inside``), else by identity (``_above``: a directory on the way, or a
+    link standing for one, that is ``root``). None when it is not."""
+    place = path if inside(path, root) else _above(Path(path), Path(root))
+    if place is None:
+        return None
+    rel = os.path.relpath(path, root if place == path else place)
+    return "" if rel == "." else rel.replace(os.sep, "/")
+
+
+def _sees(link: dict, actor: str) -> bool:
+    """Whether ``where_is`` tells ``actor`` of the vault: a role in its
+    workspace for one of this server, its own for one of another server."""
+    if link["remote_url"]:
+        return link["created_by"] == actor
+    return bool(workspaces.role_of(link["workspace_id"], actor))
+
+
+def vault_name(link: dict) -> str:
+    """A folder vault's name in words said of it: its folder's (a vault of
+    another server's as its rounds recorded it), the directory's for a
+    vault of the whole library."""
+    names = _folder_names(link, ask=False)
+    return (names[-1] if names else "") or dest_of(link).name
+
+
+def _vault_word(link: dict, actor: str) -> dict:
+    """A vault as ``where_is`` names it: ``{id, kind, workspace, folder,
+    remote_url, work, choosing, paused, mine, name}`` (``vault_name``)."""
+    return {"id": link["id"], "kind": "folder", "workspace": link["workspace_id"], "folder": link["folder_id"],
+            "remote_url": link["remote_url"], "work": work_vault(link), "choosing": choosing(link),
+            "paused": bool(link["status"].get(PAUSED)), "mine": link["created_by"] == actor, "name": vault_name(link)}
+
+
+def dir_folder(link: dict, rel: str) -> tuple[str, bool]:
+    """The folder of the vault's directory ``rel`` (``/`` between names, ""
+    its top) → ``(folder id, exact)``: the folder a round recorded for it
+    (vaults.db ``vault_dirs``), else the nearest directory above it's, else
+    the vault's own, the names compared as this computer compares them;
+    ``exact`` when ``rel`` itself had one, or is the top. A vault of another
+    server's are that server's ids, as its rounds recorded them."""
+    if not rel:
+        return link["folder_id"], True
+    fold = "lower(path) = lower(?)" if os.path.normcase("A") == "a" else "path = ?"
+    names = rel.split("/")
+    with connect_vaults_db() as conn:
+        for k in range(len(names), 0, -1):
+            at = "/".join(names[:k])
+            row = conn.execute(f"SELECT folder_id FROM vault_dirs WHERE link_id = ? AND folder_id != '' AND {fold} "
+                               "ORDER BY path = ? DESC LIMIT 1", (link["id"], at, at)).fetchone()
+            if row:
+                return row[0], k == len(names)
+    return link["folder_id"], False
+
+
+def where_is(text: str, actor: str) -> dict:
+    """What the path ``text`` is to Gamma for ``actor``, read only (nothing
+    written, no round run): the desktop app's *Open with Gamma* asks it of
+    each local server (``POST /api/folder-links/where``) and then goes by
+    ids. The path is taken two ways: as named (absolute, normalized, links
+    not followed: the file manager's) and resolved. → in this order:
+
+    - ``{is: "vault", dir, name, link, rel, never, …}``: inside a folder
+      vault's directory, of this server or another (by the path as named,
+      else resolved: a link outside every vault to a file inside one is
+      that file; the deepest vault). ``link`` is ``_vault_word``'s,
+      ``rel`` the path in the vault ("" its top), ``never`` the words of
+      why its scan never tracks it (``selection.never_reason``, read
+      unresolved, so a link on the way is one). A directory has ``folder``
+      and ``exact`` (``dir_folder``); a file ``page`` (its row's of any
+      kind: "" for none, and with ``trashed`` for one in Recently deleted;
+      a vault of another server's unchecked) and ``tracked`` (a page, or a
+      vault that pushes everything whose ``.gammaignore`` tracks it and
+      whose scan may).
+    - ``{is: "hidden"}``: such a vault ``actor`` may not see (``_sees``),
+      or a directory around vaults none of which it may.
+    - ``{is: "around", vaults: [{id, workspace, folder, remote_url, work,
+      choosing, mine, name, rel}]}``: a directory holding the directories
+      of vaults it may see, ``rel`` each one's in it, by ``rel``.
+    - ``{is: "file_vault", workspace, page}``: a file that is a vault of
+      one file (``linked_files._file_vault_page``).
+    - ``{is: "none", dir, name, refusal}``: nothing of Gamma's,
+      ``refusal`` ``place_refusal``'s ("" for none).
+
+    LinkError for a path that is not a full one or names nothing."""
+    from . import linked_files  # local: it imports this module
+    from .work_folders import selection
+
+    text = str(text or "").strip()
+    if not _absolute(text):
+        raise LinkError("Give the full path of a file or directory on this computer.")
+    p = os.path.abspath(os.path.expanduser(text))
+    if not os.path.exists(p):
+        raise LinkError(f"There is no file or directory {p}.")
+    real = Path(p).resolve()
+    is_dir, name = os.path.isdir(p), Path(p).name or p
+    links = [link for link in all_links() if link["kind"] == "folder"]
+    for spelled in (p, str(real)):
+        held = [(link, rel) for link in links if (rel := _rel_in(spelled, link["path"])) is not None]
+        if held:
+            link, rel = max(held, key=lambda m: len(m[0]["path"]))
+            if not _sees(link, actor):
+                return {"is": "hidden"}
+            root = dest_of(link)
+            code, words = selection.never_reason(root, rel) if rel else ("", "")
+            answer = {"is": "vault", "dir": is_dir, "name": name, "link": _vault_word(link, actor), "rel": rel,
+                      "never": words}
+            if is_dir:
+                folder, exact = dir_folder(link, rel)
+                return {**answer, "folder": folder, "exact": exact}
+            page, trashed = linked_files.vault_page(link, rel)
+            tracked = bool(page) or (link["push"] == PUSH_ALL and not code and selection.tracked(root, rel))
+            return {**answer, "page": page, "trashed": trashed, "tracked": tracked}
+    if is_dir:
+        around = []
+        for link in links:
+            top = next((t for t in (str(real), p) if inside(link["path"], t) and _key(link["path"]) != _key(t)), None)
+            if top is not None:
+                around.append((link, os.path.relpath(link["path"], top).replace(os.sep, "/")))
+        shown = [{**{k: v for k, v in _vault_word(link, actor).items() if k not in ("kind", "paused")}, "rel": rel}
+                 for link, rel in around if _sees(link, actor)]
+        if shown:
+            return {"is": "around", "vaults": sorted(shown, key=lambda v: v["rel"])}
+        if around:
+            return {"is": "hidden"}
+    else:
+        vault = linked_files._file_vault_page(str(real), actor)
+        if vault:
+            return {"is": "file_vault", "workspace": vault["workspace"], "page": vault["page"]["id"]}
+    return {"is": "none", "dir": is_dir, "name": name, "refusal": place_refusal(real, directory=is_dir)}
 
 
 # --- a page and its vault -------------------------------------------------------------------

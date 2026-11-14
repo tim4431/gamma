@@ -1,9 +1,10 @@
-"""Synced vaults and PDFs read where they are (docs/dev/synced_vaults.md
+"""Synced vaults and files read where they are (docs/dev/synced_vaults.md
 "The routes"): the folders of a workspace the desktop
 app's own server keeps as directories on this computer and the pages that
 follow a PDF file on it (gamma/folder_links.py), of its own workspaces or of
-another Gamma server reached with a token of it, and the PDFs opened from
-this computer (gamma/linked_files.py). Only that server answers
+another Gamma server reached with a token of it, the files opened from
+this computer (gamma/linked_files.py), and what a path of it is to Gamma
+(``POST /where``, for the desktop app's *Open with Gamma*). Only that server answers
 (``config.folder_links_enabled``); any other answers 404. A signed-in
 account's session only: an integration token is refused as for backups, and
 so is the guest. Making, changing, syncing or removing a link of this
@@ -27,9 +28,11 @@ from pydantic import BaseModel, Field
 
 from .. import config, folder_links, linked_files, workspaces
 from ..auth import require_personal_user_id, require_ws, ws_role
+from ..documents.model import page_document
 from ..logbuf import log
 from ..markdown_import import MAX_MARKDOWN_BYTES
 from ..ops import OpError
+from ..vault import disk as vault_disk
 from ..work_folders import selection
 
 router = APIRouter(prefix="/api/folder-links", tags=["folder-links"])
@@ -83,7 +86,11 @@ class LinkPatch(BaseModel):
 
 
 class OpenFile(BaseModel):
-    path: str = Field(min_length=1, max_length=400)   # a PDF's full path on this computer, from the shell's dialog
+    path: str = Field(min_length=1, max_length=400)   # a file's full path on this computer, from the shell
+
+
+class WherePath(BaseModel):
+    path: str = Field(min_length=1, max_length=400)   # a file's or a directory's full path, from the file manager
 
 
 class Preview(BaseModel):
@@ -374,35 +381,65 @@ def hint(request: Request):
     return {"ok": True}
 
 
+@router.post("/where")
+def where(payload: WherePath, request: Request):
+    """What a file or a directory of this computer is to Gamma, for the
+    asking account (``folder_links.where_is``): ``{path}`` → ``{is: "vault"
+    | "hidden" | "around" | "file_vault" | "none", …}``, read only (no
+    round, no page, nothing written). The desktop app's *Open with Gamma*
+    asks each local server, then goes by the ids it answers. No workspace:
+    the answer names the workspace a vault is in. 400 for a path that is
+    not a full one or names nothing; a place no vault may have is no 400
+    but ``none``'s ``refusal``."""
+    user_id = _from_shell(request)
+    try:
+        return folder_links.where_is(payload.path, user_id)
+    except folder_links.LinkError as e:
+        raise _refused(e)
+
+
 @router.post("/open")
 def open_file(payload: OpenFile, request: Request):
-    """A PDF of this computer opened where it is (``linked_files.open_pdf``):
-    ``{path}`` → ``{workspace, page, created, title}``, the page's id and
-    the workspace it is in, which is the request's unless the file belongs to
-    a vault of another. 400 for a path that is not a full one, a file that
-    is no PDF, is not there or cannot be read, one inside the data directory,
-    or a clone's workspace."""
+    """A file of this computer opened where it is
+    (``linked_files.open_file``), of any format Gamma can show: ``{path}``
+    → ``{workspace, page, created, title, format}``, the page's id, the
+    workspace it is in, which is the request's unless the file belongs to a
+    vault of another, and the format of the page's document (``pdf``,
+    ``text`` (a Markdown file outside every vault among them), ``image``,
+    ``audio``, ``video``; "" for a page with none, a work folder's note).
+    400 for a path that is not a full one, a file that is not there or
+    cannot be read, a program, a binary, a file of another format than PDF
+    past the keep limit, a ``.pdf`` that is no PDF, one inside the data
+    directory, or a clone's workspace; and inside a vault for a work folder
+    whose files are not chosen yet, a file its scan never tracks, a work
+    folder's file it does not track, a file with no page yet of a paused
+    vault, a file whose page is in Recently deleted, and a file a vault of
+    another server that the account made reads (``kept on <host>: open it
+    there``)."""
     user_id = _from_shell(request)
     ws = require_ws(request, write=True)
     try:
-        opened = linked_files.open_pdf(ws, payload.path, user_id)
+        opened = linked_files.open_file(ws, payload.path, user_id)
     except folder_links.LinkError as e:
         raise _refused(e)
+    view = page_document(opened["page"].get("properties"))
     return {"workspace": opened["workspace"], "page": opened["page"]["id"], "created": opened["created"],
-            "title": opened["page"]["content"]}
+            "title": opened["page"]["content"], "format": view["format"] if view else ""}
 
 
 @router.post("/opened/{page_id}/add")
 def add_opened(page_id: str, payload: AddToLibrary, request: Request):
-    """An opened PDF goes into the library of its workspace, or with
+    """An opened file goes into the library of its workspace, or with
     ``workspace`` of another of this server the account may edit, there with
     its notes, highlights and chats, the opened page gone
     (``linked_files.add_to_library``): ``{folder?, keep_pushing?,
     workspace?}`` → the page, ``folder`` one of the workspace it goes to. 400
-    for a page that reads no file here, a folder that does not exist, a file
-    that is gone or changed, a workspace that takes no such page, or
-    ``keep_pushing`` or ``workspace`` asked by any account but the one that
-    opened the file; 507 past the quota."""
+    for a page that reads no file here, a Markdown file read as text (it
+    joins the library as a note, dropped there), ``keep_pushing`` for a file
+    that is no PDF, a folder that does not exist, a file that is gone or
+    changed, a workspace that takes no such page, or ``keep_pushing`` or
+    ``workspace`` asked by any account but the one that opened the file;
+    507 past the quota."""
     user_id = _account(request)
     ws = require_ws(request, write=True)
     try:
@@ -419,7 +456,9 @@ def carried(page_id: str, request: Request):
     pages}``, their digest and their ids, the page first. The desktop app
     reads it before its export, looks for each page there first, and hands
     the digest back to ``POST`` once the page is there. 400 for a page that
-    reads no file here, or any account but the one that opened the file."""
+    reads no file here, one whose document is no PDF (``Only a PDF is
+    carried to another server.``), or any account but the one that opened
+    the file."""
     user_id = _account(request)
     ws = require_ws(request, write=True)
     try:
@@ -449,9 +488,10 @@ def let_go(page_id: str, payload: Carried, request: Request):
 
 @router.post("/opened/{page_id}/locate")
 def locate_opened(page_id: str, payload: OpenFile, request: Request):
-    """The file of an opened PDF found again (``linked_files.locate``):
-    ``{path}`` → the page. 400 as for ``/open``, or for a page that reads
-    no file here."""
+    """The file of an opened page found again (``linked_files.locate``):
+    ``{path}`` → the page. 400 as for ``/open``, for a file of another
+    format than the page's document, or for a page that reads no file
+    here."""
     user_id = _from_shell(request)
     ws = require_ws(request, write=True)
     try:
@@ -467,10 +507,11 @@ def page_state(page_id: str, request: Request):
     work_folder, choosing, library, mine, page: {library, file_name}}`` for
     a page a synced vault keeps (``folder_links.page_vault``: ``mine``
     whether the asking account made the vault, ``page`` the page's own
-    stamps as a work folder's file), else null; ``reader`` is ``{path, missing, mine, relocation_error?}`` for a
-    PDF read where it is, else null, ``mine`` whether the asking account
-    opened the file (what keeps it pushing or takes it elsewhere is that
-    account's alone). A ``path`` is empty for a member who cannot act on it,
+    stamps as a work folder's file), else null; ``reader`` is ``{path,
+    missing, mine, format, ext, relocation_error?}`` for a file read where
+    it is, else null, ``mine`` whether the asking account opened the file
+    (what keeps it pushing or takes it elsewhere is that account's alone),
+    ``format`` and ``ext`` its document's. A ``path`` is empty for a member who cannot act on it,
     but the vault's maker: where the file lies is the reading of whoever made
     the vault or opened the file."""
     user_id = _account(request)
@@ -747,6 +788,26 @@ def removal(link_id: str, request: Request):
     work folder of another server that cannot be asked now, whose removal
     is refused until it can (``DELETE``'s ``force``)."""
     return folder_links.removal(_kept(request, link_id))
+
+
+@router.get("/{link_id}/page")
+def vault_file_page(link_id: str, request: Request, path: str = Query(min_length=1, max_length=1000)):
+    """The page of the work folder's file ``path`` (its path in the vault,
+    ``/`` between names), from the vault's row of it
+    (``linked_files.vault_page``) → ``{page}``: its id, "" while no round has
+    read the file yet and for a page in Recently deleted (a work folder of
+    another server's id there, unchecked). What the tracking dialog lands
+    on after a Save that ticked a file opened from this computer. 400 for a
+    ``path`` outside the vault or below a link; the rest as ``GET
+    /{id}/tree`` (``_chooser``)."""
+    link = _chooser(request, link_id)
+    rel = path.strip().strip("/")
+    try:
+        vault_disk.path(folder_links.dest_of(link), rel)
+    except vault_disk.Outside as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    page, _trashed = linked_files.vault_page(link, rel)
+    return {"page": page}
 
 
 @router.get("/{link_id}/tree")

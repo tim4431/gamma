@@ -77,7 +77,11 @@ The functions:
   malformed extension, which `/api/uploads/` refuses.
 - `format_of(name, head=None)`: `(format, language)` by `NAMES`, then
   `EXTENSIONS`, then the first bytes when `head` is given, else
-  `("binary", None)`. `language_of(name, ext)`: a text document's language.
+  `("binary", None)`. `language_of(name, ext)`: a text document's
+  language, by `NAMES`, then a text row of `EXTENSIONS`; a Markdown row's
+  is `markdown`, for a `.md` read in place as text (an opened file outside
+  every vault), though `format_of` still answers `("markdown", None)` for
+  the name, which is what makes a Markdown file a note everywhere else.
 - `stored_format(name, ext, head)`: the format of a file already stored
   under `ext` with the shown name `name`, which an attach, a by-file and
   the vault's file class settle on the server: the extension's row unless
@@ -364,8 +368,8 @@ annotated PDF's translation (`translateExport.exportFile`,
 `folderTranslation.folderPapers`) and the chat's PDF ids.
 
 **Read in place** (`in_place`) is asked as itself only where a page read
-in place is set apart for its file: `linked_files.open_pdf` and its carry,
-and the client's `duplicable`, `isOpenedPdf` and `pdfLinked`. The paper
+in place is set apart for its file: `linked_files.open_file` and its carry,
+and the client's `duplicable`, `isOpenedFile` and `pdfLinked`. The paper
 readers ask the library rule (`library_document`, `is_library_pdf`, and
 `SQL_LIBRARY_PDF` in the statements;
 [work_folders.md](work_folders.md#the-library-rule)), which keeps this
@@ -629,7 +633,12 @@ PDF by `fileHash`.
 `documents/viewers.js` is the viewer registry. `FORMAT_VIEWER` is the
 document pane a format gets: `pdf` → `pdf`, `text` → `text`, `image` →
 `image`, `audio` and `video` → `media`, `binary` → `file`; a Markdown note
-has none, since its notes are the file. `viewerOf(format, doc)` reads it,
+has none, since its notes are the file. A Markdown file opened outside
+every vault is not a note: it is a text document (`format: "text"`,
+`ext: ".md"`, read in place), so it gets the code view, coloured as
+Markdown (`language_of` answers `markdown`, `codeLanguages.js` maps it to
+language-data's `Markdown`). No document of format `markdown` is ever
+stored. `viewerOf(format, doc)` reads it,
 with `"file"` for a listed document whatever its format ("The listed
 state"). `VIEWERS` is one descriptor per pane, the notebook's included,
 and what each pane brings to the frame around it, which App reads from
@@ -998,7 +1007,8 @@ step 55), and with it:
   PDF's rows (a region has no rows of its own yet); the AI title is offered
   for a PDF alone (`docId` is a PDF's); the chat's context and `read_block`
   draw a PDF's area pictures, not a region's; a region exports as a note in
-  the readable exports; a text file is read, never edited; *Opened files*
-  stay PDFs; a listed file's head is not shown as text; the keep limit is
+  the readable exports; a text file is read, never edited; carrying an
+  *Opened files* page to another server is for a PDF alone (the page
+  itself takes every format with a viewer); a listed file's head is not shown as text; the keep limit is
   an environment setting ([work_folders.md](work_folders.md) "Known gaps").
   The whole list is the plan's "As built (step 3)".

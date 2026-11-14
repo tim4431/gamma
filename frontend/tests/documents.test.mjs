@@ -44,6 +44,9 @@ test("the registry names only known formats, and the extensions the server never
   assert.equal(languageOf("Makefile", ""), "makefile");
   assert.equal(languageOf("main.tex", ".tex"), "latex");
   assert.equal(languageOf("fig.png", ".png"), null, "no language outside text");
+  assert.equal(languageOf("README.md", ".md"), "markdown", "a Markdown file read as text");
+  assert.equal(languageOf("notes.markdown", ".markdown"), "markdown");
+  assert.deepEqual(formatOf("README.md"), { format: "markdown", language: null }, "its format stays markdown");
 });
 
 test("pageDocument reads what a block carries, the backend's page_document", () => {

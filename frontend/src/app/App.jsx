@@ -245,7 +245,7 @@ import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
-import { addsToLibrary, carriesToServer, computerAgent, isOpenedPdf, keeperAgent, keeperComputer, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, vaultConflictsPath } from "../vault/vaultState.js";
+import { addsToLibrary, baseName, carriesToServer, computerAgent, isOpenedFile, keeperAgent, keeperComputer, libraryWorkspaces, mentionAgent, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -353,7 +353,7 @@ const CommentsPanel = lazySurface(() => import("../comments/CommentsPanel"));
 // pointer or the focus reaches the bell.
 const InboxPanel = lazySurface(() => import("../inbox/InboxPanel"));
 // A synced vault's notes file edited whole (Edit the file, vault/VaultChip.jsx),
-// and Add to library…, an opened PDF's (vault/useVault.js), while open.
+// and Add to library…, an opened file's (vault/useVault.js), while open.
 const FileSourceDialog = lazySurface(() => import("../vault/FileSourceDialog"));
 const FolderPickerDialog = lazySurface(() => import("../vault/FolderPickerDialog"));
 // Choose files…, what a work folder tracks (explorer/TrackDialog.jsx), while open.
@@ -660,8 +660,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const initialLabel = params.get("unlabelled") ? NO_LABEL : (params.get("label") || "");
   const initialFolder = params.get("folder") || "";
   // The desktop app's hand-over once it made a work folder (desktop/main.js
-  // addDirectoryVault): its vault's tracking dialog opens (vault/useVault.js).
+  // addDirectoryVault): its vault's tracking dialog opens (vault/useVault.js);
+  // `tick`, a file of its directory opened with Gamma that it does not track
+  // yet, by its path there, which the dialog ticks (explorer/TrackDialog.jsx).
   const initialTrack = params.get("track") || "";
+  const initialTick = params.get("tick") || "";
   // shareMode: this tab shows a page through a ?share= link (or a page
   // host's pretty address) — no account of its own, no library, no chat, no
   // prefs sync. readOnly: the block tree can't be edited; every share view
@@ -1667,7 +1670,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // "Move into page…": the move picker over every page but the moved ones
   // and the pages inside them, where they cannot go (moveExclude). Only the
   // topmost of `picked` move: a page inside one of them goes along inside
-  // it rather than out of it. One naming an opened PDF moves nothing
+  // it rather than out of it. One naming an opened file moves nothing
   // (addingToLibrary).
   function pickPageParent(picked) {
     if (addingToLibrary(picked) || work.refused(picked, (rules) => rules.moveIntoPage)) return;
@@ -1699,7 +1702,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // "Move to library": out of the page they are in, filed in their top's
   // folders, where they were listed until now. Only the topmost of `picked`
   // that are inside a page move: a page inside another of them stays inside it.
-  // One naming an opened PDF moves nothing (addingToLibrary). Whether any
+  // One naming an opened file moves nothing (addingToLibrary). Whether any
   // did, or Add to library… opened instead (none: every one is in the
   // library already).
   function movePagesToLibrary(picked) {
@@ -1719,30 +1722,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // is a PDF read where it lies. Its chip and banner, the notes lock, the
   // vault's conflicts and Add to library… read it; the page socket's `vault`
   // reads it again.
-  const vault = useVault(focusedBlockId, !shareMode && !!authUser?.user, { track: initialTrack, setStatus: (msg) => setStatus(msg) });
+  const vault = useVault(focusedBlockId, !shareMode && !!authUser?.user, { track: initialTrack, tick: initialTick, setStatus: (msg) => setStatus(msg) });
   // On any server, the computers that keep the open page in a synced vault
   // of the account's (vault/usePageComputer.js): the chip shows the first
   // where the page has no standing with this computer; the account's
   // `computer` nudge reads them again. A guest is never told.
   const pageComputer = usePageComputer(focusedBlockId, !shareMode && !!authUser?.user && !authUser?.is_guest);
-  // A PDF opened from this computer (vault/vaultState.js isOpenedPdf) leaves
+  // A file opened from this computer (vault/vaultState.js isOpenedFile) leaves
   // *Opened files* only through Add to library…, which stores its bytes
   // first (linked_files.add_to_library) (the open page says so itself too:
   // its standing with this computer, read whatever the listing's rows carry).
-  const openedPdf = (id) => isOpenedPdf(id, pagesById) || (id === focusedBlockId && addsToLibrary(vault.state));
-  // A move of pages that names an opened PDF is not made: the menus offer
+  const openedFile = (id) => isOpenedFile(id, pagesById) || (id === focusedBlockId && addsToLibrary(vault.state));
+  // The document of an opened file: its row's, else the open page's reader,
+  // which carries its format and ext (vaultState.js opensAsPdf, openedNote).
+  const openedDoc = (id) => pagesById.get(id)?._doc || (id === focusedBlockId ? vault.state?.reader : null) || null;
+  // A move of pages that names an opened file is not made: the menus offer
   // the moves only when none is selected (Add to library… when all are), so
   // the one dialog that shows is Add to library…, for the opened ones.
   // Whether `ids` named one (the move is then not made).
   function addingToLibrary(ids) {
-    const opened = ids.filter(openedPdf);
+    const opened = ids.filter(openedFile);
     if (opened.length) vault.setAdding(opened);
     return opened.length > 0;
   }
   // Whether Add to library… offers another server's library (the desktop
-  // app's `carry-to-server`, one page at a time): not for the open page
-  // whose file is known to be gone.
-  const carriesAway = (ids) => IS_DESKTOP && ids.length === 1
+  // app's `carry-to-server`, one page at a time): a PDF alone (the carry
+  // routes refuse any other format), and not the open page whose file is
+  // known to be gone.
+  const carriesAway = (ids) => IS_DESKTOP && ids.length === 1 && opensAsPdf(openedDoc(ids[0]))
     && (ids[0] !== focusedBlockId || !vault.state || carriesToServer(vault.state));
   // Whether the pages to add are known to be another account's opened files
   // (the open page's state says so): what keeps reading the file or takes it
@@ -1759,18 +1766,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     vault.setAdding(null);
     const away = target !== wsId;
     const added = [];
+    // PDF words while every one is known to be a PDF, else a file's.
+    const pdfs = ids.every((id) => opensAsPdf(openedDoc(id)));
     const result = await runBatch(ids, async (id) => {
       const page = await apiJson(`${API}/folder-links/opened/${encodeURIComponent(id)}/add`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folder, keep_pushing: keepPushing, workspace: away ? target : "" }),
       });
       added.push(page?.id || id);
-    }, { name: t("Add {n} PDFs to the library", { n: ids.length }), tasks });
+    }, { name: pdfs ? t("Add {n} PDFs to the library", { n: ids.length })
+      : t("Add {n} files to the library", { n: ids.length }), tasks });
     if (away && added.length && !result.failed.length) { switchWorkspace(target, added[0]); return; }
     await fetchHomeBlocks();
     rereadFamily();
     vault.refresh();
-    batchStatus(tn("Added {n} PDF to the library.", "Added {n} PDFs to the library.", result.done.length), result, ids.length);
+    batchStatus(pdfs ? tn("Added {n} PDF to the library.", "Added {n} PDFs to the library.", result.done.length)
+      : tn("Added {n} file to the library.", "Added {n} files to the library.", result.done.length), result, ids.length);
   }
 
   // Pin/unpin folders: `properties.pinned` (an ISO time; null unpins) on
@@ -11134,7 +11145,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       open={mergeOpen === focusedBlockId} onOpenChange={(v) => setMergeOpen(v ? focusedBlockId : null)} />
                   </span>
                 ) : null}
-                {/* in the desktop app: the synced vault that keeps the page, or the file an opened PDF is read from;
+                {/* in the desktop app: the synced vault that keeps the page, or the file an opened page is read from;
                     elsewhere the computer that keeps it */}
                 <VaultChip state={vaultState} computers={pageComputer.computers} open={openPopover === "vault"} canAdd={lib.organize}
                   onOpenChange={(v) => { if (v) { vault.refresh(); pageComputer.refresh(); } setOpenPopover(v ? "vault" : null); }}
@@ -13914,7 +13925,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ) : null}
         </div>
       ) : null}
-      {/* the open page's note its vault could not write, or its opened PDF's file gone */}
+      {/* the open page's note its vault could not write, or its opened file gone */}
       {focusedBlockId && !pageGone && vault.banner ? (
         <VaultBanner banner={vault.banner}
           onLocate={IS_DESKTOP && lib.organize ? () => askShell("relocate-file", { page: focusedBlockId }) : null}
@@ -14452,7 +14463,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       /></LazyBoundary> : null}
       {vault.adding ? (
         <LazyBoundary>
-          <FolderPickerDialog count={vault.adding.length}
+          <FolderPickerDialog count={vault.adding.length} pdf={vault.adding.every((id) => opensAsPdf(openedDoc(id)))}
             workspaces={libraryWorkspaces(workspaces, wsId)} workspace={wsId} opener={!openedByOther(vault.adding)}
             folders={[{ id: "", name: t("All files") }, ...folderMenuIds.map((id) => ({ id, name: folderPath(libTree, id) }))]}
             readFolders={readWorkspaceFolders}
@@ -14474,14 +14485,32 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <FeedbackHost me={authUser?.user || ""} canSend={canWriteWorkspace} links={vault.links} onOpenThread={openThreadAt} />
       {vault.tracking ? (
         <LazyBoundary>
-          <TrackDialog link={vault.tracking.link} fresh={vault.tracking.fresh} setStatus={setStatus}
+          <TrackDialog link={vault.tracking.link} fresh={vault.tracking.fresh} tick={vault.tracking.tick} setStatus={setStatus}
             onClose={vault.closeTracking}
-            onSaved={() => {
+            onSaved={(ticked) => {
+              const { link, tick } = vault.tracking;
               vault.closeTracking();
-              setStatus(t("Saved. The work folder reads its files now."));
+              // A file opened from this computer (?tick=) in a work folder of
+              // this server: left unticked, said so; ticked, its page opens
+              // once the round read it.
+              const lands = tick && !link.remote_url ? ticked : null;
+              const file = baseName(tick);
+              setStatus(lands === false ? t("{file} was left unticked, so it is not a page of this work folder.", { file })
+                : t("Saved. The work folder reads its files now."));
               fetchHomeBlocks();
               vault.refreshLinks();
-              vault.watchRound(vault.tracking.link.id, () => { fetchHomeBlocks({ still: true }); vault.refreshLinks(); });
+              vault.watchRound(link.id, async () => {
+                fetchHomeBlocks({ still: true });
+                vault.refreshLinks();
+                if (lands !== true) return;
+                try {
+                  const { page } = await apiJson(`${API}/folder-links/${encodeURIComponent(link.id)}/page?${new URLSearchParams({ path: tick })}`);
+                  if (page) openPage(page);
+                  else setStatus(t("{file} is tracked; its page opens once the work folder has read it.", { file }));
+                } catch (err) {
+                  setStatus(t("Could not open this page: {message}", { message: err.message || err }));
+                }
+              });
             }}
             onCancelled={() => {
               vault.closeTracking();
@@ -14901,10 +14930,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <MenuItem icon={FilePlusIcon} title={t("A blank page inside this one")}
                   onClick={() => { setTabMenu(null); createSubPage(tabMenu.id); }}>{t("New page inside")}</MenuItem>
               )}
-              {tabFile ? null : openedPdf(tabMenu.id) ? (
-                // a PDF opened from this computer: stored first, then filed
-                <MenuItem icon={FolderPlusIcon} title={t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")}
-                  onClick={() => { setTabMenu(null); vault.setAdding([tabMenu.id]); }}>{t("Add to library…")}</MenuItem>
+              {tabFile ? null : openedFile(tabMenu.id) ? (
+                // a file opened from this computer: stored first, then filed;
+                // a Markdown file read as text never joins the library
+                openedNote(openedDoc(tabMenu.id)) ? null : (
+                  <MenuItem icon={FolderPlusIcon} title={opensAsPdf(openedDoc(tabMenu.id))
+                    ? t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")
+                    : t("Store the file in the library and file the page in a folder: its notes and chat come with it")}
+                    onClick={() => { setTabMenu(null); vault.setAdding([tabMenu.id]); }}>{t("Add to library…")}</MenuItem>
+                )
               ) : <>
                 <MenuItem icon={IndentIcon} title={t("Put it inside another page, where it is listed under Pages inside")}
                   onClick={() => { setTabMenu(null); pickPageParent([tabMenu.id]); }}>{t("Move into page…")}</MenuItem>
@@ -14944,10 +14978,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               const { files, allFiles, anyFile, ruled, filable, leftOut, ownFolders, copied } = pagesMenu(acted, ids, pagesById, workTree);
               const outOf = topmostPages(pageBlocks, ids).filter((id) => pagesById.get(id)?._parentPage);
               const fromHere = folderFilter && !workFolder ? folderFilter : "";
-              // PDFs opened from this computer (inside *Opened files*): all
+              // files opened from this computer (inside *Opened files*): all
               // of them, or any among the acted-on pages (addingToLibrary)
-              const opened = ids.every(openedPdf);
-              const anyOpened = ids.some(openedPdf);
+              const opened = ids.every(openedFile);
+              const anyOpened = ids.some(openedFile);
               const allLabelled = (l) => acted.every((b) => b?._labels?.includes(l));
               const close = () => setHomeMenu(null);
               // A typed name: the label of that name, else a new one.
@@ -15054,11 +15088,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       ) : null}
                     </SubMenuItem>
                   ),
-                  // PDFs opened from this computer are stored before they are
+                  // files opened from this computer are stored before they are
                   // filed: Add to library… in place of the moves, and with
-                  // other pages beside them, neither
-                  lib.organize && opened && (
-                    <MenuItem key="add" icon={FolderPlusIcon} title={t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")}
+                  // other pages beside them, neither; nor with a Markdown file
+                  // read as text, which never joins the library
+                  lib.organize && opened && !ids.some((id) => openedNote(openedDoc(id))) && (
+                    <MenuItem key="add" icon={FolderPlusIcon} title={ids.every((id) => opensAsPdf(openedDoc(id)))
+                      ? t("Store the PDF in the library and file the page in a folder: its highlights, notes and chat come with it")
+                      : t("Store the file in the library and file the page in a folder: its notes and chat come with it")}
                       onClick={() => { close(); vault.setAdding(ids); }}>{t("Add to library…")}</MenuItem>
                   ),
                   ...(lib.organize && allFiles ? work.libraryItems(files, close) : []),

@@ -21,6 +21,9 @@
 //   GAMMA_MAS_VERSION (CFBundleShortVersionString, also what About and the
 //   server report) must be higher than the last one approved, and
 //   GAMMA_MAS_BUILD (CFBundleVersion) higher than every build uploaded;
+// - PDFs only, no folder type: the sandbox gives a file or folder from
+//   Finder for one run only, and only the picker yields the bookmark a work
+//   folder needs (lib/folderAccess.js); its PDFs are uploaded;
 // - the provisioning profile, GAMMA_MAS_PROFILE: the Mac App Store profile
 //   for dist:mas, a development profile for pack:mas-dev. The certificates
 //   come from the keychain (Apple Distribution and Mac Installer
@@ -30,6 +33,10 @@
 // modes, since the store installs the .pkg's files as they are packed.
 
 const base = require('./electron-builder.cjs');
+const { table, macEntry } = require('./scripts/openwith.cjs');
+
+// The base's extendInfo less its folder type (CFBundleDocumentTypes).
+const { CFBundleDocumentTypes, ...baseInfo } = base.mac.extendInfo;
 
 const APP_ID = 'net.blitzbuild.gamma'; // App Store Connect: "Gamma - PDF Reader"
 const TEAM_ID = 'A436A36DDC';
@@ -59,8 +66,9 @@ module.exports = {
     ...base.mac,
     hardenedRuntime: false,
     notarize: false,
+    fileAssociations: [macEntry(table().find((k) => k.kind === 'pdf'))],
     extendInfo: {
-      ...base.mac.extendInfo, // the microphone's purpose string
+      ...baseInfo, // the microphone's purpose string
       CFBundleShortVersionString: version,
       ElectronTeamID: TEAM_ID,
       // HTTPS only, as the iPad app declares (ipad/project.yml).

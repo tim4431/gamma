@@ -313,6 +313,7 @@ test("a file's format as the Format column reads it", () => {
   assert.equal(formatLabel({ format: "markdown", language: null }), "Markdown");
   assert.equal(formatLabel({ format: "text", language: "latex" }), "LaTeX");
   assert.equal(formatLabel({ format: "text", language: "cpp" }), "C++");
+  assert.equal(formatLabel({ format: "text", language: "markdown" }), "Markdown", "a Markdown file read as text");
   assert.equal(formatLabel({ format: "text", language: "toString" }), "Text", "a language without a name of its own");
   assert.equal(formatLabel({ format: "text", language: "plaintext" }), "Text");
   // the words the chat's context names a language by too

@@ -44,6 +44,7 @@ ONE_SIDED = {
     "synctree.json": "the mirror's tree rules, which only the server runs",
     "textmerge.json": "the server's three-way text merge",
     "inkhold.json": "the held pen shape, drawn by the web, the iPad and Android; the server stores only the result",
+    "openwith.json": "what the desktop app registers with the operating system; its other reader is desktop/test/openWith.test.js, which this check does not scan",
 }
 
 
@@ -932,11 +933,13 @@ def test_text_decode(case):
 
 
 def test_language_names():
-    """What a text file's language is called, the client's Format column's words: every language of the tables but plaintext."""
+    """What a text file's language is called, the client's Format column's
+    words: every language of the tables and markdown (language_of's for a
+    Markdown file read as text), but plaintext."""
     from gamma.documents import formats
     assert formats.LANGUAGE_NAMES == FORMATS["language_names"]
     langs = {row.language for row in formats.EXTENSIONS.values() if row.language} | {
-        language for _, language in formats.NAMES.values() if language}
+        language for _, language in formats.NAMES.values() if language} | {"markdown"}
     assert set(formats.LANGUAGE_NAMES) == langs - {"plaintext"}
 
 
