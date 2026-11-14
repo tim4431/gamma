@@ -1,5 +1,5 @@
 """A SyncTeX reader: which source line made a place on a page of a TeX
-build, read from the build's ``.synctex.gz`` (docs/dev/feedback.md
+build, read from the build's ``.synctex.gz`` (docs/dev/annotations.md
 "SyncTeX"). Pure, stdlib only.
 
 The file, as TeX Live 2024 writes it: a preamble (``Input:<tag>:<path>``

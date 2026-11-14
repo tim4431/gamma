@@ -1,5 +1,5 @@
 """Exercise the real SDK transport, scoped credentials, and shared dispatch;
-a feedback connection's answering tools (gamma/feedback/agent.py)."""
+a feedback connection's answering tools (gamma/annotations/agent.py)."""
 
 import json
 import re
@@ -51,7 +51,7 @@ def test_initialize_and_read_tools(client, connection):
     # a new one is offered without touching the adapter); the literal makes growth visible.
     assert {t["name"] for t in tools} == mcp_tools() | {"list_workspaces", "read_gamma_link", "export_page"}
     assert {t["name"] for t in tools} == {"list_pages", "list_folders", "read_page", "read_block", "read_chats",
-                                          "list_feedback", "read_feedback", "view_pdf_page", "view_ink",
+                                          "list_annotations", "read_annotation", "view_pdf_page", "view_ink",
                                           "view_image", "cite", "search_library", "list_workspaces",
                                           "read_gamma_link", "export_page"}
     # every tool but the workspace list and a link (which names its own) can be pointed at a workspace
@@ -774,7 +774,7 @@ def answering(connection):
 def _commented_file(c, name):
     """A work folder ``name`` of the client's workspace with ``main.pdf``
     and one thread on a passage of it: ``(work, thread)``."""
-    from test_feedback_tools import commented, work_folder
+    from test_annotations_tools import commented, work_folder
 
     work = work_folder(c, "mcp-reader", name)
     return work, commented(c, work.files["main.pdf"], "lambda is never introduced.")
@@ -857,7 +857,7 @@ def _follows(ws, page_id):
         return conn.execute("SELECT * FROM page_follows WHERE page_id = ? ORDER BY 1, 2", (page_id,)).fetchall()
 
 
-def test_feedback_ids_find_their_workspace(client, connection):
+def test_annotations_ids_find_their_workspace(client, connection):
     from gamma import workspaces
 
     c, ws, _ = connection
@@ -871,12 +871,12 @@ def test_feedback_ids_find_their_workspace(client, connection):
         made = c.post("/api/integrations/tokens", json={"name": "Claude Code", "scope": "feedback",
                                                         "workspaces": [ws, lab]}).json()
         token = made["token"]
-        # every work folder of every connected workspace, a section each
-        text = call(client, token, "list_feedback", {})["content"][0]["text"]
+        # the library of every connected workspace, a section each
+        text = call(client, token, "list_annotations", {})["content"][0]["text"]
         assert f"## Workspace Feedback lab (workspace={lab})" in text
-        assert home_thread["id"] in text and lab_thread["id"] in text and "# Feedback on Lab paper" in text
+        assert home_thread["id"] in text and lab_thread["id"] in text and "# Annotations on the library" in text
         # a thread's id reads and answers in its own workspace
-        read = call(client, token, "read_feedback", {"thread_id": lab_thread["id"]})
+        read = call(client, token, "read_annotation", {"id": lab_thread["id"]})
         assert not read["isError"], read
         assert read["structuredContent"]["workspace_id"] == lab and read["structuredContent"]["pdf_page"] == 1
         assert f"http://localhost/?ws={lab}&page={away.files['main.pdf']}&block=" in read["content"][0]["text"]
@@ -885,11 +885,23 @@ def test_feedback_ids_find_their_workspace(client, connection):
         replied = call(client, token, "reply_feedback", {"thread_id": lab_thread["id"], "body": "Done."})
         assert not replied["isError"] and replied["structuredContent"]["workspace_id"] == lab
         # a work folder's directory by id finds it too; by name, the default workspace's
-        assert lab_thread["id"] in call(client, token, "list_feedback", {"scope": away.w})["content"][0]["text"]
-        named = call(client, token, "list_feedback", {"scope": "Lab paper"})
+        assert lab_thread["id"] in call(client, token, "list_annotations", {"scope": away.w})["content"][0]["text"]
+        named = call(client, token, "list_annotations", {"scope": "Lab paper"})
         assert named["isError"] or lab_thread["id"] not in named["content"][0]["text"]
-        named = call(client, token, "list_feedback", {"scope": "Lab paper", "workspace": lab})
+        named = call(client, token, "list_annotations", {"scope": "Lab paper", "workspace": lab})
         assert lab_thread["id"] in named["content"][0]["text"]
+        # a bare highlight's id finds its workspace as a thread's does, on a library page as on a file
+        from test_annotations_tools import passage
+
+        shelf = make_folder(in_lab, "Lab shelf")
+        book = make_page(in_lab, "Lab book", properties={"folders": [shelf]})["id"]
+        bare = passage(in_lab, book, quote="marked, not commented")
+        read = call(client, token, "read_annotation", {"id": bare})
+        assert not read["isError"], read
+        assert read["structuredContent"]["workspace_id"] == lab and "· highlight · passage" in read["content"][0]["text"]
+        for scope in (book, shelf):
+            listed = call(client, token, "list_annotations", {"scope": scope})["content"][0]["text"]
+            assert bare in listed and "## Lab book" in listed and lab_thread["id"] not in listed, scope
         # one id in two of them is refused, naming both, until workspace chooses
         for owner, work in ((c, home), (in_lab, away)):
             file = work.files["main.pdf"]

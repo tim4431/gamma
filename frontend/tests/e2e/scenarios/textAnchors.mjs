@@ -7,7 +7,7 @@ import { movePast } from "./pdf.mjs";
 
 // Anchors in a text file (docs/research/file-explorer.md step 6;
 // docs/dev/api.md "The highlight shape", docs/dev/highlight_relocation.md
-// "Text files", docs/dev/feedback.md, docs/dev/documents.md "Viewers",
+// "Text files", docs/dev/annotations.md, docs/dev/documents.md "Viewers",
 // docs/dev/comments.md "The margin"): a work folder of the SyncTeX sample
 // paper with its .tex sources tracked. A selection in main.tex's code view
 // makes a highlight (its lines, columns, context and the file's version)
@@ -153,7 +153,7 @@ export async function textAnchorScenarios(env) {
       write(path.join(paperDir, rel), fs.readFileSync(path.join(PAPER, rel)));
     }
     write(path.join(paperDir, ".gammaignore"), IGNORE);
-    const feedbackDir = path.join(paperDir, ".gamma", "feedback");
+    const feedbackDir = path.join(paperDir, ".gamma", "annotations");
     const openJson = () => JSON.parse(fs.readFileSync(path.join(feedbackDir, "open.json"), "utf8"));
     const openMd = () => fs.readFileSync(path.join(feedbackDir, "open.md"), "utf8");
     const filesOf = async (folder) => (await user.api(`/api/folders/${folder}/pages?limit=500`)).pages;
@@ -395,10 +395,14 @@ export async function textAnchorScenarios(env) {
         assertNoProblems(page);
       } finally { await ctx.close(); }
 
-      const doc = await openJsonWhen((d) => d.entries?.length === 11
+      // the eleven threads and the highlight made in the view, which no thread is on
+      const doc = await openJsonWhen((d) => d.entries?.length === 12
         && LOST.every((n) => d.entries.find((e) => e.id === ten[n].thread)?.where.placed === "lost"), "open.json after the rewrite");
       const entryOf = (id) => doc.entries.find((e) => e.id === id);
       assert(doc.entries.every((e) => e.file === "main.tex" && e.kind === "lines" && e.source?.file === "main.tex"), "every entry by main.tex's own lines");
+      assertEq(doc.entries.filter((e) => e.type === "thread").length, 11, "eleven threads");
+      assertEq(JSON.stringify([entryOf(made.id)?.type, entryOf(made.id)?.state, entryOf(made.id)?.comments.length]),
+        JSON.stringify(["highlight", null, 0]), "the bare highlight, with no state and no comments");
       for (const n of TEN) {
         const { where, source } = entryOf(ten[n].thread);
         if (LOST.includes(n)) {

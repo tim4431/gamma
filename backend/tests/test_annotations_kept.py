@@ -1,4 +1,4 @@
-"""The commented version kept (gamma/feedback/kept.py): a work folder's
+"""The commented version kept (gamma/annotations/kept.py): a work folder's
 build read in place has its bytes stored once a thread is opened on it,
 each rebuild while the thread is open stores the incoming build, so the
 relocation run reads the outgoing one from the store and places an area by
@@ -30,7 +30,7 @@ from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page, new_block_id
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.documents.model import document, page_document
-from gamma.feedback import anchors, kept
+from gamma.annotations import anchors, kept
 from gamma.vault.local_remote import LocalRemote
 from test_highlight_relocate import H, W, _pdf as _lines, _position
 from test_vault_sync import Vault, insert
@@ -279,8 +279,8 @@ def test_the_source_of_the_place_is_recorded_on_the_anchor_at_the_thread_s_open(
         asked.append((page_id, place))
         return {"file": "main.tex", "line": 18}
     fake = SimpleNamespace(source_for=source_for)
-    monkeypatch.setitem(sys.modules, "gamma.feedback.sources", fake)
-    monkeypatch.setattr("gamma.feedback.sources", fake, raising=False)
+    monkeypatch.setitem(sys.modules, "gamma.annotations.sources", fake)
+    monkeypatch.setattr("gamma.annotations.sources", fake, raising=False)
     v = work("source")
     v.write("main.pdf", _build("sourced"), age=30)
     v.sync()

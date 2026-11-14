@@ -50,7 +50,7 @@ keeps, then renamed over the note, tried again while Windows says another
 program holds it; a caller with a journal holds that copy until its history
 has it. A new file
 (``write_new``) never replaces one that appeared meanwhile; a file of Gamma's
-own below ``.gamma/`` (the feedback files) is renamed over whatever is there
+own below ``.gamma/`` (the annotation files) is renamed over whatever is there
 (``write_own``), and its stale temporary files, which no scan meets, are
 swept by ``sweep_own``. The trash is
 ``.gamma/trash/<stamp>/<path>``, on the vault's volume so that a delete is a
@@ -805,18 +805,32 @@ def write_new(root: Path, rel: str, data: bytes, ready=None) -> Written:
         tmp.unlink(missing_ok=True)
 
 
-def write_own(root: Path, rel: str, data: bytes) -> bool:
+def write_own(root: Path, rel: str, data: bytes, *, beside: str = "") -> bool:
     """A file of Gamma's own below ``.gamma/`` (``rel`` starts with it: the
-    feedback files, gamma/feedback/files.py) holding ``data``: written
+    annotation files, gamma/annotations/files.py) holding ``data``: written
     beside its place under a name the scan skips, flushed, then renamed
     over whatever is there (``_rename_over``), the directories it needs
-    made; ``path`` refuses a link or a junction on the way. True once the
-    file holds ``data``; False when another program held it to the last
-    try (Windows), nothing written, for the caller to try again later.
-    ValueError for a path outside ``.gamma/``."""
+    made; ``path`` refuses a link or a junction on the way. ``beside``
+    names the file a vault of one file follows in ``root``, which holds no
+    marker: that file there stands for it (Stopped where a marker is, which
+    is a vault's this server may not know), and a ``.gamma/`` made for it is
+    hidden as a vault's is. True once the file holds ``data``; False when
+    another program held it to the last try (Windows), nothing written, for
+    the caller to try again later. ValueError for a path outside
+    ``.gamma/``."""
     if not rel.startswith(f"{MARKER_DIR}/"):
         raise ValueError(f"{rel} is not below {MARKER_DIR}/")
-    _ours(root)
+    if beside:
+        if not (root / beside).is_file():
+            raise Offline("the followed file is not there: the disk may not be")
+        if (root / MARKER).exists():
+            raise Stopped("the file's directory is a vault's: its .gamma/ is not the file's")
+        folder = path(root, MARKER_DIR)
+        if not folder.is_dir():
+            folder.mkdir()
+            hide(folder)
+    else:
+        _ours(root)
     target = path(root, rel)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp, _st = _temp_beside(target, data)

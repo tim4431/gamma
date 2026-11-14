@@ -10,7 +10,9 @@ refused and forced while that server does not answer, a cancel too, the mark
 said to stay when it stops answering midway), a mark whose answer was lost taken back, the questions between
 rounds waiting as questions, stopped for good once that server let go of it
 (never marking, pushing into or releasing that folder again), the remote kept folders
-that push everything left as they were; the remote's own ``stamp`` and
+that push everything left as they were; the annotation files of such a work
+folder and of a followed file there, read from that server with the vault's
+token (gamma/annotations/files.py); the remote's own ``stamp`` and
 ``work_pages`` against ``LocalRemote``'s, a ``locked`` refusal as the file's,
 a round of push alone that reads no listing. And every server's side: a
 vault's mark refused in a clone or a Zotero-linked workspace and inside or
@@ -22,20 +24,22 @@ the workspace, which is woken, its paused vaults left to their next round;
 refused in a clone or a Zotero-linked workspace, sweeping again once the mark
 is off)."""
 
+import io
 import json
 import os
 import time
 
+import pymupdf
 import pytest
 
-from conftest import (account_of, fresh_client, login, make_folder, make_user, mark_work_folder, work_props,
-                      workspace_of)
+from conftest import (account_of, doc_props, fresh_client, login, make_folder, make_page, make_user, mark_work_folder,
+                      thread_on, work_props, workspace_of)
 from gamma import config, folder_links, gamma_sync, workspaces
 from gamma.auth import DISK_CLIENT
 from gamma.computers import channel, registry
 from gamma.blocks_store import FOLDERS, create_page, new_block_id
 from gamma.db import connect_pages_db, connect_users_db
-from gamma.feedback import files as feedback_files
+from gamma.annotations import files as annotation_files
 from gamma.integrations import create_token
 from gamma.local_agents import runner
 from gamma.ops import LOCKED, OpError, commit_ops
@@ -44,6 +48,8 @@ from gamma.vault.local_remote import LocalRemote
 from gamma.vault.remote import Edit
 from gamma.work_folders import elsewhere, selection, takeover
 from test_folder_links import _create, _sync, disk, over_http  # noqa: F401: the disk and over_http fixtures
+from test_highlight_relocate import _position
+from test_vault_sync import insert
 
 OWNER = "rwf_owner"
 _made = []    # the tokens a test made, revoked after it: an account holds twenty at most
@@ -83,7 +89,7 @@ def far(monkeypatch, owner):
             return fn(at, *args, **kwargs)
         return call
 
-    for module in (folder_links, selection, feedback_files):
+    for module in (folder_links, selection, annotation_files):
         monkeypatch.setattr(module, "connect_pages_db", guarded(module.connect_pages_db))
     monkeypatch.setattr(folder_links, "commit_ops", guarded(folder_links.commit_ops))
     return ws
@@ -478,6 +484,127 @@ def test_the_questions_between_rounds_wait_as_questions(owner, disk, over_http, 
     folder_links.removal(keyed)
     folder_links.delete_link(link["id"])
     assert waits and set(waits) == {folder_links.ASK_TIMEOUT_S}, waits
+
+
+# --- the annotation files ---------------------------------------------------------------------
+
+AREA = {"x1": 66, "y1": 60, "x2": 260, "y2": 110}
+JPEG = b"\xff\xd8\xff"
+
+
+def _pdf(text: str) -> bytes:
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), text)
+    return doc.tobytes()
+
+
+def _area(ws, page) -> str:
+    """An area highlight on the page's first PDF page, written there."""
+    block_id = new_block_id()
+    commit_ops(ws, page, [insert(page, "", {"pdf_position": _position(1, AREA, area=True), "color": "#ffe28fa6"},
+                                 block_id)], actor=account_of(OWNER))
+    return block_id
+
+
+def _recorded(monkeypatch) -> list:
+    """The paths this computer asks the other server, recorded."""
+    asked, opened = [], gamma_sync.default_open
+
+    def recording(method, path, headers, body=None):
+        asked.append(path)
+        return opened(method, path, headers, body)
+    monkeypatch.setattr(gamma_sync, "default_open", recording)
+    return asked
+
+
+def test_a_work_folder_of_another_server_writes_the_annotations_it_reads_there(owner, disk, over_http, far,
+                                                                              monkeypatch):
+    """Each round reads its folder's entries there (``GET /api/annotations``)
+    and the pictures they name, by the routes that server names, with the
+    vault's token, never this computer's copy of that workspace (``far``),
+    and writes the files a work folder of this server writes, its files
+    named by its rows; the files of before go. A server that does not
+    answer it is the files' error, never the round's."""
+    w = make_folder(owner, "RWF marks")
+    root = disk / "RWF marks"
+    link = _saved(owner, over_http, w, root, {"main.pdf": _pdf("the method defines the loss"), "notes.md": "a\n"})
+    page = vault_store.files(link["id"])["main.pdf"]["page_id"]
+    area = _area(far, page)
+    thread = thread_on(owner, page, page, "the whole paper")
+    former = root / annotation_files.FORMER
+    former.mkdir(parents=True)
+    (former / "open.json").write_bytes(b"{}\n")
+    asked = _recorded(monkeypatch)
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and status["annotations"] == {"open": 1}
+    here = root / annotation_files.DIR
+    doc = json.loads((here / "open.json").read_text(encoding="utf-8"))
+    assert (doc["format"], doc["work_folder"]["id"], doc["scope"]["kind"], doc["owner"]) == (
+        "gamma-annotations-1", w, "work_folder", OWNER)
+    assert "agent" not in doc and "agents_found" not in doc                # the dialog's, never the files'
+    assert [(e["id"], e["type"], e["file"]) for e in doc["entries"]] == [
+        (thread["id"], "thread", "main.pdf"), (area, "highlight", "main.pdf")]
+    entry = doc["entries"][1]
+    assert entry["picture"] and (here / entry["picture"]).read_bytes()[:3] == JPEG and "picture_url" not in entry
+    assert f"/api/annotations?scope={w}&state=open" in asked
+    assert any(path.startswith(f"/api/annotations/{area}/picture?at=now") for path in asked)
+    assert "## main.pdf" in (here / "open.md").read_text(encoding="utf-8")
+    assert (here / ".gitignore").read_bytes() == annotation_files.GITIGNORE and not former.exists()
+
+    # a round of push alone reads them again at most every REMOTE_POLL_S, keeping the last summary meanwhile
+    asked.clear()
+    status = _sync(owner, link["id"], direction="push")
+    assert status["annotations"] == {"open": 1} and not any(p.startswith("/api/annotations") for p in asked)
+    folder_links._annotations_read[link["id"]] -= folder_links.REMOTE_POLL_S
+    status = _sync(owner, link["id"], direction="push")
+    assert status["annotations"] == {"open": 1} and f"/api/annotations?scope={w}&state=open" in asked
+
+    # a server of a release before the reader: the round goes on, the files stay as they were
+    before = (here / "open.json").read_bytes()
+    opened = gamma_sync.default_open
+
+    def older(method, path, headers, body=None):
+        if path.startswith("/api/annotations"):
+            return 404, {"Content-Type": "application/json"}, io.BytesIO(b'{"detail": "Not Found"}')
+        return opened(method, path, headers, body)
+    monkeypatch.setattr(gamma_sync, "default_open", older)
+    status = _sync(owner, link["id"])
+    assert status["last_error"] == "" and status["annotations"]["error"] and (here / "open.json").read_bytes() == before
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert not (root / vault_disk.MARKER_DIR).exists()
+
+
+def test_a_followed_file_of_another_server_writes_its_pages_annotations_beside_it(owner, disk, over_http, far,
+                                                                                 monkeypatch):
+    """A vault of one file of another server reads its page's entries there
+    at its rounds, one every ``REMOTE_POLL_S`` while the file rests, and
+    writes them beside the file; removed, they go."""
+    data = _pdf("the far draft")
+    r = owner.post("/api/uploads", files={"file": ("draft.pdf", data, "application/pdf")})
+    assert r.status_code == 200, r.text
+    page = make_page(owner, "RWF far draft", doc_props(r.json()["doc_id"], name="draft.pdf"))["id"]
+    build = _put(disk / "far" / "main.pdf", data)
+    token = _token()
+    link = _create(owner, kind="file", page=page, path=str(build), remote_url=over_http, token=token["token"],
+                   token_id=token["id"], workspace=far)
+    asked = _recorded(monkeypatch)
+    status = _sync(owner, link["id"])
+    assert status["counts"]["sent"] == 0 and status["annotations"] == {"open": 0}
+    assert f"/api/annotations?scope={page}&state=open" in asked
+    here = build.parent / annotation_files.DIR / "main.pdf"
+    assert json.loads((here / "open.json").read_text(encoding="utf-8"))["scope"] == {
+        "kind": "page", "id": page, "name": "RWF far draft"}
+
+    # the file at rest: a round every REMOTE_POLL_S all the same, which sends nothing and reads them again
+    area = _area(far, page)
+    assert folder_links.due(folder_links.get_link(link["id"])) == "both"
+    assert folder_links.due(folder_links.get_link(link["id"])) == ""         # asked a moment ago
+    status = _sync(owner, link["id"])
+    assert status["counts"]["sent"] == 0 and status["last_error"] == ""
+    [entry] = json.loads((here / "open.json").read_text(encoding="utf-8"))["entries"]
+    assert (entry["id"], entry["file"]) == (area, "main.pdf") and (here / entry["picture"]).is_file()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert not (build.parent / vault_disk.MARKER_DIR).exists() and build.is_file()
 
 
 # --- the remote's own pieces ------------------------------------------------------------------

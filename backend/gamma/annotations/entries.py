@@ -1,28 +1,30 @@
-"""The feedback reader (docs/dev/feedback.md "The entry and the document"):
-the comment threads on a work folder's files as entries an agent can act
-on, each with its file, its place, the source line SyncTeX maps it to (a
-range of a text file names its own lines), a picture of its region and its
-comments.
+"""The annotations reader (docs/dev/annotations.md "The entry and the
+document"): the highlights and comment threads of a page, a folder or the
+library as entries an agent can act on, each with its file, its place, the
+source line SyncTeX maps it to (a range of a text file names its own
+lines), a picture of its region and, for a thread, its comments.
 
 A scope (``resolve_scope``) is a work folder W, a directory below it or one
-of its files. ``entries`` reads the scope's threads (``comments``' readers:
-a file in Recently deleted and an orphaned thread are none) and turns each
-into an entry: its ``kind`` and ``where`` from the place the thread was
-opened on (its root's ``anchor``, gamma/feedback/anchors.py), read against
-the block now; a root from before step 54 holds no anchor and is read from
-its block alone. ``document`` wraps a scope's entries with what an agent
-needs to answer them; gamma/feedback/markdown.py writes it as Markdown, the
-routes (routers/feedback.py), the MCP tools and the files below a vault's
-``.gamma/feedback/`` (gamma/feedback/files.py) serve it. Nothing here
+of its files, a library page, a library folder or the library (``HOME``).
+``entries`` reads the scope's threads (``comments``' readers: a page in
+Recently deleted and an orphaned thread are none) and its highlights that
+have no thread, and turns each into an entry: its ``kind`` and ``where``
+from the place the thread was opened on (its root's ``anchor``,
+gamma/annotations/anchors.py), read against the block now, or for a
+highlight from its block alone, as a root from before step 54 is.
+``document`` wraps a scope's entries with what an agent needs to answer
+them; gamma/annotations/markdown.py writes it as Markdown, the routes
+(routers/annotations.py), the MCP tools and the files on a vault's disk
+(``.gamma/annotations/``, gamma/annotations/files.py) serve it. Nothing here
 writes, and nothing renders: a picture is named by its key
-(gamma/feedback/pictures.py), drawn by whoever serves it.
+(gamma/annotations/pictures.py), drawn by whoever serves it.
 """
 
 import json
 from typing import NamedTuple
 
 from .. import comments, highlights, storage
-from ..blocks_store import load_props
+from ..blocks_store import PATH_SEP, folder_paths, live_pages, load_props, pages_in_folder
 from ..documents.model import file_hash, is_image, page_document
 from ..highlights import COORDS
 from ..work_folders.library import work_folder_of
@@ -31,10 +33,12 @@ from ..work_folders.paths import dir_path, page_path, work_folders_named
 from ..vault.store import in_place
 from . import anchors, pictures
 
-FORMAT = "gamma-feedback-1"
+FORMAT = "gamma-annotations-1"
+HOME = "home"           # the library's scope, as the chat's buckets name it
 MAX_ENTRIES = 500       # entries one document carries; the rest is counted as ``truncated``
 MAX_NOTE = 1000         # characters of a note's text in ``where.note``
 STATES = comments.STATES
+WORK_KINDS = ("work_folder", "folder", "file")  # the scopes of a work folder: what a Send names
 PLACED = ("passage", "area", "ink")         # the kinds that have a page
 REGION = "region"                           # the kind that has a place on a picture
 LINED = ("lines",)                          # the kinds that have lines in a text file
@@ -46,9 +50,11 @@ ANSWER = {"reply": "POST /api/pages/{page_id}/comments {block_id, thread_id, bod
           "resolve": "POST /api/comments/{id}/resolve {resolved: true}",
           "request_state": "POST /api/feedback/requests/{request_id}/state {state, detail}",
           "mcp": ["reply_feedback", "resolve_feedback"]}
+# Until step 3.3 the MCP tools answer a work folder's threads alone: outside one they go unnamed.
+ANSWER_OUTSIDE = {k: v for k, v in ANSWER.items() if k != "mcp"}
 
 
-class FeedbackError(Exception):
+class AnnotationError(Exception):
     """A refusal of the reader or the requests: the HTTP status and the
     words. The routes answer it as an HTTPException, the tools as text."""
 
@@ -58,10 +64,11 @@ class FeedbackError(Exception):
 
 
 class Scope(NamedTuple):
-    kind: str            # "work_folder" | "folder" | "file"
-    id: str              # W, a folder below W, or a file's page id
-    work_folder: str     # W
-    name: str            # W's name, the directory's path in W, or the file's path
+    kind: str            # "work_folder" | "folder" | "file" | "page" | "library_folder" | "home"
+    id: str              # W, a folder below W, a page's id, a library folder's id, or HOME
+    work_folder: str     # W; "" for a library page, a library folder and the library
+    name: str            # W's name, the directory's path in W, the file's path, the page's title,
+                         # the folder's path ("Physics / QEC"), or "" for the library
 
 
 # --- scopes ------------------------------------------------------------------------
@@ -69,10 +76,10 @@ class Scope(NamedTuple):
 def file_path(tree: Tree, props: dict, paths: dict | None = None, *, page_id: str = "", title: str = "") -> str:
     """A file's path in its work folder: ``paths[page_id]`` when given (the
     vault's rows on this computer, ``paths_of``), else the tree's
-    (``work_folders.paths.page_path``)."""
+    (``work_folders.paths.page_path``); a library page's is its title."""
     if paths and page_id in paths:
         return paths[page_id]
-    return page_path(tree, props, title=title)
+    return page_path(tree, props, title=title) or title or "Untitled"
 
 
 def paths_of(rows: dict) -> dict:
@@ -90,81 +97,123 @@ def paths_of(rows: dict) -> dict:
 
 
 def resolve_scope(conn, scope_id: str, tree: Tree | None = None) -> Scope:
-    """What ``scope_id`` names: a work folder's root (``work_folder``), a
-    folder below one (``folder``), or a live page of a work folder (``file``).
-    FeedbackError 404 for no such folder or live page, 400 for a library
-    page or folder."""
+    """What ``scope_id`` names: the library (``HOME``: ``home``), a work
+    folder's root (``work_folder``), a folder below one (``folder``), a live
+    page of a work folder (``file``), a library folder (``library_folder``)
+    or a library page (``page``). AnnotationError 404 for no such folder or
+    live page."""
+    if scope_id == HOME:
+        return Scope("home", HOME, "", "")
     tree = tree or Tree.read(conn)
     if scope_id in tree:
         w = tree.work_of(scope_id)
         if not w:
-            raise FeedbackError(400, "Feedback is for a work folder's files.")
+            return Scope("library_folder", scope_id, "", PATH_SEP.join(folder_paths(conn).get(scope_id, [])))
         if scope_id == w:
             return Scope("work_folder", w, w, tree.names.get(w, ""))
         return Scope("folder", scope_id, w, dir_path(tree, scope_id, w))
     row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
                        (scope_id,)).fetchone() if scope_id else None
     if not row:
-        raise FeedbackError(404, "No folder or page has that id.")
+        raise AnnotationError(404, "No folder or page has that id.")
     props = load_props(row[1])
     w = work_folder_of(props)
-    if not w:
-        raise FeedbackError(400, "Feedback is for a work folder's files.")
-    return Scope("file", scope_id, w, file_path(tree, props, page_id=scope_id, title=row[0] or ""))
+    return Scope("file" if w else "page", scope_id, w, file_path(tree, props, page_id=scope_id, title=row[0] or ""))
+
+
+def work_scope(conn, scope_id: str, tree: Tree | None = None) -> Scope:
+    """``resolve_scope`` for what is a work folder's alone (a Send, a far
+    turn's file): AnnotationError 400 for a library page or folder and the
+    library, 404 as ``resolve_scope``."""
+    scope = resolve_scope(conn, scope_id, tree)
+    if scope.kind not in WORK_KINDS:
+        raise AnnotationError(400, "Feedback is for a work folder's files.")
+    return scope
 
 
 def work_folder_named(conn, name_or_id: str, tree: Tree | None = None) -> Scope:
     """A work folder by its root folder's id, or by its name
     (``work_folders.paths.work_folders_named``: exactly, else ignoring case;
-    exactly one may carry it). FeedbackError 404 for none, 400 for a name
+    exactly one may carry it). AnnotationError 404 for none, 400 for a name
     two carry."""
     tree = tree or Tree.read(conn)
     found = work_folders_named(tree, name_or_id)
     if not found:
-        raise FeedbackError(404, f"No work folder is named {name_or_id!r}.")
+        raise AnnotationError(404, f"No work folder is named {name_or_id!r}.")
     if len(found) > 1:
-        raise FeedbackError(400, f"{len(found)} work folders are named {name_or_id!r}: name one by its id.")
+        raise AnnotationError(400, f"{len(found)} work folders are named {name_or_id!r}: name one by its id.")
     return Scope("work_folder", found[0], found[0], tree.names.get(found[0], ""))
 
 
-# --- which threads -------------------------------------------------------------------
+# --- which threads and highlights ------------------------------------------------------
 
 def _check_state(state) -> None:
     if state not in STATES:
-        raise FeedbackError(400, "state must be open, resolved or all")
+        raise AnnotationError(400, "state must be open, resolved or all")
+
+
+def _page_ids(conn, scope: Scope, tree: Tree) -> list[str]:
+    """The ids of the scope's live pages: the page alone; a work folder's
+    files (one query by the pages' column, ``idx_ub_work_folder``), a
+    directory's those filed below it; a library folder's pages
+    (``pages_in_folder``: filed in it or below, with the pages inside them,
+    a work folder's files below it among them); the library's, every live
+    page."""
+    if scope.kind in ("file", "page"):
+        return [scope.id]
+    if scope.kind == "library_folder":
+        return pages_in_folder(conn, scope.id)
+    if scope.kind == "home":
+        return live_pages(conn)
+    below = tree.subtree(scope.id) if scope.kind == "folder" else None
+    rows = conn.execute("SELECT id, json_extract(properties, '$.folders[0]') FROM unified_blocks "
+                        "WHERE work_folder = ? AND parent_id = 'root'", (scope.work_folder,))
+    return [page_id for page_id, folder in rows if below is None or folder in below]
 
 
 def _pages(conn, page_ids) -> dict:
-    """``{page id: (title, properties)}`` of the live pages among ``page_ids``."""
+    """``{page id: (title, properties)}`` of the live pages among
+    ``page_ids``, each read once."""
     rows = conn.execute("SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root' "
                         "AND id IN (SELECT value FROM json_each(?))", (json.dumps(sorted(set(page_ids))),))
     return {r[0]: (r[1] or "", load_props(r[2])) for r in rows}
 
 
-def _scoped(conn, scope: Scope, state: str, tree: Tree) -> tuple[list[dict], dict]:
-    """The scope's threads (``comments.threads_for``' shape) and their
-    pages, ``{page id: (title, properties)}``."""
-    if scope.kind == "file":
-        threads = comments.threads_for(conn, [scope.id], state=state)
-    else:
-        threads = comments.threads_in_work_folder(conn, scope.work_folder, state=state)
-    pages = _pages(conn, {t["page_id"] for t in threads})
-    if scope.kind == "folder":
-        below = tree.subtree(scope.id)
+class _Scoped(NamedTuple):
+    threads: list        # the threads in the state asked for (``comments.threads_for``' shape), oldest first
+    marks: list          # the highlights without a thread: (block id, page id, created_at, updated_at), oldest first
+    pages: dict          # {page id: (title, properties)}
+    stored: dict         # {thread id: its root's stored anchor}, every thread's of the scope
 
-        def in_scope(props):
-            folders = props.get("folders") if isinstance(props.get("folders"), list) else []
-            return bool(folders) and folders[0] in below
-        pages = {p: v for p, v in pages.items() if in_scope(v[1])}
-    pages = {p: v for p, v in pages.items() if work_folder_of(v[1]) == scope.work_folder}
-    return [t for t in threads if t["page_id"] in pages], pages
+
+def _scoped(conn, scope: Scope, state: str, tree: Tree) -> _Scoped:
+    """The scope's threads in ``state``, its highlights that no thread of
+    any state is placed on (its block, or a block below it: the anchor's
+    ``block``), and their pages. A work folder's scope keeps the pages its
+    work folder is still the one of."""
+    pages = _pages(conn, _page_ids(conn, scope, tree))
+    if scope.kind in WORK_KINDS:
+        pages = {p: v for p, v in pages.items() if work_folder_of(v[1]) == scope.work_folder}
+    every = comments.threads_for(conn, list(pages))
+    stored = dict(conn.execute("SELECT id, anchor FROM comments WHERE id IN (SELECT value FROM json_each(?))",
+                               (json.dumps([t["id"] for t in every]),)).fetchall())
+    placed = set()
+    for t in every:
+        recorded = anchors.parse(stored.get(t["id"]))
+        placed.add(recorded["block"] if recorded else anchors.anchor_of(conn, t["page_id"], t["block_id"])["block"])
+    marks = [tuple(r) for r in conn.execute(
+        "SELECT id, page_id, created_at, updated_at FROM unified_blocks WHERE kind = 'highlight' "
+        "AND page_id IN (SELECT value FROM json_each(?)) ORDER BY created_at, id",
+        (json.dumps(sorted(pages)),)) if r[0] not in placed]
+    threads = [t for t in every if state == "all" or (state == "resolved") == bool(t["resolved_at"])]
+    return _Scoped(threads, marks, pages, stored)
 
 
 def thread_ids(conn, scope: Scope, *, state: str = "open", tree: Tree | None = None) -> list[str]:
     """The ids of the scope's threads in ``state``, oldest first: what a
     Send names when it names none."""
     _check_state(state)
-    return [t["id"] for t in _scoped(conn, scope, state, tree or Tree.read(conn))[0]]
+    return [t["id"] for t in _scoped(conn, scope, state, tree or Tree.read(conn)).threads]
 
 
 # --- the place ---------------------------------------------------------------------
@@ -250,7 +299,11 @@ def _lines_where(pos, source: dict, recorded: dict | None, placed: str, *, kept:
 
 
 class _Item(NamedTuple):
-    thread: dict
+    id: str                # the thread's id, or the highlight's block id
+    page_id: str
+    block_id: str          # the block the thread hangs on, or the highlight
+    at: str                # when the thread was opened, or the highlight made
+    thread: dict | None    # None for a highlight without a thread
     file: str
     kind: str
     where: dict
@@ -263,8 +316,11 @@ class _Item(NamedTuple):
     view: dict | None      # the page's document (page_document)
 
 
-def _item(conn, thread: dict, stored: str | None, title: str, props: dict, tree: Tree, paths) -> _Item:
-    page_id, block_id = thread["page_id"], thread["block_id"]
+def _item(conn, page_id: str, block_id: str, at: str, thread: dict | None, stored: str | None, title: str,
+          props: dict, tree: Tree, paths) -> _Item:
+    """The item of a thread on ``block_id`` (its root's anchor ``stored``),
+    or with no ``thread`` of the highlight ``block_id``, read as a root
+    without an anchor is: from its block now."""
     view = page_document(props)
     current = file_hash(view) or ""
     recorded = anchors.parse(stored)
@@ -313,18 +369,21 @@ def _item(conn, thread: dict, stored: str | None, title: str, props: dict, tree:
             where["placed"] = placed
             if placed == "rough":
                 where["match"] = pos["match"]
-    if kind == "note" or (kind != "file" and block_id != (place or {}).get("block", block_id)):
+    # The note: the text of the block a thread hangs on below its place (or
+    # on no place), and a highlight's own text, what the person wrote on it.
+    if thread is None or kind == "note" or (kind != "file" and block_id != (place or {}).get("block", block_id)):
         row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
         text = (row[0] or "").strip() if row else ""
         if text:
             where["note"] = text[:MAX_NOTE]
-    return _Item(thread, file_path(tree, props, paths, page_id=page_id, title=title), kind, where, place,
+    return _Item(thread["id"] if thread else block_id, page_id, block_id, at, thread,
+                 file_path(tree, props, paths, page_id=page_id, title=title), kind, where, place,
                  recorded or live, bool(recorded), color, current, props, view)
 
 
 def _order(item: _Item) -> tuple:
     """Files by name; in a file the whole file's threads first, then by page,
-    top and left edge, the threads without a page after: a picture's regions
+    top and left edge, the entries without a page after: a picture's regions
     by top and left edge, a text file's ranges by line, then the notes; then
     by when."""
     page = item.where.get("page")
@@ -332,8 +391,7 @@ def _order(item: _Item) -> tuple:
     box = place.get("box")
     left = box[0] if box else min((min(r[0], r[2]) for r in place.get("rects") or ()), default=0.0)
     return (item.file.casefold(), item.file, item.kind != "file", page is None, page or 0, item.kind == "note",
-            item.where.get("line") or 0, anchors.top(place) if place else 0.0, left, item.thread["created_at"],
-            item.thread["id"])
+            item.where.get("line") or 0, anchors.top(place) if place else 0.0, left, item.at, item.id)
 
 
 # --- the entry -----------------------------------------------------------------------
@@ -356,7 +414,7 @@ def _source(ws, conn, item: _Item, live_sources: bool) -> dict | None:
             and place["doc_id"] == item.current):
         from . import sources  # local: it reaches the vaults (folder_links), loaded where a source is asked for
 
-        found = sources.source_for(ws, conn, item.thread["page_id"], item.props,
+        found = sources.source_for(ws, conn, item.page_id, item.props,
                                    {"kind": item.kind, "page": place["page"], "rects": place["rects"]})
         if found:
             return {**_source_fields(found), "version": "current"}
@@ -378,7 +436,7 @@ def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[
     the current file (a region of a picture, which stays where it was on a
     new version, and the whole picture for a thread on its page, always),
     and as it was commented on, while that earlier file is stored; each
-    ``img/<key>.jpg`` (gamma/feedback/pictures.py), ``regions`` gaining
+    ``img/<key>.jpg`` (gamma/annotations/pictures.py), ``regions`` gaining
     ``{key: (page id, Region)}``. ``memo`` is the pass's, which reads each
     page's marks once."""
     if item.kind in PLACED and item.place:
@@ -387,7 +445,7 @@ def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[
         on_this_build = True
     else:
         return None, None
-    page_id = item.thread["page_id"]
+    page_id = item.page_id
 
     def named(region):
         if region is None:
@@ -409,14 +467,19 @@ def _pictures(ws, conn, item: _Item, regions: dict | None, memo: dict) -> tuple[
 
 def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions: dict | None, memo: dict,
            places: bool = False) -> dict:
+    """The item's entry: a thread's with its state, its Send and its
+    comments; a highlight's with neither state nor Send and no comments."""
     thread, view = item.thread, item.view
     picture, before = _pictures(ws, conn, item, regions, memo)
-    out = {"id": thread["id"], "file": item.file, "format": view["format"] if view else "markdown",
-           "page_id": thread["page_id"], "block_id": thread["block_id"], "kind": item.kind, "where": item.where,
-           "source": _source(ws, conn, item, live_sources), "picture": picture, "before": before,
-           "state": "resolved" if thread["resolved_at"] else "open", "sent": _sent(thread.get("sent")),
-           "link": f"{link_base}?ws={ws}&page={thread['page_id']}&block={thread['block_id']}&thread={thread['id']}",
-           "comments": [_comment(c) for c in thread["comments"]]}
+    link = f"{link_base}?ws={ws}&page={item.page_id}&block={item.block_id}"
+    out = {"id": item.id, "type": "thread" if thread else "highlight", "file": item.file,
+           "format": view["format"] if view else "markdown", "page_id": item.page_id, "block_id": item.block_id,
+           "kind": item.kind, "where": item.where, "source": _source(ws, conn, item, live_sources),
+           "picture": picture, "before": before,
+           "state": ("resolved" if thread["resolved_at"] else "open") if thread else None,
+           "sent": _sent(thread.get("sent")) if thread else None,
+           "link": f"{link}&thread={item.id}" if thread else link,
+           "comments": [_comment(c) for c in thread["comments"]] if thread else []}
     if places and item.kind in PLACED and item.place:
         place = item.place
         out["place"] = {"page": place.get("page"), "box": place.get("box"), "rects": place.get("rects") or [],
@@ -443,86 +506,109 @@ def _sent(sent: dict | None) -> dict | None:
     return out
 
 
-def _entries(ws, conn, scope: Scope, *, state: str, paths, link_base: str, sources: bool, threads=None,
+def _entries(ws, conn, scope: Scope, *, state: str, paths, link_base: str, sources: bool, ids=None,
              regions: dict | None = None, limit: int | None = None, tree: Tree | None = None,
-             places: bool = False) -> tuple[list[dict], int, list[dict]]:
-    """The scope's entries in their order, the first ``limit`` of them, with
-    how many there were and the threads they were made of."""
+             places: bool = False) -> tuple[list[dict], int, list[str], int]:
+    """The scope's entries in their order, at most ``limit`` of them (the
+    threads take the cap first, then the highlights), with how many there
+    were, when each of those kept last changed (a thread's newest activity,
+    a highlight's write) and how many threads were cut."""
     _check_state(state)
     tree = tree or Tree.read(conn)
-    found, pages = _scoped(conn, scope, state, tree)
-    if threads is not None:
-        wanted = set(threads)
-        found = [t for t in found if t["id"] in wanted]
-    stored = dict(conn.execute("SELECT id, anchor FROM comments WHERE id IN (SELECT value FROM json_each(?))",
-                               (json.dumps([t["id"] for t in found]),)).fetchall())
-    items = sorted((_item(conn, t, stored.get(t["id"]), *pages[t["page_id"]], tree, paths) for t in found),
-                   key=_order)
-    kept = items if limit is None else items[:limit]
+    found = _scoped(conn, scope, state, tree)
+    threads, marks = found.threads, found.marks
+    if ids is not None:
+        wanted = set(ids)
+        threads = [t for t in threads if t["id"] in wanted]
+        marks = [m for m in marks if m[0] in wanted]
+    items = [_item(conn, t["page_id"], t["block_id"], t["created_at"], t, found.stored.get(t["id"]),
+                   *found.pages[t["page_id"]], tree, paths) for t in threads]
+    changed = {}
+    for block_id, page_id, at, updated in marks:
+        item = _item(conn, page_id, block_id, at, None, None, *found.pages[page_id], tree, paths)
+        if item.place:  # a highlight whose position does not read has no place to name
+            items.append(item)
+            changed[block_id] = updated
+    items.sort(key=_order)
+    if limit is None:
+        kept = items
+    else:
+        kept = sorted(items, key=lambda i: i.thread is None)[:limit]  # threads take the cap first
+        kept.sort(key=_order)
     memo: dict = {}
     out = [_entry(ws, conn, item, link_base=link_base, live_sources=sources, regions=regions, memo=memo,
                   places=places) for item in kept]
-    return out, len(items), [item.thread for item in kept]
+    cut = sum(1 for i in items if i.thread) - sum(1 for i in kept if i.thread)
+    return out, len(items), [item.thread["last_at"] if item.thread else changed[item.id] for item in kept], cut
 
 
 def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None = None, link_base: str = "",
-            sources: bool = True, threads=None, regions: dict | None = None, places: bool = False) -> list[dict]:
-    """The entries of the scope's threads in ``state`` (open, resolved or
-    all), in the document's order (files by name; in a file the whole
-    file's threads, then by page and place, a picture's regions, the notes
-    last). ``paths``:
-    ``{page id: path}`` (``paths_of``) for the files' names; ``link_base``
-    goes before each thread's link (MCP's absolute base; "" for a link
-    that is its query alone); ``sources`` false leaves the live SyncTeX
-    lookup out (the recorded source stays); ``threads``: only those ids;
-    ``regions`` gains ``{key: (page id, Region)}`` for each picture named,
-    for whoever draws them (``pictures.cached``); ``places``: an entry on a
-    PDF page (a passage, an area, ink) gains ``place: {page, box, rects,
-    doc_id}``, its place now as its anchor has it (the rects fractions of
-    the page, ``doc_id`` the file they were measured on), for a computer
-    that finds its source line itself (gamma/routers/computers.py).
-    FeedbackError 400 for another state."""
+            sources: bool = True, ids=None, regions: dict | None = None, places: bool = False) -> list[dict]:
+    """The entries of the scope: its threads in ``state`` (open, resolved
+    or all) and its highlights without a thread, whatever ``state``, in the
+    document's order (files by name; in a file the whole file's threads,
+    then by page and place, a picture's regions, the notes last).
+    ``paths``: ``{page id: path}`` (``paths_of``) for the files' names;
+    ``link_base`` goes before each entry's link (MCP's absolute base; ""
+    for a link that is its query alone); ``sources`` false leaves the live
+    SyncTeX lookup out (the recorded source stays); ``ids``: only those
+    entries (threads' ids, highlights' block ids); ``regions`` gains
+    ``{key: (page id, Region)}`` for each picture named, for whoever draws
+    them (``pictures.cached``); ``places``: an entry on a PDF page (a
+    passage, an area, ink) gains ``place: {page, box, rects, doc_id}``, its
+    place now as its anchor has it (the rects fractions of the page,
+    ``doc_id`` the file they were measured on), for a computer that finds
+    its source line itself (gamma/routers/computers.py). AnnotationError
+    400 for another state."""
     return _entries(ws, conn, scope, state=state, paths=paths, link_base=link_base, sources=sources,
-                    threads=threads, regions=regions, places=places)[0]
+                    ids=ids, regions=regions, places=places)[0]
 
 
 def document(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None = None, owner: str = "",
              link_base: str = "", sources: bool = True, regions: dict | None = None) -> dict:
-    """The scope's feedback as one document (``FORMAT``): its work folder
-    and scope, ``owner`` (the username of the account it is written for:
-    whose comments are the requests), ``updated_at`` (the newest activity
-    among its threads, so an unchanged document reads byte for byte the
-    same), how to answer, and at most ``MAX_ENTRIES`` entries, ``truncated``
-    saying how many more there were."""
+    """The scope's annotations as one document (``FORMAT``): its work
+    folder (None outside one) and scope, ``owner`` (the username of the
+    account it is written for: whose comments are the requests),
+    ``updated_at`` (the newest change among its entries, so an unchanged
+    document reads byte for byte the same), how to answer, and at most
+    ``MAX_ENTRIES`` entries, the threads first: ``truncated`` says how many
+    more there were, ``truncated_threads`` how many of those were threads."""
     tree = Tree.read(conn)
-    out, total, threads = _entries(ws, conn, scope, state=state, paths=paths, link_base=link_base,
+    out, total, changed, cut = _entries(ws, conn, scope, state=state, paths=paths, link_base=link_base,
                                    sources=sources, regions=regions, limit=MAX_ENTRIES, tree=tree)
-    doc = {"format": FORMAT, "workspace": ws,
-           "work_folder": {"id": scope.work_folder, "name": tree.names.get(scope.work_folder, "")},
+    w = scope.work_folder
+    doc = {"format": FORMAT, "workspace": ws, "work_folder": {"id": w, "name": tree.names.get(w, "")} if w else None,
            "scope": {"kind": scope.kind, "id": scope.id, "name": scope.name}, "owner": owner, "state": state,
-           "updated_at": max((t["last_at"] for t in threads), default=None), "count": len(out)}
+           "updated_at": max(changed, default=None), "count": len(out)}
     if total > len(out):
         doc["truncated"] = total - len(out)
-    doc["answer"] = ANSWER
+    if cut:
+        doc["truncated_threads"] = cut
+    doc["answer"] = ANSWER if w else ANSWER_OUTSIDE
     doc["entries"] = out
     return doc
 
 
-def entry(ws, conn, thread_id: str, *, paths: dict | None = None, link_base: str = "", sources: bool = True,
+def entry(ws, conn, entry_id: str, *, paths: dict | None = None, link_base: str = "", sources: bool = True,
           regions: dict | None = None) -> dict | None:
-    """One thread's entry, in any state; None when it is hidden (orphaned,
-    gone) or not on a live file of a work folder."""
-    thread = comments.thread_of(conn, thread_id)
-    if thread is None:
-        return None
+    """One entry by its id: a thread's in any state, or a highlight's that
+    has no thread (one that has is read by its thread's id); None when it
+    is hidden (orphaned, gone) or on no live page."""
+    thread = comments.thread_of(conn, entry_id)
+    if thread is not None:
+        page_id = thread["page_id"]
+    else:
+        row = conn.execute("SELECT page_id FROM unified_blocks WHERE id = ? AND kind = 'highlight'",
+                           (entry_id,)).fetchone()
+        if row is None:
+            return None
+        page_id = row[0]
     try:
-        scope = resolve_scope(conn, thread["page_id"])
-    except FeedbackError:
-        return None
-    if scope.kind != "file":
+        scope = resolve_scope(conn, page_id)
+    except AnnotationError:
         return None
     found = entries(ws, conn, scope, state="all", paths=paths, link_base=link_base, sources=sources,
-                    threads=[thread_id], regions=regions)
+                    ids=[entry_id], regions=regions)
     return found[0] if found else None
 
 
@@ -531,10 +617,10 @@ def key_of(picture: str | None) -> str:
     return picture.rsplit("/", 1)[-1].removesuffix(".jpg") if picture else ""
 
 
-def picture_url(thread_id: str, at: str, picture: str | None) -> str | None:
+def picture_url(entry_id: str, at: str, picture: str | None) -> str | None:
     """The route that serves an entry's picture (``at`` now or before),
     named by its key (``v``, which only busts a browser's cache)."""
-    return f"/api/feedback/threads/{thread_id}/picture?at={at}&v={key_of(picture)}" if picture else None
+    return f"/api/annotations/{entry_id}/picture?at={at}&v={key_of(picture)}" if picture else None
 
 
 def with_urls(entry: dict, base: str = "") -> dict:

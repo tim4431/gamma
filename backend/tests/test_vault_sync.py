@@ -27,7 +27,7 @@ from gamma.vault import disk as vault_disk, kinds, local_remote, merge as vault_
 from gamma.vault import sync as vault_sync
 from gamma.blocks_store import LABELS, block_kind, new_block_id, newest_change_seq, write_lock
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
-from gamma.feedback import kept
+from gamma.annotations import kept
 from gamma.ops import commit_ops, move_across_pages, restore_page, trash_page
 from gamma.routers import pages as pages_mod
 from gamma.routers.pages import replace_attachment
@@ -616,7 +616,7 @@ def test_a_pdf_is_a_page_reading_it_in_place_with_the_note_of_its_stem(vault):
 
 def test_a_pdf_with_an_open_thread_has_each_version_stored_as_it_comes(vault, owner, monkeypatch):
     """A comment thread on a vault's PDF keeps the bytes it shows stored
-    (gamma/feedback/kept.py): stored at its open, every new file stored by
+    (gamma/annotations/kept.py): stored at its open, every new file stored by
     the round as it comes, read in place all the same; once resolved, the
     next is read in place alone."""
     monkeypatch.setattr(comments, "write_listeners", [kept.after_comment])

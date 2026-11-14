@@ -144,8 +144,8 @@ export function runningLabel(step, titleOf = () => "") {
       return page ? t("Reading notes of “{title}”…", { title: page }) : t("Reading notes…");
     }
     case "read_chats": return title ? t("Reading the chat about “{title}”…", { title }) : t("Reading chats…");
-    case "list_feedback": return t("Listing the feedback…");
-    case "read_feedback": return t("Reading a feedback item…");
+    case "list_annotations": return t("Listing the highlights and comments…");
+    case "read_annotation": return t("Reading a highlight or comment…");
     case "view_pdf_page": return t("Looking at PDF page {page}…", { page: args.pdf_page || "?" });
     case "view_ink": return t("Looking at handwriting…");
     case "view_image": return t("Looking at a note's pictures…");

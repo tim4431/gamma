@@ -12,7 +12,7 @@ Codex does not invoke Gamma's AI provider.
 | File | Owns |
 |---|---|
 | `gamma/mcp_server.py`, `gamma/mcp_lazy.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export, a feedback connection's answering tools; `mcp_lazy.py` authenticates the request and loads the SDK adapter on first use |
-| `gamma/feedback/agent.py` | `reply_feedback` and `resolve_feedback`: their schemas and executors ([feedback.md](feedback.md)) |
+| `gamma/annotations/agent.py` | `reply_feedback` and `resolve_feedback`: their schemas and executors ([annotations.md](annotations.md)) |
 | `gamma/mcp_oauth.py`, `gamma/mcp_oauth_provider.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base`; the provider issues the 90-day token through `integrations.create_token` |
 | `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspaces; which of them holds an id (`holders`: a block, a comment thread, a Send request) |
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
@@ -242,8 +242,8 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `read_page` | The pages it is inside and the pages inside it, notes, highlights, open comment threads, properties, and the document's text in windows: a PDF's by page, a text file's numbered lines by `from_line` / `to_line`; a work folder's file named by its `path` too |
 | `read_block` | One block/subtree or a page's nested note outline |
 | `read_chats` | The AI chat kept with a page or folder: the current conversation as a transcript, earlier ones by `chat_id` |
-| `list_feedback` | The feedback: the comment threads on a work folder's files (a work folder by name or id, a directory, a file; every work folder without one), each with its file, place, source line and comments, as Markdown, in batches (`limit`, `after`); a Send request's threads (`request`) |
-| `read_feedback` | One feedback item in any state, as Markdown and as JSON, with the pictures of its region now and as it was commented on |
+| `list_annotations` | The highlights and comment threads of a page, a folder or the library (a page's or a folder's id, a folder's path, a work folder by name, `home`; the library without one), each with its file, place, source line, note and a thread's comments, as Markdown, in batches (`limit`, `after`); a Send request's threads (`request`) |
+| `read_annotation` | One annotation, a thread in any state or a bare highlight (`id`), as Markdown and as JSON, with the pictures of its region now and as it was commented on |
 | `view_pdf_page` | One PDF page as an image (a scan, a figure, a table's layout) |
 | `view_ink` | The user's handwriting as an image: a group's strokes on their PDF page or sheet of paper, or a whole page with all its handwriting |
 | `view_image` | The pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all or one by index |
@@ -269,7 +269,7 @@ permissions (Settings → AI → Tool usage) do not govern this connection: the
 token is its own grant, created, changed and revoked in Integrations.
 `list_workspaces`, `read_gamma_link`, `export_page` and the two answering
 tools exist only here.
-`view_pdf_page`'s, `view_ink`'s, `view_image`'s and `read_feedback`'s pictures
+`view_pdf_page`'s, `view_ink`'s, `view_image`'s and `read_annotation`'s pictures
 go out as MCP `image` items, which the client shows the model as images.
 
 ### Several workspaces
@@ -280,17 +280,19 @@ default. Every tool but `list_workspaces` and `read_gamma_link` takes an
 optional `workspace`, an id or a name (`mcp_server._targets`). Without one:
 
 - a call naming a block by id (`page_id`, `block_id`, `parent`, `after`,
-  `folder`, `page_ids`, `list_feedback`'s `scope`), a comment thread
-  (`thread_id`, `list_feedback`'s `after`) or a Send request
-  (`list_feedback`'s `request`) reads the workspace holding it
-  (`mcp_links.holders`: a thread by its root's id, a hidden one held by
-  none); ids in two workspaces are refused with their names, asking for
-  `workspace`;
-- `search_library`, `list_folders` without a `folder`, and `list_feedback`
-  without a `scope`, a `request` or an `after`, read every workspace, one
-  section each, headed by its name and id with its link shapes;
-- anything else reads the default workspace (a work folder `list_feedback`
-  names by its name, too).
+  `folder`, `page_ids`, `list_annotations`' `scope`), a comment thread
+  (`thread_id`), an annotation (`list_annotations`' `after` and
+  `read_annotation`'s `id`, a thread's or a highlight's block id:
+  `ANNOTATION_ARGS`) or a Send request (`list_annotations`' `request`)
+  reads the workspace holding it (`mcp_links.holders`: a thread by its
+  root's id, a hidden one held by none); ids in two workspaces are refused
+  with their names, asking for `workspace`;
+- `search_library`, `list_folders` without a `folder`, and
+  `list_annotations` without a `scope`, a `request` or an `after`, read
+  every workspace (the library of each), one section each, headed by its
+  name and id with its link shapes;
+- anything else reads the default workspace (a work folder or a folder
+  path `list_annotations` names, `home` too).
 
 With more than one workspace, a single-workspace result starts with the
 workspace's name and id, and its `structuredContent` carries `workspace_id`.
@@ -372,7 +374,7 @@ off by default (a page with none inside exports as without it):
 - `notes_pdf`: the notes typeset as their own PDF, for any page; with
   `sub_pages`, one PDF of every page, each on a fresh sheet.
 
-A secrets file's text is kept from the model (`feedback.anchors.text_kept`),
+A secrets file's text is kept from the model (`annotations.anchors.text_kept`),
 so its ranges' quotes are too: `markdown` leaves out the highlights of such a
 page and the result's text says so; `notes_pdf` leaves out every highlight
 when the export holds one.
@@ -435,8 +437,9 @@ a page, folder or topic without a URL.
 ### Answering feedback
 
 The comment threads on a work folder's files are the user's feedback
-([feedback.md](feedback.md)): `list_feedback` and `read_feedback` read them
-on any connection, as the chat does. Answering them is the `feedback` token
+([annotations.md](annotations.md)): `list_annotations` and `read_annotation`
+read them, with every other page's highlights and threads, on any
+connection, as the chat does. Answering them is the `feedback` token
 scope (`integrations.SCOPES`): everything `read` may, plus a reply in and the
 resolve of such a thread, and setting a Send request's state over the HTTP
 API. A manual token gets the scope in the Tokens pane (**Read and answer
@@ -446,7 +449,7 @@ API as before and is read-only on MCP, as it always was. A setup command's
 sign-in gets it from the same checkbox.
 
 - **Two tools of the adapter's own**, `reply_feedback` and `resolve_feedback`
-  (`gamma/feedback/agent.py`: their schemas, descriptions and executors;
+  (`gamma/annotations/agent.py`: their schemas, descriptions and executors;
   `mcp_server.ANSWERING_TOOLS`). They are no entries of the chat registry,
   so the chat never answers threads and the MCP scope keeps `can_write:
   False`. `reply_feedback(thread_id, body, id?)` writes one reply (`id`, the
@@ -469,7 +472,7 @@ sign-in gets it from the same checkbox.
   file of a work folder (a library page's thread is not feedback). Then it
   writes through `comments.create` / `comments.resolve` as the comment API
   does, author the connection's account, and `comments.written` tells the
-  page's room, the Inbox and the feedback files. The answer names the file
+  page's room, the Inbox and the annotation files. The answer names the file
   and the place (`anchors.place_words`; a range of a text file by the lines
   it holds now, `anchors.following`), links the thread (`gamma_link(thread_id=)`, the address the
   Inbox opens) and carries `{thread_id, comment_id?, page_id, url}` as
@@ -490,7 +493,7 @@ sign-in gets it from the same checkbox.
 
 The plugin skill's "Feedback on a work folder" section (`plugins/gamma/skills/gamma/SKILL.md`)
 tells the agent the loop: find the items (the repository's
-`.gamma/feedback/open.md`, or `list_feedback`), read each with its source
+`.gamma/annotations/open.md`, or `list_annotations`), read each with its source
 line, change the sources and rebuild, reply with what changed and resolve
 what is done, act on the owner's comments and ask about anyone else's, and
 without the answering tools say so in the terminal.
@@ -674,7 +677,7 @@ manual tokens in **Integrations**, where users can revoke them.
 
 ## Permissions and credentials
 
-- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads), `feedback` (everything `read` may, plus replying to and resolving the comment threads on a work folder's files and setting a Send request's state, [feedback.md](feedback.md); a viewer may make one, since viewers comment) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers); a fourth, `computer`, is a computer's channel to the server ([computers.md](computers.md)), which opens nothing else and no MCP connection; a fifth, `turn`, is the token of one turn of an agent on this computer ("The token of an agent's turn" below), which opens MCP alone. A read or feedback token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes": `''`, `'*'` or a list), only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included); a `feedback` token the same, but for its answers (`auth.require_commenter`'s `answer`), which it gives in its own workspace alone, whatever else its MCP connection reads. `POST /api/ai/chat` through either arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
+- An integration token belongs to one workspace, its `workspace_id`: `read` (the default; the MCP endpoint and the HTTP API's reads), `feedback` (everything `read` may, plus replying to and resolving the comment threads on a work folder's files and setting a Send request's state, [annotations.md](annotations.md); a viewer may make one, since viewers comment) or `write` (a mirror's push credential, [mirror.md](mirror.md); refused to viewers); a fourth, `computer`, is a computer's channel to the server ([computers.md](computers.md)), which opens nothing else and no MCP connection; a fifth, `turn`, is the token of one turn of an agent on this computer ("The token of an agent's turn" below), which opens MCP alone. A read or feedback token's MCP connection may read more, its `workspaces` (`integrations.grant`): `''` for its own workspace alone (every token from before step 51), `'*'` for every workspace the account can open, now and later, or a JSON list of ids, its own first; and of those, the ones whose notes it may also edit, its `edits` (`integrations.edit_grant`, "Editing notes": `''`, `'*'` or a list), only where the account edits. A write token is always its workspace alone. On the HTTP API a manual token is a bearer credential — the account behind it, confined to its own workspace whatever it grants MCP, never an admin, and refused (403) by every account-level endpoint — AI provider entries, preferences, AI usage, the workspace list, backups, tokens — whatever its scope ([api.md](api.md) "Integrations"). A `read` token writes nothing there: every write endpoint answers 403 "this token is read-only" (chats and cover snapshots included); a `feedback` token the same, but for its answers (`auth.require_commenter`'s `answer`), which it gives in its own workspace alone, whatever else its MCP connection reads. `POST /api/ai/chat` through either arms the reading tools only (`auth.can_write`), so its agent cannot rename, move or edit either. On MCP, a tool's `workspace` argument reaches only the connection's workspaces; on the HTTP API,
   `?ws=` and `X-Gamma-Workspace` cannot select another workspace.
 - Only token SHA-256 hashes are stored in `users.db`. Tokens contain 256 random bits.
 - HTTP share URLs also stay within the integration token's workspace and
@@ -951,10 +954,13 @@ connection even right after a feedback one listed them, a reply with its
 stamp, the room and the Inbox told, a retried id written once, a resolve
 repeated idempotently and never a reopen, a library page's thread and a
 read-only server refused), and a thread id finding its workspace on a
-connection of two, or refused when both hold it. `test_feedback_tools.py`
-covers `list_feedback` and `read_feedback` in the chat's scopes (a section per
-work folder, a directory, a file, a name, a Send request, batches, a page
-chat, a library page, the item's JSON and pictures); `test_mcp_links.py`
+connection of two, or refused when both hold it, and a bare highlight's
+id, a library page and a library folder read through `/mcp`.
+`test_annotations_tools.py` covers `list_annotations` and `read_annotation`
+in the chat's scopes (the library, a work folder, a directory, a file, a
+name, a library folder by id or path, a library page and its bare
+highlight, a Send request, batches, a page chat, the reach refused, the
+item's JSON and pictures, the old names replayed); `test_mcp_links.py`
 `holders` by thread and request. `test_token_api.py` covers the Tokens
 pane's `feedback` scope (a viewer's, several workspaces, all of them, its
 PATCH) and the token's HTTP reads kept to its first workspace.

@@ -8,7 +8,7 @@
 // (ListMotion): a thread that comes rises into place, and one with a new
 // reply glides to the top as the others make room. The bell in its header
 // is the page's Notify me, and on a work folder's file Feedback opens the
-// feedback view (docs/dev/feedback.md).
+// feedback view (docs/dev/annotations.md).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ListMotion from "../shared/ui/ListMotion";
 import { StateTag } from "../shared/ui/StateTag";

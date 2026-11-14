@@ -1990,7 +1990,7 @@ def _v54_comment_agents(ws: str, pages: sqlite3.Connection, data) -> None:
     """``comments`` gains ``agent``, ``agent_id`` and ``resolved_agent`` (the
     integration token that wrote a comment or resolved a thread, ``''`` on
     every comment so far) and ``anchor`` (the place a thread was opened on,
-    gamma/feedback/anchors.py), each added where ``_columns()`` lacks it, in
+    gamma/annotations/anchors.py), each added where ``_columns()`` lacks it, in
     that order. No anchor is filled in: a thread from before the step reads
     its place from its block. Nothing is stamped or touched, and the format
     stays: comments never leave the workspace's own copy (``LOCAL_STEPS``).

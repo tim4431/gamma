@@ -83,7 +83,7 @@ def _links(c) -> dict:
 
 
 def _feedback(c, scope) -> dict:
-    r = c.get("/api/feedback", params={"scope": scope})
+    r = c.get("/api/annotations", params={"scope": scope})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -344,7 +344,7 @@ def test_the_feedback_dialog_reads_the_persons_agent(lab, disk, monkeypatch):
     _patch(lab.owner, f.id, paused=False)
 
     # never in the Markdown, nor on a server that runs no agents
-    r = lab.owner.get("/api/feedback", params={"scope": f.w, "format": "md"})
+    r = lab.owner.get("/api/annotations", params={"scope": f.w, "format": "md"})
     assert r.status_code == 200 and "Codex" not in r.text
     monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")
     assert "agent" not in _feedback(lab.owner, f.w) and "agents_found" not in _feedback(lab.owner, f.w)

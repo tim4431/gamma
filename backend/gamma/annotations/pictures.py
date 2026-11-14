@@ -1,8 +1,8 @@
-"""The picture of a feedback thread's region (docs/dev/feedback.md "The
-pictures"): the passage, area or handwriting a thread hangs on, cut out of
-its PDF page as the page shows it; the region of a picture a thread hangs
-on, cut out of the picture; the whole picture for a thread on a picture's
-page.
+"""The picture of a highlight's or a comment thread's region
+(docs/dev/annotations.md "The pictures"): the passage, area or handwriting
+a thread or a highlight is on, cut out of its PDF page as the page shows
+it; the region of a picture, cut out of the picture; the whole picture for
+a thread on a picture's page.
 
 ``now`` is the region as the person sees it now: the page's current file
 with its pictures, text boxes and handwriting stamped in
@@ -15,7 +15,7 @@ region's box with the page's regions drawn (``ai_pictures.image_region``),
 whatever version the region was drawn on, since a region stays where it
 was on a new version. ``made`` is the region as it was commented on: the
 version the thread was opened on (held while it is open,
-gamma/feedback/kept.py), its page with the pictures, text boxes and
+gamma/annotations/kept.py), its page with the pictures, text boxes and
 handwriting as they are (page coordinates do not move) and the thread's
 own rectangles alone, in its colour; on a picture, that version cut at the
 box with the thread's own region drawn. A note on its own has no picture,
@@ -25,7 +25,7 @@ A region is ``(file, page, box, drawn)``: ``file`` the stored file it is
 cut from (``<hash><ext>``: a PDF, or the picture itself), ``page`` its
 1-based PDF page (0 for a picture), ``box`` the crop (fractions of the page
 or the picture as shown, top-left origin, the anchor's:
-gamma/feedback/anchors.py) and ``drawn`` what is drawn on it: each
+gamma/annotations/anchors.py) and ``drawn`` what is drawn on it: each
 highlight by its id, colour, kind, style and rectangles, each ink group by
 its content-addressed file, each picture and text box by its place and
 content, the embedded originals they replace; on a picture, each region by
@@ -34,9 +34,9 @@ its id, colour, rectangle and whether it was drawn on this version. So
 mark moved on that page another, a mark on another page none. The picture
 is ``pdf_text.render_page``'s JPEG (the longer side ``RENDER_MAX_SIDE``, a
 zoom of at most 4, quality 85), never re-encoded and never an upload:
-``cached`` keeps it in data.db ``feedback_pictures`` by key, at most
+``cached`` keeps it in data.db ``annotation_pictures`` by key, at most
 ``CACHE_BYTES`` in all, the oldest going first; in a work folder its file
-``.gamma/feedback/img/<key>.jpg`` is the cache too (gamma/feedback/files.py).
+``.gamma/annotations/img/<key>.jpg`` is the cache too (gamma/annotations/files.py).
 One page's PDF is built once per ``(file, page, drawn)`` and cut for each
 thread on it.
 """
@@ -175,11 +175,11 @@ def render(ws: str, conn, page_id: str, region: Region) -> bytes | None:
 
 
 def cached(ws: str, conn, page_id: str, region: Region) -> bytes | None:
-    """``render``'s picture through data.db ``feedback_pictures``: read by
+    """``render``'s picture through data.db ``annotation_pictures``: read by
     its key, else drawn and kept (``_put``)."""
     name = key(region)
     with connect_data_db(ws) as db:
-        row = db.execute("SELECT data FROM feedback_pictures WHERE key = ?", (name,)).fetchone()
+        row = db.execute("SELECT data FROM annotation_pictures WHERE key = ?", (name,)).fetchone()
     if row:
         return bytes(row[0])
     data = render(ws, conn, page_id, region)
@@ -197,7 +197,7 @@ def _put(ws: str, name: str, data: bytes) -> None:
     with connect_data_db(ws) as db:
         db.execute("BEGIN IMMEDIATE")
         try:
-            rows = db.execute("SELECT key, bytes FROM feedback_pictures WHERE key != ? ORDER BY at, key",
+            rows = db.execute("SELECT key, bytes FROM annotation_pictures WHERE key != ? ORDER BY at, key",
                               (name,)).fetchall()
             over = sum(size for _, size in rows) + len(data) - CACHE_BYTES
             gone = []
@@ -206,8 +206,8 @@ def _put(ws: str, name: str, data: bytes) -> None:
                     break
                 gone.append(old)
                 over -= size
-            db.executemany("DELETE FROM feedback_pictures WHERE key = ?", [(old,) for old in gone])
-            db.execute("INSERT OR REPLACE INTO feedback_pictures (key, data, bytes, at) VALUES (?, ?, ?, ?)",
+            db.executemany("DELETE FROM annotation_pictures WHERE key = ?", [(old,) for old in gone])
+            db.execute("INSERT OR REPLACE INTO annotation_pictures (key, data, bytes, at) VALUES (?, ?, ?, ?)",
                        (name, data, len(data), page_now()))
             db.commit()
         except BaseException:

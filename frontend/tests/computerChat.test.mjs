@@ -424,7 +424,7 @@ test("the transcript's shape: a turn done, with its steps as plain chips, its mo
   assert.deepEqual(stepChip({ kind: "search" }), { kind: "search", summary: "Searched the sources" });
   // A call of Gamma's tools is the kind Gamma AI's call of that tool is: the pill counts it as a read.
   const reads = [{ kind: "gamma", tool: "read_page", status: "completed" }, { kind: "gamma", tool: "list_pages", status: "completed" },
-    { kind: "gamma", tool: "view_pdf_page", status: "failed" }, { kind: "gamma", tool: "read_feedback" }].map(stepChip);
+    { kind: "gamma", tool: "view_pdf_page", status: "failed" }, { kind: "gamma", tool: "read_annotation" }].map(stepChip);
   assert.deepEqual(reads.map((c) => c.kind), ["read", "list", "view", "read"]);
   assert.deepEqual(reads[2], { kind: "view", summary: "Read Gamma: view_pdf_page", error: true });
   assert.equal(splitActions(reads).failed, 1);

@@ -1,16 +1,18 @@
-"""What keeps feedback current (docs/dev/feedback.md "What keeps it
-current"): two listeners, registered by ``register`` (app.create_app calls
+"""What keeps the annotation files and the requests current
+(docs/dev/annotations.md "What keeps it current"): two listeners, registered by ``register`` (app.create_app calls
 it, so every server process has them).
 
 - On every committed comment write (``comments.write_listeners``): the
-  page's work folder's files are due (gamma/feedback/files.py), the
+  files of the page's work folder, or of the vault of one file that
+  follows it, are due (gamma/annotations/files.py), the
   requests waiting on the thread hear a reply or a resolve
-  (gamma/feedback/requests.py ``answered``), and the commented version is
-  kept or released (gamma/feedback/kept.py).
+  (gamma/annotations/requests.py ``answered``), and the commented version is
+  kept or released (gamma/annotations/kept.py).
 - On every committed op batch (``ops.commit_listeners``): the page's files
   are due, whoever wrote it, a vault included: a relocation, a trash or a
-  restore and an orphaning delete move an entry. Nothing is read here; the
-  writer resolves the marked pages to their work folders.
+  restore and an orphaning delete move an entry, and a highlight made or
+  changed is one. Nothing is read here; the writer resolves the marked
+  pages to their work folders and followed files.
 
 Each part runs on its own, its module loaded when it is first asked for,
 so one that fails or is missing never stops the others, and none of them
@@ -30,7 +32,7 @@ def _on_comment(ws: str, event: dict) -> None:
 
             files.mark(ws, page_id)
         except Exception as e:  # noqa: BLE001 — each part on its own
-            log.warning(f"[feedback] marking page {page_id} of workspace {ws}: {e}")
+            log.warning(f"[annotations] marking page {page_id} of workspace {ws}: {e}")
     try:
         from . import requests
 

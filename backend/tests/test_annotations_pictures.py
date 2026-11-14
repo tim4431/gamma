@@ -1,4 +1,4 @@
-"""The region pictures of feedback threads (gamma/feedback/pictures.py):
+"""The region pictures of feedback threads (gamma/annotations/pictures.py):
 what the picture now draws (the page's own highlights measured on its file,
 not a lost one, one still placed in another file, a link region or one the
 file embeds; its handwriting), its content key (the same for the same
@@ -21,7 +21,7 @@ from gamma import storage
 from gamma.blocks_store import load_props, new_block_id
 from gamma.db import connect_data_db, connect_pages_db
 from gamma.documents.model import document
-from gamma.feedback import anchors, pictures
+from gamma.annotations import anchors, pictures
 from gamma.pdf_text import RENDER_MAX_SIDE
 from test_highlight_relocate import SIZE, _line_rect, _position
 
@@ -299,7 +299,7 @@ def test_the_cache_answers_by_key_and_keeps_the_newest_within_its_cap(owner, ws,
     passage = _insert(owner, page, _mark())
     region = _now(ws, page, passage)
     with connect_data_db(ws) as db:
-        db.execute("DELETE FROM feedback_pictures")
+        db.execute("DELETE FROM annotation_pictures")
         db.commit()
     drawn = pictures.cached(ws, connect_pages_db(ws), page, region)
     assert drawn[:2] == b"\xff\xd8"                                   # a JPEG, as render_page makes it
@@ -311,5 +311,5 @@ def test_the_cache_answers_by_key_and_keeps_the_newest_within_its_cap(owner, ws,
         pictures._put(ws, f"k{n}", bytes([n]) * 1000)
     pictures._put(ws, "huge", b"x" * 3000)                            # past the cap on its own: not kept
     with connect_data_db(ws) as db:
-        kept = dict(db.execute("SELECT key, bytes FROM feedback_pictures").fetchall())
+        kept = dict(db.execute("SELECT key, bytes FROM annotation_pictures").fetchall())
     assert kept == {"k2": 1000, "k3": 1000}

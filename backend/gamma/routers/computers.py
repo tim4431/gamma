@@ -22,7 +22,7 @@ computer minted for it (a retry is told it holds it; another taker 409),
 and gets its entries, its threads' last speakers and ``seen``, this
 server's clock at the read; it writes ``/progress`` and, at its end,
 ``/answers``, which this server writes itself as the agent's
-(``feedback.agent.answer_run``: signed ``local:<agent>`` with its label, as
+(``annotations.agent.answer_run``: signed ``local:<agent>`` with its label, as
 an agent on this computer's are, each reply under the id the computer
 minted for it), only while that run holds the request running, so a
 withdraw is never overwritten. ``GET /threads/{id}/picture`` is a region's
@@ -55,8 +55,8 @@ from .. import comments, workspaces
 from ..auth import _api_bearer, _off_loop, is_token, read_body, require_personal_user_id, require_ws
 from ..computers import registry
 from ..db import connect_pages_db, page_now
-from ..feedback import requests
-from ..feedback.entries import FeedbackError
+from ..annotations import requests
+from ..annotations.entries import AnnotationError
 from ..integrations import Connection, resolve_token_scope
 
 router = APIRouter(prefix="/api", tags=["computers"])
@@ -198,7 +198,7 @@ class SendAnswers(BaseModel):
 def _refusals():
     try:
         yield
-    except FeedbackError as e:
+    except AnnotationError as e:
         raise HTTPException(status_code=e.status, detail=e.detail) from None
 
 
@@ -219,7 +219,7 @@ def _held(conn, request_id: str, user_id: str, token_id: str) -> dict:
     request of the token's account (``requests.run_of``); 404 otherwise."""
     run = requests.run_of(conn, request_id)
     if run is None or run["holder"] != token_id or requests.requester(conn, request_id) != user_id:
-        raise FeedbackError(404, NO_REQUEST)
+        raise AnnotationError(404, NO_REQUEST)
     return run
 
 
@@ -263,18 +263,18 @@ def claim_send(request_id: str, payload: SendClaim, request: Request):
         row = conn.execute("SELECT by, via, work_folder FROM feedback_requests WHERE id = ?",
                            (request_id,)).fetchone()
         if not row or row[0] != user_id or row[1] != requests.SESSION:
-            raise FeedbackError(404, NO_REQUEST)
+            raise AnnotationError(404, NO_REQUEST)
         if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):   # agent_folders then has none
-            raise FeedbackError(403, f"Only an owner or an editor of this workspace can send comments to "
+            raise AnnotationError(403, f"Only an owner or an editor of this workspace can send comments to "
                                      f"{_label(payload.agent) if payload.agent in registry.AGENTS else 'an agent'}.")
         if row[2] not in folders:
-            raise FeedbackError(404, NO_REQUEST)
+            raise AnnotationError(404, NO_REQUEST)
         folder = folders[row[2]]
         label = _label(folder["agent"])
         if payload.agent != folder["agent"]:
-            raise FeedbackError(409, f"This synced folder's agent is {label}.")
+            raise AnnotationError(409, f"This synced folder's agent is {label}.")
         if folder["paused"]:
-            raise FeedbackError(409, f"The synced folder is paused: {label} starts once it syncs again.")
+            raise AnnotationError(409, f"The synced folder is paused: {label} starts once it syncs again.")
         seen = page_now()
         found = requests.entries_of(ws, conn, requests.get(conn, request_id), places=True)
         read = {e["id"]: [c["id"] for c in e["comments"]] for e in found}
@@ -304,9 +304,9 @@ def send_progress(request_id: str, payload: SendProgress, request: Request):
 @router.get("/computers/threads/{thread_id}/picture")
 def thread_picture(thread_id: str, request: Request, at: str = "now"):
     """The JPEG of a thread's region (``at`` now or before), as ``GET
-    /api/feedback/threads/{id}/picture`` answers it, for a thread of a
+    /api/annotations/{id}/picture`` answers it, for a thread of a
     request a run of this computer holds; 404 for any other."""
-    from .feedback import picture_of  # local: the feedback routes reach the agents' package
+    from .annotations import picture_of  # local: the annotations' routes reach the agents' package
 
     _user_id, _username, ws, token_id = _computer(request)
     if at not in ("now", "before"):
@@ -362,7 +362,7 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     """``{run, replies: [{id, thread_id, text, resolve}], state: "done" |
     "failed", summary, changed, error?}`` → ``{ok, written}``: the run's
     answers, written here as its agent's while that run holds the request
-    running (``feedback.agent.answer_run``: each reply under its id, so a
+    running (``annotations.agent.answer_run``: each reply under its id, so a
     retry writes none twice; a thread asked resolved unless a person said
     in it what the run did not read; the text made inert as the computer
     made it, ``prompt.inert``), then the request's end (``_end``).
@@ -373,7 +373,7 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     the folder; 404 for no request this computer holds or held; 409 when
     another run holds it or it is no longer running (withdrawn: nothing is
     written, the run stops)."""
-    from ..feedback import agent as feedback_agent
+    from ..annotations import agent as feedback_agent
     from ..local_agents import prompt  # local: the agents' package is loaded where an agent's words are stored
 
     user_id, username, ws, token_id = _computer(request)
@@ -385,12 +385,12 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     with connect_pages_db(ws) as conn, _refusals():
         held = _held(conn, request_id, user_id, token_id)
         if held["run"] != run:
-            raise FeedbackError(409, "Another run holds this request.")
+            raise AnnotationError(409, "Another run holds this request.")
         record = requests.get(conn, request_id)
         named, replies = {t["id"] for t in record["threads"]}, {}
         for item in payload.replies:
             if item.thread_id not in named:
-                raise FeedbackError(400, "A reply answers a thread of the request.")
+                raise AnnotationError(400, "A reply answers a thread of the request.")
             replies.setdefault(item.thread_id, {"id": item.id, "thread_id": item.thread_id, "resolve": item.resolve,
                                                 "text": prompt.inert(item.text.strip())[:comments.MAX_BODY]})
         again = bool(held["ended"]) and held["ended"] == record["state"]

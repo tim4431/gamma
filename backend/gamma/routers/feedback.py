@@ -1,5 +1,7 @@
-"""Feedback on a work folder's files and the Sends that ask an agent to act
-on it (gamma/feedback/, docs/dev/feedback.md "The routes").
+"""The Sends that ask an agent to act on a work folder's comment threads
+(gamma/annotations/requests.py, docs/dev/annotations.md "The routes"),
+until the request layer goes (docs/research/agents-as-participants-plan.md,
+step 3.7); the reader is routers/annotations.py.
 
 Every route is the workspace's members' — any role — and integration
 tokens' of any scope, a token in its own workspace as everywhere on the
@@ -13,28 +15,22 @@ refused, and so is a token's change of a request it is answering. On any
 server the same holds for a work folder a computer keeps with an agent
 there (gamma/computers/registry.py ``agent_of``): its maker's Sends run
 on that computer, taken over its channel (gamma/routers/computers.py). Every
-handler is a sync ``def``: it reads the pages.db, and the pictures are
-drawn, off the event loop.
+handler is a sync ``def``: it reads the pages.db off the event loop.
 """
 
-from contextlib import contextmanager
-
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .. import local_agents, workspaces
-from ..auth import is_token, require_ws
+from ..auth import is_token
 from ..db import connect_pages_db
-from ..feedback import entries, markdown, pictures, requests
-from ..feedback.entries import FeedbackError
+from ..annotations import entries, requests
+from ..annotations.entries import AnnotationError
 from ..integrations import display_name
+from .annotations import member as _member, refusals as _refusals
 
 router = APIRouter(prefix="/api/feedback", tags=["feedback"])
-
-FORMATS = ("json", "md")
-MARKDOWN = "text/markdown; charset=utf-8"
-PICTURE_CACHE = "private, max-age=86400"
 
 
 class RequestCreate(BaseModel):
@@ -49,60 +45,24 @@ class RequestState(BaseModel):
     detail: str = ""
 
 
-@contextmanager
-def _refusals():
-    try:
-        yield
-    except FeedbackError as e:
-        raise HTTPException(status_code=e.status, detail=e.detail) from None
-
-
-def _member(request: Request, *, write: bool = False) -> str:
-    """The workspace of a member's or a token's request (``require_ws``);
-    403 through a share link."""
-    if request.query_params.get("share"):
-        raise HTTPException(status_code=403, detail="feedback belongs to the workspace's members")
-    return require_ws(request, write=write)
-
-
-def _format(format: str) -> str:
-    if format not in FORMATS:
-        raise HTTPException(status_code=400, detail="format is json or md")
-    return format
-
-
-@router.get("")
-def read_feedback(request: Request, scope: str = "", state: str = "open", format: str = "json"):
-    """The feedback of a work folder, a directory or a file
-    (``entries.document``, its entries with ``picture_url`` and
-    ``before_url``; ``owner`` the requester's username), or with
-    ``format=md`` its Markdown (``text/markdown``, the pictures as their
-    routes). 400 for a library page or folder, another state or format;
-    404 for no such folder or live page. On a server that runs agents the
-    JSON has ``agent``, the work folder's agent on this computer for the
-    Feedback dialog (``_agent_of``), and ``agents_found``, whether this
-    computer has any; on any server, for a work folder its reader keeps on
-    a computer with an agent there, ``agent`` is that one
-    (``_computer_agent``). Never the files' document, which stays as it
-    is."""
-    ws = _member(request)
-    _format(format)
-    with connect_pages_db(ws) as conn, _refusals():
-        doc = entries.document(ws, conn, entries.resolve_scope(conn, scope), state=state,
-                               owner=request.state.user or "")
-    doc["entries"] = [entries.with_urls(e) for e in doc["entries"]]
-    if format == "md":
-        return Response(markdown.render(doc, pictures="urls"), media_type=MARKDOWN)
+def dialog_agent(ws: str, w: str, user_id: str) -> dict:
+    """What the Feedback dialog reads beside a work folder's annotations
+    (``GET /api/annotations``): on a server that runs agents ``agent``, the
+    work folder's agent on this computer (``_agent_of``), and
+    ``agents_found``, whether this computer has any; on any server, for a
+    work folder its reader keeps on a computer with an agent there,
+    ``agent`` is that one (``_computer_agent``)."""
+    out: dict = {}
     if local_agents.enabled():
         from ..local_agents import catalog
 
-        doc["agent"] = _agent_of(ws, doc["work_folder"]["id"], request.state.user_id)
-        doc["agents_found"] = any(catalog.cached(name)["found"] for name in catalog.AGENTS)
-    if not doc.get("agent"):
-        far = _computer_agent(ws, doc["work_folder"]["id"], request.state.user_id)
+        out["agent"] = _agent_of(ws, w, user_id)
+        out["agents_found"] = any(catalog.cached(name)["found"] for name in catalog.AGENTS)
+    if not out.get("agent"):
+        far = _computer_agent(ws, w, user_id)
         if far is not None:
-            doc["agent"] = far
-    return doc
+            out["agent"] = far
+    return out
 
 
 def _agent_of(ws: str, w: str, user_id: str) -> dict | None:
@@ -169,59 +129,6 @@ def _problem(found: dict) -> str:
     return f"{label} is not ready on {computer}."
 
 
-def _entry(ws: str, thread_id: str, regions: dict | None = None) -> dict:
-    """The thread's entry in ``ws``; with ``regions`` (a picture's read)
-    its pictures' regions, and no SyncTeX lookup. 404 for a thread hidden,
-    gone or on no work folder's file."""
-    with connect_pages_db(ws) as conn:
-        found = entries.entry(ws, conn, thread_id, regions=regions, sources=regions is None)
-    if found is None:
-        raise HTTPException(status_code=404, detail="no feedback item has that id")
-    return found
-
-
-@router.get("/threads/{thread_id}")
-def read_thread(thread_id: str, request: Request, format: str = "json"):
-    """One thread's entry in any state → ``{entry}``, or its Markdown. 404
-    for a thread hidden, gone or not on a work folder's file."""
-    _format(format)
-    found = entries.with_urls(_entry(_member(request), thread_id))
-    if format == "md":
-        return Response(f"## {found['file']}\n\n" + markdown.render_entry(found, pictures="urls"), media_type=MARKDOWN)
-    return {"entry": found}
-
-
-@router.get("/threads/{thread_id}/picture")
-def thread_picture(thread_id: str, request: Request, at: str = "now", v: str = ""):
-    """The JPEG of a thread's region: ``at=now`` as it is on the current
-    file, ``before`` as it was commented on. ``v`` (the picture's key) only
-    busts a browser's cache. 404 when the entry has no such picture, or it
-    cannot be drawn now."""
-    if at not in ("now", "before"):
-        raise HTTPException(status_code=400, detail="at is now or before")
-    return picture_of(_member(request), thread_id, at)
-
-
-def picture_of(ws: str, thread_id: str, at: str) -> Response:
-    """The JPEG of the region of the thread ``thread_id`` of ``ws``
-    (``thread_picture``, and a computer's channel's for a thread of a
-    request it holds, gamma/routers/computers.py). 400 for another ``at``,
-    404 for no such entry or picture, or one that cannot be drawn now."""
-    if at not in ("now", "before"):
-        raise HTTPException(status_code=400, detail="at is now or before")
-    regions: dict = {}
-    found = _entry(ws, thread_id, regions)
-    key = entries.key_of(found["picture" if at == "now" else "before"])
-    if not key or key not in regions:
-        raise HTTPException(status_code=404, detail="this feedback item has no such picture")
-    page_id, region = regions[key]
-    with connect_pages_db(ws) as conn:
-        data = pictures.cached(ws, conn, page_id, region)
-    if not data:
-        raise HTTPException(status_code=404, detail="this picture cannot be drawn now")
-    return Response(data, media_type="image/jpeg", headers={"Cache-Control": PICTURE_CACHE})
-
-
 @router.post("/requests", status_code=201)
 def create_request(payload: RequestCreate, request: Request):
     """A Send → ``{request}`` (201; 200 for a repeated ``id`` of the same
@@ -234,18 +141,18 @@ def create_request(payload: RequestCreate, request: Request):
     note."""
     ws = _member(request, write=True)
     with connect_pages_db(ws) as conn, _refusals():
-        scope = entries.resolve_scope(conn, payload.scope)
+        scope = entries.work_scope(conn, payload.scope)
         if is_token(request) and local_agents.enabled():
             from ..local_agents import runner
 
             if runner.folder_agent(ws, scope.work_folder, request.state.user_id) is not None:
-                raise FeedbackError(403, "An agent on this computer takes Sends made in Gamma, not with a token.")
+                raise AnnotationError(403, "An agent on this computer takes Sends made in Gamma, not with a token.")
         if is_token(request):
             from ..computers import registry
 
             far = registry.agent_of(ws, scope.work_folder, request.state.user_id)   # the token's account's computer
             if far is not None:
-                raise FeedbackError(403, f"{far['label']} on {far['computer']} takes Sends made in Gamma, "
+                raise AnnotationError(403, f"{far['label']} on {far['computer']} takes Sends made in Gamma, "
                                          "not with a token.")
         out = requests.create(ws, conn, scope, by=request.state.user_id,
                               by_name=request.state.user or "", note=payload.note, threads=payload.threads,
@@ -338,8 +245,8 @@ def set_request_state(request_id: str, payload: RequestState, request: Request):
     with connect_pages_db(ws) as conn, _refusals():
         by = requests.requester(conn, request_id)
         if by is None:
-            raise FeedbackError(404, "no such request")
+            raise AnnotationError(404, "no such request")
         if writer == "requester" and by != request.state.user_id:
-            raise FeedbackError(403, "only an agent or the request's sender sets its state")
+            raise AnnotationError(403, "only an agent or the request's sender sets its state")
         return {"request": requests.set_state(ws, conn, request_id, payload.state, detail=payload.detail,
                                               by_name=by_name, writer=writer)}

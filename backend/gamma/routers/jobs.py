@@ -166,7 +166,7 @@ def _feedback_runs(user_id: str) -> list[dict]:
     the Send's file or folder; Stop is its requester's withdraw, theirs
     alone (``POST /api/feedback/requests/{id}/state``)."""
     from ..db import connect_pages_db
-    from ..feedback import requests
+    from ..annotations import requests
     from ..folder_links import get_link
     from ..local_agents import catalog, enabled, runner, store
 

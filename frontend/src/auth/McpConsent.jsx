@@ -75,7 +75,7 @@ export function McpAuthorization({ requestId, userCode }) {
 // The consent page: the workspaces the connection may read, which of them it
 // may also edit the notes of (View or Edit, as a share's people are given),
 // and whether it may also answer the user's comments on work-folder files (reply and
-// resolve: the `feedback` scope, docs/dev/feedback.md "Tokens and MCP"),
+// resolve: the `feedback` scope, docs/dev/annotations.md "Tokens and MCP"),
 // ticked when the client asked for gamma:feedback. A setup command's
 // sign-in (`userCode`) shows its code to check against the terminal's and
 // ends on this page, where an MCP client's returns to the client.

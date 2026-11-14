@@ -1,15 +1,20 @@
-"""The feedback files below a work folder's ``.gamma/feedback/``
-(gamma/feedback/files.py, docs/dev/feedback.md "The files"): written by
-every whole round and within one hot pass of a comment, byte for byte the
-same on a quiet pass, an entry on lines of a tracked source file naming
-them, rewritten on a reply, a moved place and a resolve,
-emptied by the last resolve, gone with the vault and when it stops being a
-work folder; nothing written where the directory is not the vault's, below
-a junction, or while the vault is paused or choosing its files; Gamma's
-stale temporary files swept; a file a reader holds tried again and left for
-the next pass; a request's file written at once and rewritten by an answer,
+"""The annotation files below a work folder's ``.gamma/annotations/``
+and beside a followed file (gamma/annotations/files.py,
+docs/dev/annotations.md "The files"): written by every whole round and
+within one hot pass of a comment, byte for byte the same on a quiet pass,
+the ``.gamma/feedback/`` of before gone at the first round, a highlight
+without a thread listed, an entry on lines of a tracked source file naming
+them, rewritten on a reply, a moved place and a resolve, emptied by the
+last resolve, gone with the vault and when it stops being a work folder;
+nothing written where the directory is not the vault's, below a junction,
+or while the vault is paused or choosing its files; Gamma's stale
+temporary files swept; a file a reader holds tried again and left for the
+next pass; a request's file written at once and rewritten by an answer,
 its pictures kept while the rest are pruned, and old done requests' files
-gone past the newest."""
+gone past the newest. A vault of one file's beside the file, under its
+name: written at its round, rewritten within a pass of a highlight or a
+comment, never a vault's directory, not written inside a folder vault's,
+and gone when the vault goes, follows its file elsewhere or is taken in."""
 
 import json
 import os
@@ -20,12 +25,12 @@ import time
 import pymupdf
 import pytest
 
-from conftest import account_of, fresh_client, login, make_page, make_user, thread_on, token_for
+from conftest import account_of, doc_props, fresh_client, login, make_page, make_user, thread_on, token_for
 from gamma import folder_links, gamma_sync, highlights, pdf_meta, storage
 from gamma.vault import disk as vault_disk, kinds, store as vault_store
 from gamma.blocks_store import new_block_id
 from gamma.db import connect_pages_db, connect_vaults_db
-from gamma.feedback import files, kept
+from gamma.annotations import files, kept
 from gamma.ops import commit_ops
 from test_highlight_relocate import _position
 from test_vault_routes import _create, _page_of, _put, _sync, _vault
@@ -80,18 +85,18 @@ def disk(tmp_path, monkeypatch):
 def _clear_marks():
     with files._guard:
         files._pages.clear()
-        files._folders.clear()
+        files._scopes.clear()
 
 
 def _pass():
     """What the hot loop's tick does for the feedback files
-    (``folder_links._feedback_pass`` for each work folder due, with no
+    (``folder_links._annotations_pass`` for each work folder due, with no
     wait), once the kept version's worker is done (it stores a commented
     page's bytes, which the pictures read)."""
     assert kept.wait()
-    links = {link["id"]: link for link in folder_links.all_links() if folder_links.engine(link) and not link["remote_url"]}
-    for ws, w in files.due(0):
-        folder_links._feedback_pass(ws, w, links, files)
+    links = [link for link in folder_links.all_links() if not link["remote_url"]]
+    for ws, scope in files.due(0):
+        folder_links._annotations_pass(ws, scope, links, files)
 
 
 def _pdf(text: str) -> bytes:
@@ -122,10 +127,11 @@ def _open(root) -> dict:
     return json.loads((_here(root) / "open.json").read_text(encoding="utf-8"))
 
 
-def _footprint(root) -> dict:
-    """Every file below ``.gamma/feedback/`` with its time and bytes."""
+def _footprint(root, here=None) -> dict:
+    """Every file below ``here`` (a work folder's ``.gamma/annotations/``)
+    with its time and bytes."""
     out = {}
-    for top, _dirs, names in os.walk(_here(root)):
+    for top, _dirs, names in os.walk(here or _here(root)):
         for name in names:
             path = os.path.join(top, name)
             out[os.path.relpath(path, root)] = (os.stat(path).st_mtime_ns, open(path, "rb").read())
@@ -166,9 +172,9 @@ def test_the_files_are_written_by_every_round_within_a_pass_of_a_comment_and_lef
     link = _paper(owner, root)
     ws, w, page = link["workspace_id"], link["folder_id"], _page_of(link, "main.pdf")
     here = _here(root)
-    assert folder_links.get_link(link["id"])["status"]["feedback"] == {"open": 0}
+    assert folder_links.get_link(link["id"])["status"]["annotations"] == {"open": 0}
     assert (here / ".gitignore").read_bytes() == b"*\n" and _open(root)["entries"] == []
-    assert "No open comments." in (here / "open.md").read_text(encoding="utf-8")
+    assert "No open comments and no highlights." in (here / "open.md").read_text(encoding="utf-8")
 
     area = _area(ws, page, AREA)
     thread = thread_on(owner, page, area, "move the legend inside the plot")
@@ -189,7 +195,7 @@ def test_the_files_are_written_by_every_round_within_a_pass_of_a_comment_and_lef
     # nothing marked, then a whole round: every byte and every time stay as they are
     before = _footprint(root)
     _pass()
-    assert _sync(owner, link["id"])["feedback"] == {"open": 1}
+    assert _sync(owner, link["id"])["annotations"] == {"open": 1}
     assert _footprint(root) == before and _leftovers(root) == []
 
 
@@ -255,7 +261,7 @@ def test_a_reply_a_moved_place_and_a_resolve_rewrite_the_files_and_the_last_reso
     _pass()
     doc = _open(root)
     assert doc["count"] == 0 and doc["entries"] == [] and doc["updated_at"] is None
-    assert "No open comments." in (here / "open.md").read_text(encoding="utf-8")
+    assert "No open comments and no highlights." in (here / "open.md").read_text(encoding="utf-8")
     files.mark_folder(ws, w)
     _pass()
     assert list((here / "img").iterdir()) == []
@@ -279,7 +285,7 @@ def test_the_files_go_with_the_vault_and_when_it_stops_being_a_work_folder(owner
     r = owner.patch(f"/api/folder-links/{link['id']}", json={"push": "pdfs"})
     assert r.status_code == 200, r.text
     status = _sync(owner, link["id"])
-    assert "feedback" not in status and not _here(other).exists() and (other / vault_disk.MARKER).is_file()
+    assert "annotations" not in status and not _here(other).exists() and (other / vault_disk.MARKER).is_file()
 
 
 def test_removing_the_files_never_enters_a_link_or_a_junction_below_them(tmp_path):
@@ -292,24 +298,23 @@ def test_removing_the_files_never_enters_a_link_or_a_junction_below_them(tmp_pat
     elsewhere.mkdir()
     (elsewhere / "precious.txt").write_bytes(b"keep me")
     _link_dir(elsewhere, here / "pictures")
-    files.remove(root)
+    files.remove({"kind": "folder", "path": str(root)})
     assert not here.exists() and (root / vault_disk.MARKER_DIR).is_dir()
     assert (elsewhere / "precious.txt").read_bytes() == b"keep me"
 
 
 def test_a_picture_that_cannot_be_drawn_takes_no_slot_of_the_cap_and_holds_no_mark(owner, disk, monkeypatch):
     root = disk / "paper"
-    link = _paper(owner, root)
-    ws, page = link["workspace_id"], _page_of(link, "main.pdf")
+    _paper(owner, root)
     monkeypatch.setattr(files, "PICTURES_PER_WRITE", 1)
-    monkeypatch.setattr(files.pictures, "cached",
-                        lambda ws, conn, page_id, region: None if region == "broken" else JPEG + region.encode())
     broken, fine, a, b = "0" * 16, "1" * 16, "2" * 16, "3" * 16
-    with connect_pages_db(ws) as conn:
-        # the broken one first in the order: the one behind it is drawn all the same, and nothing waits
-        assert files._pictures(ws, conn, root, {broken: (page, "broken"), fine: (page, "fine")}) == ({fine}, 0)
-        # one drawn is the cap: the next waits for the next pass, the broken one not
-        assert files._pictures(ws, conn, root, {broken: (page, "broken"), a: (page, "a"), b: (page, "b")}) == ({fine, a}, 1)
+
+    def draw(key):
+        return None if key == broken else JPEG + key.encode()
+    # the broken one first in the order: the one behind it is drawn all the same, and nothing waits
+    assert files._pictures(root, files.DIR, "", [broken, fine], draw) == ({fine}, 0)
+    # one drawn is the cap: the next waits for the next pass, the broken one not
+    assert files._pictures(root, files.DIR, "", [broken, a, b], draw) == ({fine, a}, 1)
     assert sorted(p.name for p in (_here(root) / "img").iterdir()) == [f"{fine}.jpg", f"{a}.jpg"]
 
 
@@ -406,7 +411,7 @@ def test_gammas_stale_temporary_files_are_swept_and_a_write_going_on_stays(owner
     theirs = here / "mine.txt"
     theirs.write_bytes(b"z")
     os.utime(theirs, (then, then))
-    assert _sync(owner, link["id"])["feedback"] == {"open": 0}
+    assert _sync(owner, link["id"])["annotations"] == {"open": 0}
     assert not any(path.exists() for path in old) and young.exists() and theirs.exists()
 
 
@@ -454,7 +459,7 @@ def test_a_file_a_reader_holds_is_tried_again_then_left_for_the_next_pass(owner,
     assert len(refused) == vault_disk.REPLACE_ATTEMPTS and _open(root)["count"] == 0   # the old file stands
     assert files.due(0) == [(ws, w)] and _leftovers(root) == []                      # kept for the next pass
     assert "1 open comment" in (here / "open.md").read_text(encoding="utf-8")        # the rest was written
-    assert _sync(owner, link["id"])["feedback"] == {"open": 1, "left": 1}            # no error of the vault's
+    assert _sync(owner, link["id"])["annotations"] == {"open": 1, "left": 1}            # no error of the vault's
     monkeypatch.setattr(os, "replace", real)
     _pass()
     assert _open(root)["count"] == 1 and files.due(0) == [] and _leftovers(root) == []
@@ -515,3 +520,143 @@ def test_a_requests_file_is_written_at_once_keeps_its_pictures_and_goes_once_don
     third = owner.post("/api/feedback/requests", json={"scope": w, "threads": [tb["id"]]}).json()["request"]
     _pass()
     assert (here / "requests" / f"{second['id']}.json").is_file() and (here / "requests" / f"{third['id']}.json").is_file()
+
+
+def test_the_former_feedback_directory_goes_at_the_first_round_and_with_the_vault(owner, disk):
+    root = disk / "paper"
+    link = _paper(owner, root)
+    former = root / files.FORMER
+    (former / "img").mkdir(parents=True)
+    (former / "open.json").write_bytes(b"{}\n")
+    (former / "img" / f"{'a' * 16}.jpg").write_bytes(JPEG)
+    assert _sync(owner, link["id"])["annotations"] == {"open": 0}
+    assert not former.exists() and (_here(root) / "open.json").is_file()
+    (former / "requests").mkdir(parents=True)          # one the removal meets goes with the rest
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert not (root / vault_disk.MARKER_DIR).exists()
+
+
+def test_a_highlight_without_a_thread_is_listed_until_a_thread_is_opened_on_it(owner, disk):
+    root = disk / "paper"
+    link = _paper(owner, root)
+    ws, page = link["workspace_id"], _page_of(link, "main.pdf")
+    here = _here(root)
+    area = _area(ws, page, AREA)
+    assert files.due(0) == [(ws, link["folder_id"])]      # the op commit marked it
+    _pass()
+    doc = _open(root)
+    [entry] = doc["entries"]
+    assert (entry["id"], entry["type"], entry["kind"], entry["state"], entry["comments"]) == (
+        area, "highlight", "area", None, [])
+    assert doc["count"] == 1 and entry["picture"] and (here / entry["picture"]).is_file()
+    text = (here / "open.md").read_text(encoding="utf-8")
+    assert f"1 highlight · owner {OWNER}" in text and f"- id: `{area}` · highlight · area · placed exactly" in text
+    assert f"![Page 1, the highlight's region]({entry['picture']})" in text
+    thread = thread_on(owner, page, area, "move the legend")
+    _pass()
+    assert [(e["id"], e["type"]) for e in _open(root)["entries"]] == [(thread["id"], "thread")]
+    assert _sync(owner, link["id"])["annotations"] == {"open": 1}
+
+
+# --- a vault of one file ---------------------------------------------------------------
+
+def _followed(owner, disk, name="main.pdf") -> tuple[dict, str, object]:
+    """A library page that follows ``disk/build/<name>``, after its first
+    round (the file's bytes the page's already: nothing sent): ``(the link,
+    the page's id, the file)``."""
+    data = _pdf(f"the {name} defines the loss")
+    r = owner.post("/api/uploads", files={"file": ("paper.pdf", data, "application/pdf")})
+    assert r.status_code == 200, r.text
+    page = make_page(owner, f"fbf {name}", doc_props(r.json()["doc_id"], name="paper.pdf"))["id"]
+    file = _put(disk / "build" / name, data)
+    link = _create(owner, kind="file", page=page, path=str(file))
+    assert _sync(owner, link["id"])["last_error"] == ""
+    return folder_links.get_link(link["id"]), page, file
+
+
+def _where(c, path) -> dict:
+    r = c.post("/api/folder-links/where", json={"path": str(path)})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_followed_files_annotations_are_written_beside_it_and_never_make_a_vault(owner, disk):
+    link, page, file = _followed(owner, disk)
+    ws, here = link["workspace_id"], file.parent / files.DIR / "main.pdf"
+    assert link["status"]["annotations"] == {"open": 0}
+    assert (here / ".gitignore").read_bytes() == b"*\n"
+    doc = json.loads((here / "open.json").read_text(encoding="utf-8"))
+    assert (doc["scope"], doc["work_folder"], doc["owner"], doc["entries"]) == (
+        {"kind": "page", "id": page, "name": "fbf main.pdf"}, None, OWNER, [])
+    assert (here / "open.md").read_text(encoding="utf-8").startswith("# Annotations on fbf main.pdf\n")
+
+    # Gamma's own and hidden, never a vault: no marker, nothing of Gamma's to Open with Gamma, no vault of it
+    assert os.listdir(file.parent / vault_disk.MARKER_DIR) == ["annotations"]
+    assert _where(owner, file.parent)["is"] == "none"
+    assert _where(owner, here)["refusal"] == folder_links.OWN_REFUSED
+    r = owner.post("/api/folder-links", json={"path": str(here), "new_folder": True, "push": "everything"})
+    assert r.status_code == 400 and r.json()["detail"] == folder_links.OWN_REFUSED
+
+    # a highlight and a thread on the page: rewritten within a pass, named by the file's name
+    area = _area(ws, page, AREA)
+    thread = thread_on(owner, page, page, "the whole paper")
+    assert files.due(0) == [(ws, page)]
+    _pass()
+    doc = json.loads((here / "open.json").read_text(encoding="utf-8"))
+    assert [(e["id"], e["type"], e["file"]) for e in doc["entries"]] == [
+        (thread["id"], "thread", "main.pdf"), (area, "highlight", "main.pdf")]
+    assert (here / doc["entries"][1]["picture"]).is_file()
+    assert "## main.pdf" in (here / "open.md").read_text(encoding="utf-8")
+
+    # paused: a pass drops the mark and writes nothing; its next round writes
+    owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True}).raise_for_status()
+    before = _footprint(file.parent, here)
+    _resolve(owner, thread["id"])
+    _pass()
+    assert files.due(0) == [] and _footprint(file.parent, here) == before
+    owner.patch(f"/api/folder-links/{link['id']}", json={"paused": False}).raise_for_status()
+    assert _sync(owner, link["id"])["annotations"] == {"open": 0}
+
+    # a second file of the directory has its own; a vault removed takes its own alone, the last one .gamma/ too
+    other, _other_page, _ = _followed(owner, disk, "slides.pdf")
+    assert (file.parent / files.DIR / "slides.pdf" / "open.json").is_file()
+    owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
+    assert not here.exists() and (file.parent / files.DIR / "slides.pdf").is_dir()
+    owner.delete(f"/api/folder-links/{other['id']}").raise_for_status()
+    assert not (file.parent / vault_disk.MARKER_DIR).exists() and file.is_file()
+
+
+def test_a_followed_files_annotations_follow_it_and_go_when_a_folder_vault_takes_it_in(owner, disk):
+    link, page, file = _followed(owner, disk)
+    ws = link["workspace_id"]
+    area = _area(ws, page, AREA)
+    moved = _put(disk / "out" / "main.pdf", file.read_bytes())
+    owner.post(f"/api/folder-links/{link['id']}/relink", json={"path": str(moved)}).raise_for_status()
+    assert not (file.parent / vault_disk.MARKER_DIR).exists()     # gone from beside the file that was
+    assert _sync(owner, link["id"])["annotations"] == {"open": 0}
+    here = moved.parent / files.DIR / "main.pdf"
+    assert [e["id"] for e in json.loads((here / "open.json").read_text(encoding="utf-8"))["entries"]] == [area]
+
+    # a work folder made around it takes it in: the work folder's files list its page, and its own go
+    work = _vault(owner, moved.parent)
+    assert folder_links.get_link(link["id"]) is None and not here.exists()
+    assert [(e["id"], e["file"]) for e in _open(moved.parent)["entries"]] == [(area, "main.pdf")]
+    owner.delete(f"/api/folder-links/{work['id']}").raise_for_status()
+
+
+def test_a_followed_file_a_folder_vault_could_not_take_in_writes_nothing_beside_it(owner, disk, monkeypatch):
+    link, page, file = _followed(owner, disk)
+    here = file.parent / files.DIR / "main.pdf"
+
+    def held(*args):
+        raise OSError("held by another program")
+    monkeypatch.setattr(folder_links, "_take_in_one", held)
+    work = _vault(owner, file.parent, {".gammaignore": "*\n!*/\n!*.md\n", "notes.md": "a thought\n"})
+    assert folder_links.get_link(link["id"]) is not None          # it stays a vault of its own
+    shutil.rmtree(here)
+    thread_on(owner, page, page, "the whole paper")
+    _pass()
+    status = _sync(owner, link["id"])
+    assert "annotations" not in status and not here.exists()
+    assert (_here(file.parent) / "open.json").is_file()            # the work folder's own, which it writes
+    owner.delete(f"/api/folder-links/{work['id']}").raise_for_status()

@@ -54,7 +54,7 @@ def holders(workspaces: list[str], ids: list[str], *, threads=(), requests=()) -
     """The workspaces, of those given, that hold a block (a page, a note, a
     folder) of one of ``ids``, a comment thread of ``threads`` (its root's
     id; a hidden one is held by none) or a Send request of ``requests``
-    (gamma/feedback/requests.py)."""
+    (gamma/annotations/requests.py)."""
     lookups = [(sql, wanted) for sql, wanted in (
         ("SELECT 1 FROM unified_blocks WHERE id IN ({}) LIMIT 1", _ids(ids)),
         ("SELECT 1 FROM comments WHERE id IN ({}) AND thread_id = id AND orphaned_at IS NULL LIMIT 1", _ids(threads)),

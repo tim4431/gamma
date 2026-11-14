@@ -18,7 +18,7 @@ from gamma.ai_tools import run_agent_tool
 from gamma.db import connect_data_db, connect_pages_db
 from gamma.documents import text as doc_text
 from gamma.documents.model import page_document
-from gamma.feedback import agent as feedback_agent, entries as feedback_entries
+from gamma.annotations import agent as feedback_agent, entries as feedback_entries
 from gamma.search import indexer
 from gamma.search.index import as_doc, store_docs
 from gamma.vault import disk as vault_disk, kinds, store as vault_store

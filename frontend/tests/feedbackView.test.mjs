@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   AGENT_MAX, NOTE_MAX, canWithdraw, firstComment, groupByFile, hasChoice, namesAgent, newestRequests, othersCount, pictureOf, readScope,
-  sendAgent, sendBody,
+  sendAgent, sendBody, threadsOf,
 } from "../src/feedback/feedbackView.js";
 
 const W = { id: "w1", name: "paper" };
@@ -23,6 +23,12 @@ test("groupByFile keeps the document's order, one group per run of a file", () =
     [["main.pdf", ["a", "b"]], ["figures/fig1.pdf", ["c"]]]);
   assert.deepEqual(groupByFile([]), []);
   assert.deepEqual(groupByFile(undefined), []);
+});
+
+test("threadsOf keeps the document's threads: a bare highlight is no entry of the dialog's", () => {
+  const doc = { entries: [{ id: "a", type: "thread" }, { id: "h", type: "highlight" }, { id: "b", type: "thread" }] };
+  assert.deepEqual(threadsOf(doc).map((e) => e.id), ["a", "b"]);
+  assert.deepEqual(threadsOf(null), []);
 });
 
 test("newestRequests lists the newest by rev, at most n", () => {

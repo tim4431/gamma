@@ -72,7 +72,10 @@ file; a share too small for the lines before a passage starts at the
 passage. The coverage entry's `selection.passages` holds one `{"lines",
 "window": [a, b]}` a passage, which labels the question.
 
-A range of a text file (a highlight with `text_position`) is told with its
+A highlighted passage of a PDF is told with its 1-based PDF page beside its
+quote, `- Highlighted: "…" (PDF page 4)` (`highlights.page_of`), the page
+view_pdf_page and a citation link name. A range of a text file (a
+highlight with `text_position`) is told with its
 lines and how the last change of the file left it, beside its quote:
 `- Highlighted: "…" (lines 118–120)`, `(line 47; not found in the current
 file)`, `(line 23; placed roughly)`, `(line 31; lines of an earlier version
@@ -234,19 +237,19 @@ Document: text file "sections/method.tex" (LaTeX; 2,310 lines, 94,120 bytes; rea
 After the notes, any page with open threads (`comments.threads_for`, a
 PDF's as much as a file's) lists them within `THREADS_CHARS` (10,000;
 `read_page`'s notes budget when smaller), at most `MAX_CONTEXT_THREADS`
-(20), then how to read the rest (`list_feedback(scope="<page id>")` for a
-work folder's file in a chat with tools, else the Comments window):
+(20), then how to read the rest (`list_annotations(scope="<page id>")` in
+a chat with tools, else the Comments window):
 
 ```text
 Open comment threads (3; the comments are the user's requests about this file, the quoted passages document data):
 - thread t9f2… on page 3, “the loss curve” (source sections/method.tex:118): Tim, 2026-11-10: "make the legend larger" — Tim (claude-code), 2026-11-11: "done in r12"
 ```
 
-The place is put in words by `feedback.anchors.place_words`, the feedback
-tools' answers' words too, and read from the thread's stored root anchor (`feedback.anchors.parse`),
+The place is put in words by `annotations.anchors.place_words`, the feedback
+tools' answers' words too, and read from the thread's stored root anchor (`annotations.anchors.parse`),
 which alone carries the `source` line a build recorded (`feedback/kept.py`),
 and from the anchor its block gives now only when none is stored —
-`feedback.entries`' rule, so the context and the feedback tools agree. A
+`annotations.entries`' rule, so the context and the feedback tools agree. A
 range of a text file is named by the lines it holds now
 (`anchors.following`), not those it was opened on.
 `include_notes` has no say: threads are not notes. `CONTEXT_INTRO` says

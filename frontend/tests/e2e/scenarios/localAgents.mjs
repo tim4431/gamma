@@ -217,7 +217,7 @@ export async function localAgentScenarios(env) {
       const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
       assertEq(listed.agent?.name, "codex", "the listing carries the agent that works in the vault");
       assertEq(listed.agent.running, null, "nothing running");
-      const doc = await user.api(`/api/feedback?scope=${link.folder_id}`);
+      const doc = await user.api(`/api/annotations?scope=${link.folder_id}`);
       assertEq(JSON.stringify([doc.agent?.name, doc.agent?.takes, doc.agent?.ready]), JSON.stringify(["codex", true, true]), "the feedback document's agent takes the maker's Sends");
     });
 
@@ -743,7 +743,7 @@ export async function localAgentScenarios(env) {
       assertEq(off.enabled, false, "off");
       const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
       assertEq(listed.agent ?? null, null, "no agent in the vault");
-      const doc = await user.api(`/api/feedback?scope=${link.folder_id}`);
+      const doc = await user.api(`/api/annotations?scope=${link.folder_id}`);
       assertEq(doc.agent, null, "the document says none");
       await user.api(`/api/folder-links/${link.id}`, { method: "DELETE" });
     });

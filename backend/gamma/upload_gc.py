@@ -10,7 +10,7 @@ names it, while an open ``zotero_file`` conflict keeps it (Zotero's PDF
 a Zotero link kept when Gamma's went over it, for that conflict's
 "theirs", gamma/zotero_sync_pdfs.py), and while an open comment thread
 holds the version it was opened on (its root's ``anchor``,
-gamma/feedback/kept.py: released at its resolve, claimed again at a
+gamma/annotations/kept.py: released at its resolve, claimed again at a
 reopen). When the last reference goes the
 file is NOT deleted: its name goes into the workspace's ``upload_orphans``
 table (pages.db: ``name``, ``since``) and the file stays stored, served as
@@ -113,7 +113,7 @@ def _references(conn) -> tuple[set[str], set[str]]:
     ``zotero_file`` conflict keeps (its ``base``'s ``doc_id``, ``_kept_pdf``): resolved
     ("keep", or "theirs", which makes it a page's PDF) or gone with its
     link, it is a file like any other — and the version each open comment
-    thread was opened on (its root's anchor, ``feedback.kept.held_files``).
+    thread was opened on (its root's anchor, ``annotations.kept.held_files``).
     The names shown are the same less those only a highlight's position or
     a thread holds, and a work folder's build (``storage.upload_refs`` with
     ``held=False``)."""
@@ -141,7 +141,7 @@ def _references(conn) -> tuple[set[str], set[str]]:
             found = {n.lower() for n in UPLOAD_REF_RE.findall(messages or "")}
             names |= found
             shown |= found
-    from .feedback.kept import held_files  # local: kept reaches comments and blocks_store, which import this module
+    from .annotations.kept import held_files  # local: kept reaches comments and blocks_store, which import this module
 
     names |= {n.lower() for n in held_files(conn)}
     return names, shown

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Account, Server, makePdf, wanted } from "../harness.mjs";
+import { selectPdfText, waitForPdf } from "./pdf.mjs";
 
 // Work folders (docs/dev/work_folders.md): a directory of this computer that
 // pushes everything is a work folder whose files are chosen in the tracking
@@ -9,7 +10,8 @@ import { Account, Server, makePdf, wanted } from "../harness.mjs";
 // the vaults group (GAMMA_FOLDER_LINKS, no shell secret, so the API names
 // paths as the shell would) and a browser that says it is the desktop app.
 // One paper directory: the dialog's preset, the folder view's tree, the
-// library gate (a file is no paper until it is added), Add to library,
+// library gate (a file is no paper until it is added), a highlight in its
+// annotation files on disk (.gamma/annotations/open.md), Add to library,
 // Remove and Save a copy, the one-place rule, a change of selection, notes
 // that follow Gamma, Cancel of a fresh work folder, a file opened from the
 // computer ticked in the dialog (?tick=) and landed on after Save, a file
@@ -193,6 +195,25 @@ export async function workFolderScenarios(env) {
         assertEq(fetched.length, 0, "opening it looks no record up");
         assertEq(await page.locator('[data-popover="meta"]').count(), 0, "no Paper metadata button");
         assert(!(await papers()).some((id) => [ids.main, ids.fig1].includes(id)), "the metadata status lists none");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    });
+
+    await step("work-folders: a highlight made in a synced folder's file shows in .gamma/annotations/open.md on disk", async () => {
+      const openMd = path.join(paperDir, ".gamma", "annotations", "open.md");
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(ids.main));
+      try {
+        await waitForPdf(page, 1);
+        await selectPdfText(page, 1, "compiled paper");
+        await page.locator(".plainTip .colorBtn").first().click();
+        await page.waitForSelector('[data-page="1"] [data-hl-id]', { timeout: 5000 });
+        const text = await until(() => {
+          const now = fs.existsSync(openMd) ? fs.readFileSync(openMd, "utf8") : "";
+          return now.includes("“compiled paper”") ? now : null;
+        }, { timeout: 15000, what: "the highlight in open.md" });
+        assert(text.includes("## main.pdf\n") && text.includes("· highlight · passage"), "under its file, as a highlight");
+        assert(text.includes("1 highlight"), "counted as a highlight");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });

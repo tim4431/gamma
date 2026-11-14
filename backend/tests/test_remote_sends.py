@@ -45,7 +45,7 @@ from gamma import folder_links, gamma_sync, pdf_meta, storage, workspaces
 from gamma.blocks_store import new_block_id
 from gamma.computers import channel, registry
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
-from gamma.feedback import files as feedback_files, requests, sources
+from gamma.annotations import files as annotation_files, requests, sources
 from gamma.integrations import create_token
 from gamma.local_agents import catalog, codex, events, home, info, procs, runner, store
 from gamma.ops import commit_ops
@@ -122,7 +122,7 @@ def nas(lab, tmp_path, monkeypatch):
             return fn(at, *args, **kwargs)
         return call
 
-    for module in (folder_links, selection, feedback_files, runner, home, info):
+    for module in (folder_links, selection, annotation_files, runner, home, info):
         monkeypatch.setattr(module, "connect_pages_db", guarded(module.connect_pages_db))
     monkeypatch.setattr(folder_links, "commit_ops", guarded(folder_links.commit_ops))
     runner.register()
@@ -150,9 +150,9 @@ def nas(lab, tmp_path, monkeypatch):
             conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user,))
             conn.execute("DELETE FROM computers WHERE user_id = ?", (user,))
             conn.execute("DELETE FROM computer_links WHERE created_by = ?", (user,))
-    with feedback_files._guard:
-        feedback_files._pages.clear()
-        feedback_files._folders.clear()
+    with annotation_files._guard:
+        annotation_files._pages.clear()
+        annotation_files._scopes.clear()
     assert not left, f"children left running: {[c.proc.pid for c in left]}"
 
 
@@ -424,10 +424,10 @@ def test_the_makers_send_runs_here_and_is_answered_there(lab, nas, monkeypatch):
     assert by[f.threads[1]]["source"] == {"file": "main.tex", "line": 22, "as": "current"}
     assert by[f.threads[0]]["file"] == "main.pdf"
     named = [rel for item in items for rel in item["pictures"]]                  # in the prompt's order
-    assert named and all(rel.startswith(f"{feedback_files.IMG}/") and (f.root / rel).is_file() for rel in named)
+    assert named and all(rel.startswith(f"{annotation_files.IMG}/") and (f.root / rel).is_file() for rel in named)
     assert [Path(p["path"]).resolve() for p in turn["input"] if p.get("type") == "localImage"] == [
         (f.root / rel).resolve() for rel in named]
-    assert (f.root / feedback_files.DIR / ".gitignore").read_bytes() == feedback_files.GITIGNORE   # never in git
+    assert (f.root / annotation_files.DIR / ".gitignore").read_bytes() == annotation_files.GITIGNORE   # never in git
     assert str(f.root) not in json.dumps(_request(lab, sent["id"]))       # never a path of this computer there
 
 

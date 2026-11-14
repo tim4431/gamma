@@ -38,7 +38,7 @@ const CHIP_ICONS = { sync: SyncIcon, push: UploadIcon, disk: HardDriveIcon, paus
 // `onCopy()` (Save a copy to library…) for its PDF while it is not (in the
 // library, the copy would be its own page); `onChoose()`, when
 // given, opens Choose files… of its work folder, `onFeedback()`, when
-// given, the file's feedback view (docs/dev/feedback.md), and `detach`,
+// given, the file's feedback view (docs/dev/annotations.md), and `detach`,
 // when given ({label, start}: useWorkFolderActions.jsx), Detach of its
 // synced folder. `computers`: the page's computers (usePageComputer.js),
 // whose chip shows when the page has no standing with this computer to show.

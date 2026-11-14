@@ -28,7 +28,7 @@ from conftest import (account_of, doc_props, fresh_client, login, make_folder, m
 from gamma import (ai_tools, app as app_mod, backups, comments, config, db, db_maintenance, folder_links, gamma_sync,
                    integrity, jobs, linked_files, offsite, pdf_meta, seed, storage, upload_gc, workspaces, ws_backup)
 from gamma.ai_context import pdf_path
-from gamma.feedback import kept
+from gamma.annotations import kept
 from gamma.blocks_store import pages_for_docs
 from gamma.db import connect_data_db, connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.documents import text

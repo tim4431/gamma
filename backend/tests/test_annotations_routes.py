@@ -1,8 +1,9 @@
-"""The feedback routes' reading side (routers/feedback.py, docs/dev/feedback.md
-"The routes"): a work folder's feedback as JSON with its pictures' routes
-and as Markdown, one thread's entry, a region's picture as a JPEG (404
-without one); who reads — any member and any token of the workspace, never
-a share visitor — and the refusals of a scope outside a work folder."""
+"""The annotations reader's routes (routers/annotations.py,
+docs/dev/annotations.md "The routes"): a work folder's annotations as JSON
+with their pictures' routes and as Markdown, a library folder's, a library
+page's and the library's, one entry (a thread's, a bare highlight's), a
+region's picture as a JPEG (404 without one); who reads — any member and
+any token of the workspace, never a share visitor — and the refusals."""
 
 from types import SimpleNamespace
 
@@ -74,71 +75,91 @@ def _ok(r, status=200):
 
 
 def test_a_work_folders_feedback_as_json(lab):
-    doc = _ok(lab.owner.get("/api/feedback", params={"scope": lab.W})).json()
+    doc = _ok(lab.owner.get("/api/annotations", params={"scope": lab.W})).json()
     assert (doc["owner"], doc["scope"], doc["count"]) == (OWNER, {"kind": "work_folder", "id": lab.W,
                                                                   "name": "fbr-paper"}, 2)
     file, passage = doc["entries"]
     assert (file["id"], passage["id"]) == (lab.t["file"], lab.t["H"])
     assert passage["where"] == {"page": 1, "quote": "The loss is defined as follows", "placed": "exact"}
     key = passage["picture"].removeprefix("img/").removesuffix(".jpg")
-    assert passage["picture_url"] == f"/api/feedback/threads/{lab.t['H']}/picture?at=now&v={key}"
+    assert passage["picture_url"] == f"/api/annotations/{lab.t['H']}/picture?at=now&v={key}"
     assert passage["before_url"] is None and file["picture_url"] is None
     assert list(passage).index("picture_url") == list(passage).index("before") + 1
-    assert lab.owner.get("/api/feedback", params={"scope": lab.W, "state": "resolved"}).json()["entries"] == []
+    assert lab.owner.get("/api/annotations", params={"scope": lab.W, "state": "resolved"}).json()["entries"] == []
 
 
 def test_the_markdown(lab):
-    r = _ok(lab.owner.get("/api/feedback", params={"scope": lab.W, "format": "md"}))
+    r = _ok(lab.owner.get("/api/annotations", params={"scope": lab.W, "format": "md"}))
     assert r.headers["content-type"] == "text/markdown; charset=utf-8"
     text = r.text
-    assert text.startswith(f"# Feedback on fbr-paper\n\n2 open comments · owner {OWNER} · updated ")
+    assert text.startswith(f"# Annotations on fbr-paper\n\n2 open comments · owner {OWNER} · updated ")
     assert "## main.pdf\n\n### 1. The whole file\n" in text and "### 2. Page 1 · “The loss is defined as follows”" in text
-    assert f"](/api/feedback/threads/{lab.t['H']}/picture?at=now&v=" in text
-    one = _ok(lab.owner.get(f"/api/feedback/threads/{lab.t['H']}", params={"format": "md"})).text
+    assert f"](/api/annotations/{lab.t['H']}/picture?at=now&v=" in text
+    one = _ok(lab.owner.get(f"/api/annotations/{lab.t['H']}", params={"format": "md"})).text
     assert one.startswith("## main.pdf\n\n### Page 1 · “The loss is defined as follows”\n")
 
 
 def test_one_thread(lab):
-    entry = _ok(lab.owner.get(f"/api/feedback/threads/{lab.t['H']}")).json()["entry"]
+    entry = _ok(lab.owner.get(f"/api/annotations/{lab.t['H']}")).json()["entry"]
     assert entry["id"] == lab.t["H"] and entry["kind"] == "passage" and entry["picture_url"]
-    for missing in (lab.t["library"], "noSuchThread"):
-        assert lab.owner.get(f"/api/feedback/threads/{missing}").status_code == 404
+    assert lab.owner.get("/api/annotations/noSuchThread").status_code == 404
+    assert lab.owner.get("/api/annotations/fbrH").status_code == 404  # a highlight with a thread: read by its thread
     assert _ok(lab.owner.post(f"/api/comments/{lab.t['file']}/resolve", json={"resolved": True})).json()
     try:
-        assert lab.owner.get(f"/api/feedback/threads/{lab.t['file']}").json()["entry"]["state"] == "resolved"
+        assert lab.owner.get(f"/api/annotations/{lab.t['file']}").json()["entry"]["state"] == "resolved"
     finally:
         _ok(lab.owner.post(f"/api/comments/{lab.t['file']}/resolve", json={"resolved": False}))
 
 
 def test_the_picture_of_a_region(lab):
-    entry = lab.owner.get(f"/api/feedback/threads/{lab.t['H']}").json()["entry"]
+    entry = lab.owner.get(f"/api/annotations/{lab.t['H']}").json()["entry"]
     r = _ok(lab.owner.get(entry["picture_url"]))
     assert r.headers["content-type"] == "image/jpeg" and r.content[:3] == b"\xff\xd8\xff"
     assert r.headers["cache-control"] == "private, max-age=86400"
     assert _ok(lab.owner.get(entry["picture_url"])).content == r.content  # the cache's
-    assert lab.owner.get(f"/api/feedback/threads/{lab.t['H']}/picture", params={"at": "before"}).status_code == 404
-    assert lab.owner.get(f"/api/feedback/threads/{lab.t['file']}/picture").status_code == 404
-    assert lab.owner.get(f"/api/feedback/threads/{lab.t['H']}/picture", params={"at": "later"}).status_code == 400
+    assert lab.owner.get(f"/api/annotations/{lab.t['H']}/picture", params={"at": "before"}).status_code == 404
+    assert lab.owner.get(f"/api/annotations/{lab.t['file']}/picture").status_code == 404
+    assert lab.owner.get(f"/api/annotations/{lab.t['H']}/picture", params={"at": "later"}).status_code == 400
 
 
 def test_who_reads(lab, anon):
-    assert _ok(lab.viewer.get("/api/feedback", params={"scope": lab.W})).json()["owner"] == VIEWER
+    assert _ok(lab.viewer.get("/api/annotations", params={"scope": lab.W})).json()["owner"] == VIEWER
     reader = _bearer(token_for(lab.owner, "read"))
-    assert _ok(reader.get("/api/feedback", params={"scope": lab.W})).json()["count"] == 2
-    assert _ok(reader.get(f"/api/feedback/threads/{lab.t['H']}"))
-    assert reader.get("/api/feedback", params={"scope": lab.W, "ws": workspace_of(OWNER)}).status_code == 403
+    assert _ok(reader.get("/api/annotations", params={"scope": lab.W})).json()["count"] == 2
+    assert _ok(reader.get(f"/api/annotations/{lab.t['H']}"))
+    assert reader.get("/api/annotations", params={"scope": lab.W, "ws": workspace_of(OWNER)}).status_code == 403
     outsider = login(OUTSIDER, f"pw-{OUTSIDER}")
     outsider.headers["X-Gamma-Workspace"] = lab.ws
-    assert outsider.get("/api/feedback", params={"scope": lab.W}).status_code == 403
+    assert outsider.get("/api/annotations", params={"scope": lab.W}).status_code == 403
     share = _ok(lab.owner.post(f"/api/share/folder/{lab.W}", json={"audience": "anyone", "role": "view"})).json()["token"]
     for visitor in (anon, login(OUTSIDER, f"pw-{OUTSIDER}")):
-        for path in ("/api/feedback", f"/api/feedback/threads/{lab.t['H']}", "/api/feedback/requests"):
+        for path in ("/api/annotations", f"/api/annotations/{lab.t['H']}", "/api/feedback/requests"):
             r = visitor.get(path, params={"share": share, "scope": lab.W})
             assert r.status_code == 403 and "members" in r.text, (path, r.text)
 
 
 def test_the_refusals(lab):
-    for params, status in (({"scope": lab.L}, 400), ({"scope": lab.library}, 400), ({"scope": "noSuchThing"}, 404),
-                           ({}, 404), ({"scope": lab.W, "state": "later"}, 400),
+    for params, status in (({"scope": "noSuchThing"}, 404), ({}, 404), ({"scope": lab.W, "state": "later"}, 400),
                            ({"scope": lab.W, "format": "html"}, 400)):
-        assert lab.owner.get("/api/feedback", params=params).status_code == status, params
+        assert lab.owner.get("/api/annotations", params=params).status_code == status, params
+
+
+def test_a_library_folder_a_library_page_and_the_library(lab):
+    _ok(lab.owner.post(f"/api/pages/{lab.library}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": "fbrB", "parent": lab.library, "content": "keep this",
+         "props": {"pdf_position": {"pageNumber": 2, **FRAME, "boundingRect": {"x1": 60, "y1": 80, "x2": 300, "y2": 96},
+                                    "rects": [{"x1": 60, "y1": 80, "x2": 300, "y2": 96}]},
+                   "quote": "a bare passage"}}]}))
+    folder = _ok(lab.owner.get("/api/annotations", params={"scope": lab.L})).json()
+    assert (folder["scope"], folder["work_folder"]) == ({"kind": "library_folder", "id": lab.L, "name": "fbr-library"},
+                                                        None)
+    assert "agent" not in folder and "agents_found" not in folder  # the Feedback dialog's: a work folder's alone
+    assert [(e["id"], e["type"]) for e in folder["entries"]] == [(lab.t["library"], "thread"), ("fbrB", "highlight")]
+    page = _ok(lab.owner.get("/api/annotations", params={"scope": lab.library})).json()
+    assert page["scope"] == {"kind": "page", "id": lab.library, "name": "a library paper"}
+    assert page["entries"] == folder["entries"]
+    bare = _ok(lab.owner.get("/api/annotations/fbrB")).json()["entry"]
+    assert (bare["type"], bare["file"], bare["where"]["page"], bare["where"]["note"]) == (
+        "highlight", "a library paper", 2, "keep this")
+    home = _ok(lab.owner.get("/api/annotations", params={"scope": "home", "format": "md"})).text
+    assert home.startswith("# Annotations on the library\n") and "not feedback" in home and "`fbrB`" in home

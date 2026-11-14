@@ -897,7 +897,7 @@ def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replac
     still embedded in it (``replaced``, as for ``annotate_pdf``) leave the
     copy first, so each is drawn once. The agent's view_ink, its pictures of
     the page as the user sees it and a feedback thread's region picture
-    render it (gamma/ink_view.py, gamma/feedback/pictures.py)."""
+    render it (gamma/ink_view.py, gamma/annotations/pictures.py)."""
     reader = PdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
     pages = len(reader.pages)
     if not 1 <= page_no <= pages:

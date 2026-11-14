@@ -180,7 +180,7 @@ they make no Inbox item and wake no round of their own.
 
 A vault pulls, pushes, or both: one switch stays on. A folder vault that
 pushes everything writes notes files whatever was asked. A vault of one
-file never writes: its file becomes the page's PDF each time it changes, a
+file never writes its file: it becomes the page's PDF each time it changes, a
 manuscript built again from its TeX say. It is made by hand for a file in
 a directory that is not wanted as a vault, and for a page on a server that
 cannot read this disk; a directory vault reads its PDFs the same way by
@@ -193,7 +193,7 @@ rule.
   .gamma/
     vault.json              the marker: format, id, notes_folder
     trash/<stamp>/<path>    the files of pages that left the vault
-    feedback/               a work folder's feedback files: open.json, open.md, img/, requests/ (feedback.md "The files")
+    annotations/            a work folder's annotation files: open.json, open.md, img/, requests/ (annotations.md "The files")
   .gammaignore              what the vault tracks, where one says (Choose files… writes it)
   Sub/                      a folder below the vault's folder
     A paper.pdf             a paper, read where it is
@@ -214,7 +214,25 @@ disk that is not there; only making the vault does. `notes_folder` names a
 directory where new notes of papers go; no route sets it, so it is what a
 person wrote in the file. An older marker's `ignore` globs are read once,
 written as the vault's `.gammaignore` ("A work folder's round"), and never
-again. A vault of one file writes nothing on disk, ever.
+again. A vault of one file has no marker: what it writes on disk is its
+page's highlights and comments, beside the file, below a `.gamma/` of its
+own that no marker makes a vault:
+
+```text
+<the file's directory>/
+  main.pdf                  the file the page follows, never written
+  .gamma/annotations/main.pdf/
+    .gitignore, open.json, open.md, img/    its page's annotation files (annotations.md "The files")
+```
+
+Each followed file has a directory named by its own name there, so two in
+one directory never meet. It is written at the vault's rounds and within a
+pass of a change to the page's highlights or comments, never while the
+vault is paused or the file is not there, and goes when the vault goes, is
+relinked to the file elsewhere or is taken in by a folder vault; a vault of
+one file that a folder vault's directory holds writes none, since that
+`.gamma/` may be the folder vault's. No vault is made of a `.gamma`
+directory or inside one (`folder_links.place_refusal`).
 
 **The files.** Each folder below the vault's folder is a directory, named
 after the folder (`obsidian_export.vault_name`; a name the scan would leave
@@ -275,7 +293,11 @@ PDF, a work folder's file under its own extension, `formats.vault_extension`,
 a blocked one as `.bin`), its hash the SHA-256 prefix the bytes would get if
 stored; a `linked_files` row says which path holds that name
 (`linked_files._put_row` with the document's `ext`). Nothing is copied, and
-nothing is ever written into the file or beside it. *Opened files* and the
+nothing is ever written into the file. A vault of one file writes its
+page's annotations beside it, in `.gamma/annotations/<file name>/` of the
+file's directory ([annotations.md](annotations.md) "The files"), unless
+that directory is one no vault may have (`place_refusal`); an opened file
+gets nothing beside it. *Opened files* and the
 follow worker below take a file of any format Gamma can show, and so does a
 vault's round (`linked_files.hash_any`: the hash and the first bytes, no
 header check; a PDF opened or followed has its header checked too,
@@ -339,19 +361,19 @@ whose PDF or picture has an open comment thread keeps the bytes it shows
 stored
 (`uploads/<hash>.pdf`, the name a `linked_files` row holds too), and the
 version each thread was opened on is held until the thread is resolved:
-the relocation run and the feedback reader go on reading it after the
+the relocation run and the annotations reader go on reading it after the
 next build at the path takes the file's bytes away. The thread's open
 stores the current bytes, a replacement while a thread is open stores the
-incoming ones first (`feedback.kept.keeps_bytes`, the one predicate with a
+incoming ones first (`annotations.kept.keeps_bytes`, the one predicate with a
 library file's versions, "A work folder's round"), and the sweep below
-stores what was left unstored ([feedback.md](feedback.md) "The commented
+stores what was left unstored ([annotations.md](annotations.md) "The commented
 version kept"). A text file keeps no version: its ranges carry their own
 context and are placed again in the round itself, from the new bytes
 alone ([highlight_relocation.md](highlight_relocation.md#text-files)).
 
 **The sweep** (`linked_files.sweep`, from each tick): the opened pages to
 forget (below), the bytes of a page with an open thread not stored yet
-(`feedback.kept.repair`), the rows of workspaces that are gone, then every
+(`annotations.kept.repair`), the rows of workspaces that are gone, then every
 row's stat, a moved one queued as a read would queue it. A read may never
 come for a file an open viewer holds, and a file that was still being
 written has nobody else to look at it again.
@@ -998,7 +1020,7 @@ are never measured, by the stat its read takes, not the scan's) is
 listed, size}` ([documents.md](documents.md) "The listed state"); one that
 crosses the limit either way, or is listed with a new size, takes one
 `set_doc`. New bytes replace the document (`replace_doc`, the versions
-stored where `feedback.kept.keeps_bytes` says; a text file's highlight
+stored where `annotations.kept.keeps_bytes` says; a text file's highlight
 ranges placed again in that call, from the bytes at the path, when the
 file is at most 512 KiB, [highlight_relocation.md](highlight_relocation.md#text-files)); the same bytes under a new
 stat refresh the row and its linked row (`restat_doc`). A move relinks and
@@ -1354,18 +1376,21 @@ unmarked folder gets the round above, unchanged. In a work folder:
 - **A library file's versions** are stored as they come (`LocalSink.store`
   before `replace_attachment`), its document still at `path`; so are a
   PDF's or a picture's while a comment thread on it is open
-  (`feedback.kept.keeps_bytes`, the one predicate at the replacement;
-  [feedback.md](feedback.md) "The commented version kept"). A text file's
+  (`annotations.kept.keeps_bytes`, the one predicate at the replacement;
+  [annotations.md](annotations.md) "The commented version kept"). A text file's
   ranges are placed again inside the round instead
   ([highlight_relocation.md](highlight_relocation.md#text-files)).
-- **The feedback files.** After its sync a whole round writes the work
-  folder's `.gamma/feedback/` (`folder_links._vault_round`, the summary in
-  `status.feedback`; [feedback.md](feedback.md) "The files"), a held round
+- **The annotation files.** After its sync a whole round writes the work
+  folder's `.gamma/annotations/` (`folder_links._vault_round`, the summary in
+  `status.annotations`; [annotations.md](annotations.md) "The files"), a held round
   too, unless the marker, the disk or the account stopped it; the hot loop
-  writes them within a pass of a change ("When rounds run"). A paused or
-  choosing vault writes none, and the files go with the vault
-  (`_remove_vault`) and when it is let go (`_work_turn`): they are Gamma's
-  own, deleted directly, never through the trash.
+  writes them within a pass of a change ("When rounds run"). A work folder
+  of another server's round reads them from that server with its token. A
+  paused or choosing vault writes none between rounds, and the files go
+  with the vault (`_remove_vault`), when it is let go (`_work_turn`) and
+  when that server let go of it: they are Gamma's own, deleted directly,
+  never through the trash. The `.gamma/feedback/` they were in before step
+  3.2 goes at the first round.
 
 **The selection.** `.gammaignore` at the vault's root says what it tracks;
 none is the default, notes, PDFs and pictures (`ignore_rules.DEFAULT_TEXT`),
@@ -1458,8 +1483,12 @@ app counts and confirms first, and only the vault's maker may ask.
   round when that server's change feed moved past its cursor (asked at most
   every `REMOTE_POLL_S`, 60 s, waited on at most `ASK_TIMEOUT_S`, 15 s),
   else, when it pushes, a round of push alone, which asks that server
-  nothing while the disk is quiet; a vault of one file when its file's stat
-  moved (`gamma_sync.moved`). Never synced, or failed `RETRY_S` (5 minutes)
+  nothing while the disk is quiet but a work folder's annotations, read
+  again at most every `REMOTE_POLL_S` and waited on at most
+  `ASK_TIMEOUT_S` ([annotations.md](annotations.md) "The files"); a vault of one file when its file's stat
+  moved (`gamma_sync.moved`), and one of another server every
+  `REMOTE_POLL_S` too, a round that sends nothing while the file rests and
+  reads its page's annotations there (`folder_links._poll`). Never synced, or failed `RETRY_S` (5 minutes)
   ago or longer: a whole round. A link is resting, and left out, while
   paused, while its round runs, or within `RETRY_S` of a failure (but for
   a certificate's, whose wait ends when the shell replaces the pins:
@@ -1480,12 +1509,13 @@ app counts and confirms first, and only the vault's maker may ask.
   last scan (`_steady`, by its file id), and keeps no state. A mark stays
   until a round covered its page: a vault whose round runs leaves it for
   the next tick, as does a file still being written. The same tick then
-  writes the feedback files of the work folders a comment write, an op
-  commit or a Send marked `HOT_S` ago or more (`feedback.files.due`,
-  `_feedback_pass`, under the link's lock): a lock a round holds keeps the
+  writes the annotation files of the work folders and of the pages a vault
+  of one file follows that a comment write, an op commit or a Send marked
+  `HOT_S` ago or more (`annotations.files.due`, `_annotations_pass`, under
+  the link's lock): a lock a round holds keeps the
   mark for the next tick, as does a pass that left a file a reader held or
   pictures past its cap; a paused, failed or choosing link, or none, drops
-  it, its next whole round writing ([feedback.md](feedback.md) "The
+  it, its next whole round writing ([annotations.md](annotations.md) "The
   files").
 - **The hint** (`POST /hint`): a window of the app got the focus; a tick
   runs now, in the background. There is no file watcher: the tick, the hot
@@ -1514,7 +1544,7 @@ first. From the moment it is kept until it ends, the vault reads `running`
 client following Sync now never takes the round before it for its own. A round marks
 each page it wrote (`collab.publish(ws, page, {"t": "vault"})`), and the
 page's chip reads its standing again. A paused vault (`PATCH {paused}`,
-`status.paused_at`) is left out of the tick and the hot loop, its feedback
+`status.paused_at`) is left out of the tick and the hot loop, its annotation
 files waiting until it syncs again; a sync asked for still runs it, and a
 round already running finishes. The pause is the user's: a round's status
 never overwrites it.
@@ -1522,15 +1552,15 @@ never overwrites it.
 A folder vault's `status`: `{running, started_at, last_sync, last_error,
 failed_at?, counts, kept, untracked, refused?, held?, stopped?, offline?,
 shared?, capped?, upgraded_at?, work_folder_at?, too_many?, push_off?,
-feedback?, paused_at?, progress?, error_kind?, move_to?, upgrade?, cert?,
+annotations?, paused_at?, progress?, error_kind?, move_to?, upgrade?, cert?,
 blocked?, folder_path}`, with `counts` `{added, updated,
 renamed, removed, kept, unchanged, sent, waiting, read, conflicts}` and
 `kept` the first
 `KEPT_SHOWN` (50) files kept, `{path, why, force}` (`force`: a force pull
 would replace it). `shared` lists the pages filed in it that an older
-vault beside it keeps. `feedback` is a work folder's feedback files as the
+vault beside it keeps. `annotations` is a work folder's annotation files as the
 round left them, `{open, left?, error?}`: the open threads, what waits for
-the next pass, or why nothing was written ([feedback.md](feedback.md) "The
+the next pass, or why nothing was written ([annotations.md](annotations.md) "The
 files"). `error_kind` and its fields say what was in the way of another
 server when its last round, or the change feed's question between rounds,
 failed (below, "A vault on another server").
@@ -1598,7 +1628,11 @@ round until it changes. The round then fails the link with that reason, so
 `RETRY_S` applies and the next round tries again. A missing file waits
 ("the file is not there"). Its status is `{running, started_at, last_sync,
 last_error, failed_at?, counts: {sent, waiting, kept}, waiting, last_sent,
-title, relocation_error?}`.
+title, relocation_error?, annotations?}`. After the push the round writes
+its page's annotation files beside the file (`annotations`, their write's
+summary, as a work folder's: "What lands on disk",
+[annotations.md](annotations.md) "The files"), one of another server read
+there with its token.
 
 **The replacement** is the one `PUT /api/pages/{id}/attachment` makes
 ([api.md](api.md)): the page keeps its id, notes and highlights, the
@@ -1728,7 +1762,10 @@ As built:
   through `clean_path`) and `where_is` answers in `none`'s `refusal`; it is
   never asked of a vault that exists, so a vault made before goes on. For a
   directory, the first that applies: a drive or filesystem root (`Pick a
-  directory, not the root of a drive.`); the home directory or a directory
+  directory, not the root of a drive.`); a `.gamma` directory or one inside
+  it, Gamma's own (a vault's marker and trash, a followed file's
+  annotations: `That directory is Gamma's own .gamma directory, or inside
+  one; pick another.`); the home directory or a directory
   around it, `/home`, `/Users`, `C:\Users` (`Pick a project directory: Gamma
   does not sync your whole home directory or a directory around it.`);
   Gamma's data directory, inside it or around it (`_in_data_dir`, by
@@ -1779,13 +1816,14 @@ As built:
   cannot be stored stops the removal before anything is undone; its live
   pages' documents are then at `store`, and a page in Recently deleted
   reads in place still, its copy stored (`_store_in_place`). Then its
-  feedback files and its marker go, and `.gamma/` when that leaves it
+  annotation files and its marker go, and `.gamma/` when that leaves it
   empty; `.gamma/trash`, whatever it holds, stays. A work folder is
   detached with a choice, its files kept in Gamma as pages or those not in
   the library sent to Recently deleted (`pages`, [work folders](work_folders.md)
   "Detaching a work folder"). A vault whose disk is not there keeps its
   pages reading their files, missing, to be located. A file vault's file is
-  never touched.
+  never touched: its annotation files beside it go, and `.gamma/` there when
+  that leaves it empty.
 - **Relink** (`POST /{id}/relink`): a vault's directory moved or its disk
   mounted elsewhere is found again only where the marker is this vault's;
   the PDFs it reads in place, and any opened page that reads one of them,
@@ -1907,6 +1945,14 @@ What differs from a vault of this server:
   there all the same (`http_remote._stored`), and a new version may change
   the format, as here: the replacement route keeps the page's format for
   every writer but the vault's client.
+- **The annotation files** of a work folder or a followed file there are
+  read from that server at each round, with the token (`GET
+  /api/annotations` of its folder or page, then the pictures it names by
+  their routes: a member's read there, which any token of the workspace
+  has), and written as a vault of this server writes them
+  ([annotations.md](annotations.md) "The files"); a server that does not
+  answer them, or one of a release before them, is that write's error,
+  never the round's.
 - **Not seen from here**: the carets in that server's rooms (a shape op may
   land on a block someone is typing in, which that editor merges), and the
   relocation run, which a token cannot start: the highlights a callout
