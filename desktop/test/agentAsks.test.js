@@ -115,7 +115,7 @@ test('what the bar, the notification and the tray say', () => {
   assert.equal(agentAsks.notice(card, 'once'), 'Allowed once: Codex goes on.');
   assert.equal(agentAsks.notice(card, 'deny'), 'Declined: Codex goes on without it.');
   assert.equal(agentAsks.notice(card, 'stop'), 'Declined, and Codex no longer asks to run more, here or in the chat.');
-  assert.equal(agentAsks.stale(card), 'Codex no longer waits for that: nothing was allowed.');
+  assert.equal(agentAsks.stale(card), 'Codex no longer waits for that: nothing was allowed here.');
   assert.equal(agentAsks.unsure(card), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
   assert.equal(agentAsks.couldNot(card, 'That server is not running'),
     `Could not answer Codex: That server is not running. Without an answer it is declined at ${time(at(12))}.`);

@@ -287,6 +287,9 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 | `set-agent-runs {ws, agent, ask}` (Settings → AI: what it may run, `ask` or not) | `shell:agent-runs-from-page` | `agentRunsFromPage` → `setAgentRuns` |
 | `agent-dirs {ws, dir}` (Settings → AI: a directory offered to the agents, `dir` "new" or the one moved) | `shell:agent-dirs-from-page` | `agentDirsFromPage` → `agentDirs` |
 | `agent-person {ws, agent, place, person}` (Settings → AI: a person who may use an agent, `place` the workspace's id, `person` the account's) | `shell:agent-person-from-page` | `agentPersonFromPage` → `agentPerson` |
+| `add-server {ws, link}` (Settings → AI: *Add a server…*, `link` "new", or *Reconnect…* of a link that server refused) | `shell:add-server-from-page` | `addServerFromPage` → `addLinkedServer` |
+| `remove-server {ws, link}` (Settings → AI: a server this computer no longer answers) | `shell:remove-server-from-page` | `removeServerFromPage` → `removeLinkedServer` |
+| `link-asks {ws, link, asks}` (Settings → AI: whether that server may answer what the agents ask) | `shell:link-asks-from-page` | `linkAsksFromPage` → `setLinkAsks` |
 
 **The agents of this computer** are set from Settings → AI on a page of a
 server on this computer (a remote's page is refused with why), and the
@@ -302,8 +305,8 @@ the person, and whoever runs it, can send work to it, buttons *Turn on
 Codex* and *Cancel*), then `PATCH /api/local-agents/<name> {enabled: true}`
 with the shell's word while the bar reads *Checking Codex…* (the server
 asks the agent afresh and refuses one not ready with why), and a notice
-says what came of it (`keeping.agentSaid`: "Codex is on: it answers the
-Sends you make in your synced folders; 2 waiting were handed to it.").
+says what came of it (`keeping.agentSaid`: "Codex is on: it talks with you
+in the chat and answers the comments you send it.").
 Turning it off asks nothing and carries no word. `setAgentRuns(serverId,
 name, runs)` refuses an agent that is off ("Turn Codex on first."); `ask`
 asks first, a warning whose default is Cancel (`keeping.runsAsk`: *Let
@@ -599,6 +602,34 @@ reached, the notice names the connection left to remove in its Settings).
 workspace goes, the removal's notice saying when the token was left. `refreshKeeping` reads each running local server's `GET
 /api/computer-links` for the line.
 
+**The servers this computer answers** (Settings → AI → Agents on a server
+on this computer, step 4.1 of
+[the plan](../../docs/research/agents-as-participants-plan.md)) need no
+vault. `addLinkedServer(serverId, 'new')` asks which of the launcher's
+remote servers (`keeping.serverAsk`: *Let TIM-PC answer NAS?*, or *Which
+server should TIM-PC answer?* with one button a server, what that server
+then sees, the offered directories' names among it, and that whoever signs in there as the person can send work to
+the agents turned on here), reads `GET /api/session` there with the
+window's session (signed out: `keeping.serverSignIn`, *Open NAS* opening
+it in the window to sign in, nothing minted), asks which workspace where
+the account has several (`keeping.serverPlaceAsk`; a clone's left out, the
+personal one first), then `showComputer` as above, and remembers the host
+for launch (`folderHost`); a link's id in place of `'new'` hands that
+link's server a new token (*Reconnect…* on a link it refused).
+`removeLinkedServer` forgets the link and revokes its token there
+(`dropComputerLink`, which *Stop showing* shares through `hideComputer`),
+asking nothing; the host stops starting at launch once it keeps neither a
+vault of a remote server nor a link (`releaseHost`, which `releaseRemote`
+shares). `setLinkAsks(serverId, linkId, on)` lets that server answer what
+the agents here ask, or not (decision 7): on asks first, a warning whose
+default is Cancel (`keeping.linkAsksAsk`: *Let NAS answer what the agents
+here ask to run?*, that the question can then be answered in any window
+signed in to NAS as the person, and that what whoever signs in there or
+runs NAS allows runs here as the person), then `PATCH
+/api/computer-links/{id} {asks: true}` with the shell's word; off asks
+nothing and carries no word (`keeping.linkAsksSaid`). The shell's own
+session acts on the host, as for the agents.
+
 In the Mac App Store build the pick is also the app's access to the
 directory or the file, kept as a bookmark (`lib/folderAccess.js`; at
 launch a directory is listed and a file checked for reading), and a server
@@ -744,7 +775,7 @@ the round knows so far (the status's `progress`, written as the round goes),
 its tooltip the bytes of the PDFs it pushes and the file at hand, or
 *Syncing…* before the round has compared the folder with
 the directory or when its round says nothing of itself; *Codex is working ·
-Editing main.tex* while its agent answers a Send (busy: the files may
+Editing main.tex* while a turn of its agent works there (busy: the files may
 change meanwhile); *Paused · 14:02*;
 *Stopped* (its marker gone or another vault's: *Locate…* says where the
 directory is now); *Held · 12 of 20 files gone* (the guard against many
@@ -972,14 +1003,18 @@ server's page may use").
 
 ### An agent's ask on this computer
 
-A turn of a chat on another server's page, which the host runs for a work
-folder of that server while its agent may ask (`runs` `ask`, set from
-Settings → AI: [docs/dev/local_agents.md](../../docs/dev/local_agents.md)
-"Asking on this computer"), may ask to run a command or to change files outside its
-sandbox. The question is the host's and is drawn here alone, in the bar,
-in the shell's words; nothing the other server sends draws, words or
-answers it, and it shows no answerable card ("Waiting for your answer on
-TIM-PC" is all its page says). A co-author's turn on the host's own server
+A turn of a chat on another server's page, which the host runs while its
+agent may ask (`runs` `ask`, set from Settings → AI:
+[docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Asking on this
+computer"), may ask to run a command or to change files outside its
+sandbox. The question is the host's and is drawn here, in the bar, in the
+shell's words; nothing the other server sends draws or words it. With the
+link's *may answer what the agents ask* off (Settings → AI → Agents), the
+bar alone answers it and that server's page shows no answerable card
+("Waiting for your answer on TIM-PC" is all it says); with it on, the page
+there draws the chat's card too, *Allow once* and *Decline*, and the first
+answer is the one: one given there takes the card out of the host's list,
+which the bar follows as any ask that went away unanswered here. A co-author's turn on the host's own server
 ([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "A co-author's
 turn") asks here too, its card naming whose chat it is ("From bob's chat
 of main.pdf on this computer"), while the co-author answers it in their
@@ -1000,8 +1035,10 @@ person.
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Following.** While the host's last reading lists a work folder of
-another server and an agent that may ask (`refreshKeeping`, from `GET
+**Following.** While the host's last reading lists an agent that may ask
+and a server this computer answers (a link of `GET /api/computer-links`:
+any chat there may ask here), a work folder of another server, or a
+co-author of the host's own (`refreshKeeping`, from `GET
 /api/local-agents`; the host restarted while the last reading wanted it,
 `startLocalNow`), one follower holds `GET
 /api/local-agents/asks?after=<version>&wait=20` on the host (the first
@@ -1071,7 +1108,7 @@ on without it.", "Declined, and Codex no longer asks to run more, here or
 in the chat." (*Stop*, which then sets what the agent may run back to
 `never`, `PATCH /api/local-agents/<agent> {runs: "never"}` as its owner,
 whatever became of the ask); a 404
-or 409 "Codex no longer waits for that: nothing was allowed.", except
+or 409 "Codex no longer waits for that: nothing was allowed here.", except
 after an earlier answer to that ask the bar did not hear of, which may be
 the one taken: then the unsure line below again; not
 reached, or refused, "Could not answer Codex: … Without an answer it is

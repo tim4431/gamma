@@ -50,15 +50,14 @@ def _ids(values) -> list[str]:
     return [i for i in values if isinstance(i, str) and 0 < len(i) <= 128][:50]
 
 
-def holders(workspaces: list[str], ids: list[str], *, threads=(), requests=()) -> list[str]:
+def holders(workspaces: list[str], ids: list[str], *, threads=()) -> list[str]:
     """The workspaces, of those given, that hold a block (a page, a note, a
-    folder) of one of ``ids``, a comment thread of ``threads`` (its root's
-    id; a hidden one is held by none) or a Send request of ``requests``
-    (gamma/annotations/requests.py)."""
+    folder) of one of ``ids`` or a comment thread of ``threads`` (its root's
+    id; a hidden one is held by none)."""
     lookups = [(sql, wanted) for sql, wanted in (
         ("SELECT 1 FROM unified_blocks WHERE id IN ({}) LIMIT 1", _ids(ids)),
-        ("SELECT 1 FROM comments WHERE id IN ({}) AND thread_id = id AND orphaned_at IS NULL LIMIT 1", _ids(threads)),
-        ("SELECT 1 FROM feedback_requests WHERE id IN ({}) LIMIT 1", _ids(requests))) if wanted]
+        ("SELECT 1 FROM comments WHERE id IN ({}) AND thread_id = id AND orphaned_at IS NULL LIMIT 1", _ids(threads)))
+                if wanted]
     if not lookups:
         return []
     found = []

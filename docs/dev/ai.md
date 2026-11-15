@@ -999,9 +999,10 @@ model's window when the window fit shrank the budget (`budget` below
 The chat talks to one agent at a time, picked in the composer's model chip
 (`chat/AgentChip.jsx`): Gamma AI, and the agents of the account's
 computers (`chat/agents.js` `chatAgents`: Codex and Claude Code this
-computer runs that the account turned on in Settings → AI → Agents, or on
-a page of a work folder another computer keeps, that computer's agent,
-"Codex on TIM-PC"). With more than one, the chip's menu lists them first,
+computer runs that the account turned on in Settings → AI → Agents, and
+each agent on of each of the account's other computers shown to the
+server, "Codex on TIM-PC", one entry per computer, those that keep the
+page's work folder first, an offline one's listed offline). With more than one, the chip's menu lists them first,
 each by its icon, then the picked one's models and reasoning effort (Gamma
 AI's speed too); with Gamma AI alone it is the model menu it always was.
 It is shown in every bucket (a page, a folder, the library) and even when
@@ -1011,7 +1012,9 @@ of the workspace has Gamma AI alone.
 The bucket's pick lasts the tab's life (`chat/computer/chatSide.js`
 `useChatAgent`), as a computer agent's model and effort do; a bucket never
 picked shows Gamma AI, unless no AI service is connected and a computer's
-agent can answer (`pickAgent`). A conversation keeps the agent it began
+agent can answer (`pickAgent`; a pick is the agent's id, another
+computer's `computer:<computer>:<name>`, which History, a thread's *Open
+in chat* and Background tasks name it by too: `agent_id`). A conversation keeps the agent it began
 with (decision 10 of [the plan](../research/agents-as-participants-plan.md)):
 picking another agent in a conversation that has messages asks *Start a
 new chat with Codex?* first, and on yes the agent picked starts a new

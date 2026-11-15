@@ -26,10 +26,11 @@ function relAge(iso) {
   return d < 365 ? t("{n}mo", { n: Math.floor(d / 30) }) : t("{n}y", { n: Math.floor(d / 365) });
 }
 
-// The rows the search keeps: those whose title or preview holds the query.
+// The rows the search keeps: those whose title, preview or `by` holds the
+// query.
 export function matchRows(rows, query) {
   const q = String(query || "").trim().toLowerCase();
-  return q ? rows.filter((s) => `${s.title || ""} ${s.preview || ""}`.toLowerCase().includes(q)) : rows;
+  return q ? rows.filter((s) => `${s.title || ""} ${s.preview || ""} ${s.by || ""}`.toLowerCase().includes(q)) : rows;
 }
 
 // What Delete asks of a history row (askConfirm's options), `onConfirm`
@@ -40,8 +41,9 @@ export const deleteQuestion = (row, onConfirm) => ({
   confirmLabel: t("Delete"), danger: true, onConfirm,
 });
 
-// `rows` the listed ones ([{id, title, updated_at, active}], the search's
-// matches: matchRows), the active one first; `loading` while the earlier
+// `rows` the listed ones ([{id, title, updated_at, active, by?}], the
+// search's matches: matchRows; `by` whose conversation it is, said after
+// its title: "bob's chat with Codex"), the active one first; `loading` while the earlier
 // ones are read. `onOpen(row)` opens another one; `disabledReason(row)`,
 // set while the row cannot be opened, greys it and is its title.
 // `menuItems(row, close)` the row menu's MenuItems (none: the row has no
@@ -84,6 +86,7 @@ export default function ChatHistoryPop({
               {lead?.(s)}
               {Icon ? <Icon size={14} className="chatHistIcon" aria-hidden="true" /> : null}
               <span className="chatHistTitle">{s.title || t("Untitled")}</span>
+              {s.by ? <span className="chatHistBy">{s.by}</span> : null}
               <span className="chatHistAge">{s.active ? t("now") : relAge(s.updated_at)}</span>
               {hasMenu ? <MenuButton open={openMenu(s)} /> : null}
             </div>

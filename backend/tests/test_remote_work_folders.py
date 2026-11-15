@@ -531,7 +531,7 @@ def test_a_work_folder_of_another_server_writes_the_annotations_it_reads_there(o
     page = vault_store.files(link["id"])["main.pdf"]["page_id"]
     area = _area(far, page)
     thread = thread_on(owner, page, page, "the whole paper")
-    former = root / annotation_files.FORMER
+    former = root / annotation_files.FORMER[0]
     former.mkdir(parents=True)
     (former / "open.json").write_bytes(b"{}\n")
     asked = _recorded(monkeypatch)
@@ -541,7 +541,6 @@ def test_a_work_folder_of_another_server_writes_the_annotations_it_reads_there(o
     doc = json.loads((here / "open.json").read_text(encoding="utf-8"))
     assert (doc["format"], doc["work_folder"]["id"], doc["scope"]["kind"], doc["owner"]) == (
         "gamma-annotations-1", w, "work_folder", OWNER)
-    assert "agent" not in doc and "agents_found" not in doc                # the dialog's, never the files'
     assert [(e["id"], e["type"], e["file"]) for e in doc["entries"]] == [
         (thread["id"], "thread", "main.pdf"), (area, "highlight", "main.pdf")]
     entry = doc["entries"][1]

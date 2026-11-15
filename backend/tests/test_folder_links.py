@@ -698,7 +698,7 @@ def test_the_hot_loop_writes_a_marked_work_folders_annotation_files_under_its_lo
         folder_links.hot_tick()
     assert written and set(written) == {(link["id"], True)} and (ws, w) not in annotation_files.due(0)
     n = len(written)
-    annotation_files.mark_folder(ws, w)
+    annotation_files.mark(ws, page)
     lock = folder_links._lock(link["id"])
     assert lock.acquire(blocking=False)                # a round holds the vault: the mark waits
     try:
@@ -713,7 +713,7 @@ def test_the_hot_loop_writes_a_marked_work_folders_annotation_files_under_its_lo
     feedback_pass()
     assert len(written) == n + 2 and (ws, w) not in annotation_files.due(0)
     owner.patch(f"/api/folder-links/{link['id']}", json={"paused": True}).raise_for_status()
-    annotation_files.mark_folder(ws, w)                  # paused: dropped, nothing written
+    annotation_files.mark(ws, page)                      # paused: dropped, nothing written
     feedback_pass()
     assert len(written) == n + 2 and (ws, w) not in annotation_files.due(0)
     annotation_files.mark(ws, "no-such-page")

@@ -20,7 +20,7 @@ a turn reads Gamma with a token of its own (gamma/local_agents/tools.py),
 living as long as its deadline, gone however the turn ends and at the next
 start; a follow-up whose Gamma's tools did not start fails once and keeps
 its session;
-a turn waits behind a Send and shares its queue; New chat and History open
+a turn waits behind a thread's turn in its directory and shares its queue; New chat and History open
 are refused while a turn runs, delete is refused for the active one;
 recover fails a turn a stopped server left, its vault removed or not; the
 vault forgotten forgets the sessions and ended turns; the transcript is in
@@ -51,8 +51,7 @@ from gamma import agents, folder_links, integrations, ops, workspaces
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.local_agents import catalog, chats, runner, store, tools
 from gamma.vault import store as vault_store
-from test_local_agents_runner import (TITLE, _folder, _request, _send, _turn_started, _until,  # noqa: F401: the disk fixture
-                                      _withdraw, disk)
+from test_local_agents_runner import TITLE, _folder, _until, disk  # noqa: F401: the disk fixture
 
 OWNER, EDITOR = "lach_owner", "lach_editor"
 PLACES = json.loads((Path(__file__).parent / "samples" / "synctex" / "paper" / "places.json").read_text(
@@ -117,7 +116,7 @@ def test_who_may(lab, disk, monkeypatch, anon, guest):
             assert who.post("/api/local-agents/chat/new", json={"bucket": bucket}).status_code == status
         # History is the account's own whatever its agents: none of the editor's, nobody's to anon
         assert lab.editor.get("/api/local-agents/chat/history", params={"bucket": bucket}).json() == {
-            "conversations": [], "active": None}
+            "conversations": [], "active": None, "lent": []}
         assert anon.get("/api/local-agents/chat/history", params={"bucket": bucket}).status_code == 401
     script = fresh_client()
     script.headers.update({"Authorization": f"Bearer {token_for(lab.owner, 'write', 'Script')}",
@@ -325,9 +324,9 @@ def test_stop_and_what_waits_for_a_running_turn(lab, disk, monkeypatch):
     read = _chat(lab.owner, f.page)
     assert read["computer"]["turn"] == {"turn_id": turn_id, "state": "running", "ahead": False}
     assert read["conversation"]["messages"][1]["state"] == "running"
-    # the vault works: its chip and the sync panel say it is the chat's
+    # the vault works: its chip and the sync panel say what it is at
     running = lab.owner.get(f"/api/folder-links/{f.id}").json()["agent"]["running"]
-    assert running == {"kind": "chat", "request_id": None, "detail": "Editing a file in the folder"}
+    assert running == {"detail": "Editing a file in the folder"}
     # a second message, New chat and History open wait for it
     assert _say(lab.owner, f.page, "And another.", status=409)["detail"].startswith("Codex is still working")
     assert lab.owner.post("/api/local-agents/chat/new", json={"bucket": f.page}).status_code == 409
@@ -481,12 +480,23 @@ def reply_version(lab, made) -> int:
         return chats.get(conn, made["conversation"]["id"])["version"]
 
 
-def test_a_turn_waits_behind_a_send_and_a_queued_one_stops(lab, disk, monkeypatch):
+def _ticked(lab, f, body="Look at the title.") -> str:
+    """A comment on the paper's page sent to Codex: a turn of its thread's
+    conversation, in the vault's directory (test_local_agents_threads.py)
+    → the turn's id, once it runs."""
+    r = lab.owner.post(f"/api/pages/{f.page}/comments",
+                       json={"block_id": f.page, "body": body, "to": agents.here("codex").id})
+    assert r.status_code == 201, r.text
+    turn_id = r.json()["turn"]["turn_id"]
+    _running(lab, turn_id)
+    return turn_id
+
+
+def test_a_turn_waits_behind_a_threads_turn_and_a_queued_one_stops(lab, disk, monkeypatch):
     script_agent(monkeypatch, disk.log, delay=30)
     f = _folder(lab, disk)
-    sent = _send(lab.owner, f)
-    _turn_started(lab, sent["id"])
-    made = _say(lab.owner, f.page, "After the Send.")
+    ahead = _ticked(lab, f)
+    made = _say(lab.owner, f.page, "After the thread's turn.")
     turn_id = made["turn"]["id"]
     assert runner.chat_state(lab.ws, turn_id) == {"turn_id": turn_id, "state": "queued", "ahead": True}
     assert _chat(lab.owner, f.page)["computer"]["turn"] == {"turn_id": turn_id, "state": "queued", "ahead": True}
@@ -494,17 +504,16 @@ def test_a_turn_waits_behind_a_send_and_a_queued_one_stops(lab, disk, monkeypatc
     reply = _reply(lab, f.page)
     assert reply["state"] == "stopped" and store.get_turn(turn_id)["state"] == "stopped"
     assert runner.chat_state(lab.ws, turn_id) is None
-    _withdraw(lab, sent["id"])
+    assert _stop(lab.owner, ahead) == {"stopped": True}
     assert runner.wait_idle(30)
 
-    # one that waits runs once the Send is done
+    # one that waits runs once the thread's turn is done
     script_agent(monkeypatch, disk.log, delay=1)
-    sent = _send(lab.owner, f)
-    _turn_started(lab, sent["id"])
-    made = _say(lab.owner, f.page, "After the Send, again.")
+    ahead = _ticked(lab, f, "And the abstract.")
+    made = _say(lab.owner, f.page, "After the thread's turn, again.")
     assert runner.chat_state(lab.ws, made["turn"]["id"])["ahead"] is True
     assert runner.wait_idle(60)
-    assert _request(lab, sent["id"])["state"] == "done" and _reply(lab, f.page)["state"] == "done"
+    assert store.get_turn(ahead)["state"] == "done" and _reply(lab, f.page)["state"] == "done"
 
 
 def test_a_stop_while_it_waits_for_a_slot_ends_it_at_once(lab, disk):
@@ -515,7 +524,7 @@ def test_a_stop_while_it_waits_for_a_slot_ends_it_at_once(lab, disk):
     try:
         made = _say(lab.owner, f.page, "Wait for a slot.")
         turn_id = made["turn"]["id"]
-        _until(lambda: (lab.ws, runner.CHAT, turn_id) in runner._active)
+        _until(lambda: (lab.ws, turn_id) in runner._active)
         assert runner.chat_state(lab.ws, turn_id) == {"turn_id": turn_id, "state": "queued", "ahead": True}
         assert _stop(lab.owner, turn_id) == {"stopped": True}
         stopped = _reply(lab, f.page)
@@ -583,9 +592,8 @@ def test_the_strip_and_the_refusals(lab, disk, monkeypatch):
 def test_an_agent_turned_off_meanwhile_fails_the_turn(lab, disk, monkeypatch):
     f = _folder(lab, disk)
     script_agent(monkeypatch, disk.log, delay=30)
-    sent = _send(lab.owner, f)
-    _turn_started(lab, sent["id"])
-    _say(lab.owner, f.page)  # waits behind the Send
+    _ticked(lab, f)
+    _say(lab.owner, f.page)  # waits behind the thread's turn
     store.set_agent("codex", False, by=lab.user)
     store.set_agent("claude", True, by=lab.user)
     runner.stop_agent("codex")  # what the PATCH calls
@@ -618,7 +626,7 @@ def test_the_vault_forgotten_forgets_its_sessions_and_turns(lab, disk):
     assert runner.wait_idle(60)
     conversation_id, turn_id = made["conversation"]["id"], made["turn"]["id"]
     assert store.conversation_of(conversation_id) and store.get_turn(turn_id)
-    store.forget_threads(f.id)  # relinked: a session belongs to the directory it ran in
+    store.forget_sessions(f.id)  # relinked: a session belongs to the directory it ran in
     assert store.conversation_of(conversation_id) is None and store.get_turn(turn_id)
     store.ran_conversation(conversation_id, link_id=f.id, agent="codex", session="s1", cwd=str(f.root))
     store.forget_links(set())  # a vault gone while this server was not looking: ended turns go too

@@ -58,7 +58,7 @@ import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { UsageRing } from "../shared/ui/UsageRing";
-import { useChatAgent, useChatThread } from "./computer/chatSide.js";
+import { showInChat, useChatAgent, useChatShown } from "./computer/chatSide.js";
 import {
   computerExportPath, computerHistory, deleteComputerChat, newComputerChat, openComputerChat, useComputerSide,
 } from "./computer/useComputerChat.js";
@@ -350,9 +350,10 @@ export default function ChatDock({
   // same transcript and composer; the draft stays across a pick. A viewer
   // talks to Gamma AI.
   const [wanted, setWanted] = useChatAgent(chatKey);
-  // A comment thread's Open in chat shows its conversation in place of the
-  // page's own (chat/computer/chatSide.js), until Back to the chat.
-  const [threadShown, leaveThread] = useChatThread(chatKey);
+  // A comment thread's Open in chat, or a co-author's conversation opened
+  // from History or Background tasks, shows that conversation in place of
+  // the page's own (chat/computer/chatSide.js), until Back to the chat.
+  const [shownChat, leaveShown] = useChatShown(chatKey);
   const gammaNav = useContext(GammaNavContext);
   const agentList = useMemo(() => (readOnly || !agents?.length ? [gammaAgent(aiInfo)] : agents), [agents, readOnly, aiInfo]);
   const agent = pickAgent(agentList, wanted);
@@ -365,7 +366,7 @@ export default function ChatDock({
   const outerLinks = useContext(PathLinkContext);
   const side = useComputerSide(onComputer ? chatKey : "", agent, {
     page: !!focusedBlockId, dirs: localAgents?.dirs || NO_DIRS, pdfSelections, setPdfSelections, setStatus,
-    thread: onComputer ? threadShown : "",
+    shown: onComputer ? shownChat : null,
   });
   // The draft comes back after a remount in the conversation it was typed
   // in; loading another conversation empties it (below).
@@ -965,11 +966,21 @@ export default function ChatDock({
     }
   }
 
-  // A History row opened, with its agent picked: another agent's current
-  // conversation is shown by picking that agent; an archived one of a
-  // computer's agent becomes the bucket's active one first (the one there
+  // A History row opened, with its agent picked: a co-author's
+  // conversation is shown in place of the bucket's own (chatSide.js
+  // showInChat); any other leaves what was shown so: another agent's
+  // current conversation is shown by picking that agent; an archived one of
+  // a computer's agent becomes the bucket's active one first (the one there
   // archived), as Gamma AI's swaps with the one shown.
   async function openRow(row) {
+    if (row.lent) {
+      setOpenPopover(null);
+      setHistoryRead("");
+      chatStickRef.current = true;
+      showInChat(chatKey, { conversation: row.id }, row.agent);
+      return;
+    }
+    leaveShown();
     if (row.current) {
       setOpenPopover(null);
       setWanted(row.agent);
@@ -989,7 +1000,7 @@ export default function ChatDock({
     setOpenPopover(null);
     setHistoryRead("");
     chatStickRef.current = true;
-    if (agent?.id === row.agent) side.chat.reload();
+    if (agent?.id === row.agent || (agent?.agentId && agent.agentId === row.agent)) side.chat.reload();
     else setWanted(row.agent);
   }
 
@@ -1094,7 +1105,7 @@ export default function ChatDock({
   // The rows a selection can hold: the listed archived ones ("Select all"
   // takes the search's results, not the whole history). A tick survives
   // only while its row is listed, so Delete never takes a hidden one.
-  const archivedRows = useMemo(() => historyList.filter((s) => !s.active && !s.current), [historyList]);
+  const archivedRows = useMemo(() => historyList.filter((s) => !s.active && !s.current && !s.lent), [historyList]);
   const listedKey = archivedRows.map((s) => s.id).join(",");
   useEffect(() => {
     const listed = new Set(listedKey ? listedKey.split(",") : []);
@@ -1824,10 +1835,11 @@ export default function ChatDock({
   // History: every agent's conversations of the bucket (historyList). A row
   // opens its conversation with its agent picked; while rows are ticked it
   // ticks instead. Its menu renames (Gamma AI's), exports, selects and
-  // deletes; another agent's current conversation is only opened or
-  // exported, and a computer agent's other rows wait while its turn is to
-  // end, which the server would refuse.
-  const waits = (row) => (!row.current && row.agent !== GAMMA && side.working
+  // deletes; another agent's current conversation and a co-author's
+  // (`lent`, named by whose it is) are only opened or exported, and a
+  // computer agent's other rows wait while its turn is to end, which the
+  // server would refuse.
+  const waits = (row) => (!row.current && !row.lent && row.agent !== GAMMA && side.working
     ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: side.label }) : "");
   const historyAction = canSave && {
     id: "history", icon: HistoryIcon, label: t("Chat history"), guide: "chat.history", keep: 2, open: historyOpen,
@@ -1839,7 +1851,7 @@ export default function ChatDock({
         onOpen={pickOrOpen} disabledReason={waits}
         icon={agentList.length > 1 ? (s) => agentIcon(s.agent) : undefined}
         tip={(s) => `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
-        lead={(s) => (s.active || s.current ? null : (
+        lead={(s) => (s.active || s.current || s.lent ? null : (
           <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
             aria-label={t("Select this conversation")} title={t("Select for deleting")}
             onClick={(e) => e.stopPropagation()}
@@ -1855,7 +1867,7 @@ export default function ChatDock({
           ) : null}
           <MenuItem icon={DownloadIcon} title={t("Download this conversation as Markdown, with its pictures")}
             onClick={() => { close(); exportRow(row); }}>{t("Export")}</MenuItem>
-          {row.active || row.current ? null : <>
+          {row.active || row.current || row.lent ? null : <>
             {picked.has(row.id) ? null : (
               <MenuItem icon={SquareCheckIcon} onClick={() => { close(); togglePicked(row.id); }}>{t("Select")}</MenuItem>
             )}
@@ -1904,9 +1916,10 @@ export default function ChatDock({
       onClick: () => exportRow({ agent: agent.id, active: true, title: side.chat.conversation?.title || "" }) },
     findAction,
     historyAction,
-    // a comment thread's conversation shown: back to the page's own chat in New chat's place
-    side.thread ? { id: "back", icon: ArrowLeftIcon, label: t("Back to the chat"), keep: 3,
-      onClick: leaveThread, title: t("Show this page's chat again: this conversation stays with its comment thread") }
+    // a comment thread's or a co-author's conversation shown: back to the page's own chat in New chat's place
+    side.shown ? { id: "back", icon: ArrowLeftIcon, label: t("Back to the chat"), keep: 3, onClick: leaveShown,
+      title: side.shown.thread ? t("Show this page's chat again: this conversation stays with its comment thread")
+        : t("Show your own chat of this page again") }
       : { id: "new", icon: PlusIcon, label: t("New chat"), guide: "chat.new", keep: 3,
         disabled: side.working || side.chat.busy || !side.chat.conversation, onClick: () => side.chat.newChat(),
         title: side.working ? t("Stop {agent} or wait for it to finish to start a new chat", { agent: side.label })
@@ -2131,14 +2144,26 @@ export default function ChatDock({
         {visibleMessages.length ? setupCard : null}
       </div>
       {/* A comment thread's conversation goes on in its thread: its replies
-          sent to the agent are its messages. */}
-      {!readOnly && onComputer && side.thread ? (
+          sent to the agent are its messages. A co-author's is theirs to go
+          on: its agent's owner reads it, stops its turn and answers what
+          it asks. */}
+      {!readOnly && onComputer && side.shown?.thread ? (
         <div className="chatThreadNote" data-testid="chat-thread-note">
           <span className="chatThreadNoteText">{t("This conversation answers a comment thread: reply there to go on.")}</span>
-          <button type="button" className="uiBtn sm" onClick={() => gammaNav?.openThread?.(side.thread, "", chatKey)}>
+          <button type="button" className="uiBtn sm" onClick={() => gammaNav?.openThread?.(side.shown.thread, "", chatKey)}>
             {t("Show the thread")}
           </button>
-          <button type="button" className="uiBtn sm ghost" onClick={leaveThread}>{t("Back to the chat")}</button>
+          <button type="button" className="uiBtn sm ghost" onClick={leaveShown}>{t("Back to the chat")}</button>
+        </div>
+      ) : !readOnly && onComputer && side.shown ? (
+        <div className="chatThreadNote" data-testid="chat-lent-note">
+          <span className="chatThreadNoteText">
+            {t("This is {person}'s chat with {agent}: you can read it, stop it and answer what it asks.", {
+              person: side.chat.conversation?.person || t("Someone"), agent: side.label })}
+          </span>
+          {/* the composer and its Stop give way to this line: its turn is stopped here */}
+          {stop ? <button type="button" className="uiBtn sm" onClick={stop.onClick} title={stop.label}>{t("Stop")}</button> : null}
+          <button type="button" className="uiBtn sm ghost" onClick={leaveShown}>{t("Back to the chat")}</button>
         </div>
       ) : !readOnly ? (
       // One box: the context chips on top, the message at full

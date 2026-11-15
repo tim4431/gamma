@@ -256,8 +256,8 @@ def work_vault(link: dict) -> bool:
     finds that server let go of it (``LET_GO_THERE``). A vault of another
     server that pushes everything into a folder made otherwise stays a kept
     folder. The life cycle asks this (making, marking, letting go,
-    removing, its tracking dialog), whether its agent here answers its
-    Sends (``agent_folder``) and whether it writes its annotation files
+    removing, its tracking dialog), whether an agent here works in it
+    (gamma/local_agents/info.py) and whether it writes its annotation files
     (``annotated``); a page's chip and the chat keep to
     ``work_folder_link``."""
     from .work_folders import takeover
@@ -267,15 +267,6 @@ def work_vault(link: dict) -> bool:
     return bool(link["kind"] == "folder" and link["remote_url"] and link["folder_id"] != folder_sync.ROOT
                 and link["push"] == PUSH_ALL and link["state"].get(takeover.TAKEN_OVER)
                 and not link["state"].get(LET_GO_THERE))
-
-
-def agent_folder(link: dict) -> bool:
-    """Whether an agent on this computer may answer the vault's Sends: a
-    work folder of this server (``work_folder_link``), or one of another
-    server (``work_vault``; step 4c of docs/research/agent-collab.md), whose
-    Sends that server hands this computer over its channel. Asking in the
-    chat stays a work folder of this server's."""
-    return work_vault(link)
 
 
 def annotated(link: dict) -> bool:
@@ -1406,7 +1397,7 @@ def set_push(link_id: str, word: str, token: str = "", token_id: str = "") -> di
                 state = {k: v for k, v in (get_link(link_id) or link)["state"].items() if k != takeover.TAKEN_OVER}
                 conn.execute("UPDATE folder_links SET library = 1, state = ? WHERE id = ?", (json.dumps(state), link_id))
     if work_folder_link(link) and not work_folder_link(after):
-        _stop_agent(link_id)  # no work folder now: its agent answers no Send
+        _stop_agent(link_id)  # no work folder now: its agent works there no more
     if push == PUSH_ALL and not link["notes"]:
         set_notes(link_id, True)
     return get_link(link_id)
@@ -1526,7 +1517,7 @@ def _stop_agent(link_id: str, why: str = "") -> None:
     agent was turned off or changed, the vault paused, moved, removed or no
     longer pushes everything (gamma/local_agents/runner.py ``stop_link``,
     which reads why when the run ends unless ``why`` says it)."""
-    from .local_agents import runner  # local: the runner imports the feedback modules
+    from .local_agents import runner  # local: the runner imports the annotation modules
 
     runner.stop_link(link_id, why)
 
@@ -1650,9 +1641,9 @@ def relink(link_id: str, path: str) -> dict | None:
                 conn.execute("UPDATE folder_links SET path = ?, state = ? WHERE id = ?", (new, json.dumps(state), link_id))
             except sqlite3.IntegrityError as e:
                 raise LinkError(_taken({**link, "path": new})) from e
-        from .local_agents import store as agents  # local: the runner imports the feedback modules
+        from .local_agents import store as agents  # local: the agents' store reaches the catalog
 
-        agents.forget_threads(link_id)
+        agents.forget_sessions(link_id)
         if link["kind"] == "file":
             from .annotations import files as annotation_files  # local: it reads the pages and the vaults' rows
 
@@ -2328,7 +2319,7 @@ def page_vault(ws: str, page_id: str, *, can_act: bool, user_id: str) -> dict | 
     those shown the path alone), null for none. None for a page of no
     vault."""
     from . import local_agents
-    from .local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
+    from .local_agents import info as agent_info  # local: the runner it asks imports the annotation modules
 
     link = vault_of_page(ws, page_id)
     if link is None:
@@ -2678,23 +2669,6 @@ def _holding(link_id: str):
     lock.acquire()
     try:
         yield
-    finally:
-        _let_go(link_id, lock)
-
-
-@contextmanager
-def try_holding(link_id: str):
-    """The link's lock when nothing holds it, held for the block and let go
-    (``_let_go``): the block gets True; False, nothing held, while a round,
-    a page's round or an annotations pass holds it (a request file written at
-    once, gamma/annotations/files.py ``write_request``: the hot pass writes it
-    then)."""
-    lock = _lock(link_id)
-    if not lock.acquire(blocking=False):
-        yield False
-        return
-    try:
-        yield True
     finally:
         _let_go(link_id, lock)
 

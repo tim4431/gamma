@@ -58,8 +58,18 @@ class Agent(NamedTuple):
     @property
     def label(self) -> str:
         """"Codex on TIM-PC", or the name alone: what a server's own words
-        (the Inbox, the annotations' Markdown, a resolve) call it."""
+        (the annotations' Markdown, a prompt) call it."""
         return f"{self.name} on {self.on}" if self.on else self.name
+
+    def shown(self) -> dict:
+        """The agent as the API names it beside what it did (an Inbox
+        item's ``agent``, a thread's ``resolved_agent``): ``{id, kind, name,
+        on?, owner?}``, which the client words in the reader's language
+        (frontend/src/chat/agents.js ``madeBy``). An agent known by its
+        words alone (an Inbox item of before step 66 whose agent could not
+        be found) has an empty ``id`` and ``kind``."""
+        return {"id": self.id, "kind": self.kind, "name": self.name, **({"on": self.on} if self.on else {}),
+                **({"owner": self.owner} if self.owner else {})}
 
 
 def kind_of(agent_id: str) -> str:
@@ -69,7 +79,7 @@ def kind_of(agent_id: str) -> str:
     return "gamma" if agent_id == GAMMA else "computer" if agent_id.startswith(COMPUTER) else "connection"
 
 
-def _parts(agent_id: str) -> tuple[str, str]:
+def parts(agent_id: str) -> tuple[str, str]:
     """A computer agent's id as ``(computer, name)``."""
     computer, _, name = agent_id[len(COMPUTER):].rpartition(":")
     return computer, name
@@ -87,20 +97,23 @@ def computer_agent(computer: str, name: str, on: str = "", owner: str = "") -> A
     return Agent(f"{COMPUTER}{computer}:{name}", "computer", catalog.label(name), on, owner)
 
 
-def here_id() -> str:
+def here_id(device_id: str = "") -> str:
     """This computer's id as its own server knows it: an HMAC of the
-    install's id (``cloud_auth.device``), as its id for each server it
-    announces itself to is (gamma/computers/channel.py ``computer_id``), so
-    no server can match the ids of one computer."""
-    from .cloud_auth import device  # local: cloud_auth imports the workspaces
+    install's id (``cloud_auth.device``; ``device_id`` where the caller read
+    it itself, a users.db step), as its id for each server it announces
+    itself to is (gamma/computers/channel.py ``computer_id``), so no server
+    can match the ids of one computer."""
+    if not device_id:
+        from .cloud_auth import device  # local: cloud_auth imports the workspaces
 
-    digest = hmac.new(device()[0].encode(), b"this server", hashlib.sha256).digest()
+        device_id = device()[0]
+    digest = hmac.new(device_id.encode(), b"this server", hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:22]
 
 
 def here(name: str, person: str = "") -> Agent:
-    """The agent ``name`` of this computer, a turn or a Send this server
-    runs; with ``person`` (the account the turn is for), its ``owner`` when
+    """The agent ``name`` of this computer, of a turn this server runs;
+    with ``person`` (the account the turn is for), its ``owner`` when
     another account owns it (``_owner_here``)."""
     from .computers.channel import computer_name
 
@@ -122,24 +135,25 @@ def _owner_here(name: str, person: str) -> str:
         return account_names(conn, {owner}).get(owner, "")
 
 
-def of_channel(token_id: str, name: str) -> Agent:
-    """The agent ``name`` of the computer whose channel token is
-    ``token_id`` (a run a computer holds of this server's request)."""
-    from .computers import registry
-
-    found = registry.computer_of(token_id)
-    return computer_agent(found[0], name, found[1]) if found else computer_agent("", name)
-
-
-def of_token(token_id: str, token_name: str, scope: str, user_id: str = "") -> Agent:
+def of_token(token_id: str, token_name: str, scope: str, user_id: str = "", ws: str = "") -> Agent:
     """The agent an integration token of the account ``user_id`` writes
     as: a turn's token is its agent's (``integrations.mint_turn`` names it
-    with the agent's id; a co-author's turn names its owner, ``here``), any
-    other its connection, named by ``integrations.display_name``."""
+    with the agent's id): this computer's (a co-author's turn names its
+    owner, ``here``), or another computer's whose turn this server handed
+    it (gamma/routers/computers.py), named as that computer announced
+    itself in the token's workspace ``ws`` (``registry.far_name``: the
+    owner too for a co-author's); any other its connection, named by
+    ``integrations.display_name``."""
     from .integrations import TURN, display_name
 
     if scope == TURN and kind_of(token_name) == "computer":
-        return here(_parts(token_name)[1], user_id)
+        computer, name = parts(token_name)
+        if computer == here_id() and _runs_agents():
+            return here(name, user_id)
+        from .computers import registry
+
+        on, owner = registry.far_name(ws, user_id, computer)
+        return computer_agent(computer, name, on, owner)
     return Agent(token_id, "connection", display_name(token_name))
 
 
@@ -151,12 +165,14 @@ def of_request(request) -> Agent | None:
     if not is_token(request):
         return None
     return of_token(request.state.token_id, request.state.token_name, request.state.token_scope,
-                    request.state.user_id)
+                    request.state.user_id, getattr(request.state, "token_ws", "") or "")
 
 
 def of_connection(connection) -> Agent:
-    """The agent an MCP connection (``integrations.Connection``) writes as."""
-    return of_token(connection.token_id, connection.name, connection.scope, connection.user_id)
+    """The agent an MCP connection (``integrations.Connection``) writes as
+    (a turn's token is of one workspace, its first)."""
+    return of_token(connection.token_id, connection.name, connection.scope, connection.user_id,
+                    connection.workspaces[0] if connection.workspaces else "")
 
 
 def read_all(stored: dict[tuple[str, str, str], str], ws: str) -> dict[tuple[str, str, str], Agent]:
@@ -176,8 +192,8 @@ def read_all(stored: dict[tuple[str, str, str], str], ws: str) -> dict[tuple[str
     from .computers.channel import computer_name
 
     this = here_id() if _runs_agents() else None
-    names = registry.names_of({(user, _parts(i)[0], owner) for user, i, owner in stored
-                               if kind_of(i) == "computer" and _parts(i)[0] not in ("", this)}, ws)
+    names = registry.names_of({(user, parts(i)[0], owner) for user, i, owner in stored
+                               if kind_of(i) == "computer" and parts(i)[0] not in ("", this)}, ws)
     out = {}
     for (user, agent_id, owner), name in stored.items():
         kind = kind_of(agent_id)
@@ -185,7 +201,7 @@ def read_all(stored: dict[tuple[str, str, str], str], ws: str) -> dict[tuple[str
         if kind == "gamma":
             out[key] = gamma()
         elif kind == "computer":
-            computer, agent = _parts(agent_id)
+            computer, agent = parts(agent_id)
             on = computer_name() if computer == this else names.get((user, computer, owner), "")
             out[key] = (computer_agent(computer, agent, on, owner) if agent
                         else Agent(agent_id, kind, name or "an agent"))

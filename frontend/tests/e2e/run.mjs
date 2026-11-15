@@ -79,12 +79,10 @@ import { zoteroLinkScenarios } from "./scenarios/zotero-link.mjs";
 import { blockPropertiesScenarios } from "./scenarios/blockProperties.mjs";
 import { vaultScenarios } from "./scenarios/vaults.mjs";
 import { workFolderScenarios } from "./scenarios/workFolders.mjs";
-import { feedbackScenarios } from "./scenarios/feedback.mjs";
 import { localAgentScenarios } from "./scenarios/localAgents.mjs";
 import { computerScenarios } from "./scenarios/computers.mjs";
 import { httpsScenarios } from "./scenarios/https.mjs";
 import { remoteWorkScenarios } from "./scenarios/remoteWork.mjs";
-import { remoteSendScenarios } from "./scenarios/remoteSends.mjs";
 import { remoteChatScenarios } from "./scenarios/remoteChat.mjs";
 import { remoteAskScenarios } from "./scenarios/remoteAsks.mjs";
 import { viewerScenarios } from "./scenarios/viewers.mjs";
@@ -127,12 +125,10 @@ const RUNNERS = {
   "mirror": mirrorScenarios,
   "vaults": vaultScenarios,
   "work-folders": workFolderScenarios,
-  "feedback": feedbackScenarios,
   "local-agents": localAgentScenarios,
   "computers": computerScenarios,
   "https": httpsScenarios,
   "remote-work": remoteWorkScenarios,
-  "remote-sends": remoteSendScenarios,
   "remote-chat": remoteChatScenarios,
   "remote-asks": remoteAskScenarios,
   "viewers": viewerScenarios,

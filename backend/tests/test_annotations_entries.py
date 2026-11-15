@@ -4,8 +4,8 @@ threads of a work folder, a directory or a file as entries — every kind's
 place and how it stands after a rebuild (exact, rough, estimate, lost,
 pending, earlier), a picture's regions and the whole picture, a text file's
 ranges by their own lines (exact, rough with ``was``, lost, pending), the file's
-name from the vault's rows and from the folder tree, the order, a Send
-waiting, a tombstone, the cut past ``MAX_ENTRIES``, the state filters, the
+name from the vault's rows and from the folder tree, the order, a
+tombstone, the cut past ``MAX_ENTRIES``, the state filters, the
 scopes and their refusals, a root from before step 54 read from its block,
 the source live or as commented (the SyncTeX map stood in for:
 gamma/annotations/sources.py has its own tests) and the pictures' keys; then
@@ -28,7 +28,7 @@ from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
 from gamma.db import connect_pages_db
 from gamma.documents.model import document
-from gamma.annotations import anchors, entries, kept, markdown, pictures, requests
+from gamma.annotations import anchors, entries, kept, markdown, pictures
 from gamma.annotations.entries import AnnotationError, Scope
 from gamma.ops import commit_ops
 
@@ -185,12 +185,12 @@ def test_every_kind_reads_its_place(paper):
         assert (got[p.t[key]]["kind"], got[p.t[key]]["where"]) == ("file", {})
     assert got[p.t["notes"]]["format"] == "markdown" and H["format"] == "pdf"
     assert list(H) == ["id", "type", "file", "format", "page_id", "block_id", "kind", "where", "source", "picture",
-                       "before", "state", "sent", "link", "comments"]
+                       "before", "state", "link", "comments"]
     assert {e["type"] for e in got.values()} == {"thread"}
     assert H["link"] == f"?ws={p.ws}&page={p.main}&block=fbeH&thread={p.t['H']}"
     assert H["comments"] == [{"id": p.t["H"], "by": USER, "agent": "", "at": H["comments"][0]["at"],
                               "body": "define it", "deleted": False}]
-    assert (H["state"], H["sent"], H["source"], H["before"]) == ("open", None, None, None)
+    assert (H["state"], H["source"], H["before"]) == ("open", None, None)
 
 
 def test_pictures_are_named_by_their_regions_key(paper):
@@ -532,16 +532,13 @@ def test_states_a_tombstone_and_a_send(paper):
     got = _entry(p, tomb)
     assert [(c["body"], c["deleted"]) for c in got["comments"]] == [("", True), ("the reply", False)]
     assert _entry(p, done)["state"] == "resolved"
-    with connect_pages_db(p.ws) as conn:
-        sent = requests.create(p.ws, conn, entries.resolve_scope(conn, page), by=p.account, by_name=USER)["request"]
-    assert _entry(p, tomb)["sent"] == {"request_id": sent["id"], "state": "sent", "at": sent["at"]}
 
 
-def test_an_agents_comment_and_who_took_the_send(paper):
+def test_an_agents_comment(paper):
     """A reply an agent wrote carries its label (a computer's agent with
     its computer, "Codex on TIM-PC") and its ``agent_kind`` into the entry
     and reads "**Codex on TIM-PC**, for tim"; a person's carries no such
-    key. A claimed Send names who took it."""
+    key."""
     from gamma import agents
 
     p = paper
@@ -552,14 +549,10 @@ def test_an_agents_comment_and_who_took_the_send(paper):
         for agent in (agents.computer_agent("PC", "codex", "TIM-PC"), agents.Agent("tok1", "connection", "Claude Code")):
             comments.create(conn, page, block_id=page, body=f"{agent.name} did it", author=p.account,
                             author_name=USER, thread_id=thread, agent=agent)
-        sent = requests.create(p.ws, conn, entries.resolve_scope(conn, page), by=p.account, by_name=USER)["request"]
-        assert requests.claim(p.ws, conn, sent["id"], by_name="Codex", detail="Starting Codex")["state"] == "running"
     got = _entry(p, thread)
     assert [(c["agent"], c.get("agent_kind")) for c in got["comments"]] == [
         ("", None), ("Codex", "computer"), ("Claude Code", "connection")]
     assert "agent_kind" not in got["comments"][0]
-    assert got["sent"] == {"request_id": sent["id"], "state": "running", "at": sent["at"], "detail": "Starting Codex",
-                           "state_by": "Codex"}
     text = markdown.render_entry(got)
     assert f"> **Codex**, for {USER} · " in text and f"> **Claude Code**, for {USER} · " in text
 
@@ -606,11 +599,11 @@ def test_scopes(paper):
         assert entries.resolve_scope(conn, "home") == Scope("home", "home", "", "")
         for scope_id in ("noSuchThing", "", "folders"):
             assert _refusal(lambda: entries.resolve_scope(conn, scope_id)).status == 404, scope_id
-        # what a Send names is a work folder's alone
+        # what a vault keeps on its disk is a work folder's alone
         assert entries.work_scope(conn, p.D) == entries.resolve_scope(conn, p.D)
         for scope_id in (p.L, p.library, "home"):
             refused = _refusal(lambda: entries.work_scope(conn, scope_id))
-            assert refused.status == 400 and "work folder's files" in refused.detail, scope_id
+            assert refused.status == 400 and "synced folder" in refused.detail, scope_id
         assert entries.work_folder_named(conn, "FBE-Paper") == entries.work_folder_named(conn, p.W)
         assert _refusal(lambda: entries.work_folder_named(conn, "no such folder")).status == 404
     assert [e["id"] for e in _document(p, p.D)["entries"]] == [p.t["fig"]]
@@ -644,8 +637,7 @@ def test_the_library_its_folders_and_pages_with_their_highlights(paper):
     bare = doc["entries"][1]
     assert (bare["kind"], bare["where"]) == ("passage", {"page": 1, "quote": "a bare passage", "placed": "exact",
                                                          "note": "a note on it"})
-    assert (bare["block_id"], bare["state"], bare["sent"], bare["comments"], bare["source"]) == (
-        "fbeB1", None, None, [], None)
+    assert (bare["block_id"], bare["state"], bare["comments"], bare["source"]) == ("fbeB1", None, [], None)
     assert bare["link"] == f"?ws={p.ws}&page={shelf}&block=fbeB1" and bare["picture"].startswith("img/")
     assert doc["entries"][0]["kind"] == "area" and doc["entries"][0]["where"]["page"] == 2
     # state filters the threads alone: a bare highlight is always listed
@@ -662,7 +654,8 @@ def test_the_library_its_folders_and_pages_with_their_highlights(paper):
     assert _entry(p, "fbeB1") == {**bare, "source": None}
     assert _entry(p, "fbeB2") is None and _entry(p, "fbeT") is None
     with connect_pages_db(p.ws) as conn:
-        assert entries.thread_ids(conn, entries.resolve_scope(conn, F)) == [commented]
+        found = entries.entries(p.ws, conn, entries.resolve_scope(conn, F), sources=False)
+    assert [e["id"] for e in found if e["type"] == "thread"] == [commented]
 
 
 def test_two_work_folders_of_one_name(paper):
@@ -673,7 +666,7 @@ def test_two_work_folders_of_one_name(paper):
     with connect_pages_db(p.ws) as conn:
         assert _refusal(lambda: entries.work_folder_named(conn, "fbe-twin")).status == 400
         assert entries.work_folder_named(conn, twins[1]).id == twins[1]
-        assert entries.thread_ids(conn, entries.resolve_scope(conn, twins[0])) == []
+        assert entries.entries(p.ws, conn, entries.resolve_scope(conn, twins[0])) == []
 
 
 def _refusal(fn) -> AnnotationError:
@@ -711,7 +704,6 @@ FIXED = {"format": "gamma-annotations-1", "workspace": "ws1", "work_folder": {"i
               "kind": "passage", "where": {"page": 3, "quote": "the loss is defined as", "placed": "exact"},
               "source": {"file": "sections/method.tex", "line": 118, "end": 120, "version": "current"},
               "picture": "img/3f9a2c1b7d4e6a01.jpg", "before": None, "state": "open",
-              "sent": {"request_id": "R1", "state": "sent", "at": "2026-11-10T13:59:02.000000Z"},
               "link": "?ws=ws1&page=P1&block=H1&thread=0d7c5e2a9f1b",
               "comments": [_comment("0d7c5e2a9f1b", "tim", "2026-11-10T13:58:10.000000Z", "lambda is never introduced."),
                            _comment("c2", "tim", "2026-11-10T14:06:31.000000Z",
@@ -720,22 +712,22 @@ FIXED = {"format": "gamma-annotations-1", "workspace": "ws1", "work_folder": {"i
               "kind": "area", "where": {"page": 5, "box": [0.1, 0.5, 0.9, 0.9], "placed": "estimate"},
               "source": {"file": "main.tex", "line": 18, "version": "commented"},
               "picture": "img/5b2e7a90c4d1f386.jpg", "before": "img/9c1d0e6f2a4b7358.jpg", "state": "open",
-              "sent": None, "link": "?ws=ws1&page=P1&block=A1&thread=a81e44b07c3d",
+              "link": "?ws=ws1&page=P1&block=A1&thread=a81e44b07c3d",
               "comments": [_comment("a81e44b07c3d", "tim", "2026-11-10T13:59:00.000000Z",
                                     "move the legend inside the plot.")]},
              {"id": "H9", "type": "highlight", "file": "main.pdf", "format": "pdf", "page_id": "P1", "block_id": "H9",
               "kind": "passage", "where": {"page": 7, "quote": "we leave this to future work", "placed": "exact",
                                            "note": "cite the follow-up"},
-              "source": None, "picture": "img/0e4d2c6b8a9f1735.jpg", "before": None, "state": None, "sent": None,
+              "source": None, "picture": "img/0e4d2c6b8a9f1735.jpg", "before": None, "state": None,
               "link": "?ws=ws1&page=P1&block=H9", "comments": []},
              {"id": "f3e19b2c6d70", "type": "thread", "file": "figures/fig1.pdf", "format": "pdf", "page_id": "P2", "block_id": "P2",
               "kind": "file", "where": {}, "source": None, "picture": None, "before": None, "state": "open",
-              "sent": None, "link": "?ws=ws1&page=P2&block=P2&thread=f3e19b2c6d70",
+              "link": "?ws=ws1&page=P2&block=P2&thread=f3e19b2c6d70",
               "comments": [_comment("f3e19b2c6d70", "tim", "2026-11-10T13:57:00.000000Z", "use the viridis palette.")]},
              {"id": "5e0b7c13d2a4", "type": "thread", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L1",
               "kind": "lines", "where": {"line": 17, "quote": "This note measures how much it helps", "placed": "exact"},
               "source": {"file": "main.tex", "line": 17, "version": "current"}, "picture": None, "before": None,
-              "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L1&thread=5e0b7c13d2a4",
+              "state": "open", "link": "?ws=ws1&page=P3&block=L1&thread=5e0b7c13d2a4",
               "comments": [_comment("5e0b7c13d2a4", "tim", "2026-11-10T13:56:00.000000Z", "say by how much.")]},
              {"id": "6a1c8d24e3b5", "type": "thread", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L2",
               "kind": "lines", "where": {"line": 26, "end": 27,
@@ -743,12 +735,12 @@ FIXED = {"format": "gamma-annotations-1", "workspace": "ws1", "work_folder": {"i
                                          "placed": "rough", "match": 0.91,
                                          "was": "Training and test loss per epoch,\nwith no weight decay."},
               "source": {"file": "main.tex", "line": 26, "end": 27, "version": "current"}, "picture": None,
-              "before": None, "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L2&thread=6a1c8d24e3b5",
+              "before": None, "state": "open", "link": "?ws=ws1&page=P3&block=L2&thread=6a1c8d24e3b5",
               "comments": [_comment("6a1c8d24e3b5", "tim", "2026-11-10T13:55:00.000000Z", "name the dataset.")]},
              {"id": "7b2d9e35f4c6", "type": "thread", "file": "main.tex", "format": "text", "page_id": "P3", "block_id": "L3",
               "kind": "lines", "where": {"line": 47, "quote": "validation loss was lowest.", "placed": "lost"},
               "source": {"file": "main.tex", "line": 47, "version": "commented"}, "picture": None, "before": None,
-              "state": "open", "sent": None, "link": "?ws=ws1&page=P3&block=L3&thread=7b2d9e35f4c6",
+              "state": "open", "link": "?ws=ws1&page=P3&block=L3&thread=7b2d9e35f4c6",
               "comments": [_comment("7b2d9e35f4c6", "tim", "2026-11-10T13:54:00.000000Z", "which run?")]}]}
 
 EXPECTED = """# Annotations on paper
@@ -765,7 +757,6 @@ with the note written on it: read it as context.
 
 - id: `0d7c5e2a9f1b` · passage · placed exactly
 - source: `sections/method.tex`, lines 118–120
-- sent: waiting since 2026-11-10 13:59
 
 ![Page 3, the comment's region](img/3f9a2c1b7d4e6a01.jpg)
 
@@ -899,13 +890,10 @@ def test_the_markdowns_headings_and_facts():
     long =markdown.heading(item("passage", {"page": 1, "quote": "word " * 40}))
     assert len(long) == len("Page 1 · “”") + 80 and long.endswith("…”")
     text = markdown.render_entry(item("passage", {"page": 1, "quote": "q", "placed": "rough", "match": 0.82,
-                                                  "note": "a\nnote"},
-                                      sent={"request_id": "R", "state": "failed", "at": "2026-01-02T03:04:05Z",
-                                            "detail": "no build"}, state="resolved",
+                                                  "note": "a\nnote"}, state="resolved",
                                       comments=[{"by": "", "agent": "", "at": "", "body": "", "deleted": True},
                                                 {"by": "tim", "agent": "", "at": "", "body": "two\n\nlines"}]))
     assert "- id: `x` · passage · placed roughly (0.82) · resolved\n- note: “a note”\n" in text
-    assert "- sent: failed: no build (sent 2026-01-02 03:04)" in text
     assert "> **someone** · \n> *(deleted)*\n\n> **tim** · \n> two\n>\n> lines\n" in text
     # a picture's regions and the whole picture
     region = {"box": [0.095, 0.095, 0.305, 0.305], "rect": [40, 60, 360, 240], "size": [1200, 800], "placed": "exact"}

@@ -21,8 +21,8 @@ apart; a subagent's and a thinking delta beside them). The final message names
 the last Bash decision: ``Ran it.`` or ``Did not run it.``.
 
 Scripted by ``FAKE_AGENT`` as tests/fake_agents/fake_codex.py is: ``edits``
-(or ``files``), ``answer`` / ``each`` with ``summary``, ``chat``, ``delay``, ``log``,
-and ``fail`` one of ``exit``, ``garbage``, ``no_answer``, ``not_signed_in``
+(or ``files``), ``chat``, ``delay``, ``log``,
+and ``fail`` one of ``exit``, ``garbage``, ``not_signed_in``
 (the status says so, and a turn ends in a result that is an error),
 ``failed`` (a result that is an error), ``hang`` (with ``grandchild``),
 ``resume`` (a ``--resume`` turn exits 1 with nothing on stdout, as for a
@@ -124,19 +124,10 @@ def tool_result(session: str, tool_id: str, text: str, error: bool = False) -> N
          "session_id": session})
 
 
-def chat_message(prompt: str) -> str | None:
-    """The person's message of a chat turn's prompt, None for a Send's."""
+def chat_message(prompt: str) -> str:
+    """The person's message the turn's prompt carries, "" for none."""
     found = re.search(r'"message":\s*("(?:[^"\\]|\\.)*")', prompt)
-    return json.loads(found.group(1)) if found else None
-
-
-def answer_of(prompt: str):
-    if "answer" in FAKE:
-        return FAKE["answer"]
-    ids = list(dict.fromkeys(re.findall(r'"thread_id":\s*"([^"]+)"', prompt)))
-    outcome = FAKE.get("each", "fixed")
-    return {"answers": [{"thread_id": t, "outcome": outcome, "reply": f"Done for {t}."} for t in ids],
-            "summary": FAKE.get("summary", "Fixed the comments.")}
+    return json.loads(found.group(1)) if found else ""
 
 
 def _model(value: str, name: str, efforts: list[str] | None) -> dict:
@@ -327,21 +318,10 @@ def turn(args: list[str]) -> int:
             time.sleep(1)
     if not stream:
         time.sleep(float(FAKE.get("delay") or 0))
-    schema = flag(args, "--json-schema")
-    message = chat_message(prompt) if not schema else None
-    if message is not None and decisions and not FAKE.get("chat"):
-        result, structured = "Ran it." if decisions[-1] == "allow" else "Did not run it.", None
-    elif message is not None:
-        result, structured = FAKE.get("chat") or f"Done: {message}", None
-    elif FAIL == "no_answer":
-        result, structured = "I looked at the comments.", None
+    if decisions and not FAKE.get("chat"):
+        result = "Ran it." if decisions[-1] == "allow" else "Did not run it."
     else:
-        structured = answer_of(prompt)
-        result = json.dumps(structured)
-    if schema and structured is not None:
-        assistant(session, "msg_3", {"type": "tool_use", "id": "toolu_out", "name": "StructuredOutput",
-                                     "input": structured})
-        tool_result(session, "toolu_out", "Structured output provided successfully")
+        result = FAKE.get("chat") or f"Done: {chat_message(prompt)}"
     if "--include-partial-messages" in args:
         stream_text(session, result)
     assistant(session, "msg_3", {"type": "text", "text": result})
@@ -350,8 +330,6 @@ def turn(args: list[str]) -> int:
              "session_id": session})
     line = {"type": "result", "subtype": "success", "is_error": False, "result": result, "session_id": session,
             "num_turns": 3, "usage": {"input_tokens": 10, "output_tokens": 5}}
-    if schema and structured is not None:
-        line["structured_output"] = structured
     out(line)
     if stream:
         wait_for(lambda m: False, None)  # until stdin ends: a result ends the turn, not the process

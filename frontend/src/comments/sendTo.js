@@ -27,14 +27,15 @@ export function startsTicked(thread, remembered = false) {
 
 // The agent the tick names: the one the person chose in its menu
 // (`chosen`, an agent's id) while it is listed, else the one that wrote in
-// the thread last, else the one picked in the page's chat (`picked`, its
-// name: chat/computer/chatSide.js), else the first; null for none.
+// the thread last, else the one picked in the page's chat (`picked`, the
+// chat's id of it: chat/computer/chatSide.js, another computer's agent's
+// id or this computer's agent's name), else the first; null for none.
 export function tickAgent(agents, { thread = null, picked = "", chosen = "" } = {}) {
   const list = agents || [];
   const by = (pred) => list.find(pred) || null;
   const last = agentsLast(thread);
   return (chosen && by((a) => a.id === chosen)) || (last && by((a) => a.id === last.agent_id))
-    || (picked && by((a) => a.name === picked)) || list[0] || null;
+    || (picked && (by((a) => a.id === picked) || by((a) => !a.computer && a.name === picked))) || list[0] || null;
 }
 
 // The agent `@name` names in `text` outside code, newly (not in `initial`,

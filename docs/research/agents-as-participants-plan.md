@@ -1,7 +1,7 @@
 # Agents as participants: the build plan
 
-Status: **a plan, partly built**: steps 1, 2 and 3.1-3.6 are built, each
-step's "As built" saying where the build differs. Written 2026-11-14
+Status: **a plan, partly built**: steps 1-4 are built, each step's "As
+built" saying where the build differs; step 5 is next. Written 2026-11-14
 against `dev` @ b4870d47, after a survey of the code behind work folders, local agents,
 computers and feedback. The file and line references were read then, so
 check them again before building. This file says what to build and in
@@ -1212,6 +1212,89 @@ the thread under its own name, edits the file where there is one, and
 asks a question of its own as a thread; no Feedback button is left; an
 agent started in a terminal reads `.gamma/annotations/open.md`.
 
+**As built** (3.7). The tables go through a migration rather than by
+leaving them: pages.db workspace step 65 (`drop_requests`, in
+`LOCAL_STEPS`) drops `feedback_requests`, `feedback_request_threads` and
+`feedback_request_runs`, `db.FEEDBACK_SCHEMA` is gone from
+`PAGES_SCHEMA`, and a backup made before the step runs it on its copy and
+restores without them; vaults.db's `agent_runs` and `agent_threads` stay
+in the schema, unread and unwritten (vaults.db is additive).
+`annotations/requests.py`, `routers/feedback.py`, the channel's
+`/api/computers/sends*` (`channel._sends`, `SENDS_EVERY_S`, the `sends`
+wake) and `registry.heard` go; `files.FORMER` is a tuple, `.gamma/feedback`
+and `.gamma/annotations/requests`, both deleted at every round and
+removal. The thread picture route stays, which differs from the list
+above: a far thread's turn needs its region's picture, so
+`GET /api/computers/threads/{id}/picture` is authorized by
+`chats.holds_thread` (the computer's run holds a turn of that thread,
+for the token's account) and `HttpChatHome` fetches the pictures into the
+folder's `.gamma/annotations/img/` (its `.gitignore` first), so a far turn
+sees them as a local one does. The runner keeps one kind of item, a
+`_ChatTurn`, keyed `(ws, turn id)` (a far one `(link id, turn id)`), and
+`at_work` and a link's `agent.running` say `{detail}` alone; `_Run`,
+`waiting`, `queue_waiting`, `queue_folder`, `folder_agent`, `running`,
+`send_runs` and `MAX_THREADS` went with it, and so did `PATCH
+/api/local-agents/{agent}`'s `queued`, `folder_links.try_holding`,
+`agent_folder` and `_hand_waiting`, the jobs' `feedback-run` rows and the
+tasks' `stopBody`. The structured answer goes from the drivers too (the
+schema, Codex's `outputSchema`, Claude Code's `--json-schema` and
+`StructuredOutput`, `done.answer`), with `prompt.build`, `ANSWER_SCHEMA`,
+`pending` and `answers`. The reader loses `sent`, `request_state`, the
+`ids` argument and `thread_ids`; `list_annotations` loses `request` and
+`mcp_links.holders` its requests; `hand.answer_run` and the `seen` stamp
+go; `store.forget_threads` is `forget_sessions` (the conversations'
+sessions alone). The client loses `frontend/src/feedback/` with its two
+test files and the 49 strings only it used (`tools/i18n.mjs --sync`); the
+desktop's `agentChat` goes and `agentSaid` names the chat and the comments.
+The tests the Sends had are thread turns now where the behaviour stays: a
+timeout, the error's record, a detach, recovery waiting for a workspace's
+migrations, a turn behind another in its directory, an agent that may not
+ask, a turn's detail on the links, the source line through the vault's
+rows, a push while paused, *Stop showing*, an `@codex` made on the other
+server, the computer's binding, and the handwriting card's new group in
+the browser; withdraws, claims, progress, answer retries, the 100-comment
+cap, "nothing new", a token's Send refused and the dialog's document are
+the Sends' own and went with them. The browser groups `feedback` and
+`remote-sends` go (`select.mjs` maps their files to `work-folders` and
+`remote-chat`); `local-agents` checks the Done-when: no Feedback button in
+the folder's list bar, the vault chip's menu or the Comments window, a
+ticked comment on a line of a synced folder's `.tex` edited by Codex (the
+code view shows it after the sync), Codex's own question opened as a
+thread on another line, `open.md` naming both threads, and a ticked comment
+on a library PDF's passage answered in its thread. That step found the code
+view's CodeMirror rules (`viewers.css`) reaching the comment column's own
+fields, which stand inside its editor (a field with the code's margin, height
+and hidden caret): they name the code's editor by its children now
+(`.docTextHost > .cm-editor > …`).
+
+The loose ends of 3.3-3.6 close in the same step. The Inbox item and a
+thread's resolving agent keep the agent's name, id and owner (users.db
+`inbox_items` gains `agent_id` and `agent_owner`, pages.db `comments`
+`resolved_agent_id` and `resolved_agent_owner`, step 66 `agent_ids` with
+a global and a workspace part, the latter in `LOCAL_STEPS`), the server
+answers them as `Agent.shown`'s `{id, kind, name, on?, owner?}` named
+through `agents.read_all`, and the client words them with
+`chat/agents.js` `agentWords`; the step rewrites an old label where
+users.db (the Inbox) or the thread's comments (a resolve) name its agent
+and leaves any other as words, and `channel.computer_name` reads the host
+name without the settings so the users.db part can name this computer. A
+thread turn's row in Background tasks opens the thread's conversation:
+`runner._chats` and `chats.remote_turns` keep the turn's thread and the
+conversation's owner, the row's `params` carry `conversation`, `thread`
+and, for a co-author's turn listed in its owner's tasks too, `person`, and
+the client opens it through `chatSide.js` `showInChat`, which replaced
+`showThreadChat` and `pickChatAgent` as the one way to show another
+conversation in a page's chat. An undo of an agent's block's deletion
+keeps its stamp through a tombstone rather than anything the client
+sends: an op's delete writes the stamp to pages.db `agent_stamps` (an
+additive table) with the block's text, and an insert of that id with
+that text takes it back (`_Batch.keep_stamps`, `stamp_back`). The owner's
+History lists a co-author's chat conversations under their name (`GET
+/chat/history`'s `lent`, `chats.lent_history`), opened in place of the
+owner's own (`GET /chat?conversation=`, `chats.lent_one`, the
+`{conversation}` of `showInChat`), exported but never selected, opened as
+the owner's or deleted; the strip offers no terminal on one.
+
 ## 4. Another server
 
 ### 4.1 A computer linked in Settings
@@ -1221,6 +1304,42 @@ agent started in a terminal reads `.gamma/annotations/open.md`.
   mints the `computer` token as `showComputer` does, `main.js:2480`) and
   removes one. No vault is needed.
 - `computer_links` gains `asks`, the switch of decision 7.
+
+**As built** (4.1). `GET /api/computer-links` was there already (the
+sync panel's line read it); it gains `asks` and `workspace_name`, and the
+section is `SettingsAgents.jsx` `AnsweredServers`, a read of the pane where
+`who.desktop`, shown below *This computer* in the desktop app and nowhere
+else. A row names the link by its address's host and the workspace there:
+the host keeps no server name of the launcher's, so the announce's answer
+names the workspace (`workspace: {id, name}`) and the channel keeps it
+(`computer_links.workspace_name`), which also names that workspace in the
+people an owner may name (`_co_authors_there`, "" before). Users.db step 67
+(`computer_asks`) adds `computer_links.asks` and `workspace_name` and the
+server's `computers.asks`: the announce carries `asks` (a flag, false from
+an app that says nothing), the server keeps it and answers it with the
+account's computers and the page's (`registry.of_account`, `of_page`; a
+lent computer's false), for 4.3 to read (4.3 relays the asks). `PATCH
+/api/computer-links/{id} {asks}` takes the shell's word to turn it on,
+even on a server started with no secret (`shell_strict`), and the session
+to turn it off; a new token for a link keeps it. The shell's
+page asks are `add-server {link}` (`"new"`, or a link's id: *Reconnect…*
+on one that server refused, hands it a new token), `remove-server {link}`
+and `link-asks {link, asks}`, run by `addLinkedServer`,
+`removeLinkedServer` and `setLinkAsks` (`removeServer` is the
+launcher's). *Add a server…* picks among the launcher's remote
+servers; it signs in nowhere by itself: signed out there, its question
+offers to open that server in the window to sign in, and the person adds
+it again. With several workspaces there it asks which (a clone's left
+out). *Remove* deletes the link with the shell's word, which stops the
+turns of that server that run here (`runner.stop_channel(…,
+"unlinked")`, 4.2's), and the shell revokes the token there, where the server's
+`registry._fail_held` fails what its runs held, as *Stop showing* does
+(`dropComputerLink`, shared). The host starts at launch while it keeps a
+link (`folderHost`, cleared by `releaseHost` only once neither a vault of
+a remote server nor a link is left), since a channel runs only while the
+host does. Not changed: the last vault of a server and workspace removed
+still takes the link with it (`releaseRemote`), one made in Settings too,
+since the host does not tell the two apart.
 
 ### 4.2 Any chat there
 
@@ -1233,6 +1352,97 @@ agent started in a terminal reads `.gamma/annotations/open.md`.
   computer resolves the id and refuses one it does not offer.
 - The token of a turn (2.7) is minted by the server at the claim and
   handed to the computer with its own MCP address.
+
+**As built** (4.2). The far seats are `registry.seats(ws, bucket,
+user_id)`, in place of `agent_of`, `agent_folders` and `_kept_with`: each
+agent on of each of the account's computers shown to the workspace, on
+any bucket (a page of a synced folder or not, a folder, the library), read
+even while the computer is away; those keeping the bucket's work folder
+first (their agents work in that vault), then the lent ones (3.6's rule
+stands: a co-author's agent is the owner's first agent on, on a work
+folder's files alone), then the others; online ones first. `GET
+/api/pages/{id}/computer` keeps its path and answers every such computer:
+`vault` the one that keeps the page or null, its `agent` replaced by
+`work` (a computer's every agent on works in the work folder it keeps,
+not its first alone, as on this computer), and `dirs`. The client's
+`keeperAgent` and vaultState's `vaultAgent` gave way to `farAgents`, a
+far agent's `id` is its `agentId` (`computer:<computer>:<name>`), which
+the chat's routes take as `agent` (`_named`: this computer's by its name
+or its id, another's by its id), and the chip lists the keepers' agents,
+then this computer's, then the others'; every far agent is named with its
+computer (*Codex on TIM-PC*), not only where there are two. The computer
+chip names the first computer that keeps the page, and its *Agent:* line
+went. A conversation keeps its computer as it keeps its agent:
+`computer_chats.computer` (workspace step 68 `far_chats`, in
+`LOCAL_STEPS`, filled from each far conversation's newest run's holder,
+else its owner's computer that announced a vault of its work folder), so
+a turn is listed to that computer alone (`chats.waiting_turns` by it, no
+longer by folder and agent) and the announce's or a token's end fails
+the queued turns it would no longer take (`registry._refusal`: its agent
+off, a person no longer served, the work folder no longer kept, the
+directory no longer offered, the channel gone; the old "Codex is no
+longer this folder's agent." went). The server reads the conversation's
+`dir` (W, an offered directory's id, "") as `chats.dir_of`'s `{kind, id}`
+(a folder of the tree is a `vault`), the listing and the claim carry it,
+and the claim's `page: {path, title}` became `about` (`chats.about`). The
+offered directories are announced by id and name (`state_of`'s `dirs`,
+`channel.offered`, while the channel's account has an agent on; users.db
+`computers.dirs`, step 68's global part, none kept while no agent is on),
+the strip answers them (`dirs`) and `POST /chat/turns`'s `dir` must be one
+(`chats.far_dir`). The computer resolves the id (`home.far_place`): a vault
+of that channel's server, workspace and account alone, an offered
+directory while the account has an agent on, or `<data>/agents/<channel
+id>/<conversation id>/` of its own (`home.far_dir`, removed with the
+channel and, once it is gone, at start), refusing anything else with why;
+a turn that names nothing here waits in a queue of its own and fails
+once taken. The runner keys a far turn by the channel (`(channel id, turn
+id)`, `_chats[…]["channel"]`, vaults.db `agent_turns` `ws` and `link_id`
+the channel's id) in place of its vault, which `run["link_id"]` still
+names for a turn in one; `stop_remote_chat`, `end_stopped_remote`,
+`fail_remote_of` take the channel, the channel's `delete` calls the new
+`runner.stop_channel`, `ask_refusal` takes the server's address, and
+`channel.of_vault` and `runner._vault_place` went. Not asked for but
+needed: a turn for a computer offline is refused (409 "TIM-PC is offline:
+send this again once it connects."), never queued, so the strip says
+*send this once it connects.* and the composer holds the message.
+The turn token: the claim mints it (`routers/computers.py` `_tools`,
+`integrations.mint_turn` for the turn's `for`, named with the computer's
+agent's id here), keeps its id in the run's row (`computer_chat_runs.token`,
+step 68), replaces it on a retried claim, renews it at the run's writes
+(`renew_turn`'s new `within`, at most once a minute, `chats.TOKEN_S`), and
+deletes it wherever the run ends (`chats._close`: a write that ends it, a
+Stop, `fail_held`, a message gone); `agents.of_token` names a far token's
+agent by `registry.far_name` (the account's computer of that id in the
+token's workspace, else a lent one with its owner), and `of_channel` went.
+The address is `_mcp_url`: the public URL set in Settings, else the
+loopback address the claim came to, else none (the MCP transport refuses
+other hosts), the claim's `tools` null and the turn without tools. The
+computer takes it only at the channel's origin and path `/mcp`
+(`HttpChatHome.gamma`); refused, the turn runs without the tools and its
+message begins with why (`home.FAR_TOOLS`, `_ChatTurn.preface`), and
+where the server gave none it says nothing (only the log does): a NAS with
+no public URL would otherwise say it on every turn. History rows, the
+conversation, a thread's `agent_chat` and Background tasks' `params` name
+the conversation's agent by its id too (`agent_id`, `chats.agent_id_of`),
+which `pickAgent` matches by `agentId`, so *Open in chat* and History
+pick the right computer's agent. A desktop app's restart deletes every
+turn token it holds (`drop_turns`), a far one minted there with them.
+A conversation whose directory is no longer kept or offered there gives
+way to a new one at its next message (`far_dir` answers "" for it and
+`begin` archives it), a thread's conversation too; a `dir` the request
+names that is not offered is still refused. A computer may not announce
+this server's own computer id (`registry.normalise`, 400), so a far
+turn's token never writes as this computer's agent, and `of_token` reads
+that id as this computer's only where agents run here. The turn path, like
+the announce, reads an older server's shape: a listed turn with no
+`agent` (`{id, conversation_id, page_id, folder_id}`) is queued in the
+vault here that keeps its work folder, with the agent that vault names
+(`channel._chats`), and a claim's answer with no `dir` keeps the listed
+one (`HttpChatHome.claim`). Where no page is open (a folder's or the
+library's chat), the chip lists the account's computers' agents from `GET
+/api/computers`, which now carries each computer's `dirs`, without
+another account's lent ones (`vaultState.readAccountComputers`), after
+this computer's.
 
 ### 4.3 Asks relayed
 
@@ -1250,6 +1460,41 @@ agent started in a terminal reads `.gamma/annotations/open.md`.
 Done when: from a phone, on a page of a NAS that is in no synced folder,
 Claude Code on the PC is picked, asks to run a build, and the card is
 answered on the phone.
+
+**As built** (4.3). The relay is the link's switch of 4.1 (`asks`), read
+on the computer at the turn's start, at each ask and at each write
+(`_ChatTurn._relays`), never the server's record of it. *Ask on this
+computer* did not wait for later: it is the first place, and the relayed
+card the second, as the note at the end said. A far turn of the owner's
+asks on the computer as before whatever the switch (the bar, the shell's
+secret, https); with the switch on it is written in that server's message
+too (`asks`, the chat's own card, each `once`: no grant is kept for any
+turn on another computer, so the owner's far ask offers *Allow once* and
+*Decline* as a co-author's does), and the shell's secret and the bar's
+presence are not needed then; `waiting` now says only that an ask waits on
+the computer alone. A co-author's far turn asks only with the switch on.
+The answer is kept with the run in a new column, pages.db
+`computer_chat_runs.answers` (workspace step 69 `far_answers`, in
+`LOCAL_STEPS`; `SCHEMA_VERSION` 69), the ask taken out of the message at
+once (`chats.answer_run`), the computer woken with `chat` and handed it by
+the listing's new `answers` (`chats.answers_of` → `channel._chats` →
+`runner.answer_relayed`); the server's writes leave an ask answered there
+out of the message, and keep its answer while the run's writes still name
+the ask. The first answer is the one: the computer's `_decide` takes one
+answer an ask, and the server refuses an ask its message no longer holds;
+when both come at once the computer's stands and the server's card closes
+at the next write. The server's answer route now answers a far turn's ask
+(the turn's person or its agent's owner, `chats.readable`) and refuses
+`chat`; on the computer, its chat route still refuses its far turns (409).
+Not asked for but needed: the desktop app follows the asks while it keeps
+any link, not only a remote work folder (4.2 made every chat there ask
+here); the bar's notice after an answer that came too late reads "nothing
+was allowed here", since the server's answer may have allowed it;
+Background tasks say *Waiting for you* for a relayed ask and *Waiting for
+your answer on TIM-PC* (`progress.there`) for one that waits on the
+computer alone; the switch changed while a turn runs writes its message
+there again (`runner.relays_changed`). The stand-in Codex lets a scripted
+turn give its own asks (`turns`' `ask`), for the browser scenario's build.
 
 ## 5. Sessions
 
@@ -1269,8 +1514,8 @@ answered on the phone.
 | Where | Change | How |
 |---|---|---|
 | vaults.db | `computer_agents`, `agent_dirs`, `agent_dir_grants` new and `agent_folders`, `agent_policies`, `agent_grants` unread (built, 2.1, 2.2); `agent_people` new (built, 3.6); `agent_runs`, `agent_threads` unread (later) | additive, with one carry-over at start (2.1) |
-| users.db | `integration_tokens.comments`; `feedback` tokens become commenting `read` tokens (built, 3.3: global step 61, `integration_comments`); `computer_links.asks`; `computers.assistants` reshaped | one global step, the next free number after 58 |
-| pages.db | `computer_chats` keeps its name, `page_id` becoming `bucket`, with `dir`, and `computer_chat_runs` gains `bucket` (built, 2.5: workspace step 59, `computer_chat_buckets`); `thread_id` (built, 3.5: workspace step 62, `computer_chat_threads`); `owner` (built, 3.6: workspace step 63, `computer_chat_owners`); `comments.agent_owner` (built, 3.6: workspace step 64, `comment_agent_owners`); the three `feedback_request*` tables dropped; `comments.agent_id` `local:<name>` rewritten to the new id (built, 3.4: workspace step 60, `comment_agent_ids`) | one workspace step, in `LOCAL_STEPS` as 54 and 58 are: no copy of a workspace syncs these tables |
+| users.db | `integration_tokens.comments`; `feedback` tokens become commenting `read` tokens (built, 3.3: global step 61, `integration_comments`); `computer_links.asks` and `workspace_name`, `computers.asks` (built, 4.1: global step 67, `computer_asks`); `computers.dirs` (built, 4.2: step 68 `far_chats`, its global part); `computers.assistants` reshaped | one global step, the next free number after 58 |
+| pages.db | `computer_chats` keeps its name, `page_id` becoming `bucket`, with `dir`, and `computer_chat_runs` gains `bucket` (built, 2.5: workspace step 59, `computer_chat_buckets`); `thread_id` (built, 3.5: workspace step 62, `computer_chat_threads`); `owner` (built, 3.6: workspace step 63, `computer_chat_owners`); `comments.agent_owner` (built, 3.6: workspace step 64, `comment_agent_owners`); `computer_chats.computer` and `computer_chat_runs.token` (built, 4.2: workspace step 68, `far_chats`); `computer_chat_runs.answers` (built, 4.3: workspace step 69, `far_answers`); the three `feedback_request*` tables dropped; `comments.agent_id` `local:<name>` rewritten to the new id (built, 3.4: workspace step 60, `comment_agent_ids`) | one workspace step, in `LOCAL_STEPS` as 54 and 58 are: no copy of a workspace syncs these tables |
 | data.db | `feedback_pictures` renamed | rebuilt on demand, no step |
 | The directory | `.gamma/feedback/` removed, `.gamma/annotations/` written | at the vault's first round |
 

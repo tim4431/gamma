@@ -3847,6 +3847,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistRow[aria-disabled="true"]:hover { background: none; }
 .chatHistIcon { flex: none; color: var(--text-muted); }
 .chatHistTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Whose a co-author's conversation is ("bob's chat with Codex"): after the
+   title, dim, giving way to it on a narrow popover. */
+.chatHistBy { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: var(--fs-2xs); color: var(--text-dim); }
 .chatHistAge { flex: none; font-size: var(--fs-2xs); color: var(--text-dim); padding-right: 4px; }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }

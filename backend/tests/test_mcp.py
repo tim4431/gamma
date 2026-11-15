@@ -828,7 +828,7 @@ def test_a_commenting_connection_replies_and_resolves(client, connection, commen
         assert conn.execute("SELECT agent_id FROM comments WHERE id = ?", (comment_id,)).fetchone()[0] == commenting["id"]
     assert (ws, file, {"t": "comments", "block_id": thread["block_id"], "thread_id": thread["id"]}) in published
     items = c.get("/api/inbox", params={"filter": "all"}).json()["items"]
-    assert any(i["thread_id"] == thread["id"] and i["kind"] == "reply" and i["agent"] == "Claude Code" for i in items)
+    assert any(i["thread_id"] == thread["id"] and i["kind"] == "reply" and i["agent"]["name"] == "Claude Code" for i in items)
     # the same words again moments later write nothing twice
     again = call(client, token, "comment", {"thread_id": thread["id"],
                                             "body": "Defined in 3.1 (sections/method.tex:112)."})
@@ -854,7 +854,7 @@ def test_a_commenting_connection_replies_and_resolves(client, connection, commen
     assert resolved["content"][0]["text"].endswith(
         f"ok — resolved thread {thread['id']} on main.pdf, page 1, “the loss is defined as”. Link: {url}")
     stored = c.get(f"/api/pages/{file}/comments").json()["threads"][0]
-    assert (stored["resolved_by"], stored["resolved_agent"]) == ("mcp-reader", "Claude Code")
+    assert (stored["resolved_by"], stored["resolved_agent"]["name"]) == ("mcp-reader", "Claude Code")
     again = call(client, token, "resolve", {"thread_id": thread["id"]})
     assert not again["isError"] and "was resolved already" in again["content"][0]["text"]
     assert c.get(f"/api/pages/{file}/comments").json()["threads"][0]["resolved_at"] == stored["resolved_at"]

@@ -13,12 +13,9 @@ key optional):
   the working directory; each is one fileChange item, the text replaced;
 - ``commands``: command lines reported as commandExecution items (exit 0,
   output ``ok``), none of them run;
-- ``answer``: the final message's JSON, whole; or ``each``: an outcome
-  (``fixed``) given to every ``"thread_id": "<id>"`` in the prompt, with
-  ``summary``;
-- ``chat``: the final message of a chat turn (a turn with no output schema
-  whose prompt carries a ``"message"``, gamma/local_agents/prompt.py
-  ``build_chat``), plain text; by default ``Done: <the message>``;
+- ``chat``: the final message of a turn, plain text; by default ``Done:
+  <the message>``, the ``"message"`` the prompt's JSON block carries
+  (gamma/local_agents/prompt.py ``build_chat``, ``build_thread``);
 - ``ask``: what a turn whose thread asked for ``approvalPolicy``
   ``on-request`` asks, in order: ``{"command", "reason"?, "host"?, "kind"?,
   "cwd"?}`` a command's approval (``kind`` the approval's, ``command`` by
@@ -38,8 +35,7 @@ key optional):
   default), ``typing`` seconds between two;
 - ``models``: what ``model/list`` lists (``MODELS`` by default, two a page);
 - ``fail``: ``exit`` (dies after turn/start, a line on stderr), ``garbage``
-  (lines that are not JSON, then exits), ``no_answer`` (a final message
-  that is not JSON), ``not_signed_in``, ``sandbox_not_ready``, ``hang``
+  (lines that are not JSON, then exits), ``not_signed_in``, ``sandbox_not_ready``, ``hang``
   (never ends its turn, ignores the interrupt; with ``grandchild`` it starts
   a child process that sleeps), ``approval`` (asks the methods in
   ``approvals``, the command approval by default, and records each
@@ -68,7 +64,7 @@ key optional):
   ``failed`` when the variable is not set (or ``fail`` is ``gamma_down``);
 - ``turns``: ``{message: {keys}}``, a chat turn of that message scripted
   by those keys in place of the others' (``gamma``, ``edits``,
-  ``commands``, ``chat``, ``delay``, ``typing``);
+  ``commands``, ``chat``, ``ask``, ``delay``, ``typing``);
 - ``log``: a file receiving one JSON line per thing seen: ``{"argv",
   "cwd", "env"}`` (the GAMMA_* and agent-session variable names it got),
   ``{"in": message}``, ``{"answer": message}`` (to a request it made),
@@ -251,10 +247,10 @@ def prompt_of(params: dict) -> str:
     return "\n".join(part.get("text", "") for part in params.get("input") or [] if part.get("type") == "text")
 
 
-def chat_message(prompt: str) -> str | None:
-    """The person's message of a chat turn's prompt, None for a Send's."""
+def chat_message(prompt: str) -> str:
+    """The person's message the turn's prompt carries, "" for none."""
     found = re.search(r'"message":\s*("(?:[^"\\]|\\.)*")', prompt)
-    return json.loads(found.group(1)) if found else None
+    return json.loads(found.group(1)) if found else ""
 
 
 def chat_block(prompt: str) -> dict:
@@ -288,18 +284,10 @@ def script_of(prompt: str) -> dict:
     return {**FAKE, **((FAKE.get("turns") or {}).get(chat_message(prompt)) or {})}
 
 
-def answer_text(prompt: str, schema=None, script: dict = FAKE, said: str = "") -> str:
-    message = chat_message(prompt) if schema is None else None
-    if message is not None:
-        return (script.get("chat") or f"Done: {message}").replace("{gamma}", said)
-    if FAIL == "no_answer":
-        return "I looked at the comments but have nothing to say in JSON."
-    if "answer" in FAKE:
-        return json.dumps(FAKE["answer"])
-    outcome = FAKE.get("each", "fixed")
-    ids = list(dict.fromkeys(re.findall(r'"thread_id":\s*"([^"]+)"', prompt)))
-    return json.dumps({"answers": [{"thread_id": t, "outcome": outcome, "reply": f"Done for {t}."} for t in ids],
-                       "summary": FAKE.get("summary", "Fixed the comments.")})
+def answer_text(prompt: str, script: dict = FAKE, said: str = "") -> str:
+    """The turn's final message (``chat``), ``{gamma}`` in it the text the
+    last call of Gamma's tools gave back."""
+    return (script.get("chat") or f"Done: {chat_message(prompt)}").replace("{gamma}", said)
 
 
 def item(method: str, thread: str, body: dict) -> None:
@@ -430,7 +418,7 @@ def run_turn() -> None:
         item("item/started", thread, body)
         item("item/completed", thread, {**body, "status": "completed", "aggregatedOutput": "ok\n", "exitCode": 0})
     decisions = []
-    for n, asked in enumerate((FAKE.get("ask") or []) if state["policy"] == "on-request" else []):
+    for n, asked in enumerate((script.get("ask") or []) if state["policy"] == "on-request" else []):
         decision = ask_one(thread, n, asked, cwd)
         if decision is None or decision == "cancel":
             complete(thread, "interrupted")
@@ -450,7 +438,7 @@ def run_turn() -> None:
     if state["interrupted"]:
         complete(thread, "interrupted")
         return
-    text = answer_text(prompt_of(params), params.get("outputSchema"), script, said)
+    text = answer_text(prompt_of(params), script, said)
     if decisions and not script.get("chat"):
         text = "Ran it." if decisions[-1] in ("accept", "acceptForSession") else "Did not run it."
     item("item/started", thread, {"type": "agentMessage", "id": "am0", "text": ""})

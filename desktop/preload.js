@@ -16,10 +16,14 @@
 //   this computer: one turned on or off (`set-agent`, `enabled`), let ask
 //   or not (`set-agent-runs`, `ask`), a directory offered to them
 //   (`agent-dirs`: `dir` "new", or the one moved), a person who may use one
-//   (`agent-person`: `place` the workspace, `person` the account). The shell checks each
+//   (`agent-person`: `place` the workspace, `person` the account), and the
+//   servers this computer answers: one added (`add-server`: `link` "new",
+//   or a link handed a new token), one removed (`remove-server`), one let
+//   answer what the agents ask or not (`link-asks`, `asks`). The shell checks each
 //   and asks the user for the directory, the file or the server, its own
-//   question before an agent is turned on or let ask, or its own server
-//   for the terminal's command. Gamma stays a black box.
+//   question before an agent is turned on or let ask, or a server let
+//   answer its asks, or its own server for the terminal's command. Gamma
+//   stays a black box.
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -119,6 +123,9 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     'set-agent-runs': ['shell:agent-runs-from-page', 'agent', 'ask'],
     'agent-dirs': ['shell:agent-dirs-from-page', 'dir'],
     'agent-person': ['shell:agent-person-from-page', 'agent', '', 'place', 'person'],
+    'add-server': ['shell:add-server-from-page', 'link'],
+    'remove-server': ['shell:remove-server-from-page', 'link'],
+    'link-asks': ['shell:link-asks-from-page', 'link', 'asks'],
   };
   window.addEventListener('message', (e) => {
     const d = e.data;

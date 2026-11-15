@@ -29,13 +29,12 @@ import { MentionContext } from "../editor/MentionMenu";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { CommentComposer, hasDraft } from "./CommentComposer";
-import { agentFor, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen, turnChip } from "./comments.js";
+import { agentFor, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen, resolvedBy, turnChip } from "./comments.js";
 import { openReport } from "../support/reportContent.js";
 import { ThreadPlaceContext } from "./threadPlaceContext.js";
 
 // What a thread says of its place once its file changed, a PDF rebuilt or
-// a text file rewritten (App's placeOf through threadPlaceContext.js): the
-// words of the feedback files too (feedback/feedbackText.js placedText).
+// a text file rewritten (App's placeOf through threadPlaceContext.js).
 const PLACE_TEXT = {
   moved: () => t("The passage moved in the new version"),
   lost: () => t("The passage was not found in the new version"),
@@ -235,8 +234,7 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
       ) : null}
       {open ? null : (
         <div className="commentThreadState">
-          {thread.resolved_agent || thread.resolved_by
-            ? t("Resolved by {name}", { name: thread.resolved_agent || thread.resolved_by }) : t("Resolved")}
+          {resolvedBy(thread) ? t("Resolved by {name}", { name: resolvedBy(thread) }) : t("Resolved")}
         </div>
       )}
     </section>

@@ -1,6 +1,6 @@
 """The agent drivers (gamma/local_agents/events.py, codex.py, claude.py)
 against the stand-ins in tests/fake_agents/, through the real procs.spawn:
-what each sends, the events it makes of what comes back, the answer, and
+what each sends, the events it makes of what comes back, its text, and
 every way a turn ends (its end, a stop, a crash, a stream that is not
 JSON, silence) with exactly one done and no process left; Gamma's tools
 (step 2.7 of docs/research/agents-as-participants-plan.md): the config and
@@ -24,9 +24,7 @@ from gamma import auth, integrations, mcp_server, workspaces
 from gamma.local_agents import claude, codex, events, procs, tools
 from test_mcp import call, rpc
 
-PROMPT = 'The comments:\n```json\n{\n "thread_id": "t1"\n}\n```\n```json\n{\n "thread_id": "t2"\n}\n```\n'
-SCHEMA = {"type": "object", "properties": {"answers": {"type": "array"}, "summary": {"type": "string"}},
-          "required": ["answers", "summary"], "additionalProperties": False}
+PROMPT = 'The message:\n```json\n{\n "message": "Fix the intro."\n}\n```\n'
 
 
 @pytest.fixture(autouse=True)
@@ -82,9 +80,6 @@ def test_the_event_helpers(tmp_path):
     assert events.rel_path("a/b.tex", str(inside)) == "a/b.tex"
     outside = tmp_path / "other.tex"
     assert events.rel_path(str(outside), str(inside)) == str(outside.resolve())
-    assert events.parse_answer('```json\n{"a": 1}\n```') == {"a": 1}
-    assert events.parse_answer(' {"a": [1]} ') == {"a": [1]}
-    assert events.parse_answer("Done, nothing to say.") is None
     assert events.stderr_reason("2026-11-13T10:00:00Z ERROR codex_core: boom\n") == ""
     assert events.stderr_reason("[12:00:01] warn\nError: the model is overloaded\n\n") == \
         "Error: the model is overloaded"
@@ -110,8 +105,8 @@ def test_a_cli_that_cannot_start_ends_in_a_done(work):
 
 def test_codex_answers_a_turn(monkeypatch, work, log):
     script_agent(monkeypatch, log, edits=[{"path": "main.tex", "old": "the the", "new": "the"}],
-                 commands=["latexmk -pdf main.tex"], each="fixed", summary="Fixed both.")
-    turn = _turn("codex", work, schema=SCHEMA, images=[str(work / "fig.png")])
+                 commands=["latexmk -pdf main.tex"])
+    turn = _turn("codex", work, images=[str(work / "fig.png")])
     out = _all(turn)
     assert out[0] == {"type": "session", "id": "019a0000-fake-thread"} and turn.session == out[0]["id"]
     assert _tools(out) == [("edit", "Edit main.tex", "started"), ("edit", "Edit main.tex", "completed"),
@@ -122,10 +117,7 @@ def test_codex_answers_a_turn(monkeypatch, work, log):
     ran = [e for e in out if e["type"] == "tool" and e["kind"] == "run"]
     assert ran[0]["command"] == "latexmk -pdf main.tex" and "output" not in ran[0] and ran[1]["output"] == "ok\n"
     done = out[-1]
-    assert done["ok"] and not done["stopped"] and done["error"] == ""
-    assert done["answer"] == {"answers": [{"thread_id": "t1", "outcome": "fixed", "reply": "Done for t1."},
-                                          {"thread_id": "t2", "outcome": "fixed", "reply": "Done for t2."}],
-                              "summary": "Fixed both."}
+    assert done["ok"] and not done["stopped"] and done["error"] == "" and done["text"] == "Done: Fix the intro."
     assert [e for e in out if e["type"] == "text"] == [{"type": "text", "text": done["text"]}]
     assert done["usage"]["total"]["totalTokens"] == 15
     assert (work / "main.tex").read_text(encoding="utf-8") == "\\section{Intro}\nthe cavity\n"
@@ -148,13 +140,12 @@ def test_codex_answers_a_turn(monkeypatch, work, log):
     assert sent[4]["params"] == {
         "threadId": "019a0000-fake-thread",
         "input": [{"type": "text", "text": PROMPT}, {"type": "localImage", "path": str(work / "fig.png")}],
-        "sandboxPolicy": {"type": "workspaceWrite", "writableRoots": [str(work)], "networkAccess": False},
-        "outputSchema": SCHEMA}
+        "sandboxPolicy": {"type": "workspaceWrite", "writableRoots": [str(work)], "networkAccess": False}}
 
 
 def test_codex_resumes_its_thread_and_checks_the_sandbox_on_windows(monkeypatch, work, log):
     monkeypatch.setattr(codex, "CHECK_SANDBOX", True)
-    script_agent(monkeypatch, log, answer={"answers": [], "summary": ""})
+    script_agent(monkeypatch, log)
     turn = _turn("codex", work, session="019a-earlier-thread", images=[str(work / f"{i}.png") for i in range(9)])
     out = _all(turn)
     assert out[0] == {"type": "session", "id": "019a-earlier-thread"} and out[-1]["ok"]
@@ -265,12 +256,6 @@ def test_codex_failures_name_the_reason(monkeypatch, work, log, fail, error):
     assert not out[-1]["ok"] and not out[-1]["stopped"] and out[-1]["error"] == error
 
 
-def test_codex_without_an_answer_in_json(monkeypatch, work, log):
-    script_agent(monkeypatch, log, fail="no_answer")
-    done = _all(_turn("codex", work))[-1]
-    assert done["ok"] and done["answer"] is None and done["text"].startswith("I looked")
-
-
 def test_codex_silent_for_too_long_is_stopped(monkeypatch, work, log):
     monkeypatch.setattr(events, "TURN_IDLE_S", 1.0)
     script_agent(monkeypatch, log, fail="hang")
@@ -281,8 +266,8 @@ def test_codex_silent_for_too_long_is_stopped(monkeypatch, work, log):
 # --- Claude Code ---------------------------------------------------------------------
 
 def test_claude_answers_a_turn(monkeypatch, work, log):
-    script_agent(monkeypatch, log, edits=[{"path": "main.tex", "old": "the the", "new": "the"}], summary="Both.")
-    turn = _turn("claude", work, schema=SCHEMA, images=[str(work / "fig.png")])
+    script_agent(monkeypatch, log, edits=[{"path": "main.tex", "old": "the the", "new": "the"}])
+    turn = _turn("claude", work, images=[str(work / "fig.png")])
     out = _all(turn)
     assert out[0] == {"type": "session", "id": "5e55-fake-session"} and turn.session == "5e55-fake-session"
     assert _tools(out) == [("read", "Read main.tex", "started"), ("read", "Read main.tex", "completed"),
@@ -290,13 +275,12 @@ def test_claude_answers_a_turn(monkeypatch, work, log):
                            ("search", "Search TODO", "started"), ("search", "Search TODO", "failed")]
     assert all(e["path"] == "main.tex" for e in out if e["type"] == "tool" and e["kind"] in ("read", "edit"))
     done = out[-1]
-    assert done["ok"] and done["answer"]["summary"] == "Both."
-    assert [a["thread_id"] for a in done["answer"]["answers"]] == ["t1", "t2"]
+    assert done["ok"] and done["text"] == "Done: Fix the intro."
     assert done["usage"] == {"input_tokens": 10, "output_tokens": 5}
     assert (work / "main.tex").read_text(encoding="utf-8") == "\\section{Intro}\nthe cavity\n"
     entries = read_log(log)
     argv = entries[0]["argv"]
-    assert argv == claude.FLAGS + ["--json-schema", json.dumps(SCHEMA)]
+    assert argv == claude.FLAGS
     assert argv[:14] == ["-p", "--output-format", "stream-json", "--verbose", "--restricted", "--permission-mode",
                          "acceptEdits", "--permission-prompts", "none", "--strict-mcp-config", "--tools",
                          "Read,Edit,Write,Glob,Grep", "--disallowedTools", "Bash,WebFetch,WebSearch"]
@@ -311,9 +295,7 @@ def test_claude_resumes_only_a_session_id_that_looks_like_one(monkeypatch, work,
     assert read_log(log)[0]["argv"][-2:] == ["--resume", "46a1f3dd-abe3-441d-8c99-a73f846098ea"]
     assert claude.command(["claude"], session="x; rm -rf /") == ["claude"] + claude.FLAGS
     assert claude.command(["claude"], session="a" * 129) == ["claude"] + claude.FLAGS
-    # Without a schema the answer is the result's text read as JSON.
-    done = out[-1]
-    assert done["ok"] and done["answer"] == json.loads(done["text"]) and "--json-schema" not in read_log(log)[0]["argv"]
+    assert out[-1]["ok"] and out[-1]["text"] == "Done: Fix the intro."
 
 
 def test_claude_stop_kills_it_and_its_child(monkeypatch, work, log):
@@ -336,14 +318,8 @@ def test_claude_stop_kills_it_and_its_child(monkeypatch, work, log):
 ])
 def test_claude_failures_name_the_reason(monkeypatch, work, log, fail, error):
     script_agent(monkeypatch, log, fail=fail)
-    out = _all(_turn("claude", work, schema=SCHEMA))
+    out = _all(_turn("claude", work))
     assert not out[-1]["ok"] and not out[-1]["stopped"] and out[-1]["error"] == error
-
-
-def test_claude_without_an_answer_in_json(monkeypatch, work, log):
-    script_agent(monkeypatch, log, fail="no_answer")
-    done = _all(_turn("claude", work, schema=SCHEMA))[-1]
-    assert done["ok"] and done["answer"] is None and done["text"] == "I looked at the comments."
 
 
 def test_claude_silent_for_too_long_is_stopped(monkeypatch, work, log):

@@ -15,7 +15,7 @@ settings, git or tool-configuration file needs a person (a planted
 edits inside the directory, and with permission prompts off
 (``--permission-prompts none``) anything that would ask is denied. The
 flags are those of Claude Code 2.1.318's ``--help``, checked against it
-(the hook refused, an edit outside refused, the structured answer kept);
+(the hook refused, an edit outside refused);
 ``--tools`` and ``--disallowedTools`` take several values, so nothing
 positional follows them (the prompt is on stdin).
 
@@ -96,7 +96,6 @@ DEFAULT_MODEL = "default"   # the listing's entry for the model Claude Code pick
 MODELS_FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--restricted",
                 "--strict-mcp-config"]
 MODELS_S = 15
-STRUCTURED = "StructuredOutput"   # the tool --json-schema answers through: not a step
 GAMMA_TOOLS = f"mcp__{events.MCP_NAME}"   # what --allowedTools names: every tool of Gamma's server
 GAMMA_PREFIX = GAMMA_TOOLS + "__"         # a call of one: mcp__gamma_turn__<tool>
 EDITS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
@@ -130,8 +129,8 @@ def mcp_config(url: str) -> str:
         separators=(",", ":"))
 
 
-def command(argv: list[str], *, schema: dict | None = None, session: str = "", ask: bool = False,
-            stream: bool = False, model: str = "", effort: str = "", gamma_url: str = "") -> list[str]:
+def command(argv: list[str], *, session: str = "", ask: bool = False, stream: bool = False, model: str = "",
+            effort: str = "", gamma_url: str = "") -> list[str]:
     """The whole command line of a turn: ``--model`` and ``--effort`` said
     each time (``--restricted`` reads no settings file that would); with
     ``gamma_url``, Gamma's server and its tools allowed (``GAMMA_TOOLS``),
@@ -145,8 +144,6 @@ def command(argv: list[str], *, schema: dict | None = None, session: str = "", a
         out += ["--model", model]
     if effort:
         out += ["--effort", effort]
-    if schema is not None:
-        out += ["--json-schema", json.dumps(schema)]
     if session and SESSION.match(session):
         out += ["--resume", session]
     return out
@@ -206,11 +203,10 @@ def models(argv: list[str]) -> list[dict]:
 class ClaudeTurn(events.Turn):
     label = LABEL
 
-    def __init__(self, argv: list[str], *, cwd: str, prompt: str, schema: dict | None, session: str,
-                 ask: bool = False, stream: bool = False, model: str = "", effort: str = "",
-                 gamma: events.Gamma | None = None):
-        super().__init__(command(argv, schema=schema, session=session, ask=ask, stream=stream, model=model,
-                                 effort=effort, gamma_url=gamma.url if gamma else ""),
+    def __init__(self, argv: list[str], *, cwd: str, prompt: str, session: str, ask: bool = False,
+                 stream: bool = False, model: str = "", effort: str = "", gamma: events.Gamma | None = None):
+        super().__init__(command(argv, session=session, ask=ask, stream=stream, model=model, effort=effort,
+                                 gamma_url=gamma.url if gamma else ""),
                          cwd=cwd, ask=ask, env=ASK_ENV if ask else None, gamma=gamma)
         self.stream = stream
         self._tools: dict[str, dict] = {}   # tool_use id → its started event
@@ -236,8 +232,6 @@ class ClaudeTurn(events.Turn):
     def _started(self, block: dict) -> dict | None:
         name, tool_id = str(block.get("name") or ""), str(block.get("id") or "")
         args = block.get("input") if isinstance(block.get("input"), dict) else {}
-        if name == STRUCTURED:
-            return None  # its result is dropped too: it never enters _tools
         if name == "Read":
             path = events.rel_path(str(args.get("file_path") or ""), self.cwd)
             event = events.tool(tool_id, "read", f"Read {path}", "started", path=path)
@@ -401,21 +395,17 @@ class ClaudeTurn(events.Turn):
     def _result(self, line: dict) -> dict:
         ok = line.get("subtype") == "success" and not line.get("is_error")
         text = line.get("result") if isinstance(line.get("result"), str) else ""
-        answer = line.get("structured_output")
-        if answer is None:
-            answer = events.parse_answer(text)
         usage = line.get("usage") if isinstance(line.get("usage"), dict) else {}
-        return events.done(ok=ok, answer=answer, text=text, usage=usage,
+        return events.done(ok=ok, text=text, usage=usage,
                            error=text or str(line.get("subtype") or "") or "Claude Code's turn failed.")
 
 
-def start(*, argv: list[str], cwd: str, prompt: str, schema: dict | None = None, session: str = "",
-          images: list[str] = (), ask: bool = False, stream: bool = False, model: str = "",
-          effort: str = "", gamma: events.Gamma | None = None) -> ClaudeTurn:
+def start(*, argv: list[str], cwd: str, prompt: str, session: str = "", images: list[str] = (), ask: bool = False,
+          stream: bool = False, model: str = "", effort: str = "", gamma: events.Gamma | None = None) -> ClaudeTurn:
     """Start ``claude -p`` in ``cwd`` for one turn of ``prompt`` (``session``
     one to resume; ``ask``, it may ask to run commands; ``stream``, its text
     as it is written; ``model``, ``effort``; ``gamma``, Gamma's tools).
     ``images`` are not passed: the prompt names the pictures, which Claude
     Code opens with Read."""
-    return ClaudeTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, ask=ask, stream=stream,
-                      model=model, effort=effort, gamma=gamma)
+    return ClaudeTurn(list(argv), cwd=cwd, prompt=prompt, session=session, ask=ask, stream=stream, model=model,
+                      effort=effort, gamma=gamma)

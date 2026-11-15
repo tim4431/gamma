@@ -20,7 +20,7 @@ token that opened it may use.
 
 A connection may read several workspaces (gamma/integrations.py). Every
 tool takes an optional ``workspace``; without it a call reads the workspace
-holding the ids it names (a block, a comment thread, a Send request), else
+holding the ids it names (a block, a comment thread), else
 the connection's first, and search_library, list_folders and
 list_annotations read them all (``_targets``)."""
 
@@ -166,13 +166,12 @@ COMMENT_WORKSPACE_ARG = {**WORKSPACE_ARG, "description": "The workspace to write
 SEEN_BLOCKS = 2000
 SEEN_CONNECTIONS = 64
 # The arguments that name a block (a page, a note, a folder, where a note
-# goes) by id, and
-# those that name a comment thread or a Send request, which find the
+# goes) by id, and those that name a comment thread, which find the
 # workspace of a call that names none; the argument of a tool that names
 # an annotation, a thread or a highlight (a block): list_annotations'
 # after (the one its previous batch ended at) and read_annotation's id;
-# and the tools that, naming none, no id and no folder, scope or request,
-# read every workspace of the connection.
+# and the tools that, naming none, no id and no folder or scope, read every
+# workspace of the connection.
 ID_ARGS = ("page_id", "block_id", "parent", "after", "folder", "scope", "parent_id", "after_id")
 THREAD_ARGS = ("thread_id",)
 ANNOTATION_ARGS = {"list_annotations": "after", "read_annotation": "id"}
@@ -278,14 +277,13 @@ def _targets(workspaces: list[str], names: dict, tool: str, args: dict) -> list[
     ids = [args[key] for key in ID_ARGS if isinstance(args.get(key), str)] + [
         i for i in args.get("page_ids") or () if isinstance(i, str)] + named
     threads = [args[key] for key in THREAD_ARGS if isinstance(args.get(key), str)] + named
-    found = holders(workspaces, ids, threads=threads,
-                    requests=[args["request"]] if isinstance(args.get("request"), str) else ())
+    found = holders(workspaces, ids, threads=threads)
     if len(found) > 1:
         raise ValueError("These ids are in more than one connected workspace ("
                          + ", ".join(names.get(w, w) for w in found) + "); pass workspace to choose one.")
     if found:
         return found
-    narrowed = any(args.get(key) for key in ("folder", "scope", "request", "after"))
+    narrowed = any(args.get(key) for key in ("folder", "scope", "after"))
     return workspaces if tool in SPREAD and not narrowed else workspaces[:1]
 
 

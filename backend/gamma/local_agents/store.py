@@ -1,16 +1,10 @@
 """What this computer keeps of its agents, in vaults.db (``db.VAULTS_SCHEMA``,
 never migrated): its agents (``computer_agents``, one row an agent: whether
 it is on, what it may run, ``never`` or ``ask``, and the account that turned
-it on, which owns it: its turns, mentions and Sends use it, nobody else's),
-the directories it offers them beyond its vaults (``agent_dirs``), one row a
-run (``agent_runs``): which request it took, the agent's session, its state
-(``running`` until it ends ``done``, ``failed`` or ``stopped``), the last
-progress it showed, the source files it changed, whether the build changed,
-its steps and its process; and one row a thread an agent here answered last
-(``agent_threads``): the agent, its session and the directory it ran in,
-when the run read the thread, the reply it wrote and the request, so that a
-follow-up in the thread resumes that session. For the chat's computer side
-(gamma/local_agents/chats.py): one row a conversation (``agent_conversations``),
+it on, which owns it: its turns and mentions use it, nobody else's), the
+directories it offers them beyond its vaults (``agent_dirs``). For the
+conversations (gamma/local_agents/chats.py, a chat's and a comment thread's):
+one row a conversation (``agent_conversations``),
 the session its agent ran in last, the directory and the vault it is of
 ("" for none), what its next turn resumes, and one row a turn
 (``agent_turns``, its ``page_id`` the conversation's bucket), its state and
@@ -29,16 +23,19 @@ none of them.
 Before agents were the computer's, each vault had its own (``agent_folders``)
 and what it could run (``agent_policies``), and a chat's grants were keyed
 by the vault (``agent_grants``): ``carry_over`` reads the first two once,
-and nothing reads any of the three since.
+and nothing reads any of the three since. Until step 3.7 of
+docs/research/agents-as-participants-plan.md a Send's runs
+(``agent_runs``) and the threads they answered (``agent_threads``) were
+kept too: vaults.db is additive, so both tables stay, emptied at every
+start (``carry_over``), and nothing reads or writes them since.
 
-A run's or a turn's ``error`` is this computer's record of a failure, the
-agent's whole error and its stderr's tail: it may name the user's paths and
-is never shown to the workspace's members (their request carries a sentence
-of the runner's) nor written in the conversation. A removed vault forgets
-its threads and its conversations' sessions and turns
-(``vault.store.forget_link``), a relinked one its threads and sessions
-(``forget_threads``); ``forget_links`` drops the rows of links that are gone
-some other way.
+A turn's ``error`` is this computer's record of a failure, the agent's
+whole error and its stderr's tail: it may name the user's paths and is
+never shown to the workspace's members (their message carries a sentence
+of the runner's). A removed vault forgets its conversations' sessions and
+turns (``vault.store.forget_link``), a relinked one its sessions
+(``forget_sessions``); ``forget_links`` drops the rows of links that are
+gone some other way.
 
 Every function opens its own short connection and commits before it returns,
 as gamma/vault/store.py does.
@@ -51,27 +48,10 @@ from ..blocks_store import new_block_id
 from ..db import connect_vaults_db, page_now
 from .catalog import AGENTS
 
-MAX_STEPS = 200        # steps a run keeps
-MAX_CHANGES = 200      # source files a run keeps as changed
+MAX_STEPS = 200        # steps a turn's message keeps
+MAX_CHANGES = 200      # source files a turn's message keeps as changed
 MAX_DIRS = 50          # directories this computer offers its agents
 MAX_DIR_NAME = 80      # characters of a directory's name
-RUN_STATES = ("running", "done", "failed", "stopped")
-
-_RUN_COLUMNS = ("id", "ws", "link_id", "request_id", "agent", "session", "state", "started_at", "ended_at", "detail",
-                "error", "changes", "built", "steps", "pid")
-_RUN_SELECT = f"SELECT {', '.join(_RUN_COLUMNS)} FROM agent_runs"
-_UPDATABLE = ("session", "pid")
-
-
-def _run(values) -> dict:
-    run = dict(zip(_RUN_COLUMNS, values))
-    for key in ("changes", "steps"):
-        try:
-            run[key] = json.loads(run[key] or "[]")
-        except ValueError:
-            run[key] = []
-    run["built"] = bool(run["built"])
-    return run
 
 
 # --- the computer's agents ------------------------------------------------------------------
@@ -89,8 +69,12 @@ def carry_over() -> None:
     too (``agent_policies`` ``computer``: the consent that covered both a
     chat here and another server's turns, which ``ask`` now is; a vault's
     ``ask``, its own chat's alone, carries ``never``); nothing once the
-    computer has a row of any agent. Nothing reads the old tables after."""
+    computer has a row of any agent. Nothing reads the old tables after.
+    The rows the Sends left (``agent_runs``, ``agent_threads``: their
+    sessions, directories and stderr tails) are deleted at every start."""
     with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM agent_runs")
+        conn.execute("DELETE FROM agent_threads")
         if conn.execute("SELECT 1 FROM computer_agents").fetchone():
             return
         rows = conn.execute("SELECT f.agent, f.set_by, f.set_at, EXISTS (SELECT 1 FROM agent_policies p JOIN "
@@ -125,8 +109,8 @@ def enabled_agents() -> dict[str, dict]:
 
 def agent_for(user_id: str) -> dict | None:
     """The account's first agent that is on, in the catalog's order (Codex,
-    then Claude Code): the one its chat turns and Sends use, and the one its
-    mention names; None for none, and for no account."""
+    then Claude Code): the one its chat turns use, and the one its mention
+    names; None for none, and for no account."""
     return next((row for row in enabled_agents().values() if user_id and row["set_by"] == user_id), None)
 
 
@@ -314,78 +298,26 @@ def usable(user_id: str, ws: str, agent: str) -> dict | None:
 
 
 def forget_links(live_ids: set[str]) -> None:
-    """The threads, conversations (their grants with them) and ended turns
-    of the links not in ``live_ids`` forgotten (a vault gone while this
-    server was not looking); a conversation's and a turn's of no vault
-    (``link_id`` "") stay."""
+    """The conversations (their grants with them) and ended turns of the
+    links not in ``live_ids`` forgotten (a vault gone while this server was
+    not looking); a conversation's and a turn's of no vault (``link_id``
+    "") stay."""
     live = json.dumps(sorted(live_ids))
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM agent_dir_grants WHERE conversation_id IN (SELECT conversation_id "
                      "FROM agent_conversations WHERE link_id != '' "
                      "AND link_id NOT IN (SELECT value FROM json_each(?)))", (live,))
-        conn.execute("DELETE FROM agent_threads WHERE link_id NOT IN (SELECT value FROM json_each(?))", (live,))
         conn.execute("DELETE FROM agent_conversations WHERE link_id != '' "
                      "AND link_id NOT IN (SELECT value FROM json_each(?))", (live,))
         conn.execute("DELETE FROM agent_turns WHERE ended_at IS NOT NULL AND link_id != '' "
                      "AND link_id NOT IN (SELECT value FROM json_each(?))", (live,))
 
 
-# --- the threads answered ---------------------------------------------------------------
-
-_THREAD_COLUMNS = ("thread_id", "agent", "session", "cwd", "seen_at", "read_ids", "comment_id", "request_id", "at")
-
-
-def answered_thread(link_id: str, thread_id: str, *, agent: str, session: str, cwd: str, seen_at: str,
-                    read: list[str], comment_id: str, request_id: str) -> None:
-    """The agent ``agent`` of the vault ``link_id`` answered the thread with
-    the reply ``comment_id``, in the session ``session`` run in ``cwd``, on
-    the request ``request_id``, having read the thread's comments ``read``
-    at ``seen_at``: the thread's row, in place of the one it had."""
+def forget_sessions(link_id: str) -> None:
+    """The sessions of the vault's conversations forgotten: its directory
+    moved (a session belongs to the directory; a grant is keyed by it, so
+    none holds in the new one)."""
     with connect_vaults_db() as conn:
-        conn.execute("INSERT INTO agent_threads (link_id, thread_id, agent, session, cwd, seen_at, read_ids, "
-                     "comment_id, request_id, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                     "ON CONFLICT(link_id, thread_id) DO UPDATE SET agent = excluded.agent, "
-                     "session = excluded.session, cwd = excluded.cwd, seen_at = excluded.seen_at, "
-                     "read_ids = excluded.read_ids, comment_id = excluded.comment_id, "
-                     "request_id = excluded.request_id, at = excluded.at",
-                     (link_id, thread_id, agent, session or "", cwd or "", seen_at or "", json.dumps(list(read or [])),
-                      comment_id or "", request_id or "", page_now()))
-
-
-def threads_of(link_id: str, thread_ids) -> dict[str, dict]:
-    """``{thread id: {thread_id, agent, session, cwd, seen_at, read (the
-    ids of the comments the run read), comment_id, request_id, at}}`` of
-    those of ``thread_ids`` an agent of the vault ``link_id`` answered, in
-    one query."""
-    ids = sorted(set(thread_ids))
-    if not ids:
-        return {}
-    with connect_vaults_db() as conn:
-        rows = conn.execute(f"SELECT {', '.join(_THREAD_COLUMNS)} FROM agent_threads WHERE link_id = ? "
-                            "AND thread_id IN (SELECT value FROM json_each(?))", (link_id, json.dumps(ids))).fetchall()
-    out = {}
-    for row in rows:
-        found = dict(zip(_THREAD_COLUMNS, row))
-        found["read"] = _ids(found.pop("read_ids"))
-        out[row[0]] = found
-    return out
-
-
-def _ids(raw: str) -> list[str]:
-    """A stored JSON list of ids; [] for anything else."""
-    try:
-        value = json.loads(raw or "[]")
-    except ValueError:
-        return []
-    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
-
-
-def forget_threads(link_id: str) -> None:
-    """The threads the vault's agent answered forgotten, and the sessions
-    of its conversations: its directory moved (a session belongs to the
-    directory; a grant is keyed by it, so none holds in the new one)."""
-    with connect_vaults_db() as conn:
-        conn.execute("DELETE FROM agent_threads WHERE link_id = ?", (link_id,))
         conn.execute("DELETE FROM agent_conversations WHERE link_id = ?", (link_id,))
 
 
@@ -429,72 +361,6 @@ def forget_grants(conversation_id: str) -> None:
     """The conversation's grants taken back: each command asks again."""
     with connect_vaults_db() as conn:
         conn.execute("DELETE FROM agent_dir_grants WHERE conversation_id = ?", (conversation_id,))
-
-
-# --- the runs ------------------------------------------------------------------------------
-
-def start_run(*, ws: str, link_id: str, request_id: str, agent: str, run_id: str = "") -> str:
-    """A run of ``agent`` on the request ``request_id`` begins → its id
-    (``run_id``, one the run minted before it claimed the request of
-    another server, else a new one)."""
-    run_id = run_id or new_block_id()
-    with connect_vaults_db() as conn:
-        conn.execute("INSERT INTO agent_runs (id, ws, link_id, request_id, agent, state, started_at) "
-                     "VALUES (?, ?, ?, ?, ?, 'running', ?)", (run_id, ws, link_id, request_id, agent, page_now()))
-    return run_id
-
-
-def update_run(run_id: str, **fields) -> None:
-    """What a run learns while it works: its ``session``, its ``pid``.
-    ValueError for another field."""
-    keys = list(fields)
-    if not keys:
-        return
-    if not set(keys) <= set(_UPDATABLE):
-        raise ValueError(f"no such fields: {sorted(set(keys) - set(_UPDATABLE))}")
-    with connect_vaults_db() as conn:
-        conn.execute(f"UPDATE agent_runs SET {', '.join(f'{k} = ?' for k in keys)} WHERE id = ?",
-                     (*(fields[k] for k in keys), run_id))
-
-
-def end_run(run_id: str, *, state: str, detail: str = "", error: str = "", session: str = "", changes=(),
-            built: bool = False, steps=(), pid: int = 0) -> None:
-    """The run ends in ``state`` (done, failed, stopped): what it showed
-    last, this computer's record of why it failed, the source files it
-    changed (``MAX_CHANGES``), whether the build changed and its steps
-    (``MAX_STEPS``). A ``session`` or ``pid`` left empty keeps the one it
-    had. A run that ended already stays as it ended."""
-    if state not in RUN_STATES[1:]:
-        raise ValueError(f"a run ends {', '.join(RUN_STATES[1:])}")
-    with connect_vaults_db() as conn:
-        conn.execute("UPDATE agent_runs SET state = ?, ended_at = ?, detail = ?, error = ?, "
-                     "session = CASE WHEN ? != '' THEN ? ELSE session END, changes = ?, built = ?, steps = ?, "
-                     "pid = CASE WHEN ? != 0 THEN ? ELSE pid END WHERE id = ? AND ended_at IS NULL",
-                     (state, page_now(), detail or "", error or "", session or "", session or "",
-                      json.dumps(list(changes)[:MAX_CHANGES]), int(bool(built)), json.dumps(list(steps)[:MAX_STEPS]),
-                      int(pid or 0), int(pid or 0), run_id))
-
-
-def get_run(run_id: str) -> dict | None:
-    with connect_vaults_db() as conn:
-        row = conn.execute(f"{_RUN_SELECT} WHERE id = ?", (run_id,)).fetchone()
-    return _run(row) if row else None
-
-
-def open_runs() -> list[dict]:
-    """The runs that have not ended, oldest first: at startup, those a
-    server that stopped left behind."""
-    with connect_vaults_db() as conn:
-        rows = conn.execute(f"{_RUN_SELECT} WHERE ended_at IS NULL ORDER BY started_at").fetchall()
-    return [_run(row) for row in rows]
-
-
-def run_of(ws: str, request_id: str) -> dict | None:
-    """The newest run of the request, None for none."""
-    with connect_vaults_db() as conn:
-        row = conn.execute(f"{_RUN_SELECT} WHERE ws = ? AND request_id = ? ORDER BY started_at DESC, rowid DESC "
-                           "LIMIT 1", (ws, request_id)).fetchone()
-    return _run(row) if row else None
 
 
 # --- the chat's conversations and turns ------------------------------------------------------
@@ -541,11 +407,11 @@ def add_turn(turn_id: str, *, ws: str, link_id: str, conversation_id: str, page_
 
 
 def claimed_turn(turn_id: str, *, link_id: str, conversation_id: str, page_id: str, agent: str) -> None:
-    """A turn of a page of another server that this computer claimed there
-    for the vault ``link_id`` (gamma/local_agents/home.py ``HttpChatHome``),
-    its row keyed by the vault in place of the workspace (as the runner
-    keys it), queued again when it had one: a claim taken once more after
-    its first was settled."""
+    """A turn of another server that this computer claimed there over its
+    channel ``link_id`` (gamma/local_agents/home.py ``HttpChatHome``), its
+    row keyed by the channel in place of the workspace (as the runner keys
+    it), queued again when it had one: a claim taken once more after its
+    first was settled."""
     with connect_vaults_db() as conn:
         conn.execute("INSERT INTO agent_turns (id, ws, link_id, conversation_id, page_id, agent, state, started_at) "
                      "VALUES (?, ?, ?, ?, ?, ?, 'queued', ?) ON CONFLICT(id) DO UPDATE SET ws = excluded.ws, "

@@ -11,8 +11,8 @@ thread with a ``title`` (a chat's conversation's) ``thread/name/set``, so
 ``codex resume`` in the directory lists it by that name (C3 of
 docs/research/agents-as-participants-plan.md), its answer not waited for (a
 Codex that names no thread runs the turn all the same); ``turn/start`` with the
-prompt, the pictures, the answer's schema and a sandbox policy writable in
-the folder only, without network. Items map to
+prompt, the pictures and a sandbox policy writable in the folder only,
+without network. Items map to
 events (``_item``), approvals are refused (``_REFUSALS``), and
 ``turn/completed`` ends it. One loop reads every message in every phase:
 notifications and the server's requests can come before the response a
@@ -296,12 +296,11 @@ def _parse(line: str) -> dict | None:
 class CodexTurn(events.Turn):
     label = LABEL
 
-    def __init__(self, argv: list[str], *, cwd: str, prompt: str, schema: dict | None, session: str,
-                 images: list[str], ask: bool = False, stream: bool = False, model: str = "", effort: str = "",
+    def __init__(self, argv: list[str], *, cwd: str, prompt: str, session: str, images: list[str],
+                 ask: bool = False, stream: bool = False, model: str = "", effort: str = "",
                  gamma: events.Gamma | None = None, title: str = ""):
         super().__init__(argv + ["app-server"], cwd=cwd, ask=ask, gamma=gamma)
         self._prompt = prompt
-        self._schema = schema
         self._resume = session
         self._title = title
         self.stream = stream
@@ -593,8 +592,6 @@ class CodexTurn(events.Turn):
                        + [{"type": "localImage", "path": path} for path in self._images],
                        "sandboxPolicy": {"type": "workspaceWrite", "writableRoots": [self.cwd],
                                          "networkAccess": False}}
-        if self._schema is not None:
-            turn_params["outputSchema"] = self._schema
         if self._effort:
             turn_params["effort"] = self._effort
         turn = self._request("turn/start", turn_params, START_S).get("turn") or {}
@@ -608,25 +605,24 @@ class CodexTurn(events.Turn):
                 self._dispatch(message)
         turn = self._completed
         status = turn.get("status")
-        answer = events.parse_answer(self._last_text)
         if status == "completed":
-            yield events.done(ok=True, answer=answer, text=self._last_text, usage=self._usage)
+            yield events.done(ok=True, text=self._last_text, usage=self._usage)
         elif status == "interrupted" and self._stop.is_set():
             yield events.done(ok=False, stopped=True, text=self._last_text, usage=self._usage)
         else:
             error = str((turn.get("error") or {}).get("message") or "") or self._error
-            yield events.done(ok=False, answer=answer, text=self._last_text, usage=self._usage,
+            yield events.done(ok=False, text=self._last_text, usage=self._usage,
                               error=error or ("Codex stopped its turn." if status == "interrupted"
                                               else "Codex's turn failed."))
 
 
-def start(*, argv: list[str], cwd: str, prompt: str, schema: dict | None = None, session: str = "",
-          images: list[str] = (), ask: bool = False, stream: bool = False, model: str = "",
-          effort: str = "", gamma: events.Gamma | None = None, title: str = "") -> CodexTurn:
+def start(*, argv: list[str], cwd: str, prompt: str, session: str = "", images: list[str] = (), ask: bool = False,
+          stream: bool = False, model: str = "", effort: str = "", gamma: events.Gamma | None = None,
+          title: str = "") -> CodexTurn:
     """Start Codex's app-server in ``cwd`` for one turn of ``prompt``
     (``session`` a thread to resume; ``ask``, it may ask to step outside its
     sandbox; ``stream``, its text as it is written; ``model`` its thread's,
     ``effort`` its turn's; ``gamma``, Gamma's tools; ``title``, a new
     thread's name); read the turn with ``events()``."""
-    return CodexTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, images=list(images),
-                     ask=ask, stream=stream, model=model, effort=effort, gamma=gamma, title=title)
+    return CodexTurn(list(argv), cwd=cwd, prompt=prompt, session=session, images=list(images), ask=ask,
+                     stream=stream, model=model, effort=effort, gamma=gamma, title=title)

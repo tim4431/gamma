@@ -19,7 +19,7 @@ itself, never another), declined with a note (Codex's steer, Claude Code's
 message), declined by Gamma when nobody answers, withdrawn by the agent,
 taken away by a Stop; the time it waits is not the turn's. Claude Code is
 denied every tool but Bash without asking, a write to a protected path
-first. Only the agent's owner answers, once; a Send never asks. An ask
+first. Only the agent's owner answers, once; an agent that may not ask never does. An ask
 shows its command exactly as given and the folder's and the home's paths
 short only where they end; a grant is the command in its directory to its
 host; set back to never, what waits and what comes is declined; Codex's
@@ -46,8 +46,7 @@ from gamma.db import connect_pages_db
 from gamma.local_agents import chats, claude, codex, events, procs, prompt, runner, store
 from test_local_agents_chat import _chat, _reply, _say, _stop
 from test_local_agents_routes import _agent
-from test_local_agents_runner import (_folder, _request, _send, _until,  # noqa: F401: the disk fixture
-                                      disk)
+from test_local_agents_runner import _folder, _until, disk  # noqa: F401: the disk fixture
 
 OWNER, EDITOR = "laas_owner", "laas_editor"
 BUILD = "latexmk -pdf main.tex"
@@ -459,16 +458,12 @@ def test_a_stop_while_it_asks_and_who_may_answer(lab, disk, monkeypatch):
     assert _answer(lab.owner, turn_id, card["id"], 409, decision="once")["detail"] == "This turn has ended."
 
 
-def test_a_folder_that_does_not_ask_and_a_send_never_ask(lab, disk, monkeypatch):
+def test_an_agent_that_may_not_ask_never_asks(lab, disk, monkeypatch):
     f = _folder(lab, disk)
     script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
     _say(lab.owner, f.page, "Rebuild.")  # never: as in 3a
     assert runner.wait_idle(60)
     assert _reply(lab, f.page)["text"] == "Done: Rebuild."
-    store.set_runs("codex", "ask", by=lab.user)
-    sent = _send(lab.owner, f)
-    assert runner.wait_idle(60)
-    assert _request(lab, sent["id"])["state"] == "done"
     started = [m["params"] for m in requests_in(disk.log) if m.get("method") == "thread/start"]
     assert all(p["approvalPolicy"] == "never" and "approvalsReviewer" not in p for p in started)
     assert not _answers(disk.log)

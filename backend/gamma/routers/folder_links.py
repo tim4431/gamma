@@ -28,7 +28,6 @@ from pydantic import BaseModel, Field
 from .. import folder_links, linked_files, remote_servers, workspaces
 from ..auth import require_ws, ws_role
 from ..documents.model import page_document
-from ..logbuf import log
 from ..markdown_import import MAX_MARKDOWN_BYTES
 from ..ops import OpError
 from ..vault import disk as vault_disk
@@ -212,7 +211,7 @@ def _info(link: dict, can_act: bool = True, agents: dict | None = None) -> dict:
     once for every link). For a member who cannot act on it (``_acts``) no
     place on this computer: no path, of its status no text a round wrote,
     which may name one, and no detail of its agent's run."""
-    from ..local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
+    from ..local_agents import info as agent_info  # local: the runner it asks imports the annotation modules
 
     info = {k: v for k, v in link.items() if k not in ("state", "token")}
     info.update(dest=str(folder_links.dest_of(link)), pull=bool(link["pull"]), push=folder_links.push_word(link["push"]),
@@ -264,8 +263,7 @@ def list_links(request: Request):
     desktop app forgets such a vault), ``mine`` whether the account made
     the link (the tracking dialog's routes are its maker's alone), ``agent``
     a work folder's agent on this computer, ``{name, label, ready, problem,
-    running: {kind: "send" | "chat", request_id (null for a chat turn),
-    detail} | null}`` or null (``local_agents.info``:
+    running: {detail} | null}`` or null (``local_agents.info``:
     nothing is run to know it). The desktop app's sync panel lists
     them all. A folder vault's ``status``: ``{running, started_at,
     last_sync, last_error, failed_at?, counts, kept, untracked?, refused?,
@@ -276,7 +274,7 @@ def list_links(request: Request):
     it, keeps (``[{page, title}]``); ``error_kind`` and the rest what the
     last failure of a vault of another server was
     (``gamma_sync.status_fields``)."""
-    from ..local_agents import info as agent_info  # local: the runner it asks imports the feedback modules
+    from ..local_agents import info as agent_info  # local: the runner it asks imports the annotation modules
 
     user_id = _account(request)
     links = folder_links.visible_links(user_id)
@@ -579,9 +577,8 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
     server refuses or that opens another workspace, or one that may not
     write for a link that pushes; 403 for any of them but by the link's
     maker (``_made``), who may pause it whatever its role now (``_kept``).
-    A resume hands the agents on this computer the Sends made since that
-    wait (``_hand_waiting``). The agents themselves are the computer's
-    (``PATCH /api/local-agents/{agent}``), not a vault's."""
+    The agents themselves are the computer's (``PATCH
+    /api/local-agents/{agent}``), not a vault's."""
     changes = (payload.notes is not None or payload.push is not None or payload.pull is not None
                or payload.library is not None or bool(payload.token))
     link = _made(request, link_id) if changes else _kept(request, link_id)
@@ -602,26 +599,7 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
         raise _refused(e)
     if payload.paused is False:
         folder_links.run_in_background(link_id)
-        _hand_waiting(link)
     return _info(link)
-
-
-def _hand_waiting(link: dict) -> None:
-    """A work folder that writes its directory again (resumed, its files
-    chosen): the agents on this computer take the Sends that wait for them
-    (``runner.waiting``; one of another server, those that server hands
-    over, which its channel asks for: ``runner.queue_folder``). An error is
-    logged; the change it follows stands."""
-    from .. import local_agents
-    from ..local_agents import runner, store
-
-    if not local_agents.enabled() or not folder_links.agent_folder(link):
-        return
-    try:
-        if store.enabled_agents():
-            runner.queue_folder(link["workspace_id"], link["id"])
-    except Exception as e:  # noqa: BLE001 — the vault's change is made; the Sends wait for the next chance
-        log.warning(f"[agents] the waiting Sends of vault {link['id']}: {e}")
 
 
 @router.post("/{link_id}/sync")
@@ -764,8 +742,7 @@ def save_selection(link_id: str, payload: SelectionSave, request: Request):
     guard → the link. 409 ``{detail, hash}`` when the ``.gammaignore`` on
     disk is not the one the dialog read (``base_hash``, "" for none); 400
     for more files than the vault reads, or a library switch refused; the
-    refusals of ``GET /{id}/tree``. A work folder's agent then takes the
-    Sends made since it was turned on that wait."""
+    refusals of ``GET /{id}/tree``."""
     _chooser(request, link_id)
     try:
         link = folder_links.save_selection(link_id, payload.selection.model_dump(), payload.base_hash, payload.library)
@@ -775,7 +752,6 @@ def save_selection(link_id: str, payload: SelectionSave, request: Request):
         raise _refused(e)
     if link is None:
         raise HTTPException(status_code=404, detail="no such link")
-    _hand_waiting(link)
     return _info(link)
 
 

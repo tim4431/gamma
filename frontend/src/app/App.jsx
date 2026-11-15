@@ -249,7 +249,7 @@ import { usePageComputer } from "../vault/usePageComputer.js";
 import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
 import { chatAgents, commentAgents } from "../chat/agents.js";
 import { useLocalAgents } from "../chat/useLocalAgents.js";
-import { showThreadChat } from "../chat/computer/chatSide.js";
+import { showInChat } from "../chat/computer/chatSide.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -310,8 +310,6 @@ import { layoutKeeping, useFilesWindow } from "../explorer/useFilesWindow.js";
 import { useFilesTree } from "../explorer/useFilesTree.js";
 import { fileCrumbs } from "../explorer/workPaths.js";
 import { PathLinkContext } from "../editor/pathLinkContext.js";
-import FeedbackHost from "../feedback/FeedbackHost.jsx";
-import { openFeedback } from "../feedback/useFeedback.js";
 import { documentView, viewerOf } from "../documents/documentView.js";
 import { VIEWERS } from "../documents/viewers.js";
 import DocumentPane, { preloadViewer } from "../documents/DocumentPane.jsx";
@@ -4916,9 +4914,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const vaultConflicts = vaultConflictsPath(vaultState);
   const vaultConflictCount = vaultState?.vault?.conflicts || 0;
   // The agents the chat talks to (chat/agents.js chatAgents): Gamma AI, the
-  // agents this computer runs that the account turned on (GET
-  // /api/local-agents, chat/useLocalAgents.js), or on a page of a work
-  // folder another computer keeps, that computer's. The comment fields'
+  // agents of the account's computers shown to the page's server (the
+  // page's computers, those that keep its work folder first), and the agents
+  // this computer runs that the account turned on (GET /api/local-agents,
+  // chat/useLocalAgents.js). The comment fields'
   // `links.agents` are those a comment on the page can be sent to (its
   // Send to tick and `@codex`, commentAgents: the chat's computer agents,
   // "Codex on TIM-PC" or this computer's), never MentionContext, which
@@ -5296,9 +5295,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // phone's PDF tab (showInNotes), so the note it is about shows under it.
   // A thread's Open in chat (comments/Thread.jsx): its page's chat on the
   // reader's conversation of the thread with its agent
-  // (chat/computer/chatSide.js showThreadChat), where its asks are answered.
+  // (chat/computer/chatSide.js showInChat), where its asks are answered.
   function openThreadChat(thread) {
-    showThreadChat(thread.page_id, thread.id, thread.agent_chat?.agent || "");
+    showInChat(thread.page_id, { thread: thread.id }, thread.agent_chat?.agent_id || thread.agent_chat?.agent || "");
     if (thread.page_id === focusedBlockId) showChat();
     else openBlock(thread.page_id, { then: "ask" });
   }
@@ -11181,8 +11180,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setOpenPopover(v ? "vault" : null);
                   }}
                   onReveal={() => askShell("reveal-on-disk", { page: focusedBlockId })}
-                  onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip}
-                  onFeedback={work.chip.file && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined} />
+                  onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip} />
                 {/* a work folder's file has a record only once it is in the library */}
                 {(isPdf(doc) || pageMeta) && (!focusedFile || openInLibrary) ? (
                   <span data-popover="meta" className="popoverAnchor">
@@ -11663,11 +11661,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   />
                 )}
                 {workFolder ? null : <ViewToggle view={homeView} onChange={changeHomeView} />}
-                {/* the work folder's feedback: this directory's open comments, to read or send to an agent (feedback/) */}
-                {workFolder && lib.organize ? (
-                  <button type="button" className="uiBtn sm" title={t("The open comments on this folder's files, to read or send to an agent")}
-                    onClick={() => openFeedback({ kind: "folder", id: folderFilter })}>{t("Feedback")}</button>
-                ) : null}
                 {selecting ? (
                   <>
                     <span className="homeSelectCount">{t("{n} selected", { n: selectionCount })}</span>
@@ -12650,8 +12643,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onStatus={setStatus}
             // what a thread is on: a highlight's quote, else the note's text, else the handwriting's page
             anchorText={(id) => anchorWords(treeById.get(id))}
-            // on a work folder's file, for a member who may edit: the feedback view (feedback/)
-            onFeedback={focusedFile && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
             onOpen={(thread) => {
               if (isPhone) { setNotesVisible(true); setPhonePanel("notes"); }
@@ -14528,8 +14519,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <DetachDialog {...work.detachDialog} />
         </LazyBoundary>
       ) : null}
-      {/* the feedback view, while an opener (the list bar, the Comments window, the vault chip) has it open */}
-      <FeedbackHost me={authUser?.user || ""} canSend={canWriteWorkspace} links={vault.links} onOpenThread={openThreadAt} />
       {vault.tracking ? (
         <LazyBoundary>
           <TrackDialog link={vault.tracking.link} fresh={vault.tracking.fresh} tick={vault.tracking.tick} setStatus={setStatus}

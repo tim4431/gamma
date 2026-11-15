@@ -1,8 +1,8 @@
 // A state as a small tag (`uiTag` in its `tone`): what became of something
 // that changes while it is shown, as a thread's turn with an agent
 // (comments/comments.js turnChip: the thread's chip, the Comments window's
-// row) and a Send's (feedback/feedbackText.js sendState: the feedback
-// view's entries and request rows). `state` is {label, title, tone, live}:
+// row) and a synced folder's agent at work (vault/vaultState.js agentLine:
+// the vault chip's card). `state` is {label, title, tone, live}:
 // while `live` (work under way) a spinner leads it and its words shimmer,
 // and a new label morphs in over the last (MorphText). The rest goes on
 // the tag (`data-turn`, `className`).
