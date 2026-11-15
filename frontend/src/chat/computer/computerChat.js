@@ -43,7 +43,7 @@
 // the message carries it in `asks` as this computer's are, each `once`, and
 // the page draws its card; otherwise the message says only `waiting: true`
 // while one waits on that computer alone.
-import { t, tn } from "../../shared/i18n/i18n.js";
+import { T, t, tn } from "../../shared/i18n/i18n.js";
 import { agentWorking, sinceText } from "../../vault/vaultState.js";
 import { GAMMA, agentLabel } from "../agents.js";
 
@@ -410,6 +410,50 @@ export function workPlace(info, conversation, dirs = [], picked = "") {
   const offered = ((isRemote(info) ? info.dirs : dirs) || []).filter((d) => d && d.id);
   const options = [["", t("No folder")], ...offered.map((d) => [d.id, String(d.name || d.path || d.id)])];
   return { pick: true, value: offered.some((d) => d.id === picked) ? picked : "", options };
+}
+
+// The directory whose sessions History lists under "On {computer}" (the
+// CLI's own, started in a terminal or an editor: GET
+// /api/local-agents/sessions' `dir`), as the chat's picker names it: the
+// work folder's id (`folder_id`) where the reader made its vault (the
+// server's `dir` then names its `path` on this computer; another computer
+// keeps the reader's own alone), an offered directory's id, the one picked
+// for a conversation that begins; "" for none: a co-author's agent, a
+// directory of its own (it holds Gamma's sessions alone), a vault another
+// account made on this computer (its directory is its maker's).
+export function sessionsDir(info, place = null) {
+  if (!info || info.lent) return "";
+  if (info.dir?.kind === "vault") return info.dir.path || isRemote(info) ? String(info.folder_id || "") : "";
+  if (info.dir?.kind === "offered") return String(info.dir.id || "");
+  return place?.pick ? String(place.value || "") : "";
+}
+
+// Why another computer lists no session (GET /api/local-agents/sessions'
+// `away`), "" for none: offline, a Gamma there too old to be asked, or no
+// answer yet (History opened again reads the one that came).
+export function sessionsAway(away, computer) {
+  if (away === "offline") return t("{computer} is offline: its sessions show once it connects.", { computer });
+  if (away === "older") return t("{computer} needs a newer Gamma to list its sessions here.", { computer });
+  if (away === "waiting") return t("{computer} has not answered yet: open History again in a moment.", { computer });
+  return "";
+}
+
+// What a session was started from, as its History row says it (the
+// server's `source`).
+const SOURCE_WORDS = { cli: T("Terminal"), vscode: T("VS Code"), exec: T("Script"), app: T("Desktop app"), gamma: T("Gamma") };
+
+// The sessions GET /api/local-agents/sessions lists ([{id, title, at,
+// created, source, ours, busy}]) as History's rows (chat/ChatHistoryPop.jsx):
+// {id, title, preview, updated_at, by, busy}, `by` "In Gamma" for one a
+// conversation of Gamma's continues, else what it was started from, `busy`
+// why it cannot be opened now (another window of `label`'s has it open), ""
+// while it can.
+export function sessionRows(sessions, label) {
+  return (sessions || []).map((s) => ({
+    id: s.id, title: s.title || "", preview: "", updated_at: s.at || "",
+    by: s.ours ? t("In Gamma") : SOURCE_WORDS[s.source] ? t(SOURCE_WORDS[s.source]) : "",
+    busy: s.busy ? t("{agent} has this session open in another window: close it there first.", { agent: label }) : "",
+  }));
 }
 
 // The empty transcript's line: what the agent is asked about and where it

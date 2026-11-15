@@ -60,6 +60,25 @@ export function deleteComputerChat(id) {
   return apiJson(`${API}/local-agents/chat/history/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+// The sessions the CLI of the agent `agent` keeps of the directory `dir`
+// (computerChat.js sessionsDir), started in a terminal or an editor (GET
+// /api/local-agents/sessions; `agent` this computer's by its name, another
+// computer's by its id, asked there over its channel): {sessions: [{id,
+// title, at, created, source, ours, busy}], away?}, the most recently used
+// first, `away` why another computer answered nothing (sessionsAway).
+export function computerSessions(agent, dir) {
+  return apiJson(`${API}/local-agents/sessions?${new URLSearchParams({ agent, dir })}`);
+}
+
+// One of them opened in the bucket's chat ({bucket, agent, dir, session}):
+// {conversation}, the bucket's active conversation now, whose next turn
+// resumes the session; throws the server's refusal (another window has it
+// open, another chat continues it, a turn still to end, the other computer
+// offline or not answering).
+export function openComputerSession(body) {
+  return apiJson(`${API}/local-agents/sessions/open`, post(body));
+}
+
 // Where a conversation, active or archived, downloads from.
 export const computerExportPath = (id) => `${API}/local-agents/chat/history/${encodeURIComponent(id)}/export`;
 

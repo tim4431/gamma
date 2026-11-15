@@ -1,8 +1,9 @@
 """A stand-in for Codex CLI (gamma/local_agents/codex.py), standard library
 only: ``--version``, ``login status`` and ``app-server`` (initialize,
 initialized, windowsSandbox/readiness, model/list, config/read,
-thread/start, thread/resume, thread/name/set, turn/start, turn/steer,
-turn/interrupt; the item notifications, the approvals,
+thread/start, thread/resume, thread/name/set, thread/list, thread/read,
+thread/turns/list, turn/start, turn/steer, turn/interrupt; the item
+notifications, the approvals,
 serverRequest/resolved, the final agentMessage and its deltas, and
 turn/completed), as codex-cli 0.167.0 answers them.
 
@@ -48,6 +49,18 @@ key optional):
   ``resume`` (thread/resume is an error: the thread is gone), ``name``
   (thread/name/set is an error: an older Codex), ``name_silent``
   (thread/name/set is never answered);
+- ``sessions``: the threads Codex keeps, as a person's terminal left them,
+  ``{"threads": [Thread], "busy": [id], "page": n}``: each ``Thread`` as
+  ``thread/list`` gives it (``id``, ``name``, ``preview``, ``cwd``,
+  ``source``, ``originator``, ``createdAt``, ``updatedAt``) with its
+  ``turns`` (``[{id, status, startedAt, completedAt, items}]``, the
+  items as ``thread/turns/list`` ``full`` gives them), listed by
+  ``thread/list`` (its ``cwd`` compared as the file system does, its
+  ``sourceKinds``, the most recently updated first, ``limit`` a page, at
+  most ``page`` (100), the next page's index the ``nextCursor``) and read by ``thread/read`` and
+  ``thread/turns/list``; a ``thread/resume`` of one in ``busy`` is refused
+  as Codex refuses a second writer (-32600 "already has an active
+  writer");
 - ``config``: what ``config/read``'s config holds beside its own server
   (``mcp_servers`` merged with it, the rest as given);
 - ``distinct``: each thread/start makes a thread of its own id (else every
@@ -169,6 +182,34 @@ def chunks(text: str) -> list[str]:
     return FAKE.get("deltas") or re.findall(r"\s*\S+", text) or [text]
 
 
+def _sessions() -> dict:
+    return FAKE.get("sessions") or {}
+
+
+def _kept(thread_id: str) -> dict | None:
+    return next((t for t in _sessions().get("threads") or [] if t.get("id") == thread_id), None)
+
+
+def _same_dir(a: str, b: str) -> bool:
+    return bool(a and b) and os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def _listed(params: dict) -> dict:
+    """thread/list of the kept threads: their cwd, their source kinds, the
+    newest first, a page of ``limit``."""
+    cwds = params.get("cwd")
+    cwds = [cwds] if isinstance(cwds, str) else cwds or []
+    kinds = params.get("sourceKinds") or ["cli", "vscode"]
+    found = [t for t in _sessions().get("threads") or []
+             if t.get("source") in kinds and (not cwds or any(_same_dir(t.get("cwd", ""), c) for c in cwds))]
+    found.sort(key=lambda t: t.get("updatedAt") or 0, reverse=True)
+    start, limit = int(params.get("cursor") or 0), min(int(params.get("limit") or 25), _sessions().get("page") or 100)
+    page = [{k: v for k, v in t.items() if k != "turns"} | {"turns": [], "status": {"type": "notLoaded"}}
+            for t in found[start:start + limit]]
+    more = start + limit < len(found)
+    return {"data": page, "nextCursor": str(start + limit) if more else None, "backwardsCursor": None}
+
+
 def handle(message: dict) -> None:
     method, request_id, params = message.get("method"), message.get("id"), message.get("params") or {}
     if method is None or request_id is None:
@@ -193,6 +234,24 @@ def handle(message: dict) -> None:
         config = {"web_search": "live", **given,
                   "mcp_servers": {SERVER: {"command": "fake-mcp"}, **(given.get("mcp_servers") or {})}}
         send({"id": request_id, "result": {"config": config, "origins": {}}})
+    elif method == "thread/list":
+        send({"id": request_id, "result": _listed(params)})
+    elif method in ("thread/read", "thread/turns/list") and _kept(params.get("threadId")) is None:
+        send({"id": request_id, "error": {"code": -32600, "message": f"no rollout found for thread id "
+                                                                     f"{params.get('threadId')}"}})
+    elif method == "thread/read":
+        kept = _kept(params["threadId"])
+        send({"id": request_id, "result": {"thread": {k: v for k, v in kept.items() if k != "turns"}
+                                            | {"turns": [], "status": {"type": "notLoaded"}}}})
+    elif method == "thread/turns/list":
+        turns = list(_kept(params["threadId"]).get("turns") or [])
+        if params.get("sortDirection") != "asc":
+            turns.reverse()
+        send({"id": request_id, "result": {"data": turns[:int(params.get("limit") or 25)], "nextCursor": None,
+                                            "backwardsCursor": None}})
+    elif method == "thread/resume" and params.get("threadId") in (_sessions().get("busy") or []):
+        send({"id": request_id, "error": {"code": -32600, "message": f"thread {params['threadId']} already has an "
+                                                                     "active writer"}})
     elif method == "thread/resume" and FAIL == "resume":
         send({"id": request_id, "error": {"code": -32600, "message": f"no rollout found for thread id "
                                                                      f"{params.get('threadId')}"}})

@@ -10,6 +10,9 @@ Nothing runs over it yet.
 - ``registry``: the server's side, on every Gamma server: what each
   computer announced (users.db ``computers``) and whether it is online now
   (in memory), the long-poll's hold, and the computers of a page.
+- ``sessions``: the server's asks of a computer's agents' own sessions (a
+  CLI's, started in a terminal), waiting in memory for the computer to
+  take and answer them over the channel.
 - ``channel``: the computer's side, on the desktop app's own server only:
   its credential for each server (users.db ``computer_links``) and one
   thread per credential that announces this computer and holds the poll.

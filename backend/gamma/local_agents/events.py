@@ -19,9 +19,9 @@ A turn's ``events()`` gives, in order as they happen:
   the tool event it is about ("" for none);
 - ``{"type": "ask_gone", "id"}``: the agent withdrew that ask;
 - ``{"type": "done", "ok", "text", "error", "stopped", "usage",
-  "gamma_down"}``: exactly one, last, however the turn ends: its end,
-  ``stop()``, a crash, a broken pipe, ten minutes of silence, Gamma's tools
-  that did not start (``done``).
+  "gamma_down", "busy"}``: exactly one, last, however the turn ends: its
+  end, ``stop()``, a crash, a broken pipe, ten minutes of silence, Gamma's
+  tools that did not start, a session another process holds (``done``).
 
 An ask is answered with ``answer()``, from any thread, the person's or
 Gamma's own (``by``: a driver words the agent's decline after whose it
@@ -320,11 +320,12 @@ def protected(path: str, cwd: str) -> bool:
 
 
 def done(*, ok: bool, text: str = "", error: str = "", stopped: bool = False, usage: dict | None = None,
-         gamma_down: bool = False) -> dict:
+         gamma_down: bool = False, busy: bool = False) -> dict:
     """The turn's end; ``gamma_down``, it failed because Gamma's tools did
-    not start or connect (``GammaDown``)."""
+    not start or connect (``GammaDown``); ``busy``, because another process
+    holds the session it resumes (``SessionBusy``)."""
     return {"type": "done", "ok": ok, "text": text or "", "error": "" if ok else error, "stopped": stopped,
-            "usage": usage or {}, "gamma_down": gamma_down}
+            "usage": usage or {}, "gamma_down": gamma_down, "busy": busy}
 
 
 def one_line(text: str, limit: int = MAX_TITLE) -> str:
@@ -369,6 +370,18 @@ class TurnFailed(Exception):
 class GammaDown(TurnFailed):
     """Gamma's tools did not start or connect for the turn: the session is
     the agent's all the same, so a turn again afresh would fail alike."""
+
+
+# What a turn, a listing and an opening say of a session another process
+# holds (a terminal's, an editor's): Codex refuses its second writer, Claude
+# Code has no lock and two writers fork its file (gamma/local_agents/
+# sessions.py).
+BUSY = "{agent} has this session open in another window: close it there first."
+
+
+class SessionBusy(TurnFailed):
+    """The session the turn resumes is held by another process: never
+    started afresh in its place, which would fork it."""
 
 
 class _Stopped(Exception):
@@ -482,6 +495,9 @@ class Turn:
         except GammaDown as e:
             graceful = False
             end = done(ok=False, error=str(e), gamma_down=True)
+        except SessionBusy as e:
+            graceful = False
+            end = done(ok=False, error=str(e), busy=True)
         except TurnFailed as e:
             graceful = False
             end = done(ok=False, error=str(e))

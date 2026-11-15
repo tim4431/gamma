@@ -65,8 +65,20 @@ that server starts, ``networkAccess: false`` does not block it, nothing
 asks before a call). Its startup status ``starting`` and ``ready`` are its
 own; ``failed`` fails the turn with why (``events.GammaDown``). A call is
 an ``mcpToolCall`` item, a ``gamma`` step named by its tool.
+
+A resume Codex refuses because another process holds the thread (-32600
+"already has an active writer": a terminal or an editor has it open, C4 of
+docs/research/agents-as-participants-plan.md) fails the turn
+(``events.SessionBusy``); any other refusal is a thread that is gone, and a
+new one does the work. A held thread is never forked.
+
+The threads Codex keeps of a directory and their turns are read on a
+short-lived app-server, which uses no model (``threads``, ``thread``:
+gamma/local_agents/sessions.py), their items' steps worded as a turn's are
+(``item_steps``).
 """
 
+import itertools
 import json
 import sys
 import tempfile
@@ -118,12 +130,27 @@ TurnFailed = events.TurnFailed
 
 
 class RequestError(TurnFailed):
-    """Codex answered a request with a JSON-RPC error."""
+    """Codex answered a request with a JSON-RPC error (``code`` its code)."""
+
+    def __init__(self, message: str, code=None):
+        super().__init__(message)
+        self.code = code
+
+
+HELD = "already has an active writer"   # a thread/resume refused: another process holds the thread
+
+
+def _held(e: RequestError) -> bool:
+    """Whether a refused resume says another process holds the thread."""
+    return e.code == -32600 and HELD in str(e)
 
 
 DELTA = "item/agentMessage/delta"   # what a turn with ``stream`` does not opt out of
 MAX_MODEL_PAGES = 5
 MODELS_S = 15                       # how long model/list may take, its pages together
+READ_S = 30                         # how long reading a directory's threads, or one's turns, may take
+SOURCE_KINDS = ["cli", "vscode", "exec"]   # the threads a person started: a terminal, an editor, a script
+MAX_THREAD_PAGES = 3
 
 
 def _initialize(stream: bool = False) -> dict:
@@ -285,6 +312,39 @@ def _diff(changes: list[dict], cwd: str) -> str:
     return "".join(out)
 
 
+STEP_ITEMS = ("commandExecution", "fileChange", "mcpToolCall", "webSearch")
+
+
+def item_steps(item: dict, cwd: str, *, started: bool, gamma: bool) -> list[dict]:
+    """The steps of an item of a kind ``STEP_ITEMS`` names, as tool events:
+    a command's run (failed when it exits otherwise than 0), a file change's
+    edits (one a path, relative to ``cwd``), a tool call (with ``gamma``, a
+    call of Gamma's own server a ``gamma`` step), a web search; [] for any
+    other item."""
+    kind, item_id = item.get("type"), str(item.get("id") or "")
+    status = "started" if started else ("completed" if item.get("status") == "completed" else "failed")
+    if kind == "commandExecution":
+        command = str(item.get("command") or "")
+        if not started and item.get("exitCode") != 0:
+            status = "failed"
+        return [events.tool(item_id, "run", f"Run {command}", status, command=command,
+                            output=None if started else str(item.get("aggregatedOutput") or ""))]
+    if kind == "fileChange":
+        out = []
+        for i, change in enumerate(item.get("changes") or []):
+            path = events.rel_path(str((change or {}).get("path") or ""), cwd)
+            if path:
+                out.append(events.tool(f"{item_id}:{i}", "edit", f"Edit {path}", status, path=path))
+        return out
+    if kind == "mcpToolCall":
+        if gamma and item.get("server") == events.MCP_NAME:
+            return [events.gamma_step(item_id, str(item.get("tool") or ""), status)]
+        return [events.tool(item_id, "other", f"Use {item.get('server')}.{item.get('tool')}", status)]
+    if kind == "webSearch":
+        return [events.tool(item_id, "search", f"Search {item.get('query') or 'the web'}", status)]
+    return []
+
+
 def _parse(line: str) -> dict | None:
     try:
         message = json.loads(line)
@@ -339,7 +399,7 @@ class CodexTurn(events.Turn):
             if message.get("id") == request_id and "method" not in message:
                 if "error" in message:
                     error = message.get("error") or {}
-                    raise RequestError(str(error.get("message") or f"Codex refused {method}."))
+                    raise RequestError(str(error.get("message") or f"Codex refused {method}."), error.get("code"))
                 return message.get("result") or {}
             self._dispatch(message)
 
@@ -422,31 +482,15 @@ class CodexTurn(events.Turn):
 
     def _item(self, item: dict, *, started: bool) -> list[dict]:
         kind, item_id = item.get("type"), str(item.get("id") or "")
-        status = "started" if started else ("completed" if item.get("status") == "completed" else "failed")
         if kind == "commandExecution":
-            command = str(item.get("command") or "")
             if started:
-                self._commands[item_id] = command
+                self._commands[item_id] = str(item.get("command") or "")
             else:
                 self._commands.pop(item_id, None)
-            if not started and item.get("exitCode") != 0:
-                status = "failed"
-            return [events.tool(item_id, "run", f"Run {command}", status, command=command,
-                                output=None if started else str(item.get("aggregatedOutput") or ""))]
-        if kind == "fileChange":
+        elif kind == "fileChange":
             self._changes[item_id] = list(item.get("changes") or [])
-            out = []
-            for i, change in enumerate(item.get("changes") or []):
-                path = events.rel_path(str((change or {}).get("path") or ""), self.cwd)
-                if path:
-                    out.append(events.tool(f"{item_id}:{i}", "edit", f"Edit {path}", status, path=path))
-            return out
-        if kind == "mcpToolCall":
-            if self.gamma_url and item.get("server") == events.MCP_NAME:
-                return [events.gamma_step(item_id, str(item.get("tool") or ""), status)]
-            return [events.tool(item_id, "other", f"Use {item.get('server')}.{item.get('tool')}", status)]
-        if kind == "webSearch":
-            return [events.tool(item_id, "search", f"Search {item.get('query') or 'the web'}", status)]
+        if kind in STEP_ITEMS:
+            return item_steps(item, self.cwd, started=started, gamma=bool(self.gamma_url))
         if kind == "agentMessage" and not started:
             self._last_text = str(item.get("text") or "")
             # With stream, even an empty message ends what its deltas built.
@@ -565,8 +609,10 @@ class CodexTurn(events.Turn):
             try:
                 started = self._request("thread/resume", {"threadId": self._resume, **thread_params,
                                                           "excludeTurns": True}, START_S)
-            except RequestError as e:  # a thread that is gone: a new one does the work
-                log.info(f"[agents] Codex could not resume {self._resume}: {e}")
+            except RequestError as e:
+                if _held(e):   # open in a terminal or an editor: refused, never forked
+                    raise events.SessionBusy(events.BUSY.format(agent=LABEL)) from None
+                log.info(f"[agents] Codex could not resume {self._resume}: {e}")   # gone: a new one does the work
         new = started is None
         if new:
             started = self._request("thread/start", thread_params, START_S)
@@ -626,3 +672,69 @@ def start(*, argv: list[str], cwd: str, prompt: str, session: str = "", images: 
     thread's name); read the turn with ``events()``."""
     return CodexTurn(list(argv), cwd=cwd, prompt=prompt, session=session, images=list(images), ask=ask,
                      stream=stream, model=model, effort=effort, gamma=gamma, title=title)
+
+
+# --- the threads of a directory (gamma/local_agents/sessions.py) -------------------------------
+
+def _reading(argv: list[str], read):
+    """``read(ask)`` on a short-lived app-server in the temporary directory,
+    initialized, ``ask(method, params)`` a request's result → what ``read``
+    gives. TurnFailed when Codex does not start or answer within
+    ``READ_S``, RequestError when it refuses a request."""
+    try:
+        child = procs.spawn(argv + ["app-server"], cwd=tempfile.gettempdir())
+    except (OSError, ValueError) as e:
+        raise TurnFailed(f"Codex could not start: {e}") from None
+    deadline = time.monotonic() + READ_S
+    ids = itertools.count(1)
+
+    def ask(method: str, params) -> dict:
+        answer = _ask(child, next(ids), method, params, deadline)
+        if answer is None:
+            raise TurnFailed("Codex did not answer Gamma on this computer.")
+        if "error" in answer:
+            error = answer.get("error") or {}
+            raise RequestError(str(error.get("message") or f"Codex refused {method}."), error.get("code"))
+        return answer.get("result") or {}
+
+    try:
+        ask("initialize", _initialize())
+        child.send(json.dumps({"method": "initialized"}) + "\n")
+        return read(ask)
+    finally:
+        child.close_stdin()
+        child.wait(2)
+        procs.kill_tree(child, grace=1.0)
+
+
+def threads(argv: list[str], cwd: str, limit: int) -> list[dict]:
+    """The threads Codex keeps whose directory is ``cwd`` (``thread/list``,
+    which compares it whole, its separators and case aside), started in a
+    terminal, an editor or a script (``SOURCE_KINDS``), the most recently
+    updated first, at most ``limit`` (``MAX_THREAD_PAGES`` pages): Codex's
+    ``Thread``s as it gives them."""
+    def read(ask) -> list[dict]:
+        found, cursor = [], None
+        for _ in range(MAX_THREAD_PAGES):
+            params = {"cwd": cwd, "sourceKinds": SOURCE_KINDS, "sortKey": "updated_at", "limit": limit}
+            result = ask("thread/list", {**params, "cursor": cursor} if cursor else params)
+            found += [t for t in result.get("data") or [] if isinstance(t, dict) and t.get("id")]
+            cursor = result.get("nextCursor")
+            if len(found) >= limit or not isinstance(cursor, str) or not cursor:
+                break
+        return found[:limit]
+
+    return _reading(argv, read)
+
+
+def thread(argv: list[str], thread_id: str, limit: int) -> tuple[dict, list[dict]]:
+    """One thread (``thread/read``) and its last ``limit`` turns, oldest
+    first, each with its every item (``thread/turns/list`` ``itemsView``
+    ``full``) → ``(the Thread, its turns)``."""
+    def read(ask) -> tuple[dict, list[dict]]:
+        found = ask("thread/read", {"threadId": thread_id}).get("thread") or {}
+        turns = ask("thread/turns/list", {"threadId": thread_id, "itemsView": "full", "sortDirection": "desc",
+                                          "limit": limit}).get("data") or []
+        return found, [t for t in reversed(turns[:limit]) if isinstance(t, dict)]
+
+    return _reading(argv, read)

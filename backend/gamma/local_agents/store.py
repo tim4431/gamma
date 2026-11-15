@@ -391,6 +391,25 @@ def ran_conversation(conversation_id: str, *, link_id: str, agent: str, session:
                      (conversation_id, link_id, agent, session or "", cwd or "", page_now()))
 
 
+def bound(agent: str, sessions: list[str]) -> dict[str, str]:
+    """The conversation each of ``sessions`` of ``agent`` is the session of
+    now, by session (the newest where two are: a thread's conversation
+    begins with its opener's), the unbound left out."""
+    with connect_vaults_db() as conn:
+        rows = conn.execute("SELECT session, conversation_id FROM agent_conversations WHERE agent = ? "
+                            "AND session IN (SELECT value FROM json_each(?)) ORDER BY at",
+                            (agent, json.dumps(sorted(set(sessions))))).fetchall()
+    return {session: conversation_id for session, conversation_id in rows}
+
+
+def unbound(agent: str, session: str) -> None:
+    """The session of ``agent`` let go by every conversation that continues
+    it (another one is about to): their next turns start afresh, their rows
+    and grants kept."""
+    with connect_vaults_db() as conn:
+        conn.execute("UPDATE agent_conversations SET session = '' WHERE agent = ? AND session = ?", (agent, session))
+
+
 def forget_conversation(conversation_id: str) -> None:
     """A deleted conversation's session and grants forgotten."""
     with connect_vaults_db() as conn:

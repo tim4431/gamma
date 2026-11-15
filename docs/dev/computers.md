@@ -96,7 +96,7 @@ A server older than the scope refuses to mint it (an unknown scope is
 
 | Method | Path | |
 |---|---|---|
-| POST | `/api/computers/announce` | A `computer` token only. `{computer: {id, name}, app, vaults: [{kind: "folder", folder_id, paused} \| {kind: "file", page_id, paused}], assistants: [{name: "codex" \| "claude", label, found, ready, version, code, models, enabled, runs, people}], asks, dirs: [{id, name}]}`: `asks` a flag (false when left out, 400 for another value), `dirs` the directories the computer offers its agents by id (1-64 of `[A-Za-z0-9_-]`, 400 for another, a path among them) and name (one line, at most 80 characters), at most 50, none kept while no assistant is on, the id 1-64 of `[A-Za-z0-9_-]`, the name 1-64 printable characters, at most 500 vaults (deduplicated; one this workspace does not have is dropped), an unknown assistant dropped, an unknown `code` read as `not_ready`, `enabled` a flag (400 for another value), `runs` anything but `ask` read as `never` (and `never` while it is off), `people` at most 50 account ids of this workspace (400 for another shape; none while it is off), every string capped at 64; this server's own computer id (`agents.here_id`) is refused (400 "The computer's id is this server's own."), so a far turn's token never writes as this computer's agent. A work folder's vault also carries its `agent`, which the app still sends for an older server; this server drops it, and reads it only from an announce whose assistants carry no `enabled` (an older app's), where the first agent a folder vault names is on, `runs` `never`. At most 128 KiB (413). 200 `{account: {id, username}, computer: {id, name}, workspace: {id, name}, version, wait}`: `name` the workspace's, which the computer's Settings shows, `version` is what the computer's polls name, `wait` the longest hold. 400 for a body of another shape. A read-only hosted server lets it through (`hosted.READ_ONLY_ALLOWED`): it holds no data of the library. |
+| POST | `/api/computers/announce` | A `computer` token only. `{computer: {id, name}, app, vaults: [{kind: "folder", folder_id, paused} \| {kind: "file", page_id, paused}], assistants: [{name: "codex" \| "claude", label, found, ready, version, code, models, enabled, runs, people}], asks, dirs: [{id, name}]}`: `asks` a flag (false when left out, 400 for another value), `dirs` the directories the computer offers its agents by id (1-64 of `[A-Za-z0-9_-]`, 400 for another, a path among them) and name (one line, at most 80 characters), at most 50, none kept while no assistant is on, the id 1-64 of `[A-Za-z0-9_-]`, the name 1-64 printable characters, at most 500 vaults (deduplicated; one this workspace does not have is dropped), an unknown assistant dropped, an unknown `code` read as `not_ready`, `enabled` a flag (400 for another value), `runs` anything but `ask` read as `never` (and `never` while it is off), `people` at most 50 account ids of this workspace (400 for another shape; none while it is off), every string capped at 64; this server's own computer id (`agents.here_id`) is refused (400 "The computer's id is this server's own."), so a far turn's token never writes as this computer's agent. A work folder's vault also carries its `agent`, which the app still sends for an older server; this server drops it, and reads it only from an announce whose assistants carry no `enabled` (an older app's), where the first agent a folder vault names is on, `runs` `never`. `sessions` a flag: the computer answers what this server asks of its agents' sessions ("Sessions over the channel"; false when left out, an app before that), kept in memory alone (`registry._live`, `answers`). At most 128 KiB (413). 200 `{account: {id, username}, computer: {id, name}, workspace: {id, name}, version, wait}`: `name` the workspace's, which the computer's Settings shows, `version` is what the computer's polls name, `wait` the longest hold. 400 for a body of another shape. A read-only hosted server lets it through (`hosted.READ_ONLY_ALLOWED`): it holds no data of the library. |
 | GET | `/api/computers/poll?v=<version>&wait=<s>` | A `computer` token only, `async def`: a hold uses no worker thread, and every SQLite read is off the event loop. `{announce: true}` at once when this server does not know the computer (a restart) or `v` is not its last announce's version. Else held up to `min(wait, 25)` s (0 answers at once): `{}` when the hold ends, `{announce: true}` when woken for it, `{wake: [...]}` for later steps' work. After the hold the token is resolved again: revoked meanwhile, or its account gone from the workspace, it is 401 and the computer is forgotten. Not written as a slow request (`auth._finish_request_log`), quiet in uvicorn's access log (`logbuf._QuietPolls`). |
 | GET | `/api/folders/computers` | The signed-in account's computers that keep a folder vault of the workspace, by folder (`registry.of_folders`): `{folders: {folder id: {name, online, since, paused}}}`, each folder's first computer (online ones first, then the most recently seen; the whole library's vault left out), which a synced folder's card, row and Files window row name with its state ([work_folders.md](work_folders.md) "File icons"). A session only, a share's reader 404; `{folders: {}}` for an account none of whose computers keeps one. Read with the listing. |
 | GET | `/api/pages/{page_id}/computer` | The signed-in account's computers for the page, those that keep it and those with an agent on for it (whose agents it talks to on any page, "The agents' turns there"): a session only (`require_personal_user_id`: a token or the guest 403), a share's reader 404. `{computers: [{id, name, online, since, vault: {kind, name, paused, work} \| null, assistants, asks, dirs, lent_by?}]}` (`asks` as announced, `dirs` the directories it offers, `[{id, name}]`; a lent computer's false and `[]`): `vault` a `file` vault of that page, or a `folder` vault the page is filed in or below (`blocks_store.page_in_folder`; the library's root covers every page), the one that keeps it when several do (a vault of that file, else the deepest folder: the computer's own rule), null for a computer that keeps none of it; `work` whether that vault keeps a work folder of the workspace the account may edit (its agents work in that folder there); `since` the time it went offline, null while online; `vault.name` the folder's name or the page's title as this server has it. In the order its turns are given (`registry._ordered`): a computer that keeps the page's work folder first, the account's own before the lent ones, online ones first, then the most recently seen, a computer that keeps the page before one that keeps none. `[]` for none and for any other account. |
@@ -243,6 +243,64 @@ at.
 The announce's assistants carry their `models` for the chat's model
 chip (at most 32, 8 efforts each); an announce is at most 128 KiB.
 
+### Sessions over the channel (step 5)
+
+History's *On TIM-PC* for a far conversation's agent
+([local_agents.md](local_agents.md) "Sessions started elsewhere", step 5
+of [the plan](../research/agents-as-participants-plan.md)) lists the
+sessions its CLI keeps of the directory it works in there, started in a
+terminal or an editor, and opens one as a conversation here. This server
+cannot reach the computer, so it asks through the channel
+(`gamma/computers/sessions.py`): the ask waits in memory, the computer's
+held poll is woken (`{wake: ["sessions"]}`), and the computer takes and
+answers it. `GET /api/local-agents/sessions` waits on the event loop up
+to 15 s for the answer and keeps a listing's 30 s, so History opened
+again soon reads it (a listing asked while one of that agent and
+directory waits joins it); an opening waits 30 s, and its answer forgets
+that computer's kept listings. Nothing is asked while History is closed,
+and nothing polls: no answer in time is said (`away: "waiting"`), and the
+answer that comes later is kept for the next opening. A computer has 4
+asks unanswered at most, and one never answered goes after 60 s.
+
+Only the account's own computer is asked (`registry.own_computer`: never
+one another account lends it, so a co-author asks nothing), for an agent
+on there, in a directory named by an id: a work folder that computer
+keeps (`{kind: "vault", id}`) or one it offers (`{kind: "offered", id}`),
+never a path; anything else is 404 before anything is asked. A computer
+offline is not asked (`away: "offline"`; an opening 409 "TIM-PC is
+offline: send this again once it connects."), nor one whose announce does
+not say `sessions` (`away: "older"`; an opening 409 "TIM-PC needs a newer
+Gamma to open its sessions here.").
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/computers/sessions` | A `computer` token only: `{asks: [{id, kind: list \| open, agent, dir: {kind, id}, session?, conversation_id?, rebind?}]}`, the asks of this token not handed out yet, each handed out once (`sessions.taken`). |
+| POST | `/api/computers/sessions/{id}` | A `computer` token only, the token the ask was of (another 404): the answer → `{ok}`, handed to the route that waits (404 for an ask answered already or given up; 413 past 3 MiB), checked and capped as a turn's writes are (`routers/computers.py` `_session_answer`; 400 for another shape): `{error, status}` a refusal there (404 or 409, its words cut to 2000 characters); to a listing `{sessions: [{id, title, at, created, source, busy, conversation}]}`, at most 50, one whose id is of another shape left out, `conversation` the conversation of Gamma's that is its session there ("" for none); to an opening `{busy: true}`, `{conversation}`, or `{title, messages}`, at most 200 messages (the person's `{role: "user", text, at}`, the agent's `{role: "agent", text, steps, state, error, at, ended_at}`), each kept as this server keeps a conversation's (`sessions.user_message`, `agent_message`, `from_session`): its text made inert (`prompt.inert`), its steps as a turn's write keeps them (a path not relative `outside`), its state an end. |
+
+Opening one (`POST /api/local-agents/sessions/open` with the far agent's
+id) mints the id of the conversation it will be and asks the computer to
+open the session for it; the computer reads it, binds it there to that id
+(its vaults.db `agent_conversations`, as a far turn's session is bound)
+and answers its turns, and the conversation is made here with them
+(`chats.adopt`, `computer_chats.computer` that computer's, `dir` the
+directory's id), so its next far turn's claim resumes the session there:
+the session a turn resumes is always one the computer bound, never one
+this server names. The bucket's active conversation at work is refused
+(409) before the computer is asked, since it binds before it answers. A
+session the computer names as a conversation's already (`{conversation}`)
+is that conversation where it is the account's here with that agent
+(opened as History opens one; one of another bucket 409 with where); one
+this server has otherwise (a co-author's, another account's, another
+computer's or agent's, a comment thread's) is 409, never taken from it;
+one this server does not have (one of the computer's own server, or one
+gone here) is asked again with it as `rebind`, and the computer moves the
+session to the new conversation, the old one letting go of it
+(`store.unbound`: its next turn starts afresh). A session another process holds there is
+refused with why (409 "Codex has this session open in another window:
+close it there first."). The listing's `ours` is this server's: a session
+whose `conversation` is one of the account's here with that computer's
+agent, titled as it is.
+
 ### A work folder detached here
 
 A work folder of this server that a computer keeps (an announced folder
@@ -387,6 +445,22 @@ failure ([https.md](https.md)), timeout the hold plus 15 s. Each turn:
 A vault added, paused, resumed or removed nudges the threads
 (`channel.nudge`, from `folder_links`): they see it when the poll they
 hold ends, at most 25 s later.
+
+A poll answered `{wake: ["sessions"]}` (History's *On TIM-PC* there:
+"Sessions over the channel") takes that server's asks
+(`_Channel._sessions`, `GET /api/computers/sessions`) and answers each in
+a thread of its own (`channel._answer_session`,
+`local_agents/sessions.answer_far`), so a slow listing never holds the
+poll: for the channel's account alone (its agent on here, `store.owns`),
+in the directory the ask names as a far turn's claim does
+(`home.far_place`: the vault of that server's work folder this channel's
+account keeps, or a directory offered; a path, a directory of its own or
+anything else refused with why); a listing as History's here
+(`sessions.listed`, with the conversation each is the session of), an
+opening only of a session `read` finds in that directory, bound to the
+conversation id that server named unless this computer knows that id
+already, its messages without ids, the newest within 2 MiB. The state
+says `sessions: true`.
 
 A poll answered `{wake: ["let_go"]}` (a work folder of that server
 detached there) gives each work folder of that server kept here a round
@@ -534,6 +608,16 @@ for the shell to revoke there.
   (`runner.answer_relayed`). What that server answers is allowed once at
   most, never kept as a grant, over https alone, within the caps of any
   turn there (what the computer cannot show whole is declined unseen).
+- **Sessions read there.** The server asks of the CLI's sessions of a
+  directory its agent works in for its own account alone (a co-author's
+  use asks none), by the directory's id; the computer answers for the
+  channel's account, in a directory it would run that account's far turn
+  in, and sends titles, times, what each was started from and, for one
+  opened, its turns as messages (the person's text, the agent's text and
+  steps, paths relative, no thinking, the newest within 2 MiB). It opens
+  only a session it finds in that directory, and binds it there to the
+  conversation that server makes, so a far turn resumes only a session
+  the computer itself handed out.
 - **Made and taken back by the shell's word.** A Gamma page never makes a
   channel: the shell mints the token with the window's session and hands
   it over with its word, as it does a vault's.
@@ -568,7 +652,12 @@ announce drops them, their waiting turn failed, none on a page of no work
 folder); `backend/tests/test_computer_agents.py` and
 `test_computer_chats.py` the seats and the turns' routes;
 `backend/tests/test_remote_chat.py` a co-author's turn there run on the
-computer, a page in no synced folder run there, the turn's token;
+computer, a page in no synced folder run there, the turn's token; the
+sessions there (listed for the owner alone, a directory not offered or a
+path refused on both sides, the answer kept, one opened and resumed by
+the next far turn, one bound to a conversation that server lacks opened
+afresh, busy, offline, an older computer, no answer yet, the channel's
+routes taking and checking the answers);
 `backend/tests/test_remote_asks.py` the asks relayed where the link lets
 that server answer (answered there by the person or the owner, another
 account refused, once at most, the first answer the one, an answer

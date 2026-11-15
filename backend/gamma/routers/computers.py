@@ -43,6 +43,15 @@ names, and those of a relayed ask (its ``cwd`` and ``paths``, outside the
 directory too, which the shell's question before the computer relays asks
 says). Each is a sync ``def``: it reads the pages.db off the event loop.
 
+The sessions of the computer's agents (step 5 of
+docs/research/agents-as-participants-plan.md): History's *On {computer}*
+here asks the computer for the sessions its agent's CLI keeps of the
+directory a far conversation works in there, and for one's turns to open
+it as a conversation here (gamma/computers/sessions.py); the computer
+takes the asks with ``GET /sessions`` once woken (``sessions``) and
+answers each with ``POST /sessions/{id}``, every answer checked and capped
+here as a turn's writes are (``_session_answer``).
+
 A co-author's turns (decision 13 of
 docs/research/agents-as-participants-plan.md): the people of the token's
 workspace its agent serves (the announce's ``people``) have their turns run
@@ -63,7 +72,7 @@ from pydantic import BaseModel
 from .. import agents, workspaces
 from ..auth import _api_bearer, _off_loop, is_token, read_body, require_personal_user_id, require_ws
 from ..computers import registry
-from ..db import connect_pages_db
+from ..db import connect_pages_db, page_now
 from ..integrations import resolve_token_scope
 
 router = APIRouter(prefix="/api", tags=["computers"])
@@ -375,7 +384,7 @@ def _tools(request: Request, ws: str, turn_id: str, run: str, person: str, agent
 
 def _step(raw) -> dict:
     """A step of the agent's message as a run writes it, kept as the
-    chat's messages keep one (runner._step): ``{id, kind, status}``, with
+    chat's messages keep one (runner.step_of): ``{id, kind, status}``, with
     ``path`` (its path in the folder, else "outside") for a read or an
     edit, ``program`` for a command, ``tool`` for a call of Gamma's tools.
     400 for another shape."""
@@ -519,6 +528,112 @@ def thread_picture(thread_id: str, request: Request, at: str = "now"):
         if not chats.holds_thread(conn, token_id, user_id, thread_id):
             raise HTTPException(status_code=404, detail="No thread of a turn on this computer has that id.")
     return picture_of(ws, thread_id, at)
+
+
+MAX_SESSION_ANSWER = 3 * 1024 * 1024   # bytes of a computer's answer of its sessions (sessions.FAR_MAX_BYTES's)
+
+
+@router.get("/computers/sessions")
+def session_asks(request: Request):
+    """``{asks: [{id, kind: list | open, agent, dir: {kind, id},
+    session?, conversation_id?, rebind?}]}``: what this server asks of the
+    sessions of the computer's agents (gamma/computers/sessions.py
+    ``taken``: History's *On {computer}* of the token's account), each
+    handed out once."""
+    from ..computers import sessions
+
+    _user_id, _username, _ws, token_id = _computer(request)
+    return {"asks": sessions.taken(token_id)}
+
+
+@router.post("/computers/sessions/{ask_id}")
+async def session_answer(ask_id: str, request: Request):
+    """The computer's answer to its ask ``ask_id`` (``_session_answer``) →
+    ``{ok}``, handed to the route that waits for it. 400 for an answer of
+    another shape; 404 for no ask of this computer's that waits (one asked
+    of another token, answered already, or given up); 413 past
+    ``MAX_SESSION_ANSWER``."""
+    from ..computers import sessions
+
+    _user_id, _username, _ws, token_id = _computer(request)
+    raw = await read_body(request, MAX_SESSION_ANSWER, "An answer of sessions is at most 3 MiB.")
+    try:
+        body = json.loads(raw or b"null")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="The answer is no JSON.")
+    ask = sessions.pending(token_id, ask_id)
+    if ask is None:
+        raise HTTPException(status_code=404, detail="No ask of this computer's has that id.")
+    if not sessions.answered(token_id, ask_id, await asyncio.to_thread(_session_answer, ask, body)):
+        raise HTTPException(status_code=404, detail="No ask of this computer's has that id.")
+    return {"ok": True}
+
+
+def _stamp(raw) -> str:
+    return raw if isinstance(raw, str) and len(raw) <= 64 else ""
+
+
+def _session_answer(ask: dict, raw) -> dict:
+    """A computer's answer to ``ask`` as kept (gamma/local_agents/sessions.py
+    ``answer_far``): ``{error, status}`` (404 or 409) for a refusal; to a
+    listing, ``{sessions: [{id, title, at, created, source, busy,
+    conversation}]}``, at most ``sessions.MAX_LISTED``, one of another shape
+    left out; to an opening, ``{busy: true}``, ``{conversation}`` (the
+    conversation of Gamma's it names as the session's) or ``{title,
+    messages}``, the session's turns as this server keeps a conversation's
+    messages (``_session_message``). 400 for another shape."""
+    from ..local_agents import chats, events, sessions
+
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="An answer is an object.")
+    if "error" in raw:
+        return {"error": events.one_line(str(raw["error"]), MAX_ERROR) or "The computer refused it.",
+                "status": 404 if raw.get("status") == 404 else 409}
+    if ask["kind"] == "list":
+        if not isinstance(raw.get("sessions"), list):
+            raise HTTPException(status_code=400, detail="sessions is a list.")
+        rows = []
+        for row in raw["sessions"][:sessions.MAX_LISTED]:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not events.SESSION.match(row["id"]):
+                continue
+            conversation = row.get("conversation")
+            rows.append({"id": row["id"], "title": chats.title_of(str(row.get("title") or "")),
+                         "at": _stamp(row.get("at")), "created": _stamp(row.get("created")),
+                         "source": row.get("source") if row.get("source") in sessions.SOURCES else "other",
+                         "busy": row.get("busy") is True,
+                         "conversation": conversation if isinstance(conversation, str)
+                         and chats.MESSAGE_ID.match(conversation) else ""})
+        return {"sessions": rows}
+    if raw.get("busy") is True:
+        return {"busy": True}
+    if "conversation" in raw:
+        if not isinstance(raw["conversation"], str) or not chats.MESSAGE_ID.match(raw["conversation"]):
+            raise HTTPException(status_code=400, detail="conversation is a conversation's id.")
+        return {"conversation": raw["conversation"]}
+    if not isinstance(raw.get("messages"), list) or len(raw["messages"]) > 2 * sessions.MAX_TURNS:
+        raise HTTPException(status_code=400, detail="messages is a list of a session's turns.")
+    return {"title": chats.title_of(str(raw.get("title") or "")),
+            "messages": [_session_message(m, ask["agent"]) for m in raw["messages"]]}
+
+
+def _session_message(raw, agent: str) -> dict:
+    """A message of a session's turn as a computer sent it, kept as the
+    chat's messages keep one (``sessions.user_message``, ``agent_message``):
+    its text made inert (``prompt.inert``), its steps as a turn's writes
+    keep them (``_step``), its state an end. 400 for another shape."""
+    from ..local_agents import chats, events, prompt, sessions, store
+
+    if not isinstance(raw, dict) or raw.get("role") not in ("user", "agent") or not isinstance(raw.get("text"), str):
+        raise HTTPException(status_code=400, detail="A message is the person's or the agent's, with its text.")
+    text, at = prompt.inert(raw["text"].strip())[:chats.MAX_TEXT], _stamp(raw.get("at")) or page_now()
+    if raw["role"] == "user":
+        return sessions.user_message(text, at)
+    steps = raw.get("steps") if isinstance(raw.get("steps"), list) else []
+    error = raw.get("error") if isinstance(raw.get("error"), str) else ""
+    return sessions.agent_message(agent, text=text, steps=[_step(step) for step in steps[:store.MAX_STEPS]],
+                                  state=raw.get("state") if raw.get("state") in chats.ENDED else "done",
+                                  error=events.one_line(prompt.inert(error), sessions.MAX_ERROR), at=at,
+                                  ended_at=_stamp(raw.get("ended_at")) or at)
 
 
 @router.post("/computers/chats/{turn_id}/write")

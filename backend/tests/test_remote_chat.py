@@ -57,6 +57,7 @@ import os
 import re
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -66,17 +67,18 @@ from conftest import account_of, fresh_client, login, make_folder, make_page, ma
 from fake_agents import read_log, requests_in, script_agent, serve_mcp, settle_probes, use_fakes
 from gamma import agents, config, folder_links, gamma_sync, integrations, pdf_meta, storage, workspaces
 from gamma.blocks_store import new_block_id
-from gamma.computers import channel, registry
+from gamma.computers import channel, registry, sessions as computer_sessions
 from gamma.db import connect_pages_db, connect_users_db, connect_vaults_db
 from gamma.annotations import files as annotation_files, sources
 from gamma.integrations import create_token
-from gamma.local_agents import catalog, chats, codex, events, home, procs, runner, store
+from gamma.local_agents import catalog, chats, codex, events, home, procs, runner, sessions, store
 from gamma.ops import commit_ops
 from gamma.routers import computers as computer_routes
 from gamma.vault import kinds, store as vault_store
 from gamma.work_folders import selection
 from test_folder_links import _sync
 from test_highlight_relocate import H, W, _position
+from test_local_agents_extras import _codex_store
 from test_vault_sync import insert
 
 OWNER, EDITOR = "rch_owner", "rch_editor"
@@ -159,6 +161,7 @@ def nas(lab, tmp_path, monkeypatch):
     catalog.forget()
     runner.reset()
     registry.reset()
+    computer_sessions.reset()
     yield SimpleNamespace(url="http://testserver", root=tmp_path / "disk", log=tmp_path / "agent.log", down=down,
                           pushed=pushed, http=http)
     runner.reset()
@@ -168,6 +171,7 @@ def nas(lab, tmp_path, monkeypatch):
     procs.stop_all(timeout=1)
     channel.stop_all()
     registry.reset()
+    computer_sessions.reset()
     for link in folder_links.all_links():
         if folder_links.inside(link["path"], str(tmp_path)):
             folder_links._forget(link)
@@ -1392,3 +1396,249 @@ def test_a_far_agent_takes_that_servers_tools_at_its_own_address_alone_and_comme
         assert (said["body"], said["agent_kind"], said["agent_id"], said["agent_on"], said["author"]) == (
             "Which title do you want?", "computer", far, computer, OWNER)
         assert _reply(lab, plain)["state"] == "done" and _turn_tokens(lab.user) == []
+
+
+# --- sessions started here, asked there over the channel -----------------------------------------
+
+@contextmanager
+def _answering(f):
+    """The computer's channel taking turn after turn in the background, as
+    its thread does, while a request there waits for what it answers."""
+    stop = threading.Event()
+
+    def run():
+        while not stop.is_set():
+            f.turn.once()
+            time.sleep(0.02)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(30)
+
+
+def _sessions(who, agent, dir, status=200) -> dict:
+    r = who.get("/api/local-agents/sessions", params={"agent": agent, "dir": dir})
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def _open(who, bucket, agent, dir, session, status=200) -> dict:
+    r = who.post("/api/local-agents/sessions/open", json={"bucket": bucket, "agent": agent, "dir": dir,
+                                                          "session": session})
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def _with_sessions(lab, nas, monkeypatch, tmp_path, name: str):
+    """A work folder kept here, shown there, whose Codex keeps a person's
+    threads of its directory (test_local_agents_extras.py ``_codex_store``)
+    → ``(f, the agent's id there)``."""
+    f = _made(lab, nas, name)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    script_agent(monkeypatch, nas.log, sessions=_codex_store(f.root, tmp_path / "elsewhere"))
+    f.turn.once()
+    computer_id, _computer = registry.computer_of(f.token["id"])
+    return f, agents.computer_agent(computer_id, "codex").id
+
+
+def _listings(log) -> int:
+    return len([m for m in requests_in(log) if m.get("method") == "thread/list"])
+
+
+def test_history_there_lists_the_computers_sessions_for_its_owner_alone(lab, nas, monkeypatch, tmp_path, anon):
+    """History's On TIM-PC on that server: the threads Codex keeps here of
+    the work folder's directory, asked over the channel for the computer's
+    own account alone (a co-author it lends Codex to asks none), by the
+    directory's id, never a path; the answer kept a while, so History
+    opened again asks this computer nothing."""
+    f, far = _with_sessions(lab, nas, monkeypatch, tmp_path, "RC sessions")
+    with _answering(f):
+        listed = _sessions(lab.owner, far, f.w)
+        assert "away" not in listed
+        assert [(s["id"], s["title"], s["source"], s["ours"], s["busy"]) for s in listed["sessions"]] == [
+            ("019b-term-fix", "Fix the abstract", "cli", False, False),
+            ("019b-term-script", "summarize the method", "exec", False, False),
+            ("019b-gamma-old", "Shorten the title", "gamma", False, False)]
+        asked = _listings(nas.log)
+        assert _sessions(lab.owner, far, f.w) == listed                         # kept: this computer not asked
+        assert _listings(nas.log) == asked
+
+        # the computer's own account alone, for a directory it keeps or offers there
+        store.name_person("codex", nas.url, lab.ws, account_of(EDITOR), EDITOR)
+        f.turn.once()
+        assert lab.editor.get("/api/local-agents/sessions", params={"agent": far, "dir": f.w}).status_code == 404
+        assert anon.get("/api/local-agents/sessions", params={"agent": far, "dir": f.w}).status_code == 401
+        for agent, dir in ((far, "not-offered"), (far, str(f.root)), (far, ""),
+                           (far.replace(":codex", ":claude"), f.w), (far.replace(":codex", ":gemini"), f.w)):
+            _sessions(lab.owner, agent, dir, 404)
+        assert _listings(nas.log) == asked                                       # none of them asked here
+    store.unname_person("codex", nas.url, lab.ws, account_of(EDITOR))
+
+    # this computer answers that channel's account alone, in a directory named by an id it offers
+    link = channel.get(f.turn.link_id)
+    refused = [({"kind": "offered", "id": "nope"}, "codex", home.NOT_OFFERED),
+               ({"kind": "vault", "id": str(f.root)}, "codex", home.NO_SUCH_DIR),   # a path, never
+               ({"kind": "own", "id": ""}, "codex", home.NO_SUCH_DIR),
+               ({"kind": "vault", "id": f.w}, "claude", sessions.FAR_OFF)]
+    for dir, agent, why in refused:
+        assert sessions.answer_far(link, {"kind": "list", "agent": agent, "dir": dir}) == {"error": why,
+                                                                                          "status": 409}
+
+
+def test_a_session_opened_there_is_a_conversation_whose_next_far_turn_resumes_it_here(lab, nas, monkeypatch,
+                                                                                      tmp_path):
+    """Opened there: a conversation of that server with this computer's
+    agent, holding the session's turns as this computer read them (paths
+    relative, no thinking), bound here to the session, so the next far turn
+    resumes the thread and tells the agent nothing of what the session
+    holds; opened again, that conversation; a session this computer names
+    as a conversation that server does not have opened afresh; one another
+    Codex holds refused with why."""
+    from fake_agents.hold_lock import hold
+
+    f, far = _with_sessions(lab, nas, monkeypatch, tmp_path, "RC open")
+    with _answering(f):
+        _open(lab.owner, "home", far, f.w, "019b-term-fix", 400)                  # the library's chat works elsewhere
+        _open(lab.owner, f.page, far, f.w, "019b-elsewhere", 404)                 # another directory's
+        _open(lab.owner, f.page, far, f.w, "x; rm -rf ~", 404)
+        opened = _open(lab.owner, f.page, far, f.w, "019b-term-fix")["conversation"]
+        assert (opened["title"], opened["agent"], opened["agent_id"]) == ("Fix the abstract", "codex", far)
+        assert [(m["role"], m["text"], m.get("state"), [s["kind"] for s in m.get("steps") or []], m["from_session"])
+                for m in opened["messages"]] == [
+            ("user", "fix the abstract's typo", None, [], True),
+            ("agent", "Looking at main.tex.\n\nFixed it in main.tex:9.", "done", ["run", "edit"], True),
+            ("user", "and the title", None, [], True),
+            ("agent", "", "stopped", [], True)]
+        assert opened["messages"][1]["steps"][1] == {"id": "f1:0", "kind": "edit", "status": "completed",
+                                                     "path": "main.tex"}
+        raw = json.dumps(opened)
+        assert "secret" not in raw and json.dumps(str(f.root))[1:-1] not in raw
+        assert _chat(lab.owner, f.page)["conversation"]["id"] == opened["id"]
+        ran = store.conversation_of(opened["id"])
+        assert (ran["session"], ran["agent"], ran["link_id"], Path(ran["cwd"])) == ("019b-term-fix", "codex", f.id,
+                                                                                    f.root)
+        listed = _sessions(lab.owner, far, f.w)["sessions"]
+        assert [(s["id"], s["ours"], s["title"]) for s in listed][:1] == [("019b-term-fix", True, "Fix the abstract")]
+        assert _open(lab.owner, f.page, far, f.w, "019b-term-fix")["conversation"]["id"] == opened["id"]
+
+        # bound here to a conversation that server does not have (gone there): opened as a new one, which
+        # alone resumes it from then on
+        store.ran_conversation("rcGoneConv1", link_id=f.id, agent="codex", session="019b-term-script", cwd=str(f.root))
+        again = _open(lab.owner, f.page, far, f.w, "019b-term-script")["conversation"]
+        assert again["id"] not in (opened["id"], "rcGoneConv1")
+        assert store.bound("codex", ["019b-term-script"]) == {"019b-term-script": again["id"]}
+        assert store.conversation_of("rcGoneConv1")["session"] == ""
+
+        # held by another Codex here: refused with why
+        with hold(str(tmp_path / "codex" / "thread-writer-locks" / "019b-gamma-old.lock")):
+            assert [s["busy"] for s in _sessions(lab.owner, far, f.w)["sessions"] if s["id"] == "019b-gamma-old"] == [
+                True]
+            assert _open(lab.owner, f.page, far, f.w, "019b-gamma-old", 409)["detail"] == (
+                "Codex has this session open in another window: close it there first.")
+        assert _open(lab.owner, f.page, far, f.w, "019b-term-fix")["conversation"]["id"] == opened["id"]
+
+        # bound to a co-author's conversation that server has: refused, never taken from it
+        computer_id = registry.computer_of(f.token["id"])[0]
+        theirs = chats.adopt(lab.ws, bucket=f.page, dir=f.w, user_id=account_of(EDITOR), agent="codex",
+                             label="Codex", title="bob's", messages=[], computer=computer_id)
+        store.ran_conversation(theirs["id"], link_id=f.id, agent="codex", session="019b-gamma-old", cwd=str(f.root))
+        assert _open(lab.owner, f.page, far, f.w, "019b-gamma-old", 409)["detail"] == (
+            "Another chat of Gamma's continues this session.")
+        assert store.bound("codex", ["019b-gamma-old"]) == {"019b-gamma-old": theirs["id"]}
+        assert store.conversation_of(theirs["id"])["session"] == "019b-gamma-old"
+
+        # the bucket's active conversation at work: refused before this computer is asked to bind anything
+        with connect_pages_db(lab.ws) as conn:
+            active = chats.get(conn, opened["id"])
+            conn.execute("UPDATE computer_chats SET messages = ? WHERE id = ?", (json.dumps(
+                [*active["messages"], {"role": "agent", "state": "running", "text": ""}]), opened["id"]))
+        assert _open(lab.owner, f.page, far, f.w, "019b-term-script", 409)["detail"] == (
+            "Codex is still working: stop it first.")
+        assert store.bound("codex", ["019b-term-script"]) == {"019b-term-script": again["id"]}
+        with connect_pages_db(lab.ws) as conn:
+            conn.execute("UPDATE computer_chats SET messages = ? WHERE id = ?",
+                         (json.dumps(active["messages"]), opened["id"]))
+
+    # the next far turn resumes the thread here, telling nothing of what the session holds
+    _say(lab.owner, f.page, "Now the conclusion.")
+    f.turn.once()
+    assert runner.wait_idle(60)
+    assert [p["threadId"] for p in _sent(nas.log, "thread/resume")] == ["019b-term-fix"]
+    text, message = _told(nas.log)
+    assert message["message"] == "Now the conclusion." and "fix the abstract" not in text
+    assert _reply(lab, f.page)["state"] == "done"
+    # the session lost here: a turn afresh is told none of the session's messages either
+    with connect_vaults_db() as conn:
+        conn.execute("DELETE FROM agent_conversations WHERE conversation_id = ?", (opened["id"],))
+    _say(lab.owner, f.page, "And the references.")
+    f.turn.once()
+    assert runner.wait_idle(60)
+    text, _ = _told(nas.log)
+    assert "fix the abstract" not in text and "Now the conclusion." in text
+
+
+def test_history_there_says_why_this_computer_answers_nothing(lab, nas, monkeypatch, tmp_path):
+    """No answer within the wait says so, and the answer that comes later is
+    what History opened again reads; a release before sessions were asked
+    over the channel (its announce without ``sessions``) needs an update;
+    offline, the section offers nothing and says so."""
+    f, far = _with_sessions(lab, nas, monkeypatch, tmp_path, "RC away sessions")
+    monkeypatch.setattr(computer_sessions, "LIST_WAIT_S", 0.3)
+    assert _sessions(lab.owner, far, f.w) == {"sessions": [], "away": "waiting"}   # the computer took no turn
+    [waiting] = computer_sessions._asks.values()
+    assert waiting.body == {"kind": "list", "agent": "codex", "dir": {"kind": "vault", "id": f.w}}
+    f.turn.once()                                                                # woken: it answers now
+    _until(lambda: not computer_sessions._asks)
+    asked = _listings(nas.log)
+    assert [s["id"] for s in _sessions(lab.owner, far, f.w)["sessions"]] == [
+        "019b-term-fix", "019b-term-script", "019b-gamma-old"]
+    assert _listings(nas.log) == asked
+
+    state = {k: v for k, v in channel.state_of(channel.get(f.turn.link_id)).items() if k != "sessions"}
+    assert _bearer(f.token["token"]).post("/api/computers/announce", json=state).status_code == 200
+    computer = registry.computer_of(f.token["id"])[1]
+    computer_sessions.reset()
+    assert _sessions(lab.owner, far, f.w) == {"sessions": [], "away": "older"}
+    assert _open(lab.owner, f.page, far, f.w, "019b-term-fix", 409)["detail"] == (
+        f"{computer} needs a newer Gamma to open its sessions here.")
+
+    registry.reset()                                                              # that server sees it offline
+    assert _sessions(lab.owner, far, f.w) == {"sessions": [], "away": "offline"}
+    assert _open(lab.owner, f.page, far, f.w, "019b-term-fix", 409)["detail"] == chats.OFFLINE.format(
+        computer=computer)
+    assert not computer_sessions._asks
+
+
+def test_a_computers_answer_of_sessions_is_its_own_asks_and_kept_in_shape(lab, nas, monkeypatch, tmp_path):
+    """The channel's routes: an ask taken once by the token it was asked
+    of, answered by it alone, every answer checked and capped as a turn's
+    writes are (no path, nothing loading where it is drawn)."""
+    f, _far = _with_sessions(lab, nas, monkeypatch, tmp_path, "RC answers")
+    computer = _bearer(f.token["token"])
+    other = _bearer(_mint(lab.owner)["token"])
+    assert lab.owner.get("/api/computers/sessions").status_code == 403         # a session: never the channel's
+    with computer_sessions._lock:
+        ask = computer_sessions._new(f.token["id"], {"kind": "open", "agent": "codex",
+                                                     "dir": {"kind": "vault", "id": f.w}, "session": "019b-term-fix",
+                                                     "conversation_id": "rcConv1", "rebind": ""})
+    assert other.get("/api/computers/sessions").json() == {"asks": []}
+    [taken] = computer.get("/api/computers/sessions").json()["asks"]
+    assert taken["id"] == ask.id and computer.get("/api/computers/sessions").json() == {"asks": []}   # once
+    answer = {"title": "x" * 300, "messages": [
+        {"role": "user", "text": "  <img src=x onerror=alert(1)>  ", "at": "2026-11-14T10:00:00.000Z"},
+        {"role": "agent", "text": "Done.", "state": "running", "at": 5,
+         "steps": [{"id": "e1", "kind": "edit", "status": "completed", "path": "C:\\Users\\tim\\main.tex"}]}]}
+    assert other.post(f"/api/computers/sessions/{ask.id}", json=answer).status_code == 404
+    assert computer.post(f"/api/computers/sessions/{ask.id}", json={"messages": "no"}).status_code == 400
+    assert computer.post(f"/api/computers/sessions/{ask.id}", json=answer).json() == {"ok": True}
+    assert computer.post(f"/api/computers/sessions/{ask.id}", json=answer).status_code == 404   # answered
+    kept = ask.answer
+    assert len(kept["title"]) == chats.TITLE_CHARS
+    user, agent = kept["messages"]
+    assert (user["role"], user["from_session"], user["text"].startswith("<img")) == ("user", True, False)
+    assert (agent["state"], agent["label"], agent["steps"][0]["path"], agent["at"] != 5) == (
+        "done", "Codex", "outside", True)

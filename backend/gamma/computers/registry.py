@@ -34,9 +34,12 @@ what a window shows. A poll is answered ``{announce: true}`` when the
 computer is unknown here (a restart) or announced another version; held
 polls are woken by ``wake``: to announce again, ``chat`` when a turn of its
 account's agent there (a chat's, a comment's sent to it) is begun or asked
-to stop (step 4d), or ``let_go`` when a work folder
-it keeps is detached here (gamma/work_folders/detach.py, ``keepers``), a
-wake while no poll is held answering the next.
+to stop (step 4d), ``let_go`` when a work folder
+it keeps is detached here (gamma/work_folders/detach.py, ``keepers``), or
+``sessions`` when this server asks of its agents' sessions
+(gamma/computers/sessions.py, which only a computer that says it answers
+is asked: ``answers``, in memory), a wake while no poll is held answering
+the next.
 
 Only the token's account sees its computer (``of_page``, ``of_folders``,
 ``of_account``), and a person its agent names, who sees that agent alone
@@ -94,6 +97,7 @@ class _Live:
         self.armed = 0             # the timer's generation: one that fires after a newer one was armed does nothing
         self.written = 0.0         # time.monotonic() when ``seen_at`` was last written
         self.shown = False         # whether the account's windows were last told it is online
+        self.sessions = False      # whether its last announce says it answers the asks of its sessions
 
 
 _live: dict[str, _Live] = {}
@@ -188,7 +192,9 @@ def normalise(body) -> dict:
     off), whether the computer lets this server answer what its agents
     ask (``asks``, false from an app that says nothing of it) and the
     directories it offers them (``dirs``, ``_dirs_of``; none while no
-    agent is on). An older app's announce, whose assistants carry no
+    agent is on), and whether it answers what this server asks of its
+    agents' sessions (``sessions``: gamma/computers/sessions.py; false from
+    an app before that). An older app's announce, whose assistants carry no
     ``enabled``, has on the agent its folder vaults name. ValueError for a
     body of another shape, and for this server's own computer id (a far
     turn's token would then write as this computer's agent)."""
@@ -241,7 +247,8 @@ def normalise(body) -> dict:
     dirs = _dirs_of(body.get("dirs"))
     return {"computer": {"id": computer_id, "name": name.strip()}, "app": _text(body.get("app"), "app"),
             "vaults": kept, "assistants": there, "asks": bool(_flag(body.get("asks"), "asks")),
-            "dirs": dirs if any(a["enabled"] for a in there) else []}
+            "dirs": dirs if any(a["enabled"] for a in there) else [],
+            "sessions": bool(_flag(body.get("sessions"), "sessions"))}
 
 
 def _kept_here(ws: str, vaults: list[dict]) -> list[dict]:
@@ -331,6 +338,7 @@ def announce(user_id: str, username: str, ws: str, token_id: str, body) -> dict:
         if live is None:
             live = _live[token_id] = _Live(user_id)
         live.version, live.written = secrets.token_urlsafe(8), time.monotonic()
+        live.sessions = found["sessions"]
         live.pending = [reason for reason in live.pending if reason != "announce"]
         version = live.version
         came = _beat(token_id, live)
@@ -397,7 +405,8 @@ def answer(reasons: list) -> dict:
 
 def wake(token_id: str, reason: str) -> None:
     """Answer the computer's held polls now, with ``reason``: ``announce``
-    to have it announce again, ``chat`` for its turns, or ``let_go`` for a
+    to have it announce again, ``chat`` for its turns, ``sessions`` for
+    what this server asks of its agents' sessions, or ``let_go`` for a
     work folder it keeps
     that was detached; while none is held, its next poll is answered at
     once. Safe from any thread."""
@@ -924,6 +933,33 @@ def is_online(token_id: str) -> bool:
     """Whether the computer behind ``token_id`` is online now."""
     with _lock:
         return online(_live.get(token_id))
+
+
+def answers(token_id: str) -> bool:
+    """Whether the computer behind ``token_id`` answers what this server
+    asks of its agents' sessions, as its announce since it was last online
+    said (gamma/computers/sessions.py)."""
+    with _lock:
+        live = _live.get(token_id)
+        return live is not None and live.sessions
+
+
+def own_computer(user_id: str, ws: str, computer_id: str) -> dict | None:
+    """The account's own computer ``computer_id`` shown to ``ws`` (never
+    another account's whose agent serves it), as ``taking`` says it, with
+    its ``token_id`` and whether it is ``online`` (the online one's row
+    where it has several, else the most recently seen): what History's
+    *On {computer}* asks (gamma/computers/sessions.py); None for
+    none, and while the account may not edit ``ws``."""
+    rows = sorted((row for row in _account_rows(user_id, ws) if row[1] == computer_id),
+                  key=lambda row: row[5] or "", reverse=True)
+    with _lock:
+        rows.sort(key=lambda row: not online(_live.get(row[0])))
+    for token_id, *_rest in rows:
+        found = taking(token_id, ws)
+        if found is not None:
+            return {**found, "token_id": token_id, "online": is_online(token_id)}
+    return None
 
 
 def said_of(token_id: str) -> tuple[list, str]:

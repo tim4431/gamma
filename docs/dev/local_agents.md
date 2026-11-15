@@ -219,7 +219,11 @@ turn plumbing this section describes.
   deadline, is started once more afresh (Claude Code has no fallback of its
   own; Codex falls back to a new thread itself), unless Gamma's tools did
   not start for it (the done's `gamma_down`, `events.GammaDown`: afresh
-  would fail alike, and replace the session; `_Turning._resume_refused`).
+  would fail alike, and replace the session; `_Turning._resume_refused`) or
+  another process holds the session (the done's `busy`,
+  `events.SessionBusy`: afresh would fork it). A session a terminal or an
+  editor has open fails the turn with why before any process starts
+  (`sessions.held`, "Sessions started elsewhere").
 - **The watchdog**, one thread a turn, waits for the turn's stop or the
   deadline, `RUN_TIMEOUT_S` (1800 s, `GAMMA_AGENT_RUN_TIMEOUT`) counted
   from the turn's start, not from the queue's wait, and calls
@@ -855,8 +859,11 @@ steps").
      this conversation (you may not remember it)"; no tool reads a computer
      agent's conversation) and the message reads `fresh`; so does a resume Codex answered with another thread, and a
      Claude Code resume that fails before any step, which starts once more
-     afresh (not one whose Gamma's tools did not start: it fails once, and
-     the conversation keeps its session).
+     afresh (not one whose Gamma's tools did not start, nor one another
+     process holds: it fails once, and the conversation keeps its session).
+     The earlier messages never include those read from a CLI's session
+     (`from_session`, "Sessions started elsewhere"): that history is the
+     CLI's own.
   5. The events become the message, written at most every
      `CHAT_EVERY_S` (0.5 s; the watchdog writes the last one when nothing
      follows) and at the end: `session` kept in `agent_conversations`,
@@ -982,6 +989,146 @@ steps").
 Checked against the real CLIs (Codex 0.167.0, Claude Code 2.1.318): both
 list their models with no model use, stream a reply in deltas, and take a
 chosen model and effort.
+
+## Sessions started elsewhere
+
+The other direction of *Continue in a terminal* (step 5 of
+[agents-as-participants-plan.md](../research/agents-as-participants-plan.md),
+check C4): a session the person started in a terminal or an editor, with
+the same CLI in the directory the chat's agent works in, is continued in
+Gamma. `gamma/local_agents/sessions.py` reads the CLIs' own stores; it runs
+no turn and uses no model.
+
+- **Which directory.** The one the chat's picker names, by its id, never a
+  path (`chats.place_named`): a work folder's (W) whose vault here the
+  account made, or a directory this computer offers. A directory of its
+  own holds Gamma's sessions alone and lists none; a vault another account
+  made lists none either, as its terminal is its maker's
+  (`computerChat.sessionsDir` on the client).
+- **Codex.** `thread/list {cwd, sourceKinds: ["cli", "vscode", "exec"],
+  sortKey: "updated_at", limit: 50}` on a short-lived app-server
+  (`codex.threads`, its pages followed by `nextCursor`, at most three),
+  which compares the directory whole (separators and case aside); each
+  thread is titled by its `name`, else its `preview`, and its source is
+  its originator's (`codex-tui` a terminal, `codex_exec` a script,
+  `gamma` Gamma's own), else its `source`. Opened, `thread/read` (its
+  `cwd` checked again) and `thread/turns/list {itemsView: "full",
+  sortDirection: "desc", limit: 100}` (`codex.thread`) give its turns:
+  `userMessage` the person's text, `agentMessage` the agent's,
+  `commandExecution`, `fileChange`, `mcpToolCall` and `webSearch` steps
+  worded as a turn's are (`codex.item_steps`), `reasoning` left out; a
+  failed turn keeps its error, an interrupted one reads stopped.
+- **Claude Code.** The files of `<CLAUDE_CONFIG_DIR or
+  ~/.claude>/projects/<slug>/` (`sessions.slug`: every UTF-16 unit outside
+  `A-Za-z0-9` a `-`, case kept; past 200 characters cut there with `-` and
+  the base-36 of the path's Java string hash after), opened with the
+  `\\?\` prefix on Windows (such a directory passes 260 characters); a file
+  counts only where its first user record's `cwd` is the directory (two
+  paths can share a slug). The listing reads the newest 200 files' first
+  and last 64 KB: the directory, the entrypoint (`cli` a terminal,
+  `claude-vscode` an editor, `sdk-cli` a script), the first prompt, the
+  last `ai-title` (the title, else the first prompt) and the last time.
+  Opened, the file's last 16 MB are read and the current branch followed
+  from the last `last-prompt`'s `leafUuid` back through `parentUuid`
+  (`logicalParentUuid` across a compaction): a prompt (a user record with
+  text, not `isMeta`, not a slash command's) begins a turn, an assistant
+  record's text blocks are the agent's text and its `tool_use` blocks its
+  steps (`claude.tool_started`, `tool_ended` with the `tool_result`), its
+  thinking left out; the last 100 turns. The summary a compaction writes
+  as a user record (`isCompactSummary`, `isVisibleInTranscriptOnly`) is
+  no prompt.
+- **Busy.** A session another process holds cannot be opened, and a turn
+  that would resume it fails before it starts, with "Codex has this
+  session open in another window: close it there first." (`sessions.held`,
+  `events.BUSY`): Codex's while `<CODEX_HOME or
+  ~/.codex>/thread-writer-locks/<id>.lock` is locked (a read of it refused
+  on Windows, a shared `flock` refused elsewhere: a file left by a Codex
+  that was killed locks nothing), and Codex refuses a second writer itself
+  besides; Claude Code's, which has no lock and whose two writers fork
+  one file, while `<CLAUDE_CONFIG_DIR>/sessions/<pid>.json` names it and
+  that process lives (on Windows its creation time must be the entry's
+  `procStart`, so a reused number is not it).
+- **Ours.** A session `agent_conversations` binds to a conversation of
+  this workspace (`store.bound`, `chats.titles`) is *In Gamma*: titled as
+  that conversation, never busy (its own turn holds it), and opening it
+  opens that conversation, the bucket's active one again
+  (`chats.open_one`) where it is of this bucket; one of another bucket is
+  refused with where it is, as are another account's and a comment
+  thread's. A session bound to a conversation the workspace does not have
+  (deleted for good, another workspace's, another server's over the
+  channel, one whose far open failed) is listed and opened as any other.
+- **One conversation resumes a session.** Opening a session bound to a
+  conversation elsewhere moves the binding: `store.unbound` clears the
+  session of every conversation that had it (their rows and grants kept,
+  their next turns starting afresh with their earlier messages), then the
+  new one is bound. The desktop's opens run one at a time (`_opening`), and
+  History's rows wait while one is on its way, so two opens never both
+  bind it.
+- **Opened.** `chats.adopt` archives the bucket's active conversation
+  (409 while its turn is to end), writes a new one of the agent and the
+  place, titled as the session, whose messages are the session's turns in
+  the shapes above (`sessions.messages`: the agent's text through
+  `runner.reply_text`, its steps through `runner.step_of`, each message
+  `from_session`), and the route binds it to the session in that directory
+  (`store.ran_conversation`), so its next turn resumes it as a resumed chat
+  does (`thread/resume`, `--resume`). Codex keeps the thread's name; no
+  `thread/name/set` follows a resume.
+- **Caps.** 50 sessions listed, 200 files looked at, 64 KB of each end, 16
+  MB and 100 turns opened, Codex's reads within 30 s
+  (`codex.READ_S`); the routes read in the server's thread pool
+  (`asyncio.to_thread`), off the event loop.
+- **Another computer's agent** (a far conversation, "Another server's
+  chat"): the server that keeps the conversation asks the computer over
+  its channel ([computers.md](computers.md) "Sessions over the channel"),
+  for the account whose computer it is alone (never a co-author's use), the
+  directory named by an id as the far turn's claim names it (the work
+  folder that computer keeps, or one it offers). The computer answers
+  in a thread of its own (`sessions.answer_far`): `home.far_place`
+  resolves the id as for a far turn (a path, a directory of its own or one
+  not offered refused with why), the listing is `sessions.listed`'s with
+  the conversation each is the session of by its id, which that server
+  turns into `ours` for its own (`sessions.shown`, `chats.titles` of the
+  account's with that computer's agent). Opened, the server mints the
+  conversation's id and the computer reads the session (only one `read`
+  finds in that directory), binds it to that id in its
+  `agent_conversations` (the vault's id or "", the directory, as a far
+  turn binds a session: `runner._session` resumes it at the next claim),
+  and sends its messages without ids, the newest within 2 MiB
+  (`FAR_MAX_BYTES`), which the server checks and keeps as its own
+  (`chats.adopt` with that id and that computer). The bucket's active
+  conversation at work is refused before the computer is asked, since it
+  binds the session before it answers. A session it names as a
+  conversation's already is that conversation where the server has it as
+  the account's with that agent; one the server has otherwise (a
+  co-author's, another computer's) is refused with 409; one it does not
+  have is opened again bound to the new one (`rebind`: a conversation of
+  that computer's own server's, or one gone there), the old one letting go
+  of it (`store.unbound`). Busy is refused as here. The claim's earlier messages leave
+  `from_session` ones out as `home`'s do (`chats.earlier_of`, one rule
+  for both). A computer offline, or a release before this step (its
+  announce without `sessions`), is not asked: the section says *TIM-PC is
+  offline: its sessions show once it connects.* or *TIM-PC needs a newer
+  Gamma to list its sessions here.*, and no answer within 15 s *TIM-PC has
+  not answered yet: open History again in a moment.* (`away`,
+  `computerChat.sessionsAway`); the server keeps the answer that came
+  later for 30 s, and nothing is asked while History is closed.
+- **History** (`ChatDock`, `ChatHistoryPop`'s `section`): while a
+  computer's agent is picked (this computer's or another's of the
+  reader's; never a co-author's) and its directory has an id, the popover
+  reads `GET /api/local-agents/sessions` each time it opens and lists them
+  under *On {computer}* (this computer's name from `GET /api/local-agents`,
+  another's as the strip names it) below the conversations, in the same `.chatHistRow`s
+  (`computerChat.sessionRows`: the title, the time, *Terminal*, *VS Code*,
+  *Script*, *Desktop app*, *Gamma*, or *In Gamma* for one Gamma continues;
+  a busy one `aria-disabled`, titled with why, as every row is while
+  conversations are ticked or a session's open is on its way); the search
+  filters them too. A row opens the session (`POST /api/local-agents/sessions/open`)
+  and the chat reads its conversation again, as an opened History row
+  does.
+
+Checked against the real CLIs (Codex 0.167.0, Claude Code 2.1.318) by
+check C4: both stores read as above, a held Codex thread refused with
+-32600, and `--resume` continuing a `claude -p` session.
 
 ## Asking in the chat
 
@@ -1330,7 +1477,9 @@ sandbox check) or 120 s (`thread/start`, `thread/resume`, `turn/start`).
 4. `config/read {cwd}`, then `thread/start {cwd, sandbox: "workspace-write",
    approvalPolicy: "never", config: _quiet(config)}` (or `thread/resume`
    with the session's `threadId` and `excludeTurns: true`; a thread that is
-   gone starts a new one). `_quiet` turns off every server the user's
+   gone starts a new one, and one another process holds, refused with
+   -32600 "already has an active writer" (`codex._held`), fails the turn as
+   `events.SessionBusy`, never a new thread in its place). `_quiet` turns off every server the user's
    `mcp_servers` names (`mcp_servers.<name>.enabled = false`), sets
    `features.apps = false` and `web_search = "disabled"`. Verified on the
    development machine (codex-cli 0.167.0, three MCP servers in
@@ -1578,7 +1727,7 @@ short connection):
 |---|---|
 | `computer_agents` | `agent` (the key: `codex`, `claude`), `enabled`, `runs` (`never` or `ask`; `never` while it is off), `set_by` (the account that turned it on, which owns it), `set_at`; a row stays when it is turned off. Turned on again while on, it keeps its owner and `set_at` |
 | `agent_dirs` | `id` (the key), `path` (a directory as `folder_links.clean_path` gives it), `name` (the directory's own when none is given), `added_at`: the directories offered to the agents beyond the vaults, in the order last given |
-| `agent_conversations` | `conversation_id` (the key), `link_id` (its vault's, "" outside one), `agent`, `session`, `cwd`, `at`: the session a chat conversation's turns resume ("The chat's computer side") |
+| `agent_conversations` | `conversation_id` (the key), `link_id` (its vault's, "" outside one), `agent`, `session`, `cwd`, `at`: the session a chat conversation's turns resume ("The chat's computer side"), a session started elsewhere's once it is opened ("Sessions started elsewhere") |
 | `agent_turns` | `id` (the turn), `ws`, `link_id` ("" outside a vault), `conversation_id`, `page_id` (the conversation's bucket), `agent`, `state` (queued, running, then done, failed or stopped), `started_at`, `ended_at`, `error` (this computer's record: the agent's whole error and its stderr tail, never shown to members), `pid`: a turn's run, a chat's or a thread's |
 | `agent_dir_grants` | `conversation_id`, `dir` (the directory the turn works in), `command`, `cwd` (the folder below it the command runs in, `.` the directory) and `host` (a network host, "" for none), the key; `agent` (the conversation's), `at`: a command the person allowed in that chat, answered by Gamma when the same command is asked again in the same directory and folder for the same host |
 | `agent_people` | `server` ("" this server, else a channel's `remote_url`), `workspace_id`, `account` (the person's account there) and `agent`, the key; `username` (how Settings names them while that server is not reached), `at`: a person the agent's owner lets use it ("A co-author's turn"), at most 50 an agent, deleted with the agent turned off |
@@ -1595,7 +1744,8 @@ anyone while off, off and narrowed by its owner alone), `dirs()` and
 `name_person`, `unname_person`, `lent_to(ws, account)` and `usable(user_id,
 ws, agent)` (the agents another account lends the account, and whether it
 may use one), `conversation_of`, `ran_conversation` (a chat
-conversation's session, in place of the one it had), `forget_conversation`
+conversation's session, in place of the one it had), `bound` (the
+conversation each of a CLI's sessions is bound to), `forget_conversation`
 (a conversation deleted), `add_turn`, `turn_running`, `end_turn`,
 `get_turn` and `open_turns` (a turn's row; `claimed_of` the row of a
 turn of another server's page this computer claimed, by which this
@@ -1636,6 +1786,8 @@ and nothing of the turn's row.
 | POST | `/api/local-agents/asks/{ask}` | the desktop app's alone: `{decision: "once" \| "deny"}` → `{answered: true, version}`, given to the agent before it returns; 403 "Only the desktop app answers on this computer."; 404 "No question on this computer has that id." (another account's too); 400 "On this computer an ask is allowed once or declined."; 409 "{agent} no longer waits for that." or "This turn has ended." |
 | GET | `/api/local-agents/chat/terminal?bucket=` | the desktop shell's alone in practice (Continue in a terminal): `{cwd, argv, agent, label}`, the conversation's session resumed in the directory it works in, with the conversation's agent ("Its model, its typing, a terminal…"); 404 "This conversation has no session to continue.", 409 while a turn runs, when the account no longer has that agent on here or it is not on this computer |
 | POST | `/api/local-agents/chat/sources` | `{bucket, selections: [{text, page, box}]}` → `{sources: [{file, line, end?} \| null]}`, in order, nulls outside a work folder kept here; 400 past 20 selections |
+| GET | `/api/local-agents/sessions?agent=&dir=` | `{sessions: [{id, title, at, created, source, ours, busy}]}`: the sessions the CLI of `agent` keeps of the directory `dir` names, the most recently used first ("Sessions started elsewhere"; `source` one of `cli`, `vscode`, `exec`, `app`, `gamma`, `other`). The agent's owner alone (404 for a co-author, another account, an agent that is off, a `dir` that is no work folder whose vault the account made here and no offered directory), 403 for a token or the guest, 404 where agents do not run; 409 when Codex is not here or cannot list them. On every server for an agent of another computer of the account's (`agent` its id, `dir` a work folder it keeps or a directory it offers, by id; 404 otherwise, a lent computer's too), asked over its channel, with `away` (`offline`, `older`, `waiting`) and no session while it cannot answer |
+| POST | `/api/local-agents/sessions/open` | `{bucket, agent, dir, session}` → `{conversation}`: the session opened as the bucket's active conversation, bound to it (`chats.adopt`), or the conversation of the account's in that bucket that continues it already. The same gate; 400 when the bucket's agent works in another directory; 404 for no such session of that directory; 409 while another process holds it (with why), while a conversation elsewhere continues it (where), while the bucket's active conversation's turn is to end, when Codex cannot read it; 403 when the account is no editor or writes are refused. For another computer's agent (its id) the same, that computer reading and binding the session; 409 too while it is offline, older ("TIM-PC needs a newer Gamma to open its sessions here.") or not answering within 30 s ("TIM-PC did not answer: try again.") |
 
 The chat routes answer 404 on a server that runs no agents, for no such
 bucket (a live page, a folder, `home`), and for an account that has no
@@ -2038,6 +2190,15 @@ are drawn in the bar over the whole window and answered with `POST
   `<` is written `&lt;`; code is left as written, except code whose
   opening backtick is escaped (prose to Markdown) and a diagram fence
   (```` ```mermaid ````, ```` ```svg ````), which is shown as its source.
+- **A session started elsewhere** is its owner's: listed and opened for
+  the agent's owner alone, in a directory the picker names by its id
+  (never a path from the page), and in a vault only for the account that
+  made it. Its text is shown as any message is (the agent's through
+  `prompt.inert`, its paths made relative as a turn's are) and never put
+  in a prompt: the CLI keeps its own history and Gamma sends only the next
+  message (`from_session` keeps it out of a turn's earlier messages, even
+  when a resume fails and the turn starts afresh). A session another
+  process holds is refused, never forked.
 - **The replies** are comments of the workspace: every member who can
   open the file reads them. The running detail names only the files
   members see already (`tracked`); the turn's error record and its stderr
@@ -2046,6 +2207,9 @@ are drawn in the bar over the whole window and answered with `POST
 
 ## Known gaps
 
+- Sessions started elsewhere: Codex's held lock on macOS and Linux is read as an exclusive `flock`, which check C4 saw
+  only on Windows; Claude Code's sessions are read along the shapes 2.1.318
+  writes, a later one's records unread where they differ.
 - A row of Background tasks of a turn of another workspace opens its page
   there on the page's own chat, not on the turn's conversation: the app
   loads that workspace anew, and what the chat shows in place of its own
@@ -2116,7 +2280,7 @@ are drawn in the bar over the whole window and answered with `POST
 
 - `tests/fake_agents/fake_codex.py`, `fake_claude.py`: standard-library
   stand-ins for the two CLIs (`--version`, the status, `app-server`, `-p`
-  stream-json), scripted by `FAKE_AGENT` (edits, the reply, a delay, a failure mode, `resume` among them, `distinct` for a session id
+  stream-json), scripted by `FAKE_AGENT` (edits, the reply, a delay, a failure mode, `resume` among them, the fake Codex's `sessions` for the threads a terminal left, `distinct` for a session id
   of its own each, the fake Codex's `config` for what `config/read`
   answers, a log of every argv, request and stdin). Each reads
   Gamma's server from the config or the flags it was given and, scripted
@@ -2168,7 +2332,11 @@ are drawn in the bar over the whole window and answered with `POST
   each refusal with the comment stored,
   a member named codex told nothing and the sender told of the reply, the
   thread's prompt and the chat's asking line; `tests/test_remote_chat.py`
-  a comment sent to the computer's agent there run here and answered in
+  the sessions of another computer's agent asked over its channel (its
+  owner alone, a directory it does not offer or a path refused there and
+  here, one opened bound there and resumed by the next far turn with
+  nothing of it in the prompt, busy, offline, an older computer, an answer
+  that came late read at the next opening), a comment sent to the computer's agent there run here and answered in
   its thread there, an offline computer refused, and a co-author's turn
   there (named with the shell's word, run here for them asking nothing,
   their name in the prompt, answered in their thread with its owner named,
@@ -2195,7 +2363,23 @@ are drawn in the bar over the whole window and answered with `POST
   streaming a chat turn's text, the reply growing then replaced by the
   whole message, the terminal route for Codex and Claude Code (and the
   strip's `session` agreeing with it), the sources of the selections, the
-  Background tasks rows (running and asking, queued, gone after a Stop).
+  Background tasks rows (running and asking, queued, gone after a Stop);
+  sessions started elsewhere: Codex's threads of the folder from the
+  stand-in's `sessions` store (by name or first message, newest first, a
+  subagent's and another directory's left out, the owner alone, a thread
+  held by another Codex's lock busy and refused, a lock nobody holds not),
+  one opened with its turns (no thinking, its steps worded), bound,
+  opened again as the same conversation, refused from another page, its
+  next turn resuming the thread with nothing of it in the prompt, and a
+  resume Codex refuses as held failing the turn with no thread started;
+  Claude Code's files of a temporary `CLAUDE_CONFIG_DIR` (a project
+  directory past 260 characters, the ai-title, the branch the last prompt
+  left, a fork and a slash command left out, another directory of the same
+  slug left out, a live process's session busy, an ended one's not), its
+  next turn `--resume`, refused before any process while a terminal has it,
+  and a failed resume starting afresh without the session's text; the slug
+  rule with its hash (`tests/fake_agents/hold_lock.py` holds a lock as
+  Codex does).
 - `tests/test_local_agents_asks.py`: asking in the chat: consent held in
   one directory and forgotten with the agent turned off or set back to
   never and with the conversation, both
@@ -2344,4 +2528,9 @@ are drawn in the bar over the whole window and answered with `POST
   token (the prompt pointing to `read_page` by the page's id and pasting
   none of its notes, the call answered, the reply quoting the highlight
   and its note, the step *Read Gamma: read_page* in the pill, the server
-  log saying the token was deleted); turning it off.
+  log saying the token was deleted); History's *On this computer* listing
+  the stand-in's Codex threads of the paper's directory, one held by a
+  lock another process holds (`hold_lock.py`) disabled and titled with
+  why, a terminal's opened with its turns, the next message resuming its
+  thread (no thread started, nothing of it in the prompt) and the row then
+  *In Gamma*; turning it off.

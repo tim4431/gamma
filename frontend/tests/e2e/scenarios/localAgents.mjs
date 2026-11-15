@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,8 +20,9 @@ import { dragSelectCodeText } from "./textAnchors.mjs";
 // Codex's own opened as a thread, the threads named in open.md on disk; a
 // reply ticked Send to Codex (by its @codex) a turn of its thread, its
 // chip, its answer under its name, Open in chat and the next ticked reply
-// resuming the session; the chat's Codex side; Gamma's tools; and the
-// agent turned off.
+// resuming the session; the chat's Codex side; Gamma's tools; the sessions
+// Codex keeps of the folder, started in a terminal, opened from History;
+// and the agent turned off.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 const PAPER = path.join(ROOT, "backend", "tests", "samples", "synctex", "paper");
@@ -52,6 +54,13 @@ const LIB_ASK = "Is this the right time of day?";
 const LIB_REPLY = "Dawn is right; I asked about the second line.";
 const LIB_QUESTION = "Is dusk right here?";
 const SUNFLOWERS = ["Sunflowers turn east at dawn", "and west at dusk"];
+// Step 5: the threads a person's Codex keeps of the paper's directory (the
+// stand-in's `sessions`), one of them held by another Codex, and the
+// message the opened one's next turn takes.
+const TERMINAL = { id: "019b-term-fix", name: "Fix the abstract", ask: "fix the abstract's typo", reply: "Fixed it in main.tex:9." };
+const HELD = { id: "019b-term-held", name: "Draft the introduction" };
+const SESSION_ASK = "and the conclusion";
+const SESSION_REPLY = "Concluded in main.tex.";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -65,6 +74,10 @@ export async function localAgentScenarios(env) {
   if (!wanted("local-agents")) return;
   const disk = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-agents-"));
   const agentLog = path.join(disk, "agent.jsonl");
+  const paperDir = path.join(disk, "paper");
+  const codexHome = path.join(disk, "codex");   // where the server looks for a thread's writer lock
+  const thread = (id, name, updated, turns = []) => ({ id, name, preview: name, cwd: paperDir, source: "cli",
+    originator: "codex-tui", createdAt: updated - 60, updatedAt: updated, turns });
   // Both agents are the stand-ins, so neither probe reaches a CLI of this
   // computer. Codex edits the paper's method in a turn, after a pause long
   // enough to be seen working; each new session is a thread of its own id,
@@ -73,7 +86,17 @@ export async function localAgentScenarios(env) {
     GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "", GAMMA_LOCAL_AGENTS: "1",
     GAMMA_AGENT_CODEX: JSON.stringify([PYTHON, path.join(FAKES, "fake_codex.py")]),
     GAMMA_AGENT_CLAUDE: JSON.stringify([PYTHON, path.join(FAKES, "fake_claude.py")]),
+    CODEX_HOME: codexHome,
     FAKE_AGENT: JSON.stringify({ delay: 8, log: agentLog, distinct: true, chat: CHAT_REPLY,
+      // step 5: what a terminal left of the paper's directory
+      sessions: { threads: [
+        thread(TERMINAL.id, TERMINAL.name, 1794000300, [{ id: "t1", status: "completed", startedAt: 1794000000,
+          completedAt: 1794000060, items: [
+            { type: "userMessage", id: "u1", content: [{ type: "text", text: TERMINAL.ask }] },
+            { type: "commandExecution", id: "c1", command: "rg abstract main.tex", cwd: paperDir, status: "completed",
+              aggregatedOutput: "9: the abstract", exitCode: 0 },
+            { type: "agentMessage", id: "a1", text: TERMINAL.reply, phase: "final_answer" }] }]),
+        thread(HELD.id, HELD.name, 1794000100)] },
       // a turn of a folder that lets it ask (3b) asks to run the build with the network
       ask: [{ command: BUILD, reason: "The build fetches a font", host: "fonts.example" }],
       // a chat turn's reply comes as it is typed (3c): a word every half second
@@ -90,7 +113,8 @@ export async function localAgentScenarios(env) {
           gamma: [{ tool: "comment", arguments: { page_id: "$page", line: 17, end_line: 17, body: TEX_QUESTION } }],
           delay: 0, typing: 0, chat: TEX_REPLY },
         [LIB_ASK]: { edits: [], gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: SUNFLOWERS[1], pdf_page: 1,
-          body: LIB_QUESTION } }], delay: 0, typing: 0, chat: LIB_REPLY } } }),
+          body: LIB_QUESTION } }], delay: 0, typing: 0, chat: LIB_REPLY },
+        [SESSION_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SESSION_REPLY } } }),
   } });
   try {
     await server.start();
@@ -100,7 +124,6 @@ export async function localAgentScenarios(env) {
     const at = (id) => `${server.base}/?page=${id}&ws=${user.ws}`;
     const desktop = (opts = {}) => user.context(browser, { userAgent: DESKTOP_UA, ...opts });
     // written as an editor that finished a while ago, so a round takes it at once
-    const paperDir = path.join(disk, "paper");
     const write = (file, bytes) => {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, bytes);
@@ -858,6 +881,57 @@ export async function localAgentScenarios(env) {
         await row.waitFor({ state: "detached", timeout: 15000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
+    });
+
+    await step("local-agents: History lists the sessions Codex keeps of the folder on this computer: a terminal's opens as the chat's conversation, the next message resumes it, and one open in another window says why", async () => {
+      // another Codex has the held thread open: its writer's lock, as Codex holds it
+      const holder = spawn(PYTHON, [path.join(FAKES, "hold_lock.py"), path.join(codexHome, "thread-writer-locks", `${HELD.id}.lock`)]);
+      await new Promise((resolve, reject) => { holder.stdout.once("data", resolve); holder.once("error", reject); });
+      const before = heard().length;
+      const computer = (await user.api("/api/local-agents")).computer;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        const history = async () => {
+          await dock.getByRole("button", { name: "Chat history", exact: true }).click();
+          const pop = page.locator(".chatHistoryPop");
+          await pop.locator(".popoverSection", { hasText: computer ? `On ${computer}` : "On this computer" }).waitFor();
+          return pop;
+        };
+        let pop = await history();
+        const terminal = pop.locator(".chatHistRow", { hasText: TERMINAL.name });
+        await terminal.waitFor({ timeout: 20000 });
+        assertEq((await terminal.locator(".chatHistBy").innerText()).trim(), "Terminal", "started in a terminal");
+        const held = pop.locator(".chatHistRow", { hasText: HELD.name });
+        assertEq(await held.getAttribute("aria-disabled"), "true", "the held one cannot be opened");
+        assertEq(await held.getAttribute("title"), "Codex has this session open in another window: close it there first.",
+          "and says why");
+        await terminal.click();
+        await pop.waitFor({ state: "detached" });
+        await dock.locator(".chatBubble.user", { hasText: TERMINAL.ask }).waitFor({ timeout: 15000 });
+        await dock.locator(".chatBubble.ai", { hasText: TERMINAL.reply }).waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.locator(".chatBubble.ai", { hasText: SESSION_REPLY }).waitFor({ timeout: 40000 });
+        pop = await history();
+        const ours = pop.locator(".chatHistRow", { hasText: TERMINAL.name }).filter({ has: page.locator(".chatHistBy", { hasText: "In Gamma" }) });
+        await ours.waitFor({ timeout: 20000 });
+        await page.keyboard.press("Escape");
+        assertNoProblems(page);
+      } finally {
+        await ctx.close();
+        holder.stdin.end();
+      }
+      const since = heard().slice(before);
+      assertEq(JSON.stringify(since.filter((e) => e.in?.method === "thread/resume").map((e) => e.in.params.threadId)),
+        JSON.stringify([TERMINAL.id]), "the next turn resumed the terminal's thread");
+      assertEq(since.filter((e) => e.in?.method === "thread/start").length, 0, "no thread started in its place");
+      const prompt = since.find((e) => e.in?.method === "turn/start").in.params.input.map((p) => p.text || "").join("\n");
+      assert(!prompt.includes(TERMINAL.ask), "the terminal's history stays the CLI's: the prompt does not repeat it");
+      const stored = await conversation();
+      assertEq(stored.title, TERMINAL.name, "the conversation is titled as the session is");
     });
 
     await step("local-agents: turned off by its owner, the folder has no agent", async () => {

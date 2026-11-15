@@ -931,9 +931,9 @@ def test_what_a_message_keeps():
     assert chats.selections_of([{"text": "q" * 3000}])[0]["text"] == "q" * chats.MAX_QUOTE
     assert chats.title_of("\n  First line  \nsecond") == "First line"
     assert len(chats.title_of("t" * 200)) == chats.TITLE_CHARS
-    assert runner._step({"id": "x", "kind": "edit", "path": "/etc/passwd", "status": "started"}) == {
+    assert runner.step_of({"id": "x", "kind": "edit", "path": "/etc/passwd", "status": "started"}) == {
         "id": "x", "kind": "edit", "status": "started", "path": "outside"}
-    assert runner._step({"id": "y", "kind": "run", "command": "bash -lc 'make all'", "status": "failed"}) == {
+    assert runner.step_of({"id": "y", "kind": "run", "command": "bash -lc 'make all'", "status": "failed"}) == {
         "id": "y", "kind": "run", "status": "failed", "program": "make"}
-    assert runner._step({"id": "z", "kind": "fly", "status": "completed"}) == {
+    assert runner.step_of({"id": "z", "kind": "fly", "status": "completed"}) == {
         "id": "z", "kind": "other", "status": "completed"}
