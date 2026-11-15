@@ -36,7 +36,7 @@ export const SECTION_PREFS = Object.freeze({
     "Text highlighters": ["highlightPresets"],
   }),
   reading: sections({
-    PDFs: ["embAnnots", "smoothWheel", "oaFallback", "metaAutoFetch", "pdfSaveLocal", "openAddsToLibrary"],
+    PDFs: ["embAnnots", "pdfFlow", "smoothWheel", "oaFallback", "metaAutoFetch", "pdfSaveLocal", "openAddsToLibrary"],
     "Replacing a PDF": ["relocateMinMatch", "relocateExactChars"],
     Notes: ["backlinksVisible"],
     Recordings: ["replayLeadIn", "recordingTranscribe"],

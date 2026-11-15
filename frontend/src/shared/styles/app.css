@@ -5957,6 +5957,17 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfZoomLayer {
   transform-origin: 0 0;
 }
+/* Pages that run across (Settings → Reading › PDFs › Page direction;
+   pdf/pageLayout.js): one row as long as its pages (so here the layer does
+   take a width), each page centred in the row's height (the view's, or the
+   tallest page's once that is taller) and the row centred in a view wider
+   than it. The row never overflows its own box, so the centring never puts
+   a page out of reach. */
+.pdfViewer.pdfAcross > .pdfZoomLayer {
+  display: flex; align-items: center; justify-content: center;
+  width: max-content; min-width: 100%; min-height: 100%;
+}
+.pdfViewer.pdfAcross > .pdfZoomLayer > .pdfPageWrap { flex: none; }
 /* The committed zoom (shared/lib/viewerZoom.js SCALE_VAR), which the viewer
    writes on the layer and the page boxes size with (pdf/PdfViewer.jsx), so
    a zoom re-lays-out the pages without rendering them. registerScaleVar
