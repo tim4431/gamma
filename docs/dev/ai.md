@@ -994,17 +994,63 @@ named by them ("Lines 118–120 shortened: …"). The reply keeps it as
 model's window when the window fit shrank the budget (`budget` below
 `asked`, "Fitting the window" above).
 
-### The computer side
+### The picker
 
-On a work folder's file whose vault the account made, with an agent on
-(the desktop app's own server), the chat's header starts with a switch,
-**Gamma AI | Codex**, drawn even when Gamma AI is off or unset. The
-Codex side is not Gamma AI's: it talks to the agent on this computer, has
-its own conversations, strip, transcript and composer, and goes through
-none of this document's machinery (no provider, model, tools, approvals or
-chat buckets). It is [local_agents.md](local_agents.md)
-"The chat's computer side"; this side's PDF passages are the same App
-state on both.
+The chat talks to one agent at a time, picked in the composer's model chip
+(`chat/AgentChip.jsx`): Gamma AI, and the agents of the account's
+computers (`chat/agents.js` `chatAgents`: Codex and Claude Code this
+computer runs that the account turned on in Settings → AI → Agents, or on
+a page of a work folder another computer keeps, that computer's agent,
+"Codex on TIM-PC"). With more than one, the chip's menu lists them first,
+each by its icon, then the picked one's models and reasoning effort (Gamma
+AI's speed too); with Gamma AI alone it is the model menu it always was.
+It is shown in every bucket (a page, a folder, the library) and even when
+Gamma AI is off or unset, as long as there is an agent to pick. A viewer
+of the workspace has Gamma AI alone.
+
+The bucket's pick lasts the tab's life (`chat/computer/chatSide.js`
+`useChatAgent`), as a computer agent's model and effort do; a bucket never
+picked shows Gamma AI, unless no AI service is connected and a computer's
+agent can answer (`pickAgent`). A conversation keeps the agent it began
+with (decision 10 of [the plan](../research/agents-as-participants-plan.md)):
+picking another agent in a conversation that has messages asks *Start a
+new chat with Codex?* first, and on yes the agent picked starts a new
+conversation while the one left stays where it was (Gamma AI's active
+conversation, or the computer agent's, archived only when a computer's
+agent replaces another). With no messages the pick just shows that agent's
+conversation.
+
+### A computer's agent in the chat
+
+A computer's agent picked, the chat talks to the agent on that computer:
+its conversations are the account's alone, kept and written by the server
+as the turn goes, in the same buckets, and go through none of this
+document's machinery (no provider, model registry, tools, approvals or
+chat session); that is [local_agents.md](local_agents.md) "The chat's
+computer side". The window is the same. One transcript draws both
+(`chat/ChatTranscript.jsx`): ChatDock hands it Gamma AI's messages as
+saved, or a computer agent's mapped into the same shape
+(`chat/computer/computerChat.js` `shownMessages`: the steps as the pill's
+chips, its asks as cards on the approval card's shell, what it changed in
+the changes card, a stopped or failed turn as a reply that stopped or
+failed), and what a row offers comes from the handlers it passes (editing
+a sent message, reporting a reply and reverting a change are Gamma AI's).
+The composer is the same box with what such an agent takes (the message
+and the PDF passages, each noting its source line), its model chip the
+agent's models and efforts, the strip in the provider strip's slot
+(`ComputerStrip`), and the header Export, Find, History and New chat.
+History lists every agent's conversations of the bucket together
+([chat_history.md](chat_history.md) "Every agent's conversations").
+
+No AI service connected closes Gamma AI's side only: the setup card
+(`ChatSetupCard`, below Gamma AI's empty transcript) lists the agents
+found on a computer beside *Connect an AI service*, those the account
+turned on as tiles that pick the agent, one found here but off as a tile
+that opens Settings → AI, and a conversation with a computer's agent keeps
+its composer and its header's buttons. A bucket never picked shows such
+an agent when no AI service is connected (`pickAgent`). What needs a
+connection still asks for one: metadata, translation, handwriting and
+dictation.
 
 ### The composer
 
@@ -1293,7 +1339,7 @@ at a quarter of its alpha. The answer is `render_page`'s shape, `(bytes,
 "image/jpeg", width, height)`; None for a file not here, one that does not
 decode, a decompression bomb (`Image.MAX_IMAGE_PIXELS`) or one that changed
 under the read. The feedback reader's pictures of a region and of the
-whole picture are drawn by it ([feedback.md](feedback.md) "The pictures");
+whole picture are drawn by it ([annotations.md](annotations.md) "The pictures");
 the labels say "the picture" where a PDF's say "PDF page N".
 `GET /api/ai/selection-crop/{doc_id}` draws the selection pill's picture in
 saved replies. `ai_pictures.picture_at` gives the bytes of any of these
@@ -1303,7 +1349,7 @@ conversation export packs them
 ([chat_history.md](chat_history.md#exporting-a-conversation)).
 
 **Highlights drawn.** None of the chat's pictures draws Gamma's highlights.
-A feedback thread's region picture does ([feedback.md](feedback.md) "The
+A feedback thread's region picture does ([annotations.md](annotations.md) "The
 pictures", `feedback/pictures.py`): the same page as
 `ink_view.page_with_handwriting` makes it, its `marks` being the page's
 highlights measured on the file drawn, which `pdf_export.page_with_ink(highlights=…)`

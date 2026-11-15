@@ -3,10 +3,13 @@
 // turn of a chat on another server's page, run here by the host for a work
 // folder whose agent may ask on this computer, asks to run a command or to
 // change files outside its sandbox, and the question is drawn and answered
-// in the bar alone. The host lists what waits (`GET /api/local-agents/asks`,
-// the shell's word): `{id, turn_id, link_id, agent, label, kind, command,
-// lines?, inner?, shell?, marked?, background?, dir, folder, file, host?,
-// paths?, diff?, reason?, server: {origin, account}, at, expires_at}`, every
+// in the bar alone; so is a co-author's turn of the host's own (`for` the
+// person, `server.origin` "": docs/dev/local_agents.md "A co-author's
+// turn"), answered in their chat too. The host lists what waits (`GET
+// /api/local-agents/asks`, the shell's word): `{id, turn_id, link_id, agent,
+// label, kind, command, lines?, inner?, shell?, marked?, background?, dir,
+// folder, file, host?, paths?, diff?, reason?, server: {origin, account},
+// for?, at, expires_at}`, every
 // string as Gamma marks what would not show. The queue, the card's words and
 // what the shell says around it are made here; main.js follows the host and
 // arms the buttons, and the bar draws what comes back as plain text. Pure:
@@ -84,7 +87,7 @@ const label = (ask) => shown(oneLine(ask.label, 40) || 'The agent')[0];
 // mono]`: In, Network, Files, From, As), `diff`, `says` (the agent's
 // reason, marked as the agent's), `notes` (the marks, the background, the
 // risk, a replaced card, the time it is declined by itself), `stop` (the
-// footer's link), `folder` (the directory's name, for a notification) and
+// footer's link: what the agent may run set back to never), `folder` (the directory's name, for a notification) and
 // `marked` (how many characters Gamma marked: the bar draws ⟨U+…⟩ as a mark
 // only then, since the agent may write the same letters itself).
 // `replaced`: the id of an ask main.js shows in place of one that went
@@ -111,14 +114,18 @@ function cardOf(queue, servers, replaced = '') {
     ? [['Files', paths.join('\n'), true]]
     : [['In', mark(ask.dir), true], ...(ask.host ? [['Network', mark(ask.host), false]] : [])];
   const named = from.name && from.name !== hostOf(from.origin) ? `${from.name} (${from.origin})` : from.origin;
-  rows.push(['From', file ? `the chat of ${file} on ${named}` : `the chat on ${named}`, false]);
+  // a co-author's turn names whose chat it is; one of this computer's own server names no server
+  const person = mark(oneLine(ask.for, 64));
+  const chat = person ? `${person}'s chat` : 'the chat';
+  const on = from.origin ? `on ${named}` : 'on this computer';
+  rows.push(['From', file ? `${chat} of ${file} ${on}` : `${chat} ${on}`, false]);
   if (from.account) rows.push(['As', from.account, false]);
   const at = clock(ask.expires_at);
   const notes = [
     marks ? `This holds ${marks === 1 ? '1 character that does' : `${marks} characters that do`} not show: Gamma marks ${marks === 1 ? 'it' : 'them'} ⟨U+…⟩.` : '',
     ask.background && !files ? 'Asked to run in the background: Gamma runs it in the foreground, so Stop ends it.' : '',
-    files ? 'It changes files outside the work folder.'
-      : `It runs as you, with your files and the network. A build also runs what this folder's files say, and ${from.name} can change them.`,
+    files ? 'It changes files outside the synced folder.'
+      : `It runs as you, with your files and the network. A build also runs what this folder's files say, and ${from.name || "its workspace's editors"} can change them.`,
     replaced && replaced === ask.id ? 'The question before this one went away: this is another one.' : '',
     at ? `Declined by itself at ${at} unless you answer.` : '',
   ].filter(Boolean);
@@ -130,7 +137,7 @@ function cardOf(queue, servers, replaced = '') {
     lines: !files && lines ? `${lines} lines` : '', box: files ? '' : inner || command,
     through: !files && inner ? `Through ${mark(ask.shell)}: ${command}` : '',
     rows, diff: files ? mark(ask.diff) : '', says: reason ? `${name} says: “${reason}”` : '', notes,
-    stop: `Stop ${name} asking from ${from.name}`, folder: mark(baseName(ask.folder)), expires: at,
+    stop: `Stop ${name} asking`, folder: mark(baseName(ask.folder)), expires: at,
     marked: marks,
   };
 }
@@ -139,7 +146,7 @@ function cardOf(queue, servers, replaced = '') {
 // stop), and around it.
 function notice(card, decision) {
   if (decision === 'once') return `Allowed once: ${card.label} goes on.`;
-  if (decision === 'stop') return `Declined, and ${card.label} no longer asks on this computer for ${card.from.name}.`;
+  if (decision === 'stop') return `Declined, and ${card.label} no longer asks to run more, here or in the chat.`;
   return `Declined: ${card.label} goes on without it.`;
 }
 const stale = (card) => `${card.label} no longer waits for that: nothing was allowed.`;

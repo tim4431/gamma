@@ -6,14 +6,17 @@ import { waitForPdf } from "./pdf.mjs";
 
 // An agent on this computer answering a Send (docs/dev/local_agents.md): the
 // desktop app's own server, where Gamma itself starts Codex in a work
-// folder's directory with the comments its maker sent. The vaults recipe
+// folder's directory with the comments its owner sent. The vaults recipe
 // (GAMMA_FOLDER_LINKS, no shell secret, a desktop user agent) with local
 // agents on and the stand-ins of backend/tests/fake_agents/ in place of the
 // CLIs, so no real agent ever runs: the SyncTeX sample paper as a work
-// folder, two comments on its PDF, Codex turned on for the folder by its
-// maker, the Feedback dialog naming Codex before and after, Send, the
+// folder, two comments on its PDF, Codex turned on for the computer by the
+// vault's maker, the Feedback dialog naming Codex before and after, Send, the
 // request worked and done with what changed, the replies signed Codex on
-// the person's computer and the threads resolved, and the agent turned off.
+// the person's computer and the threads resolved; a reply ticked Send to
+// Codex (by its @codex) a turn of its thread, its chip, its answer under its
+// name, Open in chat and the next ticked reply resuming the session; and the
+// agent turned off.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 const PAPER = path.join(ROOT, "backend", "tests", "samples", "synctex", "paper");
@@ -23,6 +26,14 @@ const PAGE = { width: 612, height: 792 };
 const SUMMARY = "Moved the legend and introduced the penalty's weight.";
 const CHAT_REPLY = "Tightened the sentence in sections/method.tex:3.";
 const BUILD = "latexmk -pdf main.tex";
+// Gamma's tools (step 2.7): the variable that alone carries a turn's token
+// (gamma/local_agents/events.py TOKEN_ENV), and the message whose turn
+// reads the page through them and quotes what it read.
+const TOKEN_ENV = "GAMMA_AGENT_MCP_TOKEN";
+const READ_ASK = "what did I highlight?";
+// 3.3: this message's turn comments on a passage of its page through them.
+const COMMENT_ASK = "ask the authors about noon";
+const NOON = "Marigolds open at noon";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -32,7 +43,7 @@ function areaOf([x1, y1, x2, y2]) {
 }
 
 export async function localAgentScenarios(env) {
-  const { browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
+  const { browser, step, openPage, assert, assertEq, assertNoProblems, until, makePdf } = env;
   if (!wanted("local-agents")) return;
   const disk = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-agents-"));
   const agentLog = path.join(disk, "agent.jsonl");
@@ -49,7 +60,12 @@ export async function localAgentScenarios(env) {
       ask: [{ command: BUILD, reason: "The build fetches a font", host: "fonts.example" }],
       // a chat turn's reply comes as it is typed (3c): a word every half second
       typing: 0.5,
-      edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }] }),
+      edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }],
+      // 2.7: this message's turn reads its page with Gamma's tools and answers with what it read
+      turns: { [READ_ASK]: { gamma: [{ tool: "read_page", arguments: { page_id: "$page" } }], edits: [], delay: 0, typing: 0,
+        chat: "From Gamma:\n\n{gamma}" },
+      [COMMENT_ASK]: { gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: NOON, pdf_page: 1, body: "Is noon right here?" } }],
+        edits: [], delay: 0, typing: 0, chat: "Commented:\n\n{gamma}" } } }),
   } });
   try {
     await server.start();
@@ -95,7 +111,7 @@ export async function localAgentScenarios(env) {
       const area = await user.api("/api/blocks", { method: "POST", body: { parent_id: main.id, content: "",
         properties: { pdf_position: areaOf(place), color: "rgba(255, 226, 143, 0.65)" } } });
       const made = await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: area.id, body } });
-      assert(!("send" in made), "a comment that names no agent sends nothing");
+      assert(!("turn" in made), "a comment sent to no agent starts no turn");
       return made.thread;
     };
     // A thread opened from the Comments window's row, its reply field
@@ -126,10 +142,23 @@ export async function localAgentScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The chat's Codex side, its strip saying the agent is there.
+    // The agents the composer's chip lists, by name, its menu closed again.
+    const agentsListed = async (page, dock) => {
+      await dock.locator(".chatModelChip .uiSelectBtn").click();
+      const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").allInnerTexts();
+      await page.keyboard.press("Escape");
+      return names.map((s) => s.trim());
+    };
+    // The chat's Codex side, picked in the composer's chip unless it shows
+    // already (no AI service: the agent is the chat's own), its strip saying
+    // the agent is there.
     const codexSide = async (page) => {
       const dock = await openChat(page);
-      await dock.locator(".segGroup").getByRole("button", { name: "Codex", exact: true }).click();
+      await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+      if (!(await dock.locator(".computerStrip").count())) {
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: "Codex", exact: true }).click();
+      }
       await dock.locator(".computerStrip").waitFor();
       return dock;
     };
@@ -144,12 +173,7 @@ export async function localAgentScenarios(env) {
       window.getSelection().addRange(range);
       span.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     }, [n, words]);
-    const conversation = async () => (await user.api(`/api/local-agents/chat?page=${main.id}`)).conversation;
-    // The request a mention made, once it is done.
-    const doneRequest = (id) => until(async () => {
-      const found = (await user.api("/api/feedback/requests?after=0")).requests.find((r) => r.id === id);
-      return found?.state === "done" ? found : null;
-    }, { timeout: 40000, what: `request ${id} done` });
+    const conversation = async () => (await user.api(`/api/local-agents/chat?bucket=${main.id}`)).conversation;
 
     let link = null, main = null;
     const threads = [];
@@ -179,7 +203,7 @@ export async function localAgentScenarios(env) {
         const d = await openFeedback(page);
         await d.getByRole("button", { name: "Send 2 comments", exact: true }).waitFor();
         // the folder is kept here and an agent was found: the line offering one
-        await until(async () => (await notes(d)).some((s) => s.startsWith("To have Codex or Claude Code answer here, turn one on in the sync panel")),
+        await until(async () => (await notes(d)).some((s) => s === "To have Codex or Claude Code answer here, turn one on in Settings → AI."),
           { timeout: 15000, what: "the line saying where to turn an agent on" });
         await page.keyboard.press("Escape");
         await d.waitFor({ state: "detached" });
@@ -187,16 +211,16 @@ export async function localAgentScenarios(env) {
       } finally { await ctx.close(); }
     });
 
-    await step("local-agents: the vault's maker turns Codex on for the work folder, which nothing waits on yet", async () => {
-      const turned = await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent: "codex" } });
+    await step("local-agents: the vault's maker turns Codex on for the computer, which nothing waits on yet", async () => {
+      const turned = await user.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: true } });
       assertEq(turned.queued, 0, "no Send was waiting");
-      assertEq(turned.agent?.name, "codex", "the vault's agent");
-      assertEq(turned.agent.label, "Codex");
-      assertEq(turned.agent.ready, true, "ready, from the probe the PATCH ran");
-      assertEq(turned.agent.running, null, "nothing running");
+      assertEq(JSON.stringify([turned.name, turned.label, turned.enabled, turned.runs, turned.mine]),
+        JSON.stringify(["codex", "Codex", true, "never", true]), "on, the account's own");
+      assertEq(turned.ready, true, "ready, from the probe the PATCH ran");
       const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
-      assertEq(listed.agent?.name, "codex", "the listing carries it");
-      const doc = await user.api(`/api/feedback?scope=${link.folder_id}`);
+      assertEq(listed.agent?.name, "codex", "the listing carries the agent that works in the vault");
+      assertEq(listed.agent.running, null, "nothing running");
+      const doc = await user.api(`/api/annotations?scope=${link.folder_id}`);
       assertEq(JSON.stringify([doc.agent?.name, doc.agent?.takes, doc.agent?.ready]), JSON.stringify(["codex", true, true]), "the feedback document's agent takes the maker's Sends");
     });
 
@@ -236,22 +260,26 @@ export async function localAgentScenarios(env) {
       const seen = fs.readFileSync(agentLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
       const servers = seen.filter((e) => e.argv?.[0] === "app-server");
       assert(servers.some((e) => path.relative(e.cwd, paperDir) === ""), `an app-server ran in the work folder: ${JSON.stringify(servers)}`);
-      assert(seen.every((e) => !e.env || !e.env.some((name) => name.startsWith("GAMMA_"))), "no GAMMA_ variable reached the agent");
+      assert(seen.every((e) => !e.env || e.env.every((name) => !name.startsWith("GAMMA_") || name === TOKEN_ENV)),
+        "no GAMMA_ variable but the turn's token reached the agent");
       const turn = seen.find((m) => m.in?.method === "turn/start").in.params;
       const prompt = turn.input.filter((p) => p.type === "text").map((p) => p.text).join("\n");
       assert(threads.every((th) => prompt.includes(`"thread_id": "${th.id}"`)), "the prompt names both threads");
       assertEq(turn.sandboxPolicy?.networkAccess, false, "a sandbox without network");
     });
 
-    await step("local-agents: Codex's replies are signed Codex on the person's computer and the threads it fixed are resolved", async () => {
+    await step("local-agents: Codex's replies are signed Codex on this computer, for the person, and the threads it fixed are resolved", async () => {
       const stored = await threadsOf(main.id);
+      let computer = "";
       for (const th of threads) {
         const got = stored.find((s) => s.id === th.id);
         assert(got?.resolved_at, `${th.id} is resolved`);
         const reply = got.comments[1];
         assertEq(JSON.stringify([reply?.agent, reply?.agent_kind, reply?.author, reply?.body]),
-          JSON.stringify(["Codex", "local", "la-user", `Done for ${th.id}.`]), "the reply");
+          JSON.stringify(["Codex", "computer", "la-user", `Done for ${th.id}.`]), "the reply");
+        computer = reply.agent_on;
       }
+      assert(computer, "the reply names the computer Codex ran on");
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
@@ -263,89 +291,104 @@ export async function localAgentScenarios(env) {
         await row.click();
         const reply = page.locator(".commentThread .commentItem.reply", { has: page.locator(".commentAuthor", { hasText: "Codex" }) }).first();
         await reply.waitFor({ timeout: 10000 });
-        const byline = "Written by Codex on la-user's computer";
-        assertEq(await reply.locator(".commentAuthor").getAttribute("title"), byline, "the byline names the computer");
-        assertEq(await reply.locator(":scope > [title]").first().getAttribute("title"), byline, "and so does the avatar");
+        const byline = `Written by Codex on ${computer}, for la-user`;
+        assertEq(await reply.locator(".commentAuthor").getAttribute("title"), byline, "the byline names the computer and the person");
+        assertEq(await reply.locator(".commentFor").textContent(), `on ${computer}, for la-user`, "after the agent's name");
+        assertEq(await reply.locator(":scope > .agentAvatar").getAttribute("title"), byline, "and so does the agent's avatar");
         await page.keyboard.press("Escape");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });
 
-    // Step 2: @codex in a comment (docs/dev/local_agents.md "A mention in a comment").
+    // Step 3.5 of docs/research/agents-as-participants-plan.md: a comment sent to
+    // an agent (docs/dev/local_agents.md "A comment sent to an agent").
     let caption = null, captionTurn = "";
-    await step("local-agents: in the maker's reply on the PDF the @ menu lists Codex on this computer, and the reply sends that thread to Codex", async () => {
+    await step("local-agents: @codex in a reply ticks Send to Codex, and the reply is a turn of its thread: the chip says Codex is working, then its reply comes under its name", async () => {
       caption = await commentOn(PLACES.v1.figure.rect, "the caption says 2025");
       const before = turnsHeard().length;
+      const sends = (await user.api("/api/feedback/requests?after=0")).requests.length;
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
         await waitForPdf(page, 1);
         const thread = await openThread(page, caption.id);
         await replyField(thread);
+        const tick = thread.locator(".commentSendTo input[type=checkbox]");
+        assertEq(await tick.isChecked(), false, "a thread among people: as the person left the tick, off");
+        assertEq((await thread.locator(".commentSendTick").innerText()).trim(), "Send to Codex", "the tick names the agent");
         await page.keyboard.type("@cod");
         const menu = page.locator(".mentionMenu");
         const row = menu.locator(".refPopupItem.selected");
         await until(async () => (await row.locator(".refPopupText").innerText().catch(() => "")).startsWith("Codex"),
-          { what: "the @ menu offers the folder's agent" });
+          { what: "the @ menu offers the agent" });
         assertEq((await row.locator(".mentionAside").innerText()).trim(), "on this computer", "where it runs");
         assertEq(await menu.locator(".refPopupHead").allInnerTexts().then((h) => h.join("|")), "People", "under People");
         await page.keyboard.press("Enter");
         await menu.waitFor({ state: "detached" });
         await thread.locator(".cmMentionChip", { hasText: "@codex" }).waitFor();
+        await until(() => tick.isChecked(), { what: "@codex ticks the box" });
         await page.keyboard.type("fix this only");
-        assertEq((await thread.locator("[data-agent-hint]").innerText()).trim(), "Sends this thread to Codex on this computer.",
-          "the field says what sending does");
         await page.keyboard.press("Shift+Enter");
-        // the reply is stored, and its Send is the thread's alone
-        const reply = await until(async () => (await threadsOf(main.id)).find((th) => th.id === caption.id)
-          ?.comments.find((c) => c.body === "@codex fix this only"), { what: "the reply is stored" });
-        const request = await doneRequest(reply.id);
-        assertEq(JSON.stringify([request.note, request.threads.map((t) => t.id), request.state_by]),
-          JSON.stringify(["fix this only", [caption.id], "Codex"]), "a Send of the thread, the comment's other words its instruction");
-        // the reply's own @codex is the agent's chip in the maker's comment
+        // the chip follows the turn, with Stop, then the agent's reply lands under its name
+        const chip = thread.locator(".commentTurn .stateTag");
+        await until(async () => (await chip.innerText().catch(() => "")).trim().startsWith("Codex is working"),
+          { timeout: 20000, what: "the chip says Codex is working" });
+        await thread.locator(".commentTurnStop").waitFor();
+        const answer = thread.locator(".commentItem.reply", { hasText: CHAT_REPLY });
+        await answer.waitFor({ timeout: 40000 });
+        assertEq((await answer.locator(".commentAuthor").textContent()).trim(), "Codex", "the reply is Codex's");
+        await thread.locator(".commentTurn").waitFor({ state: "detached", timeout: 10000 });
+        // the reply's own @codex is the agent's chip in the person's comment
         await thread.locator(".commentItem.reply .mentionChip.mention-agent", { hasText: "@codex" }).first().waitFor();
+        // Open in chat: the thread's conversation, its steps and its reply, in the chat
+        await answer.getByRole("button", { name: "Open in chat", exact: true }).click();
+        const dock = page.locator(".dockWindow:has(.chatPanel)");
+        await dock.locator("[data-testid=chat-thread-note]").waitFor({ timeout: 10000 });
+        await dock.locator(".chatBubble.user", { hasText: "fix this only" }).waitFor();
+        await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor();
+        await dock.getByRole("button", { name: "Back to the chat", exact: true }).first().click();
+        await dock.locator("[data-testid=chat-thread-note]").waitFor({ state: "detached" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const stored = (await threadsOf(main.id)).find((th) => th.id === caption.id);
-      assert(stored.resolved_at, "the fixed thread is resolved");
-      assertEq(JSON.stringify([stored.comments.at(-1).agent, stored.comments.at(-1).body]),
-        JSON.stringify(["Codex", `Done for ${caption.id}.`]), "Codex answered it");
+      const [, mine, theirs] = stored.comments;
+      assertEq(mine.body, "@codex fix this only", "the reply is stored as written");
+      assertEq(JSON.stringify([theirs.agent, theirs.agent_kind, theirs.author, theirs.body]),
+        JSON.stringify(["Codex", "computer", "la-user", CHAT_REPLY]), "Codex answered in the thread, for the person");
+      assertEq((await user.api("/api/feedback/requests?after=0")).requests.length, sends, "no Send was made");
       const turns = turnsHeard().slice(before);
       assertEq(turns.length, 1, "one turn");
       captionTurn = turns[0];
       assert(!turnsHeard().slice(0, before).includes(captionTurn), `a session of its own: ${captionTurn}`);
+      const told = heard().filter((e) => e.in?.method === "turn/start").at(-1).in.params.input.map((p) => p.text || "").join("\n");
+      assert(told.includes('"message": "fix this only"') && told.includes(`"thread_id": "${caption.id}"`)
+        && told.includes("the caption says 2025"), `the comment and its thread reach Codex: ${told.slice(0, 600)}`);
     });
 
-    await step("local-agents: a follow-up in the reopened thread resumes the session that answered there", async () => {
+    await step("local-agents: in the thread Codex answered last the tick starts ticked, the field asks Codex to edit, and the reply resumes the session", async () => {
       const before = heard().length;
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
         await waitForPdf(page, 1);
-        const thread = await openThread(page, caption.id, true);
-        await thread.getByRole("button", { name: "Reopen", exact: true }).click();
-        await until(async () => !(await threadsOf(main.id)).find((th) => th.id === caption.id)?.resolved_at, { what: "the thread is open again" });
+        const thread = await openThread(page, caption.id);
         await replyField(thread);
-        await page.keyboard.type("@codex");
-        await page.locator(".mentionMenu .refPopupItem.selected", { hasText: "Codex" }).waitFor();
-        await page.keyboard.press("Enter"); // the row writes "@codex "
+        assertEq(await thread.locator(".commentSendTo input[type=checkbox]").isChecked(), true, "the agent spoke last: ticked");
+        assertEq((await thread.locator(".commentField .cm-placeholder").last().innerText()).trim(), "Ask Codex to edit");
         await page.keyboard.type("keep the British spelling");
         await page.keyboard.press("Shift+Enter");
-        const reply = await until(async () => (await threadsOf(main.id)).find((th) => th.id === caption.id)
-          ?.comments.find((c) => c.body === "@codex keep the British spelling"), { what: "the follow-up is stored" });
-        const request = await doneRequest(reply.id);
-        assertEq(request.note, "keep the British spelling");
+        await thread.locator(".commentItem.reply", { hasText: CHAT_REPLY }).nth(1).waitFor({ timeout: 40000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const since = heard().slice(before);
       const resumed = since.filter((e) => e.in?.method === "thread/resume").map((e) => e.in.params.threadId);
-      assertEq(JSON.stringify(resumed), JSON.stringify([captionTurn]), "Codex's thread/resume of the session that answered");
+      assertEq(JSON.stringify(resumed), JSON.stringify([captionTurn]), "Codex's thread/resume of the thread's session");
       assertEq(since.filter((e) => e.in?.method === "thread/start").length, 0, "no new session");
       assertEq(JSON.stringify(since.filter((e) => e.in?.method === "turn/start").map((e) => e.in.params.threadId)),
         JSON.stringify([captionTurn]), "the turn ran in it");
     });
 
-    await step("local-agents: an edit of an older comment is not sent and says why; a mention in the page's own thread sends the file's open comments", async () => {
+    await step("local-agents: an edit of an older comment is not sent and says why; a resolved thread is refused, the comment stored", async () => {
       const axis = await commentOn(PLACES.v1.equation.rect, "the axis label is missing");
       await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: axis.block_id, thread_id: axis.id, body: "and its units" } });
       const ctx = await desktop();
@@ -364,24 +407,19 @@ export async function localAgentScenarios(env) {
         await page.keyboard.type(" @codex");
         await page.locator(".mentionMenu .refPopupItem.selected", { hasText: "Codex" }).waitFor();
         await page.keyboard.press("Enter");
-        assertEq((await first.locator("[data-agent-hint]").innerText()).trim(), "Mention Codex in a new reply to send this thread again.",
+        assertEq((await first.locator("[data-agent-hint]").innerText()).trim(), "Reply to ask Codex again: only the newest comment is sent.",
           "the field says before saving that an older comment's edit is not sent");
         await first.getByRole("button", { name: "Save", exact: true }).click();
         await until(async () => (await page.textContent(".statusPill").catch(() => "") || "")
-          .includes("Mention Codex in a new reply to send this thread again."), { what: "the status says why it was not sent" });
+          .includes("Reply to ask Codex again: only the newest comment is sent."), { what: "the status says why it was not sent" });
         assertNoProblems(page);
       } finally { await ctx.close(); }
-      assertEq((await user.api("/api/feedback/requests?after=0")).requests.filter((r) => r.threads.some((t) => t.id === axis.id)).length,
-        0, "no Send of that thread");
-      const made = await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: main.id, body: "@codex tidy these up" } });
-      assertEq(JSON.stringify([made.send?.agent, made.send?.scope, made.send?.threads]), JSON.stringify(["Codex", "file", 2]),
-        "the file's open comments: the axis thread and the page's own");
-      assertEq(made.thread.sent?.request_id, made.send.request_id, "the answer's thread carries its Sent chip");
-      const request = await doneRequest(made.send.request_id);
-      assertEq(JSON.stringify(request.threads.map((t) => t.id).sort()), JSON.stringify([axis.id, made.thread.id].sort()));
+      const codex = (await user.api("/api/local-agents")).agents.find((a) => a.name === "codex");
+      await user.api(`/api/comments/${caption.id}/resolve`, { method: "POST", body: { resolved: true } });
       const refused = await user.api(`/api/pages/${main.id}/comments`, { method: "POST",
-        body: { block_id: caption.block_id, thread_id: caption.id, body: "@codex once more" } });
-      assertEq(refused.send?.refused, "closed", "a resolved thread is reopened first");
+        body: { block_id: caption.block_id, thread_id: caption.id, body: "once more", to: codex.id } });
+      assertEq(refused.turn?.refused, "closed", "a resolved thread is reopened first");
+      assertEq(refused.comment.body, "once more", "the comment is stored all the same");
     });
 
     // Step 3a: the chat's computer side (docs/dev/local_agents.md "The chat's computer side").
@@ -393,9 +431,8 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await openChat(page);
-        // Their names: a narrow window shows the sides' icons alone.
-        assertEq(await dock.locator(".segGroup button").evaluateAll((b) => b.map((x) => x.getAttribute("aria-label")).join("|")), "Gamma AI|Codex",
-          "the switch names Gamma AI and the folder's agent");
+        await dock.locator(".chatModelChip .uiSelectBtn").waitFor();
+        assertEq((await agentsListed(page, dock)).join("|"), "Gamma AI|Codex", "the chip lists Gamma AI and the agent turned on");
         await codexSide(page);
         await until(async () => (await dock.locator(".computerStrip").innerText()).trim() === "Codex on this computer · paper",
           { what: "the strip names the agent and the folder" });
@@ -419,7 +456,7 @@ export async function localAgentScenarios(env) {
       assertEq(turns.length, 1, "one turn");
       chatThread = turns[0].in.params.threadId;
       const prompt = turns[0].in.params.input.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-      assert(prompt.includes('"message": "tighten this sentence"') && prompt.includes("The penalty") && prompt.includes('"file": "main.pdf"'),
+      assert(prompt.includes('"message": "tighten this sentence"') && prompt.includes("The penalty") && prompt.includes('"path": "main.pdf"'),
         `the message, the passage and the file reach Codex: ${prompt.slice(0, 600)}`);
       assert(!turns[0].in.params.outputSchema, "a chat turn answers in prose, with no answer schema");
       const stored = await conversation();
@@ -466,7 +503,7 @@ export async function localAgentScenarios(env) {
         await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("rewrite the whole method");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).click({ timeout: 10000 });
-        await dock.locator(".computerEnded", { hasText: "Stopped" }).waitFor({ timeout: 20000 });
+        await dock.locator(".chatBubble.ai", { hasText: "(stopped)" }).waitFor({ timeout: 20000 });
         await dock.getByRole("button", { name: "Send", exact: true }).waitFor();
         assertEq((await conversation()).messages.at(-1).state, "stopped", "stored as stopped");
         await dock.getByRole("button", { name: "New chat", exact: true }).click();
@@ -477,7 +514,7 @@ export async function localAgentScenarios(env) {
         await dock.locator(".chatBubble.user", { hasText: "rewrite the whole method" }).waitFor();
         assertNoProblems(page);
       } finally { await ctx.close(); }
-      assert(await user.api("/api/local-agents/chat/history?page=" + main.id).then((h) => h.conversations.length === 0),
+      assert(await user.api("/api/local-agents/chat/history?bucket=" + main.id).then((h) => h.conversations.length === 0),
         "the opened conversation is the active one again");
     });
 
@@ -493,10 +530,10 @@ export async function localAgentScenarios(env) {
         const dock = await codexSide(page);
         await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(message);
         await dock.getByRole("button", { name: "Send", exact: true }).click();
-        const card = dock.locator(".computerAsk");
+        const card = dock.locator(".chatAsk");
         await card.waitFor({ timeout: 20000 });
         assertEq((await card.locator(".chatApprovalHead").innerText()).trim(), "Codex wants to run a command");
-        assertEq((await card.locator(".computerAskCommand").innerText()).trim(), BUILD, "the command, whole");
+        assertEq((await card.locator(".chatAskCommand").innerText()).trim(), BUILD, "the command, whole");
         assert((await card.innerText()).includes("The build fetches a font"), "its reason");
         assert((await card.innerText()).includes("It runs as you, with your files and the network."), "what allowing means");
         await until(async () => (await dock.locator(".computerStrip.asking").innerText().catch(() => "")).trim()
@@ -506,14 +543,14 @@ export async function localAgentScenarios(env) {
         const replies = (await conversation()).messages.filter((m) => m.role === "agent" && m.text === CHAT_REPLY).length;
         await until(async () => (await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).count()) === replies,
           { what: "the turn's reply in the window" });
-        assertEq(await dock.locator(".computerAsk").count(), 0, "no card left");
+        assertEq(await dock.locator(".chatAsk").count(), 0, "no card left");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     };
 
-    await step("local-agents: the maker lets Codex ask in the chat, and a command it asks to run waits on a card until allowed once", async () => {
-      const turned = await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "ask" } });
-      assertEq(turned.agent?.runs, "ask", "the folder lets its agent ask");
+    await step("local-agents: its owner lets Codex ask, and a command it asks to run in the chat waits on a card until allowed once", async () => {
+      const turned = await user.api("/api/local-agents/codex", { method: "PATCH", body: { runs: "ask" } });
+      assertEq(turned.runs, "ask", "the computer lets its agent ask");
       const before = decisions().length;
       await askAndAnswer("build it", (card) => card.getByRole("button", { name: "Allow once", exact: true }).click());
       assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["accept"]), "Codex heard accept");
@@ -534,12 +571,12 @@ export async function localAgentScenarios(env) {
       assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["acceptForSession"]), "allowed for the conversation");
       // the next turn asks the same command: answered by Gamma, no card
       before = decisions().length;
-      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { page: main.id, text: "and once more" } });
+      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { bucket: main.id, text: "and once more" } });
       await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 40000, what: "the turn ends unasked" });
       assertEq(JSON.stringify(decisions().slice(before)), JSON.stringify(["accept"]), "Gamma answered the granted command");
       const last = (await conversation()).messages.at(-1);
       assert(!last.steps.some((s) => s.status === "asked") && !(last.asks || []).length, "nothing was put to the person");
-      await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent_runs: "never" } });
+      await user.api("/api/local-agents/codex", { method: "PATCH", body: { runs: "never" } });
     });
 
     // Step 3c: the rest of the computer side.
@@ -605,8 +642,142 @@ export async function localAgentScenarios(env) {
       assertEq(JSON.stringify([thread?.model, turn?.effort]), JSON.stringify(["gpt-fake-mini", "medium"]), "the model and the effort chosen");
     });
 
+    // Step 2.8 of docs/research/agents-as-participants-plan.md: a chat with no AI service.
+    await step("local-agents: with no AI service, a library PDF's chat is Codex's, the setup card picks it again, and it answers in a directory offered", async () => {
+      const notesDir = path.join(disk, "notes");
+      fs.mkdirSync(path.join(notesDir, "sections"), { recursive: true });
+      fs.writeFileSync(path.join(notesDir, "sections", "method.tex"), "We fit it by gradient descent.\n");
+      const offered = await user.api("/api/local-agents/dirs", { method: "PUT", body: [{ path: notesDir, name: "Notes" }] });
+      assertEq(offered.dirs.map((d) => d.name).join(","), "Notes", "the directory offered");
+      const up = await user.upload("/api/uploads", makePdf([["A library paper for Codex"]]), "library.pdf", "application/pdf");
+      const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+        body: { default_title: "Library paper", source_url: up.source_url, original_filename: "library.pdf" } });
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(paper.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await openChat(page);
+        // no AI service connected: the chat's own agent is Codex, on a page of no synced folder
+        await dock.locator(".computerStrip").waitFor();
+        await dock.locator(".chatEmpty", { hasText: "Ask Codex anything" }).waitFor();
+        // Gamma AI picked shows the setup card, which offers Codex beside the AI services
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: "Gamma AI", exact: true }).click();
+        const card = dock.locator(".chatSetup");
+        await card.waitFor();
+        await card.getByRole("button", { name: /^Codex/ }).click();
+        await dock.locator(".computerStrip").waitFor();
+        // the header keeps what applies to Codex's conversation
+        await dock.getByRole("button", { name: "Chat history", exact: true }).waitFor();
+        // where it works: the directory offered, picked in the strip before the first turn
+        await dock.locator(".computerPlace .uiSelectBtn").click();
+        await page.getByRole("menuitemradio", { name: "Notes", exact: true }).click();
+        await dock.locator(".chatEmpty", { hasText: "it works in the directory you chose" }).waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("what is this paper about?");
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        // the reply in the chat's own transcript: its steps pill, its text, what it changed
+        await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor({ timeout: 40000 });
+        await until(async () => (await dock.locator(".chatSteps").last().innerText()).trim() === "1 step", { what: "the steps pill, done" });
+        await dock.locator(".chatFileChanges", { hasText: "sections/method.tex" }).waitFor();
+        await until(async () => (await dock.locator(".computerPlace").innerText()).trim() === "Notes", { what: "the strip names the directory" });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const stored = (await user.api(`/api/local-agents/chat?bucket=${paper.id}`)).conversation;
+      assertEq(stored.messages.at(-1).state, "done", "the turn ran");
+      assert(fs.readFileSync(path.join(notesDir, "sections", "method.tex"), "utf8").includes("weight decay"), "Codex edited the directory offered");
+      await user.api("/api/local-agents/dirs", { method: "PUT", body: [] });
+    });
+
+    // Step 2.7: Gamma's tools for the agent (docs/dev/local_agents.md "Gamma's tools").
+    await step("local-agents: with no AI service, Codex reads a library PDF's highlight through Gamma's tools with its turn's token, gone when the turn ends", async () => {
+      const quote = "Heliotrope blooms at dusk";
+      const note = "the line for my talk";
+      const up = await user.upload("/api/uploads", makePdf([[quote, "and closes at dawn"]]), "heliotrope.pdf", "application/pdf");
+      const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+        body: { default_title: "Heliotrope paper", source_url: up.source_url, original_filename: "heliotrope.pdf" } });
+      const rect = { x1: 72, y1: 60, x2: 300, y2: 80 };
+      await user.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: note, properties: {
+        quote, color: "#ffe5648c", pdf_position: { pageNumber: 1, ...PAGE, boundingRect: rect, rects: [rect] } } } });
+      const before = heard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(paper.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await openChat(page);
+        await dock.locator(".computerStrip").waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(READ_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        // the answer quotes the highlight and its note, which only Gamma's tools gave it
+        const reply = dock.locator(".chatBubble.ai", { hasText: "From Gamma:" });
+        await reply.waitFor({ timeout: 40000 });
+        await until(async () => { const said = await reply.innerText(); return said.includes(quote) && said.includes(note); },
+          { what: "the reply quotes the highlight and its note" });
+        // the transcript shows the call as a step
+        const pill = dock.locator(".chatSteps").last();
+        await until(async () => (await pill.innerText()).trim() === "1 step", { what: "the steps pill, done" });
+        await pill.click();
+        await dock.locator(".chatToolAction", { hasText: "Read Gamma: read_page" }).waitFor();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const since = heard().slice(before);
+      const told = since.find((e) => e.in?.method === "turn/start").in.params.input.map((p) => p.text || "").join("\n");
+      assert(told.includes("## Gamma's tools") && told.includes(`\`read_page\` with \`page_id\` "${paper.id}"`),
+        `the prompt points Codex to the page through the tools: ${told.slice(0, 800)}`);
+      assert(!told.includes(note), "the prompt pastes none of the page's notes");
+      // the turn's app-server, in its thread's directory (a probe's, in the server's temporary one, gets no token)
+      const cwd = since.find((e) => e.in?.method === "thread/start").in.params.cwd;
+      const appServer = since.find((e) => e.argv?.[0] === "app-server" && path.relative(e.cwd, cwd) === "");
+      assert(appServer?.env.includes(TOKEN_ENV), `the turn's token reached the agent in its environment: ${JSON.stringify(appServer)}`);
+      const called = since.find((e) => e.gamma === "read_page");
+      assert(called && called.http === 200 && !called.error && called.text.includes(quote), `the call read the page: ${JSON.stringify(called)}`);
+      const stored = (await user.api(`/api/local-agents/chat?bucket=${paper.id}`)).conversation;
+      const turned = stored.messages.at(-1);
+      assertEq(JSON.stringify([turned.state, turned.steps.map((s) => [s.kind, s.tool, s.status])]),
+        JSON.stringify(["done", [["gamma", "read_page", "completed"]]]), "the turn and its step as stored");
+      await until(async () => server.log().includes(`[agents] the token of ${turned.turn_id} deleted`),
+        { what: "the server deleted the turn's token" });
+    });
+
+    // Step 3.3: the writing tools, through the same token.
+    await step("local-agents: Codex comments on a PDF's passage through Gamma's tools: the thread reads Codex on this computer, for the person, and the passage's highlight names it", async () => {
+      const up = await user.upload("/api/uploads", makePdf([[NOON, "and close at dusk"]]), "marigold.pdf", "application/pdf");
+      const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+        body: { default_title: "Marigold paper", source_url: up.source_url, original_filename: "marigold.pdf" } });
+      const before = heard().length;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(paper.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await openChat(page);
+        await dock.locator(".computerStrip").waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(COMMENT_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.locator(".chatBubble.ai", { hasText: "Commented:" }).waitFor({ timeout: 40000 });
+        const called = heard().slice(before).find((e) => e.gamma === "comment");
+        assert(called && called.http === 200 && !called.error && called.text.includes(`ok — commented on page 1, “${NOON}”`),
+          `the call commented: ${JSON.stringify(called)}`);
+        const thread = (await threadsOf(paper.id)).find((th) => th.comments[0]?.body === "Is noon right here?");
+        assert(thread, "the thread is on the page");
+        const [comment] = thread.comments;
+        assertEq(JSON.stringify([comment.author, comment.agent, comment.agent_kind]), JSON.stringify(["la-user", "Codex", "computer"]),
+          "written for its account, by Codex");
+        const computer = comment.agent_on;
+        assert(computer, "the comment names the computer Codex ran on");
+        // the highlight it made says who made it
+        await page.locator(`[data-page="1"] [data-hl-id][title="Highlighted by Codex on ${computer}, for la-user"]`).first()
+          .waitFor({ timeout: 10000 });
+        await page.goto(`${at(paper.id)}&thread=${thread.id}`);
+        const item = page.locator(".commentItem", { hasText: "Is noon right here?" }).first();
+        await item.waitFor({ timeout: 10000 });
+        assertEq(await item.locator(".commentAuthor").textContent(), "Codex", "the agent's name");
+        assertEq(await item.locator(".commentFor").textContent(), `on ${computer}, for la-user`, "on its computer, for the person");
+        assertEq(await item.locator(":scope > .agentAvatar").getAttribute("data-agent"), "computer", "a computer agent's avatar");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    });
+
     await step("local-agents: a running turn is a Background tasks row, whose Stop ends it", async () => {
-      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { page: main.id, text: "take your time" } });
+      await user.api("/api/local-agents/chat/turns", { method: "POST", body: { bucket: main.id, text: "take your time" } });
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
       try {
@@ -621,10 +792,12 @@ export async function localAgentScenarios(env) {
       } finally { await ctx.close(); }
     });
 
-    await step("local-agents: turned off by its maker, the folder has no agent and the feedback document names none", async () => {
-      const off = await user.api(`/api/folder-links/${link.id}`, { method: "PATCH", body: { agent: "" } });
-      assertEq(off.agent ?? null, null, "no agent");
-      const doc = await user.api(`/api/feedback?scope=${link.folder_id}`);
+    await step("local-agents: turned off by its owner, the folder has no agent and the feedback document names none", async () => {
+      const off = await user.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: false } });
+      assertEq(off.enabled, false, "off");
+      const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
+      assertEq(listed.agent ?? null, null, "no agent in the vault");
+      const doc = await user.api(`/api/annotations?scope=${link.folder_id}`);
       assertEq(doc.agent, null, "the document says none");
       await user.api(`/api/folder-links/${link.id}`, { method: "DELETE" });
     });

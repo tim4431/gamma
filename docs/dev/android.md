@@ -58,7 +58,7 @@ the web's ink layer encodes and saves every stroke.
    click of the first button with the pen hovering does what the iPad's
    double tap does (the eraser, by default), and a click of the second
    button what its squeeze does (the last tool), unless Settings →
-   Reading & editing → **Stylus** (*Pen button*, *Second pen button*,
+   Handwriting → **Stylus** (*Pen button*, *Second pen button*,
    *Haptics*) says otherwise.
 4. **The bar** above every page is the desktop app's
    ([The chrome](#the-chrome)). With a keyboard, Ctrl+Shift+L is the

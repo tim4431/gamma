@@ -557,7 +557,7 @@ def test_a_files_version_is_stored_under_its_own_extension_when_kept(work):
     assert storage.exists(v.ws, f"{_digest(PNG)}.png")
 
 
-def test_removing_a_work_folder_stores_nothing_for_a_file_page(work):
+def test_removing_a_work_folders_files_stores_nothing_for_a_file_page_and_keeping_them_stores_it(work):
     v = work()
     picture = PNG + b"\x00removed"
     v.write("fig.png", picture, age=10)
@@ -565,10 +565,13 @@ def test_removing_a_work_folder_stores_nothing_for_a_file_page(work):
     v.sync()
     fig, pdf = v.page_of("fig.png"), v.page_of("p.pdf")
     assert [rel for _page, rel, _doc in folder_links._in_place(v.link)] == ["p.pdf"]
-    assert folder_links.removal(v.link)["in_place"] == 1
-    folder_links._store_in_place(v.link, v.root)
+    assert sorted(rel for _page, rel, _doc in folder_links._in_place(v.link, every=True)) == ["fig.png", "p.pdf"]
+    assert folder_links.removal(v.link)["in_place"] == 2                    # what keeping them stores
+    folder_links._store_in_place(v.link, v.root, every=False)
     assert storage.exists(v.ws, f"{v.doc(pdf)['hash']}.pdf") and not storage.exists(v.ws, f"{_digest(picture)}.png")
     assert v.doc(fig)["at"] == "path" and v.doc(pdf)["at"] == "store"
+    folder_links._store_in_place(v.link, v.root, every=True)
+    assert storage.exists(v.ws, f"{_digest(picture)}.png") and v.doc(fig)["at"] == "store"
 
 
 def test_a_release_forgets_the_file_rows_and_their_pages_keep_their_documents(work):
@@ -671,7 +674,7 @@ def test_removing_a_work_folder_lets_a_library_files_page_show_its_stored_bytes(
     v.sync()
     assert storage.exists(v.ws, f"{v.doc(pdf)['hash']}.pdf") and storage.exists(v.ws, f"{_digest(PNG)}.png")
     assert folder_links._in_place(v.link) == []
-    folder_links._store_in_place(v.link, v.root)
+    folder_links._store_in_place(v.link, v.root, every=False)
     for page in (fig, pdf):
         assert v.doc(page)["at"] == "store" and library_document(v.props(page)), page
     with connect_pages_db(v.ws) as conn:

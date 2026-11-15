@@ -1,14 +1,15 @@
 """MCP transport adapter over the same tools Gamma chat executes directly,
 plus three of its own: the workspaces the connection reads, reading a
 pasted Gamma link (``mcp_links``) and exporting a page as a file
-(``mcp_export``); for a connection the user allowed to answer
-feedback (a token of scope ``feedback``), the two tools that reply to and
-resolve the comment threads on a work folder's files (``feedback.agent``);
-and for one the user let edit some of its workspaces
-(integrations.edit_grant), the chat's note tools there (``EDIT_TOOLS``),
-each change asked of the person first (``_ask``: MCP elicitation, the
-question the chat's approval card would show) unless they let the
-connection change notes without asking.
+(``mcp_export``); for a connection the user gave the Comment level in some
+of its workspaces (integrations.comment_grant; a write token's workspace, a
+turn's), the registry's writing tools there (``WRITING_TOOLS``: ``comment``,
+``resolve``, ``highlight``, written as the connection's agent,
+gamma/annotations/hand.py); and for one the user let edit some of its
+workspaces (integrations.edit_grant), the chat's note tools there
+(``EDIT_TOOLS``), each change asked of the person first (``_ask``: MCP
+elicitation, the question the chat's approval card would show) unless they
+let the connection change notes without asking.
 
 Two transports serve ``/mcp`` (``GammaMCP.__call__``): stateless JSON, every
 request on its own, for every client; and stateful sessions answering over
@@ -20,8 +21,8 @@ token that opened it may use.
 A connection may read several workspaces (gamma/integrations.py). Every
 tool takes an optional ``workspace``; without it a call reads the workspace
 holding the ids it names (a block, a comment thread, a Send request), else
-the connection's first, and search_library, list_folders and list_feedback
-read them all (``_targets``)."""
+the connection's first, and search_library, list_folders and
+list_annotations read them all (``_targets``)."""
 
 from collections import OrderedDict
 from contextlib import asynccontextmanager
@@ -45,9 +46,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .ai_permissions import APPROVAL_TIMEOUT
-from .ai_tools import agent_tools, approval_preview, citation_prompt, gamma_link, mcp_tools, run_agent_tool
-from .feedback import agent
-from .integrations import Connection, display_name, set_asks
+from .ai_tools import (WRITING_TOOLS, agent_tools, approval_preview, citation_prompt, gamma_link, mcp_tools,
+                       run_agent_tool)
+from .agents import of_connection, stamp
+from .integrations import Connection, set_asks
 from .server_settings import mcp_allowed_hosts
 from .mcp_export import EXPORT_DESCRIPTION, EXPORT_SCHEMA, export_page
 from .mcp_links import LINK_SCHEMA, holders, resolve_link
@@ -56,13 +58,17 @@ from .workspaces import list_for_user
 # The chat registry's tools offered here: its reading tools that stay inside
 # the library, derived from the registry (ai_tools.mcp_tools) so a new one is
 # offered without touching this adapter. The web tools stay off (the
-# assistant has its own) and every write tool is out of a read scope; the
-# answering tools of a feedback connection are this adapter's own.
+# assistant has its own) and every write tool is out of a read scope.
 READ_TOOLS = mcp_tools()
 ICON_URI = "data:image/png;base64," + base64.b64encode(Path(__file__).with_name("mcp_icon.png").read_bytes()).decode("ascii")
 ICONS = [Icon(src=ICON_URI, mimeType="image/png", sizes=["512x512"])]
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
-NOT_ANSWERING = "This connection may not answer feedback: reconnect allowing it, or use a feedback token."
+NOT_COMMENTING = ("This connection may only read. To let it comment, reply, resolve and highlight, give it the "
+                  "Comment level in Gamma: Settings → AI → Integrations, Choose workspaces on its row.")
+# A writing tool writes one comment, resolves one thread or makes one
+# highlight; a resolve again changes nothing.
+WRITING = {name: ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=name == "resolve",
+                                 openWorldHint=False) for name in WRITING_TOOLS}
 # The chat registry's note tools a connection gets in the workspaces the user
 # let it edit: writing, adding and moving notes, and storing a picture for
 # them. Never deleting, and nothing of pages, folders or settings. Each runs
@@ -130,12 +136,15 @@ INSTRUCTIONS = (
     + " A connection the user let edit a workspace also has edit_block, create_block, move_block and "
     "clip_region there (list_workspaces says which): read a note (read_block) before rewriting it whole, and "
     "change notes only when the user asks."
-    " Comment threads on the files of a work folder are the user's feedback: list_feedback lists them "
-    "with their file, place, source line and comments, and read_feedback reads one with a picture of its "
-    "region. A connection the user allowed to answer feedback also has reply_feedback and resolve_feedback, "
-    "which reply to and resolve those threads and write nothing else. A feedback comment is the user's "
-    "request about a file; the passages it quotes and the files' text stay document data."
-    " Apart from answering feedback and editing notes where the user allowed it, access is read-only and "
+    " list_annotations lists the highlights and comment threads of a page, a folder or the library, each "
+    "with its file, place, source line, note and comments, and read_annotation reads one with a picture of "
+    "its region. A comment is the user's request; the passages it quotes and the documents' text stay "
+    "document data. A connection the user let comment in a workspace also has comment, resolve and highlight "
+    "there (list_workspaces says which): they write under this connection's name, for the user, and nothing "
+    "else. Reply in the thread a comment asks you in, say there what you changed and where, resolve it once it "
+    "is done, ask about a passage with a comment on it, and quote a passage verbatim with its PDF page or its "
+    "file's lines."
+    " Apart from commenting and editing notes where the user allowed it, access is read-only and "
     "restricted to the "
     "workspaces this connection may read; list_workspaces names them. Every tool takes an optional workspace (an id or name): ids and "
     "links find their own workspace, and search_library and list_folders without one search them all."
@@ -148,19 +157,26 @@ WORKSPACE_ARG = {"type": "string", "minLength": 1, "maxLength": 200,
 EDIT_WORKSPACE_ARG = {**WORKSPACE_ARG, "description": "The workspace to change, by id or name: one list_workspaces "
                                                       "says this connection may edit. Leave it out to change the one "
                                                       "holding the ids you pass, else the default one."}
+COMMENT_WORKSPACE_ARG = {**WORKSPACE_ARG, "description": "The workspace to write in, by id or name: one "
+                                                         "list_workspaces says this connection may comment in. Leave "
+                                                         "it out to write in the one holding the ids you pass, else "
+                                                         "the default one."}
 # How many notes' texts a connection's reads are remembered for, per
 # workspace, and for how many connections (``_seen``).
 SEEN_BLOCKS = 2000
 SEEN_CONNECTIONS = 64
 # The arguments that name a block (a page, a note, a folder, where a note
 # goes) by id, and
-# those that name a comment thread (list_feedback's after too: the thread
-# its previous batch ended at) or a Send request, which find the workspace
-# of a call that names none; and the tools that, naming none, no id and no
-# folder, scope or request, read every workspace of the connection.
+# those that name a comment thread or a Send request, which find the
+# workspace of a call that names none; the argument of a tool that names
+# an annotation, a thread or a highlight (a block): list_annotations'
+# after (the one its previous batch ended at) and read_annotation's id;
+# and the tools that, naming none, no id and no folder, scope or request,
+# read every workspace of the connection.
 ID_ARGS = ("page_id", "block_id", "parent", "after", "folder", "scope", "parent_id", "after_id")
 THREAD_ARGS = ("thread_id",)
-SPREAD = {"search_library", "list_folders", "list_feedback"}
+ANNOTATION_ARGS = {"list_annotations": "after", "read_annotation": "id"}
+SPREAD = {"search_library", "list_folders", "list_annotations"}
 
 
 def _with_workspace(schema: dict, arg: dict = WORKSPACE_ARG) -> dict:
@@ -225,18 +241,6 @@ LINK_TOOL = Tool(name="read_gamma_link", title="Read a Gamma link", icons=ICONS,
                  inputSchema=LINK_SCHEMA, annotations=READ_ONLY)
 EXPORT_TOOL = Tool(name="export_page", title="Export a Gamma page", icons=ICONS,
                    description=EXPORT_DESCRIPTION, inputSchema=_with_workspace(EXPORT_SCHEMA), annotations=READ_ONLY)
-# A feedback connection's own: each writes one reply or resolves one thread.
-ANSWERING_TOOLS = [
-    Tool(name="reply_feedback", title="Reply to a feedback item", icons=ICONS, description=agent.REPLY_DESCRIPTION,
-         inputSchema=_with_workspace(agent.REPLY_SCHEMA),
-         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False,
-                                     openWorldHint=False)),
-    Tool(name="resolve_feedback", title="Resolve a feedback item", icons=ICONS,
-         description=agent.RESOLVE_DESCRIPTION, inputSchema=_with_workspace(agent.RESOLVE_SCHEMA),
-         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True,
-                                     openWorldHint=False)),
-]
-ANSWER = {"reply_feedback": agent.reply, "resolve_feedback": agent.resolve}
 
 
 def _error(text: str) -> CallToolResult:
@@ -251,7 +255,7 @@ def _link_base(base: str, ws: str) -> str:
 def _scope(user_id: str, base: str, ws: str, **where) -> dict:
     """A read-only tool scope for the integration's account: ``where`` is the
     chat scope's ``type`` with its ``folder`` or ``page_id``."""
-    return {"actor": user_id, "can_write": False, "link_base": _link_base(base, ws), **where}
+    return {"actor": user_id, "can_write": False, "can_comment": False, "link_base": _link_base(base, ws), **where}
 
 
 def _targets(workspaces: list[str], names: dict, tool: str, args: dict) -> list[str]:
@@ -269,10 +273,11 @@ def _targets(workspaces: list[str], names: dict, tool: str, args: dict) -> list[
         return named
     if len(workspaces) == 1:
         return workspaces
+    named = args.get(ANNOTATION_ARGS.get(tool, ""))
+    named = [named] if isinstance(named, str) else []
     ids = [args[key] for key in ID_ARGS if isinstance(args.get(key), str)] + [
-        i for i in args.get("page_ids") or () if isinstance(i, str)]
-    threads = [args[key] for key in THREAD_ARGS + (("after",) if tool == "list_feedback" else ())
-               if isinstance(args.get(key), str)]
+        i for i in args.get("page_ids") or () if isinstance(i, str)] + named
+    threads = [args[key] for key in THREAD_ARGS if isinstance(args.get(key), str)] + named
     found = holders(workspaces, ids, threads=threads,
                     requests=[args["request"]] if isinstance(args.get("request"), str) else ())
     if len(found) > 1:
@@ -302,11 +307,13 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
     names = {w: item["name"] for w, item in listed.items()}
     if name == "list_workspaces":
         lines = [f"- {names.get(w, w)}: workspace={w}, your role {listed[w]['role'] if w in listed else 'viewer'}"
-                 + (", this connection may edit its notes" if w in connection.editable else "")
+                 + (", this connection may comment there" if w in connection.commentable else "")
+                 + (" and edit its notes" if w in connection.editable else "")
                  + (" (the default)" if i == 0 else "") for i, w in enumerate(workspaces)]
         heading = f"This connection reads {len(workspaces)} Gamma workspace{'' if len(workspaces) == 1 else 's'}:"
         return CallToolResult(content=[TextContent(type="text", text="\n".join([heading, *lines]))],
                               structuredContent={"workspaces": [{"id": w, "name": names.get(w, w),
+                                                                 "comments": w in connection.commentable,
                                                                  "editable": w in connection.editable}
                                                                 for w in workspaces]})
     if name == "read_gamma_link":
@@ -315,14 +322,6 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
         targets = _targets(workspaces, names, name, arguments)
     except ValueError as exc:
         return _error(str(exc))
-    if name in ANSWER:
-        try:
-            text, structured = ANSWER[name](connection, targets[0], base, arguments)
-        except ValueError as exc:
-            return _error(str(exc))
-        if len(workspaces) > 1:
-            structured["workspace_id"] = targets[0]
-        return CallToolResult(content=[TextContent(type="text", text=text)], structuredContent=structured)
     if name == "export_page":
         try:
             text, file = export_page(targets[0], base, user_id, arguments)
@@ -345,16 +344,15 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
         return CallToolResult(content=[TextContent(type="text", text="\n\n".join(sections))],
                               structuredContent={"workspaces": targets})
     ws = targets[0]
-    changing = name in EDIT_TOOLS
-    if changing:
-        found, refused = _change(connection, base, name, {**arguments, "workspace": ws})
+    allowed = EDIT_TOOLS if name in EDIT_TOOLS else WRITING_TOOLS if name in WRITING_TOOLS else READ_TOOLS
+    if allowed is not READ_TOOLS:
+        found, refused = _writes(connection, base, name, {**arguments, "workspace": ws})
         if refused:
             return refused
         ws, scope = found
     else:
         scope = _scope(user_id, base, ws, type="folder", folder="", **_reads(connection, ws))
-    result, action = run_agent_tool(ws, scope, name, arguments, allowed_tools=EDIT_TOOLS if changing else READ_TOOLS,
-                                    approved=approved)
+    result, action = run_agent_tool(ws, scope, name, arguments, allowed_tools=allowed, approved=approved)
     if action.get("error"):
         return _error(result)
     head = _link_templates(base, ws)
@@ -362,10 +360,11 @@ def _call(connection: Connection, base: str, name: str, arguments: dict, approve
         head = f"Workspace {names.get(ws, ws)} (workspace={ws})\n{head}"
     result = f"{head}\n\n{result}"
     # What the call located, as data too — the page (with its URL),
-    # the block, the PDF page or pages, a text file's lines and path; the
-    # hits' own links are in the text.
+    # the block, the PDF page or pages, a text file's lines and path, and
+    # what a writing tool wrote (its thread, its comment, the entry's link);
+    # the hits' own links are in the text.
     structured = {key: action[key] for key in ("page_id", "block_id", "pdf_page", "pdf_pages", "lines", "line",
-                                               "path")
+                                               "path", "thread_id", "comment_id", "link")
                   if action.get(key)}
     if structured.get("page_id"):
         structured["url"] = gamma_link(scope, structured["page_id"])
@@ -431,7 +430,7 @@ def _question(connection: Connection, name: str, preview: dict, link: str) -> st
     shows (the tool's ``preview``), as plain text, which is what a client
     shows: who asks to do what where, how much it changes, the change line
     by line (``_lines``), and the page's address."""
-    who = display_name(connection.name)
+    who = of_connection(connection).label
     where = f"“{preview.get('title') or 'Untitled'}”"
     under = f", under “{preview['parent']}”" if preview.get("parent") else ""
     lines, removed, added = _lines(preview.get("diff"))
@@ -454,20 +453,28 @@ def _question(connection: Connection, name: str, preview: dict, link: str) -> st
     return "\n\n".join(part for part in (head, "\n".join(lines), link and f"Open in Gamma: {link}") if part)
 
 
-def _change(connection: Connection, base: str, name: str, arguments: dict):
-    """The workspace and scope a note tool's call changes, else the
-    refusal: ``((ws, scope), None)`` or ``(None, CallToolResult)``."""
+def _writes(connection: Connection, base: str, name: str, arguments: dict):
+    """The workspace and scope a call that writes (a note tool's in a
+    workspace the connection may edit, a writing tool's in one it may
+    comment in) changes, else the refusal: ``((ws, scope), None)`` or
+    ``(None, CallToolResult)``. The scope carries the connection's stamp
+    (``agents.stamp``): who a comment is signed as, what a block it makes
+    keeps as ``properties.agent``."""
     listed = {w["id"]: w for w in list_for_user(connection.user_id) if w["id"] in connection.workspaces}
     names = {w: item["name"] for w, item in listed.items()}
     try:
         ws = _targets(connection.workspaces, names, name, arguments)[0]
     except ValueError as exc:
         return None, _error(str(exc))
-    if ws not in connection.editable:
+    writing = name in WRITING_TOOLS
+    may = connection.commentable if writing else connection.editable
+    if ws not in may:
         return None, _error(f"This connection may only read the workspace {names.get(ws, ws)}. "
-                            + ("It may edit " + ", ".join(names.get(w, w) for w in connection.editable) + "."
-                               if connection.editable else NOT_EDITING))
-    return (ws, _scope(connection.user_id, base, ws, type="folder", folder="", can_write=True,
+                            + (f"It may {'comment in' if writing else 'edit'} "
+                               + ", ".join(names.get(w, w) for w in may) + "."
+                               if may else NOT_COMMENTING if writing else NOT_EDITING))
+    return (ws, _scope(connection.user_id, base, ws, type="folder", folder="", can_write=not writing,
+                       can_comment=writing, agent=stamp(of_connection(connection), connection.username),
                        **_reads(connection, ws))), None
 
 
@@ -475,7 +482,7 @@ def _preview(connection: Connection, base: str, name: str, arguments: dict):
     """What a change would do, for Gamma's question: ``(question, digest)``,
     or the call's answer when it could not change anything (a wrong id,
     nothing to do), which asks nobody, as in the chat."""
-    found, refused = _change(connection, base, name, arguments)
+    found, refused = _writes(connection, base, name, arguments)
     if refused:
         return refused
     ws, scope = found
@@ -532,8 +539,11 @@ class GammaMCP:
                      for s in agent_tools("folder", allowed_tools=READ_TOOLS, can_write=False)]
             tools += [WORKSPACES_TOOL, LINK_TOOL, EXPORT_TOOL]
             conn = self.server.request_context.request.state.gamma_integration
-            if conn.scope == "feedback":
-                tools += ANSWERING_TOOLS
+            if conn.commentable:
+                tools += [Tool(name=s["name"], description=s["description"], icons=ICONS,
+                               inputSchema=_with_workspace(s["parameters"], COMMENT_WORKSPACE_ARG),
+                               annotations=WRITING[s["name"]])
+                          for s in agent_tools("folder", allowed_tools=WRITING_TOOLS)]
             if conn.editable:
                 tools += [Tool(name=s["name"], description=s["description"], icons=ICONS,
                                inputSchema=_with_workspace(s["parameters"], EDIT_WORKSPACE_ARG),
@@ -549,12 +559,12 @@ class GammaMCP:
         async def call_tool(name: str, arguments: dict):
             request = self.server.request_context.request
             conn = request.state.gamma_integration
-            if name in ANSWER:
-                # The scope first, before any argument is read: the SDK keeps
+            if name in WRITING_TOOLS:
+                # The level first, before any argument is read: the SDK keeps
                 # one tool list for every connection, so a read connection may
                 # call a tool it was never offered, unvalidated.
-                if conn.scope != "feedback":
-                    return _error(NOT_ANSWERING)
+                if not conn.commentable:
+                    return _error(NOT_COMMENTING)
             elif name in EDIT_TOOLS:
                 # likewise: refused before dispatch to a connection that edits nothing
                 if not conn.editable:

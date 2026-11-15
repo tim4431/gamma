@@ -201,10 +201,10 @@ def test_gamma_cloud_set_up_for_admins_then_linked_by_everyone(nadmin, nuser, mo
     monkeypatch.setattr(notices.cloud_auth, "settings", lambda: cfg)
     monkeypatch.setattr(notices.cloud_auth, "needs_connect", lambda: cfg["connect"])
     monkeypatch.setattr(notices.cloud_auth, "status_of", lambda user_id: linked.get(user_id))
-    # off: only an admin is told, on the Server pane
+    # off: only an admin is told, on the Users pane (its Sign-in section)
     assert _only(nuser, "cloud-setup") is None and _only(nuser, "cloud-link") is None
     setup = _only(nadmin, "cloud-setup")
-    assert (setup["tone"], setup["pane"], setup["fingerprint"]) == ("info", "server", "off")
+    assert (setup["tone"], setup["pane"], setup["fingerprint"]) == ("info", "users", "off")
     assert setup["message"].startswith("Turn on Gamma Cloud sign-in")
     nadmin.post("/api/notices/cloud-setup/seen", json={"fingerprint": "off"})
     assert _only(nadmin, "cloud-setup") is None

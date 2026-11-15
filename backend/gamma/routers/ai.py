@@ -16,7 +16,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import (ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
+from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
                 net_proxy, search_services, translate_engines)
 from ..ai_client import (
     CallRefused,
@@ -92,8 +92,8 @@ from ..ai_settings import (
     update_entry,
     update_provider_entries,
 )
-from ..auth import (actor_of, can_write, is_token, link_ratelimit, require_personal_user_id, require_user_id,
-                    require_ws, require_ws_writer)
+from ..auth import (actor_of, can_comment, can_write, is_token, link_ratelimit, require_personal_user_id,
+                    require_user_id, require_ws, require_ws_writer)
 from ..blocks_store import PATH_SEP, folder_path, page_root_id
 from ..db import connect_data_db, connect_pages_db, page_now
 from ..logbuf import log
@@ -1563,7 +1563,10 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             "context_pages": list(payload.pages),
             # What edit_block mode "selection" rewrites (labels S1, S2…).
             "note_selections": request_note_selections(payload),
-            "actor": user_id, "can_write": can_write(request),
+            "actor": user_id, "can_write": can_write(request), "can_comment": can_comment(request),
+            # What a block or a comment the chat makes says of who made it
+            # (agents.stamp): Gamma AI, or a token's connection that drives it.
+            "agent": agents.stamp(agents.of_request(request) or agents.gamma(), request.state.user or ""),
             # Bound inside fetch_paper: streamed tools run in a separate
             # thread, which does not inherit the request's ContextVars.
             # Journal sign-ins are on or off (a part of fetching, not a call to approve).
@@ -1589,13 +1592,14 @@ def _chat_tools(payload, scope: dict) -> list | None:
     """The armed tool specs: the scope decides which tools exist, the
     permission toggles pick the subset — None (or no scope) is a plain chat.
     Where the scope cannot write (a viewer, a read-scope token) no mutating
-    tool is armed; search_web only with a web engine."""
+    tool is armed, and no writing tool where it cannot comment (a read-scope
+    token); search_web only with a web engine."""
     valid_scope = payload.agent_scope in ("folder", "page") and (
         payload.agent_scope != "page" or payload.page_id)
     if not valid_scope:
         return None
     specs = agent_tools(payload.agent_scope, scope["permissions"], payload.read_char_limit,
-                        can_write=scope["can_write"], has=available(scope))
+                        can_write=scope["can_write"], can_comment=scope["can_comment"], has=available(scope))
     if scope.get("pictures") is False:
         # A model that reads text only can't look at what these answer with.
         specs = [s for s in specs if s["name"] not in PICTURE_TOOLS]

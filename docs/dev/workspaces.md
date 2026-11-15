@@ -274,7 +274,7 @@ Keep identity and data location separate in endpoint code:
 | `can_write(request)` | The same write rule as a yes/no, for an endpoint that offers less instead of refusing (the AI chat arms no changing tools) |
 | `resolve_ws(request)` | Read through a share token, otherwise normal workspace access |
 | `require_ws_writer(request)` | Write through an edit share, otherwise workspace editor access |
-| `require_commenter(request, page_id)` | Write a comment on the page: any member (viewers too), or a signed-in account a share admits, view or edit, within the share's pages; never a link visitor or a read-scope token ([comments.md](comments.md) "Who may comment") |
+| `require_commenter(request, page_id)` | Write a comment on the page: any member (viewers too), or a signed-in account a share admits, view or edit, within the share's pages; never a link visitor or a read-scope token but one at the Comment level ([comments.md](comments.md) "Who may comment") |
 | `share_scope(request)` | The `ShareScope` (one page and the pages inside it, or the pages filed in one folder and the pages inside those) a share-enabled endpoint must enforce |
 | `share_job_owner(request)` | The owner of a share view's jobs, `share:<token>`, for any visitor the share admits (the share view's export, [tasks.md](tasks.md#a-share-views-exports)); "" without a share token |
 
@@ -652,7 +652,7 @@ included. A vault of one file pushes a PDF on that computer to a page each
 time it changes, and a PDF opened from that computer is read where it lies,
 a page inside *Opened files*. A folder's *Sync with this computer…*, a
 page's *Push from a file on this computer…* or the desktop app's sync panel
-(*Add a synced vault…*) starts them. A vault's writes are its maker's, as
+(*Add a synced folder…*) starts them. A vault's writes are its maker's, as
 op-log client `disk`, and its own conflicts (`file_won`) stay out of a
 clone's and a Zotero link's. A workspace that is a clone or has a Zotero
 link takes vaults that pull or push PDFs, never one that pushes everything,

@@ -9,14 +9,15 @@ from mcp.server.auth.provider import AuthorizationCode, AuthorizationParams, Aut
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 from .db import connect_users_db
-from .integrations import create_token, edit_grant, editing, grant, granted, token_digest
-from .mcp_oauth import FEEDBACK_SCOPE, TTL, load, offered, store
+from .integrations import comment_grant, create_token, edit_grant, grant, granted, named, token_digest
+from .mcp_oauth import TTL, load, offered, store
 
 
 class GammaCode(AuthorizationCode):
     user_id: str
     workspace_id: str
     workspaces: str = ""  # the stored grant (integrations.grant): "", "*" or a JSON list
+    comments: str = ""  # the ones of them it may comment in (integrations.comment_grant)
     edits: str = ""  # the ones of them it may edit (integrations.edit_grant)
     asks: bool = True  # whether each change there asks first
     session_hash: str
@@ -45,8 +46,8 @@ class Provider:
             raise AuthorizeError("invalid_request", "A valid S256 PKCE challenge is required.")
         if params.scopes is not None and not offered(params.scopes):
             raise AuthorizeError("invalid_scope", "Gamma offers gamma:read and gamma:feedback.")
-        # The request keeps its scopes: the consent page ticks "answer
-        # feedback" when they ask for it (mcp_oauth.consent_details).
+        # The request keeps its scopes: the consent page starts at the
+        # Comment level when they ask for gamma:feedback (mcp_oauth.consent_details).
         request_id = secrets.token_urlsafe(32)
         await run_in_threadpool(store, "request", self.base, request_id,
                                 {"client_id": client.client_id, "params": params.model_dump(mode="json")}, 600)
@@ -69,15 +70,15 @@ class Provider:
             sessions = conn.execute("SELECT token FROM sessions WHERE user_id = ?", (value["user_id"],)).fetchall()
         if not user or user[0] or not any(token_digest(s[0]) == value["session_hash"] for s in sessions):
             raise TokenError("invalid_grant", "Workspace access is no longer available.")
-        # The consent's answer: a feedback token when the person let it answer feedback.
-        scope = "feedback" if FEEDBACK_SCOPE in value["scopes"] else "read"
+        # The consent's answer: a read token at the levels the person chose per workspace.
         try:
             wanted = granted(value["workspace_id"], value.get("workspaces", ""))
-            primary, stored = grant(value["user_id"], wanted, scope)
-            edits = edit_grant(value["user_id"], primary, stored, editing(value.get("edits", "")))
+            primary, stored = grant(value["user_id"], wanted)
+            comments = comment_grant(value["user_id"], primary, stored, named(value.get("comments", "")))
+            edits = edit_grant(value["user_id"], primary, stored, named(value.get("edits", "")))
             issued = create_token(value["user_id"], primary,
                                   (client.client_name or "MCP assistant")[:65] + " (OAuth)", 90,
-                                  oauth_resource=self.resource, scope=scope, workspaces=stored, edits=edits,
+                                  oauth_resource=self.resource, workspaces=stored, comments=comments, edits=edits,
                                   asks=value.get("asks", True))
         except HTTPException as exc:
             raise TokenError("invalid_grant", str(exc.detail)) from exc

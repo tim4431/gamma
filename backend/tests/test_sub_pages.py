@@ -495,7 +495,8 @@ def test_step_47_gives_a_workspace_stamped_46_the_parent_page_column(data_dir):
         with connect_pages_db("spOld") as cx:
             assert cx.execute("SELECT parent_page FROM unified_blocks WHERE id = 'spKid'").fetchone() == ("spTop",)
             assert cx.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_ub_parent_page'").fetchone()
-            assert cx.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION  # the newest step
+            # the newest workspace step (a newer step may be users.db's alone)
+            assert cx.execute("PRAGMA user_version").fetchone()[0] == migrations.WORKSPACE_STEPS[-1][0]
             ddl = cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
             migrations._v47_parent_page("spOld", cx, None)  # re-runnable: nothing to do
             assert cx.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0] == ddl

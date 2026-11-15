@@ -506,7 +506,7 @@ def test_a_gamma_review_upgrades_the_workspace_it_reads_first(client, tmp_path):
     import sqlite3
     from contextlib import closing
 
-    from gamma import config, db, ws_backup
+    from gamma import config, db, migrations, ws_backup
     from test_migrations import _at_51
 
     ws = make_user("review-doc51", "test-password")
@@ -535,7 +535,7 @@ def test_a_gamma_review_upgrades_the_workspace_it_reads_first(client, tmp_path):
     assert (entry["id"], entry["action"], entry["kind"]) == (paper["id"], "skip", "pdf")
     db.close_workspace_connections(ws)
     with closing(sqlite3.connect(str(pages_db))) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == migrations.WORKSPACE_STEPS[-1][0]
 
 
 def test_guest_cannot_use_review_to_bypass_backup_restriction(guest, accounts):

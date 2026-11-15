@@ -83,7 +83,7 @@ METADATA_LOOKUP = os.environ.get("GAMMA_METADATA_LOOKUP", "").strip().lower() no
 
 # Why a work folder's file that is not in the library gets no lookup
 # (docs/dev/work_folders.md "The library rule": no paper until it is added).
-NO_RECORD = "A work folder's file has no record: add it to the library to look one up."
+NO_RECORD = "A synced folder's file has no record: add it to the library to look one up."
 NO_PAPER = "This page's document is no PDF: it has no paper's record to look up."
 
 

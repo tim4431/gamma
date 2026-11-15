@@ -33,12 +33,17 @@ from gamma.blocks_store import create_page
 from gamma.computers import registry
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.local_agents import chats
+from gamma.ops import STALE, OpError
+from gamma.work_folders import takeover
 
 MAKER, EDITOR, STRANGER = "ccx_maker", "ccx_editor", "ccx_stranger"
 MODELS = [{"id": "gpt-5", "label": "GPT-5", "efforts": ["low", "medium", "high"], "effort": "medium", "default": True},
           {"id": "gpt-5-mini", "label": "GPT-5 mini", "efforts": [], "effort": None, "default": False}]
 CODEX = [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": "",
-          "models": MODELS}]
+          "models": MODELS, "enabled": True, "runs": "never"}]
+OFF = [{**CODEX[0], "enabled": False}]   # Codex there, turned off
+CLAUDE = [{"name": "claude", "label": "Claude Code", "found": True, "ready": True, "version": "2", "code": "",
+           "enabled": True, "runs": "never"}]
 
 
 def _bearer(token: str):
@@ -101,8 +106,8 @@ def _announce(c, *vaults, name="TIM-PC", computer_id="ccx-pc", assistants=CODEX)
                                                        "vaults": list(vaults), "assistants": assistants}))["version"]
 
 
-def _kept(lab, agent="codex", **more) -> dict:
-    return {"kind": "folder", "folder_id": lab.W, "agent": agent, **more}
+def _kept(lab, **more) -> dict:
+    return {"kind": "folder", "folder_id": lab.W, **more}
 
 
 @pytest.fixture
@@ -115,13 +120,13 @@ def pc(lab):
 
 
 def _chat(lab, who=None, page=None, status=200) -> dict:
-    r = (who or lab.maker).get("/api/local-agents/chat", params={"page": page or lab.main})
+    r = (who or lab.maker).get("/api/local-agents/chat", params={"bucket": page or lab.main})
     assert r.status_code == status, r.text
     return r.json()
 
 
 def _say(lab, text="Shorten the title.", who=None, page=None, status=202, **body) -> dict:
-    r = (who or lab.maker).post("/api/local-agents/chat/turns", json={"page": page or lab.main, "text": text, **body})
+    r = (who or lab.maker).post("/api/local-agents/chat/turns", json={"bucket": page or lab.main, "text": text, **body})
     assert r.status_code == status, r.text
     return r.json()
 
@@ -179,22 +184,27 @@ def test_the_announce_keeps_each_assistants_models(lab):
 def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, guest):
     assert _chat(lab) == {"computer": {
         "agent": "codex", "label": "Codex", "ready": True, "problem": "", "models": MODELS, "folder": "ccx-paper",
-        "paused": False, "turn": None, "session": False, "folder_id": lab.W, "grants": [], "computer": "TIM-PC",
+        "paused": False, "turn": None, "session": False, "folder_id": lab.W,
+        "dir": {"kind": "vault", "name": "ccx-paper"}, "grants": [], "lent": None, "computer": "TIM-PC",
         "online": True, "since": None, "remote": True}, "conversation": None}
     for status, who in ((404, lab.editor), (403, lab.stranger), (401, anon)):   # no member: the workspace's 403
-        assert who.get("/api/local-agents/chat", params={"page": lab.main}).status_code == status
-        assert who.post("/api/local-agents/chat/turns", json={"page": lab.main, "text": "hi"}).status_code == status
-        assert who.post("/api/local-agents/chat/new", json={"page": lab.main}).status_code == status
-        assert who.get("/api/local-agents/chat/history", params={"page": lab.main}).status_code == status
+        assert who.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == status
+        assert who.post("/api/local-agents/chat/turns", json={"bucket": lab.main, "text": "hi"}).status_code == status
+        assert who.post("/api/local-agents/chat/new", json={"bucket": lab.main}).status_code == status
+    # History is the account's own, whatever its seat: nothing of the maker's to another
+    assert _ok(lab.editor.get("/api/local-agents/chat/history", params={"bucket": lab.main})) == {
+        "conversations": [], "active": None}
+    for status, who in ((403, lab.stranger), (401, anon)):
+        assert who.get("/api/local-agents/chat/history", params={"bucket": lab.main}).status_code == status
     script = fresh_client()
     script.headers.update({"Authorization": f"Bearer {token_for(lab.maker, 'write', 'Script')}",
                            "X-Gamma-Workspace": lab.ws})
-    assert script.get("/api/local-agents/chat", params={"page": lab.main}).status_code == 403
-    assert guest.get("/api/local-agents/chat", params={"page": lab.main}).status_code == 403
-    assert pc.c.get("/api/local-agents/chat", params={"page": lab.main}).status_code == 403   # the channel's token
+    assert script.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 403
+    assert guest.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 403
+    assert pc.c.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 403   # the channel's token
     # another work folder (not kept with an agent), a library page, no page
     for page in (lab.other, lab.plain, ""):
-        assert lab.maker.get("/api/local-agents/chat", params={"page": page}).status_code == 404
+        assert lab.maker.get("/api/local-agents/chat", params={"bucket": page}).status_code == 404
     # a co-author reaches none of the maker's turns or conversations
     made = _say(lab)
     assert lab.editor.post(f"/api/local-agents/chat/turns/{made['turn']['id']}/stop").status_code == 404
@@ -209,7 +219,7 @@ def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, 
     assert _chat(lab, who=lab.editor)["computer"]["computer"] == "EVIL-PC"
     # the computer gone: no seat, though the conversation stays
     registry.forget(pc.id)
-    assert lab.maker.get("/api/local-agents/chat", params={"page": lab.main}).status_code == 404
+    assert lab.maker.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 404
     with connect_pages_db(lab.ws) as conn:
         assert conn.execute("SELECT COUNT(*) FROM computer_chats").fetchone()[0] == 1
 
@@ -247,8 +257,9 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
 
     claimed = _claim(pc, turn)
     assert claimed["turn"] == {"id": turn, "conversation_id": made["conversation"]["id"], "page_id": lab.main,
-                               "text": "Tighten this paragraph.", "selections": [selection], "model": "gpt-5",
-                               "effort": "high"}
+                               "title": "Tighten this paragraph.", "text": "Tighten this paragraph.",
+                               "selections": [selection], "model": "gpt-5", "effort": "high",
+                               "for": {"id": account_of(MAKER), "username": MAKER}}
     assert claimed["history"] == [] and claimed["page"] == {"path": "main.pdf", "title": "main"} and claimed["seen"]
     assert _reply(lab)["state"] == "running" and _chats(pc)["turns"] == []
     assert _chat(lab)["computer"]["turn"]["state"] == "running"
@@ -256,13 +267,17 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
     assert _write(pc, turn, 1, state="running", text="Working ![x](http://evil.example/a.png)",
                   steps=[{"id": "s1", "kind": "read", "status": "done", "path": "main.tex"},
                          {"id": "s2", "kind": "edit", "status": "done", "path": "C:/Users/tim/secret.txt"},
-                         {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"}],
+                         {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"},
+                         {"id": "s4", "kind": "gamma", "status": "completed", "tool": "read_page"},
+                         {"id": "s5", "kind": "gamma", "status": "completed", "tool": "Read Page; rm -rf"}],
                   asks=[{"id": "a1"}]) == {"ok": True}
     reply = _reply(lab)
     assert reply["text"] == "Working [x](http://evil.example/a.png)"             # made inert again
     assert reply["steps"] == [{"id": "s1", "kind": "read", "status": "done", "path": "main.tex"},
                               {"id": "s2", "kind": "edit", "status": "done", "path": "outside"},
-                              {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"}]
+                              {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"},
+                              {"id": "s4", "kind": "gamma", "status": "completed", "tool": "read_page"},
+                              {"id": "s5", "kind": "gamma", "status": "completed", "tool": ""}]   # a name no tool has
     assert reply["asks"] == []                                                    # it never asks
     # a retry, or a late write, never goes back
     assert _write(pc, turn, 1, text="Older") == {"ok": True, "stale": True}
@@ -296,7 +311,7 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
 def test_the_claim_is_keyed_by_the_run(lab, pc):
     turn = _say(lab)["turn"]["id"]
     assert _claim(pc, turn, run="bad id!", status=400)
-    assert _claim(pc, turn, agent="claude", status=409)["detail"] == "This work folder's agent is Codex."
+    assert _claim(pc, turn, agent="claude", status=409)["detail"] == "This synced folder's agent is Codex."
     assert _claim(pc, "no-such-turn", status=404)
     first = _claim(pc, turn)
     again = _claim(pc, turn)                                                     # a retry: held
@@ -313,22 +328,18 @@ def test_the_claim_is_keyed_by_the_run(lab, pc):
 
 def test_a_turn_whose_agent_changed_fails_at_the_announce(lab, pc):
     turn = _say(lab)["turn"]["id"]
-    _announce(pc.c, _kept(lab, agent="claude"),
-              assistants=[*CODEX, {"name": "claude", "label": "Claude Code", "found": True, "ready": True}])
+    _announce(pc.c, _kept(lab), assistants=[*OFF, *CLAUDE])
     reply = _reply(lab)
     assert (reply["state"], reply["error"]) == ("failed", "Codex is no longer this folder's agent.")
     assert _chats(pc)["turns"] == [] and _row(lab, turn)["state"] == "failed"
     assert _claim(pc, turn, agent="claude", status=409)["detail"] == "The turn is failed now."
 
 
-CLAUDE = [{"name": "claude", "label": "Claude Code", "found": True, "ready": True, "version": "2", "code": ""}]
-
-
 def _laptop(lab, agent="codex") -> SimpleNamespace:
     """The maker's other computer, LAPTOP, keeping ``ccx-paper`` with ``agent``."""
     item = _mint(lab.maker, "Gamma desktop: LAPTOP")
     c = _bearer(item["token"])
-    _announce(c, _kept(lab, agent=agent), name="LAPTOP", computer_id="ccx-laptop",
+    _announce(c, _kept(lab), name="LAPTOP", computer_id="ccx-laptop",
               assistants=CLAUDE if agent == "claude" else CODEX)
     return SimpleNamespace(c=c, id=item["id"])
 
@@ -355,11 +366,11 @@ def test_a_paused_folder_takes_no_turn(lab, pc):
     turn = _say(lab)["turn"]["id"]
     _announce(pc.c, _kept(lab, paused=True))
     assert _chats(pc)["turns"] == []
-    assert _claim(pc, turn, status=409)["detail"] == "The work folder is paused: Codex starts once it syncs again."
+    assert _claim(pc, turn, status=409)["detail"] == "The synced folder is paused: Codex starts once it syncs again."
     assert _chat(lab)["computer"]["paused"] is True
-    r = lab.maker.post("/api/local-agents/chat/turns", json={"page": lab.main, "text": "More"})
+    r = lab.maker.post("/api/local-agents/chat/turns", json={"bucket": lab.main, "text": "More"})
     assert r.status_code == 409 and r.json()["detail"] == \
-        "The work folder is paused on TIM-PC: Codex starts once it syncs again."
+        "The synced folder is paused on TIM-PC: Codex starts once it syncs again."
 
 
 def test_the_model_and_the_effort_are_among_the_announced(lab, pc):
@@ -441,7 +452,7 @@ def test_a_queued_turn_is_stoppable_once_its_seat_is_gone(lab, pc):
     turn = _say(lab)["turn"]["id"]
     with connect_users_db() as conn:
         conn.execute("UPDATE integration_tokens SET expires_at = 1 WHERE id = ?", (pc.id,))
-    assert lab.maker.get("/api/local-agents/chat", params={"page": lab.main}).status_code == 404
+    assert lab.maker.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 404
     row = next(j for j in _ok(lab.maker.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn")
     assert (row["state"], row["params"]["computer"]) == ("queued", "TIM-PC")
     assert lab.editor.post(f"/api/local-agents/chat/turns/{turn}/stop").status_code == 404
@@ -468,18 +479,18 @@ def test_a_queued_turn_of_a_page_deleted_still_stops(lab, pc):
 
 
 def test_a_queued_turn_fails_when_its_agent_is_turned_off(lab, pc):
-    """Codex turned off for the folder (the announce names the folder
-    without it), or Stop showing (the folder not named): the turns queued
-    there fail, so turning Codex on again later runs none of them."""
+    """Codex turned off on the computer (the announce says it off), or
+    Stop showing (the folder not named): the turns queued there fail, so
+    turning Codex on again later runs none of them."""
     turn = _say(lab)["turn"]["id"]
-    _announce(pc.c, {"kind": "folder", "folder_id": lab.W})
+    _announce(pc.c, _kept(lab), assistants=OFF)
     reply = _reply_of(lab, turn)
-    assert (reply["state"], reply["error"]) == ("failed", "Codex was turned off for this folder.")
+    assert (reply["state"], reply["error"]) == ("failed", "Codex was turned off on the computer that keeps this folder.")
     _announce(pc.c, _kept(lab))
     assert _chats(pc)["turns"] == []
     second = _say(lab, "Again.")["turn"]["id"]
     _announce(pc.c)                                                               # Stop showing: no vault at all
-    assert _reply_of(lab, second)["error"] == "Codex was turned off for this folder."
+    assert _reply_of(lab, second)["error"] == "Codex was turned off on the computer that keeps this folder."
     # paused there: it waits
     _announce(pc.c, _kept(lab))
     third = _say(lab, "Once more.")["turn"]["id"]
@@ -510,6 +521,41 @@ def test_a_token_taken_back_fails_what_its_runs_hold(lab, pc):
         "failed", "The computer's channel was taken back before Codex finished.")
 
 
+def test_a_detach_fails_the_turns_queued_and_leaves_a_running_one_to_its_computer(lab, pc, monkeypatch):
+    """Detach of a work folder the computer keeps (gamma/work_folders/
+    detach.py): the turn queued in its page fails at once, since no
+    computer is given it once it is no work folder, but not when the let go
+    is refused; the one running there ends as that computer writes it,
+    stopped when its round finds the folder detached."""
+    w = make_folder(lab.maker, "ccx-detached")
+    mark_work_folder(lab.maker, w)
+    with connect_pages_db(lab.ws) as conn:
+        draft, notes = (create_page(conn, name, work_props(w, f"{name}.tex"), actor=account_of(MAKER),
+                                    client=DISK_CLIENT)["id"] for name in ("draft", "notes"))
+    _announce(pc.c, _kept(lab), {"kind": "folder", "folder_id": w})
+    running = _say(lab, page=draft)["turn"]["id"]
+    _claim(pc, running)
+    queued = _say(lab, "Again.", page=notes)["turn"]["id"]
+    elsewhere = _say(lab, "And here.")["turn"]["id"]                              # another work folder's
+
+    def refused(*_args, **_kwargs):
+        raise OpError(409, "Someone else changed the folder meanwhile.", conflict=STALE)
+
+    with monkeypatch.context() as m:
+        m.setattr(takeover, "let_go", refused)
+        r = lab.maker.post(f"/api/folders/{w}/detach", json={"pages": "keep"})
+    assert r.status_code == 409, r.text
+    assert _row(lab, queued)["state"] == "queued"
+    r = lab.maker.post(f"/api/folders/{w}/detach", json={"pages": "keep"})
+    assert r.status_code == 200, r.text
+    reply = _reply_of(lab, queued)
+    assert (reply["state"], reply["error"]) == ("failed", chats.DETACHED) and _row(lab, queued)["state"] == "failed"
+    assert _row(lab, running)["state"] == "running" and _row(lab, elsewhere)["state"] == "queued"
+    assert [t["id"] for t in _chats(pc)["turns"]] == [elsewhere]
+    assert _write(pc, running, 1, state="failed", error="Stopped: the synced folder was detached.") == {"ok": True}
+    assert _reply_of(lab, running)["error"] == "Stopped: the synced folder was detached."
+
+
 def _reply_of(lab, turn_id) -> dict:
     """The turn's agent message, though the page's chat no longer answers."""
     with connect_pages_db(lab.ws) as conn:
@@ -527,10 +573,10 @@ def test_no_asks_no_source_lines_no_terminal(lab, pc):
     assert r.status_code == 409 and r.json()["detail"] == "This is answered on the computer that runs the agent."
     assert lab.editor.post(f"/api/local-agents/chat/turns/{turn}/asks/a1", json={"decision": "once"}).status_code == 404
     selection = {"text": "x", "page": 1, "box": [0.1, 0.1, 0.2, 0.2]}
-    assert _ok(lab.maker.post("/api/local-agents/chat/sources", json={"page": lab.main,
+    assert _ok(lab.maker.post("/api/local-agents/chat/sources", json={"bucket": lab.main,
                                                                         "selections": [selection, {}]})) == {
         "sources": [None, None]}
-    r = lab.maker.get("/api/local-agents/chat/terminal", params={"page": lab.main})
+    r = lab.maker.get("/api/local-agents/chat/terminal", params={"bucket": lab.main})
     assert r.status_code == 404
 
 
@@ -539,13 +585,13 @@ def test_no_asks_no_source_lines_no_terminal(lab, pc):
 def test_new_chat_history_and_delete(lab, pc):
     made = _say(lab)
     turn, first = made["turn"]["id"], made["conversation"]["id"]
-    r = lab.maker.post("/api/local-agents/chat/new", json={"page": lab.main})
+    r = lab.maker.post("/api/local-agents/chat/new", json={"bucket": lab.main})
     assert r.status_code == 409 and r.json()["detail"] == "Codex is still working: stop it first."
     _claim(pc, turn)
     _write(pc, turn, 1, state="done", text="Done.")
-    assert _ok(lab.maker.post("/api/local-agents/chat/new", json={"page": lab.main})) == {"conversation": None}
+    assert _ok(lab.maker.post("/api/local-agents/chat/new", json={"bucket": lab.main})) == {"conversation": None}
     assert _chat(lab)["conversation"] is None
-    listed = _ok(lab.maker.get("/api/local-agents/chat/history", params={"page": lab.main}))["conversations"]
+    listed = _ok(lab.maker.get("/api/local-agents/chat/history", params={"bucket": lab.main}))["conversations"]
     assert [(c["id"], c["turns"]) for c in listed] == [(first, 1)]
     _say(lab, "A new one.")
     r = lab.maker.post(f"/api/local-agents/chat/history/{first}/open")
@@ -564,7 +610,7 @@ def test_background_tasks_list_the_turns_waiting_or_running_there(lab, pc):
     row = rows[0]
     assert (row["id"], row["workspace"], row["title"], row["state"], row["stoppable"], row["stopping"]) == (
         f"computer-{turn}", lab.ws, "Codex · main", "queued", True, False)
-    assert row["params"] == {"page": lab.main, "turn": turn, "agent": "codex", "label": "Codex", "title": "main",
+    assert row["params"] == {"bucket": lab.main, "turn": turn, "agent": "codex", "label": "Codex", "title": "main",
                              "computer": "TIM-PC"}  # the computer that keeps it, named
     assert [j for j in _ok(lab.editor.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn"] == []
     _claim(pc, turn)
@@ -576,15 +622,18 @@ def test_background_tasks_list_the_turns_waiting_or_running_there(lab, pc):
 
 
 def test_a_background_tasks_row_names_the_turns_own_agent(lab, pc):
-    """The conversation began with Claude Code; the folder's agent is
-    Codex now: the follow-up's row is Codex's."""
-    _announce(pc.c, _kept(lab, agent="claude"), assistants=CLAUDE)
+    """The conversation began with Claude Code; the computer's agent is
+    Codex now: the follow-up begins Codex's own conversation (a
+    conversation keeps the agent it began with), and its row is Codex's."""
+    _announce(pc.c, _kept(lab), assistants=CLAUDE)
     first = _say(lab)
     _claim(pc, first["turn"]["id"], agent="claude")
     _write(pc, first["turn"]["id"], 1, state="done", text="Done.")
     _announce(pc.c, _kept(lab))
     turn = _say(lab, "Now the abstract.")["turn"]["id"]
-    assert _chat(lab)["conversation"]["agent"] == "claude"
+    assert _chat(lab)["conversation"]["agent"] == "codex"
+    [archived] = _ok(lab.maker.get("/api/local-agents/chat/history", params={"bucket": lab.main}))["conversations"]
+    assert (archived["id"], archived["agent"]) == (first["conversation"]["id"], "claude")
     row = next(j for j in _ok(lab.maker.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn")
     assert (row["params"]["turn"], row["title"], row["params"]["agent"], row["params"]["label"]) == (
         turn, "Codex · main", "codex", "Codex")

@@ -8,7 +8,7 @@
 // (ListMotion): a thread that comes rises into place, and one with a new
 // reply glides to the top as the others make room. The bell in its header
 // is the page's Notify me, and on a work folder's file Feedback opens the
-// feedback view (docs/dev/feedback.md).
+// feedback view (docs/dev/annotations.md).
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ListMotion from "../shared/ui/ListMotion";
 import { StateTag } from "../shared/ui/StateTag";
@@ -19,7 +19,8 @@ import { PersonAvatar } from "../collaboration/Presence";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { formatRelativeTime } from "../library/libraryUtils";
-import { anchorSnippet, authorLabel, authorTitle, sentChip, threadsIn } from "./comments.js";
+import { anchorSnippet, authorLabel, threadsIn, turnChip } from "./comments.js";
+import { CommentAvatar } from "./Thread";
 
 const notifyUrl = (page) => `${API}/pages/${encodeURIComponent(page)}/notify`;
 
@@ -59,10 +60,10 @@ function useNotifyLevel(pageId, enabled, onStatus) {
 // `notify`: the reader has an Inbox (a signed-in account, no guest), so the
 // header has the page's Notify me; onStatus(text) says a choice the server
 // refused. onFeedback(), when given (a work folder's file, a reader who may
-// edit), is the header's Feedback. `agent`: the agent that answers the
-// reader's Sends (App's commentAgent), so a waiting Send's chip reads as its
-// thread's card does ("Waiting for TIM-PC" while that computer is offline).
-export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, onFeedback, agent = null, ...common }) {
+// edit), is the header's Feedback. A row's chip is its thread card's: the
+// reader's turn of it with an agent while it is to end (comments.js
+// turnChip).
+export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, onFeedback, ...common }) {
   const [filter, setFilter] = useState("open");
   const [level, setLevel] = useNotifyLevel(pageId, notify, onStatus);
   const list = threadsIn(threads || [], filter);
@@ -93,20 +94,20 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
             const who = first ? authorLabel(first) : "";
             const replies = th.comments.length - 1;
             const anchor = th.block_id === pageId ? t("This page") : anchorSnippet(anchorText(th.block_id), 80, labelOf) || t("A note");
-            const chip = sentChip(th, agent);
+            const chip = turnChip(th);
             return (
               <button key={th.id} type="button" className={`commentsPanelRow${filter === "resolved" ? " resolved" : ""}`}
                 data-motion-key={th.id} data-thread-id={th.id} onClick={() => onOpen(th)}>
                 <span className="commentsPanelAnchor">{anchor}</span>
                 <span className="commentsPanelFirst">
-                  <PersonAvatar name={who || "?"} title={first ? authorTitle(first) : undefined} />
+                  {first ? <CommentAvatar comment={first} /> : <PersonAvatar name="?" />}
                   <span className="commentsPanelText">
                     <span className="commentAuthor">{who}</span>{" "}
                     {first?.deleted ? <em>{t("Comment deleted")}</em> : anchorSnippet(first?.body, 140, labelOf)}
                   </span>
                 </span>
                 <span className="commentsPanelMeta">
-                  {chip ? <StateTag state={chip} data-sent={chip.kind} /> : null}
+                  {chip ? <StateTag state={chip} data-turn={chip.kind} /> : null}
                   {replies ? <span>{tn("{n} reply", "{n} replies", replies)}</span> : null}
                   <span>{formatRelativeTime(th.last_at)}</span>
                 </span>

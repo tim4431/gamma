@@ -1,4 +1,4 @@
-// The topbar's configurable items (Settings → Appearance › Top bar), in the
+// The topbar's configurable items (Settings → Toolbars › Top bar), in the
 // bar's default order, and where each one goes. Pure (no React, no DOM), so
 // node tests it (tests/topbarItems.test.mjs): App places the items with
 // TOPBAR.place, the pane draws one row per item and drags them into order.

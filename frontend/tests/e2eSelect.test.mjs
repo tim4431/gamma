@@ -135,7 +135,7 @@ test("a change selects the groups that exercise it", () => {
   assert.ok(pick(["backend/gamma/work_folders/paths.py"]).includes("feedback"), "the feedback entries name their files by it");
   // anchors in text: the ladder, the shared write, the code view's marks and popup, the margin, the entries and the vault's round
   for (const file of ["backend/gamma/documents/text_anchors.py", "backend/gamma/highlight_relocate.py", "backend/gamma/documents/text.py",
-    "backend/gamma/feedback/entries.py", "backend/gamma/vault/sync.py", "frontend/src/documents/viewers/textAnchors.js",
+    "backend/gamma/annotations/entries.py", "backend/gamma/vault/sync.py", "frontend/src/documents/viewers/textAnchors.js",
     "frontend/src/documents/viewers/TextTip.jsx", "frontend/src/comments/marginSlot.jsx", "frontend/src/chat/ChatDock.jsx"]) assert.ok(pick([file]).includes("text-anchors"), file);
   assert.ok(pick(["backend/gamma/highlight_relocate.py"]).includes("notes-pdf-share"), "the PDF's run is the same write");
   // the explorer: the Files window, quick open's files, the crumbs, links by path and the reads behind them

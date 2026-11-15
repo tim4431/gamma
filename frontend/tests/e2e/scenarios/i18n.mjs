@@ -1,6 +1,6 @@
 import { Account, wanted } from "../harness.mjs";
 
-// Settings → Language and Translation → Interface language (shared/i18n,
+// Settings → Language & translation → Interface language (shared/i18n,
 // docs/dev/i18n.md): the interface follows the pick at once, the pane comes
 // back after the reload, the pick outlives the profile pull of the reloaded
 // app and a second reload, and English is back on "System" in an English
@@ -37,7 +37,7 @@ export async function i18nScenarios(env) {
     try {
       await page.waitForSelector(".folderNewBtn");
       await openSettings(page, "Account & settings", "Settings…");
-      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Language and Translation", exact: true }).click();
+      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Language & translation", exact: true }).click();
       assertEq(await page.evaluate(() => document.documentElement.lang), "en", "an English browser starts in English");
 
       // The reloaded app reads the profile once (useProfileSync), with its

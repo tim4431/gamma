@@ -2,30 +2,34 @@
 // "In the app"): the thread popover (ThreadPopover.jsx) lists a block's
 // threads, and the PDF's margin (CommentMargin.jsx) shows one card per
 // thread beside its highlight or ink group. Each comment with its author
-// (an agent by its name, with whose connection it wrote), time and text
+// (an agent by its kind's avatar and its name, then its computer and the
+// person it wrote for, "on TIM-PC, for tim"), time and text
 // rendered as a note is (so @people and [[links]] work, and in a work
 // folder maker's own comments its agent's @name), its "⋯" menu (Edit,
 // Copy link, Report on anyone else's, Delete), the
 // thread's Resolve and its reply field once the thread is the active one.
-// The first comment's line carries the chip of a Send waiting on the
-// thread, and under it a line says when its place moved in a new version
-// and one gives the agent's own words of the Send while it works or once it
-// failed (its progress, the reason; its summary is its replies').
+// Under the first comment a line says when its place moved in a new
+// version. While the reader's turn of the thread with an agent is to end
+// (docs/dev/comments.md "Sent to an agent"), the thread carries its chip
+// (comments.js turnChip: Codex is working, with Stop; Codex is waiting for
+// you, which opens the conversation in the chat, where its card is), and an
+// agent's reply in a thread the reader sent it offers Open in chat, the
+// thread's conversation with its steps and what it changed.
 // A comment that comes (a reply, yours or someone's) rises into place
 // (ListMotion).
 import React, { startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
-import { CheckIcon, FlagIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
+import { CheckIcon, FlagIcon, LinkIcon, MessageSquareIcon, PencilIcon, RefreshIcon, StopIcon, Trash2Icon } from "../shared/ui/Icons";
 import ListMotion from "../shared/ui/ListMotion";
 import { IconSwap } from "../shared/ui/MotionWidgets";
-import { StateDetail, StateTag } from "../shared/ui/StateTag";
-import { PersonAvatar } from "../collaboration/Presence";
+import { StateTag } from "../shared/ui/StateTag";
+import { AgentAvatar, PersonAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { MentionContext } from "../editor/MentionMenu";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { CommentComposer, hasDraft } from "./CommentComposer";
-import { authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen, sentChip } from "./comments.js";
+import { agentFor, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen, turnChip } from "./comments.js";
 import { openReport } from "../support/reportContent.js";
 import { ThreadPlaceContext } from "./threadPlaceContext.js";
 
@@ -37,6 +41,13 @@ const PLACE_TEXT = {
   lost: () => t("The passage was not found in the new version"),
   earlier: () => t("Drawn on an earlier version"),
 };
+
+// The avatar of a comment's writer: an agent's by its kind, else its
+// author's (the Comments window's rows draw it too).
+export function CommentAvatar({ comment }) {
+  return comment.agent ? <AgentAvatar kind={comment.agent_kind} title={authorTitle(comment)} />
+    : <PersonAvatar name={comment.author || "?"} title={comment.author} />;
+}
 
 // A comment's text, rendered as a note is. One put off (`later`) is drawn
 // once it comes within a screen of the view (the popover's list, else the
@@ -69,15 +80,15 @@ function CommentText({ comment, later, labelsFor, onBlockRefClick }) {
 }
 
 // `resolve`, on a thread's first comment only: {open, onClick}, the
-// Resolve (or Reopen) button on its author line, beside the "⋯"; `chip` and
-// `place`, on the first comment too: the Send waiting on the thread
-// (comments.js sentChip) and what became of its place (a PLACE_TEXT key).
+// Resolve (or Reopen) button on its author line, beside the "⋯"; `place`,
+// on the first comment too: what became of its place (a PLACE_TEXT key).
 // `reply`: a comment after the first, stepped in under the first one's
 // text. `later`: the ids of the comments drawn as they near the view.
 // Without `actions` (a margin card at rest) the line has neither.
-// `editRefused`: why an edit of it that names the agent is not sent
-// ("closed", "not_newest"; "" when it would be), for its field to say.
-function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null, chip = null, place = "", reply = false, actions = true, editRefused = "" }) {
+// `onOpenChat`: on an agent's reply in a thread the reader sent it, its
+// Open in chat. `editRefused`: why an edit of it that names an agent is not
+// sent ("closed", "not_newest"; "" when it would be), for its field to say.
+function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null, place = "", reply = false, actions = true, onOpenChat = null, editRefused = "" }) {
   const [menu, setMenu] = useState(null);
   const [editing, setEditing] = useState(() => hasDraft(`edit:${comment.id}`)); // an edit left unsaved
   const mayEdit = canComment && canEditComment(comment, me);
@@ -86,24 +97,30 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
   const who = authorLabel(comment);
   const byline = authorTitle(comment);
   const placeText = PLACE_TEXT[place]?.();
-  // In the maker's own comments the agent's "@name" is the agent's chip:
-  // there the server sent it to the agent (the field's `links.agent`).
-  const agent = !comment.agent && !!me && comment.author === me ? field?.links?.agent || null : null;
+  // In the reader's own comments an agent's "@name" is that agent's chip:
+  // there the server sent the comment to it (the field's `links.agents`).
+  const agents = !comment.agent && !!me && comment.author === me ? field?.links?.agents || null : null;
   const named = useContext(MentionContext);
-  const mentions = useMemo(() => (agent ? { ...named, agents: [agent] } : null), [named, agent]);
+  const mentions = useMemo(() => (agents?.length ? { ...named, agents } : null), [named, agents]);
   const text = <CommentText comment={comment} later={later.has(comment.id)} labelsFor={labelsFor} onBlockRefClick={onBlockRefClick} />;
   return (
     <div className={`commentItem rowMenuHost${reply ? " reply" : ""}`} data-motion-key={comment.id} data-comment-id={comment.id}>
-      <PersonAvatar name={who || "?"} title={byline} />
+      <CommentAvatar comment={comment} />
       <div className="commentMain">
         <div className="commentMeta">
           <span className="commentAuthor" title={comment.agent ? byline : undefined}>{who || t("Someone")}</span>
+          {comment.agent ? <span className="commentFor" title={byline}>{agentFor(comment)}</span> : null}
           <span className="commentTime" title={fmtDate(comment.created_at, { dateStyle: "medium", timeStyle: "short" })}>
             {formatRelativeTime(comment.created_at)}
           </span>
           {isEdited(comment) ? <span className="commentEdited">{t("edited")}</span> : null}
-          {chip ? <StateTag state={chip} data-sent={chip.kind} /> : null}
           <span className="commentMetaSpacer" />
+          {onOpenChat && actions ? (
+            <button type="button" className="uiBtn sm ghost commentOpenChat" onClick={onOpenChat}
+              title={t("Open this thread's conversation in the chat: its steps and what it changed")}>
+              {t("Open in chat")}
+            </button>
+          ) : null}
           {resolve && actions ? (
             <button type="button" className="ctlBtn commentResolve" onClick={resolve.onClick}
               aria-label={resolve.open ? t("Resolve") : t("Reopen")}
@@ -123,7 +140,6 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
           <div className="commentDeleted">{t("Comment deleted")}</div>
         ) : mentions ? <MentionContext.Provider value={mentions}>{text}</MentionContext.Provider> : text}
         {placeText ? <div className="commentThreadState" data-place={place}>{placeText}</div> : null}
-        {chip?.kind !== "done" ? <StateDetail state={chip} /> : null}
       </div>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} aria-label={t("Comment actions")}>
@@ -155,8 +171,11 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
 export function Thread({ thread, focused = false, active, onActivate, canComment, me, people, onResolve, onReply, summary = false, ...rest }) {
   const open = isOpen(thread);
   const ref = useRef(null);
-  // The chip names the computer a Send waits for when another keeps the folder (the field's `links.agent`).
-  const chip = sentChip(thread, rest.field?.links?.agent);
+  const chip = turnChip(thread);
+  // The reader's conversation of the thread with an agent: its turn's Stop
+  // and Open in chat (App's, through the field's `links`).
+  const { onOpenChat, onStopTurn } = rest.field?.links || {};
+  const openChat = thread.agent_chat && onOpenChat ? () => onOpenChat(thread) : null;
   const place = useContext(ThreadPlaceContext)?.(thread) || "";
   useEffect(() => {
     if (focused) ref.current?.scrollIntoView({ block: "nearest" });
@@ -167,7 +186,7 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
   const collapsed = summary && !active && !draft;
   const comments = collapsed ? thread.comments.slice(0, 1) : thread.comments;
   const replies = thread.comments.length - 1;
-  // An edit naming the agent is a Send only of the open thread's newest comment (local_agents/mention.py).
+  // An edit naming an agent is sent only as the open thread's newest comment (local_agents/threads.py).
   const newest = thread.comments.findLast((c) => !c.deleted)?.id;
   const editRefused = (c) => (!open ? "closed" : c.id === newest ? "" : "not_newest");
   const activate = (e) => {
@@ -186,15 +205,33 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
         {comments.map((c, i) => (
           <Comment key={c.id} comment={c} me={me} canComment={canComment} people={people} {...rest} actions={!collapsed}
             reply={i > 0} resolve={i === 0 && canComment ? { open, onClick: () => onResolve(thread.id, open) } : null}
-            chip={i === 0 ? chip : null} place={i === 0 ? place : ""} editRefused={editRefused(c)} />
+            place={i === 0 ? place : ""} editRefused={editRefused(c)}
+            onOpenChat={c.agent_kind === "computer" && c.agent_id ? openChat : null} />
         ))}
       </ListMotion>
       {collapsed && replies > 0 ? (
         <div className="commentReplies">{tn("{n} reply", "{n} replies", replies)}</div>
       ) : null}
+      {chip ? (
+        <div className="commentTurn" data-turn={chip.kind}>
+          <StateTag state={chip} />
+          <span className="commentMetaSpacer" />
+          {chip.open && openChat ? (
+            <button type="button" className="uiBtn sm" onClick={openChat}>
+              <MessageSquareIcon size={14} />{t("Answer in the chat")}
+            </button>
+          ) : null}
+          {chip.stop && onStopTurn ? (
+            <button type="button" className="ctlBtn commentTurnStop" onClick={() => onStopTurn(thread)}
+              aria-label={t("Stop {agent}", { agent: thread.agent_chat.label })} title={t("Stop {agent}", { agent: thread.agent_chat.label })}>
+              <StopIcon size={14} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {replying ? (
-        <CommentComposer {...rest.field} autoFocus={active} people={people} me={me} draftKey={`reply:${thread.id}`} placeholder={t("Reply…")} submitLabel={t("Send reply")}
-          onSubmit={(body) => onReply(thread.id, body)} onEscape={rest.onEscape} />
+        <CommentComposer {...rest.field} thread={thread} autoFocus={active} people={people} me={me} draftKey={`reply:${thread.id}`} placeholder={t("Reply…")} submitLabel={t("Send reply")}
+          onSubmit={(body, to) => onReply(thread.id, body, to)} onEscape={rest.onEscape} />
       ) : null}
       {open ? null : (
         <div className="commentThreadState">

@@ -1,5 +1,5 @@
 // Sign in with Gamma Cloud (backend gamma/cloud_auth.py, docs/dev/cloud_accounts.md):
-// - CloudSignInSettings — Settings → Server → Sign-in (admins): the account
+// - CloudSignInSettings — Settings → Users → Sign-in (admins): the account
 //   server's address, the client this server is, and what happens to a cloud
 //   identity this server has not seen (refuse / claim / provision / invited;
 //   on a hosted container the plan sets it, `policy_source` "plan"), and
@@ -51,8 +51,8 @@ function takeConnectResult() {
 }
 
 // `action` receives the Save button (present while the draft is dirty) so
-// the Server pane can put it on its Sign-in section rule. The settings are
-// the Server pane's one read of /api/admin/settings (settingsReads.js); a
+// the Users pane can put it on its Sign-in section rule. The settings are
+// the Users pane's one read of /api/admin/settings (settingsReads.js); a
 // save also reads the account pane's /auth/cloud/status again, which they
 // decide and which the dialog, opening on that pane, read moments before.
 const NO_CLOUD_DRAFT = { issuer: "", client_id: "", secret: "", policy: "refuse", share_host: false };
@@ -73,7 +73,7 @@ export function CloudSignInSettings({ setStatus, action }) {
   }, []);
   const managed = saved?.source === "environment";
   const connect = () => {
-    try { sessionStorage.setItem(REOPEN_SETTINGS_KEY, "server"); } catch {}
+    try { sessionStorage.setItem(REOPEN_SETTINGS_KEY, "users"); } catch {}
     const here = window.location.pathname + window.location.search;
     window.location.assign(`${API}/auth/cloud/connect/start?next=${encodeURIComponent(here)}`);
   };
@@ -238,7 +238,7 @@ function JoinRequests({ invited, setStatus }) {
 // what goes at once and what after 30 days, and what deleting leaves.
 const DELETE_ACCOUNT_URL = "https://gammapdf.com/delete-account/";
 
-// `onSetUp` (admins) opens Settings → Server → Sign-in, where cloud sign-in
+// `onSetUp` (admins) opens Settings → Users → Sign-in, where cloud sign-in
 // that is off is turned on and a server that waits is connected.
 // Inside the apps (a native host) Open account is left out: the account's
 // pages lead to a plan's checkout, and a store's app may not send its
@@ -274,10 +274,10 @@ export function CloudIdentityRow({ setStatus, confirm, onSetUp }) {
   return <>
     <Row icon={CloudIcon} label={t("Gamma Cloud")}
       hint={id ? `${id.username}${id.email ? ` · ${id.email}` : ""}${id.plan ? ` · ${id.plan} plan` : ""}`
-        : waiting ? t("An admin connects this server to Gamma Cloud first, in Settings → Server → Sign-in")
+        : waiting ? t("An admin connects this server to Gamma Cloud first, in Settings → Users → Sign-in")
         : t("Publish pages for free and carry your settings to your other servers")}
       title={id ? t("Linked {linked_at}. Signing in with this cloud account opens this account.", { linked_at: id.linked_at ? id.linked_at.slice(0, 10) : "" })
-        : off ? t("Gamma Cloud sign-in is off on this server. An admin turns it on in Settings → Server → Sign-in.")
+        : off ? t("Gamma Cloud sign-in is off on this server. An admin turns it on in Settings → Users → Sign-in.")
         : t("Link your Gamma Cloud account: you are sent to the account server and back, then either login opens this account.")}>
       <span className="setRowControls">
         {id ? <span className="uiTag ok">{t("linked")}</span> : off && !onSetUp ? <span className="uiTag">{t("off")}</span> : null}
@@ -288,7 +288,7 @@ export function CloudIdentityRow({ setStatus, confirm, onSetUp }) {
           </a>) : null}
         {id ? <button className="uiBtn sm" onClick={unlink}>{t("Unlink")}</button>
           : !off && !waiting ? <button className="uiBtn sm primary" onClick={link}>{t("Link Gamma Cloud account")}</button>
-          : onSetUp ? <button className="uiBtn sm primary" onClick={onSetUp} title={t("Open Settings → Server → Sign-in")}>{t("Set up")}</button>
+          : onSetUp ? <button className="uiBtn sm primary" onClick={onSetUp} title={t("Open Settings → Users → Sign-in")}>{t("Set up")}</button>
           : null}
       </span>
     </Row>

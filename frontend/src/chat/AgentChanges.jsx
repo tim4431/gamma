@@ -19,16 +19,20 @@ import React, { useContext, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { BookIcon, BotIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FolderIcon, GlobeIcon, HistoryIcon, ImageIcon,
-  LabelIcon, ListIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TrashIcon,
-  UndoIcon, XIcon } from "../shared/ui/Icons";
+import { ActivityIcon, BookIcon, BotIcon, CheckIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FileTextIcon, FolderIcon,
+  GlobeIcon, HighlightIcon, HistoryIcon, ImageIcon, LabelIcon, ListIcon, MessageSquareIcon, PenIcon, PencilIcon, PlusIcon,
+  QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TerminalIcon, TrashIcon, UndoIcon, XIcon } from "../shared/ui/Icons";
+import { PathLink } from "../editor/PathLink.jsx";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
 import { canRedo, canRevert, revertKind, revertRefusal } from "./aiRevert.js";
 import { WordDiff } from "./ApprovalCard";
 
 // The icon of each action kind, in this list and on the tool chips under the
-// pill (ChatDock), each chip expanding to the raw call the server ran.
-export const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, error: XIcon };
+// pill (chat/ChatTranscript.jsx), each chip expanding to the raw call the
+// server ran; a computer agent's steps are chips of kinds of their own
+// (`file`, `fileEdit`, `run`, `work`: chat/computer/computerChat.js
+// stepChip).
+export const ACTION_ICONS = { file: FileTextIcon, fileEdit: PencilIcon, run: TerminalIcon, work: ActivityIcon, rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, comment: MessageSquareIcon, resolve: CheckIcon, highlight: HighlightIcon, write: MessageSquareIcon, error: XIcon };
 
 // Take one change back, or with `redo` put a reverted one back, as its row
 // and the dialog do: POST /api/ai/revert → `{page_id, noop, kept?}`. A
@@ -136,14 +140,66 @@ export function changeText(a, { page, block }) {
 
 // The card a reply's changes are listed in (`.chatChanges`, behind the
 // accent rule): its head, `tail` at the head's end, then a `.chatChange`
-// row each. The computer side lists a turn's changed files in it too
-// (chat/computer/ComputerChat.jsx).
+// row each. A computer agent's turn lists its changed files in it too
+// (FileChanges).
 export function ChangesCard({ head, tail = null, guide, className = "", children }) {
   return (
     <div className={`chatChanges${className ? ` ${className}` : ""}`} data-guide={guide}>
       <div className="chatChangesHead"><span>{head}</span>{tail}</div>
       {children}
     </div>
+  );
+}
+
+// What a computer agent's turn changed (chat/computer/computerChat.js
+// turnChanges: {shown, rest, more, n, built, vault}), under its reply: a
+// row a file, each its path as the link that opens it (PathLink, resolved
+// from the synced folder's top while it works in one, `vault`), the first
+// few and then "and N more" unfolding to the rest, and "The PDF was
+// rebuilt" last.
+export function FileChanges({ files }) {
+  const { shown, rest, more, n, built, vault } = files;
+  const file = (path) => <PathLink href={path}>{path}</PathLink>;
+  const row = (key, icon, body) => (
+    <div key={key} className="chatChange">{icon}<span className="chatChangeText">{body}</span></div>
+  );
+  const edited = <PencilIcon size={14} />;
+  const head = vault ? (n ? t("Changed in the synced folder · {n}", { n }) : t("Changed in the synced folder"))
+    : n ? t("Changed in its directory · {n}", { n }) : t("Changed in its directory");
+  return (
+    <ChangesCard className="chatFileChanges" head={head}>
+      {shown.length ? shown.map((path) => row(path, edited, file(path)))
+        : n ? row("n", edited, tn("Changed {n} file", "Changed {n} files", n)) : null}
+      {shown.length && more > 0 ? row("more", edited, rest.length ? (
+        <details className="chatChangeItems">
+          <summary>{t("and {n} more", { n: more })}</summary>
+          {rest.map((path) => <div key={path}>{file(path)}</div>)}
+        </details>
+      ) : t("and {n} more", { n: more })) : null}
+      {built ? row("built", <FileTextIcon size={14} />, t("The PDF was rebuilt")) : null}
+    </ChangesCard>
+  );
+}
+
+// The comment threads a computer agent opened in its turn
+// (chat/computer/computerChat.js shownMessages' `threads`: [{id, page_id,
+// block_id, text}]), under its reply: a row a thread, its first comment's
+// words the link that opens it there (GammaNavContext's openThread), as an
+// agent asks its question on the passage it is about.
+export function ThreadsOpened({ threads }) {
+  const nav = useContext(GammaNavContext);
+  return (
+    <ChangesCard className="chatThreadsOpened" head={t("Comment threads it opened · {n}", { n: threads.length })}>
+      {threads.map((th) => (
+        <div key={th.id} className="chatChange">
+          <MessageSquareIcon size={14} />
+          <span className="chatChangeText">
+            <button type="button" className="chatChangeLink" data-thread-link={th.id}
+              onClick={() => nav?.openThread?.(th.id, th.block_id, th.page_id)}>{th.text || t("A comment thread")}</button>
+          </span>
+        </div>
+      ))}
+    </ChangesCard>
   );
 }
 

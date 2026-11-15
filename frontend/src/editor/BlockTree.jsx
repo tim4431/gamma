@@ -13,7 +13,7 @@ import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import { rehypeNoteSanitize } from "./noteSanitize.js";
 import {
-  blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isInkGroup, isLinkBlock,
+  blockAgent, blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isInkGroup, isLinkBlock,
   isPlaceBlock, isPlainNote, isRegionBlock, placeKeyOf, POSITION_KEY, roughMatchPercent, textSpan,
 } from "../shared/model/blockModel";
 import { lockedRow } from "../vault/notesLock.js";
@@ -73,7 +73,8 @@ import { mentionMarkdown } from "./mentions.js";
 import { useMentionMenu } from "./useMentionMenu.js";
 import { MentionChip, MentionContext, MentionMenuPopup } from "./MentionMenu";
 import { remarkCallouts } from "./callouts";
-import { PeerChips, RenderedCarets } from "../collaboration/Presence";
+import { AgentAvatar, PeerChips, RenderedCarets } from "../collaboration/Presence";
+import { agentKind, stampLabel } from "../chat/agents.js";
 import { personColor } from "../collaboration/personColor.js";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, blockLinkUrl, copyText, withShare } from "../shared/lib/utils";
@@ -1141,6 +1142,8 @@ const BlockRow = React.memo(function BlockRow({
   const placeKey = placeKeyOf(block);
   const pos = blockPosition(block, placeKey), color = blockColor(block), quote = blockQuote(block);
   const lines = placeKey === POSITION_KEY.text ? textSpan(pos) : null;
+  // The agent that made a highlight, said under its passage (blockAgent).
+  const madeBy = isHighlight ? blockAgent(block) : null;
   // How alike its text and the replaced file's were, for one matched roughly.
   const roughPercent = isHighlight ? roughMatchPercent(pos) : null;
   // The highlight made last: its card is the one the guide's highlight tour
@@ -1992,6 +1995,12 @@ const BlockRow = React.memo(function BlockRow({
           {quote.trim() ? (
             <div className="blockQuote">
               {quote}
+            </div>
+          ) : null}
+          {madeBy ? (
+            <div className="blockMadeBy">
+              <AgentAvatar kind={agentKind(madeBy.id)} />
+              <span>{t("Highlighted by {agent}", { agent: stampLabel(madeBy) })}</span>
             </div>
           ) : null}
           {(pos?.area || isRegion) && captureArea ? (

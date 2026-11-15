@@ -45,7 +45,8 @@ forgets once the link is made. A synced vault of the desktop app
 a clone or a linked workspace only as one that pulls or pushes PDFs: a
 full clone (`create_mirror` with no `page_filter`) and a Zotero link refuse
 a workspace a vault pushes everything into (`folder_links.pushing_vault`:
-"let it push only PDFs, or only pull, first"), and the vault refuses to push
+"that workspace has a synced folder, kept on this computer or another:
+detach it first"), and the vault refuses to push
 everything into a clone or a linked workspace (`check_vault`). Publishing
 refuses a page a vault keeps. The vault's conflicts share `sync_conflicts`
 as kind `file_won` (`sync_engine.VAULT_KINDS`): the mirror's and Zotero's
@@ -1018,7 +1019,7 @@ mirror's own answer apart.
   mirror's `published_pages` (`sync_engine.published_pages`, the filter's
   pages and the pages inside them, less those left out), which
   `GET /api/mirrors` and the publish answers' `mirror` carry.
-  Settings → Appearance › Top bar › Sync pill (*Synced pages* / *Every
+  Settings → Toolbars › Top bar › Sync pill (*Synced pages* / *Every
   page* / *Hidden*) can put it on every page instead, or take it off the
   bar: the account menu's Sync status row then opens the same popover, on
   any page ([settings.md](settings.md#bars-order-and-modes)). Its tooltip and name line say

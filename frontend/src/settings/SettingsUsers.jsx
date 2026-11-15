@@ -22,14 +22,14 @@ import { ZoteroAccountRow } from "./SettingsZotero";
 import { EmailInviteButtons, ManageWorkspaceDialog, inviteExpiry, looksLikeEmail, useAccounts } from "./SettingsWorkspace";
 import { useSettingsRead } from "./settingsReads.js";
 import { formatRelativeTime } from "../library/libraryUtils";
-import { BookIcon, HardDriveIcon, MailIcon, PenIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
+import { BookIcon, HardDriveIcon, MailIcon, PenIcon, PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { TaskBlock } from "../tasks/TasksTray";
 import { useActiveJobs, useJobEnd } from "../tasks/useTasks";
 import { T, t } from "../shared/i18n/i18n.js";
 import { composing } from "../shared/lib/hotkeys.js";
 
-// `onServer` (admins) opens Settings → Server at the Gamma Cloud sign-in.
+// `onServer` (admins) opens Settings → Users at the Gamma Cloud sign-in.
 export function UsersSettings({ value, selfOnly = false, onServer }) {
   const { setStatus, confirm, onSelfRenamed, refreshQuota, isAdmin, me, isGuest, quotaInfo,
     workspaces: mine, switchWorkspace, refreshSession, tasks, closeSettings } = value;
@@ -414,11 +414,36 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
     );
   }
 
+  // Users: the accounts under one section, Add user and Invite by e-mail
+  // on its rule, as a list's actions are everywhere in Settings.
+  const listAll = isAdmin && !selfOnly;
+  const loading = isAdmin && !info && !error ? <Empty icon={UsersIcon} loading>{t("Loading…")}</Empty> : null;
+  const accountActions = listAll && info ? (
+    <span className="aiProvActions">
+      <button className="uiBtn sm" onClick={() => { setError(""); setEdit(null); setAddForm({ username: "", password: "", is_admin: false }); }}>
+        <PlusIcon size={14} />{t("Add user")}
+      </button>
+      {invites ? (
+        <button className="uiBtn sm" disabled={!invites.available}
+          title={invites.available ? t("Mail someone a link to join this server with a Gamma Cloud account") : invites.reason}
+          onClick={() => { setError(""); setEdit(null); setInviteForm({ email: "" }); }}>
+          <MailIcon size={14} />{t("Invite by e-mail…")}
+        </button>
+      ) : null}
+    </span>
+  ) : null;
   return (
     <>
-      {isAdmin && !selfOnly ? <PaneHead icon={UsersIcon} title={t("Users")} /> : <PaneHead icon={UserIcon} title={t("Account & sync")} />}
-      {isAdmin && !info && !error ? <Empty icon={UsersIcon} loading>{t("Loading…")}</Empty> : null}
-      {(selfOnly ? rows.filter((row) => row.username === me) : rows).map(userRow)}
+      {listAll ? <PaneHead icon={UsersIcon} title={t("Users")} /> : <PaneHead icon={UserIcon} title={t("Account & sync")} />}
+      {listAll ? (
+        <Section title={t("Accounts")} action={accountActions}>
+          {loading}
+          {rows.map(userRow)}
+        </Section>
+      ) : <>
+        {loading}
+        {rows.filter((row) => row.username === me).map(userRow)}
+      </>}
       {!isGuest && (selfOnly || !isAdmin) ? <CloudIdentityRow setStatus={setStatus} confirm={confirm} onSetUp={onServer} /> : null}
       {!isGuest && (selfOnly || !isAdmin) ? <ZoteroAccountRow setStatus={setStatus} confirm={confirm} /> : null}
       {edit?.kind === "account" ? accountDialog() : null}
@@ -431,7 +456,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
           onClose={() => { setManage(null); refreshWorkspaces(); refreshSession?.(); }}
         />
       ) : null}
-      {!isAdmin || selfOnly ? null : addForm ? (
+      {listAll && addForm ? (
         <SubDialog title={t("Add user")} draft={addForm} onClose={() => { setAddForm(null); setError(""); }}>
           <div className="settingsForm">
           <Field label={t("Username")} hint={t("Letters, digits, _ . -")}>
@@ -465,19 +490,6 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
           </div>
           </div>
         </SubDialog>
-      ) : info ? (
-        <div className="reportModalBtns settingsAlignStart">
-          <button className="uiBtn" onClick={() => { setError(""); setEdit(null); setAddForm({ username: "", password: "", is_admin: false }); }}>
-            {t("+ Add user")}
-          </button>
-          {invites ? (
-            <button className="uiBtn" disabled={!invites.available}
-              title={invites.available ? t("Mail someone a link to join this server with a Gamma Cloud account") : invites.reason}
-              onClick={() => { setError(""); setEdit(null); setInviteForm({ email: "" }); }}>
-              {t("Invite by e-mail…")}
-            </button>
-          ) : null}
-        </div>
       ) : null}
       {inviteForm ? (
         <SubDialog title={t("Invite by e-mail")} draft={inviteForm} onClose={closeInvite}>

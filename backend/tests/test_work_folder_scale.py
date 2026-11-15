@@ -5,7 +5,7 @@ the library lists), a directory of 10,000 files reads its first page of
 rows at once, the directories' counts come from one indexed read, the op
 rule's read of a folder tree of 2,000 directories stays small, the
 feedback document of 50 open threads among the files reads at once
-(docs/dev/feedback.md), quick open's search of the files by name or path
+(docs/dev/annotations.md), quick open's search of the files by name or path
 (GET /api/files) answers within a keystroke, a path resolves to its page
 at once, the summaries of a tab bar's pages read at once, and migration
 step 55's rebuild of the kind column over the files is timed once. The
@@ -34,7 +34,7 @@ from conftest import account_of, login, make_folder, make_page, make_user, mark_
 from gamma import comments, folder_links, migrations, pdf_meta, storage
 from gamma.blocks_store import BLOCK_COLUMNS, FOLDERS, touch_page
 from gamma.db import BLOCK_HOT_INDEXES, PAGES_SCHEMA, connect_pages_db, connect_vaults_db, page_now
-from gamma.feedback import entries
+from gamma.annotations import entries
 from gamma.routers import blocks as blocks_router
 from gamma.vault import disk as vault_disk, store as vault_store, sync as vault_sync
 from gamma.vault.local_remote import LocalRemote

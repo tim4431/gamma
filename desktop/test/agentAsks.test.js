@@ -55,9 +55,14 @@ test('a command\'s card: what it runs, where, from whom, the agent\'s reason mar
   assert.equal(card.says, 'Codex says: “Fetch the bibliography the paper cites.”');
   assert.deepEqual(card.notes, ['It runs as you, with your files and the network. A build also runs what this folder\'s files say, and NAS can change them.',
     `Declined by itself at ${time(at(12))} unless you answer.`]);
-  assert.equal(card.stop, 'Stop Codex asking from NAS');
+  assert.equal(card.stop, 'Stop Codex asking');
   assert.deepEqual(card.from, { name: 'NAS', origin: 'https://nas.lab:5001', account: 'alice' });
   assert.equal(card.folder, 'cavity');
+
+  // a co-author's turn of the host's own server: whose chat, on this computer, no account of another server
+  const theirs = agentAsks.cardOf([askOf('b', { for: 'bob', server: { origin: '', account: '' } })], servers);
+  assert.deepEqual(theirs.rows.slice(2), [['From', "bob's chat of main.pdf on this computer", false]]);
+  assert.equal(theirs.notes[0], "It runs as you, with your files and the network. A build also runs what this folder's files say, and its workspace's editors can change them.");
 });
 
 test('the inner command of a shell wrapper is shown large, the wrapper under it; lines are counted', () => {
@@ -90,7 +95,7 @@ test('a file change\'s card: its paths and its diff, no network, its own risk; b
   assert.deepEqual(card.rows[0], ['Files', 'D:\\Papers\\refs.bib\nD:\\Shared\\style.sty', true]);
   assert.equal(card.diff, '--- a\n+++ b\n-x\n+y');
   assert.deepEqual([card.box, card.through, card.says, card.count], ['', '', '', '1 of 2 waiting']);
-  assert.equal(card.notes[0], 'It changes files outside the work folder.');
+  assert.equal(card.notes[0], 'It changes files outside the synced folder.');
   const bg = agentAsks.cardOf([askOf('b', { background: true, label: 'Claude Code', agent: 'claude' })], servers, 'b');
   assert.ok(bg.notes.includes('Asked to run in the background: Gamma runs it in the foreground, so Stop ends it.'));
   assert.ok(bg.notes.includes('The question before this one went away: this is another one.'));
@@ -101,7 +106,7 @@ test('a file change\'s card: its paths and its diff, no network, its own risk; b
 test('a server the registry does not hold is named by its host; the account is cut to 64, its own row', () => {
   const card = agentAsks.cardOf([askOf('a', { file: '', server: { origin: 'https://far.example:8443', account: 'x'.repeat(90) } })], servers);
   assert.deepEqual(card.rows.slice(-2), [['From', 'the chat on https://far.example:8443', false], ['As', 'x'.repeat(64), false]]);
-  assert.equal(card.stop, 'Stop Codex asking from far.example:8443');
+  assert.equal(card.stop, 'Stop Codex asking');
   assert.match(card.notes[0], /and far\.example:8443 can change them\.$/);
 });
 
@@ -109,7 +114,7 @@ test('what the bar, the notification and the tray say', () => {
   const card = agentAsks.cardOf([askOf('a'), askOf('b', { at: at(4) })], servers);
   assert.equal(agentAsks.notice(card, 'once'), 'Allowed once: Codex goes on.');
   assert.equal(agentAsks.notice(card, 'deny'), 'Declined: Codex goes on without it.');
-  assert.equal(agentAsks.notice(card, 'stop'), 'Declined, and Codex no longer asks on this computer for NAS.');
+  assert.equal(agentAsks.notice(card, 'stop'), 'Declined, and Codex no longer asks to run more, here or in the chat.');
   assert.equal(agentAsks.stale(card), 'Codex no longer waits for that: nothing was allowed.');
   assert.equal(agentAsks.unsure(card), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
   assert.equal(agentAsks.couldNot(card, 'That server is not running'),

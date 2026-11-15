@@ -1020,7 +1020,7 @@ stays in the JWKS for a week so tokens it signed still verify.
 public address gets its confidential client without anyone copying an id
 and secret by hand:
 
-1. The server's admin presses *Connect* in Gamma's Settings → Server →
+1. The server's admin presses *Connect* in Gamma's Settings → Users →
    Sign-in. The browser comes to
    `/connect-server?server=<origin>&state=…&code_challenge=…` (both
    addresses are in the discovery document as
@@ -1337,7 +1337,7 @@ the tests in the `test` job of `cloud.yml` on a PR to `main` that touches
 `backend/gamma/cloud_auth.py` (the client, the identity seam and access
 tokens), `backend/gamma/cloud_sync.py` (the grant check, the preference
 profile, the server list), `backend/gamma/routers/cloud_auth.py` (the
-endpoints), `frontend/src/settings/SettingsCloudSignIn.jsx` (the Server
+endpoints), `frontend/src/settings/SettingsCloudSignIn.jsx` (the Users
 pane's Sign-in section and the Account pane's row), the login page's
 button. Tests: `backend/tests/test_cloud_auth.py` (a fake account server
 signing real Ed25519 tokens, rotating refresh tokens and answering the
@@ -1371,7 +1371,7 @@ unlink (`/api/auth/cloud/unlink`, `manage.py unlink-identity`) or an
 account deletion (Settings → Users, `manage.py delete-user`) drops. So a
 row on the Devices page always stands for a key this server holds.
 
-**Configuration.** Settings → Server → Sign-in, stored in the `settings`
+**Configuration.** Settings → Users → Sign-in, stored in the `settings`
 KV: the account server's address (`cloud_issuer`; empty = off), the client
 (`cloud_client_id`, default the public desktop client `gamma-desktop`;
 `cloud_client_secret` encrypted, write-only) and the policy. A provisioned
@@ -1403,7 +1403,7 @@ of its own:
   through Gamma Cloud's broker ("Connecting Zotero" above), which sends
   the browser back only to a server it knows; a pasted Zotero key still
   works ([zotero_sync.md](zotero_sync.md#accounts-and-access));
-- the Server pane's *Server client* row offers *Connect*: the round trip
+- the Users pane's *Server client* row offers *Connect*: the round trip
   under "Connecting a server" above, through
   `GET /api/auth/cloud/connect/start?next=` and `…/connect/callback`
   (admins only).
@@ -1411,7 +1411,7 @@ of its own:
 The callback trades the code and saves the client id and secret as if
 typed into the row. It returns to `next` with `?cloud_connect=ok` or
 `?cloud_connect_error=`, which the pane shows once; the Settings dialog
-reopens on the Server pane (`REOPEN_SETTINGS_KEY`). Switching a server
+reopens on the Users pane (`REOPEN_SETTINGS_KEY`). Switching a server
 that already had people signed in to a new client id ends their grants:
 they link again.
 
@@ -1896,7 +1896,7 @@ username and e-mail address. Two places decide:
   (`POST …/invites {subject, role: "view"}`), which answers the request,
   admits the person at their next sign-in and opens the page for them;
   Decline (`DELETE …/requests/{subject}`) marks it declined.
-- **An admin** sees every request in Settings → Server → Sign-in
+- **An admin** sees every request in Settings → Users → Sign-in
   (`GET /api/admin/join-requests`): Approve (`approved`: the next sign-in
   gets them an account and what is shared with every signed-in account —
   a page shared with invited people only stays its sharer's to open),
@@ -1913,7 +1913,7 @@ the gate says to sign in again.
 
 **The share host.** One Gamma in cloud mode holds every free account's
 published pages (the plan's step 5). It runs cloud sign-in under the
-`provision` policy with the `cloud_share_host` switch on: Settings → Server
+`provision` policy with the `cloud_share_host` switch on: Settings → Users
 → Sign-in, *Accept published pages*, or `GAMMA_CLOUD_SHARE_HOST=1` on a
 provisioned one; the switch counts only while cloud sign-in is on. The
 account server hands its address to every Gamma server
@@ -2122,7 +2122,7 @@ nothing. Two first-run behaviours of the image are off there:
   (`config.guest_max`, [guests.md](guests.md)), since a guest would not
   count against the plan's accounts. The account server also starts every
   container with `GAMMA_GUEST_MAX=0`, which covers an image older than
-  that rule. Settings → Server shows no Guests section there.
+  that rule. Settings → Users shows no Guests section there.
 
 **The sync.** At startup and then every hour (the app's `every()` loop,
 `hosted.tick`) the container posts its report to

@@ -171,7 +171,7 @@ time with the warning; one of this network asks once per origin
 as agreed), its Cancel quiet. The launcher's edit form offers *Ask again
 before connecting over http://* for an agreed origin. A host from before
 the route (404) asks nothing. The vaults' `plain` (the list's DNS-free
-word) feeds the agent question's warning and a dotted name's tooltip line.
+word) feeds a dotted name's tooltip line.
 
 **A certificate trusted by its fingerprint.** `setCertificateVerifyProc` on
 the window's session answers each connection with `certs.decide`: Chromium's
@@ -265,7 +265,7 @@ word that lets a path through, and the ways in:
 |---|---|---|
 | a library folder's right-click *Sync with this computer…* (`frontend/src/app/App.jsx`) | a directory | `addFolderVault(ws, folder)` |
 | the sync panel's *Sync a folder of <workspace> with this computer…* (below, "The sync panel") | a folder, then a directory | `addFolderVault(ws, folder)` |
-| *Add a synced vault…* in the launcher's buttons and at the panel's end | a directory | `addDirectoryVault()` |
+| *Add a synced folder…* in the launcher's buttons and at the panel's end | a directory | `addDirectoryVault()` |
 | *Open with Gamma* on a folder in the file manager ("Opening files and folders") | the folder, or a Markdown file's project | `newWorkFolder(dir, tick)` |
 | a page's Document menu, *Push from a file on this computer…* | a PDF | `addFileVault(ws, page)` |
 
@@ -283,10 +283,57 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 | `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening files and folders") |
 | `continue-in-terminal {ws, page}` (the chat's computer side, *Continue in a terminal*) | `shell:terminal-from-page` | `terminalFromPage` |
 | `tracked {link, cancelled}` (the host's tracking dialog of a work folder of another server, saved or cancelled) | `shell:tracked-from-page` | `trackedFromPage` |
+| `set-agent {ws, agent, enabled}` (Settings → AI: an agent of this computer turned on or off) | `shell:set-agent-from-page` | `setAgentFromPage` → `setAgent` |
+| `set-agent-runs {ws, agent, ask}` (Settings → AI: what it may run, `ask` or not) | `shell:agent-runs-from-page` | `agentRunsFromPage` → `setAgentRuns` |
+| `agent-dirs {ws, dir}` (Settings → AI: a directory offered to the agents, `dir` "new" or the one moved) | `shell:agent-dirs-from-page` | `agentDirsFromPage` → `agentDirs` |
+| `agent-person {ws, agent, place, person}` (Settings → AI: a person who may use an agent, `place` the workspace's id, `person` the account's) | `shell:agent-person-from-page` | `agentPersonFromPage` → `agentPerson` |
+
+**The agents of this computer** are set from Settings → AI on a page of a
+server on this computer (a remote's page is refused with why), and the
+page names no path and no answer: the shell asks its own question and acts
+with its own session on that server, whose account then owns an agent it
+turns on ([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Who
+turns it on", "The desktop app"). `setAgent(serverId, name, on)` reads
+`GET /api/local-agents` first (an agent on already, or off, is left as it
+is); turning one on asks (`keeping.agentAsk`: *Turn on Codex on this
+computer?*, what it does in the synced folders this computer keeps, and
+that on a server this computer is shown on whoever can sign in there as
+the person, and whoever runs it, can send work to it, buttons *Turn on
+Codex* and *Cancel*), then `PATCH /api/local-agents/<name> {enabled: true}`
+with the shell's word while the bar reads *Checking Codex…* (the server
+asks the agent afresh and refuses one not ready with why), and a notice
+says what came of it (`keeping.agentSaid`: "Codex is on: it answers the
+Sends you make in your synced folders; 2 waiting were handed to it.").
+Turning it off asks nothing and carries no word. `setAgentRuns(serverId,
+name, runs)` refuses an agent that is off ("Turn Codex on first."); `ask`
+asks first, a warning whose default is Cancel (`keeping.runsAsk`: *Let
+Codex ask to run more?*, what it may then ask for in the chat of a synced
+folder, that a turn started on another server this computer is shown on
+asks only here, in Gamma's window, its words written by whoever signs in
+there as the person and whoever runs it, and that an allowed command runs
+as the person, with their files and the network), then `PATCH {runs:
+"ask"}` with the shell's word; `never` asks nothing (`keeping.runsSaid`).
+`agentDirs(serverId, dirId)` picks a directory with the native dialog
+(`pickDirectory`) and puts the whole list (`PUT /api/local-agents/dirs`)
+with the shell's word, the picked one added (`dirId` "new") or in place of
+the one `dirId` names (`keeping.dirSaid`). `agentPerson(serverId, name,
+placeId, account)` lets a co-author use an agent the window's account owns
+([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "A co-author's
+turn"): it reads whom the owner may name itself (`GET
+/api/local-agents/people`), so the question names the person and the
+workspace as the server says them, never as the page does; it asks, Cancel
+the default (`keeping.personAsk`: *Let bob use Codex on this computer?*,
+what they can then do, and one sentence of consent: their turns run on the
+owner's sign-in, the vendor's terms for personal plans forbid making the
+account available to anyone else, and the owner answers for the account's
+terms), then `POST /api/local-agents/<name>/people` with the shell's word
+(`keeping.personSaid`). Taking a person off is the page's, with its
+session. A page ask carries further ids after its flag (`PAGE_ASKS`' rest,
+each checked as the first one is).
 
 *Continue in a terminal* takes no command from the page: `terminalFromPage`
 asks the open server, which must be one on this computer (a remote's page
-is refused with a notice), `GET /api/local-agents/chat/terminal?page=<id>`
+is refused with a notice), `GET /api/local-agents/chat/terminal?bucket=<id>`
 through the shell's own `localServer(...).api` with the workspace header,
 checks the answer (an absolute `cwd` that is a directory here, an argv of
 non-empty strings, no control character, nothing a terminal would read as
@@ -351,7 +398,7 @@ the host runs).
 
 **A directory's vault** (`addDirectoryVault`, `workFolderOf`): the
 directory becomes a work folder (below) in a new folder named after it
-(`new_folder`). It comes three ways: the picker of *Add a synced vault…*,
+(`new_folder`). It comes three ways: the picker of *Add a synced folder…*,
 a directory already chosen (`oneByOne`'s *Sync the folder…*), and a folder
 opened with Gamma from the file manager, or a Markdown file's project
 (`newWorkFolder`, "Opening files and folders"), which may name a file to
@@ -372,7 +419,7 @@ rather than a project, so before a vault takes one the shell asks: *Make
 all of Downloads a work folder?*, detail *<dir> is your Downloads folder.
 Gamma would write a hidden .gamma folder there, read the folder while it
 runs, and ask which of its files to track. For one project, open that
-project's folder instead.*, buttons *Make it a work folder* and *Cancel*
+project's folder instead.*, buttons *Make it a synced folder* and *Cancel*
 (the default, and the test harness's answer). A folder's *Sync with this
 computer…* and *Locate…*, which need not make a work folder, ask *Sync all
 of Downloads with Gamma?* instead, with *Use it* and *Cancel* (`broadOk(dir,
@@ -456,10 +503,11 @@ the panel on it again (`takeState`).
 **The shell's word.** The routes that take a path on this computer answer
 only a request that carries `X-Gamma-Shell` with the secret the sidecar
 was started with: `POST /api/folder-links`, `/preview`, `/<id>/relink`,
-`/open` and `/opened/<id>/locate`, and so does `PATCH /api/folder-links/<id>`
-that turns a work folder's agent on (the agent edits the directory:
+`/open` and `/opened/<id>/locate`, and so do `PATCH /api/local-agents/<agent>`
+turning an agent on or letting it ask and `PUT /api/local-agents/dirs`
+naming a directory (an agent edits directories:
 [docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Who turns it
-on"). The shell makes the secret at each start
+on"; the servers' check is `gamma/routers/shell.py`). The shell makes the secret at each start
 (`SHELL_SECRET`, 32 random bytes) and hands it to every local server as
 `GAMMA_SHELL_SECRET` (`lib/sidecar.js`), so a page of Gamma, which shares
 its server's origin and session, cannot name a path itself. `shellWord(origin)`
@@ -496,22 +544,19 @@ computer hidden there when no other vault of that server and workspace
 stays (`releaseRemote`); a cancel the host refused (that server not
 reached) leaves the link choosing and the token kept, and the bar says
 so. Removing one whose server the removal's question could not reach
-asks only whether to remove it anyway (`force=1`). *Choose files…* on such a folder opens the
+asks only whether to detach it anyway (`force=1`). *Choose files…* on such a folder opens the
 host's window the same way. Its push stays everything and its pull on
-(`REMOTE_WORK_RULE`), its agent row stays local-only (`item.agentHere`),
-and removing it while that server cannot be reached asks first (*Remove
-anyway* forgets it with `force=1`, the folder staying a work folder there
-until the workspace's owner lets go of it). Once this computer is shown
-there (`item.agentHere`), its agent row is offered as a local work
-folder's ([local_agents.md](../../docs/dev/local_agents.md) "A work folder
-of another server"): turning it on asks with the local sentence, then
-*Whoever can sign in to NAS as tim, and whoever runs NAS, can send work
-to Codex here. Codex reads your files and its answers are stored on
-NAS.*, and, for a server reached over plain `http:` that is not this
-computer (the link's `plain`, as the host lists it), *NAS is reached without encryption:
-someone on your network could read what is sent and pose as NAS.*; no
-waiting count is asked (those Sends wait on the NAS); *What it may run*
-stays hidden (`FAR_RUNS_RULE`). The vaults of a remote workspace
+(`REMOTE_WORK_RULE`), and removing it while that server cannot be reached
+asks first (*Detach anyway* forgets it with `force=1`, the folder staying a
+synced folder there until it is detached there). One that server detached
+(its Detach woke this computer's channel: the list's `let_go`) is forgotten
+at the shell's next reading as *Detach…* forgets it (`forgetDetached`:
+`DELETE …`, its token revoked there, this computer hidden there with the
+last vault), the directory as it is but for `.gamma/`, and the bar says so.
+Once this computer is shown there, the computer's agents work in it as in
+a local work folder ([local_agents.md](../../docs/dev/local_agents.md) "A
+work folder of another server"); the question before an agent is turned on
+says what such a server can then do. The vaults of a remote workspace
 are the host's links with that origin and workspace (`listLinks`; the
 chooser lists only the folders'). `settings.folderHost` remembers the host
 so it starts at launch like the clones' hosts (`startBackgroundHosts`), and
@@ -591,9 +636,10 @@ synced yet*, *Starting…*, *Waiting*, *Changes queued* and the like, with a
 matching icon and colour (*Agent working* when the only thing at work is a
 work folder's agent: a vault's own problem still ranks above it and keeps
 its row, the run said in the row's tooltip), and shows once a server is open, anything is
-kept or the vault dialog is up; its tooltip counts them ("1 clone and 2
-synced vaults on this computer: synced"). Its **panel** lists three
-groups, *Clones*, *Zotero links* and *Synced vaults*, each row with its
+kept or the vault dialog is up; its tooltip counts them, a folder's vault
+as a synced folder and a file's as a synced vault ("1 clone, 2 synced
+folders and 1 synced vault on this computer: synced"). Its **panel** lists three
+groups, *Clones*, *Zotero links* and *Synced folders and files*, each row with its
 name over its state, a state dot, and its action buttons, always shown
 (each named by its tooltip). A vault's row adds its direction after its
 name as the two arrows its view's *Pull now* and *Push now* carry: the
@@ -601,7 +647,7 @@ pull arrow lit while it pulls, the push arrow lit while it pushes
 everything and half-lit while it pushes PDFs only, dim while off (a vault
 of one file shows the push arrow alone). Its `path ⇄ remote · folder`,
 `D:\Papers ⇄ NAS · Research / Papers`, is in the row's tooltip. Under
-the groups come *Add a synced vault…* and, while a
+the groups come *Add a synced folder…* and, while a
 workspace is open, *Sync a folder of <workspace>…*. That opens the
 panel's second level, the chooser: *Whole library* and every folder of the open workspace
 (`shell:folders` → `listFolders`: the open server's `GET /api/sync/folders`
@@ -638,29 +684,18 @@ other asks for a directory (`shell:add-folder-vault` → `addFolderVault`).
   the switches are. A row carries none of its own: a push switch there
   could drop a vault that pushes everything to off in one click.
 
-**A vault's own view** has a back row (*Synced vaults*), *Local*, *Remote*
+**A vault's own view** has a back row (*Synced folders and files*), *Local*, *Remote*
 and *State* (the state's tooltip on it), and for a folder's vault the two
 switches as the dialog has them: a remote's folder keeps *Pull* on and
 *everything* shut (`keeping.REMOTE_RULE`, which `setPull` and `setPush`
 refuse too). A work folder adds the switch *Add its PDFs and notes to the
 library* (`setLibrary`, `PATCH {library}`): whether the files it finds from
 now on are library documents too; the files it holds keep theirs. On a
-server that runs agents, the vault's maker (`item.mine`) also gets the
-agent row ([docs/dev/local_agents.md](../../docs/dev/local_agents.md)),
-pushed with the switches so the lock of a vault whose workspace the
-account left shuts it too: *Agent in this folder*, a segmented *Off* | *Codex* | *Claude Code*
-(`agentSeg`, `item.agents` from `keeping.agentChoices`), an agent not on
-this computer or not ready shut with its problem in its tooltip; under it,
-as visible lines, the problem of the chosen agent (amber, `.say.warn`), one
-line of what the choice does (*Sends wait for an
-agent you run yourself.*; *Codex answers this folder's Sends: it edits the
-files here and runs commands in its sandbox, without network.*; *Claude
-Code answers this folder's Sends: it edits the files here and runs no
-commands.*), and while a run works *Codex is working: Editing main.tex*
-(Gamma's `agentWorking` words; *Codex is working…* for a step of no name). Opening a work folder's view as its maker looks for the agents
-again (`check-agents`, `checkAgents`: `GET /api/local-agents?fresh=1`,
-then a reading). Its
-everyday actions follow as a bar of round buttons
+server that runs agents, the vault's maker (`item.mine`) reads under the
+switches where the agents are set: *Codex and Claude Code work in this
+folder once they are turned on in Gamma's Settings → AI.* (`AGENTS_SET`):
+the agents are the computer's, set from Gamma's page ("A page's asks"
+above). Its everyday actions follow as a bar of round buttons
 (`.vaultBar`: *Sync now*, *Pull now*, *Push now*, *Pause* or *Resume*, and
 the directory), each named by its tooltip; the rare and the grave ones
 keep their rows, where their words warn. Each goes through
@@ -677,74 +712,29 @@ keep their rows, where their words warn. Each goes through
 | *Locate…* (*Locate the file…*) | a stopped vault or one whose directory is not there; a file's vault always | the picker, then `POST …/relink {path}` with the shell's word; the directory's marker must be the vault's |
 | *Open the directory*, *Show in folder* | always | `openDirectory`, `revealFile` |
 | *Force pull…*, *Force push…* | a folder's vault | the page count from `GET …/removal`, a warning (`keeping.forceAsk`), then `…?force=pull` or `force=push` |
-| *Remove the vault…* | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?files=keep` or `files=trash` |
+| *Remove the synced folder…* (*Detach…* for a work folder, *Remove the vault…* for a file's) | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?pages=keep` or, a work folder's files removed from Gamma, `pages=remove` |
 | the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
-| the agent row | a work folder of its maker, on a server that runs agents | `setAgent`: turning one on asks first, then `PATCH {agent}` with the shell's word; off is `PATCH {agent: ""}` |
-| *What it may run* | under the agent row, while an agent is on | `setAgentRuns`: *Ask me in the chat* (a work folder of this server) or *Ask on this computer* (one of another server, shut over plain http) asks first (`keeping.runsAsk`, `keeping.runsComputerAsk`), then `PATCH {agent_runs: "ask" \| "computer"}` with the shell's word; *Nothing more* is `PATCH {agent_runs: "never"}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
-now*, the switches and the agent row) leave the panel open on the new
+now* and the switches) leave the panel open on the new
 state (`STAYS_OPEN`, the same list in `main.js` and `bar.html`); the
 others close it, since they ask first or open something.
 
-**Turning an agent on** (`setAgent`) is the computer's decision. The shell
-first asks the server how many Sends of the folder would be handed to the
-agent (`GET /api/local-agents/waiting?link=<id>`, counted by the rule the
-server hands them over by; left out when it does not answer) and asks
-(`keeping.agentAsk`): *Let Codex work in
-D:\Papers\thesis?*, with "Codex will answer the Sends you make on this
-folder: it edits files in this directory and runs commands in its sandbox,
-without network. 2 waiting Sends will be handed to it." (Claude Code: "…
-it edits files in this directory and runs no commands."), buttons *Turn on
-Codex* and *Cancel*. Then `PATCH /api/folder-links/<id> {agent}` with the
-shell's word, which `vaultOn`'s headers alone do not carry, while the bar
-reads *Checking Codex…* (the server asks the agent afresh and refuses one
-not ready with why), and a notice says what came of it
-(`keeping.agentSaid`: "Codex now answers the Sends on thesis; 2 waiting
-were handed to it."). Turning it off asks nothing.
-
-**Letting it ask** (`setAgentRuns`, the row *What it may run* under the
-agent's) is the computer's decision too: *Let Codex ask to run more in
-D:\Papers\thesis?*, what it may then ask for in the chat (Codex: a command
-with the network or a change outside the folder; Claude Code: a command
-such as the build), that nothing runs until allowed there, and that an
-allowed command runs as the person, with their files and the network; then
-`PATCH {agent_runs: "ask"}` with the shell's word and a notice
-(`keeping.runsSaid`). *Nothing more* asks nothing
-([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Asking in the
-chat").
-
-A work folder of another server never asks in the chat
-(`keeping.FAR_RUNS_RULE`): its row offers *Nothing more* | *Ask on this
-computer*, under it "Codex keeps to its sandbox. With Ask on this computer
-it can ask to go further (the network, files outside this folder) in a
-turn started on NAS; the question shows in this window, never on NAS."
-(Claude Code: "… it can ask to run one (your build) …"). *Ask on this
-computer* is shut, its title "Needs https: NAS is reached over plain
-http.", while the item is not `secure` (the host's `plain` for the link is
-not "", never decided by the shell); set and then reached over plain http,
-an error line says whatever is asked is declined until it is reached over
-https. Setting it is refused for a local work folder
-(`keeping.NEAR_COMPUTER_RULE`) and over plain http (`keeping.plainRule`),
-then asked (`keeping.runsComputerAsk`, a warning whose default is Cancel:
-the question shows only in this window, nothing runs until allowed there,
-and whoever signs in to that server as the account this computer is shown
-to, and whoever runs it, writes what the agent is asked to do), then
-`PATCH {agent_runs: "computer"}` with the shell's word. Its answer's
-`older` (that server's whoami lacks `computer_asks`) adds
-`keeping.olderServer` to the notice: that server's page will not say a
-turn waits, the question still shows here. The question itself is the
-bar's ("An agent's ask on this computer", under "Window").
-
-*Remove the vault…* offers *Remove, keep the files* and
-*Remove, move them to the trash* (the files the sync wrote go to
-`.gamma/trash`; files the user added or changed stay). A vault of one file,
-a vault whose directory is not there and a stopped one (its marker gone or
-another's) offer only *Remove the vault*, which touches nothing on disk.
-The pages stay in every case but a work folder's files that are not in the
-library, which go to Recently deleted; the question says both numbers
-(`removal`'s `files` and `in_library`). A remote's vault then has its token
-revoked (`releaseRemote`).
+*Remove the vault…* never touches the directory but for Gamma's own
+`.gamma/` (its marker, its annotation files, then the folder when that leaves
+it empty), and a vault whose directory is not there or a stopped one (its
+marker gone or another's) not even that. A kept folder's vault offers
+*Remove the synced folder*, a vault of one file *Remove the vault*: their
+pages stay as they are. A work
+folder's, *Detach…* in the panel, asks the web app's Detach in its words
+(`keeping.removalAsk` is `frontend/src/explorer/detach.js` in English, with
+this computer's name): how many files sync with it and how many are in the
+library, then *Keep the files in Gamma* (each an ordinary page, its bytes
+stored first: `removal`'s `bytes`; a file too large to keep stays listed)
+or *Remove them from Gamma* (those not in the library to Recently deleted,
+of the other server for a work folder there), and that the directory on
+this computer stays as it is. A remote's vault then has its token revoked
+(`releaseRemote`).
 
 A folder's vault reads, worst first: *Choosing files* for a work folder
 whose files are not chosen yet (drawn as pending; its row has *Choose
@@ -983,13 +973,18 @@ server's page may use").
 ### An agent's ask on this computer
 
 A turn of a chat on another server's page, which the host runs for a work
-folder whose *What it may run* is *Ask on this computer*
-([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "Asking on this
-computer"), may ask to run a command or to change files outside its
+folder of that server while its agent may ask (`runs` `ask`, set from
+Settings → AI: [docs/dev/local_agents.md](../../docs/dev/local_agents.md)
+"Asking on this computer"), may ask to run a command or to change files outside its
 sandbox. The question is the host's and is drawn here alone, in the bar,
 in the shell's words; nothing the other server sends draws, words or
 answers it, and it shows no answerable card ("Waiting for your answer on
-TIM-PC" is all its page says).
+TIM-PC" is all its page says). A co-author's turn on the host's own server
+([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "A co-author's
+turn") asks here too, its card naming whose chat it is ("From bob's chat
+of main.pdf on this computer"), while the co-author answers it in their
+chat as well; the follower runs while an agent that may ask serves such a
+person.
 
 ```
 ┌──────────────────────────── the whole window (content view hidden) ───────────────────────────┐
@@ -1000,20 +995,21 @@ TIM-PC" is all its page says).
 │   │ In D:\Papers\cavity · Network example.org · From the chat of main.tex on NAS (https://…) │     │
 │   │ As alice · Codex says: “Rebuild the PDF after the edit.” · the risk · Declined at 14:32  │     │
 │   ├──────────────────────────────────────────────────────────────────────────────────────┤     │
-│   │ Stop Codex asking from NAS               [ Allow once ]               [ Decline ]   │     │
+│   │ Stop Codex asking                        [ Allow once ]               [ Decline ]   │     │
 │   └──────────────────────────────────────────────────────────────────────────────────────┘     │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Following.** While the host's last reading lists a work folder set to
-*Ask on this computer* (`refreshKeeping`; the host restarted with one,
+**Following.** While the host's last reading lists a work folder of
+another server and an agent that may ask (`refreshKeeping`, from `GET
+/api/local-agents`; the host restarted while the last reading wanted it,
 `startLocalNow`), one follower holds `GET
 /api/local-agents/asks?after=<version>&wait=20` on the host (the first
 local server, never made for it) with the shell's word, through the host's
 own session (`localServer`), each read answered at once when the list
 changed and held up to 20 s otherwise (`after=-1` for a follower's first
-read, and after a failure: answered at once). A reading that says no folder asks
-here stops it; one that did not come leaves it be. Every list is taken
+read, and after a failure: answered at once). A reading that says nothing
+asks here stops it; one that did not come leaves it be. Every list is taken
 into the queue (`lib/agentAsks.js take`): the asks answered here are kept
 out by their tombstones while a list read before the answer still holds
 them, the shown ask keeps its place, and new ones queue behind it in the
@@ -1050,8 +1046,8 @@ there (64 characters at most), the agent's one-line reason marked as the
 agent's, the risk, and when it is declined by itself. The command box and
 the diff break anywhere, plaintext bidi, and scroll at 120 and 160 px;
 *Allow once* stays shut until each box that scrolls was read to its end.
-The card's body scrolls, its footer never does: *Stop Codex asking from
-NAS* (left), *Allow once*, *Decline* (the right end, where a stream of
+The card's body scrolls, its footer never does: *Stop Codex asking*
+(left), *Allow once*, *Decline* (the right end, where a stream of
 clicks lands), never focused by script. A card stays until it is
 answered, withdrawn or expired; one that takes the place of a card that
 went away unanswered here says so ("The question before this one went
@@ -1071,9 +1067,10 @@ bar's disabled buttons the look. Every button goes inactive at once, then
 `POST /api/local-agents/asks/<id> {decision: "once" | "deny"}` (*Stop*
 posts `deny`) with the shell's word, 30 s at most. The bar says only what
 the route answered: "Allowed once: Codex goes on.", "Declined: Codex goes
-on without it.", "Declined, and Codex no longer asks on this computer for
-NAS." (*Stop*, which then sets the folder back to *Nothing more*, `PATCH
-{agent_runs: "never"}` with the word, whatever became of the ask); a 404
+on without it.", "Declined, and Codex no longer asks to run more, here or
+in the chat." (*Stop*, which then sets what the agent may run back to
+`never`, `PATCH /api/local-agents/<agent> {runs: "never"}` as its owner,
+whatever became of the ask); a 404
 or 409 "Codex no longer waits for that: nothing was allowed.", except
 after an earlier answer to that ask the bar did not hear of, which may be
 the one taken: then the unsure line below again; not
@@ -1260,7 +1257,7 @@ first, and the first answer that is not `none` wins (`vault`, `hidden`,
 `around`, `file_vault`). Before a path is taken as nobody's, each local
 server that does not run is started and asked too (a second local server
 costs its start, rarely); one that does not start is named in the notice
-that follows (`Gamma could not check <server>'s synced vaults: it did not
+that follows (`Gamma could not check <server>'s synced folders: it did not
 start.`) and the open goes on. Each server has 10 s (`WHERE_MS`); an older
 server without the route (404, 405), a refusal, a timeout or a server that
 stopped is logged and skipped. Nobody's is the host's `none`, with its
@@ -1288,11 +1285,11 @@ the one that would navigate:
 | inside a vault of this server | the window on that server (opened when another shows), `?ws=&folder=` of the directory's folder: the list view there. `never`: *Gamma never tracks <rel>: <why>. “W” opened.*; not `exact`: *Nothing in <rel> is tracked yet: “W” opened at “<nearest>”.* (and *Choose files… picks what it tracks.* for a work folder). A paused vault opens as it is; a kept folder is never raised to a work folder here; a whole library's vault opens the library |
 | inside a vault of another server | the registry's remote at its origin, `?ws=&folder=` by that server's ids (its maker's work folder still choosing: the host's dialog, as *Choose files…*); a remote the registry lacks: `<dir> is synced with <host>: add that server to Gamma to open it here.` |
 | `hidden` | `<dir> is kept by another account on this computer.` |
-| `around` one vault | that vault, as above, and *<dir> holds the work folder “W”, which opened: a work folder is never inside or around another.* |
-| `around` several | *<dir> holds 3 synced vaults (“A”, “B”, “C”): open one of their folders with Gamma, or pick it in the sync panel.*, nothing opened |
+| `around` one vault | that vault, as above, and *<dir> holds the synced folder “W”, which opened: a synced folder is never inside or around another.* |
+| `around` several | *<dir> holds 3 synced folders (“A”, “B”, “C”): open one of their folders with Gamma, or pick it in the sync panel.*, nothing opened |
 | `none` with a `refusal` | the refusal (a drive's root, home or a directory around it, the data directory, a system place) |
 | `none`, a work folder made this run still choosing | *Choose the files of “W” first, then open <dir> with Gamma again.*, nothing made |
-| `none` | `newWorkFolder`: a work folder as *Add a synced vault…* makes one (`workFolderOf`: the broad-place question, `vaultPlace`, the preview, `makeWorkFolder`, "A directory's vault"), its dialog open; *“<name>” is a work folder of <workspace> on <server> now: choose the files it tracks.* A preview's refusal and the server's (`MAX_LINKS`, a clone or a Zotero-linked workspace) are said as for any work folder |
+| `none` | `newWorkFolder`: a work folder as *Add a synced folder…* makes one (`workFolderOf`: the broad-place question, `vaultPlace`, the preview, `makeWorkFolder`, "A directory's vault"), its dialog open; *“<name>” is a synced folder of <workspace> on <server> now: choose the files it tracks.* A preview's refusal and the server's (`MAX_LINKS`, a clone or a Zotero-linked workspace) are said as for any work folder |
 
 **One new work folder at a time.** The shell keeps the work folders the
 verb made in this run (`waiting`: server, workspace, link id, name).

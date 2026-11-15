@@ -3,7 +3,7 @@ stdin, one JSON object per line on stdout, a ``result`` line last.
 
 Claude Code gets no shell: its tools are Read, Edit, Write, Glob and Grep
 (``--tools``), Bash and the web ones are denied, and it starts no MCP server
-(``--strict-mcp-config`` with no ``--mcp-config``). A rule such as
+of the user's (``--strict-mcp-config``). A rule such as
 ``Bash(latexmk *)`` would let it run anything: latexmk takes Perl with
 ``-e`` and runs any ``.latexmkrc`` the agent writes. It runs
 ``--restricted``: no settings file is read (a folder's
@@ -50,6 +50,21 @@ each ``stream_event`` ``content_block_delta`` of type ``text_delta`` is a
 message. A turn's ``model`` and ``effort`` are ``--model`` (none for the
 listing's ``default``) and ``--effort``. What Claude Code offers is
 ``models``: ``initialize``'s answer, no message written.
+
+A turn with ``gamma`` (Gamma's tools, gamma/local_agents/tools.py) adds
+``--mcp-config`` with one HTTP server, ``gamma_turn`` (``events.MCP_NAME``):
+this server's ``/mcp`` with the header ``Authorization: Bearer
+${GAMMA_AGENT_MCP_TOKEN}``, which Claude Code fills from its own
+environment (``events.TOKEN_ENV``, set for that process alone), so the
+token is on no command line; and ``--allowedTools mcp__gamma_turn``, so its
+calls run without a prompt (C2 of docs/research/agents-as-participants-plan.md,
+Claude Code 2.1.318: ``--tools`` limits the built-in tools only, and the
+other flags hold as they are). ``system/init`` must then name
+``gamma_turn`` ``connected``, else the turn fails with why
+(``events.GammaDown``); each ``mcp__gamma_turn__<tool>`` call is a
+``gamma`` step named by its tool. In a
+turn with ``ask`` an allowed Bash call can read the variable: the token
+reads only and lives for the turn (docs/dev/local_agents.md "Trust").
 """
 
 import json
@@ -82,6 +97,8 @@ MODELS_FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "strea
                 "--strict-mcp-config"]
 MODELS_S = 15
 STRUCTURED = "StructuredOutput"   # the tool --json-schema answers through: not a step
+GAMMA_TOOLS = f"mcp__{events.MCP_NAME}"   # what --allowedTools names: every tool of Gamma's server
+GAMMA_PREFIX = GAMMA_TOOLS + "__"         # a call of one: mcp__gamma_turn__<tool>
 EDITS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
 CHANGE_REFUSED = events.CHANGE_REFUSED
 TOOL_REFUSED = "Gamma does not offer that tool here."
@@ -105,11 +122,23 @@ def allowed_input(args: dict) -> dict:
     return out
 
 
+def mcp_config(url: str) -> str:
+    """``--mcp-config``'s JSON: Gamma's server at ``url``, its token named
+    by its variable, which Claude Code expands from its environment."""
+    return json.dumps({"mcpServers": {events.MCP_NAME: {
+        "type": "http", "url": url, "headers": {"Authorization": f"Bearer ${{{events.TOKEN_ENV}}}"}}}},
+        separators=(",", ":"))
+
+
 def command(argv: list[str], *, schema: dict | None = None, session: str = "", ask: bool = False,
-            stream: bool = False, model: str = "", effort: str = "") -> list[str]:
+            stream: bool = False, model: str = "", effort: str = "", gamma_url: str = "") -> list[str]:
     """The whole command line of a turn: ``--model`` and ``--effort`` said
-    each time (``--restricted`` reads no settings file that would)."""
+    each time (``--restricted`` reads no settings file that would); with
+    ``gamma_url``, Gamma's server and its tools allowed (``GAMMA_TOOLS``),
+    the token never in it."""
     out = list(argv) + (ASK_FLAGS if ask else FLAGS)
+    if gamma_url:
+        out += ["--mcp-config", mcp_config(gamma_url), "--allowedTools", GAMMA_TOOLS]
     if stream:
         out.append(STREAM_FLAG)
     if model and model != DEFAULT_MODEL:
@@ -178,9 +207,11 @@ class ClaudeTurn(events.Turn):
     label = LABEL
 
     def __init__(self, argv: list[str], *, cwd: str, prompt: str, schema: dict | None, session: str,
-                 ask: bool = False, stream: bool = False, model: str = "", effort: str = ""):
+                 ask: bool = False, stream: bool = False, model: str = "", effort: str = "",
+                 gamma: events.Gamma | None = None):
         super().__init__(command(argv, schema=schema, session=session, ask=ask, stream=stream, model=model,
-                                 effort=effort), cwd=cwd, ask=ask, env=ASK_ENV if ask else None)
+                                 effort=effort, gamma_url=gamma.url if gamma else ""),
+                         cwd=cwd, ask=ask, env=ASK_ENV if ask else None, gamma=gamma)
         self.stream = stream
         self._tools: dict[str, dict] = {}   # tool_use id → its started event
         if self.child is not None:
@@ -218,6 +249,8 @@ class ClaudeTurn(events.Turn):
             event = events.tool(tool_id, "run", f"Run {command_line}", "started", command=command_line)
         elif name in ("Glob", "Grep"):
             event = events.tool(tool_id, "search", f"Search {args.get('pattern') or 'the files'}", "started")
+        elif self.gamma_url and name.startswith(GAMMA_PREFIX):
+            event = events.gamma_step(tool_id, name[len(GAMMA_PREFIX):], "started")
         else:
             event = events.tool(tool_id, "other", f"Use {name}", "started")
         self._tools[tool_id] = event
@@ -236,7 +269,20 @@ class ClaudeTurn(events.Turn):
                 content = "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
             output = str(content or "")
         return events.tool(tool_id, begun["kind"], begun["title"], status, path=begun.get("path", ""),
-                           command=begun.get("command", ""), output=output)
+                           command=begun.get("command", ""), output=output, name=begun.get("tool", ""))
+
+    def _connected(self, line: dict) -> None:
+        """Where the turn has Gamma's tools, ``system/init``'s MCP servers
+        name Gamma's ``connected``; events.GammaDown with what they say
+        otherwise (a token missing or refused: Claude Code would go on
+        without the tools)."""
+        if not self.gamma_url:
+            return
+        status = next((str(s.get("status") or "") for s in line.get("mcp_servers") or []
+                       if isinstance(s, dict) and s.get("name") == events.MCP_NAME), "")
+        if status != "connected":
+            raise events.GammaDown("Gamma's tools did not connect for Claude Code"
+                                    + (f" (it says {events.one_line(status, 60)})." if status else "."))
 
     def _run(self):
         while True:
@@ -251,6 +297,7 @@ class ClaudeTurn(events.Turn):
                 session = str(line.get("session_id") or "")
                 if session and session != self.session:
                     yield {"type": "session", "id": session}
+                self._connected(line)
             elif kind == "assistant":
                 content = (line.get("message") or {}).get("content")
                 for block in content if isinstance(content, list) else []:
@@ -364,10 +411,11 @@ class ClaudeTurn(events.Turn):
 
 def start(*, argv: list[str], cwd: str, prompt: str, schema: dict | None = None, session: str = "",
           images: list[str] = (), ask: bool = False, stream: bool = False, model: str = "",
-          effort: str = "") -> ClaudeTurn:
+          effort: str = "", gamma: events.Gamma | None = None) -> ClaudeTurn:
     """Start ``claude -p`` in ``cwd`` for one turn of ``prompt`` (``session``
     one to resume; ``ask``, it may ask to run commands; ``stream``, its text
-    as it is written; ``model``, ``effort``). ``images`` are not passed: the
-    prompt names the pictures, which Claude Code opens with Read."""
+    as it is written; ``model``, ``effort``; ``gamma``, Gamma's tools).
+    ``images`` are not passed: the prompt names the pictures, which Claude
+    Code opens with Read."""
     return ClaudeTurn(list(argv), cwd=cwd, prompt=prompt, schema=schema, session=session, ask=ask, stream=stream,
-                      model=model, effort=effort)
+                      model=model, effort=effort, gamma=gamma)

@@ -449,7 +449,7 @@ Fake-IP answers (Clash, sing-box) count as none. Answers are kept 60 s.
 `routers/remote_servers.py`, the desktop app's own server only
 (`config.folder_links_enabled()`, else 404 for every route), a signed-in
 session; the shell calls them through `serverApi` (`redirect: 'error'`).
-"Strict shell" is `routers/folder_links._shell_strict`: the shell's word
+"Strict shell" is `routers/shell.shell_strict`: the shell's word
 (`X-Gamma-Shell`) is required, and a server started with no secret
 refuses (403) rather than passing.
 

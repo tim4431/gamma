@@ -189,6 +189,18 @@ def _shell_secret_forgotten():
 
 
 @pytest.fixture(autouse=True)
+def _mcp_address_forgotten():
+    """The address of this server's /mcp a test's request named
+    (gamma/local_agents/tools.py ``heard``: one sent as from 127.0.0.1 to
+    127.0.0.1, as test_zotero_routes' and test_cloud_auth's are) is
+    forgotten after it, so a later agent turn runs without Gamma's tools
+    unless its own test names an address."""
+    yield
+    from gamma.local_agents import tools
+    tools._url = ""
+
+
+@pytest.fixture(autouse=True)
 def _reset_ratelimit():
     """The whole suite shares one TestClient source IP, so the per-IP login
     throttle would trip mid-run. Clear counters before each test — production
@@ -394,6 +406,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(config, "VAULTS_DB", tmp_path / "vaults.db")
     monkeypatch.setattr(config, "WORKSPACES_DIR", tmp_path / "workspaces")
+    monkeypatch.setattr(config, "AGENTS_DIR", tmp_path / "agents")
     monkeypatch.setattr(config, "BACKUPS_DIR", tmp_path / "backups")
     monkeypatch.setattr(db_mod, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(db_mod, "VAULTS_DB", tmp_path / "vaults.db")
@@ -471,12 +484,17 @@ def work_props(folder_id, file_name, *, library=False, doc=None, directory="") -
     return props
 
 
-def token_for(owner, scope="write", name="Script") -> str:
+def token_for(owner, scope="write", name="Script", *, comments=False) -> str:
     """A token the account of the client ``owner`` makes by hand (Settings →
     AI → Integrations → Tokens, ``POST /api/integrations/tokens``) for the
     workspace it has open (its ``X-Gamma-Workspace``, else its own), of
-    ``scope`` and named ``name``: what a script or a local agent holds."""
-    r = owner.post("/api/integrations/tokens", json={"name": name, "scope": scope})
+    ``scope`` and named ``name``, at the Comment level there with
+    ``comments`` (a read token): what a script or a local agent holds."""
+    level = {}
+    if comments:
+        ws = owner.headers.get("X-Gamma-Workspace") or owner.get("/api/session").json()["default_workspace"]
+        level = {"comment_workspaces": [ws]}
+    r = owner.post("/api/integrations/tokens", json={"name": name, "scope": scope, **level})
     assert r.status_code == 201, r.text
     return r.json()["token"]
 

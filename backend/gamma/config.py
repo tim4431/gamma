@@ -19,6 +19,10 @@ USERS_DB = DATA_DIR / "users.db"
 # a workspace carries a path.
 VAULTS_DB = DATA_DIR / "vaults.db"
 WORKSPACES_DIR = DATA_DIR / "workspaces"
+# The empty directories a computer agent's conversation of no work folder
+# and no offered directory works in: agents/<ws>/<conversation id>/, made at
+# its first turn and removed with it (gamma/local_agents/chats.py).
+AGENTS_DIR = DATA_DIR / "agents"
 # Snapshots and backup state: the migration runner's pre-upgrade copies
 # (gamma/backups.py), workspace snapshots and their scheduled tasks
 # (gamma/ws_backup.py, gamma/backup_schedule.py), the off-site copies'
@@ -79,11 +83,11 @@ _shell_secret: str | None = None   # once read; None until then
 
 def shell_secret() -> str:
     """What the desktop app sends as ``X-Gamma-Shell`` on the routes that
-    take a path on this computer (routers/folder_links.py): a page of Gamma
-    never names a path, the shell's native dialog does. GAMMA_SHELL_SECRET,
-    made anew at each start of the app; empty (dev, tests) means no check
-    on those routes, and refuses the ones that never pass unchecked
-    (``_shell_strict``). Read once, at the app's start (``create_app``),
+    take a path on this computer or its word otherwise (routers/shell.py):
+    a page of Gamma never names a path, the shell's native dialog does.
+    GAMMA_SHELL_SECRET, made anew at each start of the app; empty (dev,
+    tests) means no check on those routes, and refuses the ones that never
+    pass unchecked (``shell_strict``). Read once, at the app's start (``create_app``),
     and taken off this process's environment then (``_take_env``), so no
     process this server starts, nor anything that reads its environment
     later, finds it. The variable set again is read again: how a test sets

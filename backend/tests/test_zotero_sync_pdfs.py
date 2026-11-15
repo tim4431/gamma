@@ -488,6 +488,36 @@ def test_a_relocation_tells_the_link_once_its_job_reads_as_ended(me, made, fake,
     assert _pdf_atts(fake, item) == {att: file_md5(storage.open_path(ws, f"{doc}.pdf"))}
 
 
+def test_a_relocation_that_ends_before_the_round_writes_its_wait_lets_the_pdf_go_at_once(me, made, fake, owner_id,
+                                                                                          monkeypatch):
+    """The round read the relocation as running and held the PDF back; the
+    relocation ended before the round wrote that, its end finding nothing to
+    ask for again (or asking only to be overwritten): the file's entry is
+    written due at once, and the file goes in place in that round or the
+    next rather than PLACING_RECHECK_S later."""
+    item, att, _ann = _simple_paper(fake)
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, item)
+    placing = {page}
+    monkeypatch.setattr(zotero_sync_pdfs, "_relocating", lambda r, side: side.page_id in placing)
+    entry = zotero_sync_pdfs._placing_entry
+
+    def decided(*args):
+        held = entry(*args)
+        placing.clear()  # the relocation ends just after the round decided to wait for it
+        return held
+
+    monkeypatch.setattr(zotero_sync_pdfs, "_placing_entry", decided)
+    doc = _replace(ws, owner_id, page, pdf_bytes("Simple, retypeset."), "retypeset.pdf")
+    _place_all(ws, owner_id)  # the relocation's write: every highlight placed
+    for _ in range(2):
+        drop_pending(ws)
+        _sync(me, ws)
+    assert not placing  # a round did wait for it
+    assert _pdf_atts(fake, item) == {att: file_md5(storage.open_path(ws, f"{doc}.pdf"))}
+
+
 @pytest.mark.parametrize("waited", [True, False], ids=["while-placing", "placed-before"])
 def test_replace_zoteros_copy_after_a_replacement_here_sends_gammas_file_over_its_annotations(
         me, made, fake, owner_id, monkeypatch, bounded, waited):

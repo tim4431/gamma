@@ -2,16 +2,18 @@
 (docs/dev/local_agents.md "Claiming and the run").
 
 Every write of a request reaches ``on_request`` (a ``requests.change_listeners``
-entry, ``register``). A Send of a work folder whose vault here has an agent
-(``store.agent_of``), made in Gamma (``via`` ``session``: never a token's) by
-the vault's maker, is queued for that vault; a withdraw of one that runs
-sets its stop. One worker thread a vault takes its
-queue in order, at most ``MAX_RUNS`` runs at once on this server, so a folder
-never has two agents in its directory. A run (``_Run``):
+entry, ``register``). A Send of a work folder a vault here keeps, made in
+Gamma (``via`` ``session``: never a token's) by an account with an agent on
+here (the first of its agents, ``store.agent_for``, takes it), is queued for
+that vault; a withdraw of one that runs sets its stop. The queues are
+kept by directory (``_place``): one worker thread a directory takes its
+queue in order, at most ``MAX_RUNS`` runs at once on this server, so a
+directory never has two agents in it. A run (``_Run``):
 
 1. claims the request (``requests.claim``: ``running``; of two takers, or a
-   taker and a withdraw, one wins) after checking again that the vault, its
-   agent and its maker still hold, and records the run (``store.start_run``);
+   taker and a withdraw, one wins) after checking again that the vault, the
+   requester's agent and its role still hold, and records the run
+   (``store.start_run``);
 2. probes the agent afresh: one not ready fails the request with its problem;
 3. reads the request's entries and keeps those with something new to answer
    (``prompt.pending``), at most ``MAX_THREADS``, noting when it read them
@@ -23,12 +25,12 @@ never has two agents in its directory. A run (``_Run``):
    (``_session``; a resume that fails before any step starts afresh once),
    and shows its steps as the request's detail, at most every
    ``DETAIL_EVERY_S``, never naming a path outside the folder or a whole
-   command; a watchdog thread stops the turn on a withdraw, an agent turned
-   off, the vault paused or removed, the server closing, or
+   command; a watchdog thread stops the turn on a withdraw, its agent turned
+   off (``stop_agent``), the vault paused or removed, the server closing, or
    ``RUN_TIMEOUT_S`` after the turn began;
 5. once the turn is done, compares the files, writes each answer as the
-   agent's reply signed with its label (``agent_id`` ``local:<name>``, so the
-   comment reads as an agent on this computer's) and records the thread's
+   agent's reply, signed as this computer's agent (``agent_id``
+   ``computer:<this computer>:<name>``, gamma/agents.py) and records the thread's
    session (``store.answered_thread``), resolves the fixed ones in which a
    person said nothing the run did not read, and sets the request ``done`` with
    the summary and the files changed, or
@@ -51,20 +53,26 @@ server's, keyed by the run's id; its answers are written by that server at
 the run's end, signed as the agent's. A Send never asks.
 
 A turn of the chat's computer side (gamma/local_agents/chats.py,
-``queue_chat``) waits in the same queue of its vault and takes the same
-slots, keyed ``(ws, "chat", turn id)`` beside a Send's ``(ws, "send",
-request id)``, so a Send and a chat turn never work one directory at once.
-A ``_ChatTurn`` checks again what its route checked (the vault, its agent
-the turn's, its maker an editor, the agent ready, writes taken), resumes
-the conversation's session in the vault's directory as it is now
-(``store.conversation_of``; a refused resume starts afresh once, said
-``fresh``), and writes the agent's message as the turn goes: its text, its
+``queue_chat``) waits in the queue of the directory its agent works in
+(``chats.place_of``: a vault's, an offered one, one of its own) and takes
+the same slots, keyed ``(ws, "chat", turn id)`` beside a Send's ``(ws,
+"send", request id)``, so a Send and a chat turn, or two conversations,
+never work one directory at once. A ``_ChatTurn`` checks again what its
+route checked (where it works, the vault not paused, the turn's agent on
+and the person's, the person an editor, the agent ready, writes taken),
+makes a directory of its own the first time, resumes the conversation's
+session in that directory as it is now (``store.conversation_of``; a
+refused resume starts afresh once, said ``fresh``), and writes the agent's
+message as the turn goes: its text, its
 steps (relative paths, a command's program), what changed, its end. Its
 agent streams (``delta``): the message's last paragraph grows as the agent
 writes it, and the whole message, when it comes, takes its place. It runs
 the model and effort its turn asked for (``queue_chat``). Both kinds run
-their turn through ``_Turning``. ``chat_turns`` lists an account's turns
-that are queued or running, for Background tasks.
+their turn through ``_Turning``, which gives a turn of this server Gamma's
+tools (``_tools``: a token of the owner's for the workspace,
+gamma/local_agents/tools.py), deleted as the turn ends, however it ends.
+``chat_turns`` lists an account's turns that are queued or running, for
+Background tasks.
 
 A turn of a page of another server's work folder kept here (step 4d) runs
 the same way, its conversation's reads and writes through its home
@@ -78,9 +86,8 @@ this computer's run of it, its message written there at most every
 reached, a lost one by the next flush), and a turn there asks only on this
 computer (below).
 
-A chat turn of a vault whose agent may ask (``ask_refusal``, read at the
-turn's start: ``store.runs_of`` ``ask`` for a work folder of this server,
-``computer`` for one of another; a Send never asks) starts its agent with
+A chat turn whose agent may ask (``ask_refusal``, read at the turn's start:
+``store.runs_of`` ``ask``; a Send never asks) starts its agent with
 ``ask``. Each ask the agent makes is held for the turn under an id of
 Gamma's and written in the message (``asks``, its step ``asked``) until the
 person answers it (``answer_chat``: the step ``allowed`` or ``declined``),
@@ -95,9 +102,20 @@ asks and, after ``MAX_DECLINES`` declines of the person's in a row, asks no
 more; a file change asking to write below a root for the rest of the
 session (Codex's ``grantRoot``) is declined unseen.
 
+A co-author's turn (decision 13 of
+docs/research/agents-as-participants-plan.md: a person the agent's owner
+named on this computer, ``store.people``) runs as its owner's does, for that
+person: their conversation, their token, their name in the prompt, in the
+directory of the synced folder its page is a file of alone. What it asks is
+allowed once at most (``once`` on the ask; no grant is looked up or kept),
+answered by that person in the chat or by the owner on this computer (its
+ask a card of ``computer_asks`` too); another server's co-author's turn asks
+nothing (step 4.3 of the plan relays asks). The person no longer named
+stops their turn (``stop_person``) and fails the next one when it is taken.
+
 A turn of another server's work folder asks on this computer (step 5b of
-docs/research/agent-collab.md): its vault's policy ``computer``, the
-desktop app's secret set and that server reached securely
+docs/research/agent-collab.md): its agent's ``ask``, the desktop app's
+secret set and that server reached securely
 (``remote_servers.plain`` ""), each checked again at every ask. What it
 asks is held here and never written there: that server's message learns
 ``waiting`` and the step's status, its step ids none of this computer's.
@@ -132,13 +150,13 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from .. import config, remote_servers
+from .. import agents, config, integrations, remote_servers
 from ..blocks_store import new_block_id
 from ..db import connect_pages_db, format_stamp, page_now
-from ..feedback import requests
-from ..feedback.entries import FeedbackError
+from ..annotations import requests
+from ..annotations.entries import AnnotationError
 from ..logbuf import log
-from . import catalog, chats, enabled, events, home, procs, prompt, store
+from . import catalog, chats, enabled, events, home, procs, prompt, store, threads, tools
 
 RUN_TIMEOUT_S = 1800              # env GAMMA_AGENT_RUN_TIMEOUT: a turn running this long is stopped
 MAX_RUNS = 2                      # runs at once on this server, at most one per folder
@@ -156,6 +174,7 @@ BUILD_OUTPUTS = (".pdf", ".aux", ".log", ".synctex.gz", ".synctex", ".fls", ".fd
 MAX_ERROR = 16_000                # characters of a run's error record
 CHAT_EVERY_S = 0.5                # a chat turn's message is written at most this often
 ASK_TIMEOUT_S = 600               # an ask nobody answers this long is declined
+TOKEN_SLACK_S = 60                # a turn's token, renewed while its deadline moves, lives this much past it
 ASK_EXPIRED = "No answer within 10 minutes."
 RUNS_NEVER = "The owner no longer lets you ask to run commands in this folder."
 MAX_ASKS = 20                     # asks one chat turn may hold for the person; the rest are declined
@@ -178,28 +197,35 @@ HOST_UNREAD = "Gamma could not read the network address this command reaches."
 ONE_AT_A_TIME = "Gamma allows file changes one at a time."
 FAR_ASKS = "This is answered on the computer that runs the agent."
 NO_ASK_HERE = "No question on this computer has that id."
+ONCE_ONLY = "A co-author's turn is allowed once at most."
+UNNAMED = "The owner of {agent} on this computer no longer lets you use it."
+LENT_FOLDER = "{agent} works for {person} only on the files of a synced folder."
 
 # The kinds of work a vault's queue holds: a Send's run, a chat's turn.
 SEND, CHAT = "send", "chat"
 
 # Why a run's stop was set: the words its request is failed with (a withdraw
 # writes nothing). "link" is decided when the run ends, from what the vault
-# is then (``_link_reason``); "person" is a chat turn's Stop (it ends
+# is then (``_link_reason``), unless the stop said it (``stop_link``'s
+# ``why``, a key of ``STOPPED``); "person" is a chat turn's Stop (it ends
 # ``stopped``).
 WITHDRAWN, CLOSING, LINK, PERSON = "withdrawn", "closing", "link", "person"
-STOPPED = {"off": "Stopped: the agent was turned off for this folder.",
-           "paused": "Stopped: the work folder was paused.",
-           "removed": "Stopped: the work folder is no longer kept on this computer.",
-           "changed": "Stopped: the work folder changed on this computer.",
+STOPPED = {"off": "Stopped: the agent was turned off on this computer.",
+           "unnamed": "Stopped: the agent's owner no longer lets you use it.",
+           "unoffered": "Stopped: the directory is no longer offered on this computer.",
+           "paused": "Stopped: the synced folder was paused.",
+           "removed": "Stopped: the synced folder is no longer kept on this computer.",
+           "detached": "Stopped: the synced folder was detached.",
+           "changed": "Stopped: the synced folder changed on this computer.",
            CLOSING: "Stopped: Gamma is closing."}
 
 _lock = threading.Lock()
-_queues: dict[str, collections.deque] = {}     # link id -> (ws, kind, id) waiting, oldest first
-_workers: dict[str, threading.Thread] = {}     # link id -> the thread taking its queue
-_queued: set[tuple[str, str, str]] = set()     # (ws, kind, id) in some queue
-# (ws, kind, id) -> {link_id, stop, reason, claimed, agent, slot, detail}, a chat turn's also {chat, since}
+_queues: dict[str, collections.deque] = {}     # directory (``_place``) -> (ws, kind, id) waiting, oldest first
+_workers: dict[str, threading.Thread] = {}     # directory -> the thread taking its queue
+_queued: dict[tuple[str, str, str], str] = {}  # (ws, kind, id) in some queue -> its vault's id ("" for none)
+# (ws, kind, id) -> {link_id, dir, stop, reason, claimed, agent, slot, detail}, a chat turn's also {chat, since}
 _active: dict[tuple[str, str, str], dict] = {}
-# a chat turn's id -> {ws, conversation_id, page_id, agent, user_id, model, effort, at}, until it ends
+# a chat turn's id -> {ws, conversation_id, bucket, dir, agent, user_id, model, effort, at}, until it ends
 _chats: dict[str, dict] = {}
 _slots = threading.BoundedSemaphore(MAX_RUNS)
 _registered = False
@@ -252,12 +278,11 @@ def _request_row(ws: str, request_id: str) -> tuple | None:
 
 
 def _ours(link: dict | None, requester: str, via: str) -> bool:
-    """Whether a Send by ``requester``, made ``via``, is the agent's of the
-    vault ``link``: made in Gamma by the vault's maker, the vault having an
-    agent (a Send a token made, or one from before Sends said how they
-    were made, never is)."""
-    return (link is not None and via == requests.SESSION and requester == link["created_by"]
-            and store.agent_of(link["id"]) is not None)
+    """Whether a Send by ``requester``, made ``via``, is for an agent here in
+    the vault ``link``: made in Gamma by an account with an agent on here
+    (a Send a token made, or one from before Sends said how they were made,
+    never is)."""
+    return link is not None and via == requests.SESSION and store.agent_for(requester) is not None
 
 
 def _consider(ws: str, request_id: str) -> bool:
@@ -287,7 +312,7 @@ def _consider(ws: str, request_id: str) -> bool:
         # queue it again for the vault as it is now.
         if key in _queued or (run is not None and not (run["stop"].is_set() and not run["claimed"])):
             return True
-        _enqueue(link["id"], key)
+        _enqueue(_place(link["path"]), key, link["id"])
     return True
 
 
@@ -299,12 +324,12 @@ def queue_remote(link_id: str, request_id: str) -> bool:
     vault and its agent again before it claims it there."""
     if not enabled():
         return False
-    key = (link_id, SEND, request_id)
+    key, place = (link_id, SEND, request_id), _vault_place(link_id)
     with _lock:
         run = _active.get(key)
         if key in _queued or (run is not None and not (run["stop"].is_set() and not run["claimed"])):
             return True
-        _enqueue(link_id, key)
+        _enqueue(place, key, link_id)
     return True
 
 
@@ -325,26 +350,44 @@ def withdraw_remote(link_ids, request_id: str, run_id: str = "") -> bool:
     return stopped
 
 
-def _enqueue(link_id: str, key: tuple) -> None:
-    """``key`` at the end of the vault's queue, its worker started when it
-    has none. Under ``_lock``."""
-    _queued.add(key)
-    _queues.setdefault(link_id, collections.deque()).append(key)
-    if link_id not in _workers:
-        worker = threading.Thread(target=_work, args=(link_id,), name=f"agent-{link_id}", daemon=True)
-        _workers[link_id] = worker
+def _place(path: str) -> str:
+    """The key of the queue of the directory ``path``: the path as this
+    computer's file system compares it (case folded on Windows)."""
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def _vault_place(link_id: str) -> str:
+    """The queue of the vault ``link_id``'s directory; the vault's id for a
+    vault that is gone (its run finds it so and ends)."""
+    from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+    link = folder_links.get_link(link_id)
+    return _place(link["path"]) if link is not None else link_id
+
+
+def _enqueue(place: str, key: tuple, link_id: str) -> None:
+    """``key`` (of the vault ``link_id``, "" for none) at the end of the
+    queue of the directory ``place``, its worker started when it has none.
+    Under ``_lock``."""
+    _queued[key] = link_id
+    _queues.setdefault(place, collections.deque()).append(key)
+    if place not in _workers:
+        worker = threading.Thread(target=_work, args=(place,), name=f"agent-{link_id or key[2]}", daemon=True)
+        _workers[place] = worker
         worker.start()
 
 
-def queue_chat(ws: str, link_id: str, turn_id: str, *, conversation_id: str, page_id: str, agent: str,
+def queue_chat(ws: str, place: dict, turn_id: str, *, conversation_id: str, bucket: str, agent: str,
                user_id: str = "", model: str = "", effort: str = "") -> None:
     """A chat turn of ``user_id`` (``chats.begin`` wrote it ``queued``),
     asking for ``model`` and ``effort`` ("" for the agent's default), waits
-    in the vault ``link_id``'s queue, behind what is there."""
+    in the queue of the directory of its ``place`` (``chats.place_of``),
+    behind what is there."""
+    path = place["path"] if place["kind"] != "own" else str(chats.own_dir(ws, conversation_id))
     with _lock:
-        _chats[turn_id] = {"ws": ws, "conversation_id": conversation_id, "page_id": page_id, "agent": agent,
-                           "user_id": user_id, "model": model, "effort": effort, "at": page_now()}
-        _enqueue(link_id, (ws, CHAT, turn_id))
+        _chats[turn_id] = {"ws": ws, "conversation_id": conversation_id, "bucket": bucket, "dir": place["dir"],
+                           "agent": agent, "user_id": user_id, "model": model, "effort": effort, "at": page_now()}
+        _enqueue(_place(path), (ws, CHAT, turn_id), (place["link"] or {}).get("id", ""))
 
 
 def queue_remote_chat(link_id: str, turn_id: str, *, conversation_id: str, page_id: str, agent: str) -> bool:
@@ -360,15 +403,15 @@ def queue_remote_chat(link_id: str, turn_id: str, *, conversation_id: str, page_
     id."""
     if not enabled():
         return False
-    key = (link_id, CHAT, turn_id)
+    key, place = (link_id, CHAT, turn_id), _vault_place(link_id)
     with _lock:
         if turn_id in _settling:
             return False
         if key in _queued or key in _active:
             return True
-        _chats[turn_id] = {"ws": link_id, "conversation_id": conversation_id, "page_id": page_id, "agent": agent,
-                           "user_id": "", "model": "", "effort": "", "at": page_now()}
-        _enqueue(link_id, key)
+        _chats[turn_id] = {"ws": link_id, "conversation_id": conversation_id, "bucket": page_id, "dir": "",
+                           "agent": agent, "user_id": "", "model": "", "effort": "", "at": page_now()}
+        _enqueue(place, key, link_id)
     return True
 
 
@@ -389,13 +432,18 @@ def stop_remote_chat(link_ids, turn_id: str, run_id: str = "") -> bool:
                 run["stop"].set()
                 stopped = True
             elif key in _queued:
-                _queued.discard(key)
-                queue = _queues.get(link_id)
-                if queue and key in queue:
-                    queue.remove(key)
+                _unqueue(key)
                 _chats.pop(turn_id, None)
                 stopped = True
     return stopped
+
+
+def _unqueue(key: tuple) -> None:
+    """``key`` out of the queue it waits in. Under ``_lock``."""
+    _queued.pop(key, None)
+    for queue in _queues.values():
+        if key in queue:
+            queue.remove(key)
 
 
 def end_stopped_remote(link_ids, turn_id: str, run_id: str = "") -> bool:
@@ -427,21 +475,39 @@ def end_stopped_remote(link_ids, turn_id: str, run_id: str = "") -> bool:
 
 def waiting(ws: str, link: dict) -> list[str]:
     """The Sends of the vault ``link``'s work folder that wait (``sent``)
-    and are its agent's to take (``_ours``, the vault's agent aside), oldest
-    first: what turning the agent on hands it, and what the panel's
-    question counts."""
+    and are for an agent here (``_ours``), oldest first: what an agent
+    turned on, or the vault writing its directory again, hands over."""
+    owners = {row["set_by"] for row in store.enabled_agents().values()}
+    if not owners:
+        return []
     with connect_pages_db(ws) as conn:
         rows = conn.execute("SELECT id, by, via FROM feedback_requests WHERE work_folder = ? AND state = 'sent' "
                             "ORDER BY rev", (link["folder_id"],)).fetchall()
-    return [request_id for request_id, by, via in rows
-            if via == requests.SESSION and by == link["created_by"]]
+    return [request_id for request_id, by, via in rows if via == requests.SESSION and by in owners]
+
+
+def queue_waiting() -> int:
+    """An agent was turned on: every work folder kept here hands over the
+    Sends that wait (``queue_folder``) → how many were taken here (those of
+    another server's work folders are that server's to hand over, which
+    the channels ask for)."""
+    from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+    count = 0
+    for link in folder_links.all_links():
+        if folder_links.agent_folder(link):
+            try:
+                count += queue_folder(link["workspace_id"], link["id"])
+            except Exception as e:  # noqa: BLE001 — one vault never keeps the others
+                log.warning(f"[agents] the waiting Sends of vault {link['id']}: {e}")
+    return count
 
 
 def queue_folder(ws: str, link_id: str) -> int:
-    """Hand the agent of the vault ``link_id`` its work folder's Sends that
-    wait (``waiting``) → how many it takes; for a work folder of another
-    server, its channel asks that server for them (``channel.ask_sends``)
-    → 0."""
+    """Hand the agents here the Sends of the vault ``link_id``'s work folder
+    that wait (``waiting``) → how many were taken; for a work folder of
+    another server, its channel asks that server for them
+    (``channel.ask_sends``) → 0."""
     from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
     if not enabled():
@@ -465,25 +531,27 @@ def queue_folder(ws: str, link_id: str) -> int:
 
 # --- what the routes ask ----------------------------------------------------------------
 
-def folder_agent(ws: str, w: str) -> dict | None:
-    """The agent of the vault here that keeps the work folder ``w`` of
-    ``ws``, paused or not: ``{name, label, link_id, maker, set_by, set_at,
-    writable}`` (``maker`` the account that made the vault, ``writable``
-    whether the vault may write its directory now: not paused, not choosing
-    its files), None when no vault here keeps it or it has no agent. Runs
-    no process."""
+def folder_agent(ws: str, w: str, user_id: str = "") -> dict | None:
+    """The agent here that works in the work folder ``w`` of ``ws`` for the
+    account ``user_id``, in the vault here that keeps it, paused or not:
+    the account's first agent on (``store.agent_for``), else the first on
+    of any account's (whose Sends and mentions it takes, never this
+    one's): ``{name, label, link_id, owner, writable}`` (``owner`` the
+    account that turned it on, ``writable`` whether the vault may write its
+    directory now: not paused, not choosing its files), None when no vault
+    here keeps it or no agent is on. Runs no process."""
     from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
-    links = [link for link in folder_links.all_links()
-             if link["workspace_id"] == ws and link["folder_id"] == w and folder_links.work_folder_link(link)]
-    agents = store.agents_of([link["id"] for link in links])
-    for link in links:
-        row = agents.get(link["id"])
-        if row:
-            return {"name": row["agent"], "label": catalog.label(row["agent"]), "link_id": link["id"],
-                    "maker": link["created_by"], "set_by": row["set_by"], "set_at": row["set_at"],
-                    "writable": not link["status"].get(folder_links.PAUSED) and not folder_links.choosing(link)}
-    return None
+    link = next((link for link in folder_links.all_links()
+                 if link["workspace_id"] == ws and link["folder_id"] == w and folder_links.work_folder_link(link)),
+                None)
+    if link is None:
+        return None
+    row = store.agent_for(user_id) or next(iter(store.enabled_agents().values()), None)
+    if row is None:
+        return None
+    return {"name": row["agent"], "label": catalog.label(row["agent"]), "link_id": link["id"], "owner": row["set_by"],
+            "writable": not link["status"].get(folder_links.PAUSED) and not folder_links.choosing(link)}
 
 
 def running(ws: str, request_id: str) -> bool:
@@ -495,15 +563,15 @@ def running(ws: str, request_id: str) -> bool:
 
 
 def at_work(link_ids) -> dict[str, dict]:
-    """``{link id: {kind, ws, id, detail, remote}}`` of the vaults among
-    ``link_ids`` whose agent works now: a Send it claimed (``detail`` "":
-    the request's own is read; a Send of another server's, ``remote``, the
-    progress the run wrote there last), a chat turn that runs (``detail``
-    what its step shows a member, ``_said``)."""
+    """``{link id: {kind, ws, id, agent, detail, remote}}`` of the vaults
+    among ``link_ids`` where an agent works now: a Send it claimed
+    (``detail`` "": the request's own is read; a Send of another server's,
+    ``remote``, the progress the run wrote there last), a chat turn that
+    runs (``detail`` what its step shows a member, ``_said``)."""
     wanted = set(link_ids)
     with _lock:
-        return {run["link_id"]: {"kind": kind, "ws": ws, "id": key_id, "detail": run.get("detail", ""),
-                                 "remote": bool(run.get("remote"))}
+        return {run["link_id"]: {"kind": kind, "ws": ws, "id": key_id, "agent": run.get("agent") or "",
+                                 "detail": run.get("detail", ""), "remote": bool(run.get("remote"))}
                 for (ws, kind, key_id), run in _active.items() if run["link_id"] in wanted and run["claimed"]}
 
 
@@ -531,16 +599,16 @@ def chat_state(ws: str, turn_id: str) -> dict | None:
             return {"turn_id": turn_id, "state": "queued", "ahead": not run["slot"]}
         if key not in _queued:
             return None
-        for link_id, queue in _queues.items():
+        for place, queue in _queues.items():
             if key in queue:
-                ahead = queue.index(key) > 0 or any(r["link_id"] == link_id for r in _active.values())
+                ahead = queue.index(key) > 0 or any(r["dir"] == place for r in _active.values())
                 return {"turn_id": turn_id, "state": "queued", "ahead": ahead}
     return None
 
 
 def chat_turns(user_id: str) -> list[dict]:
     """The chat turns of ``user_id`` this server holds, queued or running,
-    oldest first: ``{ws, turn_id, conversation_id, page_id, agent, state:
+    oldest first: ``{ws, turn_id, conversation_id, bucket, agent, state:
     "queued" | "running", asking, stopping, queued_at, started_at}``,
     ``asking`` whether an ask of it waits for the person, ``stopping``
     whether its stop is set (Background tasks' rows, routers/jobs.py)."""
@@ -553,7 +621,7 @@ def chat_turns(user_id: str) -> list[dict]:
             running = run is not None and run["claimed"]
             turning = run.get("chat") if run is not None else None
             out.append({"ws": chat["ws"], "turn_id": turn_id, "conversation_id": chat["conversation_id"],
-                        "page_id": chat["page_id"], "agent": chat["agent"],
+                        "bucket": chat["bucket"], "agent": chat["agent"],
                         "state": "running" if running else "queued",
                         "asking": bool(turning is not None and turning.asks),
                         "stopping": bool(run is not None and run["stop"].is_set()),
@@ -582,10 +650,7 @@ def stop_chat(ws: str, turn_id: str, conversation_id: str) -> bool:
             if run["slot"]:
                 return True
         else:
-            _queued.discard(key)
-            for queue in _queues.values():
-                if key in queue:
-                    queue.remove(key)
+            _unqueue(key)
             _chats.pop(turn_id, None)
     _, reply = chats.reply_of(ws, conversation_id, turn_id)
     # One held without a slot is ended here while its message reads queued;
@@ -611,36 +676,34 @@ def answer_chat(ws: str, turn_id: str, ask_id: str, decision: str, note: str = "
     turning.answer(ask_id, decision, note)
 
 
-def runs_never(link_id: str) -> None:
-    """What the vault ``link_id``'s agent may run was set back to never:
-    each chat turn of it running declines the asks that wait
-    (``_ChatTurn.decline_all``) and goes on; what it asks next is declined
-    unseen (``_ChatTurn._asked``)."""
+def runs_never(agent: str) -> None:
+    """What ``agent`` may run was set back to never: each chat turn of it
+    running declines the asks that wait (``_ChatTurn.decline_all``) and
+    goes on; what it asks next is declined unseen (``_ChatTurn._asked``)."""
     with _lock:
         turnings = [run["chat"] for (_, kind, _), run in _active.items()
-                    if kind == CHAT and run["link_id"] == link_id and run.get("chat") is not None]
+                    if kind == CHAT and run["agent"] == agent and run.get("chat") is not None]
     for turning in turnings:
         try:
             turning.decline_all(RUNS_NEVER)
-        except Exception as e:  # noqa: BLE001 — the policy is set; the turn's end takes its cards
+        except Exception as e:  # noqa: BLE001 — what it may run is set; the turn's end takes its cards
             log.warning(f"[agents] declining the asks of chat turn {turning.turn_id}: {e}")
 
 
 # --- asking on this computer -------------------------------------------------------------------
 
-def ask_refusal(link: dict | None, remote: bool) -> str:
-    """Why a chat turn of the vault ``link`` may not ask now, "" when it
-    may: one of a work folder of this server while its policy is ``ask``;
-    one of another server's (``remote``) while its policy is ``computer``,
-    the desktop app's secret is set (without it there is no window to ask
-    in) and that server is reached securely (https, or this computer). The
-    app's presence is each ask's (``_ChatTurn._asked``)."""
-    if link is None:
+def ask_refusal(link: dict | None, remote: bool, agent: str) -> str:
+    """Why a chat turn of ``agent`` may not ask now, "" when it may: the
+    agent's ``ask`` (``store.runs_of``); for a turn of another server's work
+    folder (``remote``, in its vault ``link``), asked on this computer, also
+    the desktop app's secret set (without it there is no window to ask in)
+    and that server reached securely (https, or this computer). The app's
+    presence is each ask's (``_ChatTurn._asked``)."""
+    if store.runs_of(agent) != "ask":
         return RUNS_NEVER
-    runs = store.runs_of(link["id"])
     if not remote:
-        return "" if runs == "ask" else RUNS_NEVER
-    if runs != "computer" or not link["remote_url"]:
+        return ""
+    if link is None or not link["remote_url"]:
         return RUNS_NEVER
     if not config.shell_secret():
         return NOBODY_HERE
@@ -699,18 +762,21 @@ def wait_asks(after: int, timeout: float) -> int:
         return _asks_version
 
 
-def _remote_turnings() -> list:
-    """The chat turns of other servers' work folders running here."""
+def _computer_turnings() -> list:
+    """The chat turns running here whose asks are answered on this
+    computer: those of other servers' work folders, and the co-authors'
+    turns of this server's (answered in their chat too)."""
     with _lock:
         return [run["chat"] for (_, kind, _), run in _active.items()
-                if kind == CHAT and run.get("chat") is not None and run["chat"].home.remote]
+                if kind == CHAT and run.get("chat") is not None and (run["chat"].home.remote or run["chat"].lent)]
 
 
 def computer_asks(user_id: str) -> list[dict]:
-    """The asks waiting on remote turns of the vaults ``user_id`` made,
-    oldest first, each as the desktop app draws it (``_ChatTurn._card``)."""
+    """The asks waiting on remote turns of the vaults ``user_id`` made, and
+    on co-authors' turns of the agents it owns, oldest first, each as the
+    desktop app draws it (``_ChatTurn._card``)."""
     held = []
-    for turning in _remote_turnings():
+    for turning in _computer_turnings():
         if turning.maker != user_id:
             continue
         with turning._asking:
@@ -720,11 +786,12 @@ def computer_asks(user_id: str) -> list[dict]:
 
 def answer_computer(ask_id: str, decision: str, user_id: str) -> int:
     """The desktop app's answer to the ask ``ask_id`` of a remote turn of a
-    vault ``user_id`` made: ``once`` or ``deny`` (``_ChatTurn._answer_here``)
-    → the asks' version once the agent has it. ChatError 404 for no such
-    ask (or another account's), 400 for another decision, 409 as
-    ``_answer_here`` says, or for a turn that ended."""
-    for turning in _remote_turnings():
+    vault ``user_id`` made, or of a co-author's turn of its agent: ``once``
+    or ``deny`` (``_ChatTurn._answer_here``) → the asks' version once the
+    agent has it. ChatError 404 for no such ask (or another account's), 400
+    for another decision, 409 as ``_answer_here`` says, or for a turn that
+    ended."""
+    for turning in _computer_turnings():
         with turning._asking:
             found = ask_id in turning.asks or ask_id in turning.answered
         if found and turning.maker == user_id:
@@ -739,23 +806,84 @@ def answer_computer(ask_id: str, decision: str, user_id: str) -> int:
     return asks_version()
 
 
-def stop_link(link_id: str) -> None:
-    """Stop the run of the vault ``link_id``, if one runs: its agent was
-    turned off or changed, the vault paused, relinked, removed or its push
-    lowered (what fits is read when the run ends). The Sends still queued
-    for it are dropped from the queue: a vault that takes them again
-    (``queue_folder``) finds them sent. Its chat turns stay: each, taken,
-    finds the vault as it is now and fails with why."""
+def stop_link(link_id: str, why: str = "") -> None:
+    """Stop the run of the vault ``link_id``, if one runs: the vault was
+    paused, relinked, removed or its push lowered (what fits is read when
+    the run ends), or ``why`` says it (a key of ``STOPPED``): ``removed``
+    for a vault being removed, whose row may outlast the run's end,
+    ``detached`` for a work folder its other server detached. The Sends
+    still queued for it are dropped from the queue: a vault that takes them
+    again (``queue_folder``) finds them sent. Its chat turns stay: each,
+    taken, finds the vault as it is now and fails with why."""
     with _lock:
         for run in _active.values():
             if run["link_id"] == link_id and not run["stop"].is_set():
+                run["reason"] = why or LINK
+                run["stop"].set()
+        for key in [key for key, held in _queued.items() if held == link_id and key[1] == SEND]:
+            _unqueue(key)
+
+
+def stop_dirs(paths) -> None:
+    """Stop the chat turns that work in the directories ``paths``, no
+    longer offered (``store.set_dirs``): each fails with why. One queued
+    there fails when it is taken (``_ChatTurn._work``: its place is no
+    longer that directory)."""
+    gone = {_place(path) for path in paths}
+    with _lock:
+        for (_, kind, _), run in _active.items():
+            if kind == CHAT and not run["link_id"] and run["dir"] in gone and not run["stop"].is_set():
                 run["reason"] = LINK
                 run["stop"].set()
-        queue = _queues.get(link_id)
-        if queue:
-            for key in [key for key in queue if key[1] == SEND]:
-                _queued.discard(key)
-                queue.remove(key)
+
+
+def stop_person(agent: str, server: str, ws: str, account: str) -> None:
+    """The account ``account`` of the workspace ``ws`` on ``server`` (""
+    this one) may no longer use ``agent``: its co-author's turns of it that
+    run here stop, failed with why (``unnamed``); one queued fails when it
+    is taken (``_ChatTurn._work``)."""
+    from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+    with _lock:
+        turnings = [(run, run["chat"]) for (_, kind, _), run in _active.items()
+                    if kind == CHAT and run.get("chat") is not None and run["chat"].lent
+                    and run["chat"].agent == agent and run["chat"].person == account]
+    for run, turning in turnings:
+        if turning.home.remote:
+            link = folder_links.get_link(turning.link_id)
+            here = link is not None and (link["remote_url"], link["workspace_id"]) == (server, ws)
+        else:
+            here = not server and turning.ws == ws
+        if here:
+            with _lock:
+                if not run["stop"].is_set():
+                    run["reason"] = "unnamed"
+                    run["stop"].set()
+
+
+def stop_agent(agent: str) -> None:
+    """Stop every run and chat turn of ``agent``, which was turned off (why
+    is read when each ends: ``_Turning._link_reason``). What waits in the
+    queues stays: a Send's claim finds the agent of its requester then,
+    and a chat turn fails with why."""
+    with _lock:
+        for run in _active.values():
+            if run["agent"] == agent and not run["stop"].is_set():
+                run["reason"] = LINK
+                run["stop"].set()
+
+
+def release_account(user_id: str) -> None:
+    """The agents of the account ``user_id``, which is deleted, turned off
+    (``store.release_account``): their runs stop, and the open pages and
+    the other servers hear it."""
+    from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+    released = store.release_account(user_id)
+    for agent in released:
+        stop_agent(agent)
+    if released:
+        folder_links.agents_changed()
 
 
 def shutdown(timeout: float = 5.0) -> None:
@@ -813,11 +941,17 @@ RECOVER_POLL_S = 5
 
 
 def recover() -> None:
-    """At startup: the runs a server that stopped left open fail, each its
-    request too ("Send again"); the agents of vaults gone meanwhile are
+    """At startup: the agents the vaults had before agents were the
+    computer's become its own, once (``store.carry_over``); the tokens of
+    the turns a server that stopped left are deleted
+    (``integrations.drop_turns``: no turn runs yet); the runs a
+    server that stopped left open fail, each its request too ("Send
+    again"); what this computer kept of vaults gone meanwhile is
     forgotten; then, in the background, the chat turns it left open fail,
-    each its message too, and each vault with an agent takes the Sends that
-    still wait for it (``waiting``), as turning it on does. A workspace
+    each its message too, while an agent is on each work folder of this
+    server hands over the Sends that still wait (``waiting``), as turning
+    one on does, and the directories of their own of conversations gone
+    meanwhile are removed (``chats.sweep_dirs``). A workspace
     behind on its migrations is waited for (the background walk upgrades
     it, ``migrations.warming``), at most ``RECOVER_WAIT_S``: a chat turn
     not failed by then stays open for the next start. A run or a chat turn
@@ -826,6 +960,10 @@ def recover() -> None:
     hear once it announces."""
     from .. import folder_links, migrations  # local: folder_links imports this package's modules inside functions
 
+    store.carry_over()
+    dropped = integrations.drop_turns()
+    if dropped:
+        log.info(f"[agents] deleted {dropped} token(s) of turns a stopped server left")
     links = {link["id"]: link for link in folder_links.all_links()}
     remote, turns = [], []
     for run in store.open_runs():
@@ -838,13 +976,14 @@ def recover() -> None:
                 requests.set_state(run["ws"], conn, run["request_id"], "failed",
                                    detail=f"Gamma stopped while {label} worked on this. Send again.",
                                    by_name=label, writer="agent", only_from=("running",))
-        except FeedbackError:
+        except AnnotationError:
             pass  # withdrawn, or gone: nothing to say
         except Exception as e:  # noqa: BLE001 — one workspace never keeps the others
             log.warning(f"[agents] failing the run {run['id']} left open in workspace {run['ws']}: {e}")
         store.end_run(run["id"], state="failed", error="Gamma stopped while the run was open.")
     store.forget_links(set(links))
-    agents = store.agents_of(links)
+    handing = [link_id for link_id, link in links.items()
+               if not link["remote_url"] and folder_links.agent_folder(link)] if store.enabled_agents() else []
     # The chat turns first: a vault's queue may hold none of them again. A
     # remote turn's row names its vault in place of the workspace.
     jobs = []
@@ -854,8 +993,10 @@ def recover() -> None:
             continue
         jobs.append((turn["ws"], f"the chat turn {turn['id']} left open", lambda turn=turn: _fail_left_open(turn)))
     jobs += [(links[link_id]["workspace_id"], f"the waiting Sends of vault {link_id}",
-              lambda link_id=link_id: queue_folder(links[link_id]["workspace_id"], link_id)) for link_id in agents
-             if not links[link_id]["remote_url"]]
+              lambda link_id=link_id: queue_folder(links[link_id]["workspace_id"], link_id)) for link_id in handing]
+    if config.AGENTS_DIR.is_dir():
+        jobs += [(top.name, f"the directories of conversations gone in workspace {top.name}",
+                  lambda ws=top.name: chats.sweep_dirs(ws)) for top in config.AGENTS_DIR.iterdir() if top.is_dir()]
     if remote or turns:
         threading.Thread(target=_fail_remote, args=(remote, turns), name="agent-recover-remote", daemon=True).start()
 
@@ -963,24 +1104,25 @@ def _fail_left_open(turn: dict) -> None:
 
 # --- the workers ---------------------------------------------------------------------------
 
-def _work(link_id: str) -> None:
-    """The vault's worker: its queue's runs in order, one at a time; it
+def _work(place: str) -> None:
+    """The directory's worker: its queue's runs in order, one at a time; it
     leaves (and forgets itself) in the same step that finds the queue
     empty."""
     while True:
         with _lock:
-            queue = _queues.get(link_id)
+            queue = _queues.get(place)
             if not queue:
-                _queues.pop(link_id, None)
-                if _workers.get(link_id) is threading.current_thread():
-                    del _workers[link_id]
+                _queues.pop(place, None)
+                if _workers.get(place) is threading.current_thread():
+                    del _workers[place]
                 return
             key = queue.popleft()
-            _queued.discard(key)
-            run = {"link_id": link_id, "stop": threading.Event(), "reason": "", "claimed": False, "agent": "",
-                   "slot": False, "detail": ""}
-            _active[key] = run
+            link_id = _queued.pop(key, "")
             chat = _chats.get(key[2]) if key[1] == CHAT else None
+            # a Send's agent is the one its claim finds; a chat turn's, its own
+            run = {"link_id": link_id, "dir": place, "stop": threading.Event(), "reason": "", "claimed": False,
+                   "agent": (chat or {}).get("agent") or "", "slot": False, "detail": ""}
+            _active[key] = run
             slots = _slots
         ws, kind, key_id = key
         try:
@@ -1100,8 +1242,8 @@ def _program(command: str) -> str:
 def _said(event: dict, tracked: set[str] | None = None) -> str:
     """What a step shows a member: ``Reading main.tex``, ``Editing
     sections/intro.tex``, ``Running latexmk``, ``Searching the sources``,
-    ``Working``; a file the vault does not track is named as no file
-    (``_named``)."""
+    ``Reading Gamma: read_page``, ``Working``; a file the vault does not
+    track is named as no file (``_named``)."""
     kind = event.get("kind")
     if kind in ("read", "edit"):
         what = _named(event.get("path") or "", tracked)
@@ -1111,6 +1253,8 @@ def _said(event: dict, tracked: set[str] | None = None) -> str:
         return f"Running {program}" if program else "Running a command"
     if kind == "search":
         return "Searching the sources"
+    if kind == "gamma":
+        return events.gamma_words(event.get("tool") or "", now=True)
     return "Working"
 
 
@@ -1209,22 +1353,76 @@ class _Turning:
         self.ws, self.name, self.link_id, self.run = ws, name, link_id, run
         self.stop = run["stop"]
         self.agent, self.label = "", "the agent"
+        self.owner = ""                 # the account that turned the agent on, whose agent works
+        self.person = ""                # the account the turn is for: the owner, or a co-author it serves
         self.turn = None
         self.timed_out = False
         self.steps: list[dict] = []
         self._step_at: dict[str, int] = {}
+        self.gamma: events.Gamma | None = None   # Gamma's tools for the turn (``_tools``)
+        self._token = ""                          # their token's id, deleted at the end (``_drop_tools``)
+        self._token_until = 0.0                   # when it expires, or a failed renewal is tried again (monotonic)
+
+    def _tools(self) -> None:
+        """Gamma's tools for a turn of this server (``tools.mint``), once:
+        the token of the account the turn is for (its person: the owner, or
+        a co-author's) of the workspace, named with the agent's id,
+        living the run's timeout and ``TOKEN_SLACK_S``. A chat turn mints
+        them before its prompt, which says whether it has them. A turn of
+        another server's work folder gets none here (step 4.2 of
+        docs/research/agents-as-participants-plan.md has that server mint
+        one)."""
+        if self._token or self.home.remote:
+            return
+        minted = tools.mint(self.person or self.owner, self.ws, self.agent, _run_timeout() + TOKEN_SLACK_S)
+        if minted:
+            self.gamma, self._token = minted
+            self._token_until = time.monotonic() + _run_timeout() + TOKEN_SLACK_S
+            log.info(f"[agents] Gamma's tools for {self.label} on {self.name}")
+
+    def _keep_tools(self, deadline: float) -> None:
+        """The turn's deadline is ``deadline`` (monotonic): its token lives
+        that long, renewed at most once a minute (``TOKEN_SLACK_S`` past the
+        deadline); a renewal that failed is tried again a minute later."""
+        if self._token and deadline > self._token_until:
+            self._token_until = deadline + TOKEN_SLACK_S
+            try:
+                integrations.renew_turn(self._token, self._token_until - time.monotonic())
+            except Exception as e:  # noqa: BLE001 — the watch goes on
+                log.warning(f"[agents] renewing the token of {self.name}: {e}")
+
+    def _drop_tools(self) -> None:
+        """The turn ended, however it ended: its token is deleted, so a call
+        of the agent's after it is refused. Never raises: an expired token
+        reads nothing either, and the next start deletes what is left."""
+        if not self._token:
+            return
+        try:
+            integrations.drop(self._token)
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"[agents] deleting the token of {self.name}: {e}")
+        else:
+            log.info(f"[agents] the token of {self.name} deleted")
+        self._token, self.gamma = "", None
 
     def _turn(self, argv: list[str], root: Path, text: str, session: str, *, schema: dict | None = None,
-              images=(), ask: bool = False, stream: bool = False, model: str = "", effort: str = "") -> dict:
+              images=(), ask: bool = False, stream: bool = False, model: str = "", effort: str = "",
+              title: str = "") -> dict:
         """One turn of the agent on ``text`` (``session`` one to resume;
         ``ask``, it may ask; ``stream``, its text as it is written; its
-        ``model`` and ``effort``), watched, its events followed → its done.
-        A turn before it is closed first."""
+        ``model`` and ``effort``; ``title`` a new session's name) with
+        Gamma's tools (``_tools``), watched, its events followed → its done.
+        A turn before it is closed first. The tools live as long as this
+        turn's deadline, counted from now (``_keep_tools``: what came
+        between the mint and the start, a snapshot of a large folder, or a
+        turn before it)."""
         if self.turn is not None:
             self.turn.close()
+        self._tools()
+        self._keep_tools(time.monotonic() + _run_timeout())
         self.turn = events.start(self.agent, argv=argv, cwd=str(root), prompt=text, schema=schema,
                                  images=list(images), session=session, ask=ask, stream=stream, model=model,
-                                 effort=effort)
+                                 effort=effort, gamma=self.gamma, title=title)
         if self.turn.pid:
             self._started(self.turn.pid)
         ended = threading.Event()
@@ -1234,6 +1432,15 @@ class _Turning:
             return self._follow()
         finally:
             ended.set()
+
+    def _resume_refused(self, done: dict, session: str) -> bool:
+        """Whether a turn that resumed ``session`` failed as one whose
+        session this computer no longer has: before any step, neither
+        stopped nor out of time, and not because Gamma's tools did not start
+        (``gamma_down``: a session afresh would fail alike, and the
+        conversation's would be lost)."""
+        return bool(session and not done["ok"] and not done.get("gamma_down") and not self.steps
+                    and not self.stop.is_set() and not self.timed_out)
 
     def _started(self, pid: int) -> None:
         """The turn's process is ``pid``: what the record keeps."""
@@ -1258,6 +1465,7 @@ class _Turning:
             if self._waiting():
                 deadline += now - last
                 self._waited(now - last)
+                self._keep_tools(deadline)
             last = now
             if self.stop.is_set():
                 turn.stop()
@@ -1303,9 +1511,7 @@ class _Turning:
 
     def _stop_words(self) -> str:
         reason = self.run["reason"]
-        if reason == CLOSING:
-            return STOPPED[CLOSING]
-        return STOPPED[self._link_reason()]
+        return STOPPED[reason if reason in STOPPED else self._link_reason()]
 
     def _push(self) -> None:
         """A work folder of another server pushes what the turn changed now,
@@ -1329,8 +1535,7 @@ class _Turning:
         link = folder_links.get_link(self.link_id)
         if link is None:
             return "removed"
-        row = store.agent_of(self.link_id)
-        if row is None or row["agent"] != self.agent:
+        if not store.owns(self.owner, self.agent):
             return "off"
         if link["status"].get(folder_links.PAUSED):
             return "paused"
@@ -1338,8 +1543,9 @@ class _Turning:
 
 
 class _Run(_Turning):
-    """One request worked by one turn of the vault's agent (the module doc's
-    steps). ``go`` never raises and always ends the run it recorded."""
+    """One request worked by one turn of the requester's agent in the vault
+    (the module doc's steps). ``go`` never raises and always ends the run
+    it recorded."""
 
     def __init__(self, ws: str, request_id: str, link_id: str, run: dict):
         super().__init__(ws, request_id, link_id, run)
@@ -1352,7 +1558,7 @@ class _Run(_Turning):
         self.request_id = request_id
         self.link: dict | None = None
         self.record: dict | None = None
-        self.maker, self.maker_name = "", ""
+        self.owner_name = ""
         self.run_id = ""
         self.end = {"state": "failed", "detail": "", "error": ""}
         self.changes: list[str] = []
@@ -1424,6 +1630,7 @@ class _Run(_Turning):
         finally:
             if self.turn is not None:
                 self.turn.close()  # a turn whose events were never read still ends its process
+            self._drop_tools()
             if self.run_id and self.unwritten:
                 # The request could not be told how the run ended (its
                 # database refused): the run stays open, so the next start
@@ -1439,7 +1646,7 @@ class _Run(_Turning):
                 self._push()
 
     def _claim(self) -> bool:
-        """Step 1: the vault, its agent and its maker checked again, the
+        """Step 1: the vault, the requester's agent and role checked again, the
         request taken (``home.claim``) and the run recorded → whether it is
         this run's."""
         if self.stop.is_set():
@@ -1491,7 +1698,7 @@ class _Run(_Turning):
             return
         if len(todo) > MAX_THREADS:
             self._fail(f"{self.label} takes at most {MAX_THREADS} comments at a time: send a file or a directory of "
-                       "this work folder.")
+                       "this synced folder.")
         self._show(f"Reading {len(todo)} comment{'' if len(todo) == 1 else 's'}", force=True)
 
         # 4. the turn
@@ -1502,12 +1709,12 @@ class _Run(_Turning):
         if argv is None:
             self._fail(f"{self.label} is not on this computer.")
         self.home.pictures(todo, root)
-        text = prompt.build(agent=self.agent, owner=self.maker_name, work_folder=self.record["work_folder"]["name"],
+        text = prompt.build(agent=self.agent, owner=self.owner_name, work_folder=self.record["work_folder"]["name"],
                             note=self.record["note"], entries=todo, root=root)
         session = self._session(todo, last)
         schema, images = prompt.ANSWER_SCHEMA, prompt.picture_paths(todo, root)
         done = self._turn(argv, root, text, session, schema=schema, images=images)
-        if session and not done["ok"] and not self.steps and not self.stop.is_set() and not self.timed_out:
+        if self._resume_refused(done, session):
             # A session this computer no longer has (Claude Code has no
             # fallback of its own): the same prompt once more, afresh.
             log.info(f"[agents] {self.label} could not resume its session on request {self.request_id}: "
@@ -1652,7 +1859,8 @@ class _Run(_Turning):
 
 class _ChatTurn(_Turning):
     """One turn of the chat's computer side (the module doc): the person's
-    message worked by one turn of the vault's agent, the agent's message
+    message worked by one turn of its agent where the conversation works
+    (``chats.place_of``; ``link_id`` its vault, "" for none), the agent's message
     written as the turn goes (at most every ``CHAT_EVERY_S``) and at its
     end. ``go`` never raises and always ends the turn: its message (unless
     it is gone) and its row, which keeps this computer's record of a
@@ -1669,7 +1877,7 @@ class _ChatTurn(_Turning):
         self.home = home.chat_home_for(ws, link_id, turn_id)
         run["remote"] = self.home.remote
         self.left_open = False          # a claim never answered: the row stays open, for that server to be told
-        self.conversation_id, self.page_id = chat["conversation_id"], chat["page_id"]
+        self.conversation_id, self.bucket, self.dir = chat["conversation_id"], chat["bucket"], chat["dir"]
         self.agent, self.label = chat["agent"], catalog.label(chat["agent"])
         self.model, self.effort = chat.get("model") or "", chat.get("effort") or ""
         self.root: Path | None = None
@@ -1683,7 +1891,7 @@ class _ChatTurn(_Turning):
         self.tracked: set[str] = set()  # the vault's files, by path folded: what the vault's detail may name
         self.end = {"state": "failed", "error": "", "record": ""}
         self.gone = False               # its message is gone: nothing more is written in it
-        self.ask = False                # its agent may ask (the vault's policy at its start)
+        self.ask = False                # its agent may ask (what it may run at the turn's start)
         self.asks: dict[str, dict] = {}  # Gamma's id -> an ask that waits: {key, kind, command, cwd, host, step,
         #                                   since, shown, card (a remote turn's: what the desktop app draws)}
         self.answered: set[str] = set()  # the asks that waited and wait no more
@@ -1691,7 +1899,9 @@ class _ChatTurn(_Turning):
         self.declines = 0               # the person's declines in a row
         self.waited = 0.0               # seconds a remote turn waited for the person (its deadline moved so)
         self.file = ""                  # the page's path from this computer's vault rows ("" for none)
-        self.maker = ""                 # the account that made the vault
+        self.maker = ""                 # who answers its asks on this computer: the vault's maker, else the owner
+        self.person_name = ""           # its username
+        self.lent = False               # a co-author's turn (``_work``)
         self._io = threading.Lock()     # one write of the message at a time, the newest last
         self._asking = threading.Lock()  # the asks and the steps, which the person's answer changes too
         self._written_at = 0.0
@@ -1713,28 +1923,42 @@ class _ChatTurn(_Turning):
         finally:
             if self.turn is not None:
                 self.turn.close()  # a turn whose events were never read still ends its process
+            self._drop_tools()
             self._stopping()
             self._close()
             if self.home.remote and (self.changes or self.built):
                 self._push()
 
     def _close(self) -> None:
-        """The turn's end written: its message, then its row."""
+        """The turn's end written: its message (with the threads its agent
+        opened meanwhile, ``threads.opened``: a turn of this server's), then
+        its row."""
         if self.left_open:
             return
         try:
             with self._io:
                 self._ended = True
                 if not self.gone:
+                    opened = {} if self.home.remote else {"threads": self._opened()}
                     self.gone = not self.home.write(self, {
                         **self._progress(), "state": self.end["state"], "error": self.end["error"],
                         "changes": self.changes, "changed": self.changed, "built": self.built,
-                        "ended_at": page_now()}, last=True)
+                        **opened, "ended_at": page_now()}, last=True)
         except Exception as e:  # noqa: BLE001 — the row stays open: the next start fails the message
             log.warning(f"[agents] chat turn {self.turn_id} of workspace {self.ws} left open; the next start "
                         f"fails it: {e}")
             return
         store.end_turn(self.turn_id, state=self.end["state"], error=(self.end["record"] or "")[-MAX_ERROR:])
+
+    def _opened(self) -> list[dict]:
+        """The threads its agent opened for the turn's owner since the turn
+        began running (``threads.opened``), what its answer's card lists;
+        none for a turn that never ran, or when they cannot be read."""
+        try:
+            return threads.opened(self.ws, agents.here(self.agent).id, self.person, self.run.get("since") or "")
+        except Exception as e:  # noqa: BLE001 — the end is written without them
+            log.warning(f"[agents] the threads chat turn {self.turn_id} opened: {e}")
+            return []
 
     def _fail(self, words: str, record: str = "") -> None:
         """The turn failed: ``words`` its message says, ``record`` this
@@ -1775,19 +1999,24 @@ class _ChatTurn(_Turning):
         self._check_stop()  # stopped while it waited for a slot
 
         # 1. what its route checked, checked again
-        link = folder_links.get_link(self.link_id)
-        if link is None or not self.home.kept(link):
-            self._fail("The work folder is no longer kept on this computer.")
-        if link["status"].get(folder_links.PAUSED) or folder_links.choosing(link):
-            self._fail("The work folder is paused on this computer: send this again once it syncs.")
-        if not self.home.ours(link, context):
-            self._fail(f"Only the person who keeps this folder on this computer can talk to {self.label}.")
-        row = store.agent_of(self.link_id)
-        if row is None:
-            self._fail(f"{self.label} was turned off for this folder.")
-        if row["agent"] != self.agent:
-            self._fail(f"{self.label} is no longer this folder's agent.")
-        if not self.home.editor(link):
+        place = self.home.place(self, context)
+        if place["path"] and _place(place["path"]) != self.run["dir"]:   # moved while it waited: not its queue
+            self._fail("The directory this conversation works in moved on this computer: send this again.")
+        link = place["link"]
+        if link is not None and (link["status"].get(folder_links.PAUSED) or folder_links.choosing(link)):
+            self._fail("The synced folder is paused on this computer: send this again once it syncs.")
+        self.owner = self.home.whose(link, context)
+        self.person, self.person_name = self.home.person(context)
+        self.lent = self.home.lent(context)
+        if not store.owns(self.owner, self.agent):
+            self._fail(f"{self.label} was turned off on this computer.")
+        if self.lent and not self.home.serves(self.agent, self.person):
+            self._fail(UNNAMED.format(agent=self.label))
+        if self.lent and not self.home.editor(self.owner):
+            self._fail(f"The owner of {self.label} on this computer can no longer edit this workspace.")
+        if self.lent and place["kind"] != "vault":
+            self._fail(LENT_FOLDER.format(agent=self.label, person=self.person_name or "you"))
+        if not self.home.editor(self.person):
             self._fail(f"Only an owner or an editor of this workspace can talk to {self.label}.")
         found = catalog.probe(self.agent, fresh=True, models=False)
         self._check_stop()
@@ -1803,13 +2032,16 @@ class _ChatTurn(_Turning):
         argv = catalog.command(self.agent)
         if argv is None:
             self._fail(f"{self.label} is not on this computer.")
-        # Another server's turn asks only on this computer (``ask_refusal``), each ask checked again.
-        self.ask = not ask_refusal(link, self.home.remote)
-        self.maker = link["created_by"]
+        # Another server's turn asks only on this computer (``ask_refusal``), each ask checked again; a
+        # co-author's there asks nothing.
+        self.ask = not ask_refusal(link, self.home.remote, self.agent) and not (self.lent and self.home.remote)
+        self.maker = link["created_by"] if link is not None and not self.lent else self.owner
 
         # 2. running
-        self.root = Path(link["path"])
-        self.tracked = {path.casefold() for path in vault_store.files(self.link_id)}
+        self.root = Path(place["path"])
+        if place["kind"] == "own":
+            self.root.mkdir(parents=True, exist_ok=True)   # its first turn makes it
+        self.tracked = {path.casefold() for path in vault_store.files(link["id"])} if link is not None else set()
         with _lock:
             self.run["claimed"] = True
             self.run["since"] = page_now()
@@ -1817,25 +2049,41 @@ class _ChatTurn(_Turning):
         self._show(force=True, state="running")
         self._check_stop()
 
-        # 3. the prompt and the session
-        owner = self.home.owner(link)
-        file, folder, selections = self.home.where(self, link, context)
-        self.file = self.home.vault_file(self, link)   # what an ask names: never the other server's word
+        # 3. the prompt and the session: the person's words are the instruction
+        owner = self.person_name or "the owner"
+        about, selections = self.home.where(self, place, context)
+        # what an ask names: never the other server's word
+        self.file = self.home.vault_file(self, link) if link is not None else ""
         earlier = context["earlier"]
-        session = self._session(link)
+        session = self._session(place)
         self.fresh = bool(earlier) and not session
+        self._tools()   # the prompt says whether the turn has them
+        thread, images, pictures = None, [], None
+        if context.get("thread_id"):
+            # a thread's turn: the thread as it is now, its pictures where a vault's files hold them
+            thread = self.home.thread(self, place, context)
+            if thread is None:
+                self._fail("That comment thread is gone.")
+            pictures = self.root if place["kind"] == "vault" and not self.home.remote else None
+            images = prompt.picture_paths([thread], pictures) if pictures else []
 
         def told(with_earlier: bool) -> str:
-            return prompt.build_chat(agent=self.agent, owner=owner, work_folder=folder, file=file,
+            if thread is not None:   # the thread holds what was said before: no earlier messages
+                return prompt.build_thread(agent=self.agent, owner=owner, about=about, place=place,
+                                           message=context["text"], thread=thread, root=pictures, ask=self.ask,
+                                           tools=self.gamma is not None)
+            return prompt.build_chat(agent=self.agent, owner=owner, about=about, place=place,
                                      message=context["text"], selections=selections,
-                                     earlier=earlier if with_earlier else None, ask=self.ask)
+                                     earlier=earlier if with_earlier else None, ask=self.ask,
+                                     tools=self.gamma is not None)
 
         # 4. the turn
         before = _snapshot(self.root)
         self._check_stop()
-        chosen = {"ask": self.ask, "stream": True, "model": self.model, "effort": self.effort}
+        chosen = {"ask": self.ask, "stream": True, "model": self.model, "effort": self.effort,
+                  "title": context.get("title") or "", "images": images}
         done = self._turn(argv, self.root, told(not session), session, **chosen)
-        if session and not done["ok"] and not self.steps and not self.stop.is_set() and not self.timed_out:
+        if self._resume_refused(done, session):
             # A session this computer no longer has (Claude Code has no
             # fallback of its own): afresh, with the earlier messages.
             log.info(f"[agents] {self.label} could not resume the session of chat turn {self.turn_id}: "
@@ -1860,16 +2108,23 @@ class _ChatTurn(_Turning):
                 self.paragraphs, self.live = [done["text"].strip()], False  # a reply its done alone carries
         self.end = {"state": "done", "error": "", "record": record}
 
-    def _session(self, link: dict) -> str:
+    def _session(self, place: dict) -> str:
         """The session to resume: the one the conversation's agent ran in
-        last, when it is this turn's agent in this vault's directory as it
+        last, when it is this turn's agent in this place's directory as it
         is now; "" for a new one."""
         row = store.conversation_of(self.conversation_id)
-        if (row is None or row["agent"] != self.agent or row["link_id"] != link["id"] or row["cwd"] != link["path"]
-                or not row["session"]):
+        if (row is None or row["agent"] != self.agent or row["link_id"] != self.link_id
+                or row["cwd"] != place["path"] or not row["session"]):
             return ""
         self.asked = row["session"]
         return self.asked
+
+    def _link_reason(self) -> str:
+        """Why its stop was set, a turn of no vault's: its agent turned off,
+        else its directory no longer offered (``stop_dirs``)."""
+        if self.link_id:
+            return super()._link_reason()
+        return "off" if not store.owns(self.owner, self.agent) else "unoffered"
 
     def _started(self, pid: int) -> None:
         store.turn_running(self.turn_id, pid)
@@ -1921,6 +2176,8 @@ class _ChatTurn(_Turning):
                     _asks_changed()
                     self._show_later()
                 else:
+                    if self.lent:
+                        _asks_changed()
                     self._show(force=True)
                 return None
         elif kind == "ask_gone":
@@ -1930,7 +2187,7 @@ class _ChatTurn(_Turning):
                 if ask_id:
                     self.answered.add(ask_id)
             if held is not None:
-                if self.home.remote:
+                if self.home.remote or self.lent:
                     _asks_changed()
                 self._settle(held, "failed")
         self._show()
@@ -1955,7 +2212,7 @@ class _ChatTurn(_Turning):
 
     def _asked(self, event: dict) -> bool:
         """The agent asks. Gamma declines it, never shown, in this order:
-        while the vault's agent may no longer ask (``ask_refusal``: set back
+        while the turn's agent may no longer ask (``ask_refusal``: set back
         to never, a remote turn's server no longer reached securely or the
         desktop app's secret gone), a remote turn's ask of another kind than
         a command or a file change, a file change asking to write below a
@@ -1966,9 +2223,11 @@ class _ChatTurn(_Turning):
         ``SHELL_GRACE_S`` for its first read). A command the person allowed
         in a local conversation, exactly it in the same directory and to
         the same network host, is answered at once, never shown; a remote
-        turn looks up no grant. Any other ask is held, in the message
-        (``asks``) with its step ``asked``, a remote turn's for the desktop
-        app alone (``card``) → whether it was held."""
+        turn and a co-author's look up no grant. Any other ask is held, in
+        the message (``asks``, a co-author's marked ``once``: Allow once and
+        Decline alone) with its step ``asked``, a remote turn's for the
+        desktop app alone (``card``), a co-author's for the desktop app too
+        → whether it was held."""
         from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
         remote = self.home.remote
@@ -1976,8 +2235,8 @@ class _ChatTurn(_Turning):
         raw = str(event.get("command") or "")
         command = raw.strip()
         cwd, host = self._grant_cwd(event.get("cwd") or "."), str(event.get("host") or "").strip()
-        link = folder_links.get_link(self.link_id)
-        refusal = ask_refusal(link, remote)
+        link = folder_links.get_link(self.link_id) if self.link_id else None
+        refusal = RUNS_NEVER if self.link_id and link is None else ask_refusal(link, remote, self.agent)
         if not refusal and remote and kind not in ("command", "files"):
             refusal = RUNS_NEVER
         if not refusal and event.get("grant_root"):
@@ -1992,8 +2251,8 @@ class _ChatTurn(_Turning):
         if refusal:
             self.turn.answer(event["id"], "deny", refusal, by="gamma")
             return False
-        if not remote and kind == "command" and command and store.granted(
-                self.conversation_id, command, link_id=self.link_id, cwd=cwd, host=host):
+        if not remote and not self.lent and kind == "command" and command and store.granted(
+                self.conversation_id, command, dir=str(self.root), cwd=cwd, host=host):
             self.turn.answer(event["id"], "once")
             return False
         if self.held >= MAX_ASKS or self.declines >= MAX_DECLINES:
@@ -2031,6 +2290,8 @@ class _ChatTurn(_Turning):
             shown["tool"] = events.one_line(str(event.get("tool") or ""), 100)
         if event.get("background"):
             shown["background"] = True
+        if self.lent:
+            shown["once"] = True
         now = datetime.now(timezone.utc)
         shown["at"], shown["expires_at"] = format_stamp(now), format_stamp(now + timedelta(seconds=ASK_TIMEOUT_S))
         # a step's id never the ask's: a remote turn's steps reach the other server
@@ -2041,7 +2302,7 @@ class _ChatTurn(_Turning):
             step = _step({"id": step_id, "kind": "edit", "path": (event.get("paths") or [""])[0], "status": "asked"})
         else:
             step = _step({"id": step_id, "kind": "other", "status": "asked"})
-        card = self._card(event, shown, link) if remote else None
+        card = self._card(event, shown, link) if remote or self.lent else None
         with self._asking:
             self.held += 1
             self.asks[ask_id] = {"key": event["id"], "kind": kind, "command": command, "cwd": cwd, "host": host,
@@ -2091,8 +2352,10 @@ class _ChatTurn(_Turning):
             card["diff"] = mark(shown["diff"])
         if event.get("reason"):
             card["reason"] = mark(events.one_line(str(event["reason"]), 300))
-        card["server"] = {"origin": remote_servers.origin_of(link["remote_url"]),
-                          "account": mark(events.one_line(self.home.username, 64))}
+        card["server"] = {"origin": remote_servers.origin_of(link["remote_url"]) if link["remote_url"] else "",
+                          "account": mark(events.one_line(self.home.username if self.home.remote else "", 64))}
+        if self.lent:
+            card["for"] = mark(events.one_line(self.person_name, 64))
         if count:
             card["marked"] = count
         card["at"], card["expires_at"] = shown["at"], shown["expires_at"]
@@ -2113,13 +2376,15 @@ class _ChatTurn(_Turning):
         records the grant. ChatError 404 for an ask the turn never had, 409
         for one that waits no more (answered, withdrawn, declined by Gamma)
         or that the agent no longer takes, 400 for Allow in this chat on
-        anything but a command."""
+        anything but a command, and in a co-author's turn (``ONCE_ONLY``)."""
         with self._asking:
             held = self.asks.get(ask_id)
             if held is None:
                 raise chats.ChatError(409 if ask_id in self.answered else 404,
                                       f"{self.label} no longer waits for that." if ask_id in self.answered
                                       else "No question of this turn has that id.")
+            if decision == "chat" and self.lent:
+                raise chats.ChatError(400, ONCE_ONLY)
             if decision == "chat" and held["kind"] != "command":
                 raise chats.ChatError(400, "Only a command can be allowed in this chat.")
         if not self._decide(ask_id, decision, note):
@@ -2129,9 +2394,9 @@ class _ChatTurn(_Turning):
         """The ask answered with ``decision``, once, by the person (``by``
         ``owner``: a decline counts toward ``MAX_DECLINES``, an allow sets
         the count back) or by Gamma → whether the agent took the answer.
-        Allow in this chat is kept (``store.grant``: the command, its
-        directory, its host) only while the vault's agent may still ask and
-        is still this turn's. A remote turn's message is written by the
+        Allow in this chat is kept (``store.grant``: the command, the
+        directory the turn works in, the folder below it, its host) only
+        while the turn's agent is still on and may still ask. A remote turn's message is written by the
         flush, so the desktop app's answer never waits on that server."""
         answered = "declined" if decision == "deny" else "allowed"
         with self._asking:
@@ -2146,12 +2411,11 @@ class _ChatTurn(_Turning):
             # event's guard), whichever thread comes first.
             self._mark(held, "asked", answered)
         written = self.turn is not None and self.turn.answer(held["key"], decision, note, by=by)
-        if written and decision == "chat" and held["kind"] == "command" and held["command"]:
+        if written and decision == "chat" and not self.lent and held["kind"] == "command" and held["command"]:
             try:
-                if (store.runs_of(self.link_id) == "ask"
-                        and (store.agent_of(self.link_id) or {}).get("agent") == self.agent):
-                    store.grant(self.conversation_id, held["command"], link_id=self.link_id, cwd=held["cwd"],
-                                host=held["host"])
+                if store.runs_of(self.agent) == "ask" and store.owns(self.owner, self.agent):
+                    store.grant(self.conversation_id, held["command"], agent=self.agent, dir=str(self.root),
+                                cwd=held["cwd"], host=held["host"])
             except Exception as e:  # noqa: BLE001 — this call is allowed; the next one asks again
                 log.warning(f"[agents] keeping a grant of chat turn {self.turn_id}: {e}")
         if not written:
@@ -2161,6 +2425,8 @@ class _ChatTurn(_Turning):
             _asks_changed()
             self._show_later()
         else:
+            if self.lent:
+                _asks_changed()
             self._show(force=True)
         return written
 
@@ -2211,7 +2477,7 @@ class _ChatTurn(_Turning):
                 if at is not None and self.steps[at]["status"] == "asked":
                     self.steps[at]["status"] = "declined"
         if left:
-            if self.home.remote:
+            if self.home.remote or self.lent:
                 _asks_changed()
             try:
                 self._show(force=True)
@@ -2300,8 +2566,9 @@ class _ChatTurn(_Turning):
 def _step(event: dict) -> dict:
     """A tool event as the chat's message keeps it: ``{id, kind, status}``
     with ``path`` for a read or an edit (relative to the folder, "outside"
-    for a file outside it) and ``program`` for a command (its name alone,
-    ``_program``); worded by the client."""
+    for a file outside it), ``program`` for a command (its name alone,
+    ``_program``) and ``tool`` for a call of Gamma's tools; worded by the
+    client."""
     kind = event.get("kind") if event.get("kind") in events.KINDS else "other"
     step = {"id": str(event.get("id") or ""), "kind": kind, "status": event.get("status") or ""}
     if kind in ("read", "edit"):
@@ -2309,4 +2576,6 @@ def _step(event: dict) -> dict:
         step["path"] = events.one_line(path, 200) if _inside(path) else "outside"
     elif kind == "run":
         step["program"] = _program(event.get("command") or "")
+    elif kind == "gamma":
+        step["tool"] = event.get("tool") if events.GAMMA_TOOL.match(str(event.get("tool") or "")) else ""
     return step

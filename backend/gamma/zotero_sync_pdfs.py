@@ -246,6 +246,12 @@ class UnitPdf:
     record is (``_file``), with the page's ``zotero_pdf`` mark and a new
     attachment for Gamma's file."""
 
+    def _placing_now(self, entries: list[dict]) -> list[dict]:
+        """The unit's queue as ``finish`` writes it (gamma/zotero_sync_items.py),
+        a PDF held back for a relocation that has ended since due at once
+        (the module's ``_placing_now``)."""
+        return _placing_now(self.r, entries)
+
     def _attachments(self) -> list[dict]:
         return [c for c in self.children if (c.get("data") or {}).get("itemType") == "attachment"
                 and (c.get("data") or {}).get("parentItem") == self.key]
@@ -308,7 +314,7 @@ class UnitPdf:
         if resend is not None and may_send_files(self.r) and _relocating(self.r, side):
             # its highlights are being placed: no attachment made now; decided again once they are
             self._put({**resend, "state": "waiting", "detail": {**resend["detail"], "file": FILE_PLACING}})
-            self.queue.append(_placing_entry(resend["key"], max(0, int(resend["version"]))))
+            self.queue.append(_placing_entry(resend["key"], max(0, int(resend["version"])), side))
             self._mark(None)
             return
         if not self.standalone:  # attachments other pages held until now (Merge Items moved them here)
@@ -409,7 +415,7 @@ class UnitPdf:
             base.update(state="waiting", version=int(att.get("version") or 0), detail={**detail, "file": reason})
             self._put(base)
             if reason == FILE_PLACING:  # decided again at the relocation's end (``relocation_ended``), or a while later
-                self.queue.append(_placing_entry(att["key"], int(att.get("version") or 0)))
+                self.queue.append(_placing_entry(att["key"], int(att.get("version") or 0), side))
             return None if side.has_pdf else self._pdf_mark(att, "unavailable", reason)
         if action == "none":
             if bound and int(base["version"]) != int(att.get("version") or 0):
@@ -598,13 +604,24 @@ def _later(seconds: float) -> datetime:
     return datetime.now(timezone.utc) + timedelta(seconds=seconds)
 
 
-def _placing_entry(key: str, version: int) -> dict:
+def _placing_entry(key: str, version: int, side: Side) -> dict:
     """The file entry of a PDF that waits for its page's highlights to be
     placed (``FILE_PLACING``): held back ``PLACING_RECHECK_S``, so it is
     looked at again even when no relocation's end asks for it
-    (``relocation_ended``)."""
+    (``relocation_ended``). ``relocation`` is the side whose relocation it
+    waits for, asked again as the entry is written (``_placing_now``)."""
     return {"id": zr.FILE_PREFIX + key, "kind": "file", "version": int(version),
-            "next_at": _later(PLACING_RECHECK_S), "reason": PLACING_WAIT}
+            "next_at": _later(PLACING_RECHECK_S), "reason": PLACING_WAIT, "relocation": side}
+
+
+def _placing_now(r: Round, entries: list[dict]) -> list[dict]:
+    """``entries`` as they are written, under the workspace's write lock: a
+    PDF held back for a relocation that has ended since the round decided is
+    due at once. Its end (``relocation_ended``) may have come in between and
+    found nothing to ask for again, or asked for it only to have it held back
+    here for ``PLACING_RECHECK_S``."""
+    return [{**e, "next_at": "", "reason": ""}
+            if e.get("relocation") is not None and not _relocating(r, e["relocation"]) else e for e in entries]
 
 
 def relocation_ended(ws: str, page_id: str) -> None:
@@ -616,10 +633,14 @@ def relocation_ended(ws: str, page_id: str) -> None:
     it are held or wait (a highlight the run left where it was reads as it
     last synced, so no change of the page's lifts the wait it was put on;
     its item's unit does). The link's round is asked for after the clock's
-    quiet time. Nothing for a workspace with no link."""
+    quiet time. Nothing for a workspace with no link. Read under the
+    workspace's write lock: a round that held a PDF back for the relocation
+    has written that by then, and one that writes after reads the job as
+    ended (``_placing_now``)."""
     if get_link(ws) is None:
         return
     with connect_pages_db(ws) as conn:
+        write_lock(conn)
         entries = [{"id": zr.FILE_PREFIX + key, "kind": "file", "next_at": "", "reason": ""} for (key,) in conn.execute(
             "SELECT key FROM zotero_objects WHERE kind = 'attachment' AND page_id = ? AND ((state = 'waiting' "
             "AND json_extract(detail, '$.file') = ?) OR key IN (SELECT substr(id, ?) FROM zotero_queue "
@@ -632,7 +653,6 @@ def relocation_ended(ws: str, page_id: str) -> None:
                 "AND kind IN ('item', 'attachment')", (page_id,)).fetchall()]
         if not entries:
             return
-        write_lock(conn)
         zr.enqueue(conn, entries)
         conn.commit()
     clock = sync_clock.get(ENGINE)
@@ -775,7 +795,7 @@ def _file_waits(r: Round, entry: zr.Entry, row: dict, att: dict, side: Side, rea
                 write_rows(conn, [new])
                 zr.drop(conn, [entry.id])
         elif reason == FILE_PLACING:
-            zr.enqueue(conn, [_placing_entry(row["key"], entry.version)])
+            zr.enqueue(conn, _placing_now(r, [_placing_entry(row["key"], entry.version, side)]))
         else:
             zr.done(conn, [entry.id])
 

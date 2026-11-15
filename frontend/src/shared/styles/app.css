@@ -265,7 +265,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   background: var(--bg-page);
   position: relative;
 }
-/* An item off the bar (Settings → Appearance › Top bar; on a phone, a row
+/* An item off the bar (Settings → Toolbars › Top bar; on a phone, a row
    of More): only its popover lives here, opened from its row, its shortcut
    or App, in the place its button would be. No slot: zero wide, the gap
    before it given back, and as tall as a button so the popover hangs from
@@ -1398,6 +1398,15 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   line-height: 1.45;
   font-size: var(--fs-sm);
 }
+
+/* Who made a highlight when an agent did, under its passage (BlockTree). */
+.blockMadeBy {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: 6px; min-width: 0;
+  font-size: var(--fs-xs); color: var(--text-muted);
+}
+.blockMadeBy > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blockMadeBy .agentAvatar { flex-shrink: 0; width: 16px; height: 16px; border: none; }
 
 /* Area-selection crop on a note card — quote-style left border in the
    highlight's color; clicking anywhere on the card already jumps the PDF. */
@@ -3831,10 +3840,12 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .chatHistRow:hover, .chatHistRow:focus-visible { background: var(--bg-hover); outline: none; }
 .chatHistRow.active { background: var(--accent-bg); font-weight: 600; cursor: default; }
-/* A row that cannot open now (the computer side while a turn runs): faint,
-   no hover, its title saying why. */
+/* A row that cannot open now (a computer agent's while its turn runs):
+   faint, no hover, its title saying why. Its agent's icon leads it while
+   the chat has several agents. */
 .chatHistRow[aria-disabled="true"] { color: var(--text-dim); cursor: default; }
 .chatHistRow[aria-disabled="true"]:hover { background: none; }
+.chatHistIcon { flex: none; color: var(--text-muted); }
 .chatHistTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatHistAge { flex: none; font-size: var(--fs-2xs); color: var(--text-dim); padding-right: 4px; }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
@@ -3880,6 +3891,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   padding: 8px 4px;
   font-style: italic;
 }
+/* A computer agent's conversation that could not be read: Try again under
+   the reason. */
+.chatEmpty .chatEmptyAgain { margin-top: 6px; font-style: normal; }
 /* No AI connected: the setup card, centred in the empty transcript (below an
    earlier conversation when there is one). Tiles are plain two-line buttons. */
 .chatMessages:has(> .chatSetup) { display: flex; flex-direction: column; }
@@ -4040,7 +4054,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHandoffInstead { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatHandoffInstead .aiKeyInput { flex: 1 1 14rem; min-width: 0; }
 /* A call waiting for the user's decision (ApprovalShell.jsx: Gamma AI's
-   ApprovalCard.jsx, the computer side's ComputerAsk.jsx): what it would do,
+   ApprovalCard and a computer agent's AskCard, ApprovalCard.jsx): what it would do,
    the change as a word diff, the answers. It looks like a fetch handoff's
    card, the other place the chat waits for the user. */
 .chatApproval {
@@ -4114,6 +4128,27 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   background: var(--bg-surface);
 }
 .chatApprovalNote { margin-top: 6px; color: var(--text-secondary); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
+/* What a computer's agent asks (ApprovalCard.jsx AskCard): the command on a
+   code line, the files it would change, and their diff one row a line, the
+   lines taken out struck and the ones put in tinted. Each line keeps its
+   spaces and reads in its own direction, so a right-to-left character
+   cannot reorder what is around it; a character the server marked because
+   it would not show is drawn in the warning colour. */
+.chatAskCommand code {
+  display: block;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  direction: ltr;
+}
+.chatAskMark { color: var(--warn); }
+.chatAskPaths { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 6px; }
+.chatAskPaths code { font-family: var(--font-mono); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); overflow-wrap: anywhere; }
+.chatAskDiff { font-family: var(--font-mono); }
+.chatAskDiff > * { display: block; white-space: break-spaces; unicode-bidi: plaintext; direction: ltr; }
+.chatAskDiffHead { color: var(--text-muted); }
 /* "Allowed in this chat" in the composer's toolbar: click to ask again. In a
    narrow chat its words give way first (down to the shield and the ×), so
    the send button keeps its place. */
@@ -4538,6 +4573,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   flex-shrink: 0;
 }
 .chatSelChipNote { color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A passage's source line: its file's theme icon before it (shared/ui/FileIcon.jsx). */
+.chatSelChipNote .kindGlyph { vertical-align: -3px; margin-right: 3px; }
 /* A passage too long to go whole: what the message keeps of it. */
 .chatSelChipNote.cut { color: var(--warn); }
 .chatSelChipText {
@@ -4724,6 +4761,23 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-width: 0;
 }
 .chatComposer.off { box-shadow: none; }
+/* In the composer's place while the chat shows a comment thread's
+   conversation (ChatDock: it goes on in its thread). */
+.chatThreadNote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 4px 2px 2px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.chatThreadNote .chatThreadNoteText { flex: 1; min-width: 12em; }
 .chatComposerBar { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .chatComposerSpacer { flex: 1; }
 .chatComposer .chatSelChip { margin: 0 0 2px; }
@@ -5143,6 +5197,35 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-bottom: 1px solid var(--danger-border);
 }
 .chatHealthStrip .chatHealthText { flex: 1; min-width: 0; }
+/* A conversation with a computer's agent has its strip in the same slot
+   (chat/computer/ComputerStrip.jsx): it names the agent and what it is at,
+   in neutral colours, amber only while the agent cannot run or waits for
+   the person's answer. After its line where the agent works (the
+   directory's name, or while the conversation has no turn the menu of
+   those offered), kept to the strip's line height, then its ⋯ menu. */
+.chatHealthStrip.computerStrip {
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border-bottom-color: var(--border-subtle);
+}
+.chatHealthStrip.computerStrip:is(.problem, .asking) { color: var(--warn); background: var(--warn-bg); }
+.chatHealthStrip.computerStrip .transferSpin.inline { flex: none; }
+.chatHealthStrip.computerStrip .computerPlace {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-width: 0;
+  margin-left: auto;
+}
+.chatHealthStrip.computerStrip .computerPlace .uiSelectBtn { margin: -4px 0; }
+.chatHealthStrip.computerStrip .computerStripMenu {
+  flex: none;
+  width: var(--ctl-icon-btn-xs);
+  height: var(--ctl-icon-btn-xs);
+  margin: -4px -6px -4px 0;
+  color: inherit;
+}
 /* find-in-chat bar */
 .chatFindRow {
   display: flex;
@@ -5296,6 +5379,17 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border-left: 2px solid var(--accent);
   font-size: calc(var(--fs-sm) * var(--text-scale, 1));
   line-height: 1.45;
+}
+/* A computer agent's changed files (AgentChanges.jsx FileChanges), after
+   its reply's text rather than before it; above a turn, the line of a
+   session not resumed. */
+.chatChanges.chatFileChanges { margin: 6px 0 2px; }
+.chatNotice {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  line-height: var(--lh-ui);
+  font-style: italic;
 }
 .chatChangesHead {
   display: flex;
@@ -7071,6 +7165,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-size: var(--fs-2xs); font-weight: 600; line-height: 1; letter-spacing: 0;
   border: 1.5px solid var(--bg-surface); user-select: none;
 }
+/* an agent's avatar (AgentAvatar): its kind's icon on a neutral disc */
+.peerAvatar.agentAvatar { background: var(--bg-active); color: var(--text-secondary); }
 .presenceBar { display: inline-flex; align-items: center; margin-left: 10px; vertical-align: middle; }
 .presenceBar .peerAvatar { margin-left: -6px; cursor: pointer; transition: transform var(--dur-fast); }
 .presenceBar .peerAvatar:first-child { margin-left: 0; }

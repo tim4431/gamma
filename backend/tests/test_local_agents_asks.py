@@ -1,13 +1,14 @@
 """Asking in the chat (step 3b of docs/research/agent-collab.md; the drivers'
 ``ask``, runner.py ``_ChatTurn``'s asks, ``POST /api/local-agents/chat/
-turns/{turn}/asks/{ask}``, the PATCH's ``agent_runs``): against the
+turns/{turn}/asks/{ask}``, what an agent may run): against the
 stand-ins (tests/fake_agents/) through the real processes, on the sample
 paper as a work folder of this computer (test_local_agents_runner's
 fixtures).
 
-What a vault's agent may run is the computer's word (the shell's, to let it
-ask; the maker's alone to stop it), ``never`` until then, and forgotten
-with the agent turned off or changed, the vault relinked or removed. The
+What an agent may run is the computer's (test_local_agents_routes.py
+checks its gate), ``never`` until it is let ask, and a grant in a chat is
+kept for the directory the turn works in, forgotten with the agent turned
+off or set back to never and with its conversation. The
 drivers start differently with ``ask`` (Claude Code's own flags and the
 control protocol, Codex's approval policy and reviewer, checked), relay
 what their agent asks and write the answers in the protocols' shapes; a
@@ -18,7 +19,7 @@ itself, never another), declined with a note (Codex's steer, Claude Code's
 message), declined by Gamma when nobody answers, withdrawn by the agent,
 taken away by a Stop; the time it waits is not the turn's. Claude Code is
 denied every tool but Bash without asking, a write to a protected path
-first. Only the vault's maker answers, once; a Send never asks. An ask
+first. Only the agent's owner answers, once; a Send never asks. An ask
 shows its command exactly as given and the folder's and the home's paths
 short only where they end; a grant is the command in its directory to its
 host; set back to never, what waits and what comes is declined; Codex's
@@ -43,10 +44,8 @@ from fake_agents import ARGV, read_log, requests_in, script_agent
 from gamma import workspaces
 from gamma.db import connect_pages_db
 from gamma.local_agents import chats, claude, codex, events, procs, prompt, runner, store
-from gamma.routers import folder_links as folder_links_api
-from gamma.vault import store as vault_store
 from test_local_agents_chat import _chat, _reply, _say, _stop
-from test_local_agents_routes import SHELL, _links, _patch
+from test_local_agents_routes import _agent
 from test_local_agents_runner import (_folder, _request, _send, _until,  # noqa: F401: the disk fixture
                                       disk)
 
@@ -68,9 +67,9 @@ def lab(client):
 
 
 def _asking(lab, disk, agent="codex"):
-    """The paper as a vault whose agent may ask."""
+    """The paper as a vault, its agent on and let ask."""
     f = _folder(lab, disk, agent=agent)
-    store.set_runs(f.id, "ask", by=lab.user)
+    store.set_runs(agent, "ask", by=lab.user)
     return f
 
 
@@ -96,58 +95,31 @@ def _steers(log) -> list[str]:
 
 # --- what the agent may run ----------------------------------------------------------------------
 
-def test_what_the_agent_may_run_is_the_computers_word(lab, disk, monkeypatch):
-    f = _folder(lab, disk, agent="")
-    monkeypatch.setenv("GAMMA_SHELL_SECRET", "the-secret")
-    assert _patch(lab.editor, f.id, 403, SHELL, agent_runs="ask")["detail"] == folder_links_api.MAKER_ONLY
-    assert _patch(lab.owner, f.id, 400, SHELL, agent_runs="ask")["detail"] == "Turn an agent on first."
-    store.set_agent(f.id, "codex", by=lab.user)
-    assert _patch(lab.owner, f.id, 400, SHELL, agent_runs="always")["detail"] == (
-        "What an agent may run is never, ask or computer.")
-    assert _patch(lab.owner, f.id, 403, agent_runs="ask")["detail"] == (
-        "Only the desktop app may let an agent ask to run commands in this folder.")
-    assert store.runs_of(f.id) == "never" and _links(lab.owner)[f.id]["agent"]["runs"] == "never"
-
-    on = _patch(lab.owner, f.id, 200, SHELL, agent_runs="ask")
-    assert on["agent"]["runs"] == "ask" and store.runs_of(f.id) == "ask"
-    assert lab.owner.get(f"/api/folder-links/page/{f.page}").json()["vault"]["agent"]["runs"] == "ask"
-    assert _patch(lab.owner, f.id, 200, agent_runs="never")["agent"]["runs"] == "never"  # the maker's alone
-    # turning it on with the agent, in one PATCH; changing the agent forgets it
-    both = _patch(lab.owner, f.id, 200, SHELL, agent="claude", agent_runs="ask")
-    assert (both["agent"]["name"], both["agent"]["runs"]) == ("claude", "ask")
-    store.grant("cvOne", BUILD, link_id=f.id)
-    _patch(lab.owner, f.id, 200, SHELL, agent="codex")
-    assert store.runs_of(f.id) == "never" and not store.granted("cvOne", BUILD, link_id=f.id)
-    monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")
-    assert _patch(lab.owner, f.id, 404, agent_runs="never")["detail"] == "Agents run on the desktop app's own server."
-
-
-def test_consent_goes_with_the_agent_the_directory_and_the_vault(lab, disk):
+def test_consent_goes_with_the_agent_and_holds_in_one_directory(lab, disk):
     f = _asking(lab, disk)
+    here = str(f.root)
 
     def given():
-        store.set_runs(f.id, "ask", by=lab.user)
-        store.grant("cvOne", BUILD, link_id=f.id)
+        store.set_agent("codex", True, by=lab.user)
+        store.set_runs("codex", "ask", by=lab.user)
+        store.grant("cvOne", BUILD, agent="codex", dir=here)
 
     def kept():
-        return store.runs_of(f.id) == "ask", store.granted("cvOne", f"  {BUILD}\n", link_id=f.id)
+        return store.runs_of("codex") == "ask", store.granted("cvOne", f"  {BUILD}\n", dir=here)
 
     given()
     assert kept() == (True, True)
-    assert not store.granted("cvOne", f"{BUILD} -f", link_id=f.id)  # never a prefix
-    store.set_agent(f.id, "codex", by=lab.user)  # the same agent again keeps it
+    assert not store.granted("cvOne", f"{BUILD} -f", dir=here)  # never a prefix
+    assert not store.granted("cvOne", BUILD, dir=str(f.root.parent))  # never another directory
+    store.set_agent("codex", True, by=lab.user)  # on again keeps it
     assert kept() == (True, True)
     store.forget_conversation("cvOne")
     assert kept() == (True, False)
-    for forget in (lambda: store.set_runs(f.id, "never", by=lab.user), lambda: store.set_agent(f.id, "", by=""),
-                   lambda: store.forget_threads(f.id), lambda: store.forget_links(set()),
-                   lambda: vault_store.forget_link(f.id)):
-        store.set_agent(f.id, "codex", by=lab.user)
+    for forget in (lambda: store.set_runs("codex", "never", by=lab.user),
+                   lambda: store.set_agent("codex", False, by=lab.user)):
         given()
         forget()
         assert kept() == (False, False)
-    with pytest.raises(ValueError):
-        store.set_runs(f.id, "always", by=lab.user)
 
 
 # --- the drivers ---------------------------------------------------------------------------------
@@ -176,9 +148,12 @@ def _ended(got) -> dict:
     return _until(lambda: got and got[-1]["type"] == "done" and got[-1], 30)
 
 
+ABOUT = {"kind": "page", "id": "p1", "title": "main", "format": "pdf", "path": "main.pdf", "work_folder": "paper"}
+
+
 def _chat_prompt(message="Build it."):
-    return prompt.build_chat(agent="codex", owner="tim", work_folder="paper", file="main.pdf", message=message,
-                             selections=[], ask=True)
+    return prompt.build_chat(agent="codex", owner="tim", about=ABOUT, place={"kind": "vault", "name": "paper"},
+                             message=message, selections=[], ask=True)
 
 
 def test_the_drivers_start_differently_with_ask(work, monkeypatch):
@@ -329,7 +304,7 @@ def test_a_command_asked_allowed_once_and_its_wait_is_not_the_turns(lab, disk, m
     assert (reply["state"], reply["text"], reply["asks"]) == ("done", "Ran it.", [])
     assert reply["steps"] == [{"id": "ap0", "kind": "run", "status": "completed", "program": "latexmk"}]
     assert [a["result"] for a in _answers(disk.log)] == [{"decision": "accept"}]
-    assert not store.granted(made["conversation"]["id"], BUILD, link_id=f.id)
+    assert not store.granted(made["conversation"]["id"], BUILD, dir=str(f.root))
     assert _answer(lab.owner, turn_id, card["id"], 409, decision="once")["detail"] == "This turn has ended."
 
 
@@ -342,7 +317,7 @@ def test_allowed_in_this_chat_answers_the_same_command_alone(lab, disk, monkeypa
     _answer(lab.owner, made["turn"]["id"], card["id"], decision="chat")
     _answer(lab.owner, made["turn"]["id"], card["id"], 409, decision="once")  # waits no more, or the turn ended
     assert runner.wait_idle(60)
-    assert store.granted(conversation, BUILD, link_id=f.id)
+    assert store.granted(conversation, BUILD, dir=str(f.root))
 
     # the same command again: answered by itself, never shown
     _say(lab.owner, f.page, "Rebuild again.")
@@ -370,7 +345,7 @@ def test_allowed_in_this_chat_answers_the_same_command_alone(lab, disk, monkeypa
     r = lab.owner.delete(f"/api/local-agents/chat/grants/{conversation}")
     assert r.status_code == 200 and r.json() == {"forgotten": True}
     assert _chat(lab.owner, f.page)["computer"]["grants"] == []
-    assert not store.granted(conversation, BUILD, link_id=f.id)
+    assert not store.granted(conversation, BUILD, dir=str(f.root))
 
 
 def test_a_file_change_asked_with_its_diff(lab, disk, monkeypatch):
@@ -490,7 +465,7 @@ def test_a_folder_that_does_not_ask_and_a_send_never_ask(lab, disk, monkeypatch)
     _say(lab.owner, f.page, "Rebuild.")  # never: as in 3a
     assert runner.wait_idle(60)
     assert _reply(lab, f.page)["text"] == "Done: Rebuild."
-    store.set_runs(f.id, "ask", by=lab.user)
+    store.set_runs("codex", "ask", by=lab.user)
     sent = _send(lab.owner, f)
     assert runner.wait_idle(60)
     assert _request(lab, sent["id"])["state"] == "done"
@@ -598,8 +573,8 @@ def test_allowed_in_this_chat_is_the_command_in_its_directory_to_its_host(lab, d
     assert "reason" not in card
     _answer(lab.owner, made["turn"]["id"], card["id"], decision="chat")
     assert runner.wait_idle(60)
-    assert store.granted(conversation, odd, link_id=f.id, cwd=".", host="ctan.org")
-    assert not store.granted(conversation, odd, link_id=f.id)
+    assert store.granted(conversation, odd, dir=str(f.root), cwd=".", host="ctan.org")
+    assert not store.granted(conversation, odd, dir=str(f.root))
 
     # the same command in another directory, to another host, to none: asked again; the same three: answered alone
     script_agent(monkeypatch, disk.log, ask=[{"command": odd, "host": "ctan.org", "cwd": "sections"},
@@ -624,7 +599,7 @@ def test_what_may_run_set_back_to_never_declines_what_waits_and_what_comes(lab, 
     script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}, {"command": "make"}])
     _say(lab.owner, f.page, "Rebuild.")
     _waiting(lab, f.page)
-    assert _patch(lab.owner, f.id, 200, agent_runs="never")["agent"]["runs"] == "never"
+    assert _agent(lab.owner, "codex", runs="never")["runs"] == "never"
     assert runner.wait_idle(60)
     reply = _reply(lab, f.page)
     # the card went, the agent heard a decline, and the next ask was declined unseen; the turn went on
@@ -634,18 +609,18 @@ def test_what_may_run_set_back_to_never_declines_what_waits_and_what_comes(lab, 
     assert [a["result"] for a in _answers(disk.log)] == [{"decision": "decline"}, {"decision": "decline"}]
     assert _steers(disk.log) == [f"Gamma declined that: {runner.RUNS_NEVER}"] * 2
 
-    # Allow in this chat that lands once what may run is never, or the agent is another: no grant
-    for meanwhile in (lambda: store.set_runs(f.id, "never", by=lab.user),
-                      lambda: (store.set_agent(f.id, "claude", by=lab.user), store.set_runs(f.id, "ask", by=lab.user))):
-        store.set_agent(f.id, "codex", by=lab.user)
-        store.set_runs(f.id, "ask", by=lab.user)
+    # Allow in this chat that lands once what may run is never, or the agent is off: no grant
+    for meanwhile in (lambda: store.set_runs("codex", "never", by=lab.user),
+                      lambda: store.set_agent("codex", False, by=lab.user)):
+        store.set_agent("codex", True, by=lab.user)
+        store.set_runs("codex", "ask", by=lab.user)
         script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
         made = _say(lab.owner, f.page, "Rebuild again.")
         [card] = _waiting(lab, f.page)["asks"]
         meanwhile()
         _answer(lab.owner, made["turn"]["id"], card["id"], decision="chat")
         assert runner.wait_idle(60)
-        assert not store.granted(made["conversation"]["id"], BUILD, link_id=f.id)
+        assert not store.granted(made["conversation"]["id"], BUILD, dir=str(f.root))
 
 
 def test_codex_input_to_a_terminal_and_a_protected_change_are_declined_unasked(work, monkeypatch):
@@ -838,3 +813,66 @@ def test_a_turn_holds_at_most_twenty_asks_and_three_declines_in_a_row(lab, disk,
     assert runner.wait_idle(60)
     assert _steers(disk.log)[-1] == f"Gamma declined that: {runner.DECLINED_OFTEN}"
     assert len(seen) == 5                                              # the fourth never reached the person
+
+
+# --- a co-author's turn (step 3.6 of docs/research/agents-as-participants-plan.md) ------------------
+
+def _theirs(lab, page) -> dict:
+    """The editor's agent message of the page's chat, read as kept."""
+    with connect_pages_db(lab.ws) as conn:
+        conversation = chats.active(conn, page, account_of(EDITOR))
+    return [m for m in conversation["messages"] if m["role"] == "agent"][-1]
+
+
+def test_a_co_authors_ask_is_allowed_once_at_most_by_them_or_the_owner_and_leaves_no_grant(lab, disk, monkeypatch):
+    from conftest import make_page
+
+    f = _asking(lab, disk)
+    editor = account_of(EDITOR)
+    assert _say(lab.editor, f.page, status=404)                               # not named: the agent is not theirs
+    store.name_person("codex", "", lab.ws, editor, EDITOR)
+    script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
+    made = _say(lab.editor, f.page, "Rebuild the PDF.")
+    turn_id, conversation_id = made["turn"]["id"], made["conversation"]["id"]
+    [card] = _until(lambda: _theirs(lab, f.page).get("asks"))
+    assert (card["command"], card["once"]) == (BUILD, True)                    # Allow once and Decline alone
+    strip = _chat(lab.editor, f.page)["computer"]
+    assert (strip["lent"], strip["grants"], strip["session"]) == ({"by": OWNER}, [], False)
+    told = next(m["params"] for m in requests_in(disk.log) if m.get("method") == "turn/start")["input"][0]["text"]
+    assert f"message {EDITOR} wrote" in told                                  # the person's words are the instruction
+    # the owner reads it on this computer too, for whom it is
+    [held] = runner.computer_asks(lab.user)
+    assert (held["id"], held["command"], held["for"]) == (card["id"], BUILD, EDITOR)
+    assert runner.computer_asks(editor) == []
+    # never Allow in this chat; answered by the owner, once
+    assert _answer(lab.editor, turn_id, card["id"], 400, decision="chat")["detail"] == runner.ONCE_ONLY
+    assert _answer(lab.owner, turn_id, card["id"], 400, decision="chat")["detail"] == runner.ONCE_ONLY
+    assert _answer(lab.owner, turn_id, card["id"], decision="once") == {"answered": True}
+    assert runner.wait_idle(60)
+    assert (_theirs(lab, f.page)["state"], _theirs(lab, f.page)["asks"]) == ("done", [])
+    assert not store.granted(conversation_id, BUILD, dir=str(f.root)) and store.grants_of(conversation_id,
+                                                                                          dir=str(f.root)) == []
+
+    # the same command again asks again (no grant outlives the ask), answered by the person
+    script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
+    made = _say(lab.editor, f.page, "Rebuild it again.")
+    [card] = _until(lambda: _theirs(lab, f.page).get("asks"))
+    assert _answer(lab.editor, made["turn"]["id"], card["id"], decision="once") == {"answered": True}
+    assert runner.wait_idle(60)
+    assert [a["result"] for a in _answers(disk.log)] == [{"decision": "accept"}, {"decision": "accept"}]
+
+    # the person taken off while a turn of theirs waits: it stops, with why, and they have no seat any more
+    script_agent(monkeypatch, disk.log, ask=[{"command": BUILD}])
+    made = _say(lab.editor, f.page, "Rebuild once more.")
+    _until(lambda: _theirs(lab, f.page).get("asks"))
+    r = lab.owner.delete("/api/local-agents/codex/people", params={"workspace_id": lab.ws, "account": editor})
+    assert r.status_code == 200 and r.json() == {"people": []}
+    assert runner.wait_idle(60)
+    assert (_theirs(lab, f.page)["state"], _theirs(lab, f.page)["error"]) == ("failed", runner.STOPPED["unnamed"])
+    assert _chat(lab.editor, f.page, 404)
+
+    # a co-author works in a synced folder's files alone: a library page is no seat of theirs
+    store.name_person("codex", "", lab.ws, editor, EDITOR)
+    plain = make_page(lab.editor, "A page of no synced folder")["id"]
+    assert _say(lab.editor, plain, status=404)
+    assert _chat(lab.owner, plain)["computer"]["lent"] is None                 # its owner's own: anywhere

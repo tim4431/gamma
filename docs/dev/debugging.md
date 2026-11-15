@@ -106,7 +106,7 @@ What differs from the Windows commands elsewhere in these docs and in
 - **A directory symlink is removed with `os.unlink`**, not with
   `os.rmdir`, which removes only a Windows junction. A test that links a
   directory through its helper removes it by the platform
-  (`tests/test_vault_sync.py`, `tests/test_feedback_files.py`).
+  (`tests/test_vault_sync.py`, `tests/test_annotations_files.py`).
 - **The desktop app without a Developer ID**: `backend/venv/bin/python
   desktop/build_backend.py`, then, in `desktop/`,
   `CSC_IDENTITY_AUTO_DISCOVERY=false npm run pack` for
@@ -589,7 +589,7 @@ runs more, and `ZOTERO_FUZZ_TRACE=<key>` follows one object round by round.
 
 The synced vaults' tests ([synced_vaults.md](synced_vaults.md)) work on
 real directories in `tmp_path` and a real workspace; a test that makes a
-vault removes it with `DELETE …?files=keep`, since the links live in the
+vault removes it with `DELETE /api/folder-links/{id}`, since the links live in the
 worker's shared users.db. By module: `test_md_lens.py` (the lens block by
 block, each law on small files) and `test_md_lens_corpus.py`, the gate: the
 lens's laws through `shape` over every Markdown file of the repository, the
@@ -1749,8 +1749,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   open on what they had; a theme change draws every colour in one frame;
   and under reduced motion each of them moves nothing and leaves no copy.
   `npm run e2e -- --only motion`.
-- `i18n.mjs`: Settings → Appearance → Language switches the interface to
-  Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
+- `i18n.mjs`: Settings → Language & translation → Interface language
+  switches the interface to Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share, a folder share
   copied into another library by the listing's Add to my library and, on a
@@ -1799,7 +1799,7 @@ The scenarios live in `tests/e2e/scenarios/`:
   nothing) until the mail's link lands her on the page with the
   invitation's role; a request to join approved in the Share popover; a
   namesake of the owner who asks to join and lands as `lab-owner-2`; and
-  a request from the login page approved under Server → Sign-in
+  a request from the login page approved under Users → Sign-in
   (`--only "cloud sign-in: a page shared"`). The other invites by e-mail
   from Settings → Users (one sent, one withdrawn), from a shared
   workspace's Manage page (its role changed, mailed again, withdrawn) and

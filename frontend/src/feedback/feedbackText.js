@@ -1,11 +1,12 @@
-// The feedback view's words (docs/dev/feedback.md, feedback/FeedbackDialog.jsx):
-// an entry's heading as the Markdown form names it (gamma/feedback/markdown.py,
+// The feedback view's words (docs/dev/annotations.md, feedback/FeedbackDialog.jsx):
+// an entry's heading as the Markdown form names it (gamma/annotations/markdown.py,
 // here in the reader's language), how its place was found again, its
 // source line, a Send's line with what became of it, and what the Send
 // block says of an agent on this computer. Pure, so node
 // tests it (tests/feedbackText.test.mjs).
 //
-// An entry is the reader's (GET /api/feedback): {id, file, format, page_id,
+// An entry is the reader's (GET /api/annotations): {id, type ("thread" |
+// "highlight"), file, format, page_id,
 // block_id, kind ("passage" | "area" | "ink" | "region" | "lines" | "note" |
 // "file"), where: {page, quote, box, placed, note; a region's rect and size
 // in the picture's pixels; a text file's range its line, end and, placed
@@ -14,11 +15,55 @@
 // before, state, sent, link, comments}. A request is a Send:
 // {id, rev, work_folder, scope, by, at, note, state ("sent" | "running" |
 // "done" | "failed"), state_at, state_by, detail, threads: [{id, answered}]}.
-import { anchorSnippet, sendState } from "../comments/comments.js";
+import { anchorSnippet } from "../comments/comments.js";
 import { agentAway } from "../editor/mentions.js";
 import { formatRelativeTime } from "../library/libraryUtils.js";
 import { t, tn } from "../shared/i18n/i18n.js";
-import { AGENT_MAX, namesAgent } from "./feedbackView.js";
+import { agentWorking } from "../vault/vaultState.js";
+import { AGENT_MAX, isWithdrawn, namesAgent } from "./feedbackView.js";
+
+// What became of a Send, in the one wording every place that shows it
+// uses (the feedback view's entries and request rows, drawn by
+// shared/ui/StateTag.jsx), from a
+// request or a thread's `sent` ({state, detail, state_by}): {kind, label,
+// detail, title, tone, live}. `kind` the state's name ("sent", "running",
+// "done", "failed", "withdrawn"); `label` short: waiting for the agent
+// (for the computer that keeps the folder while another one does, else
+// for the agent by its name), the agent working (named by `state_by` when
+// it says), done by it, failed, or withdrawn by its requester; `detail`
+// the agent's own words (its progress, its summary, the reason it
+// failed), "" for none; `title` the tag's: the words behind the label,
+// and while the computer it waits for is offline, that it runs when that
+// one connects; `tone` the uiTag's; `live` while the agent works.
+// `answers`, the agent that answers the reader's Sends (feedbackView.js
+// sendAgent's plan; null for none), names what a Send waits for.
+export function sendState(send, answers = null) {
+  const { state, state_by: agent } = send;
+  const detail = send.detail || "";
+  if (isWithdrawn(send)) return { kind: "withdrawn", label: t("Withdrawn"), detail: "", title: t("Withdrawn"), tone: "", live: false };
+  if (state === "failed") {
+    return { kind: state, label: t("Failed"), detail, title: detail ? t("Failed: {reason}", { reason: detail }) : t("Failed"), tone: "failed", live: false };
+  }
+  if (state === "running") {
+    const label = agentWorking(agent);
+    return { kind: state, label, detail, title: detail || label, tone: "pending", live: true };
+  }
+  if (state === "done") {
+    const label = agent ? t("Done by {agent}", { agent }) : t("Done");
+    return { kind: state, label, detail, title: detail || label, tone: "ok", live: false };
+  }
+  const label = answers?.computer ? t("Waiting for {computer}", { computer: answers.computer })
+    : answers?.label ? t("Waiting for {agent}", { agent: answers.label }) : t("Waiting for the agent");
+  return { kind: "sent", label, detail: "", title: agentAway(answers) || label, tone: "pending", live: false };
+}
+
+// The chip of a thread a Send waits on (`thread.sent`, {request_id, state,
+// at, detail, state_by}): its sendState, null for none, and for a Send
+// withdrawn: the thread is open, the person's to send again.
+export function sentChip(thread, answers = null) {
+  const sent = thread?.sent;
+  return sent && !isWithdrawn(sent) ? sendState(sent, answers) : null;
+}
 
 // How long a quote in a heading is, at most.
 const QUOTE_MAX = 80;
@@ -58,7 +103,7 @@ export function entryHeading(entry) {
 // (`where.placed`): exactly, roughly (with how alike the text is, a
 // `match` from 0 to 1, when it says), by estimate, not at all, not yet,
 // or on an earlier version (handwriting, which is never placed again): the
-// Markdown's words for every format (gamma/feedback/markdown.py PLACED); ""
+// Markdown's words for every format (gamma/annotations/markdown.py PLACED); ""
 // for an entry with no place. A region (`kind`) is placed exactly, drawn
 // on an earlier version of the picture (it stays where it was on the new
 // one), or lost when the file is no longer a picture.
@@ -94,7 +139,7 @@ export function sourceText(source) {
 }
 
 // A Send as the view lists it: `line`, "Sent 5m ago · 3 comments", with
-// what became of it (comments.js sendState: its `label`, the tag beside
+// what became of it (sendState: its `label`, the tag beside
 // the line, and the agent's own words, `detail`, shown on a line of their
 // own). `answers`, the agent that runs the reader's Sends (sendAgent's
 // plan, for a Send of theirs), names what it waits for.
@@ -128,7 +173,7 @@ export function sendWords(plan, n, others = 0) {
   if (!namesAgent(plan)) {
     if (plan.mode === "other" && plan.why) notes.push({ tone: "hint", text: plan.why });
     if (plan.mode === "offer") {
-      notes.push({ tone: "hint", text: t("To have Codex or Claude Code answer here, turn one on in the sync panel: the sync button in the title bar, then ⋯ on this folder.") });
+      notes.push({ tone: "hint", text: t("To have Codex or Claude Code answer here, turn one on in Settings → AI.") });
     }
     return { button: tn("Send {n} comment", "Send {n} comments", n), notes, blocked: false };
   }
@@ -140,7 +185,7 @@ export function sendWords(plan, n, others = 0) {
   } else notes.push({ tone: "hint", text: t("{agent} works on this computer, in this folder's directory, and answers each comment.", { agent }) });
   const blocked = n > AGENT_MAX;
   if (blocked) {
-    notes.push({ tone: "warn", text: t("{agent} takes at most {max} comments at a time: send a file or a directory of this work folder.", { agent, max: AGENT_MAX }) });
+    notes.push({ tone: "warn", text: t("{agent} takes at most {max} comments at a time: send a file or a directory of this synced folder.", { agent, max: AGENT_MAX }) });
   }
   if (others) {
     notes.push({ tone: "hint", text: tn("{n} of these comments is by someone else: {agent} treats it as context.",

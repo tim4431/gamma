@@ -23,22 +23,27 @@ const NONE = Object.freeze({ data: undefined, error: "", at: 0 });
 // may name the reads its answer leads to (`then`), which go out as soon as
 // it lands: Backups lists each of the account's workspaces' snapshots. One
 // marked `later` goes out with the others but is not waited for: what is
-// far down the pane (the server log) or shows only in a dialog (the
-// account pickers). `who`: {admin, signedIn, lang (the translation's target
-// language, whose glossary the translation pane shows)}.
+// far down the pane (the server log), shows only in a dialog (the account
+// pickers) or asks other servers (the people an agent may serve). `who`:
+// {admin, signedIn, desktop (the desktop app's window), lang (the
+// translation's target language, whose glossary the translation pane shows)}.
 export const LOG_START = "/admin/logs?after=0";
 export const PANE_READS = {
   account: ({ admin, signedIn }) => [admin && "/admin/users", admin && "/admin/settings",
     signedIn && "/auth/cloud/status", signedIn && LINK_BASES.mirror, signedIn && { path: "/zotero/account", later: true }],
-  users: () => ["/admin/users", "/admin/settings", "/admin/workspaces", { path: "/admin/invitations", later: true }],
+  // Users: the accounts, then under them the storage defaults, sign-in,
+  // guests (/admin/settings) and the reports.
+  users: () => ["/admin/users", "/admin/settings", "/admin/workspaces", "/auth/cloud/status", "/admin/join-requests",
+    "/admin/reports", { path: "/admin/invitations", later: true }],
   workspaces: ({ signedIn }) => ["/workspaces/mine", signedIn && LINK_BASES.mirror, signedIn && LINK_BASES.zotero, { path: "/accounts", later: true },
     { path: "/server-config", later: true }],
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
     "/backup-tasks", admin && "/admin/offsite"],
-  server: () => ["/admin/server-info", "/admin/settings", "/admin/join-requests", "/admin/reports", "/admin/ai-providers",
+  server: () => ["/admin/server-info", "/admin/settings", "/admin/ai-providers",
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
   integrations: () => ["/integrations/tokens"],
+  ai: ({ signedIn, desktop }) => [signedIn && "/computers", signedIn && desktop && { path: "/local-agents/people", later: true }],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
   tools: () => ["/ai/search-services"],
   maintenance: () => ["/quota", "/metadata/status"],

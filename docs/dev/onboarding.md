@@ -159,7 +159,13 @@ no voice step.
   can store keys — a guest cannot, and gets no tour): one step on the chat's
   setup card (`chat.setup`), "Connect an AI to use chat". Clicking a tile
   opens Settings → Connections, whose `settings.opened {pane: "ai"}` ticks
-  it. The message box is disabled then, so nothing is typed into it.
+  it. The message box is disabled then, so nothing is typed into it. The
+  card also lists the agents found on a computer, which need no
+  connection ([ai.md](ai.md#a-computers-agent-in-the-chat)): one the
+  account turned on is a tile that picks it, one found but off a tile that
+  opens Settings → AI. With such an agent on and ready, a bucket never
+  picked is that agent's chat (`pickAgent`), so the card, and this step's
+  anchor, show once Gamma AI is picked in the chip.
 
 `aiConfigured` is unknown (undefined) until `/api/ai/models` answers, so
 neither variant is picked too early. Existing drafts are restored after an
@@ -313,7 +319,7 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
 - **Once per version.** Showing an offer records it (`offered`); Not now,
   Esc or ×, Show me and Got it each settle it. Bump `version` only when a
   finished user should be offered it again.
-- **Suggest tours.** Settings → Appearance → Tours → **Suggest tours**
+- **Suggest tours.** Settings → Help & diagnostics → Tours → **Suggest tours**
   (`suggestTours`, an account preference, default on). Off, nothing is
   offered by itself; the Tours menu still works. Nothing is offered before
   the account's synced profile has loaded, so a browser whose cached value
@@ -811,7 +817,7 @@ selects by class name, text or DOM position.** It selects by anchor id.
   `npm test`; the scan also reads a conditional
   `data-guide={cond ? "id" : undefined}`.
 - The topbar's buttons and the viewer strip's tools a person can hide
-  (Settings → Appearance › Top bar and › Viewer tools,
+  (Settings → Toolbars › Top bar and › Viewer tools,
   [settings.md](settings.md#bars-order-and-modes)) are all on their bars
   while a tour runs or a hint is offered, so a step's `header.*` or
   `viewer.*` anchor is there. A step names no position on a bar: the
@@ -1196,7 +1202,8 @@ raises the Handwriting tour (`ink.stroke`) like any first stroke.
 
 Hints are one-step triggered guides in `tours/hints.js` (see Triggered
 tours and hints). The chat with no AI provider gets no hint: its empty state
-is the setup card with a tile per service. Empty states in the library and
+is the setup card with a tile per service and one per agent found on a
+computer. Empty states in the library and
 the notes column stay where they are; hints point at controls, empty states
 explain areas. A library with no pages of the user's own shows "Start your
 library" (`home.empty`, [home_library.md](home_library.md)), whose tour link

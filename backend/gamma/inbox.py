@@ -10,9 +10,10 @@ Notion's Notify me), their thread resolved by someone else
 shared with them (``shared``), added to a shared workspace (``invited``),
 someone without an account here asking to join through a share they
 manage (``join_request``: its actor is ``cloud:<subject>``, its snippet the
-cloud username; gamma/join_requests.py). An item an integration token's
-write made carries the token's display name (``agent``), and its actor, the
-token's account, is told too: what an agent writes is no one's keystrokes.
+cloud username; gamma/join_requests.py). An item an agent's write made
+(gamma/agents.py: a connection, a computer's agent) carries the agent's
+label (``agent``), and its actor, the agent's account, is told too: what an
+agent writes is no one's keystrokes.
 A notes-index scan could find a block that says ``@alice``, but not who
 typed it or when, and would notify again on every edit; so the producers
 write the row, after their own commit, through ``emit``, which never
@@ -366,12 +367,12 @@ def from_comment(ws: str, event: dict) -> None:
     mention, else the reply, else this), ``resolved`` to the author of a
     thread someone else resolved. An integration token's write (the
     event's ``agent``) is someone else's to its own account too: each of
-    these reaches the account when it would reach anyone else. The name of
-    a work folder's agent on this computer in its maker's comment on that
-    folder's files is the agent (the event's ``agent_named``, and
-    ``_agent_of`` for the thread's earlier comments), so a member of that
-    name hears nothing of it. A deleted comment's items go with it. Never
-    raises."""
+    these reaches the account when it would reach anyone else, so an
+    agent's reply in a thread a person sent it reaches that person as a
+    reply. The name of an agent in a person's comment sent to that agent is
+    the agent (the event's ``agent_named``, and ``_agents_of`` for the
+    thread's earlier comments), so a member of that name hears nothing of
+    it. A deleted comment's items go with it. Never raises."""
     try:
         _from_comment(ws, event)
     except Exception as e:  # noqa: BLE001
@@ -396,7 +397,7 @@ def _from_comment(ws: str, event: dict) -> None:
         return  # reopen tells no one
     body = event.get("body") or ""
     named = mentions.people_in(body) - (mentions.people_in(event.get("before") or "") if kind == "edit" else set())
-    named.discard(event.get("agent_named") or "")  # the folder's agent, not a member of that name (local_agents.mention)
+    named.discard(event.get("agent_named") or "")  # the agent it was sent to, not a member of that name
     ids = _ids_of(named)
     mentioned = set(ids.values())
     if mentioned:
@@ -408,12 +409,12 @@ def _from_comment(ws: str, event: dict) -> None:
         with connect_pages_db(ws) as conn:
             others = conn.execute("SELECT author, body, agent_id FROM comments WHERE thread_id = ? AND id != ? "
                                   "ORDER BY created_at, id", (event["thread_id"], event["comment_id"])).fetchall()
-        # (author, the names it mentions, whether a person's session wrote it: only there the maker names the agent)
+        # (author, the names it mentions, whether a person's session wrote it: only there a person names the agent)
         said = [(author, mentions.people_in(text), not agent_id) for author, text, agent_id in others]
-        agent = _agent_of(ws, event["page_id"], said)
+        sent = _agents_of(ws, event["thread_id"], said)
         in_thread = set()
         for author, names, own in said:
-            in_thread |= (names - {agent["name"]}) if agent and own and author == agent["maker"] else names
+            in_thread |= (names - {sent[author]}) if own and author in sent else names
         people = [p for p in dict.fromkeys([a for a, _, _ in others] + sorted(_ids_of(in_thread).values()))
                   if p not in mentioned]
         emit("reply", people, actor, ws, snippet=body, **where)
@@ -421,22 +422,21 @@ def _from_comment(ws: str, event: dict) -> None:
     emit("comment", [u for u in followers(ws, event["page_id"]) if u not in told], actor, ws, snippet=body, **where)
 
 
-def _agent_of(ws: str, page_id: str, said: list[tuple[str, set, bool]]) -> dict | None:
-    """The agent on this computer of the page's work folder
-    (``local_agents.mention.agent_of_page``: ``{name, label, maker}``) when
-    a thread's earlier comments (``said``: ``(author, names, a person's
-    session wrote it)``) mention an agent's name, None otherwise: in its
-    maker's own comments (not a token's) that name is the agent, as the
-    switch is now, and no member of that name hears of it (on a server
-    whose computers keep the folder, each such author's own computer is
-    asked: ``mention.agent_of_page``'s ``user_id``)."""
-    from .local_agents import catalog, mention  # local: they import the comments, which import this module
+def _agents_of(ws: str, thread_id: str, said: list[tuple[str, set, bool]]) -> dict[str, str]:
+    """``{author: agent name}``: of the authors of a thread's earlier
+    comments (``said``: ``(author, names, a person's session wrote it)``)
+    whose own comments mention an agent's name, those who sent the thread
+    to that agent (``local_agents.threads.agent_named``: a conversation of
+    theirs answers it): in their own comments (not a token's) that name is
+    the agent, and no member of that name hears of it."""
+    from .local_agents import catalog, threads  # local: they import the comments, which import this module
 
+    out = {}
     for author in dict.fromkeys(author for author, names, own in said if own and names & set(catalog.AGENTS)):
-        found = mention.agent_of_page(ws, page_id, author)
-        if found is not None and found["maker"] == author:
-            return found
-    return None
+        name = threads.agent_named(ws, thread_id, author)
+        if name:
+            out[author] = name
+    return out
 
 
 def forget(ws: str, comment_ids) -> None:

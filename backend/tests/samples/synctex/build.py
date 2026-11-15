@@ -1,5 +1,5 @@
 """Build the SyncTeX samples of this folder (README.md) with TeX Live and
-MuPDF, and compare gamma/feedback/synctex.py with TeX Live's ``synctex``.
+MuPDF, and compare gamma/annotations/synctex.py with TeX Live's ``synctex``.
 
     cd backend
     venv/Scripts/python.exe -I tests/samples/synctex/build.py [--compare] [--work DIR]
@@ -32,7 +32,7 @@ sys.path.insert(0, str(HERE.parents[2]))
 
 import pymupdf  # noqa: E402
 
-from gamma.feedback import synctex  # noqa: E402
+from gamma.annotations import synctex  # noqa: E402
 
 ENGINES = {"pdftex": "-pdf", "xetex": "-xelatex", "luatex": "-lualatex"}
 FILES = {"a": "main.tex", "b": "body.tex", "c": "more.tex"}

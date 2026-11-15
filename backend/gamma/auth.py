@@ -30,6 +30,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from . import guests, host_scope, publisher_sessions
+from .local_agents import tools as agent_tools
 from .blocks_store import (folder_subtree_ids, page_ancestors, page_descendants, page_in_folder, page_root_id,
                            pages_in_folder)
 from .db import account_names, connect_pages_db, connect_users_db, parse_stamp, share_token_workspace
@@ -48,6 +49,9 @@ _AUTH_PATHS = {"/api/login", "/api/login-guest", "/api/logout", "/api/session"}
 CHANNEL_PREFIX = "/api/computers/"
 _HELD_PATHS = {"/api/computers/poll"}
 CHANNEL_ONLY = "This token is a computer's channel; it opens nothing else."
+# The token of an agent's turn (integrations.mint_turn) reads through MCP
+# alone: every route of the HTTP API refuses it, its reads included.
+TURN_ONLY = "This token is an agent's turn; it opens Gamma's MCP endpoint alone."
 
 
 def _session_expired(created_at: str) -> bool:
@@ -227,6 +231,7 @@ async def session_middleware(request: Request, call_next):
     spot and the request goes on signed out, its cookie cleared.
     """
     started = time.perf_counter()
+    agent_tools.heard(request.scope)   # this server's /mcp as an agent on this computer reaches it
     request.state.request_id = secrets.token_hex(4)
     token = request.cookies.get(SESSION_COOKIE)
     request.state.user = None
@@ -239,6 +244,7 @@ async def session_middleware(request: Request, call_next):
     request.state.token_scope = ""
     request.state.token_id = ""
     request.state.token_name = ""
+    request.state.token_comments = False
     expired_guest = None
     bearer = _api_bearer(request) if not token else None
     if bearer:
@@ -252,13 +258,16 @@ async def session_middleware(request: Request, call_next):
             resp = JSONResponse({"detail": "invalid or expired token"}, status_code=401)
             return _finish_request_log(request, resp, started, None, "bad-token")
         (request.state.user_id, request.state.user, request.state.token_ws, request.state.token_scope,
-         request.state.token_id, request.state.token_name) = found
+         request.state.token_id, request.state.token_name, request.state.token_comments) = found
         request.state.auth = "token"
         if found.scope == "computer" and not request.url.path.startswith(CHANNEL_PREFIX):
             # A computer's token is its channel, never a credential for the
             # workspace's data, its reads included.
             resp = JSONResponse({"detail": CHANNEL_ONLY}, status_code=403)
             return _finish_request_log(request, resp, started, None, "channel-token")
+        if found.scope == "turn":
+            resp = JSONResponse({"detail": TURN_ONLY}, status_code=403)
+            return _finish_request_log(request, resp, started, None, "turn-token")
     if token:
         row, expired_guest = await _off_loop(_middleware_session, token)
         if row:
@@ -471,6 +480,19 @@ def can_write(request: Request) -> bool:
 
     ws = require_ws(request)
     return not _write_refusal(request) and not workspaces.is_deleting(ws)
+
+
+def can_comment(request: Request) -> bool:
+    """Whether the request may comment in its workspace (a member of any
+    role, a viewer's too, and a token that comments there:
+    ``token_comments``): ``require_commenter``'s rule, for a caller that
+    offers less instead of refusing (the AI chat arms no commenting tool);
+    false too while a delete holds the workspace. 403 for a non-member,
+    like ``require_ws``."""
+    from . import workspaces  # local: workspaces imports seed, which imports db
+
+    ws = require_ws(request)
+    return (not is_token(request) or token_comments(request)) and not workspaces.is_deleting(ws)
 
 
 def ws_role(request: Request) -> str | None:
@@ -870,30 +892,29 @@ def require_ws_writer(request: Request) -> str:
     return require_ws(request, write=True)
 
 
-def require_commenter(request: Request, page_id: str, *, answer: bool = False) -> str:
+def token_comments(request: Request) -> bool:
+    """Whether a token's request may comment in its workspace: a write
+    token, or a read token given the Comment level there
+    (integrations.comments_in)."""
+    return bool(getattr(request.state, "token_comments", False))
+
+
+def require_commenter(request: Request, page_id: str) -> str:
     """The workspace in which this request may write a comment on the page
     ``page_id`` (docs/dev/comments.md "Who may comment"): the one
     ``resolve_ws`` reads — any member, viewers included, or any signed-in
     account a share admits, view or edit, confined to the share's pages.
     403 for a link visitor (no account to sign the comment with: "sign in
-    to comment") and for an integration token without the write scope,
-    but a ``feedback`` token's ``answer`` (a reply, a resolve) on a work
-    folder's file. Whether the page is a page of the library is the
-    writer's check. 423 while a delete holds the workspace."""
+    to comment") and for an integration token that may not comment there
+    (``token_comments``: "this token is read-only"). Whether the page is a
+    page of the library is the writer's check. 423 while a delete holds the
+    workspace."""
     ws = resolve_ws(request)
     if is_link_visitor(request):
         raise HTTPException(status_code=403, detail="sign in to comment")
-    scope = request.state.token_scope if is_token(request) else ""
-    if scope and scope != "write" and not (scope == "feedback" and answer):
+    if is_token(request) and not token_comments(request):
         raise HTTPException(status_code=403, detail="this token is read-only")
     _refuse_deleting(ws)
-    if scope == "feedback":
-        with connect_pages_db(ws) as conn:
-            row = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
-                               (page_id,)).fetchone()
-        if not (row and row[0]):
-            raise HTTPException(status_code=403,
-                                detail="a feedback token answers comments on a work folder's files only")
     scope = share_scope(request)
     if scope is not None:
         with connect_pages_db(ws) as conn:

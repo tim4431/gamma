@@ -37,9 +37,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import {
-  BanIcon, BookIcon, CalendarIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, FileGlyph, FileIcon, FolderIcon, HistoryIcon,
+  BanIcon, BookIcon, CalendarIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, FileIcon, FolderIcon, HistoryIcon,
   LabelIcon, SearchIcon, TextSearchIcon, UserIcon, XIcon,
 } from "../shared/ui/Icons";
+import FileThemeIcon from "../shared/ui/FileIcon.jsx";
 import { Chevron, MorphText } from "../shared/ui/MotionWidgets";
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
@@ -81,7 +82,7 @@ export function MarkedText({ text, query, opts, lead = 0, parts }) {
   ));
 }
 
-// `button` false: the topbar's Search is off the bar (Settings → Appearance ›
+// `button` false: the topbar's Search is off the bar (Settings → Toolbars ›
 // Top bar), so only the popover lives here, opened by its shortcut or the
 // account menu's row. `openPageLink(id, target)` opens a page at a place
 // (App's, the route of a Gamma link); without it a file's hit opens its
@@ -499,9 +500,11 @@ export default function SearchPanel({
     const path = pagePathLabel(pagesById, pageId);
     return path ? `${path}${PAGE_PATH_SEP.trimEnd()}` : "";
   };
-  const resultHead = (pageId, title, format, extra, opts, lead = pageLead(pageId)) => (
+  // A synced folder's file leads with its theme icon, by its name (`file`,
+  // a file hit's by its path), any other page with its kind glyph.
+  const resultHead = (pageId, title, format, extra, opts, lead = pageLead(pageId), file = pagesById.get(pageId)?._fileName || "") => (
     <span className="searchResultPage">
-      <FileGlyph format={format} size={14} />
+      <FileThemeIcon path={file} format={format} size={14} />
       {lead ? <span className="searchResultPath">{lead}</span> : null}
       <span className="searchResultTitle">{marked(title || t("Untitled"), opts)}</span>
       {extra}
@@ -561,7 +564,7 @@ export default function SearchPanel({
         onClick={() => openFileHit(r)}
         title={t("Open \"{title}\" at line {line}", { title: path || r.title, line: r.line })}
       >
-        {resultHead(r.page_id, r.title, "text", tags, {}, lead)}
+        {resultHead(r.page_id, r.title, "text", tags, {}, lead, path)}
         <span className="searchResultText">{marked(r.snippet, {})}</span>
       </button>
     );

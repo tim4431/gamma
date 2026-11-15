@@ -71,6 +71,31 @@ test("deletions are note changes; a note's pictures and clips are reading and cl
   assert.equal(noteChangeText(deleted, "N"), "Deleted a note in N");
 });
 
+test("what the agent writes as itself is a note change, named by what it wrote", () => {
+  const written = [
+    { kind: "comment", tool: "comment", summary: "Commented on “N”", page_id: "n", block_id: "h", thread_id: "t",
+      title: "N", reply: false },
+    { kind: "comment", tool: "comment", summary: "Replied in a thread in “N”", page_id: "n", block_id: "h",
+      thread_id: "t", title: "N", reply: true },
+    { kind: "resolve", tool: "resolve", summary: "Resolved a thread in “N”", page_id: "n", thread_id: "t", title: "N" },
+    { kind: "highlight", tool: "highlight", summary: "Highlighted a passage in “N”", page_id: "n", block_id: "h2",
+      title: "N" },
+  ];
+  for (const a of written) {
+    assert.equal(isChange(a), true, `${a.tool} is a change`);
+    assert.equal(changePlace(a), "notes", `${a.tool} landed in the notes`);
+  }
+  assert.deepEqual(written.map((a) => noteChangeText(a, "N")), ["Commented in N", "Replied in a comment thread in N",
+    "Resolved a comment thread in N", "Highlighted a passage in N"]);
+  // a resolve of a resolved thread changed nothing
+  assert.equal(isChange({ kind: "resolve", tool: "resolve", summary: "ok — thread t was resolved already", noop: true }),
+    false);
+  assert.equal(runningLabel({ tool: "comment", args: { page_id: "n" } }), "Writing a comment…");
+  assert.equal(runningLabel({ tool: "comment", args: { thread_id: "t" } }), "Replying in a comment thread…");
+  assert.equal(runningLabel({ tool: "resolve", args: { thread_id: "t" } }), "Resolving a comment thread…");
+  assert.equal(runningLabel({ tool: "highlight", args: { page_id: "n", pdf_page: 2 } }), "Highlighting a passage…");
+});
+
 test("folder and label changes are library changes", () => {
   const made = [
     { kind: "rename", tool: "rename_folder", summary: "Renamed the folder “ML” → “ML2”", title: "ML", from: "ML", to: "ML2" },

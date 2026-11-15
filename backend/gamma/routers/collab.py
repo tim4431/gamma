@@ -22,7 +22,7 @@ from ..blocks_store import is_op_page
 from ..db import connect_pages_db
 from ..json_response import OrjsonResponse
 from ..logbuf import log
-from ..ops import OpError, OpsRequest, PlanRequest, commit_ops, commit_plan, latest_seq, ops_since
+from ..ops import OpError, OpsRequest, PlanRequest, client_ops, commit_ops, commit_plan, latest_seq, ops_since
 
 router = APIRouter(prefix="/api", tags=["collab"])
 
@@ -67,8 +67,9 @@ def post_ops(page_id: str, payload: OpsRequest, request: Request):
     if payload.cursor is not None:
         cursor = {"block": payload.cursor.block[:64], "anchor": payload.cursor.anchor,
                   "head": payload.cursor.head}
+    client = writer_client(request, payload.client)
     try:
-        result = commit_ops(ws, page_id, ops, actor=actor_of(request), client=writer_client(request, payload.client),
+        result = commit_ops(ws, page_id, client_ops(ops, client), actor=actor_of(request), client=client,
                             share_scoped=scope is not None, cursor=cursor, batch_id=payload.batch[:64],
                             via=share_via(request))
     except OpError as e:

@@ -49,6 +49,7 @@ import { darkPageColor, darkPageLine, lineColor } from "../shared/model/palette.
 import { isLineStyle } from "../shared/model/markStyle.js";
 import { TipMarks } from "./MarkTools.jsx";
 import { closestPlace, placedToCheck } from "../shared/model/blockModel.js";
+import { stampLabel } from "../chat/agents.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
 import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js";
 import { TipFrame } from "../shared/ui/TipFrame.jsx";
@@ -233,11 +234,17 @@ function sameHighlights(a, b) {
   for (let i = 0; i < a.length; i++) {
     const x = a[i], y = b[i];
     if (x.id !== y.id || x.color !== y.color || x.style !== y.style || x.hasNote !== y.hasNote || x.threadCount !== y.threadCount || x.position !== y.position
-      || x.note !== y.note || x.quote !== y.quote
+      || x.note !== y.note || x.quote !== y.quote || x.agent?.id !== y.agent?.id
       || x.linkTarget?.url !== y.linkTarget?.url || x.linkTarget?.pageId !== y.linkTarget?.pageId
       || x.linkTarget?.blockId !== y.linkTarget?.blockId) return false;
   }
   return true;
+}
+// A highlight's tooltip: who made it when an agent did ("Highlighted by
+// Codex on TIM-PC, for tim"), then its note.
+function highlightTitle(h) {
+  const made = h.agent ? t("Highlighted by {agent}", { agent: stampLabel(h.agent) }) : "";
+  return [made, h.note || ""].filter(Boolean).join("\n");
 }
 function rememberDoc(url, entry) {
   DOC_CACHE.delete(url);
@@ -2967,7 +2974,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
             ...(approx && !isArea ? { outline: "1px dashed var(--hl-line, var(--hl-dark-line))" } : {}),
           }} title={isLink ? (h.linkTarget.pageId ? t("Open linked paper") : h.linkTarget.url)
-            : reviewable ? undefined : h.note || ""}
+            : reviewable ? undefined : highlightTitle(h)}
             {...(reviewable ? { onMouseEnter: () => onReview.hover(h.id, true), onMouseLeave: () => onReview.hover(h.id, false) } : null)}
             onClick={function (e) {
               // A viewer with nothing to do with a highlight (a tab group's
@@ -3157,7 +3164,7 @@ function unionRect(rects) {
 const SEL_TRANSLATE_MAX = 5000;
 
 // Selection popup: highlight colors, the reference link and, when enabled
-// (Settings → Language and Translation), the selection translator. `translate`:
+// (Settings → Language & translation), the selection translator. `translate`:
 // {text, auto, langLabel, lang, run(texts, signal, onPartial) → the server's reply
 // ({translations, failed}) | null, addTerm (SelTranslation) | null} — run is the page translator's request, so
 // the same model/engine, language and server cache apply. Auto starts it on

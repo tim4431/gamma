@@ -18,6 +18,7 @@ import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
 import { EFFORT_ORDER, SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
+import { ToolbarSettings } from "./SettingsToolbars";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
 import { KeyboardSettings } from "./SettingsKeyboard";
@@ -27,7 +28,7 @@ import { UsersSettings } from "./SettingsUsers";
 import { WorkspacesSettings } from "./SettingsWorkspace";
 import { SyncSettings } from "./SettingsSync";
 import { WorkspaceBackups } from "./SettingsBackups";
-import { ServerSettings } from "./SettingsServer";
+import { AccessSettings, ServerSettings } from "./SettingsServer";
 import { ProxySettings } from "./SettingsProxy";
 import { dotTone } from "../app/notices";
 import { resolveSettingsPane, settingsSection } from "./settingsNavigation";
@@ -50,6 +51,7 @@ import {
   ImageIcon,
   FolderIcon,
   FolderPlusIcon,
+  HelpCircleIcon,
   FoldersIcon,
   GlobeIcon,
   HandIcon,
@@ -63,6 +65,7 @@ import {
   MinimizeIcon,
   MoveVerticalIcon,
   OutlineIcon,
+  PanelTopIcon,
   PaperIcon,
   PencilIcon,
   PenIcon,
@@ -89,12 +92,16 @@ import { DialogOverlay } from "../shared/ui/Surfaces";
 // captioned groups — everyday preferences, AI, the library's housekeeping
 // and, for admins only, Administration (it changes the server for everyone)
 // — with Help & diagnostics pinned to the bottom. Every pane is one click
-// from any other; nothing opens a second dialog.
+// from any other; nothing opens a second dialog. A pane holds one subject:
+// how things look (Appearance) apart from what the bars offer (Toolbars),
+// papers and notes (Reading & editing) apart from the pen (Handwriting).
 const ACCOUNT_NAV = ["account", T("Account & sync"), UserIcon];
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
+  ["toolbars", T("Toolbars"), PanelTopIcon],
   ["reading", T("Reading & editing"), BookIcon],
-  ["translation", T("Language and Translation"), LanguagesIcon],
+  ["handwriting", T("Handwriting"), PenIcon],
+  ["translation", T("Language & translation"), LanguagesIcon],
   ["keyboard", T("Keyboard"), KeyboardIcon],
 ];
 const AI_NAV = [
@@ -115,7 +122,7 @@ const ADMIN_NAV = [
 ];
 const HELP_NAV = ["diagnostics", T("Help & diagnostics"), BugIcon];
 
-// --- Reading & editing: PDFs, handwriting, search ---------------------------
+// --- Handwriting's tables: what draws, the pen's gestures and words --------
 
 // What draws on the page with the handwriting tools open: the stored
 // preference is "fingers never draw" (inkPenOnly), pictured as two tiles.
@@ -160,10 +167,11 @@ const PEN_WORDS = {
   },
 };
 
-function ViewerSettings({ value }) {
+// --- Reading & editing: PDFs, notes, recordings (search below) --------------
+
+function ReadingSettings({ value }) {
   return (
     <>
-
       <Section title={t("PDFs")} scope="account" prefs={SECTION_PREFS.reading["PDFs"]}>
         <Row
           icon={HighlightIcon}
@@ -256,9 +264,37 @@ function ViewerSettings({ value }) {
           onChange={value.setBacklinksVisible}
         />
       </Section>
+      <Section title={t("Recordings")} scope="account" prefs={SECTION_PREFS.reading["Recordings"]}>
+        <Row
+          icon={MicIcon}
+          label={t("Lead-in")}
+          hint={t("How far before a written moment a tap plays from")}
+          title={t("Tapping handwriting or a note while a recording plays starts the audio a few seconds before the moment it was written, so the words that led up to it are heard too. The player's writing skips and a bookmark use the same lead-in.")}
+        >
+          <Stepper value={value.replayLeadIn} onChange={value.setReplayLeadIn} min={0} max={15} step={1}
+            format={(v) => tn("{n} second", "{n} seconds", v)} />
+        </Row>
+        <Toggle
+          icon={SparklesIcon}
+          label={t("Transcribe recordings")}
+          hint={t("Write the spoken words under a recording when it ends")}
+          title={t("When a recording stops, a background job writes its transcript under the recording block, one paragraph per stretch of speech, each linked to its moment; it uses the OpenAI-protocol connection dictation uses. A recording can also be transcribed from its menu.")}
+          checked={value.recordingTranscribe}
+          onChange={value.setRecordingTranscribe}
+        />
+      </Section>
+    </>
+  );
+}
+
+// --- Handwriting: the pen's habits, this device's input, the pen's gestures -
+
+function HandwritingSettings({ value }) {
+  return (
+    <>
       {/* The handwriting habits that follow the account; the presets, smoothing
           and the straight highlighter are set on the strip (docs/dev/handwriting.md). */}
-      <Section title={t("Handwriting")} scope="account" prefs={SECTION_PREFS.reading["Handwriting"]}>
+      <Section title={t("Pens & eraser")} scope="account" prefs={SECTION_PREFS.handwriting["Pens & eraser"]}>
         <Row
           label={t("Reset presets")}
           icon={LineWidthIcon}
@@ -346,25 +382,6 @@ function ViewerSettings({ value }) {
         />
       </Section>
       <PencilSettings value={value} />
-      <Section title={t("Recordings")} scope="account" prefs={SECTION_PREFS.reading["Recordings"]}>
-        <Row
-          icon={MicIcon}
-          label={t("Lead-in")}
-          hint={t("How far before a written moment a tap plays from")}
-          title={t("Tapping handwriting or a note while a recording plays starts the audio a few seconds before the moment it was written, so the words that led up to it are heard too. The player's writing skips and a bookmark use the same lead-in.")}
-        >
-          <Stepper value={value.replayLeadIn} onChange={value.setReplayLeadIn} min={0} max={15} step={1}
-            format={(v) => tn("{n} second", "{n} seconds", v)} />
-        </Row>
-        <Toggle
-          icon={SparklesIcon}
-          label={t("Transcribe recordings")}
-          hint={t("Write the spoken words under a recording when it ends")}
-          title={t("When a recording stops, a background job writes its transcript under the recording block, one paragraph per stretch of speech, each linked to its moment; it uses the OpenAI-protocol connection dictation uses. A recording can also be transcribed from its menu.")}
-          checked={value.recordingTranscribe}
-          onChange={value.setRecordingTranscribe}
-        />
-      </Section>
     </>
   );
 }
@@ -1032,7 +1049,9 @@ function ToolUsageSettings({ value }) {
 // stores ask an app to link from inside it: under Help, for every client.
 const PRIVACY_URL = "https://gammapdf.com/privacy/";
 
-function AdvancedSettings({ value }) {
+// Help first (reporting a problem, the privacy policy, tours), then what a
+// report draws on: tracing and this browser's log.
+function AdvancedSettings({ value, tours }) {
   const [level, setLevel] = React.useState("all");
   const entries = value.sysLog
     .map((entry, index) => ({ key: index, timeMs: entry.t, text: entry.msg, tone: entry.tone }))
@@ -1040,6 +1059,25 @@ function AdvancedSettings({ value }) {
   return (
     <>
       <PaneHead icon={BugIcon} title={t("Help & diagnostics")} />
+      <Section title={t("Help")}>
+        <Row icon={BugIcon} label={t("Report a problem")} hint={t("A GitHub issue prefilled with this log and the build")}
+          title={t("Describe what went wrong; Gamma adds its build, your browser and the recent lines of this log and opens the bug form on GitHub for you to review before posting.")}>
+          <button type="button" className="uiBtn sm" onClick={value.openReport}>{t("Report…")}</button>
+        </Row>
+        <Row icon={ShieldIcon} label={t("Privacy policy")} hint={t("What Gamma stores, what it sends and to whom, on gammapdf.com")}
+          title={t("The privacy policy of the Gamma apps, the Gamma server, the browser extension and Gamma Cloud.")}>
+          <a className="uiBtn sm" href={PRIVACY_URL} target="_blank" rel="noopener">
+            <ExternalLinkIcon size={14} /> {t("Open")}
+          </a>
+        </Row>
+      </Section>
+      {/* Tours are help a feature offers by itself (docs/dev/onboarding.md);
+          every tour stays under Account › Tours either way. */}
+      <Section title={t("Tours")} scope="account" prefs={SECTION_PREFS.diagnostics["Tours"]}>
+        <Toggle icon={HelpCircleIcon} label={t("Suggest tours")} hint={t("A short tour the first time a feature comes up.")}
+          title={t("Off, nothing is offered by itself; every tour stays under Account › Tours.")}
+          checked={tours.suggestTours} onChange={tours.setSuggestTours} />
+      </Section>
       <Section title={t("Tracing")}>
         <Toggle
           icon={BugIcon}
@@ -1063,18 +1101,6 @@ function AdvancedSettings({ value }) {
           extra={<Segmented value={level} onChange={setLevel}
             options={[["all", t("All")], ["warn", t("Warnings"), null, t("Warnings and errors")], ["error", t("Errors")]]} />}
         />
-      </Section>
-      <Section title={t("Help")}>
-        <Row icon={BugIcon} label={t("Report a problem")} hint={t("A GitHub issue prefilled with this log and the build")}
-          title={t("Describe what went wrong; Gamma adds its build, your browser and the recent lines of this log and opens the bug form on GitHub for you to review before posting.")}>
-          <button type="button" className="uiBtn sm" onClick={value.openReport}>{t("Report…")}</button>
-        </Row>
-        <Row icon={ShieldIcon} label={t("Privacy policy")} hint={t("What Gamma stores, what it sends and to whom, on gammapdf.com")}
-          title={t("The privacy policy of the Gamma apps, the Gamma server, the browser extension and Gamma Cloud.")}>
-          <a className="uiBtn sm" href={PRIVACY_URL} target="_blank" rel="noopener">
-            <ExternalLinkIcon size={14} /> {t("Open")}
-          </a>
-        </Row>
       </Section>
     </>
   );
@@ -1169,7 +1195,8 @@ export default function SettingsDialog({
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
   // What the panes read, kept while the dialog is open (settingsReads.js).
   const reads = React.useMemo(() => createSettingsReads(), [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps
-  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest, lang: papers?.translateLang }),
+  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest, desktop: IS_DESKTOP,
+    lang: papers?.translateLang }),
     [users?.isAdmin, users?.me, users?.isGuest, papers?.translateLang]);
   const [query, setQuery] = React.useState("");
   const [mobileIndex, setMobileIndex] = React.useState(false);
@@ -1357,20 +1384,25 @@ export default function SettingsDialog({
                   : <Empty icon={SearchIcon}>{t('No settings found. Try "model", "PDF", or "storage".')}</Empty>}
               </> : <>
                 {pane === "appearance" ? <AppearanceSettings value={papers} diagnostics={diagnostics} /> : null}
+                {pane === "toolbars" ? <ToolbarSettings value={papers} /> : null}
                 {pane === "reading" ? <>
                   <PaneHead icon={BookIcon} title={t("Reading & editing")} />
-                  <ViewerSettings value={papers} />
+                  <ReadingSettings value={papers} />
                   <SearchSettings value={search} />
                 </> : null}
+                {pane === "handwriting" ? <>
+                  <PaneHead icon={PenIcon} title={t("Handwriting")} />
+                  <HandwritingSettings value={papers} />
+                </> : null}
                 {pane === "translation" ? <>
-                  <PaneHead icon={LanguagesIcon} title={t("Language and Translation")} />
+                  <PaneHead icon={LanguagesIcon} title={t("Language & translation")} />
                   <TranslationSettings value={paperValue} keybindings={keyboard?.keybindings} />
                 </> : null}
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
                 {pane === "ai" ? <>
                   <PaneHead icon={SparklesIcon} title={t("Connections")} />
-                  <AiSettings value={aiValue}
+                  <AiSettings value={aiValue} signedIn={who.signedIn}
                     confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
                 </> : null}
                 {pane === "assistant" ? <>
@@ -1385,16 +1417,19 @@ export default function SettingsDialog({
                 </> : null}
                 {pane === "integrations" ? <IntegrationSettings key={getCurrentWorkspace()} workspaceId={getCurrentWorkspace()} setStatus={library?.setStatus} /> : null}
                 {pane === "account" ? <>
-                  <UsersSettings value={users} selfOnly onServer={available("server") ? () => navigate("server", t("Account server")) : null} />
+                  <UsersSettings value={users} selfOnly onServer={available("users") ? () => navigate("users", t("Account server")) : null} />
                   {workspace ? <SyncSettings value={workspace} /> : null}
                 </> : null}
-                {pane === "users" ? <UsersSettings value={users} /> : null}
+                {pane === "users" ? <>
+                  <UsersSettings value={users} />
+                  <AccessSettings value={users} />
+                </> : null}
                 {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null}
                   onAccount={() => navigate("account", t("Zotero"))} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
                 {pane === "server" ? <ServerSettings value={server} /> : null}
                 {pane === "proxy" ? <ProxySettings setStatus={server.setStatus} /> : null}
-                {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} /> : null}
+                {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} tours={papers} /> : null}
               </>}
             </main>
           </div>

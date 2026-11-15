@@ -7,7 +7,11 @@ them (``ai_pictures.picture_at``), so the file holds what the chat showed and
 opens without a server. A conversation without pictures is the bare .md.
 
 What the chat shows is what goes: no reasoning, no tool output, no prompt
-(the context export, ``ai_context.context_markdown``, is that view)."""
+(the context export, ``ai_context.context_markdown``, is that view). A
+conversation with an agent on a computer (``computer_chats``, its owner's:
+docs/dev/local_agents.md "The chat's computer side") goes the same way: the
+person's messages with the passages they carried, and the agent's with its
+steps in words, its reply, the files it changed and how its turn ended."""
 
 import hashlib
 import io
@@ -209,6 +213,87 @@ def _message(message: dict, assets: _Assets) -> list[str]:
     return out
 
 
+# --- a computer agent's conversation (local_agents/chats.py's messages) -----------------
+
+def _place(step: dict) -> str:
+    return "a file outside the folder" if step.get("path") == "outside" else str(step.get("path") or "")
+
+
+def step_text(step: dict) -> str:
+    """A step in words, as the chat words it (chat/computer/computerChat.js
+    ``stepText``): "Read sections/intro.tex", "Ran latexmk", "Read Gamma:
+    read_page"; one asked about "Asked to run latexmk", then "Allowed …" or
+    "Not allowed …"."""
+    kind, path, program = step.get("kind"), _place(step), str(step.get("program") or "")
+    status = step.get("status")
+    if status in ("asked", "allowed", "declined"):
+        lead = {"asked": "Asked to", "allowed": "Allowed to", "declined": "Not allowed to"}[status]
+        if kind == "run":
+            return f"{lead} run {program}" if program else f"{lead} run a command"
+        if kind == "edit":
+            return f"{lead} edit {path}" if path else f"{lead} edit a file"
+        return {"asked": "Asked to go further", "allowed": "Allowed", "declined": "Not allowed"}[status]
+    if kind == "read":
+        return f"Read {path}" if path else "Read a file"
+    if kind == "edit":
+        return f"Edited {path}" if path else "Edited a file"
+    if kind == "run":
+        return f"Ran {program}" if program else "Ran a command"
+    if kind == "gamma":
+        from .local_agents.events import gamma_words  # local: the agents' package loads where its steps are read
+
+        return gamma_words(str(step.get("tool") or ""))
+    return "Searched the sources" if kind == "search" else "Worked"
+
+
+def _turn(message: dict, agent: str) -> list[str]:
+    """The agent's message: its steps, its reply, what it changed, and how
+    its turn ended when it did not answer."""
+    label = str(message.get("label") or agent)
+    out = ["## " + " · ".join(str(bit) for bit in (label, message.get("model"), message.get("effort")) if bit), ""]
+    if message.get("fresh"):
+        out += [f"*{label} started a new session: it did not remember the earlier turns.*", ""]
+    steps = [s for s in message.get("steps") or [] if isinstance(s, dict)]
+    if steps:
+        out += ["**Steps**", ""]
+        out += [f"- {step_text(s)}" + (" *(failed)*" if s.get("status") == "failed" else "") for s in steps]
+        out.append("")
+    text = str(message.get("text") or "").strip()
+    if text:
+        out += [text, ""]
+    named = [str(path) for path in message.get("changes") or [] if path]
+    changed = max(_int(message.get("changed")), len(named))
+    if changed or message.get("built"):
+        out += [f"**Changed · {changed}**" if changed else "**Changed**", ""]
+        out += [f"- {path}" for path in named]
+        if changed > len(named):
+            out.append(f"- and {changed - len(named)} more")
+        if message.get("built"):
+            out.append("- The PDF was rebuilt")
+        out.append("")
+    state = message.get("state")
+    if state == "failed":
+        error = " ".join(str(message.get("error") or "").split())[:300]
+        out += [f"*This turn failed{': ' + error if error else '.'}*", ""]
+    elif state == "stopped":
+        out += ["*Stopped.*", ""]
+    elif state in ("queued", "running"):
+        out += [f"*{label} was still working when this was exported.*", ""]
+    return out
+
+
+def _asked(message: dict) -> list[str]:
+    """The person's message to an agent: the passages it carried, each
+    quoted with its page, then its text."""
+    out = ["## You", ""]
+    for passage in message.get("selections") or []:
+        if isinstance(passage, dict) and passage.get("text"):
+            page = f" *(p. {passage['page']})*" if passage.get("page") else ""
+            out += [f"> {' '.join(str(passage['text']).split())[:600]}{page}", ""]
+    text = str(message.get("text") or "").strip()
+    return out + ([text, ""] if text else [])
+
+
 def _scope(conn, bucket: str) -> str:
     """What the conversation is the chat of, in words."""
     if not bucket or bucket == "home":
@@ -221,25 +306,31 @@ def _scope(conn, bucket: str) -> str:
     return f"“{(row[0] or '').strip() or 'Untitled'}”" if row else ""
 
 
-def transcript(ws: str, conn, messages: list, title: str, bucket: str = "") -> tuple[str, dict[str, bytes]]:
+def transcript(ws: str, conn, messages: list, title: str, bucket: str = "",
+               agent: str = "") -> tuple[str, dict[str, bytes]]:
     """``(markdown, {arcname: bytes})``: the conversation and the pictures it
-    names, read or drawn now in the workspace ``ws``."""
+    names, read or drawn now in the workspace ``ws``; with ``agent`` (its
+    label) a conversation with that agent on a computer."""
     assets = _Assets(ws, conn)
     messages = [m for m in messages or [] if isinstance(m, dict)]
     scope = _scope(conn, bucket)
     out = [f"# {title}", "",
-           f"AI chat{' of ' + scope if scope else ''} · {_plural(len(messages), 'message')} · "
-           f"exported {page_now()[:16].replace('T', ' ')} UTC", ""]
+           f"{f'Chat with {agent}' if agent else 'AI chat'}{' of ' + scope if scope else ''} · "
+           f"{_plural(len(messages), 'message')} · exported {page_now()[:16].replace('T', ' ')} UTC", ""]
     for message in messages:
-        out += _message(message, assets)
+        if not agent:
+            out += _message(message, assets)
+        else:
+            out += _asked(message) if message.get("role") == "user" else _turn(message, agent)
     return "\n".join(out).rstrip() + "\n", assets.files
 
 
-def export_file(ws: str, conn, messages: list, title: str, bucket: str = "") -> tuple[bytes, str, str]:
+def export_file(ws: str, conn, messages: list, title: str, bucket: str = "",
+                agent: str = "") -> tuple[bytes, str, str]:
     """``(data, download name, media type)``: the transcript as a bare .md,
     or a zip of it with its ``assets/`` when it names any picture."""
     base = download_base(title)
-    text, files = transcript(ws, conn, messages, title, bucket)
+    text, files = transcript(ws, conn, messages, title, bucket, agent)
     if not files:
         return text.encode("utf-8"), f"{base}.md", "text/markdown; charset=utf-8"
     out = io.BytesIO()

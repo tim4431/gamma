@@ -1,5 +1,5 @@
-// The feedback view (docs/dev/feedback.md "In the app"): a work folder's
-// open comment threads, as the reader lists them (GET /api/feedback), to
+// The feedback view (docs/dev/annotations.md "In the app"): a work folder's
+// open comment threads, as the reader lists them (GET /api/annotations), to
 // read or to send to an agent. One dialog holds both the view and Send:
 // a scope switch between the file or directory it was opened on and the
 // whole work folder; the entries grouped by file, each with its kind, its
@@ -24,11 +24,11 @@ import { FormNotice, Segmented, SubDialog } from "../settings/SettingsKit";
 import { FileTextIcon, HighlightIcon, MessageSquareIcon, PenIcon, RectSelectIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
 import { StateTag } from "../shared/ui/StateTag";
-import { anchorSnippet, sentChip } from "../comments/comments.js";
-import { entryHeading, placedText, requestLine, sendWords, sourceText, withdrawTitle } from "./feedbackText.js";
+import { anchorSnippet } from "../comments/comments.js";
+import { entryHeading, placedText, requestLine, sendWords, sentChip, sourceText, withdrawTitle } from "./feedbackText.js";
 import {
   NOTE_MAX, POLL_MS, canWithdraw, firstComment, groupByFile, hasChoice, namesAgent, newestRequests, othersCount, pictureOf, readScope,
-  sendAgent, sendBody,
+  sendAgent, sendBody, threadsOf,
 } from "./feedbackView.js";
 import "./feedback.css";
 
@@ -131,7 +131,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
     let live = true;
     const load = async () => {
       try {
-        const next = await apiJson(`${API}/feedback?scope=${encodeURIComponent(target)}`);
+        const next = await apiJson(`${API}/annotations?scope=${encodeURIComponent(target)}`);
         if (live) setRead({ target, doc: next });
       } catch (err) {
         // A poll that fails says so over the entries, which stay, as the
@@ -152,7 +152,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
 
   const reload = async () => {
     try {
-      setRead({ target, doc: await apiJson(`${API}/feedback?scope=${encodeURIComponent(target)}`) });
+      setRead({ target, doc: await apiJson(`${API}/annotations?scope=${encodeURIComponent(target)}`) });
       if (w) setRequests((await apiJson(`${API}/feedback/requests?scope=${encodeURIComponent(w)}&limit=100`)).requests || []);
     } catch {}
   };
@@ -182,7 +182,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
     onOpenThread(entry.id, entry.block_id, entry.page_id);
   };
 
-  const entries = doc?.entries || [];
+  const entries = threadsOf(doc);
   const n = entries.length;
   const paused = !!(w && links?.get(w)?.paused);
   // Who answers the Send: the folder's agent on this computer or on the
@@ -194,7 +194,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
   const answers = namesAgent(plan) ? plan : null;
   const choices = hasChoice(scope, workFolder) ? [
     ["scope", scope.kind === "file" ? t("This file") : t("This folder")],
-    ["work_folder", workFolder.name || t("Work folder")],
+    ["work_folder", workFolder.name || t("Synced folder")],
   ] : null;
   return (
     <SubDialog title={t("Feedback")} onClose={onClose} className="feedbackDialog">
@@ -203,7 +203,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
           <Segmented value={choice} onChange={setChoice} options={choices} />
         </div>
       ) : null}
-      {paused ? <p className="feedbackNotice" role="status">{t("This work folder is paused: its feedback files wait until it syncs again.")}</p> : null}
+      {paused ? <p className="feedbackNotice" role="status">{t("This synced folder is paused: its annotation files wait until it syncs again.")}</p> : null}
       {read?.error ? <FormNotice>{read.error}</FormNotice> : null}
       {!read ? <p className="reportModalHint loadingHint">{t("Reading…")}</p> : null}
       {doc ? (
@@ -214,7 +214,7 @@ export default function FeedbackDialog({ scope, me, canSend, links, onOpenThread
               {group.entries.map((entry) => <Entry key={entry.id} entry={entry} answers={answers} onOpen={open} />)}
             </section>
           )) : <p className="feedbackEmpty">{t("No open comments here.")}</p>}
-          {doc.truncated ? <p className="reportModalHint">{t("{n} more are not shown.", { n: doc.truncated })}</p> : null}
+          {doc.truncated_threads ? <p className="reportModalHint">{t("{n} more are not shown.", { n: doc.truncated_threads })}</p> : null}
         </div>
       ) : null}
       {doc && canSend ? (

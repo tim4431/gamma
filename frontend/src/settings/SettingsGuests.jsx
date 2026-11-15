@@ -1,4 +1,4 @@
-// Settings → Server → Guests (admins): whether this server takes guest
+// Settings → Users → Guests (admins): whether this server takes guest
 // logins at all, how long a guest's throwaway account and workspace last,
 // and demo mode (the login page leads with Try the demo, the guide offers
 // the first-run tour on arrival). All three live in the server `settings`
@@ -6,7 +6,7 @@
 // (GAMMA_GUEST_TTL_HOURS, GAMMA_DEMO) overrides the saved value, and the row
 // is then read-only. A server that can take no guest logins (a hosted
 // container, a share host, GAMMA_GUEST_MAX=0) has no Guests section — there
-// is nothing to switch on. docs/dev/guests.md. The settings are the Server
+// is nothing to switch on. docs/dev/guests.md. The settings are the Users
 // pane's one read of /api/admin/settings (settingsReads.js).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";

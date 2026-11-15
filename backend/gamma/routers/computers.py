@@ -1,28 +1,30 @@
-"""A computer's channel to this server, and the computers a page is kept on
-(gamma/computers/registry.py; docs/research/agent-collab.md "How the server
-sees a vault"). Every Gamma server answers.
+"""A computer's channel to this server, the computers a page or a folder is
+kept on and the account's computers (gamma/computers/registry.py;
+docs/research/agent-collab.md "How the server sees a vault"). Every Gamma
+server answers.
 
 The channel's routes take a token of the ``computer`` scope and nothing
 else (a session or any other token: 403), and such a token opens nothing
 but them (``auth.CHANNEL_PREFIX``). ``POST /announce`` says what the
 computer is and keeps; ``GET /poll`` is held up to ``registry.POLL_S``, on
 the event loop without a worker thread, and is the computer's heartbeat: a
-GET, so a read-only hosted server lets it through. The page's route is
-the signed-in account's alone: a session, never a token, a guest or a
-share, and only that account's computers.
+GET, so a read-only hosted server lets it through. The page's route,
+``GET /folders/computers`` and ``GET /computers`` (Settings → AI) are the
+signed-in account's alone: a session, never a token, a guest or a share,
+and only that account's computers.
 
-The Sends (step 4c): a work folder of this server the computer keeps with
-an agent there (its announce's folder vault with ``agent``,
-``registry.agent_folders``) has its maker's Sends made in Gamma run on
+The Sends (step 4c): a work folder of this server the computer keeps
+while an agent is on there (the first of its announce's assistants
+``enabled``, ``registry.agent_folders``) has its maker's Sends made in Gamma run on
 that computer. ``GET /sends`` lists the ones waiting and the runs
 withdrawn meanwhile; a run takes one with ``/claim``, keyed by the id the
 computer minted for it (a retry is told it holds it; another taker 409),
 and gets its entries, its threads' last speakers and ``seen``, this
 server's clock at the read; it writes ``/progress`` and, at its end,
 ``/answers``, which this server writes itself as the agent's
-(``feedback.agent.answer_run``: signed ``local:<agent>`` with its label, as
-an agent on this computer's are, each reply under the id the computer
-minted for it), only while that run holds the request running, so a
+(``annotations.hand.answer_run``: signed as that computer's agent,
+``agents.of_channel``, each reply under the id the computer minted for
+it), only while that run holds the request running, so a
 withdraw is never overwritten. ``GET /threads/{id}/picture`` is a region's
 picture for a thread of a request it holds. Every route answers only for
 the token's own account's requests; none ever names a path of the
@@ -38,7 +40,14 @@ writes the agent's message with ``/chats/{turn}/write``, each write
 numbered (``seq``), so this server takes only the newest one of the run
 that holds the turn running (gamma/local_agents/chats.py). What a turn asks
 never comes here: the message says ``waiting`` while an ask waits for an
-answer on the computer (step 5b)."""
+answer on the computer (step 5b).
+
+A co-author's turns (decision 13 of
+docs/research/agents-as-participants-plan.md): the people of the token's
+workspace its agent serves (the announce's ``people``) have their turns run
+on that computer too, the claim naming whom each is for (``for``).
+``GET /people`` lists who the computer's owner may name: the workspace's
+editors and owners but its own account."""
 
 import asyncio
 import json
@@ -50,12 +59,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .. import comments, workspaces
+from ..agents import of_channel
 from ..auth import _api_bearer, _off_loop, is_token, read_body, require_personal_user_id, require_ws
 from ..computers import registry
 from ..db import connect_pages_db, page_now
-from ..feedback import requests
-from ..feedback.entries import FeedbackError
-from ..integrations import Connection, resolve_token_scope
+from ..annotations import requests
+from ..annotations.entries import AnnotationError
+from ..integrations import resolve_token_scope
 
 router = APIRouter(prefix="/api", tags=["computers"])
 
@@ -128,6 +138,23 @@ async def poll(request: Request, v: str = "", wait: float = registry.POLL_S):
     return registry.answer(waiter[2])
 
 
+@router.get("/computers/people")
+def channel_people(request: Request):
+    """``{people: [{id, username, role}]}``: the members of the token's
+    workspace who may edit it (editors and owners), its own account left
+    out, by name: whom the computer's owner may let use an agent there
+    (Settings → AI → Agents on that computer)."""
+    from ..db import connect_users_db
+
+    user_id, _username, ws, _token_id = _computer(request)
+    with connect_users_db() as conn:
+        rows = conn.execute("SELECT u.id, u.username, m.role FROM workspace_members m JOIN users u ON u.id = m.user_id "
+                            "WHERE m.workspace_id = ? AND m.user_id != ? ORDER BY u.username",
+                            (ws, user_id)).fetchall()
+    return {"people": [{"id": r[0], "username": r[1], "role": r[2]} for r in rows
+                       if workspaces.at_least(r[2], "editor")]}
+
+
 @router.get("/pages/{page_id}/computer")
 def page_computers(page_id: str, request: Request):
     """``{computers: [{id, name, online, since, vault: {kind, name, paused},
@@ -138,6 +165,30 @@ def page_computers(page_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Not found")
     user_id = require_personal_user_id(request, "Sign in with your own account to see the computers you keep this on.")
     return {"computers": registry.of_page(user_id, require_ws(request), page_id)}
+
+
+@router.get("/computers")
+def account_computers(request: Request):
+    """``{computers: [{id, name, online, since, assistants: [{name, label,
+    found, ready, version, code, models, enabled, runs}]}]}``: the signed-in
+    account's computers shown to the workspace (``registry.of_account``),
+    each with its agents as it last announced them, for Settings → AI.
+    ``[]`` for none; a token or a guest 403."""
+    user_id = require_personal_user_id(request, "Sign in with your own account to see your computers.")
+    return {"computers": registry.of_account(user_id, require_ws(request))}
+
+
+@router.get("/folders/computers")
+def folder_computers(request: Request):
+    """``{folders: {folder id: {name, online, since, paused}}}``: the
+    signed-in account's computers that keep a folder vault of the
+    workspace, one per folder (``registry.of_folders``), which a synced
+    folder's card and rows name. A share's reader 404, a token or a guest
+    403."""
+    if request.query_params.get("share"):
+        raise HTTPException(status_code=404, detail="Not found")
+    user_id = require_personal_user_id(request, "Sign in with your own account to see the computers you keep this on.")
+    return {"folders": registry.of_folders(user_id, require_ws(request))}
 
 
 # --- the Sends a computer runs (step 4c) ----------------------------------------------------------
@@ -172,7 +223,7 @@ class SendAnswers(BaseModel):
 def _refusals():
     try:
         yield
-    except FeedbackError as e:
+    except AnnotationError as e:
         raise HTTPException(status_code=e.status, detail=e.detail) from None
 
 
@@ -193,7 +244,7 @@ def _held(conn, request_id: str, user_id: str, token_id: str) -> dict:
     request of the token's account (``requests.run_of``); 404 otherwise."""
     run = requests.run_of(conn, request_id)
     if run is None or run["holder"] != token_id or requests.requester(conn, request_id) != user_id:
-        raise FeedbackError(404, NO_REQUEST)
+        raise AnnotationError(404, NO_REQUEST)
     return run
 
 
@@ -237,18 +288,18 @@ def claim_send(request_id: str, payload: SendClaim, request: Request):
         row = conn.execute("SELECT by, via, work_folder FROM feedback_requests WHERE id = ?",
                            (request_id,)).fetchone()
         if not row or row[0] != user_id or row[1] != requests.SESSION:
-            raise FeedbackError(404, NO_REQUEST)
+            raise AnnotationError(404, NO_REQUEST)
         if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):   # agent_folders then has none
-            raise FeedbackError(403, f"Only an owner or an editor of this workspace can send comments to "
+            raise AnnotationError(403, f"Only an owner or an editor of this workspace can send comments to "
                                      f"{_label(payload.agent) if payload.agent in registry.AGENTS else 'an agent'}.")
         if row[2] not in folders:
-            raise FeedbackError(404, NO_REQUEST)
+            raise AnnotationError(404, NO_REQUEST)
         folder = folders[row[2]]
         label = _label(folder["agent"])
         if payload.agent != folder["agent"]:
-            raise FeedbackError(409, f"This work folder's agent is {label}.")
+            raise AnnotationError(409, f"This synced folder's agent is {label}.")
         if folder["paused"]:
-            raise FeedbackError(409, f"The work folder is paused: {label} starts once it syncs again.")
+            raise AnnotationError(409, f"The synced folder is paused: {label} starts once it syncs again.")
         seen = page_now()
         found = requests.entries_of(ws, conn, requests.get(conn, request_id), places=True)
         read = {e["id"]: [c["id"] for c in e["comments"]] for e in found}
@@ -278,9 +329,9 @@ def send_progress(request_id: str, payload: SendProgress, request: Request):
 @router.get("/computers/threads/{thread_id}/picture")
 def thread_picture(thread_id: str, request: Request, at: str = "now"):
     """The JPEG of a thread's region (``at`` now or before), as ``GET
-    /api/feedback/threads/{id}/picture`` answers it, for a thread of a
+    /api/annotations/{id}/picture`` answers it, for a thread of a
     request a run of this computer holds; 404 for any other."""
-    from .feedback import picture_of  # local: the feedback routes reach the agents' package
+    from .annotations import picture_of  # local: the annotations' routes reach the agents' package
 
     _user_id, _username, ws, token_id = _computer(request)
     if at not in ("now", "before"):
@@ -336,7 +387,7 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     """``{run, replies: [{id, thread_id, text, resolve}], state: "done" |
     "failed", summary, changed, error?}`` → ``{ok, written}``: the run's
     answers, written here as its agent's while that run holds the request
-    running (``feedback.agent.answer_run``: each reply under its id, so a
+    running (``annotations.hand.answer_run``: each reply under its id, so a
     retry writes none twice; a thread asked resolved unless a person said
     in it what the run did not read; the text made inert as the computer
     made it, ``prompt.inert``), then the request's end (``_end``).
@@ -347,7 +398,7 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     the folder; 404 for no request this computer holds or held; 409 when
     another run holds it or it is no longer running (withdrawn: nothing is
     written, the run stops)."""
-    from ..feedback import agent as feedback_agent
+    from ..annotations import hand
     from ..local_agents import prompt  # local: the agents' package is loaded where an agent's words are stored
 
     user_id, username, ws, token_id = _computer(request)
@@ -359,12 +410,12 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
     with connect_pages_db(ws) as conn, _refusals():
         held = _held(conn, request_id, user_id, token_id)
         if held["run"] != run:
-            raise FeedbackError(409, "Another run holds this request.")
+            raise AnnotationError(409, "Another run holds this request.")
         record = requests.get(conn, request_id)
         named, replies = {t["id"] for t in record["threads"]}, {}
         for item in payload.replies:
             if item.thread_id not in named:
-                raise FeedbackError(400, "A reply answers a thread of the request.")
+                raise AnnotationError(400, "A reply answers a thread of the request.")
             replies.setdefault(item.thread_id, {"id": item.id, "thread_id": item.thread_id, "resolve": item.resolve,
                                                 "text": prompt.inert(item.text.strip())[:comments.MAX_BODY]})
         again = bool(held["ended"]) and held["ended"] == record["state"]
@@ -375,10 +426,8 @@ def send_answers(request_id: str, payload: SendAnswers, request: Request):
         if record["state"] != "running" or held["ended"]:   # withdrawn: refused, the run stopped from then on
             requests.run_state(ws, conn, request_id, holder=token_id, run=run, state=payload.state, by_name="")
     label = _label(held["agent"])
-    connection = Connection(user_id=user_id, workspaces=[ws], scope="feedback",
-                            token_id=f"{comments.LOCAL_AGENT}{held['agent']}", name=label, username=username)
-    written, refusal = feedback_agent.answer_run(connection, ws, list(replies.values()), seen=held["seen_at"],
-                                                 read=held["read"])
+    writer = hand.Writer(user_id, username, of_channel(token_id, held["agent"]))
+    written, refusal = hand.answer_run(writer, ws, list(replies.values()), seen=held["seen_at"], read=held["read"])
     state, detail = _end(payload, changed, label, len(written), len(replies), refusal)
     with connect_pages_db(ws) as conn, _refusals():
         requests.run_state(ws, conn, request_id, holder=token_id, run=run, state=state, detail=detail, by_name=label)
@@ -416,7 +465,8 @@ def _chat_refusals():
 @router.get("/computers/chats")
 def waiting_chats(request: Request):
     """``{turns: [{id, conversation_id, page_id, folder_id, at}], stops:
-    [{id, run}]}``: the turns of the token's account's chat that wait in
+    [{id, run}]}``: the turns of the token's account's chat, and of the
+    people its agent serves there (``registry.people_of``), that wait in
     pages of the work folders this computer keeps with an agent (not paused
     there; each a turn of that agent's; oldest first, at most
     ``chats.MAX_WAITING``; none while the account may not edit,
@@ -427,8 +477,9 @@ def waiting_chats(request: Request):
     user_id, _username, ws, token_id = _computer(request)
     folders = registry.agent_folders(token_id, ws)
     taking = {w: folder["agent"] for w, folder in folders.items() if not folder["paused"]}
+    people = {p for p in registry.people_of(token_id) if workspaces.at_least(workspaces.role_of(ws, p), "editor")}
     with connect_pages_db(ws) as conn:
-        turns = chats.waiting_turns(conn, user_id, taking) if taking else []
+        turns = chats.waiting_turns(conn, user_id, taking, people) if taking else []
         stops = chats.stops_of(conn, token_id)
     return {"turns": turns, "stops": stops}
 
@@ -436,15 +487,16 @@ def waiting_chats(request: Request):
 @router.post("/computers/chats/{turn_id}/claim")
 def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
     """``{run, agent}`` → ``{turn: {id, conversation_id, page_id, text,
-    selections, model, effort}, history, page: {path, title}, seen}``
+    selections, model, effort, for}, history, page: {path, title}, seen}``
     (``chats.claim``): the turn taken for the run ``run`` (it and its
     message ``running``) in one write, or held by that run already (a
     retry: answered again). 400 for a run's id of another shape; 403 while
-    the account may not edit; 404 for no turn of the token's account's in a
-    page of a work folder this computer keeps with an agent; 409 when
-    another run holds it, it is no longer queued, the folder's agent there
-    is another, the turn is another agent's (left queued) or the folder is
-    paused there; 423 while a delete holds the workspace."""
+    the account may not edit; 404 for no turn for an agent of the token's
+    account's in a page of a work folder this computer keeps with an agent;
+    409 when another run holds it, it is no longer queued, the folder's
+    agent there is another, the turn is another agent's (left queued), it
+    is a co-author's the agent no longer serves (``registry.serves``) or
+    the folder is paused there; 423 while a delete holds the workspace."""
     from ..local_agents import chats
 
     user_id, _username, ws, token_id = _computer(request)
@@ -455,8 +507,8 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
         with connect_pages_db(ws) as conn:
             row = chats.run_of(conn, turn_id)
             page = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
-                                (row["page_id"],)).fetchone() if row else None
-        if row is None or row["user_id"] != user_id:
+                                (row["bucket"],)).fetchone() if row else None
+        if row is None or row["owner"] != user_id:
             raise chats.ChatError(404, chats.NO_TURN)
         if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):   # agent_folders then has none
             raise chats.ChatError(403, f"Only an owner or an editor of this workspace can talk to "
@@ -466,9 +518,11 @@ def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
         folder = folders[page[0]]
         label = _label(folder["agent"])
         if payload.agent != folder["agent"]:
-            raise chats.ChatError(409, f"This work folder's agent is {label}.")
+            raise chats.ChatError(409, f"This synced folder's agent is {label}.")
+        if not registry.serves(token_id, ws, row["user_id"]):
+            raise chats.ChatError(409, f"The owner of {label} no longer lets this person use it.")
         if folder["paused"]:
-            raise chats.ChatError(409, f"The work folder is paused: {label} starts once it syncs again.")
+            raise chats.ChatError(409, f"The synced folder is paused: {label} starts once it syncs again.")
         return chats.claim(ws, turn_id, user_id=user_id, holder=token_id, run=run, agent=folder["agent"],
                            computer=registry.computer_name(token_id))
 
@@ -477,7 +531,8 @@ def _step(raw) -> dict:
     """A step of the agent's message as a run writes it, kept as the
     chat's messages keep one (runner._step): ``{id, kind, status}``, with
     ``path`` (its path in the folder, else "outside") for a read or an
-    edit, ``program`` for a command. 400 for another shape."""
+    edit, ``program`` for a command, ``tool`` for a call of Gamma's tools.
+    400 for another shape."""
     from ..local_agents import events
 
     if not isinstance(raw, dict):
@@ -493,6 +548,8 @@ def _step(raw) -> dict:
             step["path"] = "outside"
     elif kind == "run":
         step["program"] = events.one_line(str(raw.get("program") or ""), MAX_STEP_TEXT)
+    elif kind == "gamma":
+        step["tool"] = raw["tool"] if events.GAMMA_TOOL.match(str(raw.get("tool") or "")) else ""
     return step
 
 

@@ -54,7 +54,7 @@ export const MERGE_KIND = {
 export function refusalWords(conflict, detail = "") {
   if (conflict !== "locked") return "";
   const kind = Object.keys(WORDS).find((key) => WORDS[key] === detail);
-  return kind ? refusalText(kind) : detail || t("That file's name and place follow its work folder.");
+  return kind ? refusalText(kind) : detail || t("That file's name and place follow its synced folder.");
 }
 
 // The rows of a Zotero collection: their page is the folders tree

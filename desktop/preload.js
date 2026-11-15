@@ -10,11 +10,16 @@
 //   (PAGE_ASKS): a folder's "Sync with this computer…", a page's "Push
 //   from a file on this computer…", its file shown in its folder, its
 //   missing file located, an opened PDF carried to another server's
-//   library, its computer chat continued in a terminal, and the tracking
+//   library, its computer chat continued in a terminal, the tracking
 //   dialog of a work folder of another server answered in the host's
-//   window (`tracked`: saved, or cancelled). The shell checks
-//   each and asks the user for the directory, the file or the server, or
-//   its own server for the terminal's command. Gamma stays a black box.
+//   window (`tracked`: saved, or cancelled), and Settings → AI's agents of
+//   this computer: one turned on or off (`set-agent`, `enabled`), let ask
+//   or not (`set-agent-runs`, `ask`), a directory offered to them
+//   (`agent-dirs`: `dir` "new", or the one moved), a person who may use one
+//   (`agent-person`: `place` the workspace, `person` the account). The shell checks each
+//   and asks the user for the directory, the file or the server, its own
+//   question before an agent is turned on or let ask, or its own server
+//   for the terminal's command. Gamma stays a black box.
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -96,9 +101,10 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
   };
   if (document.documentElement) start();
   else document.addEventListener('DOMContentLoaded', start, { once: true });
-  // Message type -> [channel, the id it names beside the workspace, and a
-  // field read as a flag, true or not]. The names before synced vaults
-  // stay, for a page of an older server opened in this app.
+  // Message type -> [channel, the id it names beside the workspace, a field
+  // read as a flag, true or not ("" for none), and the further ids it
+  // names]. The names before synced vaults stay, for a page of an older
+  // server opened in this app.
   const PAGE_ASKS = {
     'sync-folder-on-disk': ['shell:sync-folder-from-page', 'folder'],
     'keep-folder-on-disk': ['shell:sync-folder-from-page', 'folder'],
@@ -109,11 +115,18 @@ if (process.isMainFrame && shellPages.includes(pageUrl.href)) {
     'carry-to-server': ['shell:carry-from-page', 'page'],
     'continue-in-terminal': ['shell:terminal-from-page', 'page'],
     tracked: ['shell:tracked-from-page', 'link', 'cancelled'],
+    'set-agent': ['shell:set-agent-from-page', 'agent', 'enabled'],
+    'set-agent-runs': ['shell:agent-runs-from-page', 'agent', 'ask'],
+    'agent-dirs': ['shell:agent-dirs-from-page', 'dir'],
+    'agent-person': ['shell:agent-person-from-page', 'agent', '', 'place', 'person'],
   };
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (e.source !== window || e.origin !== window.location.origin || !d || d.source !== 'gamma-app') return;
     const ask = Object.prototype.hasOwnProperty.call(PAGE_ASKS, d.type) ? PAGE_ASKS[d.type] : null;
-    if (ask) ipcRenderer.send(ask[0], String(d.ws || ''), String(d[ask[1]] || ''), ask[2] ? d[ask[2]] === true : false);
+    if (ask) {
+      ipcRenderer.send(ask[0], String(d.ws || ''), String(d[ask[1]] || ''), ask[2] ? d[ask[2]] === true : false,
+        ...ask.slice(3).map((field) => String(d[field] || '')));
+    }
   });
 }

@@ -26,6 +26,7 @@ const CATALOG = [
   ["organize", "edit", true],
   ["organize_delete", "edit", true],
   ["block_edit", "edit"],
+  ["comment", "edit"],
 ];
 export const PERMISSION_KEYS = CATALOG.map(([key]) => key);
 const GROUP = Object.fromEntries(CATALOG.map(([key, group]) => [key, group]));

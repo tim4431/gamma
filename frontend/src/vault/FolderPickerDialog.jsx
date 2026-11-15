@@ -68,10 +68,10 @@ export default function FolderPickerDialog({ count = 1, workspaces: offered = []
         <div className="reportModalHint confirmMessage">
           {copy ? tn("A copy of the PDF as it is now is stored in the library and filed in the folder you pick, as a page of its own; the file's page stays as it is.",
             "Copies of the {n} PDFs as they are now are stored in the library and filed in the folder you pick, each a page of its own; the files' pages stay as they are.", count)
-            : work && pdf ? tn("The PDF is stored in the library and filed in the folder you pick; its page stays in its work folder and follows its file.",
-              "The {n} PDFs are stored in the library and filed in the folder you pick; their pages stay in their work folder and follow their files.", count)
-            : work ? tn("The page joins the library, filed in the folder you pick; it stays in its work folder and follows its file.",
-              "The {n} pages join the library, filed in the folder you pick; they stay in their work folder and follow their files.", count)
+            : work && pdf ? tn("The PDF is stored in the library and filed in the folder you pick; its page stays in its synced folder and follows its file.",
+              "The {n} PDFs are stored in the library and filed in the folder you pick; their pages stay in their synced folder and follow their files.", count)
+            : work ? tn("The page joins the library, filed in the folder you pick; it stays in its synced folder and follows its file.",
+              "The {n} pages join the library, filed in the folder you pick; they stay in their synced folder and follow their files.", count)
             : pdf ? tn("The PDF is stored in the library and filed in the folder you pick, with its highlights, notes and chat.",
               "The {n} PDFs are stored in the library and filed in the folder you pick, with their highlights, notes and chat.", count)
             : tn("The file is stored in the library and filed in the folder you pick, with its notes and chat.",

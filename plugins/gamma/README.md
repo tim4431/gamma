@@ -23,10 +23,10 @@ shown in Gamma's **Settings → AI → Integrations**. Use HTTPS for remote serv
 HTTP localhost is supported.
 
 Start Claude Code, open `/mcp`, select `gamma`, and authenticate. Sign in to Gamma
-in the browser and approve access to your chosen workspaces, each View or
-Edit (Edit lets it add, edit and move notes there, never delete them); the
-consent page can also let Claude Code answer your comments on a work folder's
-files (reply and resolve), and nothing else. Start a new
+in the browser and approve access to your chosen workspaces, each View,
+Comment or Edit (Comment lets it comment, reply, resolve and highlight there
+under its own name; Edit also lets it add, edit and move notes, never delete
+them). Start a new
 session and run `/gamma:gamma`, or ask Claude to find your Gamma notes. If tools
 are missing, inspect `/mcp` or `claude mcp get gamma` before retrying sign-in.
 Copy the Gamma page URL from your browser and paste it with your question.
@@ -91,9 +91,9 @@ is not required. To connect manually or install a development package:
    ```
 
    If sign-in is interrupted, retry with `codex mcp login gamma`.
-   Tick the workspaces, each View or Edit, and approve in your browser; the
-   consent page can also let Codex answer your comments on a work folder's
-   files (reply and resolve), and nothing else. No manual token
+   Tick the workspaces, each View, Comment or Edit (Comment lets Codex
+   comment, reply, resolve and highlight there under its own name), and
+   approve in your browser. No manual token
    or environment variable is needed. HTTPS is required for remote servers;
    HTTP localhost is supported. Manual tokens remain available for other clients.
 

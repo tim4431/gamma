@@ -34,7 +34,7 @@ def logins_possible() -> bool:
     """Whether this server could take guest logins at all: not with
     ``GAMMA_GUEST_MAX=0``, not on a hosted container (``config.guest_max``)
     and not on a share host, which holds strangers' published pages. False
-    leaves Settings → Server without its Guests rows: there is nothing an
+    leaves Settings → Users without its Guests rows: there is nothing an
     admin could turn on."""
     from . import cloud_auth  # local: cloud_auth imports auth, which imports this module
 

@@ -6,8 +6,8 @@ home.
 
 ``LocalHome`` is a work folder of this server: the runner's in-process reads
 and writes of its pages.db, as they always were (``requests.claim`` and
-``set_state``, ``requests.entries_of``, the comments, ``feedback.agent``'s
-``reply`` and ``resolve`` signed ``local:<agent>``).
+``set_state``, ``requests.entries_of``, the comments, ``annotations.hand``'s
+``reply`` and ``resolve`` signed as this computer's agent, ``agents.here``).
 
 ``HttpHome`` is a work folder of another Gamma server (a NAS; step 4c of
 docs/research/agent-collab.md), spoken to with this computer's token of that
@@ -24,17 +24,18 @@ runs it:
   says) and each thread's last speaker. 409 (another run holds it, or it
   is no longer sent) or 404 (not this computer's): nothing to run.
 - **The entries** are named by their files' paths on this disk (the vault's
-  rows, ``feedback.entries.paths_of``), their source lines computed here
-  from the PDF and the sources on this disk (``feedback.sources.
+  rows, ``annotations.entries.paths_of``), their source lines computed here
+  from the PDF and the sources on this disk (``annotations.sources.
   source_in_vault``), the region pictures of the ones put to the agent
   fetched (``GET /api/computers/threads/{id}/picture?at=now|before``) into
-  the directory's ``.gamma/feedback/img/``, where the prompt finds a local
+  the directory's ``.gamma/annotations/img/``, where the prompt finds a local
   work folder's (``prompt.picture_paths``).
 - **The progress** (``POST .../progress {run, detail}``) and **the end with
   the answers** (``POST .../answers {run, replies, state, summary, changed,
   error?}``): the replies, held until the end, are written by that server
-  as the agent's (``feedback.agent.reply`` with ``local:<agent>`` and the
-  claim's ``seen``), each with an id minted here once per run and thread
+  as the agent's (``annotations.hand.reply`` signed as this computer's
+  agent there, ``agents.of_channel``, with the claim's ``seen``), each with
+  an id minted here once per run and thread
   (``reply_id``), so a retry writes none twice; ``changed`` names only the
   files the vault tracks, relative to the folder.
 
@@ -46,9 +47,10 @@ and the channel's next announce there, or the next start, fails it there
 (``fail_left_open``). Any other refusal raises at once (``Refused``).
 
 A turn of the chat's computer side has a home too (``chat_home_for``, the
-runner's ``_ChatTurn``): ``LocalChatHome`` is a page of this server, its
-conversation in this server's pages.db (``chats.reply_of`` and
-``write_reply``, the checks its route made), as it always was;
+runner's ``_ChatTurn``): ``LocalChatHome`` is a bucket of this server (a
+page, a folder, the library), its conversation in this server's pages.db
+(``chats.reply_of`` and ``write_reply``, the checks its route made, where
+it works: ``chats.place_of``);
 ``HttpChatHome`` a page of a work folder of another server (step 4d), whose
 conversation that server keeps and writes:
 
@@ -57,8 +59,12 @@ conversation that server keeps and writes:
   id a turn, so a claim retried after a lost answer, or after this server
   restarted, holds it) → the message, its selections, the conversation's
   last messages, the model and effort it asks for, the page's path and
-  title. That server decided whose turn it is (the token's account, an
-  editor there); 409 or 404: nothing to run, nothing written.
+  title, and for a comment thread's turn the thread (its entry with its PDF
+  place, whose source line is computed here as a Send's entries' are).
+  That server decided whose turn it is (the token's account, an editor
+  there); 409 or 404: nothing to run, nothing written. The turn's end
+  written there answers the thread there (gamma/local_agents/threads.py
+  ``settle``): this computer holds no token of that server (step 4.2).
 - **The writes** (``POST .../write {run, seq, fields}``): the agent's
   message as the turn goes, at most every ``WRITE_EVERY_S`` (a write lost
   on the way is carried by the next, which holds the whole message), the
@@ -70,10 +76,10 @@ conversation that server keeps and writes:
   paths relative to the folder; a 409 or 404 (stopped there, taken by
   another run, the conversation gone) stops the turn.
 - **Source lines** of the selections are computed here, as a Send's
-  entries' (``feedback.sources.source_in_vault``).
+  entries' (``annotations.sources.source_in_vault``).
 
-A turn there asks only on this computer (the vault's policy ``computer``,
-runner.py ``ask_refusal``): what it asks is drawn and answered in the
+A turn there asks only on this computer (its agent's ``ask``, runner.py
+``ask_refusal``): what it asks is drawn and answered in the
 desktop app's window, never written there; the message says ``waiting``
 while an ask waits, and a write that did not reach that server is said
 (``missed``), so the flush tries it again.
@@ -90,17 +96,17 @@ from urllib.parse import quote, urlencode
 
 from .. import gamma_sync
 from ..db import account_names, connect_pages_db, connect_users_db, page_now
-from ..feedback import requests
-from ..feedback.entries import FeedbackError
+from ..annotations import requests
+from ..annotations.entries import AnnotationError
 from ..logbuf import log
-from . import catalog, chats, store
+from . import catalog, chats, events, store
 
 RETRY_S = 180          # how long a request that cannot reach the other server is tried again
 RETRY_FIRST_S = 2      # the first wait between two tries, doubling
 RETRY_MAX_S = 30       # up to this
 TIMEOUT_S = 60         # one request's
 WRITE_EVERY_S = 1.0    # a chat turn's message is written to the other server at most this often
-_KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a picture's key (``feedback.pictures.key``)
+_KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a picture's key (``annotations.pictures.key``)
 _MAX_PICTURE = 16 * 1024 * 1024               # bytes of one picture fetched
 # The agent message's fields a chat turn writes to the other server: never ``asks``, what a turn there asks
 # stays on this computer; ``waiting`` says that one waits (runner.py ``_progress``).
@@ -138,9 +144,10 @@ class LocalHome:
         self.ws = ws
 
     def claim(self, run) -> dict | None:
-        """The vault, its agent and its maker checked again, the request
-        taken (``requests.claim``) → the request, None when it is not this
-        run's (``run``'s link, agent, label and maker set on the way)."""
+        """The vault, the requester's agent and its role checked again, the
+        request taken (``requests.claim``) → the request, None when it is
+        not this run's (``run``'s link, agent, label and owner set on the
+        way)."""
         from .. import workspaces
         from .runner import _ours, _request_row
 
@@ -150,15 +157,13 @@ class LocalHome:
         link = requests._local_link(self.ws, row[3])
         if link is None or link["id"] != run.link_id or not _ours(link, row[2], row[4]):
             return None
-        agent = store.agent_of(link["id"])
-        if agent is None or agent["agent"] not in catalog.AGENTS:
-            return None
-        if not workspaces.at_least(workspaces.role_of(self.ws, link["created_by"]), "editor"):
+        agent = store.agent_for(row[2])
+        if agent is None or not workspaces.at_least(workspaces.role_of(self.ws, row[2]), "editor"):
             return None
         run.link, run.agent, run.label = link, agent["agent"], catalog.label(agent["agent"])
-        run.maker = link["created_by"]
+        run.owner = row[2]
         with connect_users_db() as users:
-            run.maker_name = account_names(users, {run.maker}).get(run.maker, "")
+            run.owner_name = account_names(users, {run.owner}).get(run.owner, "")
         run.run["agent"] = run.agent
         with connect_pages_db(self.ws) as conn:
             return requests.claim(self.ws, conn, run.request_id, by_name=run.label, detail=f"Starting {run.label}")
@@ -179,7 +184,7 @@ class LocalHome:
                 requests.set_state(self.ws, conn, run.request_id, state, detail=detail, by_name=run.label,
                                    writer="agent", only_from=("running",))
             return True
-        except FeedbackError as e:
+        except AnnotationError as e:
             if e.status == 409 or e.status == 404:
                 return False
             raise
@@ -191,7 +196,7 @@ class LocalHome:
 
     def entries(self, run, files: dict) -> tuple[str, list[dict]]:
         """``(when the run read them, the request's entries)``."""
-        from ..feedback import entries
+        from ..annotations import entries
 
         seen_at = page_now()
         with connect_pages_db(self.ws) as conn:
@@ -203,37 +208,40 @@ class LocalHome:
         return _spoken_after(self.ws, since)
 
     def pictures(self, todo: list[dict], root: Path) -> None:
-        """The feedback files' pass writes a local work folder's."""
+        """The annotation files' pass writes a local work folder's."""
 
-    def _connection(self, run):
-        from .. import comments
-        from ..integrations import Connection
+    def _signed(self, run):
+        """Who an answer is written as (``hand.Writer``): the owner, signed
+        as this computer's agent (``agents.here``)."""
+        from ..agents import here
+        from ..annotations.hand import Writer
 
-        # Signed as the agent's label; its id ``local:<name>`` makes the
-        # comment read as an agent on this computer's (comments.LOCAL_AGENT).
-        return Connection(user_id=run.maker, workspaces=[self.ws], scope="feedback",
-                          token_id=f"{comments.LOCAL_AGENT}{run.agent}", name=run.label, username=run.maker_name)
+        return Writer(run.owner, run.owner_name, here(run.agent))
 
     def reply(self, run, thread_id: str, body: str) -> None:
         """The answer written as the agent's reply, saying when the run read
         the thread (``seen``), and its thread's session recorded.
         ValueError for a refusal."""
+        from ..annotations import hand
         from ..blocks_store import new_block_id
-        from ..feedback import agent as feedback_agent
+        from ..db import connect_pages_db
 
-        _, out = feedback_agent.reply(self._connection(run), self.ws, "", {"thread_id": thread_id, "body": body,
-                                                                           "id": new_block_id()}, seen=run.seen_at)
-        run._answered(thread_id, out["comment_id"])
+        with connect_pages_db(self.ws) as conn:
+            out = hand.reply(conn, self._signed(run), self.ws, thread_id, body, comment_id=new_block_id(),
+                             seen=run.seen_at)
+        run._answered(thread_id, out["comment"]["id"])
 
     def resolve(self, run, thread_id: str) -> None:
         """The fixed thread resolved, unless a person said in it what the
         run did not read. ValueError for a refusal."""
-        from ..feedback import agent as feedback_agent
+        from ..annotations import hand
+        from ..db import connect_pages_db
         from .runner import _spoken_after
 
         unread = _spoken_after(self.ws, {thread_id: (run.seen_at, set(run.read.get(thread_id, ())))})
         if not unread:
-            feedback_agent.resolve(self._connection(run), self.ws, "", {"thread_id": thread_id}, seen=run.seen_at)
+            with connect_pages_db(self.ws) as conn:
+                hand.resolve(conn, self._signed(run), self.ws, thread_id, seen=run.seen_at)
 
 
 # --- another server's work folder -------------------------------------------------------
@@ -250,6 +258,28 @@ def _place(entry: dict) -> dict:
     doc_id}``) as ``sources.source_in_vault`` asks it."""
     place = entry.get("place") if isinstance(entry.get("place"), dict) else {}
     return {**place, "page_id": entry.get("page_id"), "kind": entry.get("kind")}
+
+
+def _on_disk(found: dict, files: dict, paths: dict, root: Path) -> dict:
+    """An entry of that server's (a Send's claim's, a thread turn's) named
+    by its file's path on this disk (the vault's rows, ``paths``) and,
+    open and on the PDF as it is built here, with its source line computed
+    from the PDF and the sources on this disk (``sources.source_in_vault``)."""
+    from ..annotations import entries, sources
+
+    entry = dict(found)
+    there = entry.get("file")
+    if entry.get("page_id") in paths:
+        entry["file"] = paths[entry["page_id"]]
+    source = entry.get("source") if isinstance(entry.get("source"), dict) else None
+    if source and source.get("file") == there and there != entry.get("file"):
+        entry["source"] = {**source, "file": entry["file"]}   # a range of a text file: its own path
+    if entry.get("state") == "open" and entry.get("kind") in entries.PLACED \
+            and (entry.get("where") or {}).get("placed") in entries.ON_THIS_BUILD:
+        line = sources.source_in_vault(files, root, _place(entry))
+        if line:
+            entry["source"] = {**entries._source_fields(line), "version": "current"}
+    return entry
 
 
 def _speakers(threads) -> dict[str, dict]:
@@ -275,6 +305,7 @@ class _Remote:
         self.ws = link["workspace_id"] if link else ""
         self.server: gamma_sync.Server | None = None
         self.username = ""               # the account there the channel is of
+        self.account = ""                # its id there
 
     def _ask(self, method: str, path: str, body=None, *, retry: bool = True) -> tuple[int, bytes]:
         """``(status, the answer's bytes)``; one that cannot reach that
@@ -317,7 +348,7 @@ class _Remote:
         if keyed is None or not keyed["token"]:
             return False
         self.server = gamma_sync.Server(link["remote_url"], keyed["token"], timeout=TIMEOUT_S)
-        self.username = keyed["username"]
+        self.username, self.account = keyed["username"], keyed["account"]
         return True
 
 
@@ -358,8 +389,8 @@ class HttpHome(_Remote):
         if (link is None or not link["remote_url"] or not folder_links.work_vault(link)
                 or link["status"].get(folder_links.PAUSED) or folder_links.choosing(link)):
             return None
-        agent = store.agent_of(link["id"])
-        if agent is None or agent["agent"] not in catalog.AGENTS:
+        agent = store.agent_for(link["created_by"])
+        if agent is None:
             return None
         if not self._connect(link):
             log.warning(f"[agents] a Send of vault {self.link_id} not taken: show this computer on "
@@ -384,8 +415,8 @@ class HttpHome(_Remote):
         self.found = [e for e in answer.get("entries") or [] if isinstance(e, dict) and isinstance(e.get("id"), str)]
         self.speakers = _speakers(answer.get("threads"))
         self.seen = str(answer.get("seen") or "")
-        run.maker = link["created_by"]
-        run.maker_name = str(record.get("by") or self.username or "")
+        run.owner = link["created_by"]
+        run.owner_name = str(record.get("by") or self.username or "")
         return record
 
     def withdrawn(self, run) -> bool:
@@ -451,26 +482,11 @@ class HttpHome(_Remote):
     def entries(self, run, files: dict) -> tuple[str, list[dict]]:
         """``(the claim's seen, its entries)``, each named by its file's path
         on this disk and, open, with its source line computed here."""
-        from ..feedback import entries, sources
+        from ..annotations import entries
 
         paths = entries.paths_of(files)
         root = Path(run.link["path"])
-        out = []
-        for found in self.found:
-            entry = dict(found)
-            there = entry.get("file")
-            if entry.get("page_id") in paths:
-                entry["file"] = paths[entry["page_id"]]
-            source = entry.get("source") if isinstance(entry.get("source"), dict) else None
-            if source and source.get("file") == there and there != entry.get("file"):
-                entry["source"] = {**source, "file": entry["file"]}   # a range of a text file: its own path
-            if entry.get("state") == "open" and entry.get("kind") in entries.PLACED \
-                    and (entry.get("where") or {}).get("placed") in entries.ON_THIS_BUILD:
-                line = sources.source_in_vault(files, root, _place(entry))
-                if line:
-                    entry["source"] = {**entries._source_fields(line), "version": "current"}
-            out.append(entry)
-        return self.seen, out
+        return self.seen, [_on_disk(found, files, paths, root) for found in self.found]
 
     def spoken_after(self, since: dict[str, tuple[str, set[str]]]) -> set[str]:
         """``runner._spoken_after`` from the claim's ``threads``: those of
@@ -487,12 +503,12 @@ class HttpHome(_Remote):
 
     def pictures(self, todo: list[dict], root: Path) -> None:
         """The region pictures of ``todo`` fetched into the directory's
-        ``.gamma/feedback/img/<key>.jpg``, each once (write-once by key, as
-        the feedback files' are), the ``.gamma/feedback/.gitignore`` a
-        local work folder's feedback files carry written first, so a
+        ``.gamma/annotations/img/<key>.jpg``, each once (write-once by key,
+        as the annotation files' are), the ``.gamma/annotations/.gitignore``
+        a local work folder's annotation files carry written first, so a
         repository there never lists them; one not fetched is left out of
         the prompt."""
-        from ..feedback import entries, files
+        from ..annotations import entries, files
         from ..vault import disk as vault_disk
 
         folder = Path(root) / files.IMG
@@ -514,7 +530,7 @@ class HttpHome(_Remote):
                     try:
                         ignored = vault_disk.write_own(Path(root), f"{files.DIR}/.gitignore", files.GITIGNORE)
                     except (OSError, vault_disk.Offline) as e:
-                        log.info(f"[agents] the feedback files' .gitignore of vault {self.link_id}: {e}")
+                        log.info(f"[agents] the annotation files' .gitignore of vault {self.link_id}: {e}")
                         ignored = True   # asked once a run
                 folder.mkdir(parents=True, exist_ok=True)
                 part = folder / f".{key}.{uuid.uuid4().hex[:8]}.part"
@@ -566,9 +582,10 @@ class HttpHome(_Remote):
 # --- a turn of the chat's computer side ------------------------------------------------------
 
 def chat_home_for(ws: str, link_id: str, turn_id: str):
-    """The home of a chat turn keyed ``(ws, "chat", turn id)`` in the vault
-    ``link_id``'s queue: a remote turn's key names its vault in place of the
-    workspace (``runner.queue_remote_chat``), as a remote Send's does."""
+    """The home of a chat turn keyed ``(ws, "chat", turn id)``, of the vault
+    ``link_id`` ("" for none): a remote turn's key names its vault in place
+    of the workspace (``runner.queue_remote_chat``), as a remote Send's
+    does."""
     return HttpChatHome(link_id, turn_id) if ws == link_id else LocalChatHome(ws)
 
 
@@ -591,8 +608,8 @@ def _earlier(messages: list[dict], at: int, person: dict) -> list[dict]:
 
 
 class LocalChatHome:
-    """A page of this server: the conversation in its pages.db, the checks
-    the turn's route made."""
+    """A bucket of this server: the conversation in its pages.db, the
+    checks the turn's route made."""
 
     remote = False
     run_id = ""         # a local turn is this server's own
@@ -603,68 +620,113 @@ class LocalChatHome:
         self.ws = ws
 
     def claim(self, turning) -> dict | None:
-        """The turn's context, ``{user_id, text, selections, earlier}``
-        (the conversation's account, the person's message and its
-        selections, the conversation's last messages before it), while its
-        message reads queued; None when it is gone or ended meanwhile (a
-        Stop while it waited for a slot ended its message and its row)."""
+        """The turn's context, ``{user_id, owner, text, selections,
+        earlier, title, thread_id}`` (the conversation's account, the
+        account whose agent it talks to, the person's message and its
+        selections, the conversation's last messages before it, its title,
+        the comment thread it answers, "" for a chat's), while its message
+        reads queued; None when it is gone or ended meanwhile (a Stop while
+        it waited for a slot ended its message and its row)."""
         conversation, reply = chats.reply_of(self.ws, turning.conversation_id, turning.turn_id)
         if reply is None or reply.get("state") != "queued":
             return None
         messages = conversation["messages"]
         at = next(i for i, m in enumerate(messages) if m.get("turn_id") == turning.turn_id)
         person = next((m for m in reversed(messages[:at]) if m.get("role") == "user"), None) or {}
-        return {"user_id": conversation["user_id"], "text": person.get("text") or "",
-                "selections": person.get("selections") or [], "earlier": _earlier(messages, at, person)}
+        return {"user_id": conversation["user_id"], "owner": conversation["owner"] or conversation["user_id"],
+                "text": person.get("text") or "",
+                "selections": person.get("selections") or [], "earlier": _earlier(messages, at, person),
+                "title": conversation["title"], "thread_id": conversation["thread_id"]}
 
-    def kept(self, link: dict) -> bool:
-        from .. import folder_links  # local: folder_links imports this package's modules inside functions
+    def place(self, turning, context: dict) -> dict:
+        """Where the turn works (``chats.place_of`` for the conversation's
+        account), which must still be where the conversation works: the
+        turn fails when its bucket is gone, when the account may no longer
+        talk to an agent here, when its work folder is no longer kept here
+        or its directory no longer offered, and when its bucket moved into
+        a work folder kept here."""
+        place = chats.place_of(self.ws, turning.bucket, context["user_id"], turning.dir, turning.conversation_id)
+        if place is None:
+            with connect_pages_db(self.ws) as conn:
+                gone = chats.about(conn, turning.bucket) is None
+            turning._fail("What this conversation is about is gone." if gone
+                          else f"{turning.label} was turned off on this computer.")
+        if place["dir"] != turning.dir:
+            if turning.dir and turning.dir == place["about"]["w"]:
+                turning._fail("The synced folder is no longer kept on this computer.")
+            turning._fail("The directory this conversation works in is no longer offered on this computer."
+                          if turning.dir else "This page is in a synced folder now: start a new chat to work there.")
+        return place
 
-        return folder_links.work_folder_link(link)
+    def whose(self, link: dict | None, context: dict) -> str:
+        """The account whose agent the turn runs: the conversation's owner
+        (its own account, or the one that lends a co-author its agent)."""
+        return context["owner"]
 
-    def ours(self, link: dict, context: dict) -> bool:
-        """Whether the vault is the conversation's account's."""
-        return link["created_by"] == context["user_id"]
+    def person(self, context: dict) -> tuple[str, str]:
+        """``(the account the turn is for, its username)``: the
+        conversation's."""
+        return context["user_id"], self.owner_name(context["user_id"])
 
-    def editor(self, link: dict) -> bool:
-        """Whether the vault's maker edits the workspace."""
+    def lent(self, context: dict) -> bool:
+        """Whether the turn is a co-author's: its agent another account's."""
+        return context["user_id"] != context["owner"]
+
+    def serves(self, agent: str, person: str) -> bool:
+        """Whether the agent's owner still lets ``person`` use it in this
+        workspace (``store.named``)."""
+        return store.named(agent, "", self.ws, person)
+
+    def editor(self, user_id: str) -> bool:
+        """Whether the account edits the workspace."""
         from .. import workspaces
 
-        return workspaces.at_least(workspaces.role_of(self.ws, link["created_by"]), "editor")
+        return workspaces.at_least(workspaces.role_of(self.ws, user_id), "editor")
 
     def cannot_write(self) -> str:
         from .runner import _cannot_write
 
         return _cannot_write(self.ws)
 
-    def owner(self, link: dict) -> str:
+    def owner_name(self, user_id: str) -> str:
         with connect_users_db() as users:
-            return account_names(users, {link["created_by"]}).get(link["created_by"], "") or "the owner"
+            return account_names(users, {user_id}).get(user_id, "") or "the owner"
 
-    def where(self, turning, link: dict, context: dict) -> tuple[str, str, list[dict]]:
-        """``(the page's path in the work folder, the work folder's name,
-        the person's selections for the prompt)``, each selection ``{page,
-        quote, source}``, ``source`` the line its passage maps to in the
-        sources (``feedback.sources.source_for``) when its box is known, else
-        None."""
-        from ..feedback import entries
+    def where(self, turning, place: dict, context: dict) -> tuple[dict, list[dict]]:
+        """``(what the conversation is about, the person's selections for
+        the prompt)``: the place's ``about``, a file's ``path`` as the
+        vault's rows name it, and each selection ``{page, quote, source}``,
+        ``source`` the line its passage maps to in the work folder's sources
+        (``annotations.sources.source_for``) when its box is known, else None
+        (always, outside a work folder kept here)."""
+        from ..annotations import entries
         from ..vault import store as vault_store
-        from ..work_folders.marks import Tree
 
-        with connect_pages_db(self.ws) as conn:
-            tree = Tree.read(conn)
-            try:
-                scope = entries.resolve_scope(conn, turning.page_id, tree)
-            except FeedbackError:
-                turning._fail("This page is no longer a file of the work folder.")
-            chosen = context["selections"]
-            selections = [{"page": c.get("page"), "quote": c.get("text") or "", "source": source}
-                          for c, source in zip(chosen, chats.sources_of(self.ws, conn, turning.page_id, chosen))]
-        file = entries.paths_of(vault_store.files(link["id"])).get(turning.page_id) or scope.name
-        return file, tree.names.get(scope.work_folder, "") or Path(link["path"]).name, selections
+        about, link, chosen = dict(place["about"]), place["link"], context["selections"]
+        sources = [None] * len(chosen)
+        if link is not None and about["kind"] == "page":
+            about["path"] = entries.paths_of(vault_store.files(link["id"])).get(turning.bucket) or about["path"]
+            with connect_pages_db(self.ws) as conn:
+                sources = chats.sources_of(self.ws, conn, turning.bucket, chosen)
+        selections = [{"page": c.get("page"), "quote": c.get("text") or "", "source": source}
+                      for c, source in zip(chosen, sources)]
+        return about, selections
 
     def vault_file(self, turning, link: dict) -> str:
         return _vault_file(turning, link)
+
+    def thread(self, turning, place: dict, context: dict) -> dict | None:
+        """The thread a thread's turn answers as it is now
+        (``threads.entry_of``), its file named as the vault's rows name it,
+        its source line looked up here; None for one gone."""
+        from ..annotations import entries
+        from ..vault import store as vault_store
+        from . import threads
+
+        link = place["link"]
+        paths = entries.paths_of(vault_store.files(link["id"])) if link is not None else None
+        with connect_pages_db(self.ws) as conn:
+            return threads.entry_of(self.ws, conn, context["thread_id"], paths=paths)
 
     def write(self, turning, fields: dict, *, last: bool = False) -> bool:
         """The turn's agent message takes ``fields`` → whether it was
@@ -676,10 +738,10 @@ def _vault_file(turning, link: dict) -> str:
     """The page's path in the vault as this computer's rows of it name it,
     "" when they name none: what an ask on this computer names, never a
     word the other server gave."""
-    from ..feedback import entries
+    from ..annotations import entries
     from ..vault import store as vault_store
 
-    return entries.paths_of(vault_store.files(link["id"])).get(turning.page_id) or ""
+    return entries.paths_of(vault_store.files(link["id"])).get(turning.bucket) or ""
 
 
 class HttpChatHome(_Remote):
@@ -709,7 +771,9 @@ class HttpChatHome(_Remote):
 
     def claim(self, turning) -> dict | None:
         """The vault and its agent checked, the turn taken there for this
-        computer's run → its context (``{text, selections, earlier}``; the
+        computer's run → its context (``{text, selections, earlier, title,
+        thread_id, thread, for}``, a thread's turn's thread as the claim gave
+        it, ``for`` the account there the turn is for, ``{id, username}``; the
         turn's agent, conversation, page, model and effort set on
         ``turning``), recorded here (``store.claimed_turn``); None when it is
         not this run's: stopped while it waited, the vault gone or no work
@@ -726,8 +790,8 @@ class HttpChatHome(_Remote):
         link = folder_links.get_link(self.link_id)
         if link is None or not self.kept(link):
             return None
-        agent = store.agent_of(link["id"])
-        if agent is None or agent["agent"] not in catalog.AGENTS:
+        agent = store.agent_for(link["created_by"])
+        if agent is None:
             self._turned_off(turning, link)
             return None
         if not self._connect(link):
@@ -748,13 +812,13 @@ class HttpChatHome(_Remote):
             log.warning(f"[agents] the claim of chat turn {self.turn_id}: {e}")
             self.unsure = True
             store.claimed_turn(self.turn_id, link_id=self.link_id, conversation_id=turning.conversation_id,
-                               page_id=turning.page_id, agent=turning.agent)
+                               page_id=turning.bucket, agent=turning.agent)
             return None
         turning.conversation_id = str(turn.get("conversation_id") or turning.conversation_id)
-        turning.page_id = str(turn.get("page_id") or turning.page_id)
+        turning.bucket = str(turn.get("page_id") or turning.bucket)
         turning.model, turning.effort = str(turn.get("model") or ""), str(turn.get("effort") or "")
         store.claimed_turn(self.turn_id, link_id=self.link_id, conversation_id=turning.conversation_id,
-                           page_id=turning.page_id, agent=turning.agent)
+                           page_id=turning.bucket, agent=turning.agent)
         self.page = answer["page"] if isinstance(answer.get("page"), dict) else {}
         history = answer.get("history") if isinstance(answer.get("history"), list) else []
         earlier = [{"role": "owner" if m.get("role") in ("owner", "user") else "agent", "text": m["text"]}
@@ -765,13 +829,19 @@ class HttpChatHome(_Remote):
             if kept:
                 place = raw.get("place") if isinstance(raw.get("place"), dict) else {}
                 selections.append({**kept[0], "doc_id": str(place.get("doc_id") or raw.get("doc_id") or "")})
+        thread_id = str(turn.get("thread_id") or "")
+        thread = answer.get("thread") if isinstance(answer.get("thread"), dict) else None
+        person = turn.get("for") if isinstance(turn.get("for"), dict) else {}
         return {"text": str(turn.get("text") or ""), "selections": selections[:chats.MAX_SELECTIONS],
-                "earlier": earlier[-6:]}
+                "earlier": earlier[-6:], "title": chats.title_of(str(turn.get("title") or "")),
+                "thread_id": thread_id, "thread": thread if thread_id and thread and thread.get("id") == thread_id
+                else None, "for": {"id": str(person.get("id") or self.account),
+                                   "username": events.one_line(str(person.get("username") or self.username), 64)}}
 
     def _turned_off(self, turning, link: dict) -> None:
-        """The vault's agent was turned off while the turn waited here: the
+        """The turn's agent was turned off while the turn waited here: the
         turn taken there by this run and failed with why ("Codex was turned
-        off for this folder."), as a turn of this server's page fails, never
+        off on this computer."), as a turn of this server's page fails, never
         left waiting there; nothing when that server no longer gives it to
         this computer (its announce without the agent came first) or the
         vault's computer is not shown there. Recorded here once taken, so an
@@ -779,7 +849,7 @@ class HttpChatHome(_Remote):
         (``unsure``)."""
         if turning.agent not in catalog.AGENTS or not self._connect(link):
             return
-        fields = {"state": "failed", "error": f"{catalog.label(turning.agent)} was turned off for this folder.",
+        fields = {"state": "failed", "error": f"{catalog.label(turning.agent)} was turned off on this computer.",
                   "ended_at": page_now()}
         try:
             self._json("POST", self._chats("claim"), {"run": self.run_id, "agent": turning.agent}, retry=False)
@@ -790,7 +860,7 @@ class HttpChatHome(_Remote):
             log.warning(f"[agents] the claim of chat turn {self.turn_id}, its agent turned off: {e}")
             self.unsure = True
         store.claimed_turn(self.turn_id, link_id=self.link_id, conversation_id=turning.conversation_id,
-                           page_id=turning.page_id, agent=turning.agent)
+                           page_id=turning.bucket, agent=turning.agent)
         if self.unsure:
             return
         try:
@@ -809,11 +879,42 @@ class HttpChatHome(_Remote):
 
         return bool(link["remote_url"]) and folder_links.work_vault(link)
 
-    def ours(self, link: dict, context: dict) -> bool:
-        """That server decided at the claim: the token's account's turn."""
-        return True
+    def place(self, turning, context: dict) -> dict:
+        """Where the turn works: the vault's directory, while it keeps a
+        work folder of that server (else the turn fails)."""
+        from .. import folder_links  # local: folder_links imports this package's modules inside functions
 
-    def editor(self, link: dict) -> bool:
+        link = folder_links.get_link(self.link_id)
+        if link is None or not self.kept(link):
+            turning._fail("The synced folder is no longer kept on this computer.")
+        return {"kind": "vault", "dir": "", "path": link["path"], "name": Path(link["path"]).name, "link": link}
+
+    def whose(self, link: dict, context: dict) -> str:
+        """The account here whose channel took the turn, which made the
+        vault: that server decided at the claim it is a turn for the token's
+        account's agent."""
+        return link["created_by"]
+
+    def person(self, context: dict) -> tuple[str, str]:
+        """``(the account there the turn is for, its username)``, as the
+        claim named it (``for``): the channel's own account, or a co-author
+        the agent serves there."""
+        return context["for"]["id"], context["for"]["username"]
+
+    def lent(self, context: dict) -> bool:
+        """Whether the turn is a co-author's: for another account there than
+        the channel's."""
+        return context["for"]["id"] != self.account
+
+    def serves(self, agent: str, person: str) -> bool:
+        """Whether the agent's owner still lets ``person`` of that server's
+        workspace use it (``store.named``)."""
+        from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+        link = folder_links.get_link(self.link_id)
+        return link is not None and store.named(agent, link["remote_url"], link["workspace_id"], person)
+
+    def editor(self, user_id: str) -> bool:
         """That server refuses the claim of an account that cannot edit."""
         return True
 
@@ -822,47 +923,60 @@ class HttpChatHome(_Remote):
         being deleted)."""
         return ""
 
-    def owner(self, link: dict) -> str:
-        return self.username or "the owner"
-
-    def where(self, turning, link: dict, context: dict) -> tuple[str, str, list[dict]]:
-        """``(the page's path in the work folder, the work folder's name,
-        the person's selections for the prompt)``: the path the vault's rows
-        give the page (else the claim's), and each selection's source line
-        computed here from the PDF and the sources on this disk
-        (``feedback.sources.source_in_vault``), on the version the selection
+    def where(self, turning, place: dict, context: dict) -> tuple[dict, list[dict]]:
+        """``(what the conversation is about, the person's selections for
+        the prompt)``: the page, its path the one the vault's rows give it
+        (else the claim's), and each selection's source line computed here
+        from the PDF and the sources on this disk
+        (``annotations.sources.source_in_vault``), on the version the selection
         was made on (its ``doc_id`` when that server names it, else the one
         the vault read: the page as it is shown)."""
-        from ..feedback import entries, sources
+        from ..annotations import entries, sources
         from ..vault import kinds, store as vault_store
 
+        link = place["link"]
         files = vault_store.files(link["id"])
         root = Path(link["path"])
-        shown = [row.get("hash") for row in files.values() if row.get("page_id") == turning.page_id
+        shown = [row.get("hash") for row in files.values() if row.get("page_id") == turning.bucket
                  and row.get("kind") == kinds.PDF.name and not row.get("was")]
         selections = []
         for chosen in context["selections"]:
             source = None
             if chosen.get("page") and chosen.get("box"):
                 doc_id = chosen.get("doc_id") or (shown[0] if len(shown) == 1 else "")
-                place = {"page_id": turning.page_id, "kind": "passage", "page": chosen["page"],
-                         "rects": [chosen["box"]], "doc_id": doc_id}
+                at = {"page_id": turning.bucket, "kind": "passage", "page": chosen["page"],
+                      "rects": [chosen["box"]], "doc_id": doc_id}
                 try:
-                    source = sources.source_in_vault(files, root, place)
+                    source = sources.source_in_vault(files, root, at)
                 except Exception as e:  # noqa: BLE001 — a selection without its line is searched for
-                    log.warning(f"[agents] the source of a selection on page {turning.page_id}: {e}")
+                    log.warning(f"[agents] the source of a selection on page {turning.bucket}: {e}")
             selections.append({"page": chosen.get("page"), "quote": chosen.get("text") or "", "source": source})
-        file = (entries.paths_of(files).get(turning.page_id) or str(self.page.get("path") or "")
+        file = (entries.paths_of(files).get(turning.bucket) or str(self.page.get("path") or "")
                 or str(self.page.get("title") or ""))
         if not file:
-            turning._fail("This page is no longer a file of the work folder.")
-        return file, str(self.page.get("folder") or "") or root.name, selections
+            turning._fail("This page is no longer a file of the synced folder.")
+        about = {"kind": "page", "id": turning.bucket, "title": str(self.page.get("title") or ""), "w": "",
+                 "path": file, "work_folder": str(self.page.get("folder") or "") or root.name}
+        return about, selections
 
     def vault_file(self, turning, link: dict) -> str:
         """The page's path from this computer's vault rows alone, "" for
         none (``where``'s fallback to the claim's path or title is the
         prompt's): what an ask on this computer names."""
         return _vault_file(turning, link)
+
+    def thread(self, turning, place: dict, context: dict) -> dict | None:
+        """The thread a thread's turn answers, as the claim gave it, named
+        by its file's path on this disk with its source line computed here
+        (``_on_disk``); None when the claim gave none."""
+        from ..annotations import entries
+        from ..vault import store as vault_store
+
+        found = context.get("thread")
+        if found is None:
+            return None
+        files = vault_store.files(place["link"]["id"])
+        return _on_disk(found, files, entries.paths_of(files), Path(place["path"]))
 
     def write(self, turning, fields: dict, *, last: bool = False) -> bool:
         """The turn's agent message takes ``fields`` there (``CHAT_FIELDS``

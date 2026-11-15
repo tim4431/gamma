@@ -234,7 +234,7 @@ def test_preview_and_making_refuse_what_a_vault_may_not_be(owner, disk):
     assert owner.post("/api/folder-links/preview", json={"path": str(gone)}).json()["marker"] == {"id": marker["id"],
                                                                                                "link_id": ""}
     r = owner.post("/api/folder-links", json={"path": str(gone), "new_folder": True, "push": "everything"})
-    assert r.status_code == 400 and "was a synced vault before" in r.json()["detail"]
+    assert r.status_code == 400 and "was a synced folder before" in r.json()["detail"]
     adopted = _create(owner, path=str(gone), new_folder=True, push="everything", adopt=True)
     assert folder_links.get_link(adopted["id"])["state"]["vault"] == marker["id"]
 
@@ -294,13 +294,13 @@ def test_a_clone_or_a_zotero_link_is_refused_a_workspace_a_vault_pushes_everythi
     assert folder_links.pushing_vault(ws) == str((disk / "Pushing").resolve()) and folder_links.pushing_vault("none") == ""
     monkeypatch.setattr(sync_engine, "_check_remote", lambda url, token, mode, fetch: (
         url, {"workspace": {"id": "r", "name": "R"}, "user": "u", "role": "owner"}, mode))
-    with pytest.raises(ValueError, match="synced vault"):
+    with pytest.raises(ValueError, match="synced folder"):
         sync_engine.create_mirror(user, "http://nas", "gamma_x", workspace_id=ws)
     assert sync_engine.get_mirror(ws) is None
     monkeypatch.setattr(zotero_sync, "_library_entry", lambda client, library: {"write": True, "kind": "user"})
     monkeypatch.setattr(zotero_sync.zotero_account, "client_for", lambda owner_id: None)
     monkeypatch.setattr(zotero_sync.zotero_account, "status", lambda owner_id: {})
-    with pytest.raises(ValueError, match="synced vault"):
+    with pytest.raises(ValueError, match="synced folder"):
         zotero_sync.create_link(user, "users/12345", workspace_id=ws)
     with connect_users_db() as conn:
         assert conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (ws,)).fetchone() is None
@@ -601,11 +601,12 @@ def test_removing_a_vault_keeps_its_files_and_pages_and_stores_its_pdfs_first(ow
     ws, size = link["workspace_id"], (root / "Paper.pdf").stat().st_size
     assert _props(link, pages["pdf"])["doc"]["at"] == "path"
     r = owner.get(f"/api/folder-links/{link['id']}/removal")
-    assert r.status_code == 200 and r.json() == {"pages": 3, "in_place": 1, "bytes": size, "files": 0, "in_library": 3}
+    assert r.status_code == 200 and r.json() == {"pages": 3, "files": 3, "in_library": 3, "too_large": 0, "in_place": 1,
+                                                 "bytes": size}
     doc = _props(link, pages["pdf"])["doc"]["hash"]
     assert not storage.exists(ws, f"{doc}.pdf")
 
-    assert owner.delete(f"/api/folder-links/{link['id']}", params={"files": "keep"}).json() == {"ok": True}
+    assert owner.delete(f"/api/folder-links/{link['id']}").json() == {"ok": True, "kept": 3, "trashed": 0}
     assert folder_links.get_link(link["id"]) is None and vault_store.files(link["id"]) == {}
     assert sorted(p.name for p in root.iterdir() if p.is_file()) == ["Keep from Gamma.md", "Mine.md", "Paper.pdf"]
     assert not (root / vault_disk.MARKER).exists()
@@ -630,9 +631,10 @@ def test_removing_a_work_folder_sends_its_files_out_of_the_library_to_recently_d
     commit_ops(ws, kept, [{"op": "set", "id": kept, "props": {"library": True}}], actor=link["created_by"])
     folders = {d: row["folder_id"] for d, row in vault_store.dirs(link["id"]).items()}
     r = owner.get(f"/api/folder-links/{link['id']}/removal")
-    assert r.json() | {"bytes": 0} == {"pages": 4, "in_place": 1, "bytes": 0, "files": 3, "in_library": 1}
+    assert r.json() | {"bytes": 0} == {"pages": 4, "files": 4, "in_library": 1, "too_large": 0, "in_place": 1, "bytes": 0}
 
-    assert owner.delete(f"/api/folder-links/{link['id']}").status_code == 200
+    r = owner.delete(f"/api/folder-links/{link['id']}", params={"pages": "remove"})
+    assert r.json() == {"ok": True, "kept": 1, "trashed": 3}
     remote = LocalRemote(ws, link["folder_id"], link["created_by"])
     assert {rel: remote.state(p) for rel, p in pages.items()} == {"a.md": "trashed", "deep/b.md": "trashed",
                                                                   "kept/c.md": "live", "Paper.pdf": "trashed"}
@@ -644,25 +646,88 @@ def test_removing_a_work_folder_sends_its_files_out_of_the_library_to_recently_d
         "Paper.pdf", "a.md", "deep/b.md", "kept/c.md"]                             # the disk as it was
 
 
-def test_removing_a_vault_with_its_files_trashes_only_those_its_pulls_made(owner, disk):
-    link, root, pages = _mixed(owner, disk, "Trash")
-    (root / ".gamma" / "trash").mkdir(parents=True, exist_ok=True)
-    _put(root / ".gamma" / "trash" / "old" / "kept.md", "an earlier round's\n")
-    assert owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).status_code == 200
-    assert sorted(p.name for p in root.iterdir() if p.is_file()) == ["Mine.md", "Paper.pdf"]
-    trashed = sorted(p.relative_to(root / ".gamma" / "trash").as_posix() for p in (root / ".gamma" / "trash").rglob("*.md"))
-    assert len(trashed) == 2 and "old/kept.md" in trashed and any(t.endswith("/Trash from Gamma.md") for t in trashed)
-    assert not (root / vault_disk.MARKER).exists()
-    assert LocalRemote(link["workspace_id"], "", "").state(pages["gamma"]) == "live"
+def test_detaching_a_work_folder_removing_its_files_removes_the_vault_and_leaves_the_directory(owner, disk):
+    """Remove (``POST /api/folders/{id}/detach`` on the server whose vault
+    keeps the folder): the vault removed, its files not in the library sent
+    to Recently deleted, those in it library pages still; on disk nothing
+    moves but Gamma's own marker and ``.gamma/``."""
+    root = disk / "Detach remove"
+    link = _vault(owner, root, {"a.md": "a\n", "deep/b.md": "b\n", "Paper.pdf": _pdf("detach remove")})
+    ws, w = link["workspace_id"], link["folder_id"]
+    pages = {rel: _page_of(link, rel) for rel in ("a.md", "deep/b.md", "Paper.pdf")}
+    commit_ops(ws, pages["a.md"], [{"op": "set", "id": pages["a.md"], "props": {"library": True}}],
+               actor=link["created_by"])
+    before = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if ".gamma" not in p.parts)
+
+    plan = owner.get(f"/api/folders/{w}/detach").json()
+    assert plan["may"] is True and (plan["files"], plan["in_library"]) == (3, 1)
+    r = owner.post(f"/api/folders/{w}/detach", json={"pages": "remove"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "kept": 1, "trashed": 2}
+
+    assert folder_links.get_link(link["id"]) is None
+    remote = LocalRemote(ws, w, link["created_by"])
+    assert {rel: remote.state(p) for rel, p in pages.items()} == {"a.md": "live", "deep/b.md": "trashed",
+                                                                  "Paper.pdf": "trashed"}
+    assert not any(key in _props(link, pages["a.md"]) for key in ("work_folder", "library", "file_name"))
+    assert remote.mark() is None and not (root / vault_disk.MARKER).exists()
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == before   # .gamma/ gone too
+    assert owner.post(f"/api/folders/{w}/detach", json={"pages": "remove"}).status_code == 404
+
+
+def test_detaching_a_work_folder_keeping_its_files_stores_every_format_and_trashes_nothing(owner, disk, monkeypatch):
+    """Keep (``POST /api/folders/{id}/detach``, which removes the vault here):
+    every file's bytes stored first, whatever its format, then each file an
+    ordinary page filed where it was, a file in the library a library page as
+    before and one too large to keep listed still; the directory folders that
+    hold them stay; on disk nothing moves but Gamma's own marker and
+    ``.gamma/``."""
+    monkeypatch.setattr(config, "vault_keep_bytes", lambda: 1000)
+    root = disk / "Kept whole"
+    files = {".gammaignore": "# every file\n", "main.tex": "\\documentclass{article}\n", "run.py": "print(1)\n",
+             "figures/plot.png": b"\x89PNG a plot", "Paper.pdf": _pdf("kept whole"), "notes.md": "a note\n",
+             "big.bin": b"\0" * 2000}
+    link = _vault(owner, root, files)
+    ws, w = link["workspace_id"], link["folder_id"]
+    pages = {rel: _page_of(link, rel) for rel in ("main.tex", "run.py", "figures/plot.png", "Paper.pdf", "notes.md",
+                                                  "big.bin")}
+    commit_ops(ws, pages["notes.md"], [{"op": "set", "id": pages["notes.md"], "props": {"library": True}}],
+               actor=link["created_by"])
+    stored = ("main.tex", "run.py", "figures/plot.png", "Paper.pdf")
+    assert all(_props(link, pages[rel])["doc"]["at"] == "path" for rel in stored)
+    assert _props(link, pages["big.bin"])["doc"]["at"] == "listed"
+    figures = vault_store.dirs(link["id"])["figures"]["folder_id"]
+    before = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if ".gamma" not in p.parts)
+
+    plan = owner.get(f"/api/folders/{w}/detach").json()
+    sizes = sum((root / rel).stat().st_size for rel in stored)
+    assert plan["may"] is True and plan["computer"]["online"] is True
+    assert (plan["in_library"], plan["too_large"]) == (1, 1) and plan["files"] >= len(pages)
+    assert plan["bytes"] >= sizes
+    r = owner.post(f"/api/folders/{w}/detach", json={"pages": "keep"})
+    assert r.status_code == 200 and r.json()["trashed"] == 0 and r.json()["kept"] == plan["files"]
+
+    assert folder_links.get_link(link["id"]) is None
+    remote = LocalRemote(ws, w, link["created_by"])
+    assert all(remote.state(p) == "live" for p in pages.values())                  # nothing to Recently deleted
+    assert not any(key in _props(link, p) for p in pages.values() for key in ("work_folder", "library", "file_name"))
+    for rel in stored:
+        doc = _props(link, pages[rel])["doc"]
+        assert doc["at"] == "store" and storage.exists(ws, f"{doc['hash']}{doc['ext']}"), rel
+    assert _props(link, pages["big.bin"])["doc"]["at"] == "listed"
+    assert _props(link, pages["figures/plot.png"])["folders"] == [figures]          # filed where it was
+    with connect_pages_db(ws) as conn:
+        left = {r[0] for r in conn.execute("SELECT id FROM unified_blocks WHERE page_id = ?", (FOLDERS,))}
+    assert {w, figures} <= left and remote.mark() is None
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == before   # .gamma/ gone too
 
 
 def test_a_removal_that_cannot_store_a_pdf_removes_nothing(owner, disk, monkeypatch):
     link, root, pages = _mixed(owner, disk, "Stuck")
 
-    def refuse(ws, path, doc):
+    def refuse(ws, path, view):
         raise folder_links.LinkError(f"{path} could not be stored, so the vault was not removed: the disk is full")
     monkeypatch.setattr(folder_links, "_store_copy", refuse)
-    r = owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"})
+    r = owner.delete(f"/api/folder-links/{link['id']}")
     assert r.status_code == 409 and "was not removed" in r.json()["detail"]
     assert folder_links.get_link(link["id"]) is not None and (root / vault_disk.MARKER).is_file()
     assert (root / "Stuck from Gamma.md").is_file() and _props(link, pages["pdf"])["doc"]["at"] == "path"
@@ -992,7 +1057,7 @@ def test_a_viewer_is_told_no_path_in_a_link_its_status_or_a_files_problem(lab, d
     assert status["kept"] and "another program" in status["kept"][0]["why"]
     folder_links._write_status(link["id"], {**folder_links.get_link(link["id"])["status"],
                                             "last_error": f"Cannot write {root}: no", "stopped": f"{root} moved",
-                                            "push_off": f"push turned off: the synced vault {root} pushes into too"})
+                                            "push_off": f"push turned off: the synced folder {root} pushes into too"})
     seen = _state(vera, page)["vault"]
     got = vera.get(f"/api/folder-links/{link['id']}").json()
     listed = next(l for l in vera.get("/api/folder-links").json()["links"] if l["id"] == link["id"])
@@ -1001,27 +1066,13 @@ def test_a_viewer_is_told_no_path_in_a_link_its_status_or_a_files_problem(lab, d
     assert alice.get(f"/api/folder-links/{link['id']}").json()["path"] == str(root.resolve())
 
 
-def test_removing_a_vault_with_its_files_keeps_a_pulled_file_the_person_wrote_in(owner, disk):
-    link, root, pages = _mixed(owner, disk, "Written in")
-    pushed = root / "Written in from Gamma.md"
-    _put(pushed, "written in gamma\n\nand a chapter the person wrote\n")
-    _sync(owner, link["id"])                                  # pushed: the person's file now
-    later = _made_in(owner, "Changed later", link["folder_id"])
-    commit_ops(link["workspace_id"], later, [{"op": "insert", "id": new_block_id(), "parent": later,
-                                              "content": "from gamma", "props": {}}], actor=link["created_by"])
-    _sync(owner, link["id"])
-    changed = _put(root / "Changed later.md", "from gamma, and edited, not synced yet\n", age=3)
-    assert owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).status_code == 200
-    assert pushed.is_file() and changed.is_file()
-
-
 def test_removing_a_vault_whose_marker_went_stores_its_pdfs_first(owner, disk):
     """``git clean -xdf`` took ``.gamma``: the directory answers, so the PDFs
     read in place are stored, and nothing is written there."""
     link, root, pages = _mixed(owner, disk, "Cleaned")
     ws, doc = link["workspace_id"], _props(link, pages["pdf"])["doc"]["hash"]
     shutil.rmtree(root / ".gamma")
-    assert owner.delete(f"/api/folder-links/{link['id']}", params={"files": "trash"}).status_code == 200
+    assert owner.delete(f"/api/folder-links/{link['id']}").status_code == 200
     assert storage.exists(ws, f"{doc}.pdf") and _props(link, pages["pdf"])["doc"]["at"] == "store"
     assert not (root / ".gamma").exists() and (root / "Cleaned from Gamma.md").is_file()
 
@@ -1034,7 +1085,7 @@ def test_a_vault_whose_trash_was_emptied_can_be_removed(owner, disk):
     _sync(owner, link["id"])
     assert not (root / "Mine.md").exists()
     shutil.rmtree(root / ".gamma" / "trash")
-    assert owner.delete(f"/api/folder-links/{link['id']}", params={"files": "keep"}).status_code == 200
+    assert owner.delete(f"/api/folder-links/{link['id']}").status_code == 200
 
 
 def test_removing_a_vault_leaves_a_pdf_opened_from_there_reading_in_place(owner, disk):
@@ -1195,6 +1246,23 @@ def test_the_account_that_made_a_vault_sees_pauses_and_removes_it_whatever_its_r
     r = bob.post("/api/folder-links", json={"path": link["path"], "new_folder": True, "push": "off"},
                  params={"ws": workspace_of("vr_bob")})
     assert r.status_code == 201, r.text
+
+
+def test_a_work_folder_a_vault_here_keeps_is_detached_by_its_maker_alone(lab, disk):
+    """The workspace's owner could detach a work folder another member's
+    vault of this server keeps: that vault removed, its marker and
+    ``.gamma/`` taken off that member's disk and, with keep, every file of
+    it read into the store, which the vault's own DELETE lets its maker
+    alone do."""
+    _ws, alice, bob, _vera = lab
+    link = _vault(bob, disk / "Bobs detach", {"b.md": "bob's note\n"})
+    url = f"/api/folders/{link['folder_id']}/detach"
+    assert alice.get(url).json() == {"may": False}
+    assert alice.post(url, json={"pages": "keep"}).status_code == 403 and folder_links.get_link(link["id"])
+    assert bob.get(url).json()["may"] is True
+    r = bob.post(url, json={"pages": "keep"})
+    assert r.status_code == 200, r.text
+    assert folder_links.get_link(link["id"]) is None
 
 
 def test_the_routes_that_take_a_path_take_the_shells_secret(owner, disk, monkeypatch):

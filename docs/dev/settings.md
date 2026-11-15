@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) and the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights, and a changed text file's ranges, are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer)), the tours (whether they are suggested, `suggestTours`, and which the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights, and a changed text file's ranges, are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds))), handwriting (the habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the text highlighters (`highlightPresets`, [Text highlighters](#text-highlighters)) and the released builds' highlighter colour, which only seeds the first (`highlighterColor`), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), a comment field's *Send to {agent}* tick as the person left it last (`commentSendTo`, which the tick itself sets, with no row; the Chat pane's Chat section's tag holds it, [comments.md](comments.md) "Sent to an agent"), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -231,9 +231,9 @@ and integration tokens get an empty list. The sources:
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
 | `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
 | `cloud-link` | everyone | Account | info | cloud sign-in works here (on, and not waiting for Connect) and the account has no Gamma Cloud identity (`cloud_auth.status_of`); not on the share host. The Account pane's Gamma Cloud row says what linking gives and links it | constant: seen once |
-| `cloud-setup` | admins | Server | info | cloud sign-in is off, or on but the server still has to be connected (`cloud_auth.needs_connect`); Server → Sign-in turns it on | `off` / `connect`, so each state is seen once |
-| `join-requests` | admins | Server | info | Gamma Cloud accounts ask to join this server (`join_requests.waiting`: the waiting requests, [cloud_accounts.md](cloud_accounts.md) "Requests to join"); Server → Sign-in lists them | when the newest waiting one was made: a new request brings it back, a decided one does not |
-| `reports` | admins | Server | info | open reports someone other than this admin made here (`reports.waiting`; [api.md](api.md) "Reports"); Server → Reports lists them | the newest open one: a new report brings it back, a resolved one does not |
+| `cloud-setup` | admins | Users | info | cloud sign-in is off, or on but the server still has to be connected (`cloud_auth.needs_connect`); Users → Sign-in turns it on | `off` / `connect`, so each state is seen once |
+| `join-requests` | admins | Users | info | Gamma Cloud accounts ask to join this server (`join_requests.waiting`: the waiting requests, [cloud_accounts.md](cloud_accounts.md) "Requests to join"); Users → Sign-in lists them | when the newest waiting one was made: a new request brings it back, a decided one does not |
+| `reports` | admins | Users | info | open reports someone other than this admin made here (`reports.waiting`; [api.md](api.md) "Reports"); Users → Reports lists them | the newest open one: a new report brings it back, a resolved one does not |
 | `free-translate` | everyone who met the failures | Translation | warn | Microsoft's free translation service failed `FREE_ALERT_AFTER` (3) times in a row, in memory (`translate_engines.free_failing`); one success ends it, and the Microsoft row names the error | the streak's start time |
 | `hosted` | admins (grace), everyone (read-only) | Server for admins, Account for members | warn / error | a hosted container's cached plan answer (`hosted.limits`, from memory) is in `grace` (admins only; names `grace_until`) or read-only (everyone) — [cloud_accounts.md](cloud_accounts.md) "Hosted containers" | the status and since when it holds (`status_since`), so each episode is seen once |
 | `storage` | everyone | Account | warn / error | personal storage past 90 % of the quota / full; only computed for an account under a quota, and the upload walk is remembered ten minutes (`notices.forget_usage`) | `90` / `full` |
@@ -273,7 +273,18 @@ name, and carries that pane's notice dot. Four captioned groups follow:
 renders only for admins, since it changes the server for everyone.
 `HELP_NAV`, Help & diagnostics, is pinned to the rail's bottom. Every pane
 is one click from any other; the one page below a pane is a workspace's
-Manage page, whose breadcrumb leads back. Panes carry no explanatory
+Manage page, whose breadcrumb leads back.
+
+A pane holds one subject, so a person looking for a setting guesses its
+pane from its name: how things look (Appearance) apart from what the bars
+offer (Toolbars); papers and notes (Reading & editing) apart from the pen
+(Handwriting); the server's people and who may come in (Users) apart from
+the machine itself (Server); help apart from what it is about (tours sit in
+Help & diagnostics). A new setting goes into the pane whose subject it is,
+not the one with room. The rail is 224 px at 100 % (one line for
+"Language & translation") and its rows 27.5 px, so an admin's eighteen
+panes fit the dialog's full height (`min(800px, 100dvh - 48px)`) without
+the rail scrolling; a shorter window scrolls it. Panes carry no explanatory
 subtitle: a section rule's right-hand tag (an icon plus "account" or "browser", `Section`'s `scope` prop, matching
 the settings' scope in `PREFS`; an account tag's icon is the sync state of
 that section's own settings, above) says where a setting lives, a row's
@@ -290,7 +301,7 @@ The account card:
   state, Conflicts when any wait, a "more" menu with Sync now and Stop
   publishing all; an empty state for the signed-in with nothing published).
   It is hidden for the guest. Clones and Zotero links are listed under
-  Workspaces, and the sync pill's place in the topbar is under Appearance ›
+  Workspaces, and the sync pill's place in the topbar is under Toolbars ›
   Top bar. The account's **Zotero** row (`ZoteroAccountRow` in
   [SettingsZotero.jsx](../../frontend/src/settings/SettingsZotero.jsx),
   not for the guest) connects a zotero.org account, which every Zotero link
@@ -350,14 +361,16 @@ Preferences:
   **Library**: the live card demo
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
-  **Interface** (this browser's): the interface size, the status bar and
-  Inbox notifications (`inboxSystemNotifications`), **Top bar** and
-  **Viewer tools** (a row per topbar button or strip tool, in the bar's
-  order, with a grip to drag it and the modes it offers, and Reset,
-  [below](#bars-order-and-modes)), and last **Suggest tours**
-  (`suggestTours`: off, no tour or hint is offered by itself,
-  [onboarding.md](onboarding.md)). `topbar` and `viewer-tools` open this
-  pane at their sections.
+  and last **Interface** (this browser's): the interface size, the status
+  bar and Inbox notifications (`inboxSystemNotifications`).
+- **Toolbars** (pane id `toolbars`,
+  [SettingsToolbars.jsx](../../frontend/src/settings/SettingsToolbars.jsx)):
+  what the bars offer and in which order. **Top bar** and **Viewer tools**
+  (a row per topbar button or strip tool, in the bar's order, with a grip
+  to drag it and the modes it offers, and Reset,
+  [below](#bars-order-and-modes)), then **Text highlighters**
+  ([below](#text-highlighters)). The `topbar`, `viewer-tools` and
+  `highlighters` entry points open this pane at their sections.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
   open-access fallback, metadata auto-fetch and saving external PDFs, and
@@ -387,8 +400,14 @@ Preferences:
   next change, or its Find highlights, likewise.
   **Notes**: **Linked from** (`backlinksVisible`, off by default) shows or
   hides a page's "Linked from" section ([ui-design.md](ui-design.md); off,
-  App fetches no backlinks at all). **Handwriting** (account scope,
-  `SECTION_PREFS.reading.Handwriting`; the strip's own options, such as
+  App fetches no backlinks at all). **Recordings**: the replay's
+  **Lead-in** and **Transcribe recordings** ([recording.md](recording.md)).
+  **Search opens as**: on the home page and on a page (Full panel / Find
+  bar).
+- **Handwriting** (pane id `handwriting`, also what the strip's More →
+  *Handwriting settings…* opens): the pen, in three sections.
+  **Pens & eraser** (account scope,
+  `SECTION_PREFS.handwriting["Pens & eraser"]`; the strip's own options, such as
   presets, smoothing and the straight highlighter, are set on the strip,
   [handwriting.md](handwriting.md) "What the user sees"): a *Reset
   presets* button (`uiBtn sm`, a confirm dialog, then the strip's
@@ -440,7 +459,7 @@ Preferences:
   "ellipse"])`, default `line`: what the Shapes tool draws) and
   **`inkShapeFill`** (account, flag, default off: whether it fills its
   rectangles and ellipses) are listed in `sectionPrefs.js` with the
-  Handwriting rows, as `inkTools` is. **`inkRulerUnits`**
+  Pens & eraser rows, as `inkTools` is. **`inkRulerUnits`**
   (`oneOf(["pt", "cm"])`, default `pt`: the ruler's ticks) and
   **`inkZoomHeight`** (`intClamped(160, 320)` with `serialize: String`,
   default 200: the zoom window's height in CSS px, written when a drag of
@@ -499,9 +518,7 @@ Preferences:
   *Double tap* needs `pencil`, `apple` and `pencilTap`, *Pen button*
   `pencil`, `stylus` and `pencilTap`, each *Haptics* `pencil`, its
   wording's flag and `haptics`.
-  **Search opens as**: on the
-  home page and on a page (Full panel / Find bar).
-- **Language and Translation** (pane id `translation`,
+- **Language & translation** (pane id `translation`,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),
   in five sections. **Language**: the Interface language row (a `MenuSelect`:
   System / English / 中文, [i18n.md](i18n.md)), named apart from the
@@ -569,6 +586,45 @@ Preferences:
 
 AI:
 
+- **Agents** ([SettingsAgents.jsx](../../frontend/src/settings/SettingsAgents.jsx),
+  above Connections, a signed-in account's): who the chat talks to, the
+  same list the chat's picker and the comment fields read
+  ([local_agents.md](local_agents.md) "The client"). **Gamma AI**, with the
+  connection it uses ("Uses ChatGPT", or *Not connected*). On the desktop
+  app's own server (`GET /api/local-agents` says `here`, read afresh as
+  the pane opens), a section **This computer: TIM-PC**: each agent found,
+  its version and whether it is signed in (its problem, by its code, else
+  this computer's own sentence), its switch (SettingsKit's `Toggle`), and once it is on and the
+  account's, **What Codex may run** (*Only in its sandbox* or *Asks before
+  more*, a `Segmented`) and the people it lets use it (co-authors,
+  [local_agents.md](local_agents.md) "A co-author's turn"): one row each,
+  *May use Codex in Lab* (a workspace of another server named "Group on
+  https://nas.example"), its trash button taking them off with the
+  session (`DELETE /api/local-agents/codex/people`, in any window), and in
+  the desktop app **Who else may use Codex** with *Add a person…*, an
+  `ActionMenu` of the editors of the workspaces it shares
+  (`GET /api/local-agents/people`, read in the desktop app while it owns an
+  agent; `chat/agents.js` `agentPeople`), which asks the shell
+  (`agent-person`) for its question, the consent of the account's terms in
+  its last sentence; then the directories it offers (name, path) and
+  *Offer a directory…*. An agent another account lends the account reads
+  *alice lets you use it in this workspace*, no switch of its. In the desktop app the controls ask the shell
+  (`askShell`: `set-agent`, `set-agent-runs`, `agent-dirs` "new" or an
+  id, `agent-person`), which asks its own question and acts with its word; the pane then
+  reads the listing again each second for a minute until it changed. A
+  directory is renamed in place and removed with its trash button
+  (`PUT /api/local-agents/dirs`, no shell's word needed by an account
+  with an agent on here), and *Move…* asks the shell for another path. An
+  agent another account turned on says so, and in the desktop app its
+  switch still turns it off (the shell's word). In any other window the rows are
+  read-only under "Change these in Gamma on TIM-PC.", but the owner's
+  switch, which turns the agent off with the session (`PATCH`
+  `{enabled: false}`). Last, one section per computer of the account's
+  shown to this server (`GET /api/computers`, one of the pane's reads):
+  connected or offline since when, and its agents as it last announced
+  them, read-only ("Change this in Gamma on TIM-PC."); and one per
+  computer of another account's whose agent serves this one, titled
+  *TIM-PC, alice's*, its agent tagged *Lent to you*.
 - **Connections**: the provider list (empty state: one sentence and the Add
   button, which opens the connect dialog, "Connect an AI service": service
   tiles (`IconChoices`: ChatGPT, Anthropic, OpenAI API, Other — Other opens
@@ -620,7 +676,10 @@ AI:
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
   each column's menu offers the Read library / Read & search / Ask before
   changes / Allow all presets. Web search, fetching and using connected
-  journal sign-ins have separate rows. Under the table, two switches:
+  journal sign-ins have separate rows; the last of the changes, **Comments
+  and highlights** (`comment`, Ask by default), is what the agent writes
+  under its own name: comments, replies, resolves and highlights
+  ([ai_tools.md](ai_tools.md) "comment / resolve / highlight"). Under the table, two switches:
   **Fetch blocked papers in the background** (`fetchInBackground`, the
   handoff card hands a stopped fetch to Gamma Connector by itself) and
   **Read long papers with a helper** (`delegateReads`, the `read_paper`
@@ -647,28 +706,28 @@ AI:
   while browser sign-in is unavailable. **Connected assistants** lists each
   connection: how it signed in (browser sign-in — the `(OAuth)` suffix the
   provider mints — or token), what it reads ("Reads A, B", all workspaces, or
-  read and write for a token's workspace), where it edits notes ("edits
-  notes in Lab", "edits notes wherever you edit") and "changes without
-  asking" once it no longer asks first, "answers feedback" for a
-  feedback connection, the connected and expiry dates, an
-  icon-only **Choose workspaces** (read and feedback connections) that opens
-  the checklist under the row, with View or Edit on each workspace ticked,
-  **Ask me before each change it makes** once one is Edit, and Save and
-  Cancel, and an icon-only
+  read and write for a token's workspace), where it comments ("comments in
+  Lab", "comments everywhere"), where it edits notes ("edits notes in Lab",
+  "edits notes wherever you edit") and "changes without asking" once it no
+  longer asks first, the connected and expiry dates, an
+  icon-only **Choose workspaces** (read connections) that opens
+  the checklist under the row, with View, Comment or Edit on each workspace
+  ticked, **Ask me before each change it makes** once one is Edit, and Save
+  and Cancel, and an icon-only
   Disconnect. **Tokens (advanced)**, folded, makes a token by hand: its name,
-  its scope as a `Segmented` (read-only for assistants; read and answer
-  feedback for an agent or script that replies to and resolves the comments
-  on work folders' files, [feedback.md](feedback.md) "Tokens and MCP"; read
-  and write for an offline copy of the open workspace on another Gamma,
-  [mirror.md](mirror.md)) and, but for read and write, its workspaces. The
-  checklist (`WorkspacePicker.jsx`, the page
-  picker's `.docPickerItem` rows) leads with **All workspaces, and those added
-  later**; the pane shows it only to an account with more than one workspace,
-  the MCP consent screen always. With `roles` (a connection's editor and the
-  consent screen) each ticked row, or "All workspaces", ends in the share
-  popover's View / Edit `Segmented` (eye and pen): Edit lets the connection
-  change notes there ([mcp.md](mcp.md) "Editing notes"); a workspace the
-  account only views says *view only* instead. Each command box carries its copy button in
+  its scope as a `Segmented` (read for assistants and scripts, at the levels
+  its checklist gives each workspace; read and write for an offline copy of
+  the open workspace on another Gamma, [mirror.md](mirror.md)) and, for a
+  read token, its workspaces with their levels. The checklist
+  (`WorkspacePicker.jsx`, the page picker's `.docPickerItem` rows) leads with
+  **All workspaces, and those added later**. With `roles` (the Tokens pane, a
+  connection's editor and the consent screen) each ticked row, or "All
+  workspaces", ends in the share popover's kind of `Segmented`, View /
+  Comment / Edit (the eye, the speech bubble, the pen, each with its tooltip):
+  Comment lets the connection comment, reply, resolve and highlight there
+  under its own name ([mcp.md](mcp.md) "The Comment level"), Edit also lets
+  it change notes ([mcp.md](mcp.md) "Editing notes"); a workspace the account
+  only views offers View and Comment. Each command box carries its copy button in
   its corner (a check for two seconds after a copy). The pane reads its
   connections through the dialog's reads (`PANE_READS.integrations`,
   "What a pane reads" below), again in place when the window comes back
@@ -794,9 +853,10 @@ Library:
 
 Administration (admins only):
 
-- **Users**: accounts, each with its personal workspaces and
-  labelled Storage / Edit buttons. *Invite by e-mail…* sits beside
-  *+ Add user*, disabled with the reason as its hover while
+- **Users**: the server's people and who may come in. **Accounts**, each
+  with its personal workspaces and labelled Storage / Edit buttons, with
+  *Add user* and *Invite by e-mail…* on the section's rule, the invite
+  disabled with the reason as its hover while
   `GET /api/admin/invitations` says none can go out. Its `SubDialog` takes
   an e-mail address ("They get a link to make a Gamma Cloud account, or to
   sign in with theirs, and then join this server.") and sends it. Under
@@ -806,12 +866,13 @@ Administration (admins only):
   withdraw button behind a confirm. A call that finds an invitation gone
   (404: accepted, withdrawn elsewhere, expired) reads the list again under
   its error ([cloud_accounts.md](cloud_accounts.md) "Invitations by
-  e-mail").
-- **Server**: the dashboard (build, uptime, warnings, the update
-  check), the public server URL, on a hosted container the **Plan**
-  (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
-  containers"), storage defaults (each box saves on Enter or blur),
-  **Guests**, the shared AI provider, shared workspaces,
+  e-mail"). Then `AccessSettings` (SettingsServer.jsx): **Storage
+  defaults** (each box saves on Enter or blur), **Sign-in**, **Guests** and
+  **Reports**, below.
+- **Server**: the machine itself. The dashboard (build, uptime, warnings,
+  the update check), the public server URL, on a hosted container the
+  **Plan** (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
+  containers"), the shared AI provider, shared workspaces,
   **Databases** (Check databases: a quick check of every database file as
   a `db-check` job, [tasks.md](tasks.md), the damaged ones listed under
   the row), server backups and the log with its
@@ -860,11 +921,15 @@ Administration (admins only):
 
 At the bottom of the rail:
 
-- **Help & diagnostics** (pane id `diagnostics`): browser tracing, the
-  browser session log and, under Help, the Report a problem button (the
-  same dialog as the account menu's entry; [debugging.md](debugging.md)
-  "Report a problem") and the privacy policy (gammapdf.com/privacy, a
-  link every store asks the app itself to carry).
+- **Help & diagnostics** (pane id `diagnostics`): help first, then what a
+  report draws on. **Help**: the Report a problem button (the same dialog
+  as the account menu's entry; [debugging.md](debugging.md) "Report a
+  problem") and the privacy policy (gammapdf.com/privacy, a link every
+  store asks the app itself to carry). **Tours** (account scope):
+  **Suggest tours** (`suggestTours`: off, no tour or hint is offered by
+  itself; every tour stays under the account menu's Tours,
+  [onboarding.md](onboarding.md)). Then **Tracing** (browser tracing) and
+  **Logs** (the browser session log).
 
 Inside the iPad and Android apps (a native host), the Account pane leaves
 out the Gamma Cloud row's *Open account*, whose page leads to the plan's
@@ -900,7 +965,7 @@ millions ("M tokens", decimals allowed: `0.1` is 100k, the 10^9 ceiling is
 stays in whole tokens, so the row converts both ways and a figure out of
 range snaps back to the stored one.
 
-**Guests** (Server, [SettingsGuests.jsx](../../frontend/src/settings/SettingsGuests.jsx))
+**Guests** (Users, [SettingsGuests.jsx](../../frontend/src/settings/SettingsGuests.jsx))
 has three rows over `/api/admin/settings`: the **Guest sign-in** switch
 (`guest_logins`, on unless an admin turns it off — off, the login page
 shows no guest button and `POST /api/login-guest` is a 403), **Guest
@@ -924,8 +989,8 @@ sign-in and the MCP host allowlist and persists in the server `settings`
 table. An existing `GAMMA_PUBLIC_URL` environment override is shown
 read-only.
 
-**Reports** (Server, `SettingsReports.jsx` `ContentReports`, `GET
-/api/admin/reports`), under Sign-in: a Row with how many are open (its
+**Reports** (Users, `SettingsReports.jsx` `ContentReports`, `GET
+/api/admin/reports`), last, under Guests: a Row with how many are open (its
 hover says whether this server sends each one on to Gamma Cloud) and an
 Open / Resolved switch, then one row per report: the reason with a tag for
 what it is (Comment, Page, AI reply), the text reported, quoted, the
@@ -935,7 +1000,7 @@ server that forwards them, whether Gamma Cloud has it yet. Resolve (or
 Reopen) and Delete, which asks first, are icon buttons
 ([api.md](api.md) "Reports").
 
-**Sign-in** (Server, `SettingsCloudSignIn.jsx` `CloudSignInSettings`) has
+**Sign-in** (Users, `SettingsCloudSignIn.jsx` `CloudSignInSettings`) has
 three rows. The account server's address (empty = off, an on/off `uiTag`).
 The **server client**: how this Gamma identifies itself to the account
 server. Empty on a local machine (the built-in public desktop client); a
@@ -977,7 +1042,7 @@ account server ([cloud_accounts.md](cloud_accounts.md)). Unlinked, its hint
 says what linking gives: free publishing and settings carried to the
 person's other servers. While sign-in is off, or on but waiting for Connect,
 the row stays with that hint. An admin gets a *Set up* button that opens
-Server at the Account server row; anyone else gets an `off` tag, and the
+Users at the Account server row; anyone else gets an `off` tag, and the
 hover says an admin turns it on.
 
 Search is backed by [settingsSearch.js](../../frontend/src/settings/settingsSearch.js).
@@ -989,7 +1054,7 @@ label, synonyms, hint or section. Entries whose label holds them all come
 first; inaccessible management pages are filtered out, and so is an
 admin-only section of a pane everyone has (Backups › Bucket,
 marked `admin()` in the catalog) unless the Server pane is offered. So is
-a setting only a native host shows (Reading & editing › the pen section,
+a setting only a native host shows (Handwriting › the pen section,
 Apple Pencil or Stylus, marked `hostOnly(flags, entry)`, a flag or a
 list), unless the host has every one of its flags as `hostCaps` reads
 them (the dialog passes `hostCaps(nativeHost())` as
@@ -1004,10 +1069,11 @@ one caption per pane. Picking one opens the pane and focuses the matching
 `tests/settingsSearch.test.mjs` fails when an entry's target is no
 `data-setting` its pane renders. The search box and the Keyboard filter
 carry their own × (the browser's is hidden).
-Three names open a pane at one of its sections, the targets of the strip's
-and the bars' settings rows: `handwriting` (Reading & editing at Reset
-presets), `topbar` and `viewer-tools` (Appearance at the Top bar or the
-Viewer tools section). One table in `settingsNavigation.js` holds them:
+Three names open a pane at one of its sections, the targets of the bars'
+and the highlighters' settings rows: `topbar`, `viewer-tools` and
+`highlighters` (Toolbars at the Top bar, Viewer tools or Text highlighters
+section). The strip's *Handwriting settings…* names the Handwriting pane
+itself (`handwriting`). One table in `settingsNavigation.js` holds them:
 `resolveSettingsPane` gives the pane and `settingsSection` the row the
 dialog jumps to. Any other name is a pane's own. A link names one as
 `/?settings=<pane>` (Gamma Cloud's Export for a read-only Pro server is
@@ -1031,17 +1097,17 @@ guard.
 The sections of a pane read the server through one store, made each time
 the dialog opens and kept until it closes
 ([settingsReads.js](../../frontend/src/settings/settingsReads.js)): one
-entry per path, shared by every section over it. The Server pane's five
-sections over `/api/admin/settings` (the public URL, sign-in, the plan, the
-storage defaults, guests) make one request, and what one of them saves the
-others show. `useSettingsRead(path, {poll})` gives a section the entry
+entry per path, shared by every section over it. The sections over
+`/api/admin/settings` (the Server pane's public URL and plan, the Users
+pane's storage defaults, sign-in and guests) make one request, and what one
+of them saves the others show, on either pane. `useSettingsRead(path, {poll})` gives a section the entry
 (`data`, `error`, `set` for what a write answered, `reload`); a read whose
 answer is less than three seconds old, or one already on its way, is taken
 rather than sent again, and only the newest read sent lands: one asked for
 again after a change goes out at once, and an answer that lands after a
 write to the same path is older than what the write brought, so it is
 dropped. A write that changes another path's answer reads that path again
-at once: saving the Server pane's sign-in reads `/auth/cloud/status`,
+at once: saving the Users pane's sign-in reads `/auth/cloud/status`,
 which the dialog, opening on Account & sync, read a moment before and would
 otherwise still take as fresh. A form over
 read values (`useDraftOf`, SettingsKit.jsx) follows them as they are read
@@ -1050,11 +1116,13 @@ again, unless it was edited since.
 `PANE_READS` names each pane's reads, in the order they go out: what the
 top of the pane shows first, since the browser keeps six requests in
 flight to the server. A pane's reads are worked out from `who` (an
-administrator, signed in, the translation's target language for the
-glossary's path). A read may lead to others once it lands (Backups: each
-workspace's snapshots), and one marked `later` (the server log, the account
-pickers' directory, the Users pane's invitations, the Account pane's Zotero
-connection) goes out with the rest without being waited for. They
+administrator, signed in, the desktop app's window, the translation's
+target language for the glossary's path). A read may lead to others once it
+lands (Backups: each workspace's snapshots), and one marked `later` (the
+server log, the account pickers' directory, the Users pane's invitations,
+the Account pane's Zotero connection, and in the desktop app the people an
+agent may serve, which asks each server this computer has a channel to)
+goes out with the rest without being waited for. They
 start together from the pointer or the focus reaching a pane's sidebar
 button, so a click mostly finds them in, and from the click itself. A
 pane asked for from the sidebar or a search result keeps the one before on
@@ -1066,16 +1134,18 @@ again to refresh it in place: a second visit is instant. Settings opened
 straight onto a pane (a notice, the chat's AI tiles) shows it at once, its
 reads starting together as it mounts. A test checks that every path a
 section reads is named in `PANE_READS` (`tests/settingsReads.test.mjs`).
-At 150 ms of latency the Server pane makes 8 requests in two waves and
-switches once, at 208 ms, with every section in place (at once after a
-hover); read section by section it made 12 in five waves, the sections
-jumping down four times as the ones above them filled.
+At 150 ms of latency the Server pane, measured while it still held the
+sign-in, guests, storage-defaults and reports sections that are now in
+Users, made 8 requests in two waves and switched once, at 208 ms, with
+every section in place (at once after a hover); read section by section it
+made 12 in five waves, the sections jumping down four times as the ones
+above them filled.
 
 ## Bars: order and modes
 
 Two bars take an order and a mode per item from the user: the topbar, and
 the viewer's side strip (the column of buttons at the left edge of the PDF
-and the notebook view, `.pdfZoomOverlay`). Settings → Appearance › Top bar
+and the notebook view, `.pdfZoomOverlay`). Settings → Toolbars › Top bar
 and › Viewer tools edit them. Both run on one pure model,
 [shared/model/barLayout.js](../../frontend/src/shared/model/barLayout.js)
 (`tests/barLayout.test.mjs`).
@@ -1189,7 +1259,7 @@ off the highlighter while one is on; Translate's
 current action; Paper of this page; Notes view; Toggle selection mode;
 then Customize…. A row closes the menu. Translate hidden is how the
 translate button is turned off, so there is no separate translate switch:
-Language and Translation › Viewer & selection › Translation button sets
+Language & translation › Viewer & selection › Translation button sets
 the same mode (on, always; off, hidden), and `SECTION_PREFS` lists
 `viewerTools` under both sections.
 
@@ -1211,7 +1281,7 @@ translate button, the text highlighter and the ⋯, which have their own
 menus, it offers "Customize viewer tools…". The ⋯ menu ends with
 Customize….
 They call `openSettingsPane("topbar")` and `openSettingsPane("viewer-tools")`:
-section entry points of Appearance in `settingsNavigation.js`, which the
+section entry points of Toolbars in `settingsNavigation.js`, which the
 dialog opens at the section's header.
 
 **The editor.**
@@ -1405,7 +1475,7 @@ The tools (`pdf/MarkTools.jsx` on App's `MarkToolsContext`, the hook's
   (`pdf.nextHighlighter`) are unbound, for a chord with a modifier, which a
   note lets through ([hotkeys.md](hotkeys.md)).
 
-**Settings → Appearance › Text highlighters** (`settings/TextHighlighters.jsx`,
+**Settings → Toolbars › Text highlighters** (`settings/TextHighlighters.jsx`,
 after Viewer tools; `SECTION_PREFS` "Text highlighters": `highlightPresets`):
 the list, the shown ones and, under a "Hidden — not on the strip" line,
 the hidden ones, a row each: a grip (`useDragOrder`, within its group; the
@@ -1503,7 +1573,8 @@ it through a reload, an arrow key's move and what the live region says,
 Reset; a viewer tool hidden into the strip's ⋯ menu and its Customize…,
 the strip's order in the PDF and the notebook viewer; Customize top bar…
 from a right-click on the bar's empty space),
-shared chat settings, mobile layout, administrator account separation, and
+shared chat settings, mobile layout (Appearance and Toolbars fitting a
+phone without horizontal scrolling), administrator account separation, and
 Backups › Bucket: an admin's alone, set up in its dialog (an endpoint
 pasted with the bucket's name on it taken off) and read back there with
 its write-only secret, the unsaved-edit question on Cancel, Test against a
@@ -1530,8 +1601,8 @@ One limit per account: the total uploads quota (`quota_mb`, 0 =
 unlimited). One file has no size cap of its own: the quota already bounds
 what an account stores, and an upload is spooled to disk as it arrives
 (a stored `max_upload_mb` is not read). The server-wide
-default is admin-editable in Settings → Server; per-account overrides
-(NULL = inherit) in the Users pane. It applies to the account's personal
+default is admin-editable in Settings → Users › Storage defaults;
+per-account overrides (NULL = inherit) on each account's row above it. It applies to the account's personal
 workspaces together; a shared workspace has its own optional quota
 (admins, Settings → Workspaces / Members & sharing —
 [workspaces.md](workspaces.md)). On a hosted container the plan caps all of

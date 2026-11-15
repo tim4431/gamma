@@ -144,19 +144,20 @@ export const TASK_KINDS = {
     icon: "cloudDownload", open: "handoff",
     title: ({ params }) => t("Get “{host}” in your browser", { host: named(params.host) }),
   },
-  // A turn of the work folder's agent in the chat's computer side, queued
-  // or running on this computer (docs/dev/local_agents.md "The chat's
-  // computer side"), read-only: a click opens the page's chat on that side,
-  // and Stop is the turn's own. The server's title is "<agent> · <page
-  // title>". A turn of a work folder another computer keeps (step 4d) names
+  // A turn of a computer's agent in the chat's computer side, queued or
+  // running on this computer (docs/dev/local_agents.md "The chat's computer
+  // side"), read-only: a click opens the chat of its bucket
+  // (`params.bucket`) on that side, and Stop is the turn's own. The
+  // server's title is "<agent> · <page title>". A turn of a work folder another computer keeps (step 4d) names
   // that computer (`params.computer`), and while it asks there (phase
   // `asking`) says the answer is given on that computer.
   "computer-turn": {
     icon: "terminal", open: "computer",
     title: ({ title, params }) => {
       const agent = params?.label || "";
-      // the page's own title (params.title, "" for an untitled page); the row's title from an older server
-      const page = typeof params?.title === "string" ? params.title : title;
+      // the page's own title (params.title, "" for an untitled page), the library's for its bucket; the
+      // row's title from an older server
+      const page = params?.bucket === "home" ? t("Library") : typeof params?.title === "string" ? params.title : title;
       const computer = typeof params?.computer === "string" ? params.computer : "";
       return computer ? t("{agent} on {computer}: {title}", { agent, computer, title: named(page) })
         : t("{agent} on this computer: {title}", { agent, title: named(page) });

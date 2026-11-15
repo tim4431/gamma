@@ -6,9 +6,9 @@
 // editorRef: the editor's textarea-like facade. people, me: who can be
 // named. pages, rootId: the page links. canInvite: an "Invite…" row.
 // reminders: "Remind" rows (a comment's field has none: the reminder scan
-// reads notes only). agents: the work folder's agent on this computer
-// ([{name, label, ready, problem}], a comment field's alone: a note never
-// lists it). onPicked(row): after a row went in (a reminder, an invite).
+// reads notes only). agents: the agents a comment can be sent to
+// (chat/agents.js commentAgents: [{id, name, label, ready, problem,
+// computer?}], a comment field's alone: a note never lists them). onPicked(row): after a row went in (a reminder, an invite).
 import { useState } from "react";
 import { findMathAtCursor } from "./LatexEditor";
 import { fenceInnerAt } from "./fences.js";

@@ -1,4 +1,4 @@
-// Settings → Language and Translation: interface language, Viewer &
+// Settings → Language & translation: interface language, Viewer &
 // selection (the viewer's translate button, target language, the selection
 // translator), Service (what translates — a chat model or a
 // machine-translation service — and the services' rows: Microsoft needs no
@@ -59,7 +59,7 @@ export function TranslationSettings({ value, keybindings }) {
         icon={LanguagesIcon}
         label={t("Translation button")}
         hint={t("Off, it moves to the ⋯ menu")}
-        title={t("Shows the translate button on the PDF viewer's strip; off, it is a row of the strip's ⋯ menu that opens its options. A click translates the page being read, or shows the original or the translation once it is translated; right-click or long-press opens the options: the whole document, the language, Forget. Nothing translates until you ask. Appearance › Viewer tools sets the same, and the strip's order.")}
+        title={t("Shows the translate button on the PDF viewer's strip; off, it is a row of the strip's ⋯ menu that opens its options. A click translates the page being read, or shows the original or the translation once it is translated; right-click or long-press opens the options: the whole document, the language, Forget. Nothing translates until you ask. Toolbars › Viewer tools sets the same, and the strip's order.")}
         checked={VIEWER_TOOLS.read(value.viewerTools).modes.translate !== "hidden"}
         onChange={(on) => value.setViewerTools(VIEWER_TOOLS.setMode(value.viewerTools, "translate", on ? "always" : "hidden"))}
       />

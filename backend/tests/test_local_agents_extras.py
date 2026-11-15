@@ -55,13 +55,13 @@ def lab(client):
 
 
 def _terminal(who, page, status=200) -> dict:
-    r = who.get("/api/local-agents/chat/terminal", params={"page": page})
+    r = who.get("/api/local-agents/chat/terminal", params={"bucket": page})
     assert r.status_code == status, r.text
     return r.json()
 
 
 def _sources(who, page, selections, status=200) -> dict:
-    r = who.post("/api/local-agents/chat/sources", json={"page": page, "selections": selections})
+    r = who.post("/api/local-agents/chat/sources", json={"bucket": page, "selections": selections})
     assert r.status_code == status, r.text
     return r.json()
 
@@ -217,7 +217,7 @@ def test_the_reply_grows_then_the_whole_message_takes_its_place(lab, disk, monke
 
 def test_the_terminal_resumes_the_conversations_session(lab, disk, monkeypatch, anon):
     f = _folder(lab, disk)
-    strip = lambda: lab.owner.get("/api/local-agents/chat", params={"page": f.page}).json()["computer"]  # noqa: E731
+    strip = lambda: lab.owner.get("/api/local-agents/chat", params={"bucket": f.page}).json()["computer"]  # noqa: E731
     assert _terminal(lab.owner, f.page, 404)["detail"] == "This conversation has no session to continue."
     assert strip()["session"] is False, "the strip says so too: the menu offers no terminal"
     made = _say(lab.owner, f.page)
@@ -229,12 +229,12 @@ def test_the_terminal_resumes_the_conversations_session(lab, disk, monkeypatch, 
     assert strip()["session"] is True
 
     # the maker alone, by a session
-    assert lab.editor.get("/api/local-agents/chat/terminal", params={"page": f.page}).status_code == 404
-    assert anon.get("/api/local-agents/chat/terminal", params={"page": f.page}).status_code == 401
+    assert lab.editor.get("/api/local-agents/chat/terminal", params={"bucket": f.page}).status_code == 404
+    assert anon.get("/api/local-agents/chat/terminal", params={"bucket": f.page}).status_code == 401
     script = fresh_client()
     script.headers.update({"Authorization": f"Bearer {token_for(lab.owner, 'write', 'Script')}",
                            "X-Gamma-Workspace": lab.ws})
-    assert script.get("/api/local-agents/chat/terminal", params={"page": f.page}).status_code == 403
+    assert script.get("/api/local-agents/chat/terminal", params={"bucket": f.page}).status_code == 403
 
     # never a session of another form, agent or directory
     conversation = made["conversation"]["id"]
@@ -255,8 +255,8 @@ def test_the_terminal_resumes_the_conversations_session(lab, disk, monkeypatch, 
     assert _terminal(lab.owner, f.page)["argv"][-2:] == ["resume", "019a0000-fake-thread"]
 
     # the agent turned off: no terminal
-    store.set_agent(f.id, "", by=lab.user)
-    assert _terminal(lab.owner, f.page, 409)["detail"] == "No agent is on for this work folder on this computer."
+    store.set_agent("codex", False, by=lab.user)
+    assert _terminal(lab.owner, f.page, 409)["detail"] == "Turn on Codex in Settings → AI first."
 
 
 def test_the_terminal_of_claude_code(lab, disk):
@@ -264,7 +264,7 @@ def test_the_terminal_of_claude_code(lab, disk):
     _say(lab.owner, f.page)
     assert runner.wait_idle(60)
     assert _terminal(lab.owner, f.page)["argv"] == ARGV["claude"] + ["--resume", "5e55-fake-session"]
-    lab.owner.post("/api/local-agents/chat/new", json={"page": f.page}).raise_for_status()
+    lab.owner.post("/api/local-agents/chat/new", json={"bucket": f.page}).raise_for_status()
     assert _terminal(lab.owner, f.page, 404)["detail"] == "This conversation has no session to continue."
 
 
@@ -281,7 +281,7 @@ def test_the_sources_of_the_selections(lab, disk):
     assert _sources(lab.owner, f.page, [])["sources"] == []
     assert _sources(lab.owner, f.page, [chosen] * (chats.MAX_SELECTIONS + 1), 400)["detail"] == (
         f"At most {chats.MAX_SELECTIONS} selections at a time.")
-    r = lab.editor.post("/api/local-agents/chat/sources", json={"page": f.page, "selections": [chosen]})
+    r = lab.editor.post("/api/local-agents/chat/sources", json={"bucket": f.page, "selections": [chosen]})
     assert r.status_code == 404
     assert not turns_in(disk.log)  # no agent ran
 
@@ -290,7 +290,7 @@ def test_the_sources_of_the_selections(lab, disk):
 
 def test_background_tasks_list_the_turns_that_work(lab, disk, monkeypatch):
     f = _folder(lab, disk)
-    store.set_runs(f.id, "ask", by=lab.user)
+    store.set_runs("codex", "ask", by=lab.user)
     script_agent(monkeypatch, disk.log, ask=[{"command": "curl https://example.com", "host": "example.com"}])
     assert _rows(lab.owner) == []
     turn = _say(lab.owner, f.page)["turn"]["id"]
@@ -300,19 +300,19 @@ def test_background_tasks_list_the_turns_that_work(lab, disk, monkeypatch):
         title = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (f.page,)).fetchone()[0]
     assert title and row == {
         "id": f"computer-{turn}", "kind": "computer-turn", "owner": lab.user, "workspace": lab.ws,
-        "title": f"Codex · {title}", "params": {"page": f.page, "turn": turn, "agent": "codex", "label": "Codex",
+        "title": f"Codex · {title}", "params": {"bucket": f.page, "turn": turn, "agent": "codex", "label": "Codex",
                                                     "title": title},
         "state": "running", "progress": {"phase": "asking"}, "error": "", "created_at": row["created_at"],
         "started_at": row["started_at"], "finished_at": "", "artifact": None, "downloaded": False,
         "stoppable": True, "stopping": False, "readonly": True}
     assert row["created_at"] and row["started_at"] >= row["created_at"]
-    assert _rows(lab.editor) == []  # the maker's alone
+    assert _rows(lab.editor) == []  # the owner's alone
     _stop(lab.owner, turn)
     assert runner.wait_idle(30)
     assert _rows(lab.owner) == []
 
     # one that waits for its slot reads queued, and asks nothing
-    store.set_runs(f.id, "never", by=lab.user)
+    store.set_runs("codex", "never", by=lab.user)
     script_agent(monkeypatch, disk.log, delay=30)
     held = threading.BoundedSemaphore(1)
     held.acquire()

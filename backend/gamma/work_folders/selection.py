@@ -533,7 +533,7 @@ def check(link: dict, chosen: Chosen, base_hash: str) -> None:
         raise SelectionError(409, CHANGED, chosen.rules.hash)
     cap = cap_of(link)
     if len(chosen.selected) > cap:
-        raise SelectionError(400, f"That is {len(chosen.selected):,} files, more than a work folder tracks "
+        raise SelectionError(400, f"That is {len(chosen.selected):,} files, more than a synced folder tracks "
                                   f"({cap:,}): choose fewer.")
 
 

@@ -1,7 +1,8 @@
-// The Files window's directories (docs/dev/work_folders.md "The Files
-// window"): the files of each open directory of a work folder, a page of
-// rows at a time from GET /api/folders/{id}/pages, by name. The rules of
-// when to read are directoryRows.js's; this holds them in React.
+// The open directories of a tree of a work folder (docs/dev/work_folders.md
+// "The Files window", "The folder view"): the files of each, a page of rows
+// at a time from GET /api/folders/{id}/pages, in the tree's sort. The rules
+// of when to read are directoryRows.js's; this holds them in React, once
+// for the Files window (by name) and once for the folder view (its sort).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils.js";
 import { NONE, PAGE_ROWS, findStep, merged, readLimit, readRows, wantedReads } from "./directoryRows.js";
@@ -18,8 +19,13 @@ import { NONE, PAGE_ROWS, findStep, merged, readLimit, readRows, wantedReads } f
 // read while `enabled` is false. `more` reads the next page, `retry` the
 // first again after a failure, `find` pages on until `pageId` is held (at
 // most MAX_ROWS rows: the reveal); `patch` and `drop` follow a rename or a
-// delete of a page (by its id) before the next read.
-export function useDirectoryRows({ wanted, counts, changes, enabled }) {
+// delete of a page (by its id) before the next read. `sort` and `order`
+// are the server's keys (name and asc by default), the rows read again
+// from the top when they change; `version`, when given (App's listing
+// tree), reads each open directory again whenever it changes, as the
+// folder view's columns (the open comments) want.
+export function useDirectoryRows({ wanted, counts, changes, enabled, sort = "name", order = "asc", version }) {
+  const sortKey = `${sort}|${order}`;
   const [held, setHeld] = useState(() => new Map());
   const heldRef = useRef(held);
   heldRef.current = held;
@@ -36,9 +42,9 @@ export function useDirectoryRows({ wanted, counts, changes, enabled }) {
   const read = useCallback(async (id, offset, limit, replace, count) => {
     const n = (asked.current.get(id) || 0) + 1;
     asked.current.set(id, n);
-    update(id, (e) => ({ ...e, loading: true, failed: false, count }));
+    update(id, (e) => ({ ...e, loading: true, failed: false, count, sort: sortKey, version: version ?? null }));
     const page = async (at, size) => {
-      const q = new URLSearchParams({ sort: "name", order: "asc", offset: String(at), limit: String(size) });
+      const q = new URLSearchParams({ sort, order, offset: String(at), limit: String(size) });
       const d = await apiJson(`${API}/folders/${encodeURIComponent(id)}/pages?${q}`);
       return asked.current.get(id) === n ? d : null;
     };
@@ -48,13 +54,13 @@ export function useDirectoryRows({ wanted, counts, changes, enabled }) {
     } catch {
       if (asked.current.get(id) === n) update(id, (e) => ({ ...e, loading: false, failed: true }));
     }
-  }, [update]);
+  }, [update, sort, order, sortKey, version]);
   const wantedKey = wanted.join(",");
   useEffect(() => {
-    for (const id of wantedReads(wanted, heldRef.current, counts, changes, enabled)) {
+    for (const id of wantedReads(wanted, heldRef.current, counts, changes, enabled, { sort: sortKey, version: version ?? null })) {
       read(id, 0, readLimit(heldRef.current.get(id)), true, counts?.[id] || 0);
     }
-  }, [wantedKey, counts, changes, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wantedKey, counts, changes, enabled, sortKey, version]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!seeking.size || !enabled) return;
     const done = [];

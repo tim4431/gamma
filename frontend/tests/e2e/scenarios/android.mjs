@@ -197,7 +197,7 @@ export async function androidScenarios(env) {
         await p.getByRole("menuitem", { name: "Settings…", exact: true }).click();
         const dialog = p.getByRole("dialog", { name: "Settings", exact: true });
         await dialog.waitFor();
-        await p.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Reading & editing", exact: true }).click();
+        await p.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Handwriting", exact: true }).click();
         await row(p, "Hover preview").waitFor();
         return dialog;
       };
