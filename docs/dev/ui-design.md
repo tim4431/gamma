@@ -1512,6 +1512,14 @@ page of a PDF viewer in all but rendering.
    on-screen keyboard is `!touchTyping()`. A username or account field
    turns capitalization and correction off.
 9. A file pick goes through `pickFiles`.
+10. A style that follows what an element holds keys on a class the
+    component sets where it knows (`Row`'s `noIcon`), not on a `:has()`
+    over its children. Chrome checks every `:has()` in the stylesheets
+    again on each DOM change of a page, whatever is on it:
+    `.setRow:has(> .setIcon:empty)` cost a page of 430 text boxes about
+    50 ms of restyle a change ([research/test-speed.md](../research/test-speed.md#november-2026-the-shards-at-their-cap)).
+    `:has()` stays for a state only the browser holds, a focus inside a
+    control (`.inkCustomColor:has(input:focus-visible)`).
 
 The conventions ratchet ([Ratchets](#ratchets)) checks items 1, 3, 4, 5
 and 9, and item 8's Enter and username fields.

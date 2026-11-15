@@ -127,10 +127,11 @@
 }
 .settingRow:hover .setIcon { color: var(--text-secondary); border-color: var(--border-hover); }
 /* A row with no icon (a dialog's switch) gives up the icon's column rather
-   than show an empty tile. */
-.setIcon:empty { display: none; }
-.setRow:has(> .setIcon:empty) { grid-template-columns: minmax(0, 1fr) auto; }
-.setRow.wide:has(> .setIcon:empty) > :last-child:not(.settingText) { grid-column: 1 / -1; }
+   than show an empty tile. Row marks it: a :has() over the row's children,
+   such as :has(> .setIcon:empty), is checked again on every DOM change of
+   any page, which cost a page of 400 text boxes ~50 ms a change. */
+.settingRow.setRow.noIcon { grid-template-columns: minmax(0, 1fr) auto; }
+.settingRow.setRow.wide.noIcon > :last-child:not(.settingText) { grid-column: 1 / -1; }
 .settingsPane .settingRow { flex-shrink: 0; }
 
 /* --- controls sitting in the right-hand cell of a row --- */
