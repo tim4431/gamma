@@ -30,6 +30,16 @@ Every picture below is clickable and opens the matching part of the [user guide]
 
 → Guide: [AI chat](./docs/user_guide/user_guide.md#ai-chat) · [The library agent](./docs/user_guide/user_guide.md#the-library-agent)
 
+## Work with an agent on your computer
+
+<a href="./docs/user_guide/user_guide.md#comments-and-inbox"><img alt="LaTeX lecture notes in a synced folder, open in Gamma as tabs. A comment on the empty section of a .tex file is sent to Codex on this computer, and the section appears in the source. Then a passage of the compiled PDF is commented and sent too, and the rebuilt PDF shows the equation divided by the square root of d_k with a sentence why; a region of a figure is commented, and the figure turns masked as Codex rebuilds it. Its three answers arrive in the Inbox: the one on the .tex asks about a footnote, a reply in the thread has Codex add it to the source and resolve the thread" src="./docs/assets/demos/demo-agent-collab.webp" width="100%"></a>
+
+- **Comment where you read** — sync a folder of your LaTeX project, notes or code with the desktop app, and comment on what you see: lines of a source file, a passage of the compiled PDF, a region of a figure. Tick **Send to Codex**, or type `@codex`, and Codex or Claude Code, signed in on your computer, works on that comment in the folder: it edits the sources, rebuilds, and answers in the thread.
+- **Read the answers in your Inbox** — each reply is signed with the agent and the computer it ran on, and opens at its passage with the rebuilt PDF already in place. When it needs a decision it asks in the thread, and your reply there continues the same session.
+- **On your terms** — turn an agent on for this computer in **Settings → AI**. It works in the folders you sync or offer it: Codex rebuilds in its sandbox without network, Claude Code only edits and leaves the build to yours, and if you let it ask, a command it wants beyond that waits for your answer.
+
+→ Guide: [Comments and inbox](./docs/user_guide/user_guide.md#comments-and-inbox) · [Working in a synced folder](./docs/user_guide/user_guide.md#working-in-a-synced-folder)
+
 ## Read from any place
 
 <a href="./docs/user_guide/user_guide.md#offline-copies"><img alt="One library on the lab server, open on a desktop, an iPad and a phone; a note typed from the iPad appears on every other device as the sync between them runs" src="./docs/assets/branding/gamma-anywhere-light.svg" width="100%"></a>

@@ -855,7 +855,13 @@ on). In the code view:
   their ranges' first lines (`CommentMarginSlot`'s `topOf`); while it
   stands the scroller ends where it begins, so wrapped text wraps short of
   it and a long line scrolls sideways inside the text's own box, never
-  under the cards, and a wheel over the column scrolls the text. It
+  under the cards, and a wheel over the column scrolls the text. The
+  column is portaled into the text's own editor (`view.dom`), and each
+  comment field in it is a CodeMirror view too, so `viewers.css` names the
+  text's editor and its parts by child combinators (`.docTextHost >
+  .cm-editor > .cm-scroller …`): a descendant rule would reach the fields
+  (the scroller's room for the column once left a field's scroller no
+  width, its words out of sight above the card). It
   stands with room for 360 px of text beside it, never on a
   phone; `marginRef` answers App by that room, and a resize or a wrap
   that takes it from the active card calls `onMarginLost`. Every place is

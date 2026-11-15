@@ -35,10 +35,22 @@ export function scratch(name) {
 
 /** An isolated server (harness Server: free port, throwaway data dir) whose
  *  first user holds the curated export. `shared` names a shared workspace the
- *  first user owns and the others edit; the export goes there. */
-export async function library({ users = ['demo'], shared = null, env = {} } = {}) {
-  if (!fs.existsSync(DEMO_EXPORT)) throw new Error(`No curated export at ${DEMO_EXPORT}: run export-demo.py, or set DEMO_EXPORT`);
+ *  first user owns and the others edit; the export goes there. `curated:
+ *  false` leaves the library empty, for a story that brings its own files.
+ *  `computer` is the name the server gives this computer (its host name
+ *  otherwise), which an agent's byline shows: "Codex on <computer>". */
+export async function library({ users = ['demo'], shared = null, env = {}, curated = true, computer = '' } = {}) {
+  if (curated && !fs.existsSync(DEMO_EXPORT)) throw new Error(`No curated export at ${DEMO_EXPORT}: run export-demo.py, or set DEMO_EXPORT`);
   const server = new Server({ env });
+  if (computer) {
+    // gamma/computers/channel.py computer_name() is socket.gethostname(): a
+    // sitecustomize on the server's PYTHONPATH (in its temp dir, gone with
+    // it) answers it for that process alone.
+    const site = path.join(server.dir, 'site');
+    fs.mkdirSync(site);
+    fs.writeFileSync(path.join(site, 'sitecustomize.py'), `import socket\nsocket.gethostname = lambda: ${JSON.stringify(computer)}\n`);
+    server.env = { ...server.env, PYTHONPATH: [site, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) };
+  }
   try {
     await server.start();
     for (const user of users) await server.manage('create-user', user, PASSWORD);
@@ -51,7 +63,7 @@ export async function library({ users = ['demo'], shared = null, env = {} } = {}
     }
     const accounts = await Promise.all(users.map((user) => new Account(server, user, PASSWORD).login()));
     if (ws) for (const account of accounts) account.ws = ws;
-    await accounts[0].upload('/api/import-data', fs.readFileSync(DEMO_EXPORT), 'demo.zip', 'application/zip');
+    if (curated) await accounts[0].upload('/api/import-data', fs.readFileSync(DEMO_EXPORT), 'demo.zip', 'application/zip');
     return { server, accounts, account: accounts[0], ws: accounts[0].ws };
   } catch (error) {
     // The caller never gets the server to stop: stop it here.
@@ -61,9 +73,10 @@ export async function library({ users = ['demo'], shared = null, env = {} } = {}
 }
 
 /** A retina page signed in as `account`: light English UI, the drawn arrow
- *  cursor, tours off (launchRetina). `uiScale` is the Interface size. */
-export async function openPage(browser, account, { url = '', uiScale = 0, clipboard = false, cursor = true, init = null } = {}) {
-  const context = await browser.newContext(RETINA);
+ *  cursor, tours off (launchRetina). `uiScale` is the Interface size;
+ *  `userAgent` another browser's (the desktop app's window, say). */
+export async function openPage(browser, account, { url = '', uiScale = 0, clipboard = false, cursor = true, init = null, userAgent = '' } = {}) {
+  const context = await browser.newContext({ ...RETINA, ...(userAgent ? { userAgent } : {}) });
   await context.addCookies([{ name: 'session', value: account.session, url: account.server.base }]);
   if (clipboard) await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: account.server.base });
   if (uiScale) await context.addInitScript((scale) => { try { localStorage.setItem('gamma-ui-scale', String(scale)); } catch {} }, uiScale);
