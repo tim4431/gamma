@@ -1166,7 +1166,10 @@ its `first` mark), and its file entry held for `PLACING_RECHECK_S` (30 s,
 `routers/pages.py` calls `relocation_ended` once the job reads as ended
 (`jobs.start`'s `ended`, after its row and the live set say so, so no
 round in between finds the job still running and holds the PDF the 30 s
-again): the
+again; it reads under the workspace's write lock, and a round that
+decided before the job ended asks again as it writes its entry, under the
+same lock, `_placing_now`: the entry goes in due at once rather than over
+the end's): the
 page's PDFs that waited for it are due again, so is the page's item while
 annotation rows of it are held or wait (a highlight the run left where it
 was reads as last synced, so no change of the page lifts the hold the

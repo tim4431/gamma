@@ -991,7 +991,7 @@ class _Unit(UnitPdf):
             zr.done(conn, list(entry_ids))
             if self.page_id and not self._page_work():
                 zr.done(conn, [zr.PAGE_PREFIX + self.page_id])
-            zr.enqueue(conn, self.queue)
+            zr.enqueue(conn, self._placing_now(self.queue))
             quiet = self.blocks.quiet_at if self.blocks is not None else None
             if quiet is not None and self.page_id:  # its notes go to Zotero once the page is still
                 zr.enqueue(conn, [zr.page_entry(self.page_id, next_at=quiet,
