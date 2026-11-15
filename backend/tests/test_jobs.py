@@ -187,6 +187,34 @@ def test_a_job_never_reads_as_ended_before_its_row_says_how(alice, monkeypatch):
     assert done["state"] == "done" and done["artifact"]["name"] == "file.bin"
 
 
+def test_a_job_ending_while_it_is_read_never_reads_as_done_without_its_result(alice, monkeypatch):
+    """The reader's side of the same rule: a run that ends after a read
+    took its row reads as running, never as done with the row it had while
+    running (no result) — the e2e relocation job seen done with a null
+    result."""
+    from gamma import jobs
+
+    gate = Gate(result={"made": 1})
+    job = _start("jb_alice", gate)
+    assert gate.started.wait(10)
+    real = jobs._read
+
+    def ends_meanwhile(job_id):
+        row = real(job_id)  # still running, without its result
+        gate.release()
+        deadline = time.monotonic() + 10
+        while job_id in jobs._live and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return row
+
+    monkeypatch.setattr(jobs, "_read", ends_meanwhile)
+    seen = jobs.get(job["id"], full=True)
+    monkeypatch.setattr(jobs, "_read", real)
+    assert seen["state"] == "running" and seen["result"] is None, seen
+    done = _finished(job["id"])
+    assert done["state"] == "done" and done["result"] == {"made": 1}
+
+
 @pytest.mark.parametrize("raised", [None, ValueError("no")], ids=["done", "failed"])
 def test_a_jobs_end_hook_finds_it_ended_and_wait_waits_for_the_hook(alice, raised):
     """``ended`` runs once the job reads as ended, so the work it wakes

@@ -40,7 +40,9 @@ parameters (JSON, what a window needs to show the job again), the state
 result (JSON), the error, and the file the job produced. A running job's
 progress lives in memory and is laid over the row on every read, so a
 progress report writes nothing. The final row is written before the job
-leaves the live set, so a read never sees a job ended without its result.
+leaves the live set, and a read takes the live job's state before it reads
+the row (`_live_views`), so a read never sees a job ended without its result
+or its file.
 
 The endpoint of the work authorizes the request, then calls
 `jobs.start(kind, owner=…, ws=…, title=…, params=…, run=fn)`. `fn(job)` runs
