@@ -1,0 +1,21 @@
+\section{Scaled dot-product attention}
+
+A query asks which positions of the input matter to it. Given queries $Q$,
+keys $K$ and values $V$, each query is compared with every key, and the
+scores are turned into weights by a softmax:
+\begin{equation}
+  \operatorname{Attention}(Q, K, V)
+    = \operatorname{softmax}\!\left(\frac{QK^{\top}}{d_k}\right) V .
+  \label{eq:attention}
+\end{equation}
+Each row of the softmax is a distribution over the keys: the weights with
+which one query mixes the values. Figure~\ref{fig:map} shows them for a
+short sentence.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.6\linewidth]{figures/attention-map.pdf}
+  \caption{Self-attention weights for \emph{the cat sat on the mat}: row $i$
+    is how much token $i$ attends to each token.}
+  \label{fig:map}
+\end{figure}
