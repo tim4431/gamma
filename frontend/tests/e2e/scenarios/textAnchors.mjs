@@ -267,6 +267,12 @@ export async function textAnchorScenarios(env) {
         const fresh = column(page).locator(".commentCard.active .commentNew");
         await fresh.waitFor({ timeout: 10000 });
         await focused(field(fresh), "the new comment's field takes the focus");
+        // The field as the PDF's margin draws it: one line, its editor taking
+        // nothing of the code view's own (which it stands inside).
+        const box = await fresh.locator(".commentBox").evaluate((el) => ({ h: el.getBoundingClientRect().height,
+          bg: getComputedStyle(el.querySelector(".cm-editor")).backgroundColor }));
+        assert(box.h < 48, `the new comment's field is one line tall: ${box.h}px`);
+        assertEq(box.bg, "rgba(0, 0, 0, 0)", "the field's editor paints no background");
         await page.keyboard.type("Say how much, in numbers.");
         await page.keyboard.press("Shift+Enter");
         const thread = await until(async () => (await threadsOf(main.id)).find((th) => th.comments[0]?.body === "Say how much, in numbers."),

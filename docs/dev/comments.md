@@ -29,7 +29,7 @@ the table `comments` in the workspace's `pages.db` (`db.COMMENTS_SCHEMA`):
 | `deleted_at` | a root deleted while it still has replies: a tombstone, its text gone |
 | `orphaned_at` | set when the anchor block is deleted, cleared when it comes back |
 | `agent`, `agent_id` | the name and id of the agent that wrote it (`gamma/agents.py`, "Who wrote a comment"), `''` for a session; the name is copied because a revoked or expired token's row goes |
-| `resolved_agent` | on the root only: the label of the agent that resolved it ("Codex on TIM-PC"), cleared on reopen (`resolved_by` stays the account) |
+| `resolved_agent`, `resolved_agent_id`, `resolved_agent_owner` | on the root only: the name, id and owner (a co-author's turn) of the agent that resolved it, as a comment's agent is kept, cleared on reopen (`resolved_by` stays the account; the id and the owner came with step 66) |
 | `anchor` | on the root only, JSON: the place the thread was opened on ([annotations.md](annotations.md), `gamma/annotations/anchors.py`); NULL on a reply and on a root from before step 54 |
 
 Indexes: `block_id`, `(thread_id, created_at)`, `page_id`, and a partial one
@@ -57,21 +57,19 @@ working without knowing that comments exist.
 `comments.threads_for(conn, page_ids, *, state=None)` is the reader. It
 joins each comment to its block (`unified_blocks.page_id`, so a page's own
 thread comes along) and leaves out the orphaned ones. A thread is `{id,
-block_id, page_id, resolved_at, resolved_by, resolved_agent, made_on, sent,
+block_id, page_id, resolved_at, resolved_by, resolved_agent, made_on,
 created_at, last_at, comments}`, oldest first, and each comment is `{id,
 thread_id, author, agent, body, created_at, updated_at, deleted}`, with
 `agent_kind` for an agent's, and its `agent_id`, `agent_on` and, where
 it wrote for a co-author, `agent_owner` for a computer's agent's. People
 are named by username: `author` falls back to `author_name`, and
 `resolved_by` to `""`, once the account is gone; `agent` is the agent's
-name, `""` for a person, and `resolved_agent` the resolving agent's label
-("Who wrote a comment"). `made_on` is
-the file the thread was opened on (its anchor's `doc_id`, `""` for none),
-and `sent` the Send waiting on it (`comments._sent`: the newest
-`feedback_request_threads` row of the thread not answered whose request is
-`sent`, `running` or `failed`, as `{request_id, state, at, detail}`), else
-null ([annotations.md](annotations.md) "Requests"; the Feedback dialog's
-until step 3.7 of the agents-as-participants plan). The comment routes add
+name, `""` for a person, and `resolved_agent` the resolving agent,
+`{id, kind, name, on?, owner?}` (`Agent.shown`, named as a comment's agent
+is), null for a person and while the thread is open ("Who wrote a
+comment"). `made_on` is
+the file the thread was opened on (its anchor's `doc_id`, `""` for none).
+The comment routes add
 `agent_chat` to each thread they answer: the session account's
 conversation of it with a computer's agent ("Sent to an agent" below). A
 tombstone reads `deleted: true` with an empty body. `last_at` is the newest of the thread's writes
@@ -103,6 +101,9 @@ move `migrations.workspace_format()`: the comments never pause clones and
 publications. The four columns after `orphaned_at` came with step 54
 (`feedback`), whose workspace part is in `migrations.LOCAL_STEPS`: no copy
 keeps comments in step with another, so it leaves the format at 52 too.
+`resolved_agent_id` and `resolved_agent_owner` came with step 66
+(`agent_ids`, in `LOCAL_STEPS` as well), which names the resolving agent
+of a thread resolved before it from the thread's comments.
 
 ## Who wrote a comment
 
@@ -114,7 +115,7 @@ its name in `agent` (`gamma/agents.py`, which keeps no table):
 | Kind | `agent_id` | `agent` | Written by |
 |---|---|---|---|
 | `gamma` | `gamma` | Gamma AI | the chat's writing tools (`comment`, `resolve`, `highlight`: the chat's stamp, `agents.of_stamp`) |
-| `computer` | `computer:<computer>:<name>` | the catalog's label (Codex, Claude Code) | a turn's token through MCP's writing tools (`integrations.mint_turn` names it with this id), the end of a thread's turn of this computer's (`agents.here`) or of a computer of the channel (`agents.of_channel`), and a Send's run, here or there |
+| `computer` | `computer:<computer>:<name>` | the catalog's label (Codex, Claude Code) | a turn's token through MCP's writing tools (`integrations.mint_turn` names it with this id), the end of a thread's turn of this computer's (`agents.here`) or of another computer's (the conversation's `computer`, `chats.agent_id_of`) |
 | `connection` | the integration token's id | its display name (`integrations.display_name`) | the HTTP API and MCP's writing tools with a token (`agents.of_request`, `of_connection`) |
 
 The writing tools write through `gamma/annotations/hand.py` (a `Writer`: the
@@ -142,9 +143,13 @@ co-author also carries `agent_owner`, the username of the agent's owner
 (`Agent.owner`), stored with the comment as it was when it was written
 (pages.db step 64; `''` on every comment from before it), so an agent that
 changes hands later relabels nothing; the avatar's title names it:
-"Written by alice's Codex on TIM-PC, for bob". A server's own words name an agent by its label, "Codex on
-TIM-PC" (`Agent.label`): the Inbox's items, `resolved_agent`, the
-annotations' Markdown ("**Codex on TIM-PC**, for tim"). Comments of a
+"Written by alice's Codex on TIM-PC, for bob". What the client words
+names the agent by its id, name, computer and owner, worded in the
+reader's language (`chat/agents.js` `madeBy`): a comment, a block's stamp,
+a thread's `resolved_agent` and an Inbox item's `agent` (`Agent.shown`,
+`agentWords`). A server's own words name an agent by its English label,
+"Codex on TIM-PC" (`Agent.label`): the annotations' Markdown ("**Codex on
+TIM-PC**, for tim"), a prompt. Comments of a
 computer's agent from before step 60 were signed `local:<name>`; the step
 names them by their computer ([migrations.md](migrations.md)).
 
@@ -257,8 +262,9 @@ refused with a 400.
   takes the tombstone with it, so a thread always shows a comment.
 - **Resolve.** On a root only (400 for a reply). `resolved: false` reopens.
   Anyone who may comment on the page may do either; the writing tools
-  resolve only, never reopen. An agent's resolve keeps its label (`resolved_agent`)
-  until a reopen.
+  resolve only, never reopen. An agent's resolve keeps the agent
+  (`resolved_agent`, `resolved_agent_id`, `resolved_agent_owner`) until a
+  reopen.
 - A comment that is hidden answers 404: its block was deleted (orphaned),
   or its page is in Recently deleted.
 - **Notify me.** Whoever may comment on the page (`require_commenter`),
@@ -274,17 +280,17 @@ via="")`. It publishes `{t: "comments", block_id, thread_id}` to the page's
 room, to every peer but the writer's tab (`client`,
 `collab.publish(..., exclude=client)`), then hands the write's event to
 `comments.after_write(ws, event)`. The event is `{kind, actor, page_id,
-block_id, thread_id, comment_id, agent, agent_id, ...}`, where `kind` is
-`create`, `reply`, `edit` (with `before`), `delete` (`comment_ids`),
-`resolve` or `reopen` (`thread_author`), or `sweep` (`comment_ids`), and
-`agent` / `agent_id` are the label and id of the agent that wrote it (`""`
-for a session).
+block_id, thread_id, comment_id, agent, agent_id, agent_owner, ...}`,
+where `kind` is `create`, `reply`, `edit` (with `before`), `delete`
+(`comment_ids`), `resolve` or `reopen` (`thread_author`), or `sweep`
+(`comment_ids`), and `agent`, `agent_id` and `agent_owner` are the name, id
+and owner of the agent that wrote it (`""` for a session).
 `via` is the share token the writer came through (the routes pass
 `auth.share_via`; `""` for a member and for the writing tools). It is
 the one place where the derived work hangs: the Inbox ("The inbox" below),
 then each of `comments.write_listeners` (`fn(ws, event)`, appended by
-`gamma/annotations/listeners.py`: the annotation files, the requests answered,
-the commented version kept), each called in turn with its error logged. It
+`gamma/annotations/listeners.py`: the annotation files and the commented
+version kept), each called in turn with its error logged. It
 never raises. Create, edit and resolve read the thread they
 answer with before their commit, under the write lock, so a batch that
 deletes the block in between cannot leave a stored write without its
@@ -316,7 +322,7 @@ paste).
 | a page restored | shown again |
 | a page deleted for good (`ops.delete_page`: Delete permanently, Empty, the 30-day purge, a share host's delete) | its blocks' comments go, and so do its orphaned ones whose block is gone; a thread on a block that lives on another page now stays |
 | `blocks_store.create_page(block_id=)` over a copy in Recently deleted | that copy's comments go with its blocks |
-| a backup restored in place | the table is copied with the rest, the Sends' tables (`feedback_requests`, `feedback_request_threads`) too |
+| a backup restored in place | the table is copied with the rest |
 | a backup merge, a Gamma import, "Add to my library" | copied with the pages they add (below) |
 | a clone, a publication, the share host | not synced ([mirror.md](mirror.md) "What travels") |
 | a Zotero link | not synced: threads stay in Gamma; a highlight's own note and the notes under it travel as the Zotero annotation's comment, which is no thread ([zotero_sync.md](zotero_sync.md#what-syncs)) |
@@ -352,9 +358,7 @@ have it now), and `comments.copy_rows(dst, rows, blocks=)` inserts them
 into another `pages.db`. A comment id that the destination already has is
 minted afresh, and its thread's replies follow the new id.
 
-- The rows carry every column, the agents' names and the anchors included;
-  the Sends that name the threads stay behind (`copy_rows` mints fresh
-  thread ids, so their rows would name nothing).
+- The rows carry every column, the agents' names and the anchors included.
 - The Gamma export (`routers/export.py` `_GammaBuilder`) copies the threads
   shown on the exported pages. The authors' ids mean nothing on another
   server, so `author_name` is what shows there.
@@ -397,7 +401,7 @@ they count as the owner's. An integration token's comment (any scope: a
 agent writes is no one's keystrokes, so the person hears of it by the rules
 above as anyone would (its reply in their thread, its new thread or reply on
 a page they follow, its mention of them, its resolve of their thread), and
-each item names the agent (`agent`, its label). A retried batch is answered from the op log and
+each item names the agent (its name, id and owner). A retried batch is answered from the op log and
 never reaches `after_commit`, so a retry tells no one twice. A reopen tells
 no one.
 
@@ -419,8 +423,8 @@ page_id=, block_id=, thread_id=, comment_id=, snippet=, via=)` after its
 own commit. It catches and logs every error and never raises, as the commit
 listeners do (`ops.notify_commit`), so a stored note or comment never
 answers an error because users.db was busy. It leaves out the actor (but
-for an agent's write, `emit(..., agent=)`: the agent's label, which
-the row keeps), guest accounts and accounts that are gone. Of the first `REACH_CANDIDATES` (100)
+for an agent's write, `emit(..., agent=)`: the agent, whose name, id and
+owner the row keeps, `agent`, `agent_id` and `agent_owner`), guest accounts and accounts that are gone. Of the first `REACH_CANDIDATES` (100)
 of the rest, it writes an item for the first `MAX_RECIPIENTS` (25) that
 `reach` admits, so accounts named first who cannot open the page take none
 of the places. A `mention` of someone who has the same block's mention
@@ -466,9 +470,17 @@ set; the app opens such an item through the share link.
 lists the account's items newest first. Each item has `{id, kind, actor,
 workspace_id, workspace_name, page_id, page_title, block_id, thread_id,
 comment_id, share_token, snippet, at, read_at, archived_at, agent}`. `actor`
-is a username (`""` once the account is gone); `agent` the label of the
-agent whose write made the item ("Codex on TIM-PC"), `""` for a person's;
-the row's avatar title reads "Codex on TIM-PC, for tim" (`inboxText.js`). `page_title` is the page's title
+is a username (`""` once the account is gone); `agent` the agent whose
+write made the item, `{id, kind, name, on?, owner?}`, named as a comment's
+agent is (`agents.read_all` in the item's workspace: a computer as it is
+called now), null for a person's; the client words it in the reader's
+language (`chat/agents.js` `agentWords`), "Codex on TIM-PC" in the sentence
+and "Codex on TIM-PC, for tim" as the row's avatar title (`inboxText.js`).
+An item of before step 66 names its agent by its id where users.db knew
+the label's agent (`migrations._v66_label_agent`: Gamma AI, a connection of
+the actor's by its display name, a computer the actor's channel announced
+or this computer), else by the label's words alone (`id` and `kind`
+`""`). `page_title` is the page's title
 now, or the folder's name for a folder share, while the account may still
 read it: always for a member (a trashed page is in its Recently deleted),
 else while its way in still admits it (`_entitled`). An archived item of a
@@ -835,7 +847,7 @@ with Stop (`useComments.stopTurn`); the threads are read every two seconds
 meanwhile (`useComments`), and the Comments window's row carries the same
 chip. An agent's reply in a thread the reader sent it has *Open in chat*
 on its author line: the page's chat on the thread's conversation (App's
-`openThreadChat`, `chatSide.js` `showThreadChat`: its steps, its asks and
+`openThreadChat`, `chatSide.js` `showInChat`: its steps, its asks and
 what it changed, drawn as a chat's), whose composer gives way to a line
 saying the conversation goes on in its thread, *Show the thread* and *Back
 to the chat*. The chat's answer card lists the threads its agent opened in
@@ -923,9 +935,9 @@ wherever it is drawn, a new comment rises into place. In a narrow window
 the tabs show their icons alone, the counts in their names. Beside them,
 for a reader with an Inbox (App's `canFollow`: a commenter who is no guest
 account), a bell is the page's Notify me: **All comments** or
-**Replies and @mentions**, under a "Notify me" heading. It and Feedback
-are the window's actions, which fold into the header's "⋯" when it is too
-narrow for them, Notify me as a flyout of the two choices
+**Replies and @mentions**, under a "Notify me" heading. It is the
+window's action, which folds into the header's "⋯" when it is too
+narrow for it, Notify me as a flyout of the two choices
 ([ui-design.md](ui-design.md#dock-windows) "Dock windows"). The window reads
 it (`GET /pages/{id}/notify`) when it opens and for each page it shows; a
 choice shows at once and goes back, said in the status line, when the
@@ -981,7 +993,9 @@ moves left by half of what the column takes (`marginLeft`,
 `comments/marginLayout.js`). A page that would leave less than `EDGE`
 (16 px) at either side has no margin and stays centred: a page at
 fit-width, a narrow pane, a high zoom. A phone has none (App passes no
-`commentMargin`). With no open thread in the document every page stays
+`commentMargin`), nor do pages that run across, side by side
+([pdf_loading.md](pdf_loading.md) "Pages that run across"): the column
+runs down beside the pages. With no open thread in the document every page stays
 centred. The viewer reads its own width (a ResizeObserver) and
 hands each page its left edge (`PdfPage`'s `marginLeft`, null for none),
 and the zoom anchor's horizontal arithmetic reads the same layout
@@ -1270,14 +1284,15 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   by writer, a retry by another writer), a token at the Comment level
   commenting (a reply, a new thread, its own comments' edits, a resolve and
   a reopen) and nothing else, and a read token refused. Also the events handed to
-  `after_write`, the write listeners and `written`, the anchor and `sent` on
+  `after_write`, the write listeners and `written`, the anchor on
   a thread, a work folder's threads, the open count, and the lifecycle: Recently
   deleted, the purges, a delete orphaning and an undo bringing back, the
   sweep, `PUT /blocks/{id}/children`, and a share editor's insert reading no
   other page's threads. The backup merge, the Gamma export round trip and
   the room's `{t: "comments"}` too. An agent's comment: the account its
   author, the agent's name, kind and computer as called now, the event's
-  label, a resolve's label, and an agent editing and deleting its own alone.
+  name and id, a resolve's agent (its computer as called now too), and an
+  agent editing and deleting its own alone.
   A comment's `to` that starts no turn (no agent's id, a token's) said with
   the comment stored, and `agent_chat` none for a thread nobody sent
   (`test_local_agents_threads.py` has the turns). The suite's drift checks

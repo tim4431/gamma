@@ -9,6 +9,7 @@
 // (select, open, its menu, its pin, a rename, a drag) is the library's,
 // handed in as `row`: the rows are App's pages like the listing's, found in
 // its lookups.
+import { useLayoutEffect } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { composing } from "../shared/lib/hotkeys.js";
 import { fmtBytes } from "../shared/lib/format.js";
@@ -16,6 +17,7 @@ import { FilePlusIcon, PinIcon } from "../shared/ui/Icons";
 import { SelectCheck } from "../library/FileBrowser";
 import { formatFullDate, formatLabel, formatShortDate, pageFormat } from "../library/libraryUtils";
 import TreeRow from "./TreeRow.jsx";
+import { pagedFor } from "./fileTree.js";
 import { useTree } from "./useTree.js";
 import { emptyKind, fileName } from "./workFolderActions.js";
 
@@ -69,6 +71,23 @@ export default function FolderTree({ rows, tree, folderId, pageOf, query, atTop,
       else if (kind === "open") { if (b) row.onPageOpen(r.id); else press(r); }
       else if (kind === "select" && b) row.onPageClick(b, null);
     },
+  });
+  // A file shown (useFolderTree's showFile): its row scrolled into sight
+  // once it is drawn, which may be a read or two later, and the keys on it;
+  // let go once the directory is read as far as the file and its row is not
+  // drawn (the filter hides it), or the view is on another directory.
+  useLayoutEffect(() => {
+    const want = tree.reveal;
+    if (!want) return;
+    const r = want.dir === folderId ? rows.find((x) => x.kind === "file" && x.id === want.pageId) : null;
+    const el = r && keys.rowRefs.current.get(r.key);
+    if (!el) {
+      if (want.dir !== folderId || pagedFor(tree.dirs, want)) tree.revealDone();
+      return;
+    }
+    tree.revealDone();
+    el.scrollIntoView({ block: "nearest" });
+    tree.setActive(r.key);
   });
   const chooseButton = onChoose ? <button type="button" className="uiBtn sm" onClick={onChoose}>{t("Choose files…")}</button> : null;
   // the directory holds nothing to draw once read: the line says why

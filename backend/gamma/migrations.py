@@ -2053,12 +2053,10 @@ def _v58_request_via(ws: str, pages: sqlite3.Connection, data) -> None:
     """``feedback_requests`` gains ``via``, how a Send was made: ``session``
     (a person in Gamma) or ``token`` (an integration token), ``''`` on every
     Send so far, which nobody can tell apart now. An agent on this computer
-    takes only a session's Send (docs/dev/local_agents.md), so one made by a
-    script holding the maker's token never starts it. Added where
-    ``_columns()`` has the table and lacks the column; a rerun changes
-    nothing, and a copy without the table gets it from the schema
-    statements. Requests never leave a workspace's own copy
-    (``LOCAL_STEPS``)."""
+    took only a session's Send, so one made by a script holding the maker's
+    token never started it. Added where ``_columns()`` has the table and
+    lacks the column; a rerun changes nothing. Step 65 drops the table.
+    Requests never left a workspace's own copy (``LOCAL_STEPS``)."""
     columns = _columns(pages, "feedback_requests")
     if columns and "via" not in columns:
         pages.execute("ALTER TABLE feedback_requests ADD COLUMN via TEXT NOT NULL DEFAULT ''")
@@ -2101,8 +2099,8 @@ def _v60_comment_agent_ids(ws: str, pages: sqlite3.Connection, data) -> None:
     was run here (``agents.here_id``, where agents run on this server); a
     Send swept since, or a token gone, leaves "" (an agent on a computer
     no longer known). A rerun finds no ``local:`` id and changes nothing; a
-    copy without the table gets it from the schema statements. Comments
-    never leave a workspace's own copy (``LOCAL_STEPS``)."""
+    copy without the Sends' tables names no computer. Comments never leave
+    a workspace's own copy (``LOCAL_STEPS``)."""
     from . import agents, local_agents  # local: agents reaches the computers, which import the vaults
 
     if not _columns(pages, "comments"):
@@ -2178,6 +2176,215 @@ def _v64_comment_agent_owners(ws: str, pages: sqlite3.Connection, data) -> None:
         pages.execute("ALTER TABLE comments ADD COLUMN agent_owner TEXT NOT NULL DEFAULT ''")
 
 
+def _v65_drop_requests(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The Sends go (step 3.7 of docs/research/agents-as-participants-plan.md):
+    a comment ticked *Send to* is a turn of its thread's conversation
+    (docs/dev/local_agents.md "A comment sent to an agent"), so
+    ``feedback_requests``, ``feedback_request_threads`` and
+    ``feedback_request_runs`` are dropped with their indexes, the requests
+    made before with them. A rerun, and a copy that never had them, finds
+    nothing to drop; a backup made before the step restores, the step
+    running on its copy. The tables never left a workspace's own copy
+    (``LOCAL_STEPS``)."""
+    for table in ("feedback_requests", "feedback_request_threads", "feedback_request_runs"):
+        pages.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+def _v66_label_agent(conn: sqlite3.Connection, actor: str, label: str, here: tuple[str, str] | None,
+                     tables: set[str]):
+    """The agent an Inbox item of before step 66 named by its English label
+    ("Codex on TIM-PC", gamma/agents.py ``Agent.label``) for the account
+    ``actor``, read from users.db alone: Gamma AI by its name, a connection
+    of the account by its display name, a computer's agent by the catalog's
+    name and the computer the account's channel announced under that name,
+    or this computer (``here``: its id and its name, None where agents do
+    not run here) → the agent, None for one not found. ``tables``: those of
+    ``integration_tokens`` and ``computers`` users.db holds (an older one
+    may lack ``computers``, added at schema 58 by its statement), the other
+    read as none."""
+    from . import agents
+    from .integrations import display_name
+    from .local_agents import catalog
+
+    if label == agents.GAMMA_NAME:
+        return agents.gamma()
+    tokens = conn.execute("SELECT id, name FROM integration_tokens WHERE user_id = ? ORDER BY created_at DESC",
+                          (actor,)) if "integration_tokens" in tables else ()
+    for token_id, name in tokens:
+        if display_name(name) == label:
+            return agents.Agent(token_id, "connection", label)
+    for name, entry in catalog.AGENTS.items():
+        if not label.startswith(f"{entry.label} on "):
+            continue
+        on = label[len(entry.label) + len(" on "):]
+        found = conn.execute("SELECT computer FROM computers WHERE user_id = ? AND name = ? ORDER BY seen_at DESC "
+                             "LIMIT 1", (actor, on)).fetchone() if "computers" in tables else None
+        if found:
+            return agents.computer_agent(found[0], name, on)
+        if here is not None and here[1] == on:
+            return agents.computer_agent(here[0], name, on)
+    return None
+
+
+def _v66_inbox_agents(conn: sqlite3.Connection) -> None:
+    """An Inbox item names the agent whose write made it by its id, so the
+    client words it in the reader's language (docs/dev/comments.md "The
+    inbox"): ``inbox_items`` gains ``agent_id`` and ``agent_owner``, and an
+    item's ``agent``, its English label until now, becomes the agent's name
+    where the label names an agent users.db knows (``_v66_label_agent``); an
+    unknown one stays as it was, read as words. Re-runnable: the columns are
+    added where ``_columns()`` lacks them, and an item given an id is not
+    read again. No workspace is touched."""
+    from . import local_agents
+    from .computers import channel
+
+    columns = _columns(conn, "inbox_items")
+    if columns:
+        for name in ("agent_id", "agent_owner"):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE inbox_items ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+        here = None
+        if local_agents.enabled():
+            from . import agents
+
+            device = conn.execute("SELECT value FROM settings WHERE key = 'cloud_device_id'").fetchone()
+            here = (agents.here_id(device[0]), channel.computer_name()) if device and device[0] else None
+        tables = {t for t in ("integration_tokens", "computers") if _columns(conn, t)}
+        found = {}
+        for item_id, actor, label in conn.execute("SELECT id, actor, agent FROM inbox_items "
+                                                  "WHERE agent != '' AND agent_id = ''").fetchall():
+            if (actor, label) not in found:
+                found[actor, label] = _v66_label_agent(conn, actor, label, here, tables)
+            agent = found[actor, label]
+            if agent is not None:
+                conn.execute("UPDATE inbox_items SET agent = ?, agent_id = ? WHERE id = ?",
+                             (agent.name, agent.id, item_id))
+    conn.commit()
+
+
+def _v66_resolved_agents(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A thread an agent resolved names it by its id, as a comment does
+    (docs/dev/comments.md "Who wrote a comment"): ``comments`` gains
+    ``resolved_agent_id`` and ``resolved_agent_owner``, and a root's
+    ``resolved_agent``, its English label until now, becomes the agent's
+    name: Gamma AI's by its name, another's from the newest comment of the
+    thread its resolver's account wrote through an agent that label names
+    (its name, or its name and " on " a computer). A label no comment names
+    stays as it was, read as words. Re-runnable: the columns are added where
+    ``_columns()`` lacks them, and a root given an id is not read again.
+    Comments never leave a workspace's own copy (``LOCAL_STEPS``)."""
+    from . import agents
+
+    columns = _columns(pages, "comments")
+    if not columns:
+        return
+    for name in ("resolved_agent_id", "resolved_agent_owner"):
+        if name not in columns:
+            pages.execute(f"ALTER TABLE comments ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+    rows = pages.execute("SELECT id, resolved_by, resolved_agent FROM comments WHERE id = thread_id "
+                         "AND resolved_agent != '' AND resolved_agent_id = ''").fetchall()
+    for root, by, label in rows:
+        if label == agents.GAMMA_NAME:
+            found = (agents.GAMMA_NAME, agents.GAMMA, "")
+        else:
+            found = pages.execute(
+                "SELECT agent, agent_id, agent_owner FROM comments WHERE thread_id = ? AND author = ? "
+                "AND agent_id != '' AND (agent = ? OR substr(?, 1, length(agent) + 4) = agent || ' on ') "
+                "ORDER BY created_at DESC LIMIT 1", (root, by or "", label, label)).fetchone()
+        if found:
+            pages.execute("UPDATE comments SET resolved_agent = ?, resolved_agent_id = ?, resolved_agent_owner = ? "
+                          "WHERE id = ?", (*found, root))
+
+
+def _v67_computer_asks(conn: sqlite3.Connection) -> None:
+    """A computer linked to another server (docs/dev/computers.md) lets that
+    server answer what its agents ask, or not (decision 7 of
+    docs/research/agents-as-participants-plan.md): ``computer_links``, the
+    desktop app's own server's, gains ``asks`` (0 on every link so far: off
+    until the shell's word turns it on) and ``workspace_name`` (the name of
+    the workspace there, '' until that server names it at the next
+    announce); ``computers``, every server's record of what a computer
+    announced, gains ``asks`` (0 until it announces otherwise). Re-runnable:
+    a column is added only where ``_columns()`` has the table and lacks it.
+    No workspace is touched."""
+    wanted = {"computer_links": (("asks", "INTEGER NOT NULL DEFAULT 0"), ("workspace_name", "TEXT NOT NULL DEFAULT ''")),
+              "computers": (("asks", "INTEGER NOT NULL DEFAULT 0"),)}
+    for table, columns in wanted.items():
+        have = _columns(conn, table)
+        for name, kind in columns:
+            if have and name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+    conn.commit()
+
+
+def _v68_computer_dirs(conn: sqlite3.Connection) -> None:
+    """A computer's agent is offered on any page of a server it is linked
+    to (step 4.2 of docs/research/agents-as-participants-plan.md), working
+    in a directory the computer offers it there: ``computers``, every
+    server's record of what a computer announced, gains ``dirs``, those
+    directories by id and name (``'[]'`` until it announces them). The
+    workspace part (``_v68_far_chats``) binds each conversation to its
+    computer. Re-runnable: the column is added only where ``_columns()`` has
+    the table and lacks it."""
+    have = _columns(conn, "computers")
+    if have and "dirs" not in have:
+        conn.execute("ALTER TABLE computers ADD COLUMN dirs TEXT NOT NULL DEFAULT '[]'")
+    conn.commit()
+
+
+def _v68_far_chats(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A conversation with a computer's agent names the computer it talks
+    to, as it names its agent (docs/dev/local_agents.md "The chat on another
+    server's page"): ``computer_chats`` gains ``computer`` (the computer's
+    id as users.db ``computers`` has it, "" for this server's own agent) and
+    ``computer_chat_runs`` gains ``token`` (the id of a far turn's token of
+    this server, "" for every turn so far: none had one). Every far
+    conversation so far worked in a work folder: it takes the computer of
+    its newest run's holder, else the computer of its owner's that announced
+    a vault of its work folder in this workspace last, else none (its next
+    turn then begins another conversation). Re-runnable: a column is added
+    where ``_columns()`` has the table and lacks it, and only a conversation
+    whose ``computer`` is "" is filled. Neither table leaves a workspace's
+    own copy (``LOCAL_STEPS``)."""
+    chats = _columns(pages, "computer_chats")
+    if chats and "computer" not in chats:
+        pages.execute("ALTER TABLE computer_chats ADD COLUMN computer TEXT NOT NULL DEFAULT ''")
+    runs = _columns(pages, "computer_chat_runs")
+    if runs and "token" not in runs:
+        pages.execute("ALTER TABLE computer_chat_runs ADD COLUMN token TEXT NOT NULL DEFAULT ''")
+    if not chats or not runs:
+        return
+    far = pages.execute(
+        "SELECT c.id, COALESCE(NULLIF(c.owner, ''), c.user_id), c.dir, (SELECT r.holder FROM computer_chat_runs r "
+        "WHERE r.conversation_id = c.id AND r.holder != '' ORDER BY r.started_at DESC LIMIT 1) FROM computer_chats c "
+        "WHERE c.computer = '' AND EXISTS (SELECT 1 FROM computer_chat_runs r WHERE r.conversation_id = c.id)").fetchall()
+    if not far:
+        return
+    with connect_users_db() as users:
+        for conversation_id, owner, folder, holder in far:
+            found = users.execute("SELECT computer FROM computers WHERE token_id = ?", (holder,)).fetchone() \
+                if holder else None
+            if found is None and folder:
+                found = users.execute("SELECT computer FROM computers WHERE user_id = ? AND workspace_id = ? "
+                                      "AND vaults LIKE ? ORDER BY seen_at DESC LIMIT 1",
+                                      (owner, ws, f'%"{folder}"%')).fetchone()
+            if found:
+                pages.execute("UPDATE computer_chats SET computer = ? WHERE id = ?", (found[0], conversation_id))
+
+
+def _v69_far_answers(ws: str, pages: sqlite3.Connection, data) -> None:
+    """What a far turn's agent asks is answered here where its computer
+    relays its asks (step 4.3 of docs/research/agents-as-participants-plan.md,
+    docs/dev/computers.md "The agents' turns there"): ``computer_chat_runs``
+    gains ``answers`` (``'{}'`` on every turn so far: none was answered
+    here), the answers kept for that computer to take. Re-runnable: the
+    column is added only where ``_columns()`` has the table and lacks it.
+    The table never leaves a workspace's own copy (``LOCAL_STEPS``)."""
+    runs = _columns(pages, "computer_chat_runs")
+    if runs and "answers" not in runs:
+        pages.execute("ALTER TABLE computer_chat_runs ADD COLUMN answers TEXT NOT NULL DEFAULT '{}'")
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -2209,6 +2416,9 @@ STEPS = [
     (56, "integration_edits", _v56_integration_edits),
     (57, "integration_asks", _v57_integration_asks),
     (61, "integration_comments", _v61_integration_comments),
+    (66, "agent_ids", _v66_inbox_agents),
+    (67, "computer_asks", _v67_computer_asks),
+    (68, "far_chats", _v68_computer_dirs),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
@@ -2232,6 +2442,10 @@ WORKSPACE_STEPS = [
     (62, "computer_chat_threads", _v62_computer_chat_threads),
     (63, "computer_chat_owners", _v63_computer_chat_owners),
     (64, "comment_agent_owners", _v64_comment_agent_owners),
+    (65, "drop_requests", _v65_drop_requests),
+    (66, "agent_ids", _v66_resolved_agents),
+    (68, "far_chats", _v68_far_chats),
+    (69, "far_answers", _v69_far_answers),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
@@ -2240,7 +2454,7 @@ WORKSPACE_STEPS = [
 DERIVED_STEPS = {47, 48, 53}
 
 # The workspace steps that change only tables no copy of the workspace keeps
-# in step with another (comments, the Inbox's rows, the Sends, a computer
+# in step with another (comments, the Inbox's rows, the Sends of before step 65, a computer
 # agent's conversations): a mirror never sends them, so two copies on either
 # side of one still agree.
-LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64}
+LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64, 65, 66, 68, 69}

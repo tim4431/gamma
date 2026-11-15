@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerChip, directionText, editsFile, folderKeeper, isOpenedFile,
-  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultAgent, vaultBanner,
+  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, showsOnDisk, sinceText, vaultBanner,
   vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
@@ -39,6 +39,14 @@ test("a folder vault's page says where it is synced, and what stands in its way"
   assert.match(busy.title, /paused/);
   assert.match(busy.title, /2 conflicts/);
   assert.match(busy.title, /Not written to disk: an open code block/);
+});
+
+test("Show in folder: a vault's or an opened file's path, while its file is there", () => {
+  assert.equal(showsOnDisk(folder()), true);
+  assert.equal(showsOnDisk(opened()), true);
+  assert.equal(showsOnDisk(opened({ missing: true })), false, "a missing file");
+  assert.equal(showsOnDisk(folder({ path: "" })), false, "a member who cannot see the path");
+  assert.equal(showsOnDisk(null), false);
 });
 
 test("a member who cannot see the path reads the vault's name", () => {
@@ -224,9 +232,9 @@ test("a work folder's agent on this computer: named, its problem while it cannot
   assert.deepEqual(agentLine(agent()), { line: "Agent: Codex on this computer", problem: "", working: null });
   assert.equal(agentLine(agent({ ready: false, problem: "Codex is not on this computer." })).problem, "Codex is not on this computer.");
   assert.equal(agentLine(agent({ ready: null, problem: "" })).problem, "", "still checking");
-  assert.deepEqual(agentLine(agent({ running: { request_id: "r1", detail: "Editing main.tex" } })).working,
+  assert.deepEqual(agentLine(agent({ running: { detail: "Editing main.tex" } })).working,
     { label: "Codex is working…", detail: "Editing main.tex", title: "Editing main.tex", tone: "pending", live: true });
-  assert.deepEqual(agentLine(agent({ running: { request_id: "r1", detail: "" } })).working,
+  assert.deepEqual(agentLine(agent({ running: { detail: "" } })).working,
     { label: "Codex is working…", detail: "", title: "Codex is working…", tone: "pending", live: true }, "a member who cannot act on it");
   assert.equal(agentWorking("Codex", "Editing main.tex"), "Codex is working: Editing main.tex");
   assert.equal(agentWorking("Codex"), "Codex is working…");
@@ -315,20 +323,10 @@ test("a synced folder's root names the computer that keeps it and how its sync s
   assert.equal(folderKeeper(null, null, now), null, "nobody this account knows keeps it");
 });
 
-test("the computer's chip names the agent there that runs the work folder's Sends", () => {
-  const work = (agent) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent } });
-  const chip = computerChip([work({ name: "codex", label: "Codex" })]);
-  assert.equal(chip.agent, "Agent: Codex on TIM-PC");
-  assert.equal(chip.title, "Connected\nFolder: cavity\nAssistants there: Codex\nAgent: Codex on TIM-PC");
-  assert.equal(computerChip([work({ name: "claude" })]).agent, "Agent: Claude Code on TIM-PC", "no label: its name's");
-  assert.equal(computerChip([work(null)]).agent, "");
-  assert.equal(computerChip([pc()]).agent, "", "an announce without the field");
-});
-
-test("a computer's agent on the work folder it keeps of the page's server", () => {
-  const work = (agent) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent } });
-  assert.deepEqual(vaultAgent(work({ name: "codex", label: "Codex" })), { name: "codex", label: "Codex" });
-  assert.deepEqual(vaultAgent(work({ name: "claude" })), { name: "claude", label: "Claude Code" }, "no label: its name's");
-  assert.equal(vaultAgent(work(null)), null);
-  assert.equal(vaultAgent(pc()), null, "an announce without the field");
+test("the computer's chip names the first computer that keeps the page, not one whose agents alone it offers", () => {
+  const desk = pc({ id: "c0", name: "DESK", vault: null });
+  const chip = computerChip([desk, pc({ vault: { kind: "folder", name: "cavity", paused: false, work: true } })]);
+  assert.equal(chip.label, "Synced folder on TIM-PC");
+  assert.equal(chip.title, "Connected\nFolder: cavity\nAssistants there: Codex");
+  assert.equal(computerChip([desk]), null, "none keeps it");
 });

@@ -24,7 +24,7 @@ from gamma.computers import channel, registry
 from gamma.db import connect_users_db, connect_vaults_db
 from gamma.folder_sync import ROOT
 from gamma.integrations import create_token, forget_workspace, grant, resolve_connection
-from gamma.local_agents import catalog, store
+from gamma.local_agents import catalog, runner, store
 
 PASSWORD = "cm-pass-1234"
 SECRET = "cm-shell-secret"
@@ -88,10 +88,10 @@ def _announce(c, body) -> dict:
 
 def _row(token_id: str):
     with connect_users_db() as conn:
-        row = conn.execute("SELECT computer, name, vaults, assistants, seen_at FROM computers WHERE token_id = ?",
+        row = conn.execute("SELECT computer, name, vaults, assistants, seen_at, asks FROM computers WHERE token_id = ?",
                            (token_id,)).fetchone()
     return row and {"computer": row[0], "name": row[1], "vaults": json.loads(row[2]),
-                    "assistants": json.loads(row[3]), "seen_at": row[4]}
+                    "assistants": json.loads(row[3]), "seen_at": row[4], "asks": bool(row[5])}
 
 
 def _shown(c, page_id: str, **headers) -> list:
@@ -119,7 +119,7 @@ def test_a_computer_token_is_minted_with_a_session_and_opens_its_channel_alone(o
     assert listed[item["id"]] == "computer"
     computer = _as(item["token"])
     refused = "This token is a computer's channel; it opens nothing else."
-    for path in (f"/api/blocks/{page['id']}", "/api/sync/whoami", "/api/feedback/requests", "/api/integrations/tokens",
+    for path in (f"/api/blocks/{page['id']}", "/api/sync/whoami", "/api/annotations", "/api/integrations/tokens",
                  f"/api/pages/{page['id']}/computer"):
         r = computer.get(path)
         assert (r.status_code, r.json()["detail"]) == (403, refused), path
@@ -142,6 +142,23 @@ def test_a_computer_token_is_minted_with_a_session_and_opens_its_channel_alone(o
     assert anon.get("/api/computers/poll").status_code == 403
 
 
+def test_the_sends_routes_are_gone(owner):
+    """The Feedback dialog's Send went in step 3.7 of
+    docs/research/agents-as-participants-plan.md: neither a session's
+    ``/api/feedback/requests*`` nor the channel's ``/api/computers/sends*``
+    answers, so a client or computer of before finds no route."""
+    computer = _as(_mint(owner)["token"])
+    for c, method, path in ((owner, "get", "/api/feedback/requests"),
+                            (owner, "post", "/api/feedback/requests"),
+                            (owner, "get", "/api/feedback/requests/rq1"),
+                            (owner, "post", "/api/feedback/requests/rq1/state"),
+                            (computer, "get", "/api/computers/sends"),
+                            (computer, "post", "/api/computers/sends/rq1/claim"),
+                            (computer, "post", "/api/computers/sends/rq1/progress"),
+                            (computer, "post", "/api/computers/sends/rq1/answers")):
+        assert getattr(c, method)(path, **({"json": {}} if method == "post" else {})).status_code == 404, path
+
+
 # --- the announce ---------------------------------------------------------------------------------
 
 def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(owner, stranger, told):
@@ -162,7 +179,9 @@ def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(own
                         "runs": "ask"}]})
     me = account_of("cptr_owner")
     assert answer["account"] == {"id": me, "username": "cptr_owner"} and answer["computer"] == {"id": "cm_PC-1", "name": "TIM-PC"}
-    assert answer["workspace"] == {"id": workspace_of("cptr_owner")} and answer["wait"] == registry.POLL_S and answer["version"]
+    ws = workspace_of("cptr_owner")
+    assert answer["workspace"] == {"id": ws, "name": workspaces.get(ws)["name"]}
+    assert answer["wait"] == registry.POLL_S and answer["version"]
     row = _row(item["id"])
     assert row["computer"] == "cm_PC-1" and row["name"] == "TIM-PC"
     assert row["vaults"] == [{"kind": "folder", "folder_id": folder, "paused": True},
@@ -186,6 +205,9 @@ def test_the_announce_is_kept_normalised_with_the_workspaces_own_vaults_only(own
                 {"computer": {"id": "x", "name": "PC"}, "vaults": [{"kind": "file", "page_id": "p"}] * 501},
                 {"computer": {"id": "x", "name": "PC"}, "assistants": [{"name": "codex", "enabled": "yes"}]}, []):
         assert computer.post("/api/computers/announce", json=bad).status_code == 400, bad
+    # this server's own id: a far turn's token named with it would write as this computer's agent
+    r = computer.post("/api/computers/announce", json={"computer": {"id": agents.here_id(), "name": "PC"}})
+    assert r.status_code == 400 and r.json()["detail"] == "The computer's id is this server's own.", r.text
     assert computer.post("/api/computers/announce", content=b"not json").status_code == 400
     r = computer.post("/api/computers/announce", content=b"{" + b" " * (129 * 1024) + b"}")
     assert r.status_code == 413
@@ -305,14 +327,34 @@ def test_the_page_shows_its_makers_computers_and_nobody_elses(owner, stranger, a
                                         name="LAPTOP", computer_id="cm-laptop"))["version"]
     assert _poll(computer, version) == (200, {})
     shown = _shown(owner, filed["id"])                       # a subfolder's page: the folder vault keeps it
-    assert [(c["name"], c["vault"]) for c in shown] == [("TIM-PC", {"kind": "folder", "name": "CM lab", "paused": True, "agent": None})]
+    assert [(c["name"], c["vault"]) for c in shown] == [("TIM-PC", {"kind": "folder", "name": "CM lab", "paused": True, "work": False})]
     shown = _shown(owner, loose["id"])
     assert shown == [{"id": "cm-laptop", "name": "LAPTOP", "online": True, "since": None,
-                      "vault": {"kind": "file", "name": "CM loose paper", "paused": False, "agent": None},
+                      "vault": {"kind": "file", "name": "CM loose paper", "paused": False, "work": False},
                       "assistants": [{"name": "codex", "label": "Codex", "found": True, "ready": True,
                                       "version": "0.167.0", "code": "", "models": [], "enabled": False,
-                                      "runs": "never", "people": []}]}]
+                                      "runs": "never", "people": []}], "asks": False, "dirs": []}]
     assert _shown(owner, elsewhere["id"]) == [] and _shown(owner, "no-such-page") == []
+    # a computer with an agent on is the page's though it keeps none (step 4.2), after those that keep it,
+    # with the directories it offers by id and name
+    desk = _mint(owner, "Gamma desktop: DESK")
+    on = [{"name": "codex", "label": "Codex", "found": True, "ready": True, "version": "0.167.0", "code": "",
+           "enabled": True, "runs": "never"}]
+    _announce(_as(desk["token"]), {**_body(assistants=on, name="DESK", computer_id="cm-desk"),
+                                   "dirs": [{"id": "dirA", "name": "  Thesis   drafts "}]})
+    assert [(c["name"], c["vault"], c["dirs"]) for c in _shown(owner, elsewhere["id"])] == [
+        ("DESK", None, [{"id": "dirA", "name": "Thesis drafts"}])]
+    assert [c["name"] for c in _shown(owner, loose["id"])] == ["LAPTOP", "DESK"]
+    for dirs in ([{"id": "C:\\Users\\tim", "name": "x"}], [{"id": "dirA"}], "dirA"):   # never a path, never junk
+        r = _as(desk["token"]).post("/api/computers/announce", json={**_body(assistants=on, computer_id="cm-desk"),
+                                                                   "dirs": dirs})
+        assert r.status_code == 400, r.text
+    _announce(_as(desk["token"]), {**_body(assistants=[{**on[0], "enabled": False}], computer_id="cm-desk"),
+                                   "dirs": [{"id": "dirA", "name": "Thesis"}]})
+    assert _shown(owner, elsewhere["id"]) == []                       # its agent off: no page's, offering nothing
+    with connect_users_db() as conn:
+        assert conn.execute("SELECT dirs FROM computers WHERE token_id = ?", (desk["id"],)).fetchone()[0] == "[]"
+    owner.delete(f"/api/integrations/tokens/{desk['id']}")
 
     # a restart forgets who is online, never when each was last seen
     registry.reset()
@@ -329,10 +371,11 @@ def test_the_page_shows_its_makers_computers_and_nobody_elses(owner, stranger, a
     _announce(_as(item["token"]), _body({"kind": "file", "page_id": shared_page["id"]}))
     assert [c["name"] for c in _shown(owner, shared_page["id"], **there)] == ["TIM-PC"]
     assert _shown(stranger, shared_page["id"], **there) == []
-    # Settings → AI lists the account's computers of the workspace, with no vault, and nobody else's
+    # Settings → AI (and a chat with no page open) lists the account's computers of the workspace, with no
+    # vault, each with the directories it offers, and nobody else's
     mine = owner.get("/api/computers", headers=there).json()["computers"]
     assert [(c["name"], c["online"], sorted(c)) for c in mine] == [
-        ("TIM-PC", True, ["assistants", "id", "name", "online", "since"])]
+        ("TIM-PC", True, ["asks", "assistants", "dirs", "id", "name", "online", "since"])]
     assert stranger.get("/api/computers", headers=there).json() == {"computers": []}
     assert {"LAPTOP", "TIM-PC"} <= {c["name"] for c in owner.get("/api/computers").json()["computers"]}
     assert stranger.get(f"/api/pages/{loose['id']}/computer",
@@ -385,9 +428,9 @@ def test_the_vault_that_keeps_the_page_is_named_and_a_workspace_deleted_takes_it
     vaults = [{"kind": "folder", "folder_id": ROOT, "paused": True}, {"kind": "folder", "folder_id": inner},
               {"kind": "folder", "folder_id": nest, "paused": True}]
     _announce(computer, _body(*vaults))           # the whole library first, as the computer lists them by age
-    assert _shown(owner, page["id"])[0]["vault"] == {"kind": "folder", "name": "Inner", "paused": False, "agent": None}
+    assert _shown(owner, page["id"])[0]["vault"] == {"kind": "folder", "name": "Inner", "paused": False, "work": False}
     _announce(computer, _body(*vaults, {"kind": "file", "page_id": page["id"], "paused": True}))
-    assert _shown(owner, page["id"])[0]["vault"] == {"kind": "file", "name": "CM nested paper", "paused": True, "agent": None}
+    assert _shown(owner, page["id"])[0]["vault"] == {"kind": "file", "name": "CM nested paper", "paused": True, "work": False}
 
     # its workspace deleted, a computer's row and its presence go in that transaction
     me = account_of("cptr_owner")
@@ -566,6 +609,71 @@ def test_the_channel_announces_this_computers_vaults_of_that_server_and_shows_it
     finally:
         with connect_vaults_db() as conn:
             conn.execute("DELETE FROM computer_agents")
+
+
+def test_a_server_answers_what_the_agents_ask_only_once_the_shell_lets_it_and_is_told(owner, stranger, host, monkeypatch):
+    """A link names its workspace as that server does and lets it answer
+    nothing to begin with (decision 7 of
+    docs/research/agents-as-participants-plan.md); turning that on takes the
+    shell's word and the link's maker, off the session alone, and the next
+    announce tells that server, which answers it with the account's
+    computers."""
+    ws = workspace_of("cptr_owner")
+    item = _mint(owner)
+    link = _link(owner, host, item, ws).json()["link"]
+    assert (link["asks"], link["workspace_name"]) == (False, workspaces.get(ws)["name"]) and link["workspace_name"]
+    turn = channel._Channel(link["id"])
+    turn.once()
+    assert _row(item["id"])["asks"] is False
+    assert [c["asks"] for c in owner.get("/api/computers").json()["computers"]] == [False]
+
+    path = f"/api/computer-links/{link['id']}"
+    r = owner.patch(path, json={"asks": True})
+    assert r.status_code == 403 and r.json()["detail"] == (
+        "Only the desktop app itself may let another server answer what this computer's agents ask.")
+    assert stranger.patch(path, json={"asks": True}, headers=SHELL).status_code == 404
+    assert owner.patch("/api/computer-links/none", json={"asks": True}, headers=SHELL).status_code == 404
+    from gamma import config
+
+    with monkeypatch.context() as m:                                    # a server started with no secret: never
+        m.setattr(config, "shell_secret", lambda: "")
+        assert owner.patch(path, json={"asks": True}).status_code == 403
+        assert owner.patch(path, json={"asks": False}).status_code == 200
+    r = owner.patch(path, json={"asks": True}, headers=SHELL)
+    assert r.status_code == 200 and r.json()["asks"] is True
+    assert owner.get("/api/computer-links").json()["links"][0]["asks"] is True
+    turn.once()
+    assert _row(item["id"])["asks"] is True
+    assert [c["asks"] for c in owner.get("/api/computers").json()["computers"]] == [True]
+    assert channel.state_of(channel.get(link["id"]))["asks"] is True
+
+    # off with the session alone; a new token for the link keeps what it was
+    assert owner.patch(path, json={"asks": False}).json()["asks"] is False
+    turn.once()
+    assert _row(item["id"])["asks"] is False
+    owner.patch(path, json={"asks": True}, headers=SHELL)
+    assert _link(owner, host, _mint(owner), ws).json()["link"]["asks"] is True
+
+    # an app that says nothing of it lets this server answer nothing
+    other = _mint(owner)
+    _announce(_as(other["token"]), {**_body(), "asks": None})
+    assert _row(other["id"])["asks"] is False
+    assert _as(other["token"]).post("/api/computers/announce", json={**_body(), "asks": "yes"}).status_code == 400
+
+
+def test_a_link_removed_stops_the_turns_of_that_server_and_takes_their_directories(owner, host, monkeypatch):
+    from gamma import config
+
+    ws = workspace_of("cptr_owner")
+    link = _link(owner, host, _mint(owner), ws).json()["link"]
+    own = config.AGENTS_DIR / link["id"] / "a-conversation"            # a far conversation's directory of its own
+    own.mkdir(parents=True)
+    (own / "notes.txt").write_text("kept here", encoding="utf-8")
+    stopped = []
+    monkeypatch.setattr(runner, "stop_channel", lambda link_id, why: stopped.append((link_id, why)))
+    assert owner.delete(f"/api/computer-links/{link['id']}", headers=SHELL).status_code == 200
+    assert stopped == [(link["id"], "unlinked")] and not (config.AGENTS_DIR / link["id"]).exists()
+    assert runner.STOPPED["unlinked"] == "Stopped: this computer no longer answers that server."
 
 
 def test_the_channel_says_refused_older_and_unreachable(owner, host):
@@ -802,10 +910,13 @@ def test_the_server_offers_the_agent_to_the_people_it_names_alone_and_no_longer_
     assert [(c["name"], c["lent_by"], [(a["name"], a["enabled"], a["runs"], a["people"]) for a in c["assistants"]])
             for c in listed] == [("TIM-PC", "cptr_owner", [("codex", True, "never", [])])]
     [shown] = _shown(theirs, page)
-    assert (shown["lent_by"], shown["vault"]["agent"]) == ("cptr_owner", {"name": "codex", "label": "Codex"})
+    assert (shown["lent_by"], shown["vault"]["work"], shown["dirs"]) == ("cptr_owner", True, [])
     far = chats.remote_of(ws, page, them)
     assert (far["user_id"], far["lent_by"], far["agent"]) == (me, "cptr_owner", "codex")
-    assert registry.agent_of(ws, w, them) is None                                 # never for the Sends
+    assert [s for s in registry.seats(ws, page, them) if not s["lent_by"]] == []    # none of their own
+    with connect_pages_db(ws) as conn:                                           # a lent agent: a synced folder's files alone
+        plain = create_page(conn, "plain", {}, actor=me, client=DISK_CLIENT)["id"]
+    assert chats.remote_of(ws, plain, them) is None and _shown(theirs, plain) == []
     lent = (them, "cm-computer-1", "cptr_owner")
     assert registry.names_of({lent}, ws) == {lent: "TIM-PC"}
     # named only by the owner kept with the comment, in its workspace
@@ -834,5 +945,5 @@ def test_the_server_offers_the_agent_to_the_people_it_names_alone_and_no_longer_
         reply = chats.get(conn, conversation_id)["messages"][-1]
         assert chats.run_of(conn, turn_id)["state"] == "failed"
     assert (reply["state"], reply["error"]) == (
-        "failed", "The owner of Codex on the computer that keeps this folder no longer lets you use it.")
+        "failed", "The owner of Codex on TIM-PC no longer lets you use it.")
     assert computer.get("/api/computers/chats").json()["turns"] == []

@@ -1,5 +1,6 @@
-"""Render the README stories recorded on take.mjs (the two AI demos, collaboration and the
-Notability import with ink) from their kept takes in artifacts/readme-media/<name>."""
+"""Render the README stories recorded on take.mjs (the two AI demos, the agent on your
+computer, collaboration and the Notability import with ink) from their kept takes in
+artifacts/readme-media/<name>."""
 import argparse
 
 from compose import Camera, FULL, Take, VH, VW, hold, publish_demo
@@ -296,8 +297,72 @@ def ink_import():
     return publish_demo('ink-import', cap, segments, camera, take.dir, loop_fade=0.4, motion_quality=34)
 
 
+def agent_collab():
+    """record-agent-collab.mjs: in a synced LaTeX folder, an empty section's
+    source commented for Codex on this computer, which writes it there; a
+    passage of the rebuilt PDF and a region of a figure commented too, the
+    figure masked in view; its answer on the source read from the Inbox, a
+    reply to its question resuming its session, and the footnote it adds."""
+    take = Take(SCRATCH / 'agent-collab')   # refuses a take whose checks failed
+    m = take.marks
+    p = 1.3   # pointer travel
+    k = 2     # typing, faster than the media guide's 1x, at the owner's ask
+    segments = [
+        # The section's source, empty, the folder's three files open as tabs:
+        # held so the eye finds it.
+        (m['start'] + 0.05, m['selectTex'] - 0.2),
+        # Its heading selected, its tip, Comment; the comment types; Send to
+        # Codex ticked and sent; its chip holds. Cut: Codex at work, until
+        # its section shows in the source, which holds (its answer comes
+        # after, read from the Inbox).
+        (m['selectTex'] - 0.2, m['typeMultihead'], p),
+        (m['typeMultihead'], m['typedMultihead'], k),
+        (m['typedMultihead'], m['sentMultihead'] + 0.6, p),
+        (m['sentMultihead'] + 0.6, m['sentMultihead'] + 1.4),
+        (m['texFilled'] - 0.15, m['texRead']),
+        # The notes' tab. Cut: its rebuilt PDF taken in. A passage selected,
+        # Comment, the comment, already for Codex, sent; its thread closes and
+        # the pointer leaves the text. Cut: Codex at work and the viewer's
+        # reload (a blank "Rendering page…"); the page dissolves into its
+        # build: (1) with sqrt(d_k), and the sentence why under it, held.
+        (m['toNotes'], m['openNotes'] + 0.05, p),
+        (m['notesShown'] - 0.4, m['typeScale'], p),
+        (m['typeScale'], m['typedScale'], k),
+        (m['typedScale'], m['scaleClosed'], p),
+        (m['pdfFixed'] + 0.1, m['pdfRead']),
+        # The figure's tab: a Ctrl+drag over the future tokens, its tip,
+        # Comment, the comment, sent.
+        (m['toFigure'], m['typeMask'], p),
+        (m['typeMask'], m['typedMask'], k),
+        (m['typedMask'], m['waitAgent'], p),
+        # Codex at work, at 3x: the figure turns masked in view, its answer
+        # lands in the thread, the Inbox counts to three.
+        (m['waitAgent'], m['agentDone'], 3),
+        # The figure's thread closes (a dissolve). The Inbox: three answers
+        # from "Codex on alex-laptop", held; the one on the source opens its
+        # thread there: it asks a question.
+        (m['toInbox'] - 0.2, m['inbox'], p),
+        (m['inbox'], m['toTexReply']),
+        (m['toTexReply'], m['question'], p),
+        (m['question'], m['toReply'] - 0.1),
+        # The reply, already for Codex as it spoke last; sent, "Codex is
+        # working" (its wait at 2.5x); its answer and "Resolved by Codex".
+        (m['toReply'] - 0.1, m['typeFootnote'], p),
+        (m['typeFootnote'], m['typedFootnote'], k),
+        (m['typedFootnote'], m['footnoteWorking'] + 0.6),
+        (m['footnoteWorking'] + 0.6, m['answered'], 2.5),
+        (m['answered'], m['answered'] + 1.4),
+        # Cut: the source reloaded under the popover; it closes on the
+        # footnote Codex added, which holds before the loop.
+        (m['closeAnswer'] - 0.3, m['end']),
+    ]
+    # The window at its recorded 130% interface size, the PDFs at their fit,
+    # from first frame to last: every beat reads whole at README width.
+    return publish_demo('agent-collab', take.capture, segments, Camera(FULL), take.dir)
+
+
 CASES = {'native-agentic': native_agentic, 'agentic-notes': agentic_notes,
-         'collab': collab, 'ink-import': ink_import}
+         'collab': collab, 'ink-import': ink_import, 'agent-collab': agent_collab}
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

@@ -4,7 +4,7 @@
 // across the pages too: a page's cards start under the last card of the
 // pages above (marginLayout.js stackCards, marginSlot.jsx
 // createMarginStack). A card at rest shows its thread's first comment,
-// clamped, with the chip of a Send waiting on it, and how many replies
+// clamped, with the chip of its agent's turn, and how many replies
 // follow; the active one is the whole thread as the popover draws it
 // (Thread.jsx), with its reply field.
 // A new comment opens as a card of its own, its field focused. A card

@@ -1,8 +1,9 @@
 """A stand-in for Codex CLI (gamma/local_agents/codex.py), standard library
 only: ``--version``, ``login status`` and ``app-server`` (initialize,
 initialized, windowsSandbox/readiness, model/list, config/read,
-thread/start, thread/resume, thread/name/set, turn/start, turn/steer,
-turn/interrupt; the item notifications, the approvals,
+thread/start, thread/resume, thread/name/set, thread/list, thread/read,
+thread/turns/list, turn/start, turn/steer, turn/interrupt; the item
+notifications, the approvals,
 serverRequest/resolved, the final agentMessage and its deltas, and
 turn/completed), as codex-cli 0.167.0 answers them.
 
@@ -13,12 +14,9 @@ key optional):
   the working directory; each is one fileChange item, the text replaced;
 - ``commands``: command lines reported as commandExecution items (exit 0,
   output ``ok``), none of them run;
-- ``answer``: the final message's JSON, whole; or ``each``: an outcome
-  (``fixed``) given to every ``"thread_id": "<id>"`` in the prompt, with
-  ``summary``;
-- ``chat``: the final message of a chat turn (a turn with no output schema
-  whose prompt carries a ``"message"``, gamma/local_agents/prompt.py
-  ``build_chat``), plain text; by default ``Done: <the message>``;
+- ``chat``: the final message of a turn, plain text; by default ``Done:
+  <the message>``, the ``"message"`` the prompt's JSON block carries
+  (gamma/local_agents/prompt.py ``build_chat``, ``build_thread``);
 - ``ask``: what a turn whose thread asked for ``approvalPolicy``
   ``on-request`` asks, in order: ``{"command", "reason"?, "host"?, "kind"?,
   "cwd"?}`` a command's approval (``kind`` the approval's, ``command`` by
@@ -38,8 +36,7 @@ key optional):
   default), ``typing`` seconds between two;
 - ``models``: what ``model/list`` lists (``MODELS`` by default, two a page);
 - ``fail``: ``exit`` (dies after turn/start, a line on stderr), ``garbage``
-  (lines that are not JSON, then exits), ``no_answer`` (a final message
-  that is not JSON), ``not_signed_in``, ``sandbox_not_ready``, ``hang``
+  (lines that are not JSON, then exits), ``not_signed_in``, ``sandbox_not_ready``, ``hang``
   (never ends its turn, ignores the interrupt; with ``grandchild`` it starts
   a child process that sleeps), ``approval`` (asks the methods in
   ``approvals``, the command approval by default, and records each
@@ -52,6 +49,18 @@ key optional):
   ``resume`` (thread/resume is an error: the thread is gone), ``name``
   (thread/name/set is an error: an older Codex), ``name_silent``
   (thread/name/set is never answered);
+- ``sessions``: the threads Codex keeps, as a person's terminal left them,
+  ``{"threads": [Thread], "busy": [id], "page": n}``: each ``Thread`` as
+  ``thread/list`` gives it (``id``, ``name``, ``preview``, ``cwd``,
+  ``source``, ``originator``, ``createdAt``, ``updatedAt``) with its
+  ``turns`` (``[{id, status, startedAt, completedAt, items}]``, the
+  items as ``thread/turns/list`` ``full`` gives them), listed by
+  ``thread/list`` (its ``cwd`` compared as the file system does, its
+  ``sourceKinds``, the most recently updated first, ``limit`` a page, at
+  most ``page`` (100), the next page's index the ``nextCursor``) and read by ``thread/read`` and
+  ``thread/turns/list``; a ``thread/resume`` of one in ``busy`` is refused
+  as Codex refuses a second writer (-32600 "already has an active
+  writer");
 - ``config``: what ``config/read``'s config holds beside its own server
   (``mcp_servers`` merged with it, the rest as given);
 - ``distinct``: each thread/start makes a thread of its own id (else every
@@ -68,7 +77,7 @@ key optional):
   ``failed`` when the variable is not set (or ``fail`` is ``gamma_down``);
 - ``turns``: ``{message: {keys}}``, a chat turn of that message scripted
   by those keys in place of the others' (``gamma``, ``edits``,
-  ``commands``, ``chat``, ``delay``, ``typing``);
+  ``commands``, ``chat``, ``ask``, ``delay``, ``typing``);
 - ``log``: a file receiving one JSON line per thing seen: ``{"argv",
   "cwd", "env"}`` (the GAMMA_* and agent-session variable names it got),
   ``{"in": message}``, ``{"answer": message}`` (to a request it made),
@@ -173,6 +182,34 @@ def chunks(text: str) -> list[str]:
     return FAKE.get("deltas") or re.findall(r"\s*\S+", text) or [text]
 
 
+def _sessions() -> dict:
+    return FAKE.get("sessions") or {}
+
+
+def _kept(thread_id: str) -> dict | None:
+    return next((t for t in _sessions().get("threads") or [] if t.get("id") == thread_id), None)
+
+
+def _same_dir(a: str, b: str) -> bool:
+    return bool(a and b) and os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def _listed(params: dict) -> dict:
+    """thread/list of the kept threads: their cwd, their source kinds, the
+    newest first, a page of ``limit``."""
+    cwds = params.get("cwd")
+    cwds = [cwds] if isinstance(cwds, str) else cwds or []
+    kinds = params.get("sourceKinds") or ["cli", "vscode"]
+    found = [t for t in _sessions().get("threads") or []
+             if t.get("source") in kinds and (not cwds or any(_same_dir(t.get("cwd", ""), c) for c in cwds))]
+    found.sort(key=lambda t: t.get("updatedAt") or 0, reverse=True)
+    start, limit = int(params.get("cursor") or 0), min(int(params.get("limit") or 25), _sessions().get("page") or 100)
+    page = [{k: v for k, v in t.items() if k != "turns"} | {"turns": [], "status": {"type": "notLoaded"}}
+            for t in found[start:start + limit]]
+    more = start + limit < len(found)
+    return {"data": page, "nextCursor": str(start + limit) if more else None, "backwardsCursor": None}
+
+
 def handle(message: dict) -> None:
     method, request_id, params = message.get("method"), message.get("id"), message.get("params") or {}
     if method is None or request_id is None:
@@ -197,6 +234,24 @@ def handle(message: dict) -> None:
         config = {"web_search": "live", **given,
                   "mcp_servers": {SERVER: {"command": "fake-mcp"}, **(given.get("mcp_servers") or {})}}
         send({"id": request_id, "result": {"config": config, "origins": {}}})
+    elif method == "thread/list":
+        send({"id": request_id, "result": _listed(params)})
+    elif method in ("thread/read", "thread/turns/list") and _kept(params.get("threadId")) is None:
+        send({"id": request_id, "error": {"code": -32600, "message": f"no rollout found for thread id "
+                                                                     f"{params.get('threadId')}"}})
+    elif method == "thread/read":
+        kept = _kept(params["threadId"])
+        send({"id": request_id, "result": {"thread": {k: v for k, v in kept.items() if k != "turns"}
+                                            | {"turns": [], "status": {"type": "notLoaded"}}}})
+    elif method == "thread/turns/list":
+        turns = list(_kept(params["threadId"]).get("turns") or [])
+        if params.get("sortDirection") != "asc":
+            turns.reverse()
+        send({"id": request_id, "result": {"data": turns[:int(params.get("limit") or 25)], "nextCursor": None,
+                                            "backwardsCursor": None}})
+    elif method == "thread/resume" and params.get("threadId") in (_sessions().get("busy") or []):
+        send({"id": request_id, "error": {"code": -32600, "message": f"thread {params['threadId']} already has an "
+                                                                     "active writer"}})
     elif method == "thread/resume" and FAIL == "resume":
         send({"id": request_id, "error": {"code": -32600, "message": f"no rollout found for thread id "
                                                                      f"{params.get('threadId')}"}})
@@ -251,10 +306,10 @@ def prompt_of(params: dict) -> str:
     return "\n".join(part.get("text", "") for part in params.get("input") or [] if part.get("type") == "text")
 
 
-def chat_message(prompt: str) -> str | None:
-    """The person's message of a chat turn's prompt, None for a Send's."""
+def chat_message(prompt: str) -> str:
+    """The person's message the turn's prompt carries, "" for none."""
     found = re.search(r'"message":\s*("(?:[^"\\]|\\.)*")', prompt)
-    return json.loads(found.group(1)) if found else None
+    return json.loads(found.group(1)) if found else ""
 
 
 def chat_block(prompt: str) -> dict:
@@ -288,18 +343,10 @@ def script_of(prompt: str) -> dict:
     return {**FAKE, **((FAKE.get("turns") or {}).get(chat_message(prompt)) or {})}
 
 
-def answer_text(prompt: str, schema=None, script: dict = FAKE, said: str = "") -> str:
-    message = chat_message(prompt) if schema is None else None
-    if message is not None:
-        return (script.get("chat") or f"Done: {message}").replace("{gamma}", said)
-    if FAIL == "no_answer":
-        return "I looked at the comments but have nothing to say in JSON."
-    if "answer" in FAKE:
-        return json.dumps(FAKE["answer"])
-    outcome = FAKE.get("each", "fixed")
-    ids = list(dict.fromkeys(re.findall(r'"thread_id":\s*"([^"]+)"', prompt)))
-    return json.dumps({"answers": [{"thread_id": t, "outcome": outcome, "reply": f"Done for {t}."} for t in ids],
-                       "summary": FAKE.get("summary", "Fixed the comments.")})
+def answer_text(prompt: str, script: dict = FAKE, said: str = "") -> str:
+    """The turn's final message (``chat``), ``{gamma}`` in it the text the
+    last call of Gamma's tools gave back."""
+    return (script.get("chat") or f"Done: {chat_message(prompt)}").replace("{gamma}", said)
 
 
 def item(method: str, thread: str, body: dict) -> None:
@@ -430,7 +477,7 @@ def run_turn() -> None:
         item("item/started", thread, body)
         item("item/completed", thread, {**body, "status": "completed", "aggregatedOutput": "ok\n", "exitCode": 0})
     decisions = []
-    for n, asked in enumerate((FAKE.get("ask") or []) if state["policy"] == "on-request" else []):
+    for n, asked in enumerate((script.get("ask") or []) if state["policy"] == "on-request" else []):
         decision = ask_one(thread, n, asked, cwd)
         if decision is None or decision == "cancel":
             complete(thread, "interrupted")
@@ -450,7 +497,7 @@ def run_turn() -> None:
     if state["interrupted"]:
         complete(thread, "interrupted")
         return
-    text = answer_text(prompt_of(params), params.get("outputSchema"), script, said)
+    text = answer_text(prompt_of(params), script, said)
     if decisions and not script.get("chat"):
         text = "Ran it." if decisions[-1] in ("accept", "acceptForSession") else "Did not run it."
     item("item/started", thread, {"type": "agentMessage", "id": "am0", "text": ""})

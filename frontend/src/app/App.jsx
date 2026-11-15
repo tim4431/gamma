@@ -7,6 +7,7 @@ import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf,
 import PdfViewer, { openPdfDocument, preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { penSelecting } from "../pdf/penSelect.js";
+import { pageInMiddle, pageLanded } from "../pdf/pageLayout.js";
 import { addTerm, briefRequest, chunkRequest, endTranslations, forgetTranslation, lookupRequest, useTranslateJobs } from "./translateClient.js";
 import { createRecall, langOfKey, modelOfKey, openKey } from "../pdf/translateRecall.js";
 import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from "../pdf/translateState.js";
@@ -85,7 +86,7 @@ import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
-  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
+  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitPageIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
@@ -245,10 +246,10 @@ import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
-import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
+import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, showsOnDisk, vaultConflictsPath } from "../vault/vaultState.js";
 import { chatAgents, commentAgents } from "../chat/agents.js";
 import { useLocalAgents } from "../chat/useLocalAgents.js";
-import { showThreadChat } from "../chat/computer/chatSide.js";
+import { showInChat } from "../chat/computer/chatSide.js";
 import { hopTarget, lockedRow, touchesLocked } from "../vault/notesLock.js";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
@@ -307,10 +308,8 @@ import { useFolderTree } from "../explorer/useFolderTree.js";
 import { useSummaries } from "../explorer/useSummaries.js";
 import { layoutKeeping, useFilesWindow } from "../explorer/useFilesWindow.js";
 import { useFilesTree } from "../explorer/useFilesTree.js";
-import { fileCrumbs } from "../explorer/workPaths.js";
+import { fileCrumbs, inKeptFolder, revealPath } from "../explorer/workPaths.js";
 import { PathLinkContext } from "../editor/pathLinkContext.js";
-import FeedbackHost from "../feedback/FeedbackHost.jsx";
-import { openFeedback } from "../feedback/useFeedback.js";
 import { documentView, viewerOf } from "../documents/documentView.js";
 import { VIEWERS } from "../documents/viewers.js";
 import DocumentPane, { preloadViewer } from "../documents/DocumentPane.jsx";
@@ -1409,6 +1408,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!id) return;
     clearSelection();
     openBlock(id, { restoreScroll: true, block });
+  }
+
+  // A tab's Go to folder: home, on the directory `dir` of the synced
+  // folder's file `id`, which the folder view pages to, scrolls to and
+  // selects (useFolderTree showFile; the selection effect below keeps it
+  // through the folder's change).
+  function goToFile(id, dir) {
+    pushNav();
+    goHome();
+    openFolder(dir);
+    folderTree.showFile(dir, id);
+    setSelectedPages(new Set([id]));
   }
 
   // Container (folder or label) single-click selects, Ctrl/Cmd toggles within
@@ -2998,7 +3009,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return {
       pageId, title: openTabs.find((tab) => tab.id === pageId)?.title,
       overlay: (id, children) => collabRef.current.overlay(id, children),
-      scroll: tabScrollRef.current[pageId], startPage: readPosRef.current[pageId]?.page || 0,
+      scroll: inThisFlow(tabScrollRef.current[pageId]) ? tabScrollRef.current[pageId] : undefined, startPage: readPosRef.current[pageId]?.page || 0,
       zoom: saved?.pdfScale || pdfScale, pdfHidden: !!saved?.pdfHidden, notebookView: nbViewPages.has(pageId),
       notesPlace: notesPlaceRef.current[pageId], shared: paneShared,
       onScroll: paneScroll, onZoom: paneZoom, onNotesPlace: paneNotesPlace,
@@ -3086,7 +3097,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
     const ratio = (scale || pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1);
     const targetTop = p.entry.top * ratio;
-    if (scroller && scroller.scrollHeight > targetTop) {
+    // laid out far enough down, and across (pages that run across)
+    if (scroller && scroller.scrollHeight > targetTop && scroller.scrollWidth > (p.entry.left || 0) * ratio) {
       // and across, when it was kept (a zoom wider than the viewer)
       scroller.scrollTo({ top: targetTop, ...(p.entry.left != null ? { left: p.entry.left * ratio } : null), behavior: "instant" });
       pendingRestoreRef.current = null;
@@ -3356,7 +3368,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     language, setLanguage,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal, openAddsToLibrary, setOpenAddsToLibrary,
-    embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
+    embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel, pdfFlow, setPdfFlow,
     inkPenOnly, setInkPenOnly, inkPenWritesPdf, setInkPenWritesPdf, inkPressure, setInkPressure,
     inkFingerUndo, setInkFingerUndo, inkDrawHold, setInkDrawHold, inkScribbleErase, setInkScribbleErase,
     inkEraserReturn, setInkEraserReturn, inkEraserFilter, setInkEraserFilter,
@@ -4914,9 +4926,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const vaultConflicts = vaultConflictsPath(vaultState);
   const vaultConflictCount = vaultState?.vault?.conflicts || 0;
   // The agents the chat talks to (chat/agents.js chatAgents): Gamma AI, the
-  // agents this computer runs that the account turned on (GET
-  // /api/local-agents, chat/useLocalAgents.js), or on a page of a work
-  // folder another computer keeps, that computer's. The comment fields'
+  // agents of the account's computers shown to the page's server (the
+  // page's computers, those that keep its work folder first), and the agents
+  // this computer runs that the account turned on (GET /api/local-agents,
+  // chat/useLocalAgents.js). The comment fields'
   // `links.agents` are those a comment on the page can be sent to (its
   // Send to tick and `@codex`, commentAgents: the chat's computer agents,
   // "Codex on TIM-PC" or this computer's), never MentionContext, which
@@ -5294,9 +5307,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // phone's PDF tab (showInNotes), so the note it is about shows under it.
   // A thread's Open in chat (comments/Thread.jsx): its page's chat on the
   // reader's conversation of the thread with its agent
-  // (chat/computer/chatSide.js showThreadChat), where its asks are answered.
+  // (chat/computer/chatSide.js showInChat), where its asks are answered.
   function openThreadChat(thread) {
-    showThreadChat(thread.page_id, thread.id, thread.agent_chat?.agent || "");
+    showInChat(thread.page_id, { thread: thread.id }, thread.agent_chat?.agent_id || thread.agent_chat?.agent || "");
     if (thread.page_id === focusedBlockId) showChat();
     else openBlock(thread.page_id, { then: "ask" });
   }
@@ -7111,6 +7124,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // were, not just to the same page. blockId -> {top, scale}, or for a page
   // with sheets {place} (notebook/sheetPlace.js), whichever view shows them.
   const tabScrollRef = useRef({});
+  // A PDF's exact place is measured in the layout its pages ran in (`flow`,
+  // Settings → Reading › PDFs › Page direction): once they run the other
+  // way it is no place, and the page falls back to its last-read page (the
+  // open one's viewer keeps its page itself). Its notebook {place} is any.
+  const inThisFlow = (entry) => !!entry && (entry.top == null || (entry.flow || "down") === pdfFlow);
   // The press a view of a page handed over as it made its group live
   // (PagePane's {edit: {id, clickPos}}): the editor of that note opening
   // on the page takes it (BlockTree's takeClickPos), so the caret lands
@@ -7227,7 +7245,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!pdfUrl || pdfRenderedUrlRef.current !== pdfUrl) return;
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
     if (focusedBlockId && scroller) {
-      tabScrollRef.current[focusedBlockId] = { top: scroller.scrollTop, left: scroller.scrollLeft, scale: pdfEffScale };
+      tabScrollRef.current[focusedBlockId] = { top: scroller.scrollTop, left: scroller.scrollLeft, scale: pdfEffScale, flow: pdfFlow };
     }
   }
   function cancelPdfRestore() {
@@ -7261,7 +7279,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // stable for two ticks (pages get real heights asynchronously). The jump
   // itself is instant, after the new document is visible.
   function restorePdfScroll(entry, blockId, targetUrl) {
-    if (entry?.top == null || !targetUrl) return;
+    if (entry?.top == null || !targetUrl || !inThisFlow(entry)) return;
     dbg("exact restore: pending for", blockId, "top", Math.round(entry.top));
     const token = ++restoreTokenRef.current;
     restoringForRef.current = blockId || null;
@@ -7270,23 +7288,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // fallback (already-rendered documents, layout not tall enough yet).
     pendingRestoreRef.current = { url: targetUrl, entry, blockId, token };
     let tries = 0;
-    let lastH = -1;
+    let lastH = "";
     const finish = () => { if (restoringForRef.current === blockId) restoringForRef.current = null; };
     const tryScroll = () => {
       if (restoreTokenRef.current !== token) { dbg("exact restore: superseded by navigation"); return; }
       if (pdfRenderedUrlRef.current === targetUrl) {
         const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
-        const h = scroller ? scroller.scrollHeight : 0;
+        const h = scroller ? scroller.scrollHeight : 0, w = scroller ? scroller.scrollWidth : 0;
         const ratio = (pdfEffScaleRef.current || entry.scale || 1) / (entry.scale || 1);
         const targetTop = entry.top * ratio;
-        if (scroller && h > targetTop && h === lastH) {
+        // the extent both ways, which pages that run across grow sideways
+        const extent = `${w}x${h}`;
+        if (scroller && h > targetTop && w > (entry.left || 0) * ratio && extent === lastH) {
           scroller.scrollTo({ top: targetTop, ...(entry.left != null ? { left: entry.left * ratio } : null), behavior: "instant" });
           pendingRestoreRef.current = null;
           dbg("exact restore: applied, top", Math.round(targetTop));
           finish();
           return;
         }
-        lastH = h;
+        lastH = extent;
         // Only the settle-after-render window is budgeted; waiting for the
         // document itself is uncounted (same reasoning as the coarse
         // restore: a big PDF on a slow load outlives any fixed budget, and
@@ -7313,7 +7333,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       blockId: focusedBlockId || null,
       folder: folderFilter,
       top: scroller ? scroller.scrollTop : null,
+      left: scroller ? scroller.scrollLeft : null,
       scale: pdfEffScale,
+      flow: pdfFlow,
       place: ownPane ? tabScrollRef.current[focusedBlockId] || null : null,
     };
   }
@@ -8219,6 +8241,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // pane's word for the View menu and the phone tab ("PDF" before a PDF has
   // its address).
   const ownPane = !!docView.viewer && !docView.spec?.host;
+  // A PDF whose pages run across (Settings → Reading › PDFs › Page
+  // direction) fits a whole page into the viewer, not its width.
+  const fitsPage = pdfFlow === "across" && docView.viewer === "pdf" && !docView.notebook;
   const paneWord = docView.spec ? t(docView.spec.word) : "PDF";
 
   // --- Handwriting ----------------------------------------------------------
@@ -8395,7 +8420,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const position = tb || pic ? { pageNumber: b.properties.pdf_page } : b.properties.pdf_position;
     const wasHidden = pdfHidden;
     if (wasHidden) setPdfHidden(false);
-    setTimeout(() => scrollToRef.current?.({ position, box: tb || (pic ? { y: box[1] } : undefined), offset: 120 }), wasHidden ? 300 : 0);
+    setTimeout(() => scrollToRef.current?.({ position, box: tb || (pic ? { x: box[0], y: box[1] } : undefined), offset: 120 }), wasHidden ? 300 : 0);
     flash();
   }
   function showInNotes(id) {
@@ -8821,7 +8846,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function zoomTo(next) {
     if (next === "page-width") {
       setPdfScale("page-width");
-      postPill("pdf-zoom", { msg: t("Fit to width"), final: true });
+      postPill("pdf-zoom", { msg: fitsPage ? t("Fit page") : t("Fit to width"), final: true });
       return;
     }
     const s = clampZoom(next);
@@ -9658,8 +9683,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
-  // Leaving home or changing folders drops the file-manager selection.
-  useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, labelFilter, homeMode]);
+  // Leaving home or changing folders drops the file-manager selection; a
+  // folder opened by a tab's Go to folder lands with its file selected
+  // (goToFile, the folder view's reveal).
+  useEffect(() => {
+    clearSelection();
+    setHomeMenu(null);
+    const shown = folderTree.reveal;
+    if (homeMode && shown && shown.dir === folderFilter && !labelFilter) setSelectedPages(new Set([shown.pageId]));
+  }, [folderFilter, labelFilter, homeMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // A folder or label the view names that the listing's trees lack (deleted
   // on another device, a stale link, a folder= a share does not reach): the
   // view goes back to the library's root, a share's to its folder.
@@ -10367,7 +10399,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const fid = focusedBlockIdRef.current;
     // Tab switches restore an exact per-page position (tabScrollRef) — the
     // coarse last-read page is only for (re)opening a paper cold.
-    if (tabScrollRef.current[fid]) { dbg("restore: exact tab position exists for", fid); return; }
+    if (inThisFlow(tabScrollRef.current[fid])) { dbg("restore: exact tab position exists for", fid); return; }
     dbg("restore: waiting for doc;", fid, "entry:", readPosRef.current[fid] || null);
     coarseRestorePendingRef.current = true;
     let cancelled = false;
@@ -10414,9 +10446,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // computed before the fit-width scale applies, and late page-height
       // measurements shift the layout under the set scrollTop, either of
       // which leaves the viewport a page off. So verify against the live
-      // DOM: the target page's top must sit at the viewport top (+80px, the
-      // viewer's own jump offset), re-asserting until that holds for two
-      // ticks. Real user input (wheel/touch/scrollbar grab) hands control
+      // DOM: the target page must stand where the viewer's own jump puts it
+      // (its top 80px under the viewport top, or across, its left edge 80px
+      // in or the page in the middle; pageLanded), re-asserting until that
+      // holds for two ticks. Real user input (wheel/touch/scrollbar grab) hands control
       // over instead of being fought, and the tracker stays paused until
       // done(), so no transient position is ever recorded.
       let stable = 0, settleTries = 0, userTookOver = false, inputEl = null;
@@ -10436,15 +10469,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           inputEl = scroller;
           for (const ev of INPUT_EVS) inputEl.addEventListener(ev, onUserInput, { passive: true });
         }
+        // A page near the end of the document can't reach its place — the
+        // clamped end-of-document position is as good as it gets.
         const pageEl = scroller.querySelector(`[data-page="${saved}"]`);
-        const off = pageEl
-          ? pageEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-          : null;
-        // A page near the end of the document can't reach the viewport top —
-        // the clamped bottom-of-document position is as good as it gets.
-        const atEnd = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
-        const aligned = off != null && (Math.abs(off - 80) <= 150 || (atEnd && off <= 80));
-        if (aligned) {
+        if (pageEl && pageLanded(scroller, pageEl)) {
           if (++stable >= 2) { dbg("restore: settled at page", saved); unhookInput(); done(); return; }
         } else {
           stable = 0;
@@ -10478,19 +10506,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (!target.isConnected) return;
         const pages = target.querySelectorAll('[data-page]');
         if (pages.length === 0) return;
-        const cr = target.getBoundingClientRect();
-        const midY = cr.top + cr.height / 2;
-        // The pages are stacked top to bottom: a binary search over their
-        // boxes finds the one under the middle of the view in a few layout
-        // reads instead of one per page above it.
-        let lo = 0, hi = pages.length - 1, found = null;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          const r = pages[mid].getBoundingClientRect();
-          if (r.bottom < midY) lo = mid + 1;
-          else if (r.top > midY) hi = mid - 1;
-          else { found = pages[mid]; break; }
-        }
+        // the page under the middle of the view, down or across
+        const found = pageInMiddle(target, pages);
         const n = found ? parseInt(found.dataset.page) : 0;
         if (!n) return;
         // Every scroll records, within one page too: that re-asserts this
@@ -10541,10 +10558,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   paneFnsRef.current = { onFetchRefs, onCacheRef };
   const paneShared = useMemo(() => ({
     refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages: pageBlocks,
-    textScaleStyle: notesTextScale.style, darkPage: pdfDarkPage, hideEmbeddedAnnots: embAnnots === "hide",
+    textScaleStyle: notesTextScale.style, darkPage: pdfDarkPage, hideEmbeddedAnnots: embAnnots === "hide", pageFlow: pdfFlow,
     canWrite: !readOnly, labels: !shareMode,
     onFetchRefs: (...a) => paneFnsRef.current.onFetchRefs(...a), onCacheRef: (...a) => paneFnsRef.current.onCacheRef(...a),
-  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, readOnly, shareMode]);
+  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, pdfFlow, readOnly, shareMode]);
 
   // A share link that can't open yet: sign in (signed-in / specific-people
   // shares), or explain why not. "signin" is the blocked page's own sign-in,
@@ -11182,8 +11199,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     setOpenPopover(v ? "vault" : null);
                   }}
                   onReveal={() => askShell("reveal-on-disk", { page: focusedBlockId })}
-                  onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip}
-                  onFeedback={work.chip.file && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined} />
+                  onEdit={() => vault.setEditing(focusedBlockId)} {...work.chip} />
                 {/* a work folder's file has a record only once it is in the library */}
                 {(isPdf(doc) || pageMeta) && (!focusedFile || openInLibrary) ? (
                   <span data-popover="meta" className="popoverAnchor">
@@ -11664,11 +11680,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   />
                 )}
                 {workFolder ? null : <ViewToggle view={homeView} onChange={changeHomeView} />}
-                {/* the work folder's feedback: this directory's open comments, to read or send to an agent (feedback/) */}
-                {workFolder && lib.organize ? (
-                  <button type="button" className="uiBtn sm" title={t("The open comments on this folder's files, to read or send to an agent")}
-                    onClick={() => openFeedback({ kind: "folder", id: folderFilter })}>{t("Feedback")}</button>
-                ) : null}
                 {selecting ? (
                   <>
                     <span className="homeSelectCount">{t("{n} selected", { n: selectionCount })}</span>
@@ -12651,8 +12662,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onStatus={setStatus}
             // what a thread is on: a highlight's quote, else the note's text, else the handwriting's page
             anchorText={(id) => anchorWords(treeById.get(id))}
-            // on a work folder's file, for a member who may edit: the feedback view (feedback/)
-            onFeedback={focusedFile && canWriteWorkspace ? () => openFeedback({ kind: "file", id: focusedBlockId }) : undefined}
             labelOf={(id) => { const rb = treeById.get(id) || refCache[id]; return rb ? refLabelOf(rb) : null; }}
             onOpen={(thread) => {
               if (isPhone) { setNotesVisible(true); setPhonePanel("notes"); }
@@ -13541,7 +13550,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
   const toolsMore = docView.shown && stripMenuTools.length > 0;
   // Each tool's button on the strip, by id: zoom is its three buttons,
-  // kept together (the tour points at them).
+  // kept together (the tour points at them). Its fit is the width's, or a
+  // whole page's while a PDF's pages run across (PdfViewer's fitScale).
+  const FitIcon = fitsPage ? FitPageIcon : FitWidthIcon;
+  const fitLabel = fitsPage ? t("Fit page") : t("Fit to width");
   const viewerTool = {
     zoom: () => (
       <div className="pdfCtlGroup" data-guide="viewer.zoom">
@@ -13551,8 +13563,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
           <ZoomInIcon size={16} />
         </button>
-        <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
-          <FitWidthIcon size={16} />
+        <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={fitLabel} aria-label={fitLabel}>
+          <FitIcon size={16} />
         </button>
       </div>
     ),
@@ -13658,7 +13670,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     zoom: () => [
       <MenuItem key="zoomOut" icon={ZoomOutIcon} onClick={stripRow(() => zoomStep(-1))}>{t("Zoom out")}</MenuItem>,
       <MenuItem key="zoomIn" icon={ZoomInIcon} onClick={stripRow(() => zoomStep(1))}>{t("Zoom in")}</MenuItem>,
-      <MenuItem key="fit" icon={FitWidthIcon} onClick={stripRow(() => zoomTo("page-width"))}>{t("Fit to width")}</MenuItem>,
+      <MenuItem key="fit" icon={FitIcon} onClick={stripRow(() => zoomTo("page-width"))}>{fitLabel}</MenuItem>,
     ],
     ink: () => <MenuItem key="ink" icon={PenIcon} onClick={stripRow(openInkTools)}>{t("Handwriting tools")}</MenuItem>,
     record: () => (
@@ -14164,6 +14176,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               citation={pageTarget?.kind === "citation" && pageTarget.pageId === focusedBlockId ? pageTarget : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
               smoothWheel={smoothWheel}
+              pageFlow={pdfFlow}
               onPageInView={onPageInView}
               zoomHeight={appPrefs.inkZoomHeight} onZoomHeight={appPrefs.setInkZoomHeight} onZoomChange={changeInkZoom}
               darkPage={pdfDarkPage}
@@ -14525,8 +14538,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <DetachDialog {...work.detachDialog} />
         </LazyBoundary>
       ) : null}
-      {/* the feedback view, while an opener (the list bar, the Comments window, the vault chip) has it open */}
-      <FeedbackHost me={authUser?.user || ""} canSend={canWriteWorkspace} links={vault.links} onOpenThread={openThreadAt} />
       {vault.tracking ? (
         <LazyBoundary>
           <TrackDialog link={vault.tracking.link} fresh={vault.tracking.fresh} tick={vault.tracking.tick} setStatus={setStatus}
@@ -14670,6 +14681,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setEmbAnnots,
           smoothWheel,
           setSmoothWheel,
+          pdfFlow,
+          setPdfFlow,
           // the server's relocate-highlights run reads these from the profile
           relocateMinMatch: appPrefs.relocateMinMatch,
           setRelocateMinMatch: appPrefs.setRelocateMinMatch,
@@ -14930,6 +14943,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // one of them (fileRules): it has its library rows instead.
         const inside = !!pagesById.get(tabMenu.id)?._parentPage;
         const tabFile = work.fileOf(tabMenu.id);
+        // Show in folder, as the page chip's: in the desktop app, for a page
+        // this computer keeps on disk — the open page by what its chip read,
+        // any other by its row: in a synced folder whose vault this account
+        // made here, or a file opened from it. The shell finds the file.
+        const onDisk = IS_DESKTOP && (tabMenu.id === focusedBlockId && showsOnDisk(vaultState) || openedFile(tabMenu.id)
+          || inKeptFolder(libTree, pagesById.get(tabMenu.id), work.linkOf));
+        // Go to folder: a synced folder's file, its directory opened in the
+        // folder view with the file selected (goToFile), in any window.
+        const tabDir = tabFile ? revealPath(libTree, tabFile).at(-1) || "" : "";
         return (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>
           <MenuItem icon={PinIcon} onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
@@ -14943,6 +14965,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClick={() => { setTabMenu(null); openProps(tabMenu.id, null, { at: { x: tabMenu.x, y: tabMenu.y } }); }}>
             {t("Page properties")}
           </MenuItem>
+          {tabDir ? (
+            <MenuItem icon={FolderIcon} title={t("Open the folder “{name}” in Gamma, with this file selected",
+              { name: libTree.folders.get(tabDir)?.name || t("Untitled") })}
+              onClick={() => { setTabMenu(null); goToFile(tabMenu.id, tabDir); }}>{t("Go to folder")}</MenuItem>
+          ) : null}
+          {onDisk ? (
+            <MenuItem icon={FolderOpenIcon} title={t("Show the file in this computer's file manager")}
+              onClick={() => { setTabMenu(null); askShell("reveal-on-disk", { page: tabMenu.id }); }}>{t("Show in folder")}</MenuItem>
+          ) : null}
           {!isPhone ? (
             // Tab groups (docs/dev/tab_groups.md): one group splits once, this
             // tab into a pane of its own on the right (the only tab of the

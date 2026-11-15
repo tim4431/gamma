@@ -8,7 +8,6 @@ agent at the terminal reads them with no connection to Gamma.
       open.json           the open threads and the bare highlights (entries.document), 2-space JSON
       open.md             the same as Markdown (markdown.render, pictures="files")
       img/<key>.jpg       the regions' pictures, write-once by key (pictures.cached)
-      requests/<id>.json  one per Send (requests.document_of), its pictures as ../img/<key>.jpg
 
     <the file's directory>/.gamma/annotations/<file name>/
       .gitignore, open.json, open.md, img/   the same, for the one page the vault of one file follows
@@ -21,10 +20,10 @@ writes them under the link's lock, which the caller holds: at every whole
 round of a work folder (``folder_links._vault_round``) or a vault of one
 file (``_file_round``) and, between rounds, within a hot pass of a change
 (``folder_links.hot_tick``). A comment write or an op commit marks its page
-(``mark``; gamma/annotations/listeners.py), a request's write its work
-folder (``mark_folder``); ``due`` resolves the marked pages to what writes
-them in one query a workspace (the pages' ``work_folder`` column, and the
-vaults of one file of this server that follow them) and names the scopes
+(``mark``; gamma/annotations/listeners.py); ``due`` resolves the marked
+pages to what writes them in one query a workspace (the pages'
+``work_folder`` column, and the vaults of one file of this server that
+follow them) and names the scopes
 (a work folder, a followed page) marked ``HOT_S`` ago or more and not
 since, so a burst of writes is one pass; ``settle`` drops a mark a pass
 covered unless a newer came.
@@ -41,14 +40,14 @@ Either way at most ``PICTURES_PER_WRITE`` pictures a pass (a picture not
 there yet is null in that pass's document; the next pass fills it), each
 file written only when its bytes differ (``vault_disk.write_own``; a replace
 a reader holds on Windows is left for the next pass and is no error of the
-vault's). A work folder of this server also rewrites the request files an
-answer still changes or whose pictures were not drawn when they were
-written. Then ``img/`` is pruned of what no file names and Gamma's own
+vault's). Then ``img/`` is pruned of what no file names and Gamma's own
 stale temporary files are swept, which the vault's scan never meets (it
-never enters a dot directory), and a work folder's ``.gamma/feedback/``,
-where its files were before (``FORMER``), goes. A paused or choosing vault
-writes nothing between rounds (``hot_tick`` drops its mark; its next whole
-round writes). ``remove`` takes the files away when the vault goes, stops
+never enters a dot directory), and what a work folder held before goes
+(``FORMER``): ``.gamma/feedback/``, where its files were until step 3.2 of
+docs/research/agents-as-participants-plan.md, and the Sends' request files
+in ``.gamma/annotations/requests/``, until step 3.7, each deleted directly
+and never through a link. A paused or choosing vault writes nothing between
+rounds (``hot_tick`` drops its mark; its next whole round writes). ``remove`` takes the files away when the vault goes, stops
 being a work folder or follows its file elsewhere: they are Gamma's own and
 regenerable, deleted directly, never through the trash. Errors are caught
 into the summary (``{"open": n, "error": why}``) and logged once per change
@@ -67,24 +66,22 @@ from .. import gamma_sync
 from ..vault import disk as vault_disk, store as vault_store
 from ..db import account_names, connect_pages_db, connect_users_db
 from ..logbuf import log
-from . import entries, kept, markdown, pictures, requests
+from . import entries, kept, markdown, pictures
 from .entries import AnnotationError
 
 DIR = f"{vault_disk.MARKER_DIR}/annotations"
 IMG = f"{DIR}/img"
-REQUESTS = f"{DIR}/requests"
-FORMER = f"{vault_disk.MARKER_DIR}/feedback"   # a work folder's files before step 3.2: removed at its rounds
+# What a work folder's directory held before, removed at its rounds: its files before step 3.2, the Sends' request
+# files before step 3.7.
+FORMER = (f"{vault_disk.MARKER_DIR}/feedback", f"{DIR}/requests")
 GITIGNORE = b"*\n"
 JPEG = b"\xff\xd8\xff"
 PICTURES_PER_WRITE = 20     # pictures drawn in one pass; the rest wait for the next
 MAX_PICTURE = 16 << 20      # bytes of one picture fetched from another server
-REQUEST_FILES = 100         # request files kept; an older one goes once its request is done, failed or gone
-LIVE = ("sent", "running")  # the states of a request an answer still changes: its file is read again each pass
 DOCUMENT = ("format", "workspace", "work_folder", "scope", "owner", "state", "updated_at", "count", "truncated",
             "truncated_threads", "answer", "entries")   # a document's fields: what another server's answer is cut to
 _PICTURE_RE = re.compile(r"^([0-9a-f]{16})\.jpg$")
 _KEY_RE = re.compile(r"[0-9a-f]{16}")
-_REQUEST_RE = re.compile(r"^([A-Za-z0-9_-]{1,64})\.json$")
 
 _pages: dict[tuple[str, str], float] = {}    # (workspace, page id) -> when it was marked (monotonic)
 _scopes: dict[tuple[str, str], float] = {}   # (workspace, W or a followed page) -> when it was last marked
@@ -101,12 +98,6 @@ def mark(ws: str, page_id: str) -> None:
     nothing."""
     with _guard:
         _pages[(ws, page_id)] = time.monotonic()
-
-
-def mark_folder(ws: str, w: str) -> None:
-    """A request of the work folder ``w`` changed: its files are due."""
-    with _guard:
-        _scopes[(ws, w)] = time.monotonic()
 
 
 def due(min_age_s: float) -> list[tuple[str, str]]:
@@ -188,35 +179,29 @@ def write(link: dict) -> dict:
         _check(link, root)
         if link["remote_url"]:
             doc, server, urls = _far(link)
-            asked, states = {}, None
             count = _threads(doc)
             have, left = _pictures(root, here, beside, urls, lambda key: _fetched(server, urls[key]))
         else:
             ws, regions = link["workspace_id"], {}
-            doc, asked, states = _document(link, regions)
+            doc = _document(link, regions)
             count = _threads(doc)
             kept.repair(ws, [e["page_id"] for e in doc["entries"]])
             with connect_pages_db(ws) as conn:
                 have, left = _pictures(root, here, beside, regions,
                                        lambda key: pictures.cached(ws, conn, *regions[key]))
         _without_missing(doc["entries"], have)
-        for record in asked.values():
-            _without_missing(record["entries"], have)
         before = _named(_parsed(_read(root, f"{here}/open.json")))
-        left += _write_files(root, here, beside, doc, asked)
-        named = _named(doc) | before
-        if states is not None:
-            _prune_requests(root, states)
-            named |= _named_by_requests(root)
+        left += _write_files(root, here, beside, doc)
         if not _run_pictures(link):
-            _prune_pictures(root, f"{here}/img", named)
-        for rel in (here, f"{here}/img", *((REQUESTS,) if states is not None else ())):
+            _prune_pictures(root, f"{here}/img", _named(doc) | before)
+        for rel in (here, f"{here}/img"):
             vault_disk.sweep_own(root, rel)
         if link["kind"] == "folder":
-            try:
-                _remove_tree_at(root, FORMER)
-            except OSError:
-                pass   # a file of it another program holds: the next round takes the rest
+            for rel in FORMER:
+                try:
+                    _remove_tree_at(root, rel)
+                except OSError:
+                    pass   # a file of it another program holds: the next round takes the rest
     except (AnnotationError, OSError, vault_disk.Stopped, vault_disk.Offline, gamma_sync.SyncError) as e:
         return _error(link, count, str(getattr(e, "detail", "") or e))   # Outside is an OSError
     except Exception as e:  # noqa: BLE001 — a renderer's or a database's failure never fails the round
@@ -226,51 +211,19 @@ def write(link: dict) -> dict:
     return {"open": count, "left": left} if left else {"open": count}
 
 
-def write_request(link: dict, request_id: str) -> None:
-    """The request's file written now (``requests.document_of``; the
-    pictures ``img/`` holds already, the rest null until a pass draws
-    them), best effort: nothing while a round or a pass holds the vault's
-    lock (the work folder is marked, so the hot pass writes it), and an
-    error is only logged; nothing for a vault of another server, whose
-    Sends are that server's. Never raises."""
-    from .. import folder_links  # local: it imports ops, which imports comments, which imports this package
-
-    if link["remote_url"]:
-        return
-    with folder_links.try_holding(link["id"]) as held:
-        if not held:
-            return
-        try:
-            root = Path(link["path"])
-            vault_disk.check_marker(root, link["state"]["vault"])
-            ws = link["workspace_id"]
-            paths = entries.paths_of(vault_store.files(link["id"]))
-            with connect_pages_db(ws) as conn:
-                record = requests.document_of(ws, conn, request_id, paths=paths)
-            if record is None:
-                return
-            _without_missing(record["entries"], _keys_in(root, IMG))
-            rel = f"{REQUESTS}/{request_id}.json"
-            data = _json(_in_requests(record))
-            if _read(root, rel) != data:
-                vault_disk.write_own(root, rel, data)
-        except Exception as e:  # noqa: BLE001 — the next pass writes what this could not
-            log.warning(f"[annotations] the request file {request_id} of {link['path']}: {e}")
-
-
 def remove(link: dict) -> None:
     """The vault's files deleted (``place``), nothing else (through
     ``vault_disk.path``, and a link or a junction met inside them goes as
     the entry it is, never entered: ``_remove_tree``), when the vault goes,
     stops being a work folder or follows its file elsewhere: a work folder's
-    ``.gamma/annotations/`` and its ``FORMER`` directory; a vault of one
+    ``.gamma/annotations/`` and the ``FORMER`` directories; a vault of one
     file's directory beside the file, then ``.gamma/annotations/`` and
     ``.gamma/`` there when that leaves them empty. The files are Gamma's own
     and regenerable: deleted directly, never through the trash. A file
     another program holds is logged and stays. Never raises."""
     root, here = place(link)
     try:
-        for rel in (here, FORMER) if link["kind"] == "folder" else (here,):
+        for rel in (here, *FORMER) if link["kind"] == "folder" else (here,):
             _remove_tree_at(root, rel)
         if link["kind"] == "file":
             for rel in (DIR, vault_disk.MARKER_DIR):
@@ -327,12 +280,11 @@ def _check(link: dict, root: Path) -> None:
             raise AnnotationError(403, NO_ACCESS)
 
 
-def _document(link: dict, regions: dict) -> tuple[dict, dict, dict | None]:
+def _document(link: dict, regions: dict) -> dict:
     """The document of a vault of this server, ``regions`` gaining its
     pictures' (``entries.document``): a work folder's open threads and bare
-    highlights named by the vault's rows, with the request files to write
-    and every request's state (``_requests``); or the followed page's,
-    named by the file's name, with neither (``{}``, None)."""
+    highlights named by the vault's rows, or the followed page's, named by
+    the file's name."""
     ws = link["workspace_id"]
     with connect_users_db() as users:
         owner = account_names(users, {link["created_by"]}).get(link["created_by"], "")
@@ -340,21 +292,17 @@ def _document(link: dict, regions: dict) -> tuple[dict, dict, dict | None]:
         paths = {link["page_id"]: Path(link["path"]).name}
         with connect_pages_db(ws) as conn:
             scope = entries.resolve_scope(conn, link["page_id"])
-            return entries.document(ws, conn, scope, state="open", paths=paths, owner=owner, regions=regions), {}, None
+            return entries.document(ws, conn, scope, state="open", paths=paths, owner=owner, regions=regions)
     paths = entries.paths_of(vault_store.files(link["id"]))
-    root = Path(link["path"])
     with connect_pages_db(ws) as conn:
         scope = entries.work_scope(conn, link["folder_id"])
-        doc = entries.document(ws, conn, scope, state="open", paths=paths, owner=owner, regions=regions)
-        asked, states = _requests(ws, conn, root, link["folder_id"], paths, regions)
-    return doc, asked, states
+        return entries.document(ws, conn, scope, state="open", paths=paths, owner=owner, regions=regions)
 
 
 def _far(link: dict) -> tuple[dict, gamma_sync.Server, dict]:
     """The document of a vault of another server, read there with its
     token (``GET /api/annotations`` of its folder or its page, open): cut
-    to a document's fields (``DOCUMENT``; that server adds the Feedback
-    dialog's to a work folder's), each entry's pictures named by their key
+    to a document's fields (``DOCUMENT``), each entry's pictures named by their key
     alone (one that is no key is none), its file the vault's path where its
     rows name the page, the entries in their order again. → ``(the document,
     the server its pictures are fetched from, {key: the route of its
@@ -407,46 +355,6 @@ def _threads(doc: dict) -> int:
     return sum(1 for e in doc["entries"] if e.get("type") == "thread")
 
 
-def _requests(ws: str, conn, root: Path, w: str, paths: dict, regions: dict) -> tuple[dict, dict]:
-    """The request files to write this pass, ``{id: its document}``, and
-    ``{id: state}`` of every request of the work folder ``w`` (the
-    retention, ``_prune_requests``). Of the newest ``REQUEST_FILES``
-    requests, one ``LIVE`` is read again every pass (an answer changes its
-    entries), another only while its file does not stand (``_stands``):
-    missing, behind its ``rev`` (a write at the change of state that could
-    not land), or with a place on this build whose picture was not drawn
-    when it was written."""
-    rows = conn.execute("SELECT id, rev, state FROM feedback_requests WHERE work_folder = ? ORDER BY rev DESC",
-                        (w,)).fetchall()
-    asked = {}
-    for request_id, rev, state in rows[:REQUEST_FILES]:
-        if state not in LIVE and _stands(_parsed(_read(root, f"{REQUESTS}/{request_id}.json")), rev):
-            continue
-        record = requests.document_of(ws, conn, request_id, paths=paths, regions=regions)
-        if record is not None:
-            asked[request_id] = _in_requests(record)
-    return asked, {request_id: state for request_id, _rev, state in rows}
-
-
-def _stands(current: dict | None, rev: int) -> bool:
-    """Whether a done or failed request's file is as a pass leaves it: it
-    carries the row's ``rev`` and no entry that gets a picture waits for it
-    (a Send answered before a pass drew them, or past the cap, has null
-    pictures until one does): one placed on this build, a region of a
-    picture (drawn whatever version it was made on) or a thread on a
-    picture's page (``entries._pictures``)."""
-    if current is None or current.get("rev") != rev or not isinstance(current.get("entries"), list):
-        return False
-
-    def drawn(e: dict) -> bool:
-        if e.get("kind") == entries.REGION or (e.get("kind") == "file" and e.get("format") == "image"):
-            return True
-        return (e.get("kind") in pictures.KINDS and isinstance(e.get("where"), dict)
-                and e["where"].get("placed") in entries.ON_THIS_BUILD)
-
-    return not any(isinstance(e, dict) and e.get("picture") is None and drawn(e) for e in current["entries"])
-
-
 def _pictures(root: Path, here: str, beside: str, wanted, draw) -> tuple[set, int]:
     """The pictures of ``wanted`` (their keys) that ``img/`` lacks drawn
     (``draw(key)``: its JPEG, None for one that cannot be had now) and
@@ -475,13 +383,12 @@ def _pictures(root: Path, here: str, beside: str, wanted, draw) -> tuple[set, in
     return have, left
 
 
-def _write_files(root: Path, here: str, beside: str, doc: dict, asked: dict) -> int:
-    """``.gitignore``, ``open.json``, ``open.md`` and the request files
-    ``asked``, each written only when its bytes differ from the file's: how
-    many a reader held to the last try."""
+def _write_files(root: Path, here: str, beside: str, doc: dict) -> int:
+    """``.gitignore``, ``open.json`` and ``open.md``, each written only when
+    its bytes differ from the file's: how many a reader held to the last
+    try."""
     wanted = [(f"{here}/.gitignore", GITIGNORE), (f"{here}/open.json", _json(doc)),
               (f"{here}/open.md", markdown.render(doc, pictures="files").encode("utf-8"))]
-    wanted += [(f"{REQUESTS}/{request_id}.json", _json(record)) for request_id, record in asked.items()]
     left = 0
     for rel, data in wanted:
         if _read(root, rel) != data and not vault_disk.write_own(root, rel, data, beside=beside):
@@ -489,25 +396,12 @@ def _write_files(root: Path, here: str, beside: str, doc: dict, asked: dict) -> 
     return left
 
 
-def _prune_requests(root: Path, states: dict) -> None:
-    """The request files past the newest ``REQUEST_FILES`` requests go
-    once their request is done, failed or gone; one still ``LIVE`` stays."""
-    newest = set(list(states)[:REQUEST_FILES])
-    for entry in _listed(root, REQUESTS):
-        found = _REQUEST_RE.match(entry.name)
-        if not found or found[1] in newest or states.get(found[1]) in LIVE:
-            continue
-        try:
-            vault_disk.remove(Path(entry.path))
-        except OSError:
-            continue
-
-
 def _run_pictures(link: dict) -> bool:
-    """Whether ``img/`` holds pictures a run reads now that no document
-    here names: those a run of another server's Send or chat fetched into a
-    work folder of that server (gamma/local_agents/home.py ``pictures``),
-    kept while an agent works in the vault; the round after it prunes."""
+    """Whether ``img/`` holds pictures a turn reads now that no document
+    here names: those a thread's turn of another server fetched into a work
+    folder of that server (gamma/local_agents/home.py ``HttpChatHome.
+    pictures``), kept while an agent works in the vault; the round after it
+    prunes."""
     if not link["remote_url"] or link["kind"] != "folder":
         return False
     from ..local_agents import runner  # local: the runner reaches the vaults, which import this module
@@ -540,19 +434,6 @@ def _json(doc: dict) -> bytes:
     return (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def _in_requests(record: dict) -> dict:
-    """A request's document as its file below ``requests/`` holds it: the
-    pictures named from there (``../img/<key>.jpg``)."""
-    out = []
-    for entry in record["entries"]:
-        entry = dict(entry)
-        for key in ("picture", "before"):
-            if entry.get(key):
-                entry[key] = f"../{entry[key]}"
-        out.append(entry)
-    return {**record, "entries": out}
-
-
 def _without_missing(items: list, have: set) -> None:
     """The pictures ``img/`` does not hold yet are null in the entries."""
     for entry in items:
@@ -571,18 +452,6 @@ def _named(doc) -> set:
             for key in ("picture", "before"):
                 if isinstance(entry.get(key), str):
                     out.add(entries.key_of(entry[key]))
-    return out
-
-
-def _named_by_requests(root: Path) -> set:
-    """The keys of the pictures every file in ``requests/`` names."""
-    out: set = set()
-    for entry in _listed(root, REQUESTS):
-        if _REQUEST_RE.match(entry.name):
-            try:
-                out |= _named(_parsed(Path(entry.path).read_bytes()))
-            except OSError:
-                continue
     return out
 
 

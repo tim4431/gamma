@@ -192,8 +192,11 @@ its own scale in the commit that brought it is not re-placed by the zoom
 anchor's swap rule, which is for a fit-width settling after the swap; and
 the page number shown is synced before paint, after the restore.
 
-**Where a page stands.** Pages are laid out one under another,
-`PAGE_GAP` (8 px) apart. Each page box is centred in the viewer by its auto
+**Where a page stands.** The layout model is `pdf/pageLayout.js`, shared
+by the page boxes' styles, the viewer's scroll arithmetic and the reads App
+and a tab group's view make of a viewer's scroller. Pages are laid out
+one under another, `PAGE_GAP` (8 px) apart, or side by side (below,
+"Pages that run across"). Each page box is centred in the viewer by its auto
 margins, and starts at the viewer's left edge once it is wider than the
 viewer. While the document has a highlight with an open comment thread, a
 page with room for the comment column stands beside it instead, the two
@@ -206,6 +209,41 @@ arithmetic reads the same three layouts (`pageLeft`,
 that makes the column appear or go moves a page that fits the viewer
 sideways under the pointer, since there is no horizontal scroll to take
 that up; the vertical anchor holds.
+
+**Pages that run across.** Settings → Reading › PDFs › Page direction
+(the account pref `pdfFlow`, `down` by default or `across`) lays the
+pages side by side, left to right, `PAGE_GAP` apart, and the viewer
+scrolls sideways through them, continuously, with no page snapping. App
+passes the pref to the viewer as `pageFlow`, and to a tab group's views
+through `paneShared`. The viewer marks its scroller with
+`data-flow="across"` and the `pdfAcross` class, which makes the zoom layer
+one flex row (`app.css`): each page centred in the row's height (the
+view's, or the tallest page's once that is taller), and the row centred in
+a view wider than all of it. Everything that measures along the pages
+measures along the run: the zoom anchor (`pageAt` along the run,
+`crossStart` across it in place of `pageLeft`), a jump to a page or a
+highlight (`jumpTarget`), the page counter (a third of the way across the
+view), `pagesInView` for the kept pixels, and the page in view
+(`onPageInView`, nearest by both axes). A jump across stands a page the
+view holds whole in its middle; a wider one shows its place `offset` px in
+from the left edge, as down shows it `offset` px under the top. The fit
+(`page-width`, the strip's button, *Fit page* there) fits the whole
+typical page into the viewer, its height too. So that fit holds once the
+pages are in, the scroller keeps the horizontal scrollbar's room
+(`overflow-x: scroll`), as it keeps the vertical one's down. The comment
+column runs down beside the pages, so pages that run across have none:
+their threads open in the popover. Turning the pages the other way keeps
+the page being read: the viewer lands on it before paint, and at a fit
+again once the new fit's scale has committed (`flowPageRef`, which the zoom
+anchor takes instead of holding the view's middle). App stamps the
+direction on each tab's exact place (`flow` in `tabScrollRef`'s entries
+and Back's), and a place measured in the other direction is dropped, so a
+tab opens at its last-read page instead. Its read-position tracker and
+the last-read-page restore find and check pages along the run
+(`pageInMiddle`, `pageLanded`). A mouse wheel turned down over pages that
+fit the view's height moves them across (`installWheelAcross`, below);
+with something to scroll down, a zoom taller than the view, it scrolls
+down as ever. The notebook's sheets always run down.
 
 **The worker.** pdf.js does its parsing in a Web Worker whose script is 1.3 MB.
 It is imported as a Vite asset (`pdf.worker.min.mjs?url`), so it is always the
@@ -310,8 +348,9 @@ and measurements behind it are in
   first, so a frame carries at most one pdf.js chunk. A render of a page away from
   the view is preempted when one that touches the view arrives, and starts
   over once that is done (pdf.js can only cancel). While the scroller moves
-  faster than `FAST_VIEWS_PER_S` (two viewport heights a second over the last
-  120 ms) renders away from the view wait: a fast scroll passes the pages it
+  faster than `FAST_VIEWS_PER_S` (two viewport lengths a second, heights
+  down or widths across, over the last 120 ms) renders away from the view
+  wait: a fast scroll passes the pages it
   would draw, and each chunk drawn is a frame the scroll loses. The page in
   view never waits. `tests/renderQueue.test.mjs` pins the order, the
   preemption, the hold and the cancels.
@@ -358,8 +397,8 @@ and measurements behind it are in
   zoom settles (`rest()`) `TextLayer.update` re-measures the spans at the
   new size. A text selection
   and the citation marks survive a zoom. Only a page far from the view
-  drops it. A second observer with `FAR_MARGIN` (four viewport heights each
-  way; pdf.js's own viewer keeps about ten pages) empties the layer, takes
+  drops it. A second observer with `FAR_MARGIN` (four viewport lengths each
+  way, down and across; pdf.js's own viewer keeps about ten pages) empties the layer, takes
   off what the build set on it, and forgets the paint, and the next paint
   builds it again. A book read
   through would otherwise leave every page's spans in the DOM.
@@ -390,7 +429,7 @@ twice.
 pixels of look-ahead (`RENDER_MARGIN`). A page inside it is rendered. On a
 desktop (the roomy canvas limits) a page that leaves it keeps the pixels it
 has, and draws nothing new, until it is `KEEP_MARGIN` away (three viewport
-heights each way, a second observer), so a scroll back over read pages
+lengths each way, down and across, a second observer), so a scroll back over read pages
 redraws nothing. A zoom meanwhile stretches what it holds, and the page is
 redrawn when it comes back inside the look-ahead. The pages holding pixels are kept
 within `KEEP_BUDGET_BYTES` (256 MB of canvas over the document): past that
@@ -413,20 +452,30 @@ geometry, text and overlay data; it repaints on return without waiting, and
 a forced render (jumps, the cited page) still works. A page inside the look-ahead but outside the render window holds only
 its base. Release and unmount cancel the pending pdf.js renders.
 
-`pdf/verticalScrollSnap.js` is the always-on one-finger vertical alignment
-(`installVerticalScrollSnap`, reinstalled on zoom and document changes). It
-judges direction after 8 CSS pixels within a 30° vertical cone. It never
-writes scroll offsets while a finger or native momentum is moving. After
-`scrollend` (250 ms of quiet after lift on browsers without it) it corrects
-horizontal drift once, instantly under reduced motion. A diagonal start, a
-deliberate sideways turn, a second contact, a cancelled gesture, keyboard or
-wheel input, a zoom change or teardown drops the pending alignment. Writing
+`pdf/scrollSnap.js` is the always-on one-finger alignment along the pages'
+run (`installScrollSnap`, reinstalled on zoom, document and direction
+changes). It judges direction after 8 CSS pixels within a 30° cone along
+the run: vertical down, horizontal across. It never writes scroll offsets
+while a finger or native momentum is moving. After `scrollend` (250 ms of
+quiet after lift on browsers without it) it corrects the drift the other
+way once (sideways down, up or down across), instantly under reduced
+motion. A diagonal start, a deliberate turn away from the run, a second
+contact, a cancelled gesture, keyboard or wheel input, a zoom change or
+teardown drops the pending alignment. Writing
 offsets mid-gesture fights WebKit's native scroll animation
 ([WebKit issue](https://bugs.webkit.org/show_bug.cgi?id=255193)).
 
 `shared/lib/smoothWheel.js` is the opt-in smooth wheel (Settings → Reading ›
 PDFs › Smooth wheel scrolling, the account pref `smoothWheel`, off by
-default; `installSmoothWheel`, installed by the viewer while it is on). A
+default; `installSmoothWheel`, installed by the viewer while it is on), and
+the wheel over pages that run across (`installWheelAcross`, installed
+while they do, after the smooth wheel). With nothing to scroll down, a
+wheel turned down or up moves pages that run across sideways, which it
+would otherwise not move at all: a notch glides there while the smooth
+wheel is on (`installSmoothWheel`'s `across`), and any other delta (a
+touchpad's, a notch with the setting off) moves them at once
+(`acrossDelta`). Shift, Ctrl / ⌘, a sideways delta and a wheel over an
+inner element that scrolls itself are left as they are. A
 browser without its own smooth scrolling moves a notched mouse wheel in
 jumps, 200 px a notch with Windows set to 6 lines. With the setting on, the
 scroller glides toward where the notches point: every frame it closes a

@@ -16,6 +16,7 @@ new page.
 """
 
 import contextlib
+import json
 from collections import Counter
 
 from fastapi import HTTPException
@@ -25,6 +26,7 @@ from . import goodnotes_map as gmap
 from . import note_app_import as app
 from . import notability as nb
 from .documents.model import document
+from .goodnotes_export import PAPER_KEY
 from .logbuf import log
 from .note_app_import import Skip, Stop, compose_pdf, page_kind
 from .pdf_text import page_raster
@@ -182,10 +184,12 @@ class Import(app.AppImport):
 def notebook_pdfs(members, notebook: gn.Notebook) -> tuple[dict, dict, dict, dict, list]:
     """The PDFs the pages are bound to, each checked against MAX_HELD_BYTES
     before it is read (one past it skips the notebook) and opened once:
-    ``(display sizes of their pages, readers, bytes, catalogue papers'
-    colours)`` by attachment id, and the paths of those the notebook lacks.
-    One missing or that does not open is left out, and its pages become
-    blank paper."""
+    ``(display sizes of their pages, readers, bytes, papers' looks)`` by
+    attachment id, and the paths of those the notebook lacks. A paper's
+    look is a catalogue paper's colours, or the paper itself, a dict, of a
+    PDF Gamma's GoodNotes export drew (``goodnotes_map.paper_of``). One
+    missing or that does not open is left out, and its pages become blank
+    paper."""
     pages, readers, sources, colours, missing = {}, {}, {}, {}, []
     designs = {p.template.attachment for p in notebook.pages if p.template is not None and p.template.design}
     for attachment in _template_pdfs(notebook):
@@ -200,6 +204,8 @@ def notebook_pdfs(members, notebook: gn.Notebook) -> tuple[dict, dict, dict, dic
         pages[attachment], readers[attachment], sources[attachment] = opened
         if attachment in designs:
             colours[attachment] = _colours(readers[attachment])
+        elif (paper := _gamma_paper(readers[attachment])) is not None:
+            colours[attachment] = paper
     return pages, readers, sources, colours, missing
 
 
@@ -222,6 +228,19 @@ def _colours(reader) -> tuple | None:
         return gmap.colours_of(contents.get_data() if contents is not None else b"", rules)
     except Exception:  # noqa: BLE001 — a paper whose colours do not read is white
         return None
+
+
+def _gamma_paper(reader) -> dict | None:
+    """The paper a one-page PDF of Gamma's GoodNotes export carries
+    (``goodnotes_export.PAPER_KEY``), as JSON; None for any other PDF."""
+    try:
+        if len(reader.pages) != 1:
+            return None
+        raw = reader.pages[0].get(PAPER_KEY)
+        paper = json.loads(str(raw)) if raw is not None else None
+    except Exception:  # noqa: BLE001 — a key that does not read is no paper
+        return None
+    return paper if isinstance(paper, dict) else None
 
 
 def _sticker(data: bytes, side: float) -> bytes:

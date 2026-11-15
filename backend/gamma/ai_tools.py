@@ -1644,37 +1644,21 @@ def _annotation_scope(conn, scope: dict, named: str):
 
 def _run_list_annotations(conn, ws: str, scope: dict, args: dict):
     """The annotations of a page, a folder or the library (the chat's own
-    when it names none), or the threads of one Send request, in the
-    Markdown form (``annotations.markdown``) a batch at a time: ``after``
-    is the entry the previous batch ended at, and the next call is named
-    when more are left."""
-    from .annotations import entries, markdown, requests
+    when it names none), in the Markdown form (``annotations.markdown``) a
+    batch at a time: ``after`` is the entry the previous batch ended at,
+    and the next call is named when more are left."""
+    from .annotations import entries, markdown
 
     state = str(args.get("state") or "open")
     if state not in THREAD_STATES:
         return "error: state is open, resolved or all", None
     limit = _int_arg(args, "limit", _ANNOTATION_BATCH[0], 1, _ANNOTATION_BATCH[1])
     after = str(args.get("after") or "").strip()
-    request_id = str(args.get("request") or "").strip()
     owner, origin = _reader_name(scope), _annotation_origin(scope)
-    record = None
-    if request_id:
-        record = requests.get(conn, request_id)
-        if not record:
-            return "error: no Send request has that id", None
-        # its threads in the chat's reach, as they are now
-        sent = [e for e in requests.entries_of(ws, conn, record, link_base=origin)
-                if (state == "all" or e["state"] == state)
-                and not _load_scoped_page(conn, scope, {"page_id": e["page_id"]})[1]]
-        found = entries.Scope(record["scope"]["kind"], record["scope"]["id"], record["work_folder"]["id"],
-                              record["scope"]["name"])
-        doc = {"scope": record["scope"], "work_folder": record["work_folder"], "owner": owner, "state": state,
-               "entries": sent}
-    else:
-        found, error = _annotation_scope(conn, scope, str(args.get("scope") or "").strip())
-        if error:
-            return error, None
-        doc = entries.document(ws, conn, found, state=state, owner=owner, link_base=origin)
+    found, error = _annotation_scope(conn, scope, str(args.get("scope") or "").strip())
+    if error:
+        return error, None
+    doc = entries.document(ws, conn, found, state=state, owner=owner, link_base=origin)
     items = doc["entries"]
     if after:
         at = next((i for i, e in enumerate(items) if e["id"] == after), None)
@@ -1682,31 +1666,23 @@ def _run_list_annotations(conn, ws: str, scope: dict, args: dict):
             items = items[at + 1:]
         else:
             # answered or resolved since its batch: go on from where it stands among them all
-            every = [e["id"] for e in (requests.entries_of(ws, conn, record) if record else
-                                       entries.entries(ws, conn, found, state="all", sources=False))]
+            every = [e["id"] for e in entries.entries(ws, conn, found, state="all", sources=False)]
             if after not in every:
                 return f"error: {after} is no entry of this listing — list again without after", None
             later = set(every[every.index(after) + 1:])
             items = [e for e in items if e["id"] in later]
     batch, more = items[:limit], len(items) > limit
     parts = []
-    if record:
-        line = f"Send request {record['id']}: {record['state']}"
-        if record.get("detail"):
-            line += f" ({record['detail']})"
-        line += f", sent by {record['by']} at {record['at']}"
-        parts.append(line + (f'. Its instruction: "{record["note"]}"' if record.get("note") else "."))
     if batch or not after:
         parts.append(markdown.render({**doc, "entries": batch}, pictures="tool"))
     else:
         parts.append("Nothing more after that one.")
     if more:
-        call = {k: args[k] for k in ("scope", "state", "request", "limit") if args.get(k)}
+        call = {k: args[k] for k in ("scope", "state", "limit") if args.get(k)}
         hint = "".join(f'{k}="{v}", ' if isinstance(v, str) else f"{k}={v}, " for k, v in call.items())
         parts.append(f'More: list_annotations({hint}after="{batch[-1]["id"]}") lists the next batch '
                      f"({len(items) - limit} left).")
-    action = {"kind": "list", "summary": ("Listed the threads of a Send request" if record
-                                          else f"Listed the annotations on “{found.name[:60]}”" if found.name
+    action = {"kind": "list", "summary": (f"Listed the annotations on “{found.name[:60]}”" if found.name
                                           else "Listed the annotations of the library")}
     if found.kind in ("file", "page"):
         action["page_id"] = found.id
@@ -4604,8 +4580,6 @@ TOOLS = [
                     "state": {"type": "string", "enum": ["open", "resolved", "all"],
                               "description": "Which comment threads; default open. Highlights without a "
                                              "thread are always listed."},
-                    "request": {"type": "string",
-                                "description": "A Send request's id: its threads and its instruction."},
                     "after": {"type": "string", "description": "The id the previous batch ended at."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": _ANNOTATION_BATCH[1],
                               "description": f"Default {_ANNOTATION_BATCH[0]}."},

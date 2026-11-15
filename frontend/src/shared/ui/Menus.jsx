@@ -337,8 +337,10 @@ function useDropdown(up = false) {
 // [{label, value, onChange, options}], each under its own heading — the chat
 // composer's model chip with its reasoning effort. `up` opens above the
 // trigger. `disabled` greys the trigger out and keeps the menu shut.
+// `ghost` draws the trigger as a `uiBtn ghost` (no frame until hover), for a
+// choice inside a line of text such as the chat strip's.
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
-  display, heading, sections = [], up = false, disabled = false }) {
+  display, heading, sections = [], up = false, disabled = false, ghost = false }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown(up);
   const id = useId(); // the trigger's: it names the menu
   const current = options.find(([v]) => v === value) || options[0];
@@ -358,7 +360,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
   return (
     <>
       <button type="button" id={id} aria-haspopup="menu" aria-expanded={!!menu}
-        className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
+        className={`uiBtn sm uiSelectBtn ${block ? "block" : ""} ${ghost ? "ghost" : ""} ${TriggerIcon && iconOnly ? "iconSq" : ""}`}
         aria-label={title} title={title} disabled={disabled} {...triggerProps}>
         {TriggerIcon ? (
           <TriggerIcon size={16} />

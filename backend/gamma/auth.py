@@ -43,7 +43,7 @@ WORKSPACE_HEADER = "x-gamma-workspace"
 _AUTH_PATHS = {"/api/login", "/api/login-guest", "/api/logout", "/api/session"}
 # A computer's channel (gamma/computers/, gamma/routers/computers.py): the
 # only routes a token of the ``computer`` scope opens are below this prefix
-# (the announce, the poll, and its Sends' claims, progress, answers and
+# (the announce, the poll, its people, and its turns' claims, writes and
 # pictures), and nothing else lives there. The poll is held up to half a
 # minute, by design.
 CHANNEL_PREFIX = "/api/computers/"

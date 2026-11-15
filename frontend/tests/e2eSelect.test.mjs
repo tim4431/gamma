@@ -132,7 +132,7 @@ test("a change selects the groups that exercise it", () => {
   for (const file of ["backend/gamma/search/indexer.py", "backend/gamma/documents/text.py", "backend/gamma/routers/search.py",
     "backend/gamma/work_folders/paths.py", "backend/gamma/mcp_links.py", "backend/gamma/ai_tools.py", "frontend/src/search/SearchPanel.jsx",
     "frontend/src/documents/viewers/textMark.js", "frontend/src/documents/viewers/TextViewer.jsx"]) assert.ok(pick([file]).includes("text-search"), file);
-  assert.ok(pick(["backend/gamma/work_folders/paths.py"]).includes("feedback"), "the feedback entries name their files by it");
+  assert.ok(pick(["backend/gamma/work_folders/paths.py"]).includes("work-folders"), "the annotation entries name their files by it");
   // anchors in text: the ladder, the shared write, the code view's marks and popup, the margin, the entries and the vault's round
   for (const file of ["backend/gamma/documents/text_anchors.py", "backend/gamma/highlight_relocate.py", "backend/gamma/documents/text.py",
     "backend/gamma/annotations/entries.py", "backend/gamma/vault/sync.py", "frontend/src/documents/viewers/textAnchors.js",

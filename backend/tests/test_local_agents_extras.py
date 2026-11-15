@@ -15,6 +15,10 @@ agent or directory; the sources route maps the composer's selections to
 their lines; Background tasks lists the account's turns while they are
 queued or running, asking or not."""
 
+import json
+import os
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,12 +26,14 @@ from types import SimpleNamespace
 import pytest
 
 from conftest import account_of, fresh_client, login, make_user, token_for
-from fake_agents import ARGV, requests_in, script_agent, turns_in
-from gamma import workspaces
+from fake_agents import ARGV, read_log, requests_in, script_agent, turns_in
+from gamma import agents, workspaces
 from gamma.db import connect_pages_db
 from gamma.local_agents import catalog, chats, claude, codex, events, runner, store
-from test_local_agents_chat import PLACES, _chat, _reply, _say, _stop
+from gamma.local_agents import sessions as sessions_mod
+from test_local_agents_chat import PLACES, _chat, _reply, _say, _stop, _turns_in
 from test_local_agents_runner import _folder, _until, disk  # noqa: F401: the disk fixture
+from test_vault_routes import _page_of
 
 OWNER, EDITOR = "laex_owner", "laex_editor"
 CODEX_MODELS = [{"id": "gpt-fake", "label": "GPT Fake", "efforts": ["low", "medium", "high"], "effort": "medium",
@@ -187,7 +193,7 @@ def test_the_drivers_stream_a_chat_turns_text(disk, monkeypatch, tmp_path):
         assert said == [{"type": "delta", "text": "Dra"}, {"type": "delta", "text": "ft "},
                         {"type": "delta", "text": "words"}, {"type": "text", "text": "Final words."}], name
         assert got[-1]["ok"]
-        # without stream: the whole message alone (a Send's)
+        # without stream: the whole message alone
         got = list(events.start(name, argv=ARGV[name], cwd=str(work), prompt=chat).events())
         assert [e for e in got if e["type"] in ("delta", "text")] == [{"type": "text", "text": "Final words."}], name
     inits = [m["params"] for m in requests_in(disk.log) if m.get("method") == "initialize"]
@@ -293,15 +299,17 @@ def test_background_tasks_list_the_turns_that_work(lab, disk, monkeypatch):
     store.set_runs("codex", "ask", by=lab.user)
     script_agent(monkeypatch, disk.log, ask=[{"command": "curl https://example.com", "host": "example.com"}])
     assert _rows(lab.owner) == []
-    turn = _say(lab.owner, f.page)["turn"]["id"]
+    said = _say(lab.owner, f.page)
+    turn = said["turn"]["id"]
     _until(lambda: _reply(lab, f.page).get("asks"))
     [row] = _rows(lab.owner)
     with connect_pages_db(lab.ws) as conn:
         title = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (f.page,)).fetchone()[0]
     assert title and row == {
         "id": f"computer-{turn}", "kind": "computer-turn", "owner": lab.user, "workspace": lab.ws,
-        "title": f"Codex · {title}", "params": {"bucket": f.page, "turn": turn, "agent": "codex", "label": "Codex",
-                                                    "title": title},
+        "title": f"Codex · {title}", "params": {"bucket": f.page, "turn": turn, "agent": "codex",
+                                                    "agent_id": agents.here("codex").id, "label": "Codex",
+                                                    "title": title, "conversation": said["conversation"]["id"]},
         "state": "running", "progress": {"phase": "asking"}, "error": "", "created_at": row["created_at"],
         "started_at": row["started_at"], "finished_at": "", "artifact": None, "downloaded": False,
         "stoppable": True, "stopping": False, "readonly": True}
@@ -326,3 +334,441 @@ def test_background_tasks_list_the_turns_that_work(lab, disk, monkeypatch):
     held.release()
     assert runner.wait_idle(30)
     assert _rows(lab.owner) == []
+
+
+def test_a_co_authors_turns_and_chats_reach_the_owner_who_reads_them(lab, disk, monkeypatch):
+    """A co-author's turn with the owner's agent is in the owner's Background
+    tasks too, naming the person and the conversation the row opens; the
+    co-author's conversations are in the owner's History under their name,
+    read there in place of the owner's own (``?conversation=``), stopped and
+    exported, never opened as the owner's or deleted."""
+    f = _folder(lab, disk)
+    editor = account_of(EDITOR)
+    store.name_person("codex", "", lab.ws, editor, EDITOR)
+    try:
+        script_agent(monkeypatch, disk.log, delay=30)
+        made = _say(lab.editor, f.page, "Fix the caption.")
+        turn, conversation = made["turn"]["id"], made["conversation"]["id"]
+        _until(lambda: _rows(lab.owner))
+        [row] = _rows(lab.owner)
+        assert (row["params"]["conversation"], row["params"]["person"], "thread" in row["params"]) == (
+            conversation, EDITOR, False)
+        [theirs] = _rows(lab.editor)
+        assert theirs["params"]["conversation"] == conversation and "person" not in theirs["params"]
+        assert _stop(lab.owner, turn) == {"stopped": True}                     # the owner may stop it
+        assert runner.wait_idle(30)
+        listed = lab.owner.get("/api/local-agents/chat/history", params={"bucket": f.page}).json()
+        assert [(c["id"], c["person"], c["agent"]) for c in listed["lent"]] == [(conversation, EDITOR, "codex")]
+        assert conversation not in [c["id"] for c in listed["conversations"]]
+        assert lab.editor.get("/api/local-agents/chat/history", params={"bucket": f.page}).json()["lent"] == []
+        seen = _chat(lab.owner, f.page, conversation=conversation)
+        assert (seen["conversation"]["id"], seen["conversation"]["person"], seen["computer"]["session"]) == (
+            conversation, EDITOR, False)
+        assert (_chat(lab.owner, f.page)["conversation"] or {}).get("id") != conversation   # never the owner's own
+        assert _chat(lab.editor, f.page, conversation=conversation)["conversation"] is None
+        assert lab.owner.get(f"/api/local-agents/chat/history/{conversation}/export").status_code == 200
+        assert lab.owner.post(f"/api/local-agents/chat/history/{conversation}/open").status_code == 404
+        assert lab.owner.delete(f"/api/local-agents/chat/history/{conversation}").status_code == 404
+    finally:
+        store.unname_person("codex", "", lab.ws, editor)
+
+
+# --- sessions started elsewhere ------------------------------------------------------------------------
+
+def _sessions(who, agent, dir, status=200) -> dict:
+    r = who.get("/api/local-agents/sessions", params={"agent": agent, "dir": dir})
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def _open(who, bucket, agent, dir, session, status=200) -> dict:
+    r = who.post("/api/local-agents/sessions/open",
+                 json={"bucket": bucket, "agent": agent, "dir": dir, "session": session})
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def _shape(messages) -> list:
+    return [(m["role"], m["text"], m.get("state"), [s["kind"] for s in m.get("steps") or []], m.get("from_session"))
+            for m in messages]
+
+
+def _codex_store(root: Path, other: Path) -> dict:
+    """The threads a person's Codex keeps: one of a terminal in the folder
+    (a command, an edit, its thinking, a second turn stopped), one of a
+    script there, an old one of Gamma's there, one elsewhere and a
+    subagent's."""
+    def thread(id, updated, **more):
+        return {"id": id, "name": None, "preview": "", "cwd": str(root), "source": "cli", "originator": "codex-tui",
+                "createdAt": updated - 60, "updatedAt": updated, "turns": [], **more}
+    terminal = thread("019b-term-fix", 1794000300, name="Fix the abstract", preview="fix the abstract's typo", turns=[
+        {"id": "t1", "status": "completed", "startedAt": 1794000000, "completedAt": 1794000060, "items": [
+            {"type": "userMessage", "id": "u1", "content": [{"type": "text", "text": "fix the abstract's typo"}]},
+            {"type": "reasoning", "id": "r1", "summary": ["a summary"], "content": ["secret thoughts"]},
+            {"type": "agentMessage", "id": "a1", "text": "Looking at main.tex.", "phase": "commentary"},
+            {"type": "commandExecution", "id": "c1", "command": "rg abstract main.tex", "cwd": str(root),
+             "status": "completed", "aggregatedOutput": "9: the abstract", "exitCode": 0},
+            {"type": "fileChange", "id": "f1", "status": "completed",
+             "changes": [{"path": str(root / "main.tex"), "kind": {"type": "update"}, "diff": ""}]},
+            {"type": "agentMessage", "id": "a2", "text": "Fixed it in main.tex:9.", "phase": "final_answer"}]},
+        {"id": "t2", "status": "interrupted", "startedAt": 1794000200, "completedAt": 1794000300, "items": [
+            {"type": "userMessage", "id": "u2", "content": [{"type": "text", "text": "and the title"}]}]}])
+    return {"threads": [
+        terminal,
+        thread("019b-term-script", 1794000100, preview="summarize the method\nin two lines", source="exec",
+               originator="codex_exec"),
+        thread("019b-gamma-old", 1794000050, name="Shorten the title", source="vscode", originator="gamma"),
+        thread("019b-elsewhere", 1794000400, cwd=str(other)),
+        thread("019b-subagent", 1794000500, source="subAgent")]}
+
+
+def test_codex_sessions_of_the_folder_listed_opened_and_resumed(lab, disk, monkeypatch, anon, tmp_path):
+    """History's On this computer: the threads Codex keeps of the folder's
+    directory, started in a terminal, an editor or a script, by name or
+    first message, the most recently used first; one opened is a
+    conversation of the chat holding its turns (no thinking, its steps as
+    the runner words them) whose next turn resumes it, Gamma's own marked
+    as such; one held by another Codex refused with why, at its opening and
+    at a turn, never forked."""
+    from fake_agents.hold_lock import hold
+
+    f = _folder(lab, disk)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    kept = _codex_store(f.root, tmp_path / "elsewhere")
+    script_agent(monkeypatch, disk.log, sessions=kept)
+    listed = _sessions(lab.owner, "codex", f.w)["sessions"]
+    assert [(s["id"], s["title"], s["source"], s["ours"], s["busy"]) for s in listed] == [
+        ("019b-term-fix", "Fix the abstract", "cli", False, False),
+        ("019b-term-script", "summarize the method", "exec", False, False),
+        ("019b-gamma-old", "Shorten the title", "gamma", False, False)]
+    assert listed[0]["at"].startswith("2026-11-") and listed[0]["created"] < listed[0]["at"]
+    assert [m["params"]["sourceKinds"] for m in requests_in(disk.log) if m.get("method") == "thread/list"] == [
+        ["cli", "vscode", "exec"]]
+
+    # the agent's owner alone, for a directory its agent works in
+    assert lab.editor.get("/api/local-agents/sessions", params={"agent": "codex", "dir": f.w}).status_code == 404
+    assert anon.get("/api/local-agents/sessions", params={"agent": "codex", "dir": f.w}).status_code == 401
+    script = fresh_client()
+    script.headers.update({"Authorization": f"Bearer {token_for(lab.owner, 'write', 'Script')}",
+                           "X-Gamma-Workspace": lab.ws})
+    assert script.get("/api/local-agents/sessions", params={"agent": "codex", "dir": f.w}).status_code == 403
+    for agent, dir in (("claude", f.w), ("codex", "no-such-dir"), ("codex", ""), ("gemini", f.w)):
+        _sessions(lab.owner, agent, dir, 404)
+
+    # held by another Codex: busy, and refused with why
+    lock = tmp_path / "codex" / "thread-writer-locks" / "019b-term-script.lock"
+    with hold(str(lock)):
+        assert [s["busy"] for s in _sessions(lab.owner, "codex", f.w)["sessions"]] == [False, True, False]
+        assert _open(lab.owner, f.page, "codex", f.w, "019b-term-script", 409)["detail"] == (
+            "Codex has this session open in another window: close it there first.")
+    lock.write_bytes(b"")   # left by a Codex that was killed: nobody's
+    assert [s["busy"] for s in _sessions(lab.owner, "codex", f.w)["sessions"]] == [False, False, False]
+
+    # opened: the chat's conversation now, its turns read, bound to the thread
+    _open(lab.owner, "home", "codex", f.w, "019b-term-fix", 400)        # the library's chat works elsewhere
+    _open(lab.owner, f.page, "codex", f.w, "019b-elsewhere", 404)       # another directory's
+    _open(lab.owner, f.page, "codex", f.w, "x; rm -rf ~", 404)
+    opened = _open(lab.owner, f.page, "codex", f.w, "019b-term-fix")["conversation"]
+    assert opened["title"] == "Fix the abstract" and opened["agent"] == "codex"
+    assert _shape(opened["messages"]) == [
+        ("user", "fix the abstract's typo", None, [], True),
+        ("agent", "Looking at main.tex.\n\nFixed it in main.tex:9.", "done", ["run", "edit"], True),
+        ("user", "and the title", None, [], True),
+        ("agent", "", "stopped", [], True)]
+    assert opened["messages"][1]["steps"] == [{"id": "c1", "kind": "run", "status": "completed", "program": "rg"},
+                                              {"id": "f1:0", "kind": "edit", "status": "completed", "path": "main.tex"}]
+    assert "secret" not in str(opened["messages"])
+    assert _chat(lab.owner, f.page)["conversation"]["id"] == opened["id"]
+    ran = store.conversation_of(opened["id"])
+    assert (ran["session"], ran["agent"], ran["link_id"], Path(ran["cwd"])) == ("019b-term-fix", "codex", f.id, f.root)
+    assert not turns_in(disk.log), "reading a session runs no turn"
+    listed = _sessions(lab.owner, "codex", f.w)["sessions"]
+    assert [(s["id"], s["ours"]) for s in listed][:1] == [("019b-term-fix", True)]
+
+    # opened again, or after New chat: the same conversation; from another page of the folder, refused
+    assert _open(lab.owner, f.page, "codex", f.w, "019b-term-fix")["conversation"]["id"] == opened["id"]
+    lab.owner.post("/api/local-agents/chat/new", json={"bucket": f.page}).raise_for_status()
+    assert _open(lab.owner, f.page, "codex", f.w, "019b-term-fix")["conversation"]["id"] == opened["id"]
+    assert _chat(lab.owner, f.page)["conversation"]["id"] == opened["id"]
+    figure = _page_of(f.link, "figures/fig1.pdf")
+    assert _open(lab.owner, figure, "codex", f.w, "019b-term-fix", 409)["detail"] == (
+        "The chat of main continues this session: open it there.")
+    assert lab.editor.post("/api/local-agents/sessions/open", json={
+        "bucket": f.page, "agent": "codex", "dir": f.w, "session": "019b-term-fix"}).status_code == 404
+
+    # bound to a conversation the workspace no longer has (its page deleted for good): listed and opened as any
+    # other, the new conversation alone resuming it
+    gone = _open(lab.owner, f.page, "codex", f.w, "019b-term-script")["conversation"]
+    with connect_pages_db(lab.ws) as conn:
+        conn.execute("DELETE FROM computer_chats WHERE id = ?", (gone["id"],))
+    assert [(s["id"], s["ours"]) for s in _sessions(lab.owner, "codex", f.w)["sessions"]][1] == (
+        "019b-term-script", False)
+    anew = _open(lab.owner, f.page, "codex", f.w, "019b-term-script")["conversation"]
+    assert anew["id"] != gone["id"] and anew["title"] == "summarize the method"
+    assert store.bound("codex", ["019b-term-script"]) == {"019b-term-script": anew["id"]}
+    assert store.conversation_of(gone["id"])["session"] == ""
+    assert _open(lab.owner, f.page, "codex", f.w, "019b-term-fix")["conversation"]["id"] == opened["id"]
+
+    # the next turn resumes the thread, telling nothing of what the session holds
+    _say(lab.owner, f.page, "Now the conclusion.")
+    assert runner.wait_idle(60)
+    sent = requests_in(disk.log)
+    assert [m["params"]["threadId"] for m in sent if m.get("method") == "thread/resume"] == ["019b-term-fix"]
+    assert not [m for m in sent if m.get("method") == "thread/start"]
+    assert "fix the abstract" not in str(_turns_in(disk.log)[-1])
+    assert _reply(lab, f.page)["state"] == "done" and _reply(lab, f.page)["fresh"] is False
+
+    # held when a turn takes it up: the turn fails with why, and no thread is started in its place
+    kept["busy"] = ["019b-term-fix"]
+    script_agent(monkeypatch, disk.log, sessions=kept)
+    _say(lab.owner, f.page, "And the references.")
+    assert runner.wait_idle(60)
+    reply = _reply(lab, f.page)
+    assert (reply["state"], reply["error"]) == ("failed", "Codex has this session open in another window: "
+                                                          "close it there first.")
+    assert not [m for m in requests_in(disk.log) if m.get("method") == "thread/start"]
+    assert store.conversation_of(opened["id"])["session"] == "019b-term-fix"
+
+
+def test_sessions_of_an_offered_directory_listed_and_opened(lab, disk, monkeypatch, tmp_path):
+    """An offered directory picked in the library's chat: its sessions
+    listed by the directory's id, one opened there bound to it in that
+    directory; a page of a synced folder, whose agent works in the folder,
+    refused."""
+    f = _folder(lab, disk)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    [offered] = store.set_dirs([{"path": str(scratch), "name": "Scratch"}])
+    try:
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+        script_agent(monkeypatch, disk.log, sessions=_codex_store(scratch, tmp_path / "elsewhere"))
+        assert [s["id"] for s in _sessions(lab.owner, "codex", offered["id"])["sessions"]] == [
+            "019b-term-fix", "019b-term-script", "019b-gamma-old"]
+        _open(lab.owner, f.page, "codex", offered["id"], "019b-term-fix", 400)
+        opened = _open(lab.owner, "home", "codex", offered["id"], "019b-term-fix")["conversation"]
+        assert opened["title"] == "Fix the abstract"
+        assert _chat(lab.owner, "home")["computer"]["dir"] == {"kind": "offered", "id": offered["id"],
+                                                               "name": "Scratch"}
+        ran = store.conversation_of(opened["id"])
+        assert (ran["session"], ran["link_id"], Path(ran["cwd"])) == ("019b-term-fix", "", scratch)
+        assert [(s["id"], s["ours"]) for s in _sessions(lab.owner, "codex", offered["id"])["sessions"]][0] == (
+            "019b-term-fix", True)
+    finally:
+        store.set_dirs([])
+
+
+def _claude_session(home: Path, cwd: Path, session: str, records: list[dict], at: float) -> None:
+    folder = sessions_mod._long(home / "projects" / sessions_mod.slug(str(cwd)))   # past 260 characters here
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"{session}.jsonl")
+    with open(path, "w", encoding="utf-8") as file:
+        file.write("".join(json.dumps(r) + "\n" for r in records))
+    os.utime(path, (at, at))
+
+
+def _said(uuid, parent, role, content, at, **more) -> dict:
+    return {"type": role, "uuid": uuid, "parentUuid": parent, "isSidechain": False, "timestamp": at,
+            "message": {"role": role, "content": content}, **more}
+
+
+def test_claude_code_sessions_of_the_folder_listed_opened_and_resumed(lab, disk, monkeypatch, tmp_path):
+    """Claude Code's sessions are the files of its project's directory whose
+    directory is the folder's: titled by their ai-title, read along the
+    branch the last prompt left, a process of its that lives naming one
+    busy; one opened is resumed with --resume, refused while a terminal has
+    it open, and a resume that fails starts afresh without the session's
+    own text."""
+    f = _folder(lab, disk, agent="claude")
+    home = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    cwd = {"cwd": str(f.root), "entrypoint": "cli", "sessionId": "c1"}
+    _claude_session(home, f.root, "c1-method", [
+        {"type": "queue-operation", "operation": "enqueue", "sessionId": "c1"},
+        _said("u1", None, "user", "Explain the method section", "2026-11-10T10:00:00.000Z", **cwd),
+        {"type": "attachment", "uuid": "at1", "parentUuid": "u1", "attachment": {}},
+        _said("a1", "at1", "assistant", [
+            {"type": "thinking", "thinking": "secret thoughts"}, {"type": "text", "text": "Reading it."},
+            {"type": "tool_use", "id": "tu1", "name": "Read",
+             "input": {"file_path": str(f.root / "sections" / "method.tex")}}], "2026-11-10T10:00:05.000Z"),
+        _said("r1", "a1", "user", [{"type": "tool_result", "tool_use_id": "tu1", "content": "1\tWe fit"}],
+              "2026-11-10T10:00:06.000Z"),
+        _said("a2", "r1", "assistant", [{"type": "text", "text": "It fits weight decay."}], "2026-11-10T10:00:09.000Z"),
+        _said("x1", "a2", "user", "a forked question", "2026-11-10T10:01:00.000Z"),
+        _said("x2", "x1", "assistant", [{"type": "text", "text": "a forked answer"}], "2026-11-10T10:01:05.000Z"),
+        _said("m1", "a2", "user", "<command-name>/model</command-name>", "2026-11-10T10:02:00.000Z"),
+        _said("u2", "m1", "user", [{"type": "text", "text": "Shorter, please"}], "2026-11-10T10:03:00.000Z"),
+        _said("a3", "u2", "assistant", [{"type": "text", "text": "Weight decay, fitted."}], "2026-11-10T10:03:04.000Z"),
+        {"type": "ai-title", "aiTitle": "Explaining the method", "sessionId": "c1"},
+        {"type": "last-prompt", "lastPrompt": "Shorter, please", "leafUuid": "a3", "sessionId": "c1"}], 1794000300)
+    _claude_session(home, f.root, "c2-editor", [
+        _said("u1", None, "user", "Check the figures\nplease", "2026-11-11T10:00:00.000Z",
+              **{**cwd, "entrypoint": "claude-vscode"})], 1794000200)
+    other = f.root.parent.parent / "disk-paper"   # another directory of the same project name
+    _claude_session(home, other, "c3-other", [
+        _said("u1", None, "user", "Elsewhere", "2026-11-12T10:00:00.000Z", cwd=str(other))], 1794000400)
+    (home / "sessions").mkdir()
+    ended = subprocess.Popen([sys.executable, "-c", "pass"])
+    ended.wait()   # a process that ended: its entry names no live one
+    (home / "sessions" / "1.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "c2-editor"}))
+    (home / "sessions" / "2.json").write_text(json.dumps({"pid": ended.pid, "sessionId": "c1-method"}))
+
+    listed = _sessions(lab.owner, "claude", f.w)["sessions"]
+    assert [(s["id"], s["title"], s["source"], s["ours"], s["busy"]) for s in listed] == [
+        ("c1-method", "Explaining the method", "cli", False, False),
+        ("c2-editor", "Check the figures", "vscode", False, True)]
+    assert (listed[0]["created"], listed[0]["at"]) == ("2026-11-10T10:00:00.000000Z", "2026-11-10T10:03:04.000000Z")
+    assert _open(lab.owner, f.page, "claude", f.w, "c2-editor", 409)["detail"] == (
+        "Claude Code has this session open in another window: close it there first.")
+    _open(lab.owner, f.page, "claude", f.w, "c3-other", 404)
+
+    opened = _open(lab.owner, f.page, "claude", f.w, "c1-method")["conversation"]
+    assert opened["title"] == "Explaining the method"
+    assert _shape(opened["messages"]) == [
+        ("user", "Explain the method section", None, [], True),
+        ("agent", "Reading it.\n\nIt fits weight decay.", "done", ["read"], True),
+        ("user", "Shorter, please", None, [], True),
+        ("agent", "Weight decay, fitted.", "done", [], True)]
+    assert opened["messages"][1]["steps"][0] == {"id": "tu1", "kind": "read", "status": "completed",
+                                                 "path": "sections/method.tex"}
+    assert "secret" not in str(opened["messages"]) and "forked" not in str(opened["messages"])
+
+    # the next turn resumes it
+    _say(lab.owner, f.page, "Now the conclusion.")
+    assert runner.wait_idle(60)
+    assert turns_in(disk.log)[-1]["argv"][-2:] == ["--resume", "c1-method"]
+
+    # open in a terminal when a turn takes it up: refused with why, no process started
+    (home / "sessions" / "3.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "c1-method"}))
+    started = len(turns_in(disk.log))
+    _say(lab.owner, f.page, "And the references.")
+    assert runner.wait_idle(60)
+    reply = _reply(lab, f.page)
+    assert (reply["state"], reply["error"]) == ("failed", "Claude Code has this session open in another window: "
+                                                          "close it there first.")
+    assert len(turns_in(disk.log)) == started
+    (home / "sessions" / "3.json").unlink()
+
+    # a resume that fails starts afresh, told the conversation's own messages, never the session's
+    script_agent(monkeypatch, disk.log, fail="resume")
+    _say(lab.owner, f.page, "Once more.")
+    assert runner.wait_idle(60)
+    told = [e["stdin"] for e in read_log(disk.log) if "stdin" in e][-1]
+    assert "Now the conclusion." in told and "Explain the method section" not in told
+    assert _reply(lab, f.page)["fresh"] is True
+
+
+def test_claude_codes_compaction_summary_is_no_prompt(monkeypatch, tmp_path):
+    """A session compacted: the summary Claude Code wrote in the person's
+    place past the boundary is never read as what they said; the prompts on
+    both sides of it are."""
+    home, root = tmp_path / "claude", tmp_path / "paper"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    cwd = {"cwd": str(root), "entrypoint": "cli", "sessionId": "c1"}
+    summary = "This session is being continued from a previous conversation that ran out of context."
+    _claude_session(home, root, "c1-compact", [
+        _said("u1", None, "user", "Explain the method", "2026-11-10T10:00:00.000Z", **cwd),
+        _said("a1", "u1", "assistant", [{"type": "text", "text": "It fits."}], "2026-11-10T10:00:05.000Z"),
+        {"type": "system", "subtype": "compact_boundary", "uuid": "b1", "parentUuid": None,
+         "logicalParentUuid": "a1", "timestamp": "2026-11-10T11:00:00.000Z"},
+        _said("s1", "b1", "user", summary, "2026-11-10T11:00:00.000Z", isCompactSummary=True,
+              isVisibleInTranscriptOnly=True, **cwd),
+        _said("u2", "s1", "user", "Now the results", "2026-11-10T11:01:00.000Z", **cwd),
+        _said("a2", "u2", "assistant", [{"type": "text", "text": "They hold."}], "2026-11-10T11:01:05.000Z"),
+        {"type": "last-prompt", "lastPrompt": "Now the results", "leafUuid": "a2", "sessionId": "c1"}], 1794000300)
+    read = sessions_mod.read("claude", str(root), "c1-compact")
+    assert [turn["prompt"] for turn in read["turns"]] == ["Explain the method", "Now the results"]
+    said = [m["text"] for m in sessions_mod.messages("claude", read["turns"], str(root)) if m["role"] == "user"]
+    assert said == ["Explain the method", "Now the results"]
+    assert summary not in str(read)
+
+
+def test_claude_codes_project_names():
+    """Claude Code's name of a project's directory (check C4): every
+    character outside A-Za-z0-9 a dash, case kept, and past 200 characters
+    cut with the base-36 of the path's Java hash after; the long sample is
+    the one the check saw on disk."""
+    assert sessions_mod.slug("C:\\Users\\Tim\\work\\cc term_v1.2") == "C--Users-Tim-work-cc-term-v1-2"
+    assert sessions_mod.slug("/home/tim/中文 é") == "-home-tim-----"
+    assert sessions_mod.slug("/a/\U0001F600") == "-a---"   # an astral character is two UTF-16 units
+    sample = ("C:\\Users\\Tim\\AppData\\Local\\Temp\\claude\\d--Codes-Github-gamma\\c4f3c9ab-5108-43ba-8891-7eb475c93860"
+              "\\scratchpad\\stage0\\c3c4\\work\\long_" + "abcdefghij" * 10)
+    found = sessions_mod.slug(sample)
+    assert len(found) == 205 and found.endswith("-gygl")
+
+
+def test_codex_threads_read_page_by_page_and_whole(monkeypatch, tmp_path):
+    """codex.threads reads thread/list page by page (its cursor) up to the
+    limit, a person's sources alone; codex.thread reads a thread's turns
+    with every item, oldest first."""
+    log, root = tmp_path / "codex.log", tmp_path / "paper"
+    kept = _codex_store(root, tmp_path / "elsewhere")
+    kept["threads"] += [{**kept["threads"][1], "id": f"019b-more-{i}", "updatedAt": 1794000000 - i}
+                        for i in range(3)]
+    script_agent(monkeypatch, log, sessions={**kept, "page": 2})
+    found = codex.threads(ARGV["codex"], str(root), 5)
+    assert [t["id"] for t in found] == ["019b-term-fix", "019b-term-script", "019b-gamma-old", "019b-more-0",
+                                        "019b-more-1"]
+    assert [m["params"].get("cursor") for m in requests_in(log) if m.get("method") == "thread/list"] == [
+        None, "2", "4"]
+    thread, turns = codex.thread(ARGV["codex"], "019b-term-fix", 10)
+    assert thread["name"] == "Fix the abstract" and [t["id"] for t in turns] == ["t1", "t2"]
+    [asked] = [m["params"] for m in requests_in(log) if m.get("method") == "thread/turns/list"]
+    assert asked["itemsView"] == "full"
+    with pytest.raises(codex.RequestError):
+        codex.thread(ARGV["codex"], "019b-no-such", 10)
+
+
+def test_sessions_are_the_agents_owners_in_a_place_of_theirs(lab, disk, monkeypatch, tmp_path):
+    """A directory named by a path is no place; another account with an
+    agent of its own on this computer lists nothing of a vault it did not
+    make, nor opens one of its sessions."""
+    f = _folder(lab, disk)
+    home = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    script_agent(monkeypatch, disk.log, sessions=_codex_store(f.root, tmp_path / "elsewhere"))
+    _claude_session(home, f.root, "c1-method", [
+        _said("u1", None, "user", "Explain the method", "2026-11-10T10:00:00.000Z", cwd=str(f.root))], 1794000300)
+    for dir in (str(f.root), f.root.as_uri(), "../paper", "paper"):
+        _sessions(lab.owner, "codex", dir, 404)
+    _open(lab.owner, f.page, "codex", "../paper", "019b-term-fix", 404)
+    _open(lab.owner, f.page, "codex", str(f.root), "019b-term-fix", 422)   # longer than any id
+    assert store.bound("codex", ["019b-term-fix"]) == {}
+    store.set_agent("claude", False, by="", force=True)
+    store.set_agent("claude", True, by=account_of(EDITOR))
+    try:
+        _sessions(lab.editor, "claude", f.w, 404)
+        _open(lab.editor, f.page, "claude", f.w, "c1-method", 404)
+        assert [s["id"] for s in _sessions(lab.owner, "codex", f.w)["sessions"]][:1] == ["019b-term-fix"]
+    finally:
+        store.set_agent("claude", False, by="", force=True)
+
+
+def test_claude_codes_sidechains_and_other_records_are_no_turns(monkeypatch, tmp_path):
+    """A sidechain's records (a subagent's) and the records that are no
+    message (attachments, queue operations, snapshots) are neither the
+    session's directory, its title nor its turns, even when a sidechain's
+    is the file's last record and no last-prompt names the leaf."""
+    home, root, other = tmp_path / "claude", tmp_path / "paper", tmp_path / "elsewhere"
+    root.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    cwd = {"cwd": str(root), "entrypoint": "cli"}
+    _claude_session(home, root, "c1-side", [
+        {"type": "queue-operation", "operation": "enqueue"},
+        _said("s0", None, "user", "a subagent's task", "2026-11-10T09:59:00.000Z", isSidechain=True, cwd=str(other)),
+        {"type": "file-history-snapshot", "messageId": "m", "snapshot": {}},
+        _said("u1", None, "user", "Explain the method", "2026-11-10T10:00:00.000Z", **cwd),
+        {"type": "attachment", "uuid": "at1", "parentUuid": "u1", "attachment": {}},
+        _said("a1", "at1", "assistant", [{"type": "text", "text": "It fits."}], "2026-11-10T10:00:05.000Z"),
+        _said("u2", "a1", "user", "And the results?", "2026-11-10T10:01:00.000Z", **cwd),
+        _said("a2", "u2", "assistant", [{"type": "text", "text": "They hold."}], "2026-11-10T10:01:05.000Z"),
+        _said("s1", "s0", "assistant", [{"type": "text", "text": "a subagent's answer"}], "2026-11-10T10:01:09.000Z",
+              isSidechain=True)], 1794000300)
+    [row] = sessions_mod._claude_listed(str(root))
+    assert (row["id"], row["title"], row["source"]) == ("c1-side", "Explain the method", "cli")
+    assert sessions_mod._claude_listed(str(other)) == []
+    read = sessions_mod.read("claude", str(root), "c1-side")
+    assert [(t["prompt"], t["paragraphs"]) for t in read["turns"]] == [
+        ("Explain the method", ["It fits."]), ("And the results?", ["They hold."])]
+    assert "subagent" not in str(read)

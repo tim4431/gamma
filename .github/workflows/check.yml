@@ -184,7 +184,7 @@ jobs:
 
   # The browser suite (frontend/tests/e2e): a real backend from this
   # checkout over a throwaway data dir, Playwright's Chromium driving the
-  # built app, split in two shards of about equal time on two runners. On a
+  # built app, split in three shards of about equal time on three runners. On a
   # failure the harness's screenshots + log tails are uploaded as the
   # `e2e-failures-<shard>` artifact (docs/dev/debugging.md).
   e2e:
@@ -194,7 +194,7 @@ jobs:
     strategy:
       fail-fast: false  # the other shard's failures are worth seeing too
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -224,7 +224,7 @@ jobs:
           TMPDIR: ${{ runner.temp }}/e2e
         run: |
           mkdir -p "$TMPDIR"
-          # 3 workers on the runner's 4 cores, measured no flakier than 2: ~3 min a shard
+          # 3 workers on the runner's 4 cores, measured no flakier than 2: ~8 min a shard
           npm run e2e -- --continue --jobs 3 --shard ${{ matrix.shard }}/${{ strategy.job-total }}
       - if: failure()
         uses: actions/upload-artifact@v7

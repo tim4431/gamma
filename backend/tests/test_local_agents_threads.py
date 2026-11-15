@@ -9,8 +9,12 @@ computer (test_local_agents_runner's fixtures) and on a library page.
 The turn's prompt hands over the thread (its place, quote, source line,
 comments with their authors) as data and the comment as the instruction; its
 answer is the agent's reply in the thread, written by Gamma from its last
-message when the agent wrote none there itself, once, and a failed or
-stopped turn's note; the next ticked reply resumes the conversation and its
+message when the agent wrote none there itself, once, and a failed,
+stopped or timed out turn's note (the agent's whole error kept on this
+computer alone); a detach of the synced folder stops the turn and takes its
+conversations' grants; a turn a stopped server left is failed at the next
+start, once its workspace is upgraded, and says so in its thread; the next
+ticked reply resumes the conversation and its
 session, and the first of a thread the agent opened resumes the session
 that opened it; the threads an agent opened are listed on its answer; a
 field that shows the tick unticked sends none; a reply sent to no agent
@@ -20,16 +24,17 @@ wrote them, and an owner who no longer edits lends it nothing; a refused
 ``to`` stores the comment and says why; the thread's reader sees their
 conversation and its turn's state (``agent_chat``), nobody else; a member
 named codex is told nothing of a comment sent to the agent, and the agent's
-reply reaches its sender as a reply. No Send is made."""
+reply reaches its sender as a reply."""
 
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
 
 from conftest import account_of, fresh_client, login, make_page, make_user, token_for
 from fake_agents import requests_in, script_agent, serve_mcp
-from gamma import agents, hosted, workspaces
+from gamma import agents, folder_links, hosted, migrations, workspaces
 from gamma.db import connect_pages_db, connect_users_db
 from gamma.local_agents import chats, mention, prompt, runner, store, threads, tools
 from test_local_agents_runner import TITLE, _folder, _until, disk  # noqa: F401: the disk fixture
@@ -79,11 +84,6 @@ def _conversation(lab, thread_id, user=None) -> dict:
         return chats.of_thread(conn, thread_id, user or lab.user)
 
 
-def _sends(lab) -> int:
-    with connect_pages_db(lab.ws) as conn:
-        return conn.execute("SELECT COUNT(*) FROM feedback_requests").fetchone()[0]
-
-
 def _prompts(log) -> list[str]:
     return [m["params"]["input"][0]["text"] for m in requests_in(log) if m.get("method") == "turn/start"]
 
@@ -105,7 +105,6 @@ def test_a_ticked_comment_is_a_turn_answered_in_its_thread(lab, disk, monkeypatc
     f = _folder(lab, disk, comments=())
     script_agent(monkeypatch, disk.log, edits=[{"path": "main.tex", "old": TITLE, "new": "Weight Decay"}])
     note = _note(lab, f)
-    before = _sends(lab)
     out = _post(lab.owner, f.page, note, "Shorten the title, please.", id="latTick1", to=_to())
     turn = out["turn"]
     assert (turn["agent"], turn["state"]) == ("Codex", "queued") and turn["turn_id"]
@@ -124,14 +123,13 @@ def test_a_ticked_comment_is_a_turn_answered_in_its_thread(lab, disk, monkeypatc
     assert reply["body"] == "Done: Shorten the title, please." and reply["agent_on"]
     assert thread["agent_chat"]["turn"] is None and not thread["resolved_at"]
     assert "Weight Decay" in (f.root / "main.tex").read_text(encoding="utf-8")
-    assert _sends(lab) == before   # no Send
     # the conversation is the thread's, about its page, working in the synced folder; not the page's chat
     conversation = _conversation(lab, "latTick1")
     assert (conversation["thread_id"], conversation["bucket"], conversation["dir"]) == ("latTick1", f.page, f.w)
     assert conversation["messages"][0]["comment_id"] == "latTick1"
     assert lab.owner.get("/api/local-agents/chat", params={"bucket": f.page}).json()["conversation"] is None
     assert lab.owner.get("/api/local-agents/chat/history", params={"bucket": f.page}).json() == {
-        "conversations": [], "active": None}
+        "conversations": [], "active": None, "lent": []}
     shown = lab.owner.get("/api/local-agents/chat", params={"bucket": f.page, "thread": "latTick1"}).json()
     assert shown["conversation"]["id"] == conversation["id"] and shown["conversation"]["thread_id"] == "latTick1"
     # the editor sees the reply, not the conversation
@@ -213,13 +211,28 @@ def test_a_failed_or_stopped_turn_says_so_in_its_thread(lab, disk, monkeypatch):
     failed = _post(lab.owner, f.page, note, "Rebuild it.", to=_to())
     assert runner.wait_idle(60)
     said = _thread(lab.owner, f.page, failed["thread"]["id"])["comments"][-1]
-    assert said["agent_kind"] == "computer" and said["body"].startswith("Codex could not finish:")
+    assert said["agent_kind"] == "computer"
+    assert said["body"] == "Codex could not finish: fake codex: the model refused to start"
+    assert "INFO starting" in store.get_turn(failed["turn"]["turn_id"])["error"]   # its stderr stays on this computer
+
+    # a turn that takes too long is stopped, and says why
+    monkeypatch.setenv("GAMMA_AGENT_RUN_TIMEOUT", "1")
+    script_agent(monkeypatch, disk.log, delay=30)
+    slow = _post(lab.owner, f.page, note, "Think it over.", to=_to())
+    assert runner.wait_idle(30)
+    assert _thread(lab.owner, f.page, slow["thread"]["id"])["comments"][-1]["body"] == (
+        "Codex took longer than 1 second and was stopped.")
+    monkeypatch.delenv("GAMMA_AGENT_RUN_TIMEOUT")
 
     script_agent(monkeypatch, disk.log, delay=30)
     stopped = _post(lab.owner, f.page, note, "Take your time.", to=_to())
     _until(lambda: (runner.chat_state(lab.ws, stopped["turn"]["turn_id"]) or {}).get("state") == "running")
     busy = _thread(lab.owner, f.page, stopped["thread"]["id"])["agent_chat"]["turn"]
     assert (busy["state"], busy["asking"], busy["waiting"], busy["computer"]) == ("running", False, False, "")
+    # its row in Background tasks opens the thread's conversation, not the page's chat
+    [row] = [j for j in lab.owner.get("/api/jobs").json()["jobs"] if j["kind"] == "computer-turn"]
+    assert (row["params"]["thread"], row["params"]["conversation"]) == (
+        stopped["thread"]["id"], stopped["turn"]["conversation_id"])
     # a reply sent to no agent meanwhile answers the thread with its turn still on
     aside = _post(lab.owner, f.page, note, "also check fig 2", thread_id=stopped["thread"]["id"], to="")
     assert "turn" not in aside and aside["thread"]["agent_chat"]["turn"]["turn_id"] == stopped["turn"]["turn_id"]
@@ -227,6 +240,54 @@ def test_a_failed_or_stopped_turn_says_so_in_its_thread(lab, disk, monkeypatch):
     assert r.json() == {"stopped": True}
     assert runner.wait_idle(30)
     assert _thread(lab.owner, f.page, stopped["thread"]["id"])["comments"][-1]["body"] == "Stopped before Codex answered."
+
+
+def test_a_detach_stops_the_turn_and_forgets_the_grants_there(lab, disk, monkeypatch):
+    """Detach of the synced folder (its vault removed here): one refused
+    leaves the turn going; one done stops it with why, in its thread too,
+    and the grants of the folder's conversations go with the vault's rows."""
+    script_agent(monkeypatch, disk.log, delay=30)
+    f = _folder(lab, disk, comments=())
+    out = _post(lab.owner, f.page, _note(lab, f), "Rename the variable.", to=_to())
+    turn_id = out["turn"]["turn_id"]
+    _until(lambda: (runner.chat_state(lab.ws, turn_id) or {}).get("state") == "running")
+    store.ran_conversation("lat-conversation", link_id=f.id, agent="codex", session="s1", cwd=str(f.root))
+    store.grant("lat-conversation", "latexmk", agent="codex", dir=str(f.root))
+
+    def unstored(*_args, **_kwargs):
+        raise folder_links.LinkError("draft.pdf could not be stored, so the vault was not removed.")
+
+    with monkeypatch.context() as m:
+        m.setattr(folder_links, "_store_in_place", unstored)
+        r = lab.owner.post(f"/api/folders/{f.w}/detach", json={"pages": "keep"})
+    assert r.status_code == 409, r.text
+    assert runner.chat_state(lab.ws, turn_id)["state"] == "running"
+    r = lab.owner.post(f"/api/folders/{f.w}/detach", json={"pages": "keep"})
+    assert r.status_code == 200, r.text
+    assert runner.wait_idle(30)
+    said = "Stopped: the synced folder is no longer kept on this computer."
+    assert store.get_turn(turn_id)["state"] == "failed"
+    assert _thread(lab.owner, f.page, out["thread"]["id"])["comments"][-1]["body"] == said
+    assert store.conversation_of("lat-conversation") is None
+    assert not store.granted("lat-conversation", "latexmk", dir=str(f.root))
+
+
+def test_a_turn_a_stopped_server_left_fails_once_its_workspace_is_upgraded(lab, disk, monkeypatch):
+    f = _folder(lab, disk, comments=())
+    with monkeypatch.context() as m:
+        m.setattr(runner, "queue_chat", lambda *args, **kwargs: None)   # the server stopped before it ran
+        out = _post(lab.owner, f.page, _note(lab, f), "Left open.", to=_to())
+    turn_id = out["turn"]["turn_id"]
+    assert store.get_turn(turn_id)["ended_at"] is None
+    upgraded = time.monotonic() + 0.5
+    monkeypatch.setattr(migrations, "is_behind", lambda ws: time.monotonic() < upgraded)
+    monkeypatch.setattr(runner, "RECOVER_POLL_S", 0.1)
+    runner.recover()
+    assert store.get_turn(turn_id)["ended_at"] is None                     # waits for the upgrade
+    _until(lambda: store.get_turn(turn_id)["state"] == "failed", timeout=30)
+    thread = _thread(lab.owner, f.page, out["thread"]["id"])
+    assert thread["comments"][-1]["body"] == "Gamma stopped while Codex worked on this."
+    assert thread["agent_chat"]["turn"] is None
 
 
 def test_a_library_page_thread_works_in_a_directory_of_its_own(lab, disk):

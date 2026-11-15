@@ -298,13 +298,15 @@ const NEXT_STEP = {
   obsidian: T("Unzip it into a vault, or open the folder as one."),
   gamma: T("In the other Gamma: Import → Gamma export (.zip)."),
   notability: T("Open it in Notability: on the iPad or the Mac, open the .note from Files (or AirDrop it) and choose Notability. Unzip a folder's .zip first."),
+  goodnotes: T("Open it in GoodNotes: on the iPad, iPhone or Mac, open the .goodnotes from Files (or AirDrop it) and choose GoodNotes. Unzip a folder's .zip first."),
   notion: T("In Notion: Settings → Import → ZIP, then choose this file. Importing it again adds the pages a second time; it does not update them."),
 };
 // The reasons the server gives for a page an export left out
 // (routers/export.py), listed so the catalogs translate them.
 // biome-ignore lint/correctness/noUnusedVariables: kept for the catalogs; nothing reads it at run time
 const SKIP_REASONS = [T("page has no PDF"), T("PDF not stored on the server"),
-  T("page has no paper metadata"), T("the PDF has no pages"), T("the page's PDF changed after it was translated")];
+  T("page has no paper metadata"), T("the PDF has no pages"), T("the page's PDF changed after it was translated"),
+  T("page has no PDF and no sheets of paper")];
 // And the refusals a BibTeX export job fails with (its failed step shows them).
 // biome-ignore lint/correctness/noUnusedVariables: kept for the catalogs; nothing reads it at run time
 const EXPORT_REFUSALS = [T("none of these pages has paper metadata to cite"),

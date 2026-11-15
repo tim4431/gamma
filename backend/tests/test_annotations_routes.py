@@ -133,7 +133,7 @@ def test_who_reads(lab, anon):
     assert outsider.get("/api/annotations", params={"scope": lab.W}).status_code == 403
     share = _ok(lab.owner.post(f"/api/share/folder/{lab.W}", json={"audience": "anyone", "role": "view"})).json()["token"]
     for visitor in (anon, login(OUTSIDER, f"pw-{OUTSIDER}")):
-        for path in ("/api/annotations", f"/api/annotations/{lab.t['H']}", "/api/feedback/requests"):
+        for path in ("/api/annotations", f"/api/annotations/{lab.t['H']}"):
             r = visitor.get(path, params={"share": share, "scope": lab.W})
             assert r.status_code == 403 and "members" in r.text, (path, r.text)
 
@@ -153,7 +153,6 @@ def test_a_library_folder_a_library_page_and_the_library(lab):
     folder = _ok(lab.owner.get("/api/annotations", params={"scope": lab.L})).json()
     assert (folder["scope"], folder["work_folder"]) == ({"kind": "library_folder", "id": lab.L, "name": "fbr-library"},
                                                         None)
-    assert "agent" not in folder and "agents_found" not in folder  # the Feedback dialog's: a work folder's alone
     assert [(e["id"], e["type"]) for e in folder["entries"]] == [(lab.t["library"], "thread"), ("fbrB", "highlight")]
     page = _ok(lab.owner.get("/api/annotations", params={"scope": lab.library})).json()
     assert page["scope"] == {"kind": "page", "id": lab.library, "name": "a library paper"}

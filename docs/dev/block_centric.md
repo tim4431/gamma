@@ -152,9 +152,15 @@ through its token.
 The key is the server's (`ops.SERVER_KEYS`): a client's op batch cannot
 set it (`ops.client_ops`, at `POST /pages/{id}/ops`, drops it from an
 insert's and a set's props), only the mirror's batch, which copies a
-block whole. So when the app undoes the delete of an agent's block, or
-moves one to another page by re-inserting it, the block comes back as the
-person's.
+block whole. An op that deletes an agent's block keeps its stamp by the
+block's id with its text then (pages.db `agent_stamps`, `_Batch.keep_stamps`,
+`ops.STAMP_KEEP_DAYS` long), and an insert of that id again with that text
+and no stamp sent (the server dropped the client's) gets it back from there
+(`_Batch.stamp_back`): so when the app undoes the delete of an agent's
+block, or moves one to another page by re-inserting it, the block comes back
+the agent's, its echo carrying the stamp, while no client can give a block
+a stamp of its own choosing. The kept stamp goes with that insert; a block
+put back with other text is the person's.
 Every copy of the block itself keeps the key, as it keeps every property:
 the op log and a mirror's round, a Gamma export and a backup merge. A
 vault's file holds no property: its text is the block's while the lens

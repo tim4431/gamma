@@ -12,7 +12,10 @@ bytes ever reaches them), each with its row of the change log.
 As a script, from backend/ with GAMMA_DATA_DIR set (it imports ``gamma``,
 as manage.py does)::
 
-    python tests/seed_work_folder.py <workspace id> <W's name> <files> [--big N] [--dirs N]
+    python tests/seed_work_folder.py [--big N] [--dirs N] -- <workspace id> <W's name> <files>
+
+(the ``--`` because a workspace id may begin with "-", which argparse
+would take for an option)
 
 makes a top folder of that name, marks it a work folder's root as its vault
 does (``DISK_CLIENT``), seeds it and prints ``{"w", "dirs", "files"}`` as

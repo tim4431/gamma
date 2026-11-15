@@ -63,6 +63,7 @@ import {
   MessageSquareIcon,
   MicIcon,
   MinimizeIcon,
+  MoveHorizontalIcon,
   MoveVerticalIcon,
   OutlineIcon,
   PanelTopIcon,
@@ -181,6 +182,15 @@ function ReadingSettings({ value }) {
         >
           <Segmented value={value.embAnnots} onChange={value.setEmbAnnots}
             options={[["hide", t("Keep originals")], ["strip", t("Remove originals")]]} />
+        </Row>
+        <Row
+          icon={value.pdfFlow === "across" ? MoveHorizontalIcon : MoveVerticalIcon}
+          label={t("Page direction")}
+          hint={t("Pages one under another, or side by side")}
+          title={t("Down lays a PDF's pages one under another and scrolls them up and down. Across lays them side by side and scrolls them sideways, each page fitting the viewer whole at Fit page; a mouse wheel turned down moves them across.")}
+        >
+          <Segmented value={value.pdfFlow} onChange={value.setPdfFlow}
+            options={[["down", t("Down")], ["across", t("Across")]]} />
         </Row>
         <Toggle
           icon={MoveVerticalIcon}

@@ -4,7 +4,7 @@
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
 import { blockSearchQuery, closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
-import { PYTHON, arrived, assert, assertEq, fakeAiModels, until } from "../harness.mjs";
+import { PYTHON, arrived, assert, assertEq, fakeAiModels, settingsPane, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor, darkPageLine } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -1616,20 +1616,51 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         try {
           const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
           await waitForPdf(p, 1);
+          // The pages in view drawn and the frames steady before the notch. A
+          // later pass opens where the last one left the paper (page 3), and a
+          // page rendering under the glide made frames long enough to close
+          // most of a notch in one (CI: 2286 2330 2363 2446).
+          await until(() => p.evaluate(() => {
+            const v = document.querySelector(".pdfViewer"), r = v.getBoundingClientRect();
+            return [...v.querySelectorAll("[data-page]")].filter((d) => {
+              const b = d.getBoundingClientRect();
+              return b.bottom > r.top && b.top < r.bottom;
+            }).every((d) => d.querySelector(".textLayer span"));
+          }), { what: "the pages in view drawn" });
+          await until(() => p.evaluate(() => new Promise((done) => {
+            let prev = 0, calm = 0;
+            const t0 = performance.now();
+            const tick = (now) => {
+              calm = prev && now - prev < 34 ? calm + 1 : 0;
+              prev = now;
+              if (calm >= 10) done(true);
+              else if (now - t0 > 2000) done(false);
+              else requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+          })), { what: "ten steady frames before the notch" });
           const box = await p.locator(".pdfViewer").boundingBox();
           await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-          // The positions one notch passes through, one sample per frame.
+          // The positions one notch passes through, one sample per frame, and
+          // how long each frame took.
           await p.evaluate(() => {
             const v = document.querySelector(".pdfViewer");
             window.wheelTrail = [v.scrollTop];
-            const tick = () => { window.wheelTrail.push(v.scrollTop); if (window.wheelTrail.length < 40) requestAnimationFrame(tick); };
+            window.wheelFrames = [];
+            let prev = 0;
+            const tick = (now) => {
+              if (prev) window.wheelFrames.push(Math.round(now - prev));
+              prev = now;
+              window.wheelTrail.push(v.scrollTop);
+              if (window.wheelTrail.length < 40) requestAnimationFrame(tick);
+            };
             requestAnimationFrame(tick);
           });
           await p.mouse.wheel(0, 200);
           await until(() => p.evaluate(() => window.wheelTrail.length >= 40), { what: "40 frames sampled" });
           const trail = await p.evaluate(() => [...new Set(window.wheelTrail)]);
           assertEq(Math.round(trail.at(-1) - trail[0]), 200 / scale, `one notch scrolls its ${200 / scale} px (${on ? "on" : "off"}, scale ${scale})`);
-          if (on) assert(trail.length >= 5, `on: several positions on the way at scale ${scale}, ${trail.join(" ")}`);
+          if (on) assert(trail.length >= 5, `on: several positions on the way at scale ${scale}, ${trail.join(" ")}; frames ${(await p.evaluate(() => window.wheelFrames)).join(" ")} ms`);
           else assertEq(trail.length, 2, `off: one jump, ${trail.join(" ")}`);
           if (on && scale === 1) {
             // A spin, notches closer than the glide: Chromium hands each
@@ -1656,6 +1687,92 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       }
     } finally {
       await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { smoothWheel: false } } });
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
+  });
+
+  // Settings → Reading › PDFs › Page direction (pdf/pageLayout.js): Across
+  // lays the pages side by side, 8 px apart, and the viewer scrolls sideways
+  // through them. Fit page holds a whole page; with nothing to scroll down,
+  // a plain wheel moves the pages across; a jump stands a page in the
+  // middle; a Ctrl+wheel zoom keeps the point under the pointer; and turned
+  // back down in Settings, the page being read is the one at the top.
+  await step("pdf: pages that run across stand side by side, fit whole, move across under the wheel, and keep the page read when turned back down", async () => {
+    const lines = Array.from({ length: 30 }, (_, n) => `Across line ${n + 1}`);
+    const up = await account.upload("/api/uploads", makePdf(Array.from({ length: 6 }, (_, i) => [`Page ${i + 1} heading`, ...lines])), "across.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Across paper" } });
+    await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { pdfFlow: "across" } } });
+    const c = await account.context(browser);
+    await c.addInitScript(() => localStorage.setItem("gamma-pdf-flow", "across"));
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      // The page boxes in the viewer's own px, its scroll and the counter.
+      const geo = () => p.evaluate(() => {
+        const v = document.querySelector(".pdfViewer"), r = v.getBoundingClientRect();
+        const boxes = [...v.querySelectorAll(".pdfPageWrap[data-page]")].map((b) => {
+          const q = b.getBoundingClientRect();
+          return { left: q.left - r.left, top: q.top - r.top, width: q.width, height: q.height };
+        });
+        return { flow: v.dataset.flow || "down", boxes, left: v.scrollLeft, top: v.scrollTop, cw: v.clientWidth, ch: v.clientHeight,
+          sh: v.scrollHeight, page: document.querySelector(".pdfPageWidget input")?.value };
+      });
+      let g = await geo();
+      assertEq(g.flow, "across", "the viewer runs across");
+      const [b1, b2] = g.boxes;
+      assert(Math.abs(b2.left - (b1.left + b1.width + 8)) < 1.5 && Math.abs(b2.top - b1.top) < 1, `page 2 level beside page 1, 8 px on: ${JSON.stringify([b1, b2])}`);
+      const fit = Math.min(g.cw / b1.width, g.ch / b1.height);
+      assert(Math.abs(fit - 1) < 0.01, `Fit page: the whole page fills the viewer one way, ${b1.width}×${b1.height} in ${g.cw}×${g.ch}`);
+      assert(g.sh <= g.ch + 1, "nothing to scroll down");
+      assertEq(await p.locator(".pdfFitWidthBtn").getAttribute("aria-label"), "Fit page", "the strip's fit says what it fits");
+
+      const vbox = await p.locator(".pdfViewer").boundingBox();
+      await p.mouse.move(vbox.x + vbox.width / 2, vbox.y + vbox.height / 2);
+      await p.mouse.wheel(0, 200);
+      await until(async () => (await geo()).left > g.left, { what: "the wheel moved the pages across" });
+      g = await geo();
+      assertEq(Math.round(g.left), 200, "a notch's 200 px, across");
+      assertEq(g.top, 0, "nothing down");
+
+      // A jump: page 4 in the middle of the view, and the counter on it.
+      await p.locator(".pdfPageWidget input").click();
+      await p.keyboard.type("4");
+      await p.keyboard.press("Enter");
+      await until(async () => { const q = await geo(); const b4 = q.boxes[3]; return Math.abs(b4.left + b4.width / 2 - q.cw / 2) < 2; }, { what: "page 4 in the middle" });
+      await until(async () => (await geo()).page === "4", { what: "the counter on page 4" });
+
+      // A Ctrl+wheel zoom keeps the point under the pointer, now on page 4.
+      g = await geo();
+      const px = g.cw / 2 + 30, py = g.ch / 2 - 40;
+      const under = (q) => { const b = q.boxes[3]; return [(px - b.left) / b.width, (py - b.top) / b.height]; };
+      const was = under(g);
+      await p.mouse.move(vbox.x + px, vbox.y + py);
+      await p.keyboard.down("Control");
+      await p.mouse.wheel(0, -100);
+      await p.keyboard.up("Control");
+      await until(async () => (await geo()).boxes[3].width > g.boxes[3].width * 1.05, { what: "zoomed in" });
+      await sleep(300);
+      g = await geo();
+      const now = under(g);
+      assert(Math.abs(now[0] - was[0]) * g.boxes[3].width < 3 && Math.abs(now[1] - was[1]) * g.boxes[3].height < 3,
+        `the zoom held the point under the pointer: ${was} → ${now}`);
+
+      // Turned back down in Settings: page 4 at the top.
+      await p.getByRole("button", { name: "Account & settings", exact: true }).click();
+      await p.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+      await settingsPane(p, "Reading & editing");
+      await p.locator('.setRow[data-setting="Page direction"]').getByRole("button", { name: "Down", exact: true }).click();
+      await p.keyboard.press("Escape");
+      await until(async () => (await geo()).flow === "down", { what: "the viewer runs down" });
+      g = await geo();
+      assert(Math.abs(g.boxes[3].top) < 2, `page 4 at the top: ${g.boxes[3].top}`);
+      assertEq(g.page, "4", "the counter still on page 4");
+      assert(g.boxes[4].top > g.boxes[3].top + g.boxes[3].height, "page 5 under page 4");
+      assertNoProblems(p);
+      await p.close();
+    } finally {
+      await c.close();
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { pdfFlow: "down" } } });
       await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
     }
   });

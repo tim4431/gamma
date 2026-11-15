@@ -165,10 +165,7 @@ an ink group does to the ink) are. State that must
 outlive a component, or be read outside React, is a store with listeners
 that components read through `useSyncExternalStore` (`pdf/translateState.js`,
 `recording/recorderStore.js`, `replay/playback.js`,
-`settings/settingsReads.js`, `feedback/useFeedback.js`: the feedback
-dialog's scope, which each opener writes where it is and
-`feedback/FeedbackHost.jsx` reads, so App renders the dialog and holds
-nothing of it). App calls the owner and hands its commands on.
+`settings/settingsReads.js`). App calls the owner and hands its commands on.
 
 - **An owner is tested.** Its rules are a pure module with a node test,
   since the frontend has no component tests: `ink/stripState.js` under
@@ -178,10 +175,8 @@ nothing of it). App calls the owner and hands its commands on.
   `explorer/workFolderActions.js` under `useWorkFolderActions.jsx`,
   `explorer/trackSelection.js` under `TrackDialog.jsx`,
   `explorer/directoryRows.js` under `useDirectoryRows.js`, `layoutKeeping`
-  in `useFilesWindow.js`, `explorer/fileSearch.js` under `useFileSearch.js`
-  and
-  `feedback/feedbackView.js` with `feedback/feedbackText.js` under
-  `FeedbackDialog.jsx`.
+  in `useFilesWindow.js` and `explorer/fileSearch.js` under
+  `useFileSearch.js`.
 - **An owner is narrow.** It takes the few inputs it reads and returns
   state and stable commands. A hook that takes App's variables wholesale
   moves code without giving it an owner.
@@ -297,7 +292,6 @@ and the tab groups of the `workspace/` row.
 | `editor/` | Block editing, caret/focus, undo, and notes rendering | Existing editor files, `editTail`, notes-window markup and editor actions |
 | `library/` | Listing derivation, selection, page/folder/label operations, and library UI | `pageBlocks` through `homeItems`, click handlers, filing, rename/move/delete, carousels |
 | `explorer/` (built: `workFolders.js`, `workFolderActions.js`, `knownPages.js`, `trackSelection.js`, `useFolderTree.js`, `useSummaries.js`, `useWorkFolderActions.jsx`, `FolderTree.jsx`, `TrackDialog.jsx`, the trees' `TreeRow.jsx`, `useTree.js` and `fileTree.js`, the Files window's `useFilesWindow.js`, `useFilesTree.js`, `useDirectoryRows.js`, `directoryRows.js`, `FilesWindow.jsx`, `FileTree.jsx`, the path twin `workPaths.js`, quick open's `useFileSearch.js` and `fileSearch.js`, [work_folders.md](work_folders.md)) | Work folders: the rules a file and the folders of one follow, what the menus, drops and open page ask of them, Add to library, Remove from library and Save a copy, a directory's folder view as a tree read a page of rows at a time, the pages the listing does not carry, the tracking dialog; the Files window, a file's crumbs and path, quick open's files | Extracted: the rules (node-tested twins of the server's), what App asks of them (`workFolderActions.js`, node-tested), the commands and the menus' library rows (`useWorkFolderActions.jsx`), the trees' rows, keys and reads, the Files window's state; App merges the rows into `knownBlocks`, hands the folder view and the window's tree the library's row actions, mounts the window in its dock and gates its own menus and drops on the answers |
-| `feedback/` (built: `useFeedback.js`, `FeedbackHost.jsx`, `FeedbackDialog.jsx`, `feedbackView.js`, `feedbackText.js`, [annotations.md](annotations.md)) | Feedback on a work folder's files: the view and Send dialog, the requests and their states | Extracted whole: the dialog's scope is a store each opener writes (the list bar, the Comments window, the vault chip), the host App mounts reads it, and the dialog holds its own reads and state; App only hands it `openThreadAt`, who may send and the vaults, and wires the ink threads' hook (`comments/useInkThreads.js`) into the ink owners |
 | `workspace/` (built: the tab groups, `tabLayout.js`, `TabGroups.jsx`, `PagePane.jsx`, [tab_groups.md](tab_groups.md); the dock arrangement itself is still App's) | Dock arrangement, visibility, panel sizes, drag geometry, and phone presentation; the open tabs' groups side by side | `moveWindow`, `startWindowDock`, `renderSlotGroup`, per-page layout snapshots |
 | `documents/` (built: `pageDocument.js`, `documentView.js`, `viewers.js`, `codeLanguages.js`, `DocumentPane.jsx`, `viewerSurface.js`, `viewers/`, `formats.js`, [documents.md](documents.md)) | What a page carries and which viewer it shows: one rule for the live page and a tab group's (`documentView`), the registry of panes and what each brings to the frame (`viewers.js`), the pane that mounts the viewer it names, the viewers of its own (the code view, the picture, the player, the file pane) and the surface they take | Extracted: the viewer decision (App reads it as `docView` and its gates from `spec`, never a pane's id), the viewer switch, and the surface's memo and the viewer's report ref (`useViewerSurface`, stable closures over App's handlers); App keeps the PDF's and the notebook's render functions and their props |
 | `pdf/` | Viewer controls, PDF/notes jumps, scroll restoration, translation, and snapshots | Existing viewer/translation files, `restorePdfScroll`, zoom and capture logic |

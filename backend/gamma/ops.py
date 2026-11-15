@@ -141,6 +141,9 @@ PRUNE_EVERY = 16     # prune check cadence (every Nth seq, or a batch over its s
 # (410) instead: refetching the page is cheaper than replaying it.
 CATCHUP_MAX_BATCHES = 200
 CATCHUP_MAX_BYTES = 1_000_000
+# A deleted block's agent stamp is kept this long for an undo to bring it
+# back with (``_Batch.keep_stamps``, pages.db ``agent_stamps``).
+STAMP_KEEP_DAYS = 7
 _SURROGATE = re.compile(r"[\ud800-\udfff]")
 # The properties that place an object on a page, each with its module's
 # normaliser and merge: a text box's ``text_box`` (gamma/text_box.py) and a
@@ -681,6 +684,7 @@ class _Batch:
             return
         self.check_parent(parent, None)
         position = self.free_position(parent, op.get("position"), block_id)
+        props = self.stamp_back(block_id, content, props)
         self.conn.execute(
             f"INSERT INTO unified_blocks ({BLOCK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (block_id, parent, position, content, json.dumps(props), self.now, self.now, self.page_id))
@@ -692,6 +696,38 @@ class _Batch:
         self.refs_changed(set(), upload_refs(content, props))
         self.applied.append({"op": "insert", "id": block_id, "parent": parent,
                              "position": position, "content": content, "props": props})
+
+    def keep_stamps(self, rows) -> None:
+        """The stamps (``properties.agent``, agents.stamp) of the deleted
+        ``rows`` an agent made, kept by block id with the block's text then
+        (pages.db ``agent_stamps``), so an undo's insert gets them back
+        (``stamp_back``); a stamp kept more than ``STAMP_KEEP_DAYS`` goes."""
+        kept = []
+        for r in rows:
+            stamp = load_props(r[4]).get("agent") if '"agent"' in (r[4] or "") else None
+            if isinstance(stamp, dict):
+                kept.append((r[0], json.dumps(stamp), r[3] or "", self.now))
+        if kept:
+            cutoff = format_stamp(parse_stamp(self.now) - timedelta(days=STAMP_KEEP_DAYS))
+            self.conn.execute("DELETE FROM agent_stamps WHERE deleted_at < ?", (cutoff,))
+            self.conn.executemany("INSERT OR REPLACE INTO agent_stamps (block_id, stamp, content, deleted_at) "
+                                  "VALUES (?, ?, ?, ?)", kept)
+
+    def stamp_back(self, block_id: str, content: str, props: dict) -> dict:
+        """``props`` of a block inserted again under the id of one an op
+        deleted: the stamp kept of it (``keep_stamps``) back where its text
+        is the one deleted and the writer sent none, which a client never
+        does (``client_ops``), so an undo of the deletion of an agent's
+        block keeps who made it and no client sets a stamp. A copy made
+        under a fresh id (a Duplicate) finds none. The kept stamp goes
+        either way."""
+        row = self.conn.execute("SELECT stamp, content FROM agent_stamps WHERE block_id = ?", (block_id,)).fetchone()
+        if row is None:
+            return props
+        self.conn.execute("DELETE FROM agent_stamps WHERE block_id = ?", (block_id,))
+        if SERVER_KEYS[0] in props or row[1] != content:
+            return props
+        return {**props, SERVER_KEYS[0]: json.loads(row[0])}
 
     def move(self, op: dict) -> None:
         block_id, parent = op["id"], op["parent"]
@@ -721,6 +757,7 @@ class _Batch:
         rows = fetch_subtree(self.conn, block_id)
         delete_subtree(self.conn, block_id)
         comments.orphan(self.conn, [r[0] for r in rows], self.now)  # hidden, and swept unless the blocks return
+        self.keep_stamps(rows)
         for r in rows:
             self._page_of[r[0]] = None
             self.deleted.append(r[0])
@@ -937,7 +974,9 @@ def client_ops(ops: list[dict], client: str) -> list[dict]:
     """A request's ops with the server's keys (``SERVER_KEYS``) taken out of
     each insert's and set's props: a block's ``agent`` stamp is written by
     the server's writers (an agent's create_block, the hand's highlight),
-    never by a client's batch; its removal (None in a set) passes. The
+    never by a client's batch; its removal (None in a set) passes, and an
+    undo of an agent's block's deletion gets the stamp from the server's
+    own record of it (``_Batch.stamp_back``). The
     mirror's batch (``sync``, from an integration token only:
     ``auth.writer_client``) keeps them, as it keeps every property."""
     if work_filing.writer_of(client) == "mirror":

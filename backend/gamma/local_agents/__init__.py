@@ -1,8 +1,9 @@
-"""An agent on this computer: Gamma itself is the connector that answers a
-work folder's Sends (docs/dev/local_agents.md). On the desktop app's own
-server, the vault's maker turns on Codex CLI or Claude Code for a work
-folder; a Send made in Gamma then starts it in the folder's directory with
-the comments as the prompt, and its answers come back as replies.
+"""The agents on this computer: Codex CLI and Claude Code, turned on in
+Settings → AI → Agents and used from the chat and from a comment ticked
+*Send to* (docs/dev/local_agents.md). On the desktop app's own server a
+turn runs the agent in the directory its conversation works in (a synced
+folder's, one the computer offers, one of its own), with Gamma's tools, and
+its answer comes back in the chat or in the thread.
 
 - ``catalog``: the known agents, where each is on this computer, whether it
   is signed in.
@@ -11,10 +12,13 @@ the comments as the prompt, and its answers come back as replies.
 - ``events``, ``codex``, ``claude``: the drivers, one turn of an agent as a
   stream of plain events.
 - ``store``, ``prompt``, ``runner``: what this computer keeps, what the
-  agent is told, claiming the requests and running them.
+  agent is told, and the turns' queues and runs.
+- ``chats``, ``home``, ``threads``, ``mention``, ``tools``: the
+  conversations, where a turn's conversation lives, a comment sent to an
+  agent, an ``@name`` read as one, and the token of a turn's Gamma tools.
 
 This module imports only ``config`` and ``version``: folder_links, the
-feedback modules and the routers import the rest inside functions.
+annotation modules and the routers import the rest inside functions.
 """
 
 from .. import config, version

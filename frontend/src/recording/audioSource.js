@@ -62,8 +62,21 @@ export function audioSource(clock, { onError } = {}) {
     onError?.(error);
   }
 
+  // iOS lets an <audio> element start only from a user's gesture, element by
+  // element: the one the tap plays may, the one warming the next segment may
+  // not, and playback would stop at the join. Played muted and paused within
+  // that same tap, it may start later on its own.
+  let unlocked = false;
+  function unlock() {
+    const other = players[1 - active];
+    if (unlocked || other.dataset.seg == null) return;
+    unlocked = true;
+    other.muted = true;
+    other.play().then(() => { if (other !== player()) other.pause(); }, () => {}).finally(() => { other.muted = false; });
+  }
+
   return {
-    start(t, r) { rate = r; place(t); playing = true; player().playbackRate = rate; player().play().catch(fail); },
+    start(t, r) { rate = r; place(t); playing = true; player().playbackRate = rate; player().play().catch(fail); unlock(); },
     pause() { playing = false; player().pause(); },
     seek(t) { place(t); if (playing) player().play().catch(fail); },
     setRate(r) { rate = r; for (const a of players) a.playbackRate = r; },

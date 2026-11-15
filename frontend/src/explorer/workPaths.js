@@ -66,6 +66,14 @@ export function revealPath(libTree, row) {
   return first ? folderChain(libTree, first) : [];
 }
 
+// Whether a page (`row`, as revealPath takes it) is in a synced folder that
+// `kept(folderId)` names (the desktop app's vault links by folder: a work
+// folder or a kept folder): one of its folders, or a folder above one, is.
+export function inKeptFolder(libTree, row, kept) {
+  const folders = row?._folders ?? row?.properties?.folders ?? [];
+  return folders.some((f) => folderChain(libTree, f).some((id) => !!kept(id)));
+}
+
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
 // Whether a link's address is a path relative to the note it is in, which

@@ -7,8 +7,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { NONE } from "../src/explorer/directoryRows.js";
-import { focusAfter, folderRows, keyAction, openDirs, revealLimits, revealSettled, tabStop, treeRows } from "../src/explorer/fileTree.js";
-import { revealPath } from "../src/explorer/workPaths.js";
+import { focusAfter, folderRows, keyAction, openDirs, pagedFor, revealLimits, revealSettled, tabStop, treeRows } from "../src/explorer/fileTree.js";
+import { inKeptFolder, revealPath } from "../src/explorer/workPaths.js";
 import { treeOf } from "../src/explorer/workFolders.js";
 import { libraryTree } from "../src/library/libraryUtils.js";
 
@@ -161,6 +161,15 @@ test("the reveal opens the folders from the top down to the page's first folder"
   assert.deepEqual(revealPath(LIB, null), []);
 });
 
+test("a page is in a kept synced folder when one of its folders or a folder above one is kept", () => {
+  const kept = (id) => id === "W";
+  assert.equal(inKeptFolder(LIB, { _folders: ["raw"] }, kept), true, "a file deep in the work folder");
+  assert.equal(inKeptFolder(LIB, { properties: { folders: ["deep", "sec"] } }, kept), true, "any of its folders");
+  assert.equal(inKeptFolder(LIB, { _folders: ["deep"] }, kept), false, "a library folder");
+  assert.equal(inKeptFolder(LIB, { _folders: ["raw"] }, () => false), false, "kept on no computer here");
+  assert.equal(inKeptFolder(LIB, null, kept), false);
+});
+
 test("the keys: moves, open and close, the parent, open, select and the menu", () => {
   const rows = rowsOf(["W", "fig"], { W: read([fileRow("main", "main.tex", "text")]), fig: read([]) });
   // Shelf, Paper, dir 9, dir 10, figures, raw, sections, main.tex, Empty
@@ -234,6 +243,15 @@ test("a reveal is let go once what can be drawn is", () => {
   assert.equal(settled({}, { pageId: "p1", dir: "shelf" }, ["shelf"]), true, "a library folder draws at once");
   assert.equal(settled({}, { pageId: "x", dir: "gone" }), true, "a folder the tree does not draw");
   assert.equal(settled({}, { pageId: "x", dir: "W" }, []), true, "a folder not open");
+});
+
+test("the folder view's reveal waits until its directory is paged as far as the file", () => {
+  const part = [fileRow("f0", "f0.pdf"), fileRow("f1", "f1.pdf")];
+  const paged = (reads, pageId) => pagedFor(dirsOf(reads), { pageId, dir: "W" });
+  assert.equal(paged({}, "f1"), false, "not read yet");
+  assert.equal(paged({ W: read(part, { total: 300, next: 2 }) }, "x"), false, "still paging for it");
+  assert.equal(paged({ W: read(part, { total: 300, next: 2 }) }, "f1"), true, "held already");
+  assert.equal(paged({ W: read(part) }, "x"), true, "read to the end without it");
 });
 
 test("the keys move to the row now where the one they were on went", () => {

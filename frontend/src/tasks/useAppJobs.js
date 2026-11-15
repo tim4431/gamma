@@ -10,9 +10,8 @@ import { t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
 import { guideEvents } from "../guide/events.js";
-import { pickChatAgent } from "../chat/computer/chatSide.js";
-import { openFeedback } from "../feedback/useFeedback.js";
-import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
+import { showInChat } from "../chat/computer/chatSide.js";
+import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle, turnShown } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
 export function useAppJobs({
@@ -136,9 +135,10 @@ export function useAppJobs({
 
   // A row of Background tasks clicked: the export or import dialog on that
   // job again, the Settings pane where the work is managed, or a computer
-  // turn's page, folder or library with its chat on the turn's agent (a
-  // turn of another workspace opens its page there), or a Send's Feedback
-  // dialog.
+  // turn's page, folder or library with its chat on the turn's agent and
+  // conversation (taskKinds.js turnShown: its comment thread's, a
+  // co-author's; a turn of another workspace opens its page there, on the
+  // page's own chat).
   function openTask(task) {
     const open = kindOf(task).open;
     setOpenPopover(null);
@@ -157,15 +157,10 @@ export function useAppJobs({
     } else if (open === "computer") {
       const page = task.params?.bucket || "";
       if (!page) return;
-      pickChatAgent(page, task.params?.agent || "");
+      showInChat(page, turnShown(task), task.params?.agent_id || task.params?.agent || "");
       if (task.workspace && workspaceId && task.workspace !== workspaceId) {
         window.location.href = `${window.location.pathname}?page=${encodeURIComponent(page)}&ws=${encodeURIComponent(task.workspace)}`;
       } else openPageChat?.(page);
-    } else if (open === "feedback") {
-      // a Send's run: the Feedback dialog on its file or folder, in this workspace
-      if (task.workspace && workspaceId && task.workspace !== workspaceId) {
-        window.location.href = `${window.location.pathname}?ws=${encodeURIComponent(task.workspace)}`;
-      } else openFeedback(task.params?.scope);
     } else if (open?.startsWith("settings:")) {
       setSettingsOpen(open.slice("settings:".length));
     }

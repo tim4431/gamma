@@ -13,9 +13,9 @@ Asking (``probe``) runs ``--version`` and the status command, then asks a
 ready agent which models it offers (Codex's ``model/list`` on the
 short-lived app-server that also checks its Windows sandbox, Claude Code's
 ``initialize``), none of which uses a model; the answer is kept
-``PROBE_TTL_S``, and so is the list of models apart, since a run's start
+``PROBE_TTL_S``, and so is the list of models apart, since a turn's start
 asks only whether the agent is ready (``_listed``). A read path (a listing,
-the feedback dialog's poll) uses ``cached``, which never runs a process: a
+a page's strip, a comment's tick) uses ``cached``, which never runs a process: a
 stale or missing answer, or models a ready agent has not listed within
 ``PROBE_TTL_S``, starts one probe in the background.
 """

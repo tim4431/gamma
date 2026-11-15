@@ -1469,7 +1469,11 @@ Only an iPad can show these, and none has been run yet:
    viewport's keyboard behaviour the editing bar depends on ("Where it
    sits", below).
 6. Recording, exports through the share sheet, the file picker and the
-   clipboard.
+   clipboard. A recording (WAV through Web Audio there,
+   [recording.md](recording.md#client-frontendsrcrecording)) moves the
+   pill's level meter and has sound played on the iPad and in the desktop
+   app; one past five minutes, or paused and resumed, plays across its
+   joins; dictation transcribes.
 7. The Gamma Cloud sheet: Google in `ASWebAuthenticationSession`, the
    loopback return, the sheet closed by the custom scheme.
 8. The swap from the native line to the web's outline, in every look:

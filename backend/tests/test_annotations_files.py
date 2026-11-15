@@ -2,16 +2,15 @@
 and beside a followed file (gamma/annotations/files.py,
 docs/dev/annotations.md "The files"): written by every whole round and
 within one hot pass of a comment, byte for byte the same on a quiet pass,
-the ``.gamma/feedback/`` of before gone at the first round, a highlight
+the ``.gamma/feedback/`` of before and the Sends' request files gone at the
+first round, a highlight
 without a thread listed, an entry on lines of a tracked source file naming
 them, rewritten on a reply, a moved place and a resolve, emptied by the
 last resolve, gone with the vault and when it stops being a work folder;
 nothing written where the directory is not the vault's, below a junction,
 or while the vault is paused or choosing its files; Gamma's stale
 temporary files swept; a file a reader holds tried again and left for the
-next pass; a request's file written at once and rewritten by an answer,
-its pictures kept while the rest are pruned, and old done requests' files
-gone past the newest. A vault of one file's beside the file, under its
+next pass. A vault of one file's beside the file, under its
 name: written at its round, rewritten within a pass of a highlight or a
 comment, never a vault's directory, not written inside a folder vault's,
 and gone when the vault goes, follows its file elsewhere or is taken in."""
@@ -25,7 +24,7 @@ import time
 import pymupdf
 import pytest
 
-from conftest import account_of, doc_props, fresh_client, login, make_page, make_user, thread_on, token_for
+from conftest import account_of, doc_props, login, make_page, make_user, thread_on
 from gamma import folder_links, gamma_sync, highlights, pdf_meta, storage
 from gamma.vault import disk as vault_disk, kinds, store as vault_store
 from gamma.blocks_store import new_block_id
@@ -156,12 +155,6 @@ def _link_dir(target, link):
         pytest.skip("this account may not make symlinks")
 
 
-def _bearer(token: str):
-    c = fresh_client()
-    c.headers["Authorization"] = f"Bearer {token}"
-    return c
-
-
 def _resolve(owner, thread_id: str, resolved: bool = True) -> None:
     r = owner.post(f"/api/comments/{thread_id}/resolve", json={"resolved": resolved})
     assert r.status_code == 200, r.text
@@ -232,7 +225,7 @@ def test_a_thread_on_lines_of_a_source_file_is_an_entry_naming_them(owner, disk)
 def test_a_reply_a_moved_place_and_a_resolve_rewrite_the_files_and_the_last_resolve_empties_them(owner, disk):
     root = disk / "paper"
     link = _paper(owner, root)
-    ws, w, page = link["workspace_id"], link["folder_id"], _page_of(link, "main.pdf")
+    ws, page = link["workspace_id"], _page_of(link, "main.pdf")
     here = _here(root)
     area = _area(ws, page, AREA)
     thread = thread_on(owner, page, area, "move the legend")
@@ -253,7 +246,7 @@ def test_a_reply_a_moved_place_and_a_resolve_rewrite_the_files_and_the_last_reso
     _pass()
     [entry] = _open(root)["entries"]
     assert entry["picture"] != first and (here / entry["picture"]).is_file() and (here / first).is_file()
-    files.mark_folder(ws, w)
+    files.mark(ws, page)
     _pass()
     assert not (here / first).exists() and (here / entry["picture"]).is_file()
 
@@ -262,7 +255,7 @@ def test_a_reply_a_moved_place_and_a_resolve_rewrite_the_files_and_the_last_reso
     doc = _open(root)
     assert doc["count"] == 0 and doc["entries"] == [] and doc["updated_at"] is None
     assert "No open comments and no highlights." in (here / "open.md").read_text(encoding="utf-8")
-    files.mark_folder(ws, w)
+    files.mark(ws, page)
     _pass()
     assert list((here / "img").iterdir()) == []
 
@@ -318,31 +311,6 @@ def test_a_picture_that_cannot_be_drawn_takes_no_slot_of_the_cap_and_holds_no_ma
     assert sorted(p.name for p in (_here(root) / "img").iterdir()) == [f"{fine}.jpg", f"{a}.jpg"]
 
 
-def test_a_request_answered_before_a_pass_drew_its_pictures_gets_them_at_the_next(owner, disk):
-    root = disk / "paper"
-    link = _paper(owner, root)
-    ws, w, page = link["workspace_id"], link["folder_id"], _page_of(link, "main.pdf")
-    here = _here(root)
-    thread = thread_on(owner, page, _area(ws, page, AREA), "legend")
-    r = owner.post("/api/feedback/requests", json={"scope": w, "threads": [thread["id"]]})
-    assert r.status_code == 201, r.text
-    request = r.json()["request"]
-    agent = _bearer(token_for(owner, "read", "Claude Code", comments=True))
-    r = agent.post(f"/api/feedback/requests/{request['id']}/state", json={"state": "done"})
-    assert r.status_code == 200, r.text
-    file = here / "requests" / f"{request['id']}.json"
-    done = json.loads(file.read_text(encoding="utf-8"))
-    assert done["state"] == "done" and [e["picture"] for e in done["entries"]] == [None]   # no pass drew it yet
-    _pass()
-    done = json.loads(file.read_text(encoding="utf-8"))
-    [picture] = [e["picture"] for e in done["entries"]]
-    assert done["state"] == "done" and picture and (file.parent / picture).is_file()
-    before = _footprint(root)
-    files.mark_folder(ws, w)
-    _pass()
-    assert _footprint(root) == before     # the file stands now: a pass reads it no more
-
-
 def test_nothing_is_written_where_the_directory_is_not_the_vaults_below_a_junction_or_while_the_vault_rests(owner, disk):
     root = disk / "paper"
     link = _paper(owner, root)
@@ -385,7 +353,8 @@ def test_nothing_is_written_where_the_directory_is_not_the_vaults_below_a_juncti
     chosen = disk / "choosing"
     _put(chosen / "a.md", "a\n")
     choosing = _create(owner, path=str(chosen), new_folder=True, push="everything", choose=True)
-    files.mark_folder(ws, choosing["folder_id"])
+    with files._guard:
+        files._scopes[(ws, choosing["folder_id"])] = time.monotonic()
     _pass()
     assert files.due(0) == [] and not _here(chosen).exists()
 
@@ -400,8 +369,7 @@ def test_gammas_stale_temporary_files_are_swept_and_a_write_going_on_stays(owner
     link = _paper(owner, root)
     here = _here(root)
     then = time.time() - 3600
-    old = [here / f"{vault_disk.TEMP}old.tmp", here / "img" / f"{vault_disk.TEMP}old.tmp",
-           here / "requests" / f"{vault_disk.TEMP}old.tmp"]
+    old = [here / f"{vault_disk.TEMP}old.tmp", here / "img" / f"{vault_disk.TEMP}old.tmp"]
     for path in old:
         path.parent.mkdir(exist_ok=True)
         path.write_bytes(b"x")
@@ -465,73 +433,20 @@ def test_a_file_a_reader_holds_is_tried_again_then_left_for_the_next_pass(owner,
     assert _open(root)["count"] == 1 and files.due(0) == [] and _leftovers(root) == []
 
 
-def test_a_requests_file_is_written_at_once_keeps_its_pictures_and_goes_once_done_past_the_newest(owner, disk,
-                                                                                                    monkeypatch):
+def test_what_a_work_folder_held_before_goes_at_the_first_round_and_with_the_vault(owner, disk):
+    """``.gamma/feedback/`` (the files before step 3.2) and the Sends'
+    ``.gamma/annotations/requests/`` (before step 3.7)."""
     root = disk / "paper"
     link = _paper(owner, root)
-    ws, w, page = link["workspace_id"], link["folder_id"], _page_of(link, "main.pdf")
-    here = _here(root)
-    a, b = _area(ws, page, AREA), _area(ws, page, MOVED)
-    ta, tb = thread_on(owner, page, a, "legend"), thread_on(owner, page, b, "axis")
-    _pass()
-    pictures = {e["id"]: e["picture"] for e in _open(root)["entries"]}
-    assert len(set(pictures.values())) == 2 and all((here / p).is_file() for p in pictures.values())
-
-    # a Send writes its file at once, its pictures named from requests/
-    r = owner.post("/api/feedback/requests", json={"scope": w, "threads": [ta["id"]], "note": "fix the legend"})
-    assert r.status_code == 201, r.text
-    request = r.json()["request"]
-    file = here / "requests" / f"{request['id']}.json"
-    sent = json.loads(file.read_text(encoding="utf-8"))
-    assert (sent["format"], sent["state"], sent["note"], sent["rev"]) == ("gamma-feedback-request-1", "sent",
-                                                                         "fix the legend", request["rev"])
-    assert sent["answer"]["state"] == f"POST /api/feedback/requests/{request['id']}/state {{state, detail}}"
-    [entry] = sent["entries"]
-    assert entry["id"] == ta["id"] and entry["picture"] == f"../{pictures[ta['id']]}"
-    assert (file.parent / entry["picture"]).resolve() == (here / pictures[ta["id"]]).resolve()
-
-    # an answer rewrites the request file: its entries as they are now
-    agent = _bearer(token_for(owner, "read", "Claude Code", comments=True))
-    r = agent.post(f"/api/pages/{page}/comments", json={"block_id": a, "thread_id": ta["id"], "body": "moved it"})
-    assert r.status_code == 201, r.text
-    _pass()
-    sent = json.loads(file.read_text(encoding="utf-8"))
-    assert [(c["agent"], c["body"]) for c in sent["entries"][0]["comments"]] == [("", "legend"), ("Claude Code", "moved it")]
-
-    # both resolved: open.json names no picture; the request's stays, the other goes
-    _resolve(owner, ta["id"])
-    _resolve(owner, tb["id"])
-    _pass()
-    files.mark_folder(ws, w)
-    _pass()
-    assert (here / pictures[ta["id"]]).is_file() and not (here / pictures[tb["id"]]).exists()
-
-    # a done request's file stays while it is among the newest, goes past them, and a live one never
-    monkeypatch.setattr(files, "REQUEST_FILES", 1)
-    r = agent.post(f"/api/feedback/requests/{request['id']}/state", json={"state": "done"})
-    assert r.status_code == 200, r.text
-    _pass()
-    assert json.loads(file.read_text(encoding="utf-8"))["state"] == "done"
-    _resolve(owner, tb["id"], False)
-    second = owner.post("/api/feedback/requests", json={"scope": w, "threads": [tb["id"]]}).json()["request"]
-    _pass()
-    assert not file.exists() and (here / "requests" / f"{second['id']}.json").is_file()
-    assert not (here / pictures[ta["id"]]).exists()     # nothing names it any more
-    third = owner.post("/api/feedback/requests", json={"scope": w, "threads": [tb["id"]]}).json()["request"]
-    _pass()
-    assert (here / "requests" / f"{second['id']}.json").is_file() and (here / "requests" / f"{third['id']}.json").is_file()
-
-
-def test_the_former_feedback_directory_goes_at_the_first_round_and_with_the_vault(owner, disk):
-    root = disk / "paper"
-    link = _paper(owner, root)
-    former = root / files.FORMER
-    (former / "img").mkdir(parents=True)
-    (former / "open.json").write_bytes(b"{}\n")
-    (former / "img" / f"{'a' * 16}.jpg").write_bytes(JPEG)
+    feedback, requests = (root / rel for rel in files.FORMER)
+    (feedback / "img").mkdir(parents=True)
+    (feedback / "open.json").write_bytes(b"{}\n")
+    (feedback / "img" / f"{'a' * 16}.jpg").write_bytes(JPEG)
+    requests.mkdir(parents=True)
+    (requests / "r1.json").write_bytes(b"{}\n")
     assert _sync(owner, link["id"])["annotations"] == {"open": 0}
-    assert not former.exists() and (_here(root) / "open.json").is_file()
-    (former / "requests").mkdir(parents=True)          # one the removal meets goes with the rest
+    assert not feedback.exists() and not requests.exists() and (_here(root) / "open.json").is_file()
+    (feedback / "requests").mkdir(parents=True)         # one the removal meets goes with the rest
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
     assert not (root / vault_disk.MARKER_DIR).exists()
 

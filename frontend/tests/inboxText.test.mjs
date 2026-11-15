@@ -7,6 +7,7 @@ import {
   applyMark, inFilter, inboxActor, inboxActorTitle, inboxDays, inboxJump, inboxSentence, inboxSnippet, inboxUrl, isFolderShare,
   isUnread, itemsToRing, lookedListing, mergeListing, reopenedListing, RING_AT_ONCE, sameListing,
 } from "../src/inbox/inboxText.js";
+import { setLocale } from "../src/shared/i18n/i18n.js";
 
 const item = (id, at, extra = {}) => ({
   id, kind: "mention", actor: "ann", workspace_id: "ws1", workspace_name: "Lab", page_id: "pg1",
@@ -31,7 +32,8 @@ test("one sentence per kind, with the actor, the page and the workspace", () => 
 
 test("an agent's write names the agent, its avatar's title the account it wrote for", () => {
   const at = "2026-10-20T10:00:00.000000Z";
-  const by = (kind) => item("a", at, { kind, actor: "tim", agent: "Claude Code" });
+  const claude = { id: "tok1", kind: "connection", name: "Claude Code" };
+  const by = (kind, agent = claude) => item("a", at, { kind, actor: "tim", agent });
   assert.equal(inboxSentence(by("reply")), "Claude Code replied to a comment on Draft");
   assert.equal(inboxSentence(by("resolved")), "Claude Code resolved your comment on Draft");
   assert.equal(inboxSentence(by("comment")), "Claude Code commented on Draft");
@@ -39,8 +41,31 @@ test("an agent's write names the agent, its avatar's title the account it wrote 
   assert.equal(inboxActor(by("reply")), "Claude Code", "the row's avatar takes the agent's initial");
   assert.equal(inboxActorTitle(by("reply")), "Claude Code, for tim");
   assert.equal(inboxActorTitle({ ...by("reply"), actor: "" }), "Claude Code, for Someone", "the account gone");
-  assert.equal(inboxActor(item("a", at, { agent: "" })), "ann");
+  const codex = { id: "computer:pc:codex", kind: "computer", name: "Codex", on: "TIM-PC" };
+  assert.equal(inboxSentence(by("reply", codex)), "Codex on TIM-PC replied to a comment on Draft");
+  assert.equal(inboxActorTitle(by("reply", { ...codex, owner: "alice" })), "alice's Codex on TIM-PC, for tim",
+    "a co-author's turn names the agent's owner");
+  assert.equal(inboxActor(by("reply", { id: "", kind: "", name: "Codex on GONE" })), "Codex on GONE",
+    "an item of before the ids keeps its words");
+  assert.equal(inboxActor(item("a", at, { agent: null })), "ann");
   assert.equal(inboxActorTitle(item("a", at)), "ann", "a person's item, without an agent field too");
+});
+
+test("an agent's item is worded in the reader's language", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const zh = JSON.parse(await readFile(new URL("../src/shared/i18n/locales/zh.json", import.meta.url), "utf8"));
+  setLocale("zh", zh);
+  try {
+    const at = "2026-10-20T10:00:00.000000Z";
+    const codex = { id: "computer:pc:codex", kind: "computer", name: "Codex", on: "TIM-PC" };
+    const reply = item("a", at, { kind: "reply", actor: "tim", agent: codex });
+    assert.equal(inboxActor(reply), "TIM-PC 上的 Codex");
+    assert.equal(inboxActorTitle(reply), "TIM-PC 上的 Codex，代表 tim");
+    assert.equal(inboxSentence(reply), "TIM-PC 上的 Codex 回复了“Draft”上的评论");
+    assert.equal(inboxActor(item("a", at, { agent: { id: "gamma", kind: "gamma", name: "Gamma AI" } })), zh["Gamma AI"]);
+  } finally {
+    setLocale("en", {});
+  }
 });
 
 test("a request to join names the Gamma Cloud username asking, who has no account here", () => {

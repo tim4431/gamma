@@ -157,6 +157,13 @@ export function revealLimits(libraryPages, limits, pageId) {
 export function revealSettled(rows, dirs, reveal) {
   const folder = rows.find((r) => r.kind === "folder" && r.id === reveal.dir);
   if (!folder?.expanded || !folder.work) return true;
+  return pagedFor(dirs, reveal);
+}
+
+// Whether `dirs` (useDirectoryRows) are done paging the directory
+// `reveal.dir` for the page `reveal.pageId`: read, and holding it or holding
+// all they will (the folder view's reveal, whose directory is the one shown).
+export function pagedFor(dirs, reveal) {
   const read = dirs?.of(reveal.dir) || NONE;
   return read.loaded && !read.loading && findStep(read, reveal.pageId) == null;
 }

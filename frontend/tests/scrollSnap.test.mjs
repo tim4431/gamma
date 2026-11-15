@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { installVerticalScrollSnap } from "../src/pdf/verticalScrollSnap.js";
+import { installScrollSnap } from "../src/pdf/scrollSnap.js";
 
-function fixture(t, scrollEnd = true) {
+function fixture(t, scrollEnd = true, opts = {}) {
   const doc = new EventTarget(), win = new EventTarget();
   const restore = [];
   for (const [key, value] of Object.entries({ document: doc, window: win, matchMedia: () => ({ matches: false }) })) {
@@ -11,10 +11,10 @@ function fixture(t, scrollEnd = true) {
     restore.push(() => old ? Object.defineProperty(globalThis, key, old) : delete globalThis[key]);
   }
   const el = new EventTarget(), corrections = [];
-  Object.assign(el, { scrollWidth: 2500, clientWidth: 800, scrollLeft: 300, scrollTop: 100,
+  Object.assign(el, { scrollWidth: 2500, clientWidth: 800, scrollHeight: 2000, clientHeight: 700, scrollLeft: 300, scrollTop: 100,
     scrollTo: (opts) => corrections.push(opts), contains: () => true });
   if (scrollEnd) el.onscrollend = null;
-  const cleanup = installVerticalScrollSnap(el);
+  const cleanup = installScrollSnap(el, opts);
   t.after(() => { cleanup(); restore.forEach((fn) => fn()); });
   const send = (name, points = [], target = el) => {
     const e = new Event(name);
@@ -22,7 +22,8 @@ function fixture(t, scrollEnd = true) {
     target.dispatchEvent(e);
   };
   const vertical = () => { send("touchstart", [[100, 300]]); send("touchmove", [[110, 200]]); };
-  return { el, corrections, send, vertical, cleanup, doc };
+  const sideways = () => { send("touchstart", [[300, 100]]); send("touchmove", [[200, 110]]); };
+  return { el, corrections, send, vertical, sideways, cleanup, doc };
 }
 
 test("no offset writes during touch or momentum; one correction after scrollend", (t) => {
@@ -68,4 +69,15 @@ test("older Safari fallback waits for quiet after finger lift and cancels on tea
   vertical(); el.scrollLeft = 350; send("touchend"); cleanup();
   await new Promise((r) => setTimeout(r, 280));
   assert.equal(corrections.length, 1);
+});
+test("pages running across: a sideways swipe has its vertical drift corrected once; a downward one is left alone", (t) => {
+  const { el, corrections, send, vertical, sideways } = fixture(t, true, { across: true });
+  sideways();
+  el.scrollTop = 130; el.scrollLeft = 900;
+  send("touchend"); send("scroll"); send("scrollend");
+  assert.deepEqual(corrections, [{ top: 100, behavior: "smooth" }]);
+  assert.equal(el.scrollLeft, 900, "the run's own offset is never written");
+  el.scrollTop = 100;
+  vertical(); el.scrollTop = 160; send("touchend"); send("scrollend");
+  assert.equal(corrections.length, 1, "a swipe against the run is not pulled back");
 });

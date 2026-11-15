@@ -15,7 +15,7 @@ Codex does not invoke Gamma's AI provider.
 | `gamma/mcp_server.py`, `gamma/mcp_lazy.py` | the `/mcp` transport (official Python MCP SDK): the chat registry's read tools (`READ_TOOLS`), link reading, page export, the writing tools at the Comment level (`WRITING_TOOLS`), the note tools at Edit (`EDIT_TOOLS`); `mcp_lazy.py` authenticates the request and loads the SDK adapter on first use |
 | `gamma/annotations/hand.py`, `gamma/annotations/places.py` | what the writing tools write as the connection's agent, and the places they find ([annotations.md](annotations.md) "The writing tools") |
 | `gamma/mcp_oauth.py`, `gamma/mcp_oauth_provider.py` | discovery, dynamic registration, PKCE authorization and token exchange, the consent API (`/api/integrations/oauth/*`), `public_base`; the provider issues the 90-day token through `integrations.create_token` |
-| `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspaces; which of them holds an id (`holders`: a block, a comment thread, a Send request) |
+| `gamma/mcp_links.py` | local page/block/share link resolution within the connected workspaces; which of them holds an id (`holders`: a block, a comment thread) |
 | `gamma/mcp_export.py` | `export_page`: a page as Markdown text or an embedded PDF, over `routers/export.py` |
 | `gamma/integrations.py` | integration tokens (`integration_tokens` table, hashes only), the workspaces each may read, comment in and edit (`grant`, `comment_grant`, `edit_grant`, `resolve_connection`) and their resolution |
 | `gamma/server_settings.py` | the admin-confirmed public URL and the MCP host allowlist |
@@ -242,7 +242,7 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | `read_page` | The pages it is inside and the pages inside it, notes, highlights, open comment threads, properties, and the document's text in windows: a PDF's by page, a text file's numbered lines by `from_line` / `to_line`; a work folder's file named by its `path` too |
 | `read_block` | One block/subtree or a page's nested note outline |
 | `read_chats` | The AI chat kept with a page or folder: the current conversation as a transcript, earlier ones by `chat_id` |
-| `list_annotations` | The highlights and comment threads of a page, a folder or the library (a page's or a folder's id, a folder's path, a work folder by name, `home`; the library without one), each with its file, place, source line, note and a thread's comments, as Markdown, in batches (`limit`, `after`); a Send request's threads (`request`) |
+| `list_annotations` | The highlights and comment threads of a page, a folder or the library (a page's or a folder's id, a folder's path, a work folder by name, `home`; the library without one), each with its file, place, source line, note and a thread's comments, as Markdown, in batches (`limit`, `after`) |
 | `read_annotation` | One annotation, a thread in any state or a bare highlight (`id`), as Markdown and as JSON, with the pictures of its region now and as it was commented on |
 | `view_pdf_page` | One PDF page as an image (a scan, a figure, a table's layout) |
 | `view_ink` | The user's handwriting as an image: a group's strokes on their PDF page or sheet of paper, or a whole page with all its handwriting |
@@ -284,12 +284,12 @@ optional `workspace`, an id or a name (`mcp_server._targets`). Without one:
   `folder`, `page_ids`, `list_annotations`' `scope`), a comment thread
   (`thread_id`), an annotation (`list_annotations`' `after` and
   `read_annotation`'s `id`, a thread's or a highlight's block id:
-  `ANNOTATION_ARGS`) or a Send request (`list_annotations`' `request`)
+  `ANNOTATION_ARGS`)
   reads the workspace holding it (`mcp_links.holders`: a thread by its
   root's id, a hidden one held by none); ids in two workspaces are refused
   with their names, asking for `workspace`;
 - `search_library`, `list_folders` without a `folder`, and
-  `list_annotations` without a `scope`, a `request` or an `after`, read
+  `list_annotations` without a `scope` or an `after`, read
   every workspace (the library of each), one section each, headed by its
   name and id with its link shapes;
 - anything else reads the default workspace (a work folder or a folder
@@ -453,9 +453,7 @@ writes there, and a turn's token in its one workspace ("The token of an
 agent's turn"). Unlike the edit level, the HTTP API takes the comments too,
 in the token's own workspace (`integrations.Grant.comments`,
 `auth.token_comments`, `auth.require_commenter`): a reply, a new thread, its
-own comments' edits and deletes, a resolve and a reopen, as a write token's;
-and it sets a Send request's state, until step 3.7 of
-[agents-as-participants-plan.md](../research/agents-as-participants-plan.md).
+own comments' edits and deletes, a resolve and a reopen, as a write token's.
 Before step 61 the level was the token scope `feedback` (a reply and a
 resolve on a work folder's files alone): the step makes such a token a `read`
 token at the Comment level in every workspace it reads, and the scope is
@@ -497,7 +495,7 @@ gone.
 - **The stamp.** A comment written through a token stores its agent's
   name and id (`agents.of_connection`: the token's display name and id, a
   turn's token its computer agent's; `comments.agent`, `agent_id`;
-  `resolved_agent`, the label, on a resolve), so the thread shows "Claude
+  `resolved_agent` and `resolved_agent_id` on a resolve), so the thread shows "Claude
   Code" with the person's account ([comments.md](comments.md) "Who wrote a
   comment"), and
   the token edits only what it wrote ([comments.md](comments.md) "Who may
@@ -768,11 +766,15 @@ out, the PATCH answers 404 and the DELETE `revoked: false`.
 Codex or Claude Code turned on for this computer
 ([local_agents.md](local_agents.md) "Gamma's tools") reads Gamma through
 this endpoint during a turn of this server, with a token of the turn's
-own (`integrations.mint_turn`, scope `turn`):
+own (`integrations.mint_turn`, scope `turn`); so does the agent of another
+computer during a turn of this server's it takes over its channel, with a
+token this server minted at the claim ([computers.md](computers.md) "The
+agents' turns there"):
 
 - the turn owner's, of the turn's workspace alone (`workspaces` `''`,
   `edits` `''`), named with the agent's id (`computer:<this
-  computer>:<name>`, so what it writes is that agent's: `agents.of_token`),
+  computer>:<name>`, or the other computer's id here, so what it writes is
+  that agent's, on the computer as it is called here: `agents.of_token`),
   so `list_workspaces` names
   that one workspace and the read tools (`READ_TOOLS`, with
   `list_workspaces`, `read_gamma_link` and `export_page`) are offered and
@@ -781,9 +783,10 @@ own (`integrations.mint_turn`, scope `turn`):
   highlights are signed and stamped as that computer's agent, for the turn's
   owner; the note tools are refused;
 - living the run's timeout and a minute, renewed at each start of the
-  agent and while an ask holds the turn, deleted
-  when the turn ends however it ends (`integrations.drop`) and, for what a
-  server that stopped left, at the next start (`integrations.drop_turns`);
+  agent and while an ask holds the turn (a far turn's by its writes),
+  deleted when the turn ends however it ends (`integrations.drop`) and,
+  for what a desktop app's server that stopped left, at the next start
+  (`integrations.drop_turns`);
 - refused by every route of the HTTP API (403 `auth.TURN_ONLY`), its reads
   included, as a `computer` token is outside `auth.CHANNEL_PREFIX`: a read
   token opens the API's reads as well as MCP, and this one should not;
@@ -1011,9 +1014,9 @@ HTTP API.
 `test_annotations_tools.py` covers `list_annotations` and `read_annotation`
 in the chat's scopes (the library, a work folder, a directory, a file, a
 name, a library folder by id or path, a library page and its bare
-highlight, a Send request, batches, a page chat, the reach refused, the
+highlight, batches, a page chat, the reach refused, the
 item's JSON and pictures, the old names replayed); `test_mcp_links.py`
-`holders` by thread and request. `test_token_api.py` covers the Tokens
+`holders` by thread. `test_token_api.py` covers the Tokens
 pane's Comment level (a viewer's, several workspaces, all of them, its PATCH,
 the scope `feedback` refused) and the token's HTTP reads and comments kept to
 its first workspace. `test_mcp_oauth.py` covers discovery, approval (several

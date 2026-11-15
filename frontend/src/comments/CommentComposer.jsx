@@ -243,6 +243,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
         {cancel ? null : (
           <button type="button" className="uiBtn primary chatCircleBtn commentSend" disabled={!trimmed || tooLong}
             onMouseDown={(e) => e.preventDefault()} onClick={submit} title={sendTitle} aria-label={submitLabel}>
+            {/* ui-allow icon-size: the 24 px send circle's arrow (ui-design.md, the comments row of the file map) */}
             <ArrowUpIcon size={12} />
           </button>
         )}

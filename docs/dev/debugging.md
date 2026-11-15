@@ -468,6 +468,13 @@ them only after further relevant changes or when a failure needs investigation.
   several related suites. Broaden further when the impact cannot be bounded.
 - Documentation-only changes: check the diff and referenced commands/paths;
   application tests and builds are unnecessary.
+- Before a feature branch merges into `dev`, once, on its last commit: the
+  [full backend suite](#full-backend-suite) (`-n auto --dist loadfile`,
+  about 4 minutes) and, from `frontend/`, `npm run lint && npm test` (about
+  30 s). A change breaks tests of modules it never touched (a notice's
+  pane, a settings pane's reads, a prompt's words), and `dev` is what the
+  next merge to `main` carries, where each failure costs a CI round. The
+  browser suite stays chosen by `--changed`.
 
 Examples (paths are relative to the indicated directory):
 
@@ -547,7 +554,12 @@ fails the read.
 (a data directory of the test's own, for the migration, backup and startup
 tests that must not touch the worker's shared one; the upload GC's timed
 full pass is off for the session, since it would open whichever test's
-databases are current a minute after import), `at_once` / `together`
+databases are current a minute after import; and a background job ends
+within the test that started it: the autouse `_jobs_end_with_their_test`
+waits for every job still running after a test, before its patches are
+undone, and fails the test whose job is still running 30 s on, since a
+job that ended during the next test recorded itself in that test's
+users.db), `at_once` / `together`
 (callables in threads started on one barrier), `slowed` (widens a writer's
 window between its check and its write, so a race test fails without the
 lock) and `recv` (the next message of a kind on a page socket).
@@ -706,6 +718,82 @@ double ref attach shows there, as it does in `npm run dev`. Other React
 rendering and interactions are exercised by the browser suite below, plus one standalone
 browser regression: `npm run e2e:latex` bundles the block
 editor with esbuild over an in-memory fixture ([latex_editing.md](latex_editing.md)).
+
+### Order and timing
+
+A worker runs other files before a test each time (`--dist loadfile` hands
+them out as workers free up), and a CI runner is slower than this machine,
+so a test that depends on either passes here and fails there now and then.
+What releasing 0.4.0 met, and what each needs:
+
+- **A token on the shared client.** `client` carries the last login's
+  cookie, and `auth.py` takes a session cookie before a bearer, so a token
+  sent through it runs as whoever logged in last. A token goes through
+  `anon` or `fresh_client()`.
+- **A module global a test or a request set.** A request sent as from
+  127.0.0.1 to 127.0.0.1 names this server's `/mcp` for every later agent
+  turn of the process (`local_agents/tools.py heard`). conftest resets such
+  state after each test (`_mcp_address_forgotten`, `_shell_secret_forgotten`,
+  `_reset_ratelimit`); one more gets its own fixture there, not a line in
+  the test that met it.
+- **The same bytes in the shared workspace.** Uploads are content-addressed
+  and a pypdf blank page writes the same bytes every time, so a "new"
+  document in the `guest` workspace may be one another file measured or
+  indexed. A test clears what it then asserts is missing, or makes its
+  bytes its own.
+- **Waiting for an earlier state.** Wait for the state the next line
+  needs, not one before it: the job's end hook rather than the manifest it
+  wrote first, the announce with every agent probed rather than the first
+  one. A test that orders two threads makes the order (wraps the call that
+  marks the point, as `test_zotero_sync_pdfs`'s relocation race does), not
+  a sleep.
+
+`GAMMA_TEST_SHUFFLE=<seed>` puts the files in another order (conftest's
+`pytest_collection_modifyitems`; each file's tests stay in theirs):
+
+```bash
+GAMMA_TEST_SHUFFLE=1 python -m pytest tests -q -n auto --dist loadfile
+```
+
+A failure that comes with one seed and not without is an order
+dependence; the seed gives the order again, though a worker's share also
+depends on how many workers there are (`-n`). `flakes.yml` runs the suite
+so twice a week ([github_actions.md](github_actions.md#flakesyml)).
+
+### Known flakes
+
+Failures seen once that a rerun cleared, not yet fixed: what was seen and
+what is known of the cause. The `merge` skill adds one when it reruns
+instead of fixing; the fix removes its entry.
+
+- **collab: two people's Backspace merges never lose a block's text**
+  (`frontend/tests/e2e/scenarios/collab.mjs:456`, CI, 2026-11-14): "bob's
+  refused join gone from his screen" timed out, though his screenshot shows
+  the rows as they should be (`onetwo`, `three of bob's`, `tail`) and the
+  "couldn't be saved" toast: some element of the page, not one on screen,
+  still held "twothree". Its refused save's 404, expected there, then failed
+  the next step's `assertNoProblems` ("a highlight bob makes on the PDF
+  appears on alice's page"), since a failed step leaves its page problems
+  behind.
+- **notes: Backspace right after a list marker takes it in one press**
+  (`frontend/tests/e2e/scenarios/notes.mjs:1272`, CI, 2026-11-14): the
+  server's tree never matched the screen's, though each of the six edits
+  went out as an ops request answered 200. Not seen in four local runs of
+  the `notes:` steps.
+- **local-agents: on main.tex of the synced folder a passage commented
+  with Send to Codex ticked is answered…**
+  (`frontend/tests/e2e/scenarios/localAgents.mjs:471`, this machine,
+  2026-11-15): `assertNoProblems` met `GET` and `HEAD
+  /api/uploads/<hash>.tex` answered 404, the URL of main.tex's version
+  from before Codex's edit replaced it: the code view reads the old
+  version once more after the vault's round took it (the GET's 404 turns
+  the pane to its file card, whose HEAD 404s too). Seen while several
+  groups ran at once, on dev's tip as well as with changes beside it (3
+  of 5 such runs); the group run alone passed.
+- **The brand check** (`tools/branding/build.mjs --check`, this machine,
+  2026-11-14): one run ended with an uncaught file-system error (its stack
+  lost) while the backend suite and the frontend tests ran beside it; 18
+  runs since, under the same load, passed.
 
 ### What a run leaves behind
 
@@ -950,7 +1038,7 @@ npm run e2e -- --jobs 1         # one worker, groups in order, live output (~8 m
 npm run e2e -- --changed        # only the groups the working tree's changes select
 npm run e2e -- --changed main --list  # a branch's selection and why, without running
 npm run e2e -- --group ink,collab     # these groups (ids: `--list`)
-npm run e2e -- --shard 1/2      # half the groups by time (CI runs each half on its own runner)
+npm run e2e -- --shard 1/3      # a third of the groups by time (CI runs each third on its own runner)
 npm run e2e -- --only collab    # steps whose name contains "collab" (one worker)
 npm run e2e -- --continue       # keep going after a failure
 npm run e2e -- --headed         # watch the browser
@@ -1137,15 +1225,18 @@ before testing citations).
 
 Without `--continue` a failure stops handing out groups
 and the ones running finish. The wall time is bounded by the longest group
-(settings, about two and a half minutes in CI), so split it before adding
-workers or shards.
+(notes-pdf-share, about seven minutes in CI), so split it before adding
+workers or shards past the point where a worker's share is shorter.
 
 `--shard k/n` runs the k-th of n shares of the selection. Each group,
 longest first by its `s`, goes to the share with the least time so far
 (`shardOf` in `select.mjs`), so the shares take about as long. CI runs the
-two halves (`--shard 1/2`, `--shard 2/2`) on two runners, about three
-minutes each. When a group's time drifts far from its `s` (a CI log prints
-each group's seconds as `── <group>  (N s`), update it.
+three thirds (`--shard 1/3` to `--shard 3/3`) on three runners, about eight
+minutes of steps each under the job's 15-minute cap, which the install and
+build take about two of. When a group's time drifts far from its `s` (a CI
+log prints each group's seconds as `── <group>  (N s`), update it; when a
+share comes near the cap, look first for a step gone slow (the step lines
+print their milliseconds), then add a shard.
 
 A group that throws outside its steps (its own setup: accounts, seeded
 pages) runs none of them. The summary counts it as a failure,
@@ -1196,7 +1287,7 @@ catch-all (a new folder or module needs its rule), when a group's scenario
 files drift from `scenarios/`, or when a rule names an unknown group. When a
 change reaches less than its rule says (a new prop threaded through
 App.jsx into one pane), the selection errs wide: narrow it with `--group`.
-CI runs everything, in its two shards.
+CI runs everything, in its three shards.
 
 **Flaky steps.** A step that passes here and fails on CI is almost always a
 timing assumption that a slow machine breaks, and the CI runner has 4 cores.

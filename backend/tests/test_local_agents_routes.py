@@ -2,11 +2,10 @@
 routes"): turning one on for the computer and what it may run (``PATCH
 /api/local-agents/{agent}``), its gate checked in order, and the
 directories offered (``PUT /api/local-agents/dirs``); the links and a
-page's standing carrying the agent that works in a vault, the Feedback
-dialog's ``doc.agent`` and ``GET /api/local-agents``, none of which runs a
-process; a pause and a relink stopping the run, an unpause handing over
-what waits. The stand-in Codex (tests/fake_agents/) is the only agent on
-this computer, and the vault is the sample paper
+page's standing carrying the agent that works in a vault and its turn at
+work, and ``GET /api/local-agents``, none of which runs a process; a pause
+and a relink stopping the turn. The stand-in Codex (tests/fake_agents/) is
+the only agent on this computer, and the vault is the sample paper
 (test_local_agents_runner's fixtures)."""
 
 import threading
@@ -16,11 +15,10 @@ import pytest
 
 from conftest import account_of, fresh_client, login, make_user, token_for
 from fake_agents import script_agent
-from gamma import folder_links, workspaces
+from gamma import agents, folder_links, workspaces
 from gamma.local_agents import catalog, procs, runner, store
 from gamma.routers import local_agents as local_agents_api
-from test_local_agents_runner import (_folder, _request, _send, _turn_started, _withdraw,  # noqa: F401: the disk fixture
-                                      disk)
+from test_local_agents_runner import _folder, _until, disk  # noqa: F401: the disk fixture
 from test_vault_routes import _vault
 
 OWNER, EDITOR, VIEWER = "lagr_owner", "lagr_editor", "lagr_viewer"
@@ -82,16 +80,10 @@ def _links(c) -> dict:
     return {link["id"]: link for link in r.json()["links"]}
 
 
-def _feedback(c, scope) -> dict:
-    r = c.get("/api/annotations", params={"scope": scope})
-    assert r.status_code == 200, r.text
-    return r.json()
-
-
 # --- turning an agent on ------------------------------------------------------------------
 
 def test_the_agent_gate_in_order(lab, disk, monkeypatch):
-    f = _folder(lab, disk, agent="")
+    _folder(lab, disk, agent="")
     monkeypatch.setenv("GAMMA_SHELL_SECRET", "the-secret")
 
     # a server that runs agents, an agent Gamma knows, a known value of what it may run
@@ -107,16 +99,12 @@ def test_the_agent_gate_in_order(lab, disk, monkeypatch):
     assert _agent(lab.owner, "codex", 400, SHELL, enabled=True)["detail"] == catalog.NOT_SIGNED_IN["codex"]
     assert store.agents() == {}
 
-    # ready: on, its owner the account that turned it on, the Sends waiting now handed to it
+    # ready: on, its owner the account that turned it on
     script_agent(monkeypatch, disk.log)
-    sent = _send(lab.owner, f)
-    other = _send(lab.editor, f)
     on = _agent(lab.owner, "codex", 200, SHELL, enabled=True)
-    assert (on["name"], on["enabled"], on["runs"], on["mine"], on["queued"]) == ("codex", True, "never", True, 1)
+    assert (on["name"], on["enabled"], on["runs"], on["mine"]) == ("codex", True, "never", True)
     assert store.agent_for(lab.user)["agent"] == "codex"
-    assert runner.wait_idle(60)
-    assert _request(lab, sent["id"])["state"] == "done" and _request(lab, other["id"])["state"] == "sent"
-    assert _agent(lab.owner, "codex", 200, SHELL, enabled=True)["queued"] == 0   # on already: nothing more
+    assert _agent(lab.owner, "codex", 200, SHELL, enabled=True) == on   # on already: nothing more
 
     # another account's agent: not that one's to take over, turn off without the shell's word, or narrow
     assert _agent(lab.editor, "codex", 409, SHELL, enabled=True)["detail"] == (
@@ -135,12 +123,12 @@ def test_the_agent_gate_in_order(lab, disk, monkeypatch):
     assert _agent(lab.owner, "codex", 200, runs="never")["runs"] == "never" and never == ["codex"]
     assert _agent(lab.owner, "claude", 400, SHELL, runs="ask")["detail"] == "Turn Claude Code on first."
 
-    # off: its owner's alone, without the shell's word; its runs stop and the pages hear it
+    # off: its owner's alone, without the shell's word; its turns stop and the pages hear it
     stopped, told = [], []
     monkeypatch.setattr(runner, "stop_agent", stopped.append)
     monkeypatch.setattr(folder_links, "agents_changed", lambda: told.append(True))
     off = _agent(lab.owner, "codex", 200, enabled=False)
-    assert (off["enabled"], off["runs"], off["queued"]) == (False, "never", 0) and store.agent_for(lab.user) is None
+    assert (off["enabled"], off["runs"]) == (False, "never") and store.agent_for(lab.user) is None
     assert stopped == ["codex"] and told == [True]
     assert _agent(lab.owner, "codex", 200, enabled=False) and stopped == ["codex"]   # off already: nothing more
     assert runner.wait_idle(30)
@@ -231,29 +219,22 @@ def test_the_directories_offered(lab, disk, monkeypatch):
     assert put(lab.owner, [], 404)["detail"] == "Agents run on the desktop app's own server."
 
 
-def test_a_pause_stops_the_run_and_an_unpause_hands_over_what_waits(lab, disk, monkeypatch):
+def test_a_pause_stops_the_turn(lab, disk, monkeypatch):
     f = _folder(lab, disk)
-    stopped, queued = [], []
+    stopped = []
     monkeypatch.setattr(runner, "stop_link", lambda link_id, why="": stopped.append(link_id))
-    monkeypatch.setattr(runner, "queue_folder", lambda ws, link_id: queued.append((ws, link_id)) or 0)
     _patch(lab.owner, f.id, paused=True)
-    assert stopped == [f.id] and not queued
+    assert stopped == [f.id]
     _patch(lab.owner, f.id, paused=False)
-    assert stopped == [f.id] and queued == [(lab.ws, f.id)]
+    assert stopped == [f.id]
 
-    # a vault whose push comes down (every file of it in the library) is no work folder: its run stops
+    # a vault whose push comes down (every file of it in the library) is no work folder: its turn stops
     shelf = _vault(lab.owner, disk.root / "shelf", {"s.md": "s\n"}, library=True)
     _patch(lab.owner, shelf["id"], push="pdfs")
     assert stopped == [f.id, shelf["id"]]
 
-    # with no agent on, an unpause hands nothing over
-    store.set_agent("codex", False, by=lab.user)
-    _patch(lab.owner, f.id, paused=True)
-    _patch(lab.owner, f.id, paused=False)
-    assert queued == [(lab.ws, f.id)]
 
-
-def test_a_relink_and_a_removal_stop_the_run_and_keep_the_agent(lab, disk, monkeypatch):
+def test_a_relink_and_a_removal_stop_the_turn_and_keep_the_agent(lab, disk, monkeypatch):
     f = _folder(lab, disk)
     stopped: list = []
     monkeypatch.setattr(runner, "stop_link", lambda link_id, why="": stopped.append((link_id, why)))
@@ -308,49 +289,22 @@ def test_the_links_and_a_page_carry_the_agent_without_running_anything(lab, disk
     assert "agent" not in lab.owner.get(f"/api/folder-links/page/{f.page}").json()["vault"]
 
 
-def test_a_run_shows_on_the_links_its_detail_to_who_may_act(lab, disk, monkeypatch):
-    script_agent(monkeypatch, disk.log, delay=30)
+def test_a_turn_shows_on_the_links_its_detail_to_who_may_act(lab, disk, monkeypatch):
+    script_agent(monkeypatch, disk.log, delay=30, edits=[{"path": "main.tex", "old": "Weight", "new": "Weight"}])
     f = _folder(lab, disk)
-    sent = _send(lab.owner, f)
-    _turn_started(lab, sent["id"])
-    running = _links(lab.owner)[f.id]["agent"]["running"]
-    assert running["request_id"] == sent["id"] and running["detail"].startswith("Reading 2 comments")
-    assert _links(lab.editor)[f.id]["agent"]["running"]["detail"] == running["detail"]
-    assert _links(lab.viewer)[f.id]["agent"]["running"] == {"kind": "send", "request_id": sent["id"], "detail": ""}
+    r = lab.owner.post(f"/api/pages/{f.page}/comments",
+                       json={"block_id": f.page, "body": "Shorten the title.", "to": agents.here("codex").id})
+    assert r.status_code == 201, r.text
+    turn_id = r.json()["turn"]["turn_id"]
+    running = _until(lambda: (shown := _links(lab.owner)[f.id]["agent"]["running"]) and shown["detail"] and shown)
+    assert running == {"detail": "Editing a file in the folder"}   # main.tex is no file the vault tracks
+    assert _links(lab.editor)[f.id]["agent"]["running"] == running
+    assert _links(lab.viewer)[f.id]["agent"]["running"] == {"detail": ""}
     page = lab.viewer.get(f"/api/folder-links/page/{f.page}").json()["vault"]
-    assert page["agent"]["running"] == {"kind": "send", "request_id": sent["id"], "detail": ""}
-    _withdraw(lab, sent["id"])
+    assert page["agent"]["running"] == {"detail": ""}
+    assert lab.owner.post(f"/api/local-agents/chat/turns/{turn_id}/stop").json() == {"stopped": True}
     assert runner.wait_idle(30)
     assert _links(lab.owner)[f.id]["agent"]["running"] is None
-
-
-def test_the_feedback_dialog_reads_the_persons_agent(lab, disk, monkeypatch):
-    f = _folder(lab, disk, agent="")
-    _known_ready()
-    started = _no_process(monkeypatch)
-
-    doc = _feedback(lab.owner, f.w)
-    assert doc["agent"] is None and doc["agents_found"] is True
-    store.set_agent("codex", True, by=lab.user)
-    assert _feedback(lab.owner, f.w)["agent"] == {"name": "codex", "label": "Codex", "ready": True, "problem": "",
-                                                  "takes": True, "why": ""}
-    other = _feedback(lab.editor, f.w)["agent"]
-    assert (other["takes"], other["why"]) == (
-        False, "Only the person who turned on Codex on this computer can send to it.")
-    _patch(lab.owner, f.id, paused=True)
-    paused = _feedback(lab.owner, f.w)["agent"]
-    assert (paused["takes"], paused["why"]) == (
-        False, "The synced folder is paused on this computer: Codex starts once it syncs again.")
-    _patch(lab.owner, f.id, paused=False)
-
-    # never in the Markdown, nor on a server that runs no agents
-    r = lab.owner.get("/api/annotations", params={"scope": f.w, "format": "md"})
-    assert r.status_code == 200 and "Codex" not in r.text
-    monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "0")
-    assert "agent" not in _feedback(lab.owner, f.w) and "agents_found" not in _feedback(lab.owner, f.w)
-    assert not started
-    monkeypatch.setenv("GAMMA_LOCAL_AGENTS", "1")
-    assert runner.wait_idle(30)
 
 
 # --- the agents on this computer ----------------------------------------------------------
@@ -393,17 +347,3 @@ def test_the_agents_on_this_computer(lab, disk, monkeypatch):
     assert r.status_code == 200 and r.json() == {"here": False, "computer": "", "agents": [], "dirs": []}
     r = lab.owner.patch("/api/local-agents/codex", json={"enabled": False})
     assert r.status_code == 404 and r.json()["detail"] == "Agents run on the desktop app's own server."
-
-
-def test_a_request_says_when_an_agent_here_holds_it(lab, disk, monkeypatch):
-    script_agent(monkeypatch, disk.log, delay=30)
-    f = _folder(lab, disk)
-    sent = _send(lab.owner, f)
-    _turn_started(lab, sent["id"])
-    listed = {r["id"]: r for r in lab.owner.get("/api/feedback/requests", params={"scope": f.w}).json()["requests"]}
-    assert listed[sent["id"]]["local"] is True
-    assert lab.viewer.get(f"/api/feedback/requests/{sent['id']}").json()["request"]["local"] is True
-    _withdraw(lab, sent["id"])
-    assert runner.wait_idle(30)
-    listed = {r["id"]: r for r in lab.owner.get("/api/feedback/requests", params={"scope": f.w}).json()["requests"]}
-    assert listed[sent["id"]]["local"] is False

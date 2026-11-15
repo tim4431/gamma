@@ -1,21 +1,22 @@
-"""The chat's computer side on a page of a work folder a computer keeps with
-an agent, the server's side (step 4d of docs/research/agent-collab.md;
-gamma/routers/local_agents.py, gamma/local_agents/chats.py,
-gamma/routers/computers.py, gamma/computers/registry.py): the announce's
-models kept; the chat routes answering the maker of the folder's binding
-alone (another member, a token, the guest, another page: refused), the
-strip from the binding and presence, the asks refused, the sources null,
-no terminal; a turn written here and its computer woken, waiting while it
-is away; the channel's chat routes with a computer token, answering only
-for its account's turns in a folder it announced with an agent; the claim
-keyed by the run (a retry held, another taker refused), with the message,
-the earlier ones and the page's path; the writes taken only from the run
-that holds the turn running and only when newer (``seq``), the text made
-inert, the paths relative; Stop of a queued and of a running turn, the
-computer told, one away ended at once; a token taken back failing what its
+"""The chat's computer side with an agent of another computer, the server's
+side (step 4d of docs/research/agent-collab.md, step 4.2 of
+docs/research/agents-as-participants-plan.md; gamma/routers/local_agents.py,
+gamma/local_agents/chats.py, gamma/routers/computers.py,
+gamma/computers/registry.py): the announce's models kept; the chat routes
+answering the computer's account alone (another member, a token, the
+guest: refused) on any page, the strip from the computer's seat and
+presence, an ask it does not relay refused, the sources null, no
+terminal; a turn written here and its computer woken, refused while it is
+away; the channel's chat routes with a computer token, answering only for
+its account's turns with that computer; the claim keyed by the run (a
+retry held, another taker refused), with the message, the earlier ones,
+what the page is and where its agent works by an id; the writes taken only
+from the run that holds the turn running and only when newer (``seq``),
+the text made inert, the paths relative, a relayed ask kept as the chat
+holds one; Stop of a queued and of a running turn, the computer told, one away ended at once; a token taken back failing what its
 runs hold; New chat, History and delete; Background tasks rows.
 
-One process plays both sides (as tests/test_computer_sends.py): the
+One process plays both sides (as tests/test_computer_agents.py): the
 routes are driven directly with the computer's token, as the computer's
 runner would."""
 
@@ -27,7 +28,7 @@ import pytest
 
 from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, mark_work_folder, \
     token_for, work_props
-from gamma import workspaces
+from gamma import agents, workspaces
 from gamma.auth import DISK_CLIENT
 from gamma.blocks_store import create_page
 from gamma.computers import registry
@@ -119,8 +120,8 @@ def pc(lab):
     return SimpleNamespace(c=c, id=item["id"], version=version)
 
 
-def _chat(lab, who=None, page=None, status=200) -> dict:
-    r = (who or lab.maker).get("/api/local-agents/chat", params={"bucket": page or lab.main})
+def _chat(lab, who=None, page=None, status=200, **params) -> dict:
+    r = (who or lab.maker).get("/api/local-agents/chat", params={"bucket": page or lab.main, **params})
     assert r.status_code == status, r.text
     return r.json()
 
@@ -185,7 +186,7 @@ def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, 
     assert _chat(lab) == {"computer": {
         "agent": "codex", "label": "Codex", "ready": True, "problem": "", "models": MODELS, "folder": "ccx-paper",
         "paused": False, "turn": None, "session": False, "folder_id": lab.W,
-        "dir": {"kind": "vault", "name": "ccx-paper"}, "grants": [], "lent": None, "computer": "TIM-PC",
+        "dir": {"kind": "vault", "name": "ccx-paper"}, "dirs": [], "grants": [], "lent": None, "computer": "TIM-PC",
         "online": True, "since": None, "remote": True}, "conversation": None}
     for status, who in ((404, lab.editor), (403, lab.stranger), (401, anon)):   # no member: the workspace's 403
         assert who.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == status
@@ -193,7 +194,7 @@ def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, 
         assert who.post("/api/local-agents/chat/new", json={"bucket": lab.main}).status_code == status
     # History is the account's own, whatever its seat: nothing of the maker's to another
     assert _ok(lab.editor.get("/api/local-agents/chat/history", params={"bucket": lab.main})) == {
-        "conversations": [], "active": None}
+        "conversations": [], "active": None, "lent": []}
     for status, who in ((403, lab.stranger), (401, anon)):
         assert who.get("/api/local-agents/chat/history", params={"bucket": lab.main}).status_code == status
     script = fresh_client()
@@ -202,9 +203,12 @@ def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, 
     assert script.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 403
     assert guest.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 403
     assert pc.c.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 403   # the channel's token
-    # another work folder (not kept with an agent), a library page, no page
-    for page in (lab.other, lab.plain, ""):
-        assert lab.maker.get("/api/local-agents/chat", params={"bucket": page}).status_code == 404
+    # another work folder (not kept there) and a library page: the computer's agent all the same, in a directory
+    # of its own there; no page, none
+    for page in (lab.other, lab.plain):
+        strip = _chat(lab, page=page)["computer"]
+        assert (strip["computer"], strip["folder"], strip["folder_id"], strip["dir"]) == ("TIM-PC", "", None, None)
+    assert lab.maker.get("/api/local-agents/chat", params={"bucket": ""}).status_code == 404
     # a co-author reaches none of the maker's turns or conversations
     made = _say(lab)
     assert lab.editor.post(f"/api/local-agents/chat/turns/{made['turn']['id']}/stop").status_code == 404
@@ -213,7 +217,7 @@ def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, 
     evil = _mint(lab.editor, "Gamma desktop: EVIL-PC")
     evil_c = _bearer(evil["token"])
     _announce(evil_c, _kept(lab), name="EVIL-PC", computer_id="ccx-evil")
-    assert _ok(evil_c.get("/api/computers/chats")) == {"turns": [], "stops": []}
+    assert _ok(evil_c.get("/api/computers/chats")) == {"turns": [], "stops": [], "answers": []}
     assert evil_c.post(f"/api/computers/chats/{made['turn']['id']}/claim",
                        json={"run": "r", "agent": "codex"}).status_code == 404
     assert _chat(lab, who=lab.editor)["computer"]["computer"] == "EVIL-PC"
@@ -251,16 +255,21 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
     assert _chat(lab)["computer"]["turn"] == {"turn_id": turn, "state": "queued", "ahead": False}
     with connect_pages_db(lab.ws) as conn:
         at = conn.execute("SELECT queued_at FROM computer_chat_runs WHERE turn_id = ?", (turn,)).fetchone()[0]
-    assert _chats(pc) == {"turns": [{"id": turn, "conversation_id": made["conversation"]["id"], "page_id": lab.main,
-                                     "folder_id": lab.W, "at": at}], "stops": []}
+    assert _chats(pc) == {"turns": [{"id": turn, "conversation_id": made["conversation"]["id"], "bucket": lab.main,
+                                     "agent": "codex", "dir": {"kind": "vault", "id": lab.W}, "at": at}],
+                          "stops": [], "answers": []}
     assert _say(lab, "And another.", status=409)["detail"].startswith("Codex is still working")
 
     claimed = _claim(pc, turn)
-    assert claimed["turn"] == {"id": turn, "conversation_id": made["conversation"]["id"], "page_id": lab.main,
+    assert claimed["turn"] == {"id": turn, "conversation_id": made["conversation"]["id"], "bucket": lab.main,
                                "title": "Tighten this paragraph.", "text": "Tighten this paragraph.",
                                "selections": [selection], "model": "gpt-5", "effort": "high",
                                "for": {"id": account_of(MAKER), "username": MAKER}}
-    assert claimed["history"] == [] and claimed["page"] == {"path": "main.pdf", "title": "main"} and claimed["seen"]
+    assert claimed["history"] == [] and claimed["seen"]
+    assert (claimed["about"]["kind"], claimed["about"]["title"], claimed["about"]["path"]) == ("page", "main",
+                                                                                              "main.pdf")
+    assert claimed["dir"] == {"kind": "vault", "id": lab.W}
+    assert claimed["tools"] is None                                     # this server names no address it reaches
     assert _reply(lab)["state"] == "running" and _chats(pc)["turns"] == []
     assert _chat(lab)["computer"]["turn"]["state"] == "running"
 
@@ -270,7 +279,8 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
                          {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"},
                          {"id": "s4", "kind": "gamma", "status": "completed", "tool": "read_page"},
                          {"id": "s5", "kind": "gamma", "status": "completed", "tool": "Read Page; rm -rf"}],
-                  asks=[{"id": "a1"}]) == {"ok": True}
+                  asks=[{"id": "a1", "kind": "command", "command": "latexmk -pdf main.tex", "cwd": ".", "at": "t",
+                         "expires_at": "u", "card": {"dir": "C:/Users/tim"}}]) == {"ok": True}
     reply = _reply(lab)
     assert reply["text"] == "Working [x](http://evil.example/a.png)"             # made inert again
     assert reply["steps"] == [{"id": "s1", "kind": "read", "status": "done", "path": "main.tex"},
@@ -278,14 +288,17 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
                               {"id": "s3", "kind": "run", "status": "started", "program": "latexmk"},
                               {"id": "s4", "kind": "gamma", "status": "completed", "tool": "read_page"},
                               {"id": "s5", "kind": "gamma", "status": "completed", "tool": ""}]   # a name no tool has
-    assert reply["asks"] == []                                                    # it never asks
+    assert reply["asks"] == [{"id": "a1", "kind": "command", "once": True, "command": "latexmk -pdf main.tex",
+                              "cwd": ".", "at": "t", "expires_at": "u"}]       # relayed: once at most, its fields alone
     # a retry, or a late write, never goes back
     assert _write(pc, turn, 1, text="Older") == {"ok": True, "stale": True}
     assert _write(pc, turn, 0, text="Oldest") == {"ok": True, "stale": True}
     assert _reply(lab)["text"] == "Working [x](http://evil.example/a.png)"
     # a state it may not write, a field of another shape
     for bad in ({"state": "queued"}, {"text": 3}, {"steps": "all"}, {"changed": -1}, {"built": "yes"},
-                {"changes": "main.tex"}, {"changes": [3]}):
+                {"changes": "main.tex"}, {"changes": [3]}, {"asks": [{"id": "a2"}]},
+                {"asks": [{"id": "a2", "kind": "tool"}]},
+                {"asks": [{"id": "a2", "kind": "command", "command": "x" * 9000}]}):
         _write(pc, turn, 5, status=400, **bad)
     assert _row(lab, turn)["seq"] == 1
 
@@ -311,7 +324,7 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
 def test_the_claim_is_keyed_by_the_run(lab, pc):
     turn = _say(lab)["turn"]["id"]
     assert _claim(pc, turn, run="bad id!", status=400)
-    assert _claim(pc, turn, agent="claude", status=409)["detail"] == "This synced folder's agent is Codex."
+    assert _claim(pc, turn, agent="claude", status=409)["detail"] == "Claude Code is not on for you on TIM-PC."
     assert _claim(pc, "no-such-turn", status=404)
     first = _claim(pc, turn)
     again = _claim(pc, turn)                                                     # a retry: held
@@ -329,8 +342,8 @@ def test_the_claim_is_keyed_by_the_run(lab, pc):
 def test_a_turn_whose_agent_changed_fails_at_the_announce(lab, pc):
     turn = _say(lab)["turn"]["id"]
     _announce(pc.c, _kept(lab), assistants=[*OFF, *CLAUDE])
-    reply = _reply(lab)
-    assert (reply["state"], reply["error"]) == ("failed", "Codex is no longer this folder's agent.")
+    reply = _reply_of(lab, turn)
+    assert (reply["state"], reply["error"]) == ("failed", "Codex was turned off on TIM-PC.")
     assert _chats(pc)["turns"] == [] and _row(lab, turn)["state"] == "failed"
     assert _claim(pc, turn, agent="claude", status=409)["detail"] == "The turn is failed now."
 
@@ -344,10 +357,11 @@ def _laptop(lab, agent="codex") -> SimpleNamespace:
     return SimpleNamespace(c=c, id=item["id"])
 
 
-def test_a_turn_is_listed_to_the_computer_with_its_agent_alone(lab, pc):
+def test_a_turn_is_listed_to_the_computer_it_is_for_alone(lab, pc):
     """TIM-PC keeps the folder with Codex, LAPTOP (seen last) with Claude
-    Code: the turn is Claude Code's, so TIM-PC is never given it, and its
-    claim leaves it queued for LAPTOP."""
+    Code: the chat's first is LAPTOP's, a turn picked for it is listed to
+    LAPTOP alone and TIM-PC's claim of it is no turn of its; a turn named
+    for TIM-PC's Codex is TIM-PC's, in a conversation of its own."""
     lc = _laptop(lab, "claude")
     with connect_users_db() as conn:
         conn.execute("UPDATE computers SET seen_at = '2000-01-01T00:00:00Z' WHERE token_id = ?", (pc.id,))
@@ -355,11 +369,18 @@ def test_a_turn_is_listed_to_the_computer_with_its_agent_alone(lab, pc):
     turn = _say(lab)["turn"]["id"]
     assert _reply(lab)["agent"] == "claude"
     assert _chats(pc)["turns"] == []
-    assert _claim(pc, turn, status=409)["detail"] == "This turn is for Claude Code."
+    assert _claim(pc, turn, agent="claude", status=404)["detail"] == chats.NO_TURN
     assert _row(lab, turn)["state"] == "queued" and _reply(lab)["state"] == "queued"
     assert [t["id"] for t in _chats(lc)["turns"]] == [turn]
     _claim(lc, turn, agent="claude")
     assert _row(lab, turn)["state"] == "running"
+    _write(lc, turn, 1, state="done", text="Done.")
+    tim = agents.computer_agent("ccx-pc", "codex").id
+    assert _chat(lab, agent=tim)["conversation"] is None                        # another computer: none of its own yet
+    mine = _say(lab, "On TIM-PC.", agent=tim)                                    # LAPTOP's conversation archived
+    listed = _ok(lab.maker.get("/api/local-agents/chat/history", params={"bucket": lab.main}))["conversations"]
+    assert [c["agent"] for c in listed] == ["claude"] and mine["conversation"]["agent"] == "codex"
+    assert [t["id"] for t in _chats(pc)["turns"]] == [mine["turn"]["id"]] and _chats(lc)["turns"] == []
 
 
 def test_a_paused_folder_takes_no_turn(lab, pc):
@@ -380,16 +401,17 @@ def test_the_model_and_the_effort_are_among_the_announced(lab, pc):
     assert _say(lab, effort="low")["turn"]["state"] == "queued"                  # the default model's effort
 
 
-def test_a_message_while_the_computer_is_away_waits_for_it(lab, pc):
+def test_a_message_while_the_computer_is_away_is_refused(lab, pc):
     registry.reset()                                                             # offline: no poll, no grace
     with connect_users_db() as conn:
         seen_at = conn.execute("SELECT seen_at FROM computers WHERE token_id = ?", (pc.id,)).fetchone()[0]
     strip = _chat(lab)["computer"]
     assert (strip["online"], strip["since"], strip["remote"]) == (False, seen_at, True)
-    turn = _say(lab)["turn"]["id"]
-    assert _chat(lab)["computer"]["turn"] == {"turn_id": turn, "state": "queued", "ahead": False}
+    assert _say(lab, status=409)["detail"] == "TIM-PC is offline: send this again once it connects."
+    assert _chat(lab)["conversation"] is None                                    # nothing queued for it
     version = _announce(pc.c, _kept(lab))                                         # back
     assert _ok(pc.c.get("/api/computers/poll", params={"v": version, "wait": 0})) == {}
+    turn = _say(lab)["turn"]["id"]
     assert [t["id"] for t in _chats(pc)["turns"]] == [turn]
     # back but its agent is not ready: refused at once, in the @ menu's words
     _announce(pc.c, _kept(lab), assistants=[{**CODEX[0], "ready": False, "code": "signed_out"}])
@@ -445,20 +467,22 @@ def test_a_second_stop_ends_a_running_turn_at_once(lab, pc):
     assert _say(lab, "Next.")["turn"]["state"] == "queued"
 
 
-def test_a_queued_turn_is_stoppable_once_its_seat_is_gone(lab, pc):
-    """The computer's token expired: the page's chat no longer answers,
-    but its queued turn still stops, and its Background tasks row still
-    names the computer."""
+def test_a_queued_turn_fails_once_its_computers_token_is_found_expired(lab, pc):
+    """The computer's token expired: the page's chat no longer answers it,
+    and the turn queued for that computer fails as one of a channel taken
+    back (``registry.forget``), its Background tasks row with it; Stop has
+    nothing left to stop."""
     turn = _say(lab)["turn"]["id"]
+    row = next(j for j in _ok(lab.maker.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn")
+    assert (row["state"], row["params"]["computer"]) == ("queued", "TIM-PC")
     with connect_users_db() as conn:
         conn.execute("UPDATE integration_tokens SET expires_at = 1 WHERE id = ?", (pc.id,))
     assert lab.maker.get("/api/local-agents/chat", params={"bucket": lab.main}).status_code == 404
-    row = next(j for j in _ok(lab.maker.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn")
-    assert (row["state"], row["params"]["computer"]) == ("queued", "TIM-PC")
-    assert lab.editor.post(f"/api/local-agents/chat/turns/{turn}/stop").status_code == 404
-    assert _ok(lab.maker.post(f"/api/local-agents/chat/turns/{turn}/stop")) == {"stopped": True}
-    assert _reply_of(lab, turn)["state"] == "stopped"
+    reply = _reply_of(lab, turn)
+    assert (reply["state"], reply["error"]) == ("failed", "The computer's channel was taken back before Codex finished.")
     assert [j for j in _ok(lab.maker.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn"] == []
+    assert lab.editor.post(f"/api/local-agents/chat/turns/{turn}/stop").status_code == 404
+    assert _ok(lab.maker.post(f"/api/local-agents/chat/turns/{turn}/stop")) == {"stopped": False}
 
 
 def test_a_queued_turn_of_a_page_deleted_still_stops(lab, pc):
@@ -485,22 +509,32 @@ def test_a_queued_turn_fails_when_its_agent_is_turned_off(lab, pc):
     turn = _say(lab)["turn"]["id"]
     _announce(pc.c, _kept(lab), assistants=OFF)
     reply = _reply_of(lab, turn)
-    assert (reply["state"], reply["error"]) == ("failed", "Codex was turned off on the computer that keeps this folder.")
+    assert (reply["state"], reply["error"]) == ("failed", "Codex was turned off on TIM-PC.")
     _announce(pc.c, _kept(lab))
     assert _chats(pc)["turns"] == []
     second = _say(lab, "Again.")["turn"]["id"]
-    _announce(pc.c)                                                               # Stop showing: no vault at all
-    assert _reply_of(lab, second)["error"] == "Codex was turned off on the computer that keeps this folder."
+    _announce(pc.c)                                                               # the folder no longer kept there
+    assert _reply_of(lab, second)["error"] == "TIM-PC no longer keeps this synced folder."
     # paused there: it waits
     _announce(pc.c, _kept(lab))
     third = _say(lab, "Once more.")["turn"]["id"]
     _announce(pc.c, _kept(lab, paused=True))
-    assert _row(lab, third)["state"] == "queued"
-    # another computer of the account still keeps it with Codex: it waits for that one
+    assert _row(lab, third)["state"] == "queued" and _chats(pc)["turns"] == []
+    # a turn is its computer's: another computer of the account keeping the folder takes none of it
     lc = _laptop(lab)
+    assert _chats(lc)["turns"] == []
     _announce(pc.c)
-    assert _row(lab, third)["state"] == "queued"
-    assert [t["id"] for t in _chats(lc)["turns"]] == [third]
+    assert _row(lab, third)["state"] == "failed"
+    # an offered directory withdrawn fails the turns that work in it
+    _announce(pc.c, _kept(lab))
+    offering = {"computer": {"id": "ccx-pc", "name": "TIM-PC"}, "vaults": [], "assistants": CODEX,
+                "dirs": [{"id": "dirA", "name": "Drafts"}]}
+    _ok(pc.c.post("/api/computers/announce", json=offering))
+    tim = agents.computer_agent("ccx-pc", "codex").id
+    drafts = _say(lab, "In the drafts.", page=lab.plain, agent=tim, dir="dirA")["turn"]["id"]
+    assert _chats(pc)["turns"][-1]["dir"] == {"kind": "offered", "id": "dirA"}
+    _ok(pc.c.post("/api/computers/announce", json={**offering, "dirs": []}))
+    assert _reply_of(lab, drafts)["error"] == "TIM-PC no longer offers that directory."
 
 
 def test_a_token_taken_back_fails_the_turns_queued_for_it(lab, pc):
@@ -537,6 +571,7 @@ def test_a_detach_fails_the_turns_queued_and_leaves_a_running_one_to_its_compute
     _claim(pc, running)
     queued = _say(lab, "Again.", page=notes)["turn"]["id"]
     elsewhere = _say(lab, "And here.")["turn"]["id"]                              # another work folder's
+    library = _say(lab, "And in the library.", page=lab.plain)["turn"]["id"]      # in a directory of its own
 
     def refused(*_args, **_kwargs):
         raise OpError(409, "Someone else changed the folder meanwhile.", conflict=STALE)
@@ -551,7 +586,7 @@ def test_a_detach_fails_the_turns_queued_and_leaves_a_running_one_to_its_compute
     reply = _reply_of(lab, queued)
     assert (reply["state"], reply["error"]) == ("failed", chats.DETACHED) and _row(lab, queued)["state"] == "failed"
     assert _row(lab, running)["state"] == "running" and _row(lab, elsewhere)["state"] == "queued"
-    assert [t["id"] for t in _chats(pc)["turns"]] == [elsewhere]
+    assert [t["id"] for t in _chats(pc)["turns"]] == [elsewhere, library]
     assert _write(pc, running, 1, state="failed", error="Stopped: the synced folder was detached.") == {"ok": True}
     assert _reply_of(lab, running)["error"] == "Stopped: the synced folder was detached."
 
@@ -566,11 +601,11 @@ def _reply_of(lab, turn_id) -> dict:
 
 # --- what another computer's turn has not ----------------------------------------------------------------
 
-def test_no_asks_no_source_lines_no_terminal(lab, pc):
+def test_no_ask_it_relays_no_source_lines_no_terminal(lab, pc):
     turn = _say(lab)["turn"]["id"]
     _claim(pc, turn)
     r = lab.maker.post(f"/api/local-agents/chat/turns/{turn}/asks/a1", json={"decision": "once"})
-    assert r.status_code == 409 and r.json()["detail"] == "This is answered on the computer that runs the agent."
+    assert r.status_code == 409 and r.json()["detail"] == "Codex no longer waits for that."
     assert lab.editor.post(f"/api/local-agents/chat/turns/{turn}/asks/a1", json={"decision": "once"}).status_code == 404
     selection = {"text": "x", "page": 1, "box": [0.1, 0.1, 0.2, 0.2]}
     assert _ok(lab.maker.post("/api/local-agents/chat/sources", json={"bucket": lab.main,
@@ -604,13 +639,16 @@ def test_new_chat_history_and_delete(lab, pc):
 # --- Background tasks ---------------------------------------------------------------------------------
 
 def test_background_tasks_list_the_turns_waiting_or_running_there(lab, pc):
-    turn = _say(lab)["turn"]["id"]
+    said = _say(lab)
+    turn = said["turn"]["id"]
     rows = [j for j in _ok(lab.maker.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn"]
     assert len(rows) == 1
     row = rows[0]
     assert (row["id"], row["workspace"], row["title"], row["state"], row["stoppable"], row["stopping"]) == (
         f"computer-{turn}", lab.ws, "Codex · main", "queued", True, False)
-    assert row["params"] == {"bucket": lab.main, "turn": turn, "agent": "codex", "label": "Codex", "title": "main",
+    assert row["params"] == {"bucket": lab.main, "turn": turn, "agent": "codex",
+                             "agent_id": agents.computer_agent("ccx-pc", "codex").id, "label": "Codex", "title": "main",
+                             "conversation": said["conversation"]["id"],
                              "computer": "TIM-PC"}  # the computer that keeps it, named
     assert [j for j in _ok(lab.editor.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn"] == []
     _claim(pc, turn)

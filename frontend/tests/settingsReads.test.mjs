@@ -112,6 +112,13 @@ test("every path a section reads through the store is one of a pane's reads", as
     }
   }
   assert.deepEqual(PANE_READS.workspaces(who).filter((read) => Object.values(LINK_BASES).includes(read)), ["/mirrors", "/zotero/links"]);
+  // a server that runs no agents answers 404 for the people an owner may name
+  assert.ok(!PANE_READS.ai({ signedIn: true, desktop: false }).some((read) => read?.path === "/local-agents/people"),
+    "a window other than the desktop app's reads no people");
+  // the links to other servers are kept by the desktop app's own server alone
+  assert.ok(PANE_READS.ai({ signedIn: true, desktop: true }).includes("/computer-links"));
+  assert.ok(!PANE_READS.ai({ signedIn: true, desktop: false }).includes("/computer-links"),
+    "a window other than the desktop app's reads no links");
 });
 
 test("a read asked for again after a change supersedes the one on its way, which lands for nothing", async () => {

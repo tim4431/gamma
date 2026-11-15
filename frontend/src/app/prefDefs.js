@@ -266,6 +266,9 @@ export const PREFS = {
   // Ease each notch of a mouse wheel over the PDF instead of jumping
   // (shared/lib/smoothWheel.js). Touchpads are smooth either way.
   smoothWheel: flag("gamma-smooth-wheel", ACCOUNT, false),
+  // Which way a PDF's pages run (pdf/pageLayout.js): down, one under
+  // another, or across, side by side and scrolled sideways.
+  pdfFlow: pref("gamma-pdf-flow", ACCOUNT, "down", oneOf(["down", "across"])),
 
   // --- Translation (Settings → Language & translation) ---
   // Selection translation: a translate button in the text-selection popup

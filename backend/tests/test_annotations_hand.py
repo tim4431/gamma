@@ -200,14 +200,14 @@ def test_a_reply_and_a_resolve(tim):
     text, action = _run("resolve", {"thread_id": asked["id"]})
     assert text.startswith(f"ok — resolved thread {asked['id']} on Notes, a note.") and action["kind"] == "resolve"
     stored = _threads(tim, notes)[asked["id"]]
-    assert (stored["resolved_by"], stored["resolved_agent"]) == (USER, "Gamma AI")
+    assert (stored["resolved_by"], stored["resolved_agent"]) == (USER, {"id": "gamma", "kind": "gamma", "name": "Gamma AI"})
     text, action = _run("resolve", {"thread_id": asked["id"]})
     assert text.startswith(f"ok — thread {asked['id']} on Notes, a note was resolved already") and action["noop"]
     assert _run("resolve", {"thread_id": "nosuchthread"})[0] == (
         "error: No comment thread has that id: list_annotations lists them.")
     # the inbox tells the thread's author, naming Gamma AI
     items = tim.get("/api/inbox", params={"filter": "all"}).json()["items"]
-    assert any(i["thread_id"] == asked["id"] and i["kind"] == "reply" and i["agent"] == "Gamma AI" for i in items)
+    assert any(i["thread_id"] == asked["id"] and i["kind"] == "reply" and i["agent"]["id"] == "gamma" for i in items)
 
 
 def test_a_call_made_again_doubles_nothing(tim):

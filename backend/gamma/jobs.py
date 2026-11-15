@@ -264,14 +264,35 @@ def _drop(where: str, args: tuple) -> list[str]:
     return ids
 
 
-def _public(row: dict, live: _Live | None = None, full: bool = False) -> dict:
-    """What the API shows of a job; ``full`` adds its result."""
+def _snapshot(live: _Live) -> dict:
+    """What ``_public`` reads of a live job, in one go (the caller holds
+    ``_lock``)."""
+    return {"state": live.state, "progress": dict(live.progress), "started_at": live.started_at,
+            "stopping": live.cancel.is_set(), "stoppable": live.stoppable}
+
+
+def _live_views(*job_ids: str) -> dict[str, dict]:
+    """The live jobs' ``_snapshot``s (those of ``job_ids``, or all), taken
+    BEFORE their rows are read: a job ends by writing its row and only then
+    its live state (``_work``), so a row read after this is at least as new,
+    and a job never reads as ended without its result or its file. Read the
+    other way round, a run ending between the two read as done with the
+    row it had while running."""
+    with _lock:
+        lives = [_live[i] for i in job_ids if i in _live] if job_ids else list(_live.values())
+        return {live.id: _snapshot(live) for live in lives}
+
+
+def _public(row: dict, live: dict | None = None, full: bool = False) -> dict:
+    """What the API shows of a job, from its row and, while it runs in this
+    process, its live view (``_live_views``, taken before the row was
+    read); ``full`` adds its result."""
     state, progress, started = row["state"], json.loads(row["progress"] or "{}"), row["started_at"]
     stoppable, stopping = state in ACTIVE, False
     if live is not None:
-        state, progress, started = live.state, dict(live.progress), live.started_at or started
-        stopping = live.cancel.is_set()
-        stoppable = state in ACTIVE and live.stoppable and not stopping
+        state, progress, started = live["state"], live["progress"], live["started_at"] or started
+        stopping = live["stopping"]
+        stoppable = state in ACTIVE and live["stoppable"] and not stopping
     job = {
         "id": row["id"], "kind": row["kind"], "owner": row["owner"], "workspace": row["workspace_id"],
         "title": row["title"], "params": json.loads(row["params"] or "{}"), "state": state,
@@ -290,7 +311,7 @@ def get(job_id: str, full: bool = False) -> dict | None:
     """The job as the API shows it (``full``: with its result), or None."""
     if not _ID_RE.match(job_id or ""):
         return None
-    live = _live.get(job_id)
+    live = _live_views(job_id).get(job_id)
     row = _read(job_id)
     return _public(row, live, full) if row else None
 
@@ -298,21 +319,23 @@ def get(job_id: str, full: bool = False) -> dict | None:
 def latest(owner: str, kind: str, key: str) -> dict | None:
     """The newest job of this owner, kind and key, whatever its state — so
     asking twice for the same work (a retried request) can answer the first."""
+    live = _live_views()
     with connect_users_db() as conn:
         found = conn.execute(f"{_SELECT} WHERE owner = ? AND kind = ? AND key = ? ORDER BY created_at DESC LIMIT 1",
                              (owner, kind, key)).fetchone()
-    return _public(_row(found), _live.get(found[0])) if found else None
+    return _public(_row(found), live.get(found[0])) if found else None
 
 
 def for_account(owner: str, ws: str = "") -> list[dict]:
     """The account's jobs, newest first, plus the own jobs of workspace
     ``ws`` (the caller passes a workspace the account is a member of, or
     ""). Without results."""
+    live = _live_views()
     with connect_users_db() as conn:
         rows = conn.execute(
             f"{_SELECT} WHERE owner = ? OR (owner = '' AND ? != '' AND workspace_id = ?) "
             "ORDER BY created_at DESC LIMIT ?", (owner, ws, ws, LIST_LIMIT)).fetchall()
-    return [_public(_row(r), _live.get(r[0])) for r in rows]
+    return [_public(_row(r), live.get(r[0])) for r in rows]
 
 
 # --- starting and running -------------------------------------------------------------
@@ -340,7 +363,8 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
         if key:
             for other in _live.values():
                 if (other.owner, other.kind, other.key) == (owner, kind, key):
-                    raise Busy(_public(_read(other.id), other))
+                    view = _snapshot(other)
+                    raise Busy(_public(_read(other.id), view))
         if owner != WORKSPACE and sum(1 for other in _live.values() if other.owner == owner) >= MAX_ACTIVE_PER_ACCOUNT:
             raise HTTPException(status_code=429, detail=(
                 f"you already have {MAX_ACTIVE_PER_ACCOUNT} background tasks waiting or running — "
@@ -474,7 +498,8 @@ def _work(live: _Live) -> None:
             artifact = {}
             _clear_run_files(live.id)
         # The row first, then out of the live set: a read in between still
-        # sees the job running, never ended without its result or its file.
+        # sees the job running, never ended without its result or its file
+        # (the readers take the live view before the row, _live_views).
         try:
             _update(live.id, state=state, result=encoded, error=error, progress=json.dumps(live.progress),
                     finished_at=page_now(), **artifact)

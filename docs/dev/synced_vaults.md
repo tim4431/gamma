@@ -162,7 +162,15 @@ Gamma's server is the **remote**, the directory or the file here is
   PDF, and *Choose files…*. A banner, *Not written to disk:
   …*, shows when the last write was refused or the vault reaches no file
   now (stopped, offline, held, failed). An opened PDF: a disk, *On this
-  computer*, or the alert icon and *File missing*.
+  computer*, or the alert icon and *File missing*. A tab's right-click
+  menu offers the same *Show in folder* for its page, in the desktop app,
+  when the page lies on this computer: the open page by its chip's state
+  (`vaultState.js` `showsOnDisk`), any other in a synced folder whose vault
+  this account made here (`workPaths.js` `inKeptFolder` over
+  `work.linkOf`) or a file opened from this computer. Above it, in any
+  window, a work folder's file has *Go to folder*, which opens its
+  directory in Gamma's folder view with the file selected
+  ([work_folders.md](work_folders.md) "The folder view").
 - The client: `pull`, `sync`, `push`.
 
 In the code the table stays `folder_links` and the API
@@ -1510,7 +1518,7 @@ app counts and confirms first, and only the vault's maker may ask.
   until a round covered its page: a vault whose round runs leaves it for
   the next tick, as does a file still being written. The same tick then
   writes the annotation files of the work folders and of the pages a vault
-  of one file follows that a comment write, an op commit or a Send marked
+  of one file follows that a comment write or an op commit marked
   `HOT_S` ago or more (`annotations.files.due`, `_annotations_pass`, under
   the link's lock): a lock a round holds keeps the
   mark for the next tick, as does a pass that left a file a reader held or

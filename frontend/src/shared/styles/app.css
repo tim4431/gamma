@@ -3847,7 +3847,17 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistRow[aria-disabled="true"]:hover { background: none; }
 .chatHistIcon { flex: none; color: var(--text-muted); }
 .chatHistTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Whose a co-author's conversation is ("bob's chat with Codex"): after the
+   title, dim, giving way to it on a narrow popover. */
+.chatHistBy { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: var(--fs-2xs); color: var(--text-dim); }
 .chatHistAge { flex: none; font-size: var(--fs-2xs); color: var(--text-dim); padding-right: 4px; }
+/* A row with no menu keeps the room of the ⋯ the others have. */
+.chatHistMenuSlot { flex: none; width: var(--ctl-icon-btn); }
+/* A section under the conversations (the sessions the agent's CLI keeps
+   on its computer, "On TIM-PC"): its caption the shared .popoverSection,
+   in line with the rows' titles. */
+.chatHistList .popoverSection { padding: var(--space-4) 8px var(--space-1); }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }
 /* Deleting several at once: a row menu's Select ticks the first, and every
@@ -5202,7 +5212,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
    in neutral colours, amber only while the agent cannot run or waits for
    the person's answer. After its line where the agent works (the
    directory's name, or while the conversation has no turn the menu of
-   those offered), kept to the strip's line height, then its ⋯ menu. */
+   those offered: a ghost MenuSelect in the strip's colour, its glyph and
+   name as far apart as the name's), kept to the strip's line height and
+   to half its width, a long name ellipsized, then its ⋯ menu. */
 .chatHealthStrip.computerStrip {
   color: var(--text-secondary);
   background: var(--bg-subtle);
@@ -5213,12 +5225,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatHealthStrip.computerStrip .computerPlace {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  flex: none;
+  gap: var(--space-2);
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 50%;
   margin-left: auto;
 }
-.chatHealthStrip.computerStrip .computerPlace .uiSelectBtn { margin: -4px 0; }
+.chatHealthStrip.computerStrip .computerPlace .computerPlaceName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatHealthStrip.computerStrip .computerPlace .uiSelectBtn {
+  gap: var(--space-2); min-width: 0; max-width: 100%; margin: -4px 0; padding-inline: var(--space-3); color: inherit;
+}
 .chatHealthStrip.computerStrip .computerStripMenu {
   flex: none;
   width: var(--ctl-icon-btn-xs);
@@ -5957,6 +5973,17 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfZoomLayer {
   transform-origin: 0 0;
 }
+/* Pages that run across (Settings → Reading › PDFs › Page direction;
+   pdf/pageLayout.js): one row as long as its pages (so here the layer does
+   take a width), each page centred in the row's height (the view's, or the
+   tallest page's once that is taller) and the row centred in a view wider
+   than it. The row never overflows its own box, so the centring never puts
+   a page out of reach. */
+.pdfViewer.pdfAcross > .pdfZoomLayer {
+  display: flex; align-items: center; justify-content: center;
+  width: max-content; min-width: 100%; min-height: 100%;
+}
+.pdfViewer.pdfAcross > .pdfZoomLayer > .pdfPageWrap { flex: none; }
 /* The committed zoom (shared/lib/viewerZoom.js SCALE_VAR), which the viewer
    writes on the layer and the page boxes size with (pdf/PdfViewer.jsx), so
    a zoom re-lays-out the pages without rendering them. registerScaleVar

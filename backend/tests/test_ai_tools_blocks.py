@@ -197,6 +197,59 @@ def test_create_block_placement(notes):
     assert "after_id" in text and text.startswith("error")
 
 
+def test_an_undo_brings_an_agents_block_back_stamped(notes):
+    """Undoing the deletion of a block an agent made (a client's insert of
+    it again, under its id and with its text) gets its stamp back from the
+    server's own record of it (pages.db ``agent_stamps``), whatever the
+    client sends; a person's block undone never gains one, a copy under a
+    fresh id (a Duplicate) drops it, and so does the block put back with
+    other text."""
+    from gamma.blocks_store import new_block_id
+
+    c, ids = notes
+    stamp = {"id": "computer:PC:codex", "name": "Codex", "on": "TIM-PC", "for": "tim"}   # "Made by Codex on TIM-PC, for tim"
+    text, _ = run_agent_tool(ids["ws"], {**folder(ids["sandbox"]), "agent": stamp}, "create_block",
+                             {"parent_id": ids["page"], "content": "the agent's note"})
+    made = re.search(r"\[([^\]]+)\]", text).group(1)
+    kept = props(c, made)["properties"]
+
+    def ops(*batch):
+        r = c.post(f"/api/pages/{ids['page']}/ops", json={"client": "undo-test", "ops": list(batch)})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def put_back(block_id, content, properties):
+        return {"op": "insert", "id": block_id, "parent": ids["page"], "content": content, "props": properties}
+
+    def agent_of(block_id):
+        return props(c, block_id)["properties"].get("agent")
+
+    ops({"op": "delete", "id": made})
+    echo = ops(put_back(made, "the agent's note", {k: v for k, v in kept.items() if k != "agent"}))
+    assert agent_of(made) == stamp, "an undo that sent no stamp: the server's"
+    assert echo["ops"][0]["props"]["agent"] == stamp, "the echo carries it to the client"
+    ops({"op": "delete", "id": made})
+    ops(put_back(made, "the agent's note", kept))
+    assert agent_of(made) == stamp, "one that sent it: the server's all the same"
+    # a person's own block, forged with a stamp and undone with it, never has one
+    mine = new_block_id()
+    ops(put_back(mine, "my note", {"agent": stamp}))
+    assert agent_of(mine) is None
+    ops({"op": "delete", "id": mine})
+    ops(put_back(mine, "my note", {"agent": stamp}))
+    assert agent_of(mine) is None
+    # a Duplicate is the copier's; the block put back with other text is no undo of it
+    copy = new_block_id()
+    ops(put_back(copy, "the agent's note", kept))
+    assert agent_of(copy) is None
+    ops({"op": "delete", "id": made})
+    ops(put_back(made, "my rewrite", kept))
+    assert agent_of(made) is None
+    ops({"op": "delete", "id": made})
+    ops(put_back(made, "my rewrite", kept))
+    assert agent_of(made) is None, "the kept stamp went with its first return"
+
+
 def test_move_block_rules(notes):
     c, ids = notes
     scope = folder(ids["sandbox"])

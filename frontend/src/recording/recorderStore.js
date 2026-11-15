@@ -17,7 +17,8 @@ import { CLIENT_ID } from "../collaboration/usePageCollab.js";
 import { t } from "../shared/i18n/i18n.js";
 import { fmtClock } from "../replay/clock.js";
 import { defaultTitle, extensionFor, normalizeRecording } from "./recording.js";
-import { MIC_CONSTRAINTS, canRecord, createRecorder } from "./recorder.js";
+import { MIC_CONSTRAINTS, canRecord, createRecorder, gestureContext } from "./recorder.js";
+import { withWavSizes } from "./wav.js";
 import * as spool from "./spool.js";
 
 let state = null;
@@ -134,23 +135,28 @@ export async function start(pageId) {
   }
   state = { blockId: null, pageId, status: "asking", started: 0, segments: [], pendingUploads: 0, elapsed: 0, level: 0 };
   set({});
+  // Made inside the tap, before the wait for the microphone (recorder.js).
+  const context = gestureContext();
+  const release = (stream) => { stream?.getTracks().forEach((track) => track.stop()); context?.close().catch(() => {}); };
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
   } catch (err) {
+    release(null);
     state = null; coarse = null; emit();
     settings.setStatus(microphoneProblem(err));
     return;
   }
-  if (!state) { stream.getTracks().forEach((track) => track.stop()); return; }
+  if (!state) { release(stream); return; }
   const started = Date.now();
   const blockId = settings.insertBlock?.({
     content: defaultTitle(started, t),
     properties: { t0: started, recording: { started, segments: [], state: "recording", dur: 0, by: CLIENT_ID, at: started } },
   });
-  if (!blockId) { stream.getTracks().forEach((track) => track.stop()); state = null; coarse = null; emit(); return; }
+  if (!blockId) { release(stream); state = null; coarse = null; emit(); return; }
   set({ blockId, started, status: "recording" });
   recorder = createRecorder(stream, {
+    context,
     onChunk: (seg, n, blob) => {
       if (n === 0) spool.openSegment(blockId, seg, { started: Date.now(), mime: recorder?.mime || "", ws: getCurrentWorkspace() || "", page: pageId, block: blockId }).catch(() => {});
       spool.putChunk(blockId, seg, n, blob).catch(() => {});
@@ -235,7 +241,9 @@ export async function recover(entry) {
   for (const row of entry.rows) {
     const chunks = await spool.chunksOf(entry.block, row.seg);
     if (!chunks.length) { await spool.dropSegment(entry.block, row.seg); continue; }
-    const blob = new Blob(chunks, { type: row.mime || "audio/webm" });
+    let blob = new Blob(chunks, { type: row.mime || "audio/webm" });
+    // A WAV's header was written before its length was known.
+    if (extensionFor(blob.type) === ".wav") blob = new Blob([withWavSizes(new Uint8Array(await blob.arrayBuffer()))], { type: blob.type });
     const dur = await measure(blob) ?? chunks.length * 1000;
     const file = new File([blob], `recording-${row.seg + 1}${extensionFor(row.mime)}`, { type: blob.type });
     const data = await postFile("/api/upload-file", file);

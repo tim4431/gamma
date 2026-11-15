@@ -18,10 +18,10 @@ A turn's ``events()`` gives, in order as they happen:
   (``ask``), ``id`` the driver's own key for the answer, ``step`` the id of
   the tool event it is about ("" for none);
 - ``{"type": "ask_gone", "id"}``: the agent withdrew that ask;
-- ``{"type": "done", "ok", "answer", "text", "error", "stopped", "usage",
-  "gamma_down"}``: exactly one, last, however the turn ends: its end,
-  ``stop()``, a crash, a broken pipe, ten minutes of silence, Gamma's tools
-  that did not start (``done``).
+- ``{"type": "done", "ok", "text", "error", "stopped", "usage",
+  "gamma_down", "busy"}``: exactly one, last, however the turn ends: its
+  end, ``stop()``, a crash, a broken pipe, ten minutes of silence, Gamma's
+  tools that did not start, a session another process holds (``done``).
 
 An ask is answered with ``answer()``, from any thread, the person's or
 Gamma's own (``by``: a driver words the agent's decline after whose it
@@ -110,7 +110,6 @@ CHANGE_REFUSED = "Gamma does not let an agent change that file."
 # why a turn failed; a plain last line usually does.
 _LOG_LINE = re.compile(r"^\W{0,3}(\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}:\d{2})")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_FENCE = re.compile(r"^```[A-Za-z]*\s*\n(.*?)\n?```\s*$", re.S)
 
 
 def tool(tool_id: str, kind: str, title: str, status: str, *, path: str = "", command: str = "",
@@ -320,12 +319,13 @@ def protected(path: str, cwd: str) -> bool:
     return len(parts) == 1 and parts[0].startswith(".")
 
 
-def done(*, ok: bool, answer=None, text: str = "", error: str = "", stopped: bool = False,
-         usage: dict | None = None, gamma_down: bool = False) -> dict:
+def done(*, ok: bool, text: str = "", error: str = "", stopped: bool = False, usage: dict | None = None,
+         gamma_down: bool = False, busy: bool = False) -> dict:
     """The turn's end; ``gamma_down``, it failed because Gamma's tools did
-    not start or connect (``GammaDown``)."""
-    return {"type": "done", "ok": ok, "answer": answer, "text": text or "", "error": "" if ok else error,
-            "stopped": stopped, "usage": usage or {}, "gamma_down": gamma_down}
+    not start or connect (``GammaDown``); ``busy``, because another process
+    holds the session it resumes (``SessionBusy``)."""
+    return {"type": "done", "ok": ok, "text": text or "", "error": "" if ok else error, "stopped": stopped,
+            "usage": usage or {}, "gamma_down": gamma_down, "busy": busy}
 
 
 def one_line(text: str, limit: int = MAX_TITLE) -> str:
@@ -353,19 +353,6 @@ def rel_path(path: str, cwd: str) -> str:
         return str(full)
 
 
-def parse_answer(text: str):
-    """The agent's last message as JSON (a ```json fence around it
-    stripped), None when it is not."""
-    text = (text or "").strip()
-    fenced = _FENCE.match(text)
-    if fenced:
-        text = fenced.group(1).strip()
-    try:
-        return json.loads(text) if text else None
-    except ValueError:
-        return None
-
-
 def stderr_reason(tail: str) -> str:
     """The last line of stderr when it reads as a reason (not a timestamped
     log line), else ""."""
@@ -383,6 +370,18 @@ class TurnFailed(Exception):
 class GammaDown(TurnFailed):
     """Gamma's tools did not start or connect for the turn: the session is
     the agent's all the same, so a turn again afresh would fail alike."""
+
+
+# What a turn, a listing and an opening say of a session another process
+# holds (a terminal's, an editor's): Codex refuses its second writer, Claude
+# Code has no lock and two writers fork its file (gamma/local_agents/
+# sessions.py).
+BUSY = "{agent} has this session open in another window: close it there first."
+
+
+class SessionBusy(TurnFailed):
+    """The session the turn resumes is held by another process: never
+    started afresh in its place, which would fork it."""
 
 
 class _Stopped(Exception):
@@ -496,6 +495,9 @@ class Turn:
         except GammaDown as e:
             graceful = False
             end = done(ok=False, error=str(e), gamma_down=True)
+        except SessionBusy as e:
+            graceful = False
+            end = done(ok=False, error=str(e), busy=True)
         except TurnFailed as e:
             graceful = False
             end = done(ok=False, error=str(e))
@@ -601,7 +603,7 @@ class Turn:
 
 def start(name: str, *, title: str = "", **kw) -> Turn:
     """Start a turn of the agent ``name`` (``codex``, ``claude``): the
-    driver's ``start`` with ``argv``, ``cwd``, ``prompt``, ``schema``,
+    driver's ``start`` with ``argv``, ``cwd``, ``prompt``,
     ``session``, ``images``, ``ask``, ``stream`` (its text as it is
     written, ``delta``), ``model`` and ``effort`` (one the agent listed,
     ``catalog.probe``'s ``models``; "" for its default) and ``gamma``

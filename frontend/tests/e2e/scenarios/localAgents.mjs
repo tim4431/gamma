@@ -1,31 +1,40 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { marginLeft } from "../../../src/comments/marginLayout.js";
 import { Account, PYTHON, ROOT, Server, wanted } from "../harness.mjs";
-import { waitForPdf } from "./pdf.mjs";
+import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
+import { dragSelectCodeText } from "./textAnchors.mjs";
 
-// An agent on this computer answering a Send (docs/dev/local_agents.md): the
-// desktop app's own server, where Gamma itself starts Codex in a work
-// folder's directory with the comments its owner sent. The vaults recipe
-// (GAMMA_FOLDER_LINKS, no shell secret, a desktop user agent) with local
-// agents on and the stand-ins of backend/tests/fake_agents/ in place of the
-// CLIs, so no real agent ever runs: the SyncTeX sample paper as a work
-// folder, two comments on its PDF, Codex turned on for the computer by the
-// vault's maker, the Feedback dialog naming Codex before and after, Send, the
-// request worked and done with what changed, the replies signed Codex on
-// the person's computer and the threads resolved; a reply ticked Send to
-// Codex (by its @codex) a turn of its thread, its chip, its answer under its
-// name, Open in chat and the next ticked reply resuming the session; and the
-// agent turned off.
+// The agents on this computer (docs/dev/local_agents.md): the desktop app's
+// own server, where Gamma itself starts Codex in the directory a
+// conversation works in. The vaults recipe (GAMMA_FOLDER_LINKS, no shell
+// secret, a desktop user agent) with local agents on and the stand-ins of
+// backend/tests/fake_agents/ in place of the CLIs, so no real agent ever
+// runs: the SyncTeX sample paper as a work folder with its .tex sources
+// tracked, no Feedback button anywhere, Codex turned on for the computer by
+// the vault's maker; a passage of main.tex and one of a library PDF
+// commented with Send to Codex ticked, each a turn of its thread answered
+// there under Codex's name, the .tex edited and shown so, a question of
+// Codex's own opened as a thread, the threads named in open.md on disk; a
+// reply ticked Send to Codex (by its @codex) a turn of its thread, its
+// chip, its answer under its name, Open in chat and the next ticked reply
+// resuming the session; the chat's Codex side; Gamma's tools; the sessions
+// Codex keeps of the folder, started in a terminal, opened from History;
+// and the agent turned off.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 const PAPER = path.join(ROOT, "backend", "tests", "samples", "synctex", "paper");
 const PLACES = JSON.parse(fs.readFileSync(path.join(PAPER, "places.json"), "utf8"));
 const FAKES = path.join(ROOT, "backend", "tests", "fake_agents");
 const PAGE = { width: 612, height: 792 };
-const SUMMARY = "Moved the legend and introduced the penalty's weight.";
 const CHAT_REPLY = "Tightened the sentence in sections/method.tex:3.";
 const BUILD = "latexmk -pdf main.tex";
+// A .tex is not among what a work folder tracks with no .gammaignore (notes, PDFs, pictures).
+const IGNORE = "*\n!*/\n!*.tex\n!*.pdf\n";
+// The code view's own text: the comment fields in its column are CodeMirror views too.
+const CODE = ".docTextView .docTextHost > .cm-editor > .cm-scroller > .cm-content";
 // Gamma's tools (step 2.7): the variable that alone carries a turn's token
 // (gamma/local_agents/events.py TOKEN_ENV), and the message whose turn
 // reads the page through them and quotes what it read.
@@ -34,6 +43,24 @@ const READ_ASK = "what did I highlight?";
 // 3.3: this message's turn comments on a passage of its page through them.
 const COMMENT_ASK = "ask the authors about noon";
 const NOON = "Marigolds open at noon";
+// 3.7: a comment on main.tex sent to Codex: its turn edits the file and asks
+// a question of its own on line 17; one on a library PDF asks on a passage.
+const TEX_ASK = "Shorten the title.";
+const TEX_REPLY = "Shortened the title in main.tex:9.";
+const TEX_QUESTION = "Which data set does this note measure?";
+const TITLE = "Weight Decay on a Small Data Set";
+const SHORT = "Weight Decay on Small Data";
+const LIB_ASK = "Is this the right time of day?";
+const LIB_REPLY = "Dawn is right; I asked about the second line.";
+const LIB_QUESTION = "Is dusk right here?";
+const SUNFLOWERS = ["Sunflowers turn east at dawn", "and west at dusk"];
+// Step 5: the threads a person's Codex keeps of the paper's directory (the
+// stand-in's `sessions`), one of them held by another Codex, and the
+// message the opened one's next turn takes.
+const TERMINAL = { id: "019b-term-fix", name: "Fix the abstract", ask: "fix the abstract's typo", reply: "Fixed it in main.tex:9." };
+const HELD = { id: "019b-term-held", name: "Draft the introduction" };
+const SESSION_ASK = "and the conclusion";
+const SESSION_REPLY = "Concluded in main.tex.";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -43,47 +70,75 @@ function areaOf([x1, y1, x2, y2]) {
 }
 
 export async function localAgentScenarios(env) {
-  const { browser, step, openPage, assert, assertEq, assertNoProblems, until, makePdf } = env;
+  const { browser, step, openPage, assert, assertEq, assertNoProblems, until, makePdf, sleep } = env;
   if (!wanted("local-agents")) return;
   const disk = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-agents-"));
   const agentLog = path.join(disk, "agent.jsonl");
+  const paperDir = path.join(disk, "paper");
+  const codexHome = path.join(disk, "codex");   // where the server looks for a thread's writer lock
+  const thread = (id, name, updated, turns = []) => ({ id, name, preview: name, cwd: paperDir, source: "cli",
+    originator: "codex-tui", createdAt: updated - 60, updatedAt: updated, turns });
   // Both agents are the stand-ins, so neither probe reaches a CLI of this
-  // computer. Codex answers every comment it is handed as fixed, after an
-  // edit of the paper's method and a pause long enough to be seen working;
-  // each new session is a thread of its own id, so a resumed one shows.
+  // computer. Codex edits the paper's method in a turn, after a pause long
+  // enough to be seen working; each new session is a thread of its own id,
+  // so a resumed one shows.
   const server = new Server({ env: {
     GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "", GAMMA_LOCAL_AGENTS: "1",
     GAMMA_AGENT_CODEX: JSON.stringify([PYTHON, path.join(FAKES, "fake_codex.py")]),
     GAMMA_AGENT_CLAUDE: JSON.stringify([PYTHON, path.join(FAKES, "fake_claude.py")]),
-    FAKE_AGENT: JSON.stringify({ each: "fixed", summary: SUMMARY, delay: 8, log: agentLog, distinct: true, chat: CHAT_REPLY,
+    CODEX_HOME: codexHome,
+    FAKE_AGENT: JSON.stringify({ delay: 8, log: agentLog, distinct: true, chat: CHAT_REPLY,
+      // step 5: what a terminal left of the paper's directory
+      sessions: { threads: [
+        thread(TERMINAL.id, TERMINAL.name, 1794000300, [{ id: "t1", status: "completed", startedAt: 1794000000,
+          completedAt: 1794000060, items: [
+            { type: "userMessage", id: "u1", content: [{ type: "text", text: TERMINAL.ask }] },
+            { type: "commandExecution", id: "c1", command: "rg abstract main.tex", cwd: paperDir, status: "completed",
+              aggregatedOutput: "9: the abstract", exitCode: 0 },
+            { type: "agentMessage", id: "a1", text: TERMINAL.reply, phase: "final_answer" }] }]),
+        thread(HELD.id, HELD.name, 1794000100)] },
       // a turn of a folder that lets it ask (3b) asks to run the build with the network
       ask: [{ command: BUILD, reason: "The build fetches a font", host: "fonts.example" }],
       // a chat turn's reply comes as it is typed (3c): a word every half second
       typing: 0.5,
       edits: [{ path: "sections/method.tex", old: "by gradient descent.", new: "by gradient descent with weight decay $\\lambda$." }],
-      // 2.7: this message's turn reads its page with Gamma's tools and answers with what it read
-      turns: { [READ_ASK]: { gamma: [{ tool: "read_page", arguments: { page_id: "$page" } }], edits: [], delay: 0, typing: 0,
-        chat: "From Gamma:\n\n{gamma}" },
-      [COMMENT_ASK]: { gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: NOON, pdf_page: 1, body: "Is noon right here?" } }],
-        edits: [], delay: 0, typing: 0, chat: "Commented:\n\n{gamma}" } } }),
+      turns: {
+        // 2.7: this message's turn reads its page with Gamma's tools and answers with what it read
+        [READ_ASK]: { gamma: [{ tool: "read_page", arguments: { page_id: "$page" } }], edits: [], delay: 0, typing: 0,
+          chat: "From Gamma:\n\n{gamma}" },
+        [COMMENT_ASK]: { gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: NOON, pdf_page: 1, body: "Is noon right here?" } }],
+          edits: [], delay: 0, typing: 0, chat: "Commented:\n\n{gamma}" },
+        // 3.7: a thread's turn on main.tex edits it and asks on a line; one on a library PDF asks on a passage
+        [TEX_ASK]: { edits: [{ path: "main.tex", old: TITLE, new: SHORT }],
+          gamma: [{ tool: "comment", arguments: { page_id: "$page", line: 17, end_line: 17, body: TEX_QUESTION } }],
+          delay: 0, typing: 0, chat: TEX_REPLY },
+        [LIB_ASK]: { edits: [], gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: SUNFLOWERS[1], pdf_page: 1,
+          body: LIB_QUESTION } }], delay: 0, typing: 0, chat: LIB_REPLY },
+        [SESSION_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SESSION_REPLY } } }),
   } });
   try {
     await server.start();
     await server.manage("create-user", "la-user", "la-pw");
     const user = await new Account(server, "la-user", "la-pw").login();
+    const home = `${server.base}/?ws=${user.ws}`;
     const at = (id) => `${server.base}/?page=${id}&ws=${user.ws}`;
-    const desktop = () => user.context(browser, { userAgent: DESKTOP_UA });
+    const desktop = (opts = {}) => user.context(browser, { userAgent: DESKTOP_UA, ...opts });
     // written as an editor that finished a while ago, so a round takes it at once
-    const paperDir = path.join(disk, "paper");
-    for (const rel of ["main.tex", "sections/method.tex", "figures/fig1.pdf", "main.pdf", "main.synctex.gz"]) {
-      const file = path.join(paperDir, rel);
+    const write = (file, bytes) => {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, fs.readFileSync(path.join(PAPER, "v1", rel)));
+      fs.writeFileSync(file, bytes);
       const before = new Date(Date.now() - 10_000);
       fs.utimesSync(file, before, before);
+    };
+    for (const rel of ["main.tex", "sections/method.tex", "figures/fig1.pdf", "main.pdf", "main.synctex.gz"]) {
+      write(path.join(paperDir, rel), fs.readFileSync(path.join(PAPER, "v1", rel)));
     }
-    const method = path.join(paperDir, "sections", "method.tex");
+    write(path.join(paperDir, ".gammaignore"), IGNORE);
+    const annotationsDir = path.join(paperDir, ".gamma", "annotations");
+    const openMd = () => fs.readFileSync(path.join(annotationsDir, "open.md"), "utf8");
     const threadsOf = async (page) => (await user.api(`/api/pages/${page}/comments?state=all`)).threads;
+    const filesOf = async (folder) => (await user.api(`/api/folders/${folder}/pages?limit=500`)).pages;
+    const sync = () => user.api(`/api/folder-links/${link.id}/sync?wait=1`, { method: "POST" });
     const openComments = async (page) => {
       const panel = page.locator(".commentsPanel");
       if (!(await panel.count())) {
@@ -94,14 +149,41 @@ export async function localAgentScenarios(env) {
       await panel.waitFor();
       return panel;
     };
-    const openFeedback = async (page) => {
-      await openComments(page);
-      await page.locator(".dockWindow:has(.commentsPanel)").getByRole("button", { name: "Feedback", exact: true }).click();
-      const d = page.getByRole("dialog", { name: "Feedback", exact: true });
-      await d.locator(".feedbackEntry").nth(1).waitFor({ timeout: 10000 });
-      return d;
+    // The PDF's margin, zoomed out until the column has room beside the page
+    // (comments/marginLayout.js): the column itself stands only once a thread
+    // or a new comment is there, so the room is what the zoom goes by.
+    const openMargin = async (page) => {
+      const zoomOut = page.getByRole("button", { name: "Zoom out", exact: true });
+      const room = () => page.evaluate(() => [document.querySelector(".pdfViewer").clientWidth,
+        document.querySelector('[data-page="1"]').getBoundingClientRect().width]);
+      for (let i = 0; i < 12 && marginLeft(...(await room())) == null; i++) {
+        await zoomOut.click();
+        await sleep(200);
+      }
+      assert(marginLeft(...(await room())) != null, "the page has room for the column beside it");
+      return page.locator('[data-page="1"] .commentMargin');
     };
-    const notes = async (d) => (await d.locator(".feedbackAgentNote").allInnerTexts()).map((s) => s.trim());
+    // A new comment's field in `scope` (a margin or the code view's column),
+    // the comment typed and sent with Send to Codex ticked.
+    const sendNewComment = async (page, scope, body) => {
+      const fresh = scope.locator(".commentCard.active .commentNew");
+      await fresh.waitFor({ timeout: 10000 });
+      assertEq((await fresh.locator(".commentSendTick").innerText()).trim(), "Send to Codex", "the new comment's field offers the agent");
+      const tick = fresh.locator(".commentSendTo input[type=checkbox]");
+      if (!(await tick.isChecked())) await fresh.locator(".commentSendTick").click();
+      await until(() => tick.isChecked(), { what: "Send to Codex ticked" });
+      await fresh.locator(".commentField .cm-content").click();
+      await page.keyboard.type(body);
+      await page.keyboard.press("Shift+Enter");
+    };
+    // The thread whose first comment is `body` on the page, once Codex's
+    // reply `reply` is its second comment.
+    const answered = (pageId, body, reply) => until(async () => (await threadsOf(pageId))
+      .find((th) => th.comments[0]?.body === body && th.comments[1]?.body === reply) || null,
+    { timeout: 40000, what: `Codex's reply to "${body}"` });
+    // The thread Codex opened on the page with its question `body`.
+    const asked = (pageId, body) => until(async () => (await threadsOf(pageId))
+      .find((th) => th.comments[0]?.body === body) || null, { timeout: 20000, what: `Codex's question "${body}"` });
     // What the stand-in heard, in order: each turn/start names the thread
     // (the agent's session) the turn ran in.
     const heard = () => fs.readFileSync(agentLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
@@ -176,17 +258,11 @@ export async function localAgentScenarios(env) {
     const conversation = async () => (await user.api(`/api/local-agents/chat?bucket=${main.id}`)).conversation;
 
     let link = null, main = null;
-    const threads = [];
-    await step("local-agents: a work folder of the paper with two comments on its PDF, and Codex found on this computer", async () => {
+    await step("local-agents: a work folder of the paper, its .tex tracked, and Codex found on this computer", async () => {
       link = await user.api("/api/folder-links", { method: "POST", body: { path: paperDir, new_folder: true, pull: true, push: "everything" } });
-      await user.api(`/api/folder-links/${link.id}/sync?wait=1`, { method: "POST" });
-      main = await until(async () => (await user.api(`/api/folders/${link.folder_id}/pages?limit=500`)).pages
-        .find((p) => p.properties?.file_name === "main.pdf"), { timeout: 30000, what: "main.pdf's page" });
-      for (const [place, body] of [[PLACES.v1.figure.rect, "move the legend inside the plot"], [PLACES.v1.equation.rect, "lambda is never introduced"]]) {
-        const area = await user.api("/api/blocks", { method: "POST", body: { parent_id: main.id, content: "",
-          properties: { pdf_position: areaOf(place), color: "rgba(255, 226, 143, 0.65)" } } });
-        threads.push((await user.api(`/api/pages/${main.id}/comments`, { method: "POST", body: { block_id: area.id, body } })).thread);
-      }
+      await sync();
+      main = await until(async () => (await filesOf(link.folder_id)).find((p) => p.properties?.file_name === "main.pdf"),
+        { timeout: 30000, what: "main.pdf's page" });
       const found = (await user.api("/api/local-agents?fresh=1")).agents;
       assertEq(found.map((a) => a.name).join(","), "codex,claude", "the agents Gamma knows");
       const codex = found.find((a) => a.name === "codex");
@@ -195,119 +271,45 @@ export async function localAgentScenarios(env) {
       assertEq(link.agent ?? null, null, "the folder has no agent yet");
     });
 
-    await step("local-agents: with no agent on, the Feedback dialog sends to an agent the person runs and says where to turn one on", async () => {
+    await step("local-agents: no Feedback button is left: not in the synced folder's list, the vault chip's menu or the Comments window", async () => {
       const ctx = await desktop();
-      const page = await openPage(ctx, at(main.id));
+      const page = await openPage(ctx, `${home}&folder=${link.folder_id}`);
       try {
+        await page.locator('[data-guide="home.select"]').waitFor({ timeout: 15000 });
+        assertEq(await page.getByRole("button", { name: "Feedback", exact: true }).count(), 0, "none in the folder's list bar");
+        await page.goto(at(main.id));
         await waitForPdf(page, 1);
-        const d = await openFeedback(page);
-        await d.getByRole("button", { name: "Send 2 comments", exact: true }).waitFor();
-        // the folder is kept here and an agent was found: the line offering one
-        await until(async () => (await notes(d)).some((s) => s === "To have Codex or Claude Code answer here, turn one on in Settings → AI."),
-          { timeout: 15000, what: "the line saying where to turn an agent on" });
-        await page.keyboard.press("Escape");
-        await d.waitFor({ state: "detached" });
+        await page.locator(".vaultChip").click();
+        const card = page.locator(".vaultPopover");
+        await card.waitFor();
+        assertEq(await card.getByText("Feedback…", { exact: true }).count(), 0, "none in the vault chip's menu");
+        await page.locator(".vaultChip").click();
+        await card.waitFor({ state: "detached" });
+        await openComments(page);
+        assertEq(await page.locator(".dockWindow:has(.commentsPanel)").getByRole("button", { name: "Feedback", exact: true }).count(), 0,
+          "none in the Comments window");
+        assertEq(await page.getByRole("button", { name: "Feedback", exact: true }).count(), 0, "none in the page header");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });
 
-    await step("local-agents: the vault's maker turns Codex on for the computer, which nothing waits on yet", async () => {
+    await step("local-agents: the vault's maker turns Codex on for the computer", async () => {
       const turned = await user.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: true } });
-      assertEq(turned.queued, 0, "no Send was waiting");
       assertEq(JSON.stringify([turned.name, turned.label, turned.enabled, turned.runs, turned.mine]),
         JSON.stringify(["codex", "Codex", true, "never", true]), "on, the account's own");
       assertEq(turned.ready, true, "ready, from the probe the PATCH ran");
       const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
       assertEq(listed.agent?.name, "codex", "the listing carries the agent that works in the vault");
       assertEq(listed.agent.running, null, "nothing running");
-      const doc = await user.api(`/api/annotations?scope=${link.folder_id}`);
-      assertEq(JSON.stringify([doc.agent?.name, doc.agent?.takes, doc.agent?.ready]), JSON.stringify(["codex", true, true]), "the feedback document's agent takes the maker's Sends");
     });
 
-    let request = null;
-    await step("local-agents: Send to Codex from the Feedback dialog, which shows it working and then done with what it changed", async () => {
-      const ctx = await desktop();
-      const page = await openPage(ctx, at(main.id));
-      try {
-        await waitForPdf(page, 1);
-        const d = await openFeedback(page);
-        const send = d.getByRole("button", { name: "Send 2 comments to Codex", exact: true });
-        await send.waitFor({ timeout: 10000 });
-        assert((await notes(d)).includes("Codex works on this computer, in this folder's directory, and answers each comment."), "the hint under the note");
-        await d.getByRole("textbox", { name: "Instruction for the agent (optional)" }).fill("fix these");
-        await send.click();
-        const row = d.locator(".feedbackRequest");
-        await row.waitFor({ timeout: 10000 });
-        const state = row.locator(".feedbackRequestState");
-        await until(async () => (await state.innerText()).trim() === "Codex is working…", { timeout: 20000, what: "the request reads Codex is working…" });
-        await until(async () => (await state.innerText()).trim() === "Done by Codex", { timeout: 40000, what: "the request reads Done by Codex" });
-        // the agent's own words on a line of their own, under the request's
-        const done = (await row.locator(".feedbackRequestDetail").innerText()).trim();
-        assert(done.includes(SUMMARY), `the request's detail has the summary: ${done}`);
-        // the file the comment's source line names is named; the others are counted
-        assert(done.includes("Changed sections/method.tex."), `and the file changed: ${done}`);
-        await page.keyboard.press("Escape");
-        await d.waitFor({ state: "detached" });
-        assertNoProblems(page);
-      } finally { await ctx.close(); }
-      const listed = await user.api("/api/feedback/requests?after=0");
-      assertEq(listed.requests.length, 1, "one request");
-      request = listed.requests[0];
-      assertEq(JSON.stringify([request.state, request.state_by, request.note]), JSON.stringify(["done", "Codex", "fix these"]), "done by Codex");
-      assert(fs.readFileSync(method, "utf8").includes("by gradient descent with weight decay $\\lambda$."), "the edit is in the directory");
-      // the agent ran in the folder's directory, told of both threads, and
-      // got none of the server's own variables
-      const seen = fs.readFileSync(agentLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
-      const servers = seen.filter((e) => e.argv?.[0] === "app-server");
-      assert(servers.some((e) => path.relative(e.cwd, paperDir) === ""), `an app-server ran in the work folder: ${JSON.stringify(servers)}`);
-      assert(seen.every((e) => !e.env || e.env.every((name) => !name.startsWith("GAMMA_") || name === TOKEN_ENV)),
-        "no GAMMA_ variable but the turn's token reached the agent");
-      const turn = seen.find((m) => m.in?.method === "turn/start").in.params;
-      const prompt = turn.input.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-      assert(threads.every((th) => prompt.includes(`"thread_id": "${th.id}"`)), "the prompt names both threads");
-      assertEq(turn.sandboxPolicy?.networkAccess, false, "a sandbox without network");
-    });
-
-    await step("local-agents: Codex's replies are signed Codex on this computer, for the person, and the threads it fixed are resolved", async () => {
-      const stored = await threadsOf(main.id);
-      let computer = "";
-      for (const th of threads) {
-        const got = stored.find((s) => s.id === th.id);
-        assert(got?.resolved_at, `${th.id} is resolved`);
-        const reply = got.comments[1];
-        assertEq(JSON.stringify([reply?.agent, reply?.agent_kind, reply?.author, reply?.body]),
-          JSON.stringify(["Codex", "computer", "la-user", `Done for ${th.id}.`]), "the reply");
-        computer = reply.agent_on;
-      }
-      assert(computer, "the reply names the computer Codex ran on");
-      const ctx = await desktop();
-      const page = await openPage(ctx, at(main.id));
-      try {
-        await waitForPdf(page, 1);
-        const panel = await openComments(page);
-        await page.locator(".dockWindow:has(.commentsPanel) .segGroup button", { hasText: "Resolved (2)" }).click();
-        const row = panel.locator(`.commentsPanelRow[data-thread-id="${threads[0].id}"]`);
-        await row.waitFor();
-        await row.click();
-        const reply = page.locator(".commentThread .commentItem.reply", { has: page.locator(".commentAuthor", { hasText: "Codex" }) }).first();
-        await reply.waitFor({ timeout: 10000 });
-        const byline = `Written by Codex on ${computer}, for la-user`;
-        assertEq(await reply.locator(".commentAuthor").getAttribute("title"), byline, "the byline names the computer and the person");
-        assertEq(await reply.locator(".commentFor").textContent(), `on ${computer}, for la-user`, "after the agent's name");
-        assertEq(await reply.locator(":scope > .agentAvatar").getAttribute("title"), byline, "and so does the agent's avatar");
-        await page.keyboard.press("Escape");
-        assertNoProblems(page);
-      } finally { await ctx.close(); }
-    });
-
-    // Step 3.5 of docs/research/agents-as-participants-plan.md: a comment sent to
-    // an agent (docs/dev/local_agents.md "A comment sent to an agent").
+    // Step 3.5: a reply ticked by its @codex.
     let caption = null, captionTurn = "";
     await step("local-agents: @codex in a reply ticks Send to Codex, and the reply is a turn of its thread: the chip says Codex is working, then its reply comes under its name", async () => {
       caption = await commentOn(PLACES.v1.figure.rect, "the caption says 2025");
       const before = turnsHeard().length;
-      const sends = (await user.api("/api/feedback/requests?after=0")).requests.length;
       const ctx = await desktop();
+
       const page = await openPage(ctx, at(main.id));
       try {
         await waitForPdf(page, 1);
@@ -355,7 +357,6 @@ export async function localAgentScenarios(env) {
       assertEq(mine.body, "@codex fix this only", "the reply is stored as written");
       assertEq(JSON.stringify([theirs.agent, theirs.agent_kind, theirs.author, theirs.body]),
         JSON.stringify(["Codex", "computer", "la-user", CHAT_REPLY]), "Codex answered in the thread, for the person");
-      assertEq((await user.api("/api/feedback/requests?after=0")).requests.length, sends, "no Send was made");
       const turns = turnsHeard().slice(before);
       assertEq(turns.length, 1, "one turn");
       captionTurn = turns[0];
@@ -422,6 +423,105 @@ export async function localAgentScenarios(env) {
       assertEq(refused.comment.body, "once more", "the comment is stored all the same");
     });
 
+    // Step 3.7 of docs/research/agents-as-participants-plan.md: a comment ticked
+    // Send to Codex is how a person asks the agent (docs/dev/local_agents.md
+    // "A comment sent to an agent"), on a synced folder's file and on a
+    // library PDF. After the steps that read the tick as the person left it:
+    // ticked here, it starts ticked from then on.
+    let texThread = null;
+    await step("local-agents: on main.tex of the synced folder a passage commented with Send to Codex ticked is answered in its thread under Codex's name, the file edited and the code view showing it, and Codex asks a question of its own on a line", async () => {
+      const tex = await until(async () => (await filesOf(link.folder_id)).find((p) => p.properties?.file_name === "main.tex"),
+        { timeout: 30000, what: "main.tex's page" });
+      const before = heard().length;
+      const ctx = await desktop({ viewport: { width: 1600, height: 900 } });
+      const page = await openPage(ctx, at(tex.id));
+      const codeShown = () => until(async () => (await page.locator(`${CODE} > .cm-line`).count()) > 20,
+        { timeout: 20000, what: "main.tex's lines in the code view" });
+      try {
+        await codeShown();
+        await dragSelectCodeText(page, "Weight decay is the oldest remedy");
+        await page.locator(".plainTip").getByRole("button", { name: "Comment on this passage" }).click();
+        await sendNewComment(page, page.locator(".docTextView .commentMargin"), TEX_ASK);
+        texThread = await answered(tex.id, TEX_ASK, TEX_REPLY);
+        const reply = texThread.comments[1];
+        assertEq(JSON.stringify([reply.agent, reply.agent_kind, reply.author]), JSON.stringify(["Codex", "computer", "la-user"]),
+          "the reply is Codex's, for the person");
+        const computer = reply.agent_on;
+        assert(computer, "the reply names the computer Codex ran on");
+        // the file edited on disk, and the code view shows it once the vault's round takes it. A file
+        // written less than gamma_sync.SETTLE_S ago is still being written and waits for a later
+        // round, so the page is reloaded only once its document carries the new bytes: before, it
+        // asks for the ones the disk no longer holds (404)
+        assert(fs.readFileSync(path.join(paperDir, "main.tex"), "utf8").includes(SHORT), "the edit is in the directory");
+        const was = tex.properties?.doc?.hash;
+        assert(was, `main.tex's page names its file: ${JSON.stringify(tex.properties?.doc)}`);
+        await until(async () => {
+          await sync();
+          return (await user.api(`/api/blocks/${tex.id}`)).properties?.doc?.hash !== was;
+        }, { timeout: 20000, what: "the vault's round took the edit" });
+        await page.reload();
+        await codeShown();
+        await until(async () => (await page.locator(`${CODE} > .cm-line`, { hasText: SHORT }).count()) > 0,
+          { timeout: 20000, what: "the code view shows the edit" });
+        // Codex's own question: a thread on line 17, written for the person under its name
+        const question = await asked(tex.id, TEX_QUESTION);
+        assertEq(JSON.stringify([question.comments[0].agent, question.comments[0].author]), JSON.stringify(["Codex", "la-user"]),
+          "the question is Codex's");
+        // the thread opened: the reply under Codex's name, its byline naming the computer and the person
+        await page.goto(`${at(tex.id)}&thread=${texThread.id}`);
+        const item = page.locator(".commentItem.reply", { hasText: TEX_REPLY }).first();
+        await item.waitFor({ timeout: 10000 });
+        const byline = `Written by Codex on ${computer}, for la-user`;
+        assertEq((await item.locator(".commentAuthor").textContent()).trim(), "Codex", "the agent's name");
+        assertEq(await item.locator(".commentAuthor").getAttribute("title"), byline, "the byline names the computer and the person");
+        assertEq(await item.locator(".commentFor").textContent(), `on ${computer}, for la-user`, "after the agent's name");
+        assertEq(await item.locator(":scope > .agentAvatar").getAttribute("title"), byline, "and so does the agent's avatar");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      // the agent ran in the folder's directory, told of the thread, and got none of the server's own variables
+      const since = heard().slice(before);
+      const servers = since.filter((e) => e.argv?.[0] === "app-server");
+      assert(servers.some((e) => path.relative(e.cwd, paperDir) === ""), `an app-server ran in the work folder: ${JSON.stringify(servers)}`);
+      assert(since.every((e) => !e.env || e.env.every((name) => !name.startsWith("GAMMA_") || name === TOKEN_ENV)),
+        "no GAMMA_ variable but the turn's token reached the agent");
+      const turn = since.find((e) => e.in?.method === "turn/start").in.params;
+      const told = turn.input.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+      assert(told.includes(`"message": "${TEX_ASK}"`) && told.includes(`"thread_id": "${texThread.id}"`),
+        `the comment and its thread reach Codex: ${told.slice(0, 600)}`);
+      assertEq(turn.sandboxPolicy?.networkAccess, false, "a sandbox without network");
+      // .gamma/annotations/open.md on disk names the thread and Codex's question, for an agent at the terminal
+      const question = await asked(tex.id, TEX_QUESTION);
+      await until(() => {
+        try { const md = openMd(); return md.includes(`\`${texThread.id}\``) && md.includes(`\`${question.id}\``); } catch { return false; }
+      }, { timeout: 15000, what: "open.md names both threads" });
+      assert(openMd().includes(TEX_QUESTION), "with Codex's question");
+    });
+
+    await step("local-agents: on a library PDF a passage commented with Send to Codex ticked is answered in its thread under Codex's name, and Codex asks about another passage", async () => {
+      const up = await user.upload("/api/uploads", makePdf([SUNFLOWERS]), "sunflowers.pdf", "application/pdf");
+      const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+        body: { default_title: "Sunflower paper", source_url: up.source_url, original_filename: "sunflowers.pdf" } });
+      const ctx = await desktop({ viewport: { width: 1600, height: 900 } });
+      const page = await openPage(ctx, at(paper.id));
+      try {
+        await waitForPdf(page, 1);
+        const margin = await openMargin(page);
+        await dragSelectPdfText(page, 1, "turn east at dawn");
+        await page.locator(".plainTip").getByRole("button", { name: "Comment on this passage" }).click();
+        await sendNewComment(page, margin, LIB_ASK);
+        const thread = await answered(paper.id, LIB_ASK, LIB_REPLY);
+        assertEq(JSON.stringify([thread.comments[1].agent, thread.comments[1].agent_kind]), JSON.stringify(["Codex", "computer"]),
+          "the reply is Codex's");
+        const question = await asked(paper.id, LIB_QUESTION);
+        assertEq(question.comments[0].agent, "Codex", "a thread of Codex's own on the passage it asks about");
+        await page.goto(`${at(paper.id)}&thread=${thread.id}`);
+        const item = page.locator(".commentItem.reply", { hasText: LIB_REPLY }).first();
+        await item.waitFor({ timeout: 10000 });
+        assertEq((await item.locator(".commentAuthor").textContent()).trim(), "Codex", "under Codex's name");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    });
+
     // Step 3a: the chat's computer side (docs/dev/local_agents.md "The chat's computer side").
     let chatThread = "";
     await step("local-agents: the maker's chat has a Codex side, where a message with a PDF passage goes to Codex on this computer and its reply comes back", async () => {
@@ -458,7 +558,6 @@ export async function localAgentScenarios(env) {
       const prompt = turns[0].in.params.input.filter((p) => p.type === "text").map((p) => p.text).join("\n");
       assert(prompt.includes('"message": "tighten this sentence"') && prompt.includes("The penalty") && prompt.includes('"path": "main.pdf"'),
         `the message, the passage and the file reach Codex: ${prompt.slice(0, 600)}`);
-      assert(!turns[0].in.params.outputSchema, "a chat turn answers in prose, with no answer schema");
       const stored = await conversation();
       assertEq(JSON.stringify(stored.messages.map((m) => [m.role, m.role === "agent" ? m.state : m.text])),
         JSON.stringify([["user", "tighten this sentence"], ["agent", "done"]]), "the conversation as stored");
@@ -792,13 +891,62 @@ export async function localAgentScenarios(env) {
       } finally { await ctx.close(); }
     });
 
-    await step("local-agents: turned off by its owner, the folder has no agent and the feedback document names none", async () => {
+    await step("local-agents: History lists the sessions Codex keeps of the folder on this computer: a terminal's opens as the chat's conversation, the next message resumes it, and one open in another window says why", async () => {
+      // another Codex has the held thread open: its writer's lock, as Codex holds it
+      const holder = spawn(PYTHON, [path.join(FAKES, "hold_lock.py"), path.join(codexHome, "thread-writer-locks", `${HELD.id}.lock`)]);
+      await new Promise((resolve, reject) => { holder.stdout.once("data", resolve); holder.once("error", reject); });
+      const before = heard().length;
+      const computer = (await user.api("/api/local-agents")).computer;
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        const history = async () => {
+          await dock.getByRole("button", { name: "Chat history", exact: true }).click();
+          const pop = page.locator(".chatHistoryPop");
+          await pop.locator(".popoverSection", { hasText: computer ? `On ${computer}` : "On this computer" }).waitFor();
+          return pop;
+        };
+        let pop = await history();
+        const terminal = pop.locator(".chatHistRow", { hasText: TERMINAL.name });
+        await terminal.waitFor({ timeout: 20000 });
+        assertEq((await terminal.locator(".chatHistBy").innerText()).trim(), "Terminal", "started in a terminal");
+        const held = pop.locator(".chatHistRow", { hasText: HELD.name });
+        assertEq(await held.getAttribute("aria-disabled"), "true", "the held one cannot be opened");
+        assertEq(await held.getAttribute("title"), "Codex has this session open in another window: close it there first.",
+          "and says why");
+        await terminal.click();
+        await pop.waitFor({ state: "detached" });
+        await dock.locator(".chatBubble.user", { hasText: TERMINAL.ask }).waitFor({ timeout: 15000 });
+        await dock.locator(".chatBubble.ai", { hasText: TERMINAL.reply }).waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.locator(".chatBubble.ai", { hasText: SESSION_REPLY }).waitFor({ timeout: 40000 });
+        pop = await history();
+        const ours = pop.locator(".chatHistRow", { hasText: TERMINAL.name }).filter({ has: page.locator(".chatHistBy", { hasText: "In Gamma" }) });
+        await ours.waitFor({ timeout: 20000 });
+        await page.keyboard.press("Escape");
+        assertNoProblems(page);
+      } finally {
+        await ctx.close();
+        holder.stdin.end();
+      }
+      const since = heard().slice(before);
+      assertEq(JSON.stringify(since.filter((e) => e.in?.method === "thread/resume").map((e) => e.in.params.threadId)),
+        JSON.stringify([TERMINAL.id]), "the next turn resumed the terminal's thread");
+      assertEq(since.filter((e) => e.in?.method === "thread/start").length, 0, "no thread started in its place");
+      const prompt = since.find((e) => e.in?.method === "turn/start").in.params.input.map((p) => p.text || "").join("\n");
+      assert(!prompt.includes(TERMINAL.ask), "the terminal's history stays the CLI's: the prompt does not repeat it");
+      const stored = await conversation();
+      assertEq(stored.title, TERMINAL.name, "the conversation is titled as the session is");
+    });
+
+    await step("local-agents: turned off by its owner, the folder has no agent", async () => {
       const off = await user.api("/api/local-agents/codex", { method: "PATCH", body: { enabled: false } });
       assertEq(off.enabled, false, "off");
       const listed = (await user.api("/api/folder-links")).links.find((l) => l.id === link.id);
       assertEq(listed.agent ?? null, null, "no agent in the vault");
-      const doc = await user.api(`/api/annotations?scope=${link.folder_id}`);
-      assertEq(doc.agent, null, "the document says none");
       await user.api(`/api/folder-links/${link.id}`, { method: "DELETE" });
     });
   } finally {

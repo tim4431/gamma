@@ -274,6 +274,26 @@ def pytest_sessionfinish(session, exitstatus):
         c.__exit__(None, None, None)
 
 
+def pytest_collection_modifyitems(config, items):
+    """``GAMMA_TEST_SHUFFLE=<seed>``: the files in an order of that seed's,
+    each file's tests kept in theirs, so each worker runs other files before
+    a given one (``--dist loadfile`` hands them out in this order). A test
+    that passes only after some other file, or never after one, shows up
+    (docs/dev/debugging.md "Order and timing"); the seed gives the order
+    again. Every worker collects alike, so the order is the same in each."""
+    seed = os.environ.get("GAMMA_TEST_SHUFFLE")
+    if not seed:
+        return
+    import random
+
+    files: dict = {}
+    for item in items:
+        files.setdefault(item.path, []).append(item)
+    order = list(files)
+    random.Random(seed).shuffle(order)
+    items[:] = [item for path in order for item in files[path]]
+
+
 def fresh_client(**kwargs):
     """A TestClient of its own (its own cookies) on the session client's
     loop. A bare ``TestClient(app)`` opens a loop per request and per
@@ -414,6 +434,33 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(seed_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
     monkeypatch.setattr(ws_mod, "WORKSPACES_DIR", tmp_path / "workspaces")
     return tmp_path
+
+
+JOB_END_WAIT_S = 30.0
+
+
+@pytest.fixture(autouse=True)
+def _jobs_end_with_their_test(monkeypatch, _page_ids_kept):
+    """A background job (gamma/jobs.py) ends within the test that started
+    it: after the test, every job still queued or running on the worker, or
+    running its ``ended`` hook, is waited for. A test that checks only that
+    a start is taken leaves its job running, and one ending during the next
+    test records itself in whatever users.db is current then: a
+    ``data_dir`` test's own, where a migration test's hand-built old file
+    was upgraded under it. Taking ``monkeypatch`` puts the wait before the
+    test's patches are undone, so the job ends in the data directory and
+    under the stubs it started with; taking ``_page_ids_kept`` puts it
+    before that check, which then sees what the job left. A job still
+    running after ``JOB_END_WAIT_S`` fails the test that left it."""
+    yield
+    from gamma import jobs
+    deadline = time.monotonic() + JOB_END_WAIT_S
+    while (jobs._live or jobs._ending) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    with jobs._lock:
+        left = [f"{live.kind} {live.id} ({live.state})" for live in jobs._live.values()]
+        left += [f"{job_id} (its ended hook)" for job_id in list(jobs._ending)]  # discarded outside the lock
+    assert not left, f"jobs still running {JOB_END_WAIT_S:.0f} s after the test that started them: {left}"
 
 
 @pytest.fixture(autouse=True, scope="session")

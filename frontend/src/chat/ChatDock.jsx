@@ -58,14 +58,17 @@ import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { UsageRing } from "../shared/ui/UsageRing";
-import { useChatAgent, useChatThread } from "./computer/chatSide.js";
+import { showInChat, useChatAgent, useChatShown } from "./computer/chatSide.js";
 import {
-  computerExportPath, computerHistory, deleteComputerChat, newComputerChat, openComputerChat, useComputerSide,
+  computerExportPath, computerHistory, computerSessions, deleteComputerChat, newComputerChat, openComputerChat,
+  openComputerSession, useComputerSide,
 } from "./computer/useComputerChat.js";
-import { historyRows, sourceNote } from "./computer/computerChat.js";
+import { historyRows, sessionRows, sessionsAway, sessionsDir, sourceNote } from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
 import AgentChip, { agentIcon } from "./AgentChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
+import { canRecord, createRecorder, gestureContext } from "../recording/recorder.js";
+import { extensionFor } from "../recording/recording.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 // A conversation this tab has nothing of yet (one array, never written).
@@ -216,7 +219,7 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent, agents 
             {agents.map((a) => (
               <button key={a.id} type="button" className="chatSetupTile" onClick={() => onPick(a.id)}>
                 <span className="chatSetupTileName">{agentChoice(a)}</span>
-                <span className="chatSetupTileHint">{a.ready === false ? a.problem
+                <span className="chatSetupTileHint">{a.ready === false ? <span className="agentProblem">{a.problem}</span>
                   : a.where ? t("Works on {computer}, with no AI service", { computer: a.where }) : t("Works on this computer, with no AI service")}</span>
               </button>
             ))}
@@ -348,9 +351,10 @@ export default function ChatDock({
   // same transcript and composer; the draft stays across a pick. A viewer
   // talks to Gamma AI.
   const [wanted, setWanted] = useChatAgent(chatKey);
-  // A comment thread's Open in chat shows its conversation in place of the
-  // page's own (chat/computer/chatSide.js), until Back to the chat.
-  const [threadShown, leaveThread] = useChatThread(chatKey);
+  // A comment thread's Open in chat, or a co-author's conversation opened
+  // from History or Background tasks, shows that conversation in place of
+  // the page's own (chat/computer/chatSide.js), until Back to the chat.
+  const [shownChat, leaveShown] = useChatShown(chatKey);
   const gammaNav = useContext(GammaNavContext);
   const agentList = useMemo(() => (readOnly || !agents?.length ? [gammaAgent(aiInfo)] : agents), [agents, readOnly, aiInfo]);
   const agent = pickAgent(agentList, wanted);
@@ -363,7 +367,7 @@ export default function ChatDock({
   const outerLinks = useContext(PathLinkContext);
   const side = useComputerSide(onComputer ? chatKey : "", agent, {
     page: !!focusedBlockId, dirs: localAgents?.dirs || NO_DIRS, pdfSelections, setPdfSelections, setStatus,
-    thread: onComputer ? threadShown : "",
+    shown: onComputer ? shownChat : null,
   });
   // The draft comes back after a remount in the conversation it was typed
   // in; loading another conversation empties it (below).
@@ -632,7 +636,7 @@ export default function ChatDock({
   // into the input via /api/ai/transcribe, ↑ transcribes and sends, × discards.
   const [dictation, setDictation] = useState(""); // "" | "rec" | "busy"
   const [recSecs, setRecSecs] = useState(0);
-  const recRef = useRef(null); // {recorder, stream, chunks, canceled, autoSend, baseText, analyser, audioCtx, amps}
+  const recRef = useRef(null); // {recorder, blob, canceled, autoSend, baseText, analyser, amps}
   const waveCanvasRef = useRef(null);
   // The latest render's send to the agent shown, for the record-view ↑
   // button — the recorder's onstop fires from the render that started it,
@@ -849,6 +853,38 @@ export default function ChatDock({
   useEffect(() => { setHistoryRead(""); }, [agent?.id, side.chat.conversation?.id]);
   // The selection belongs to the open popover: closing it drops the ticks.
   useEffect(() => { if (!historyOpen) setPicked(new Set()); }, [historyOpen]);
+  // History's "On {computer}": the sessions the picked agent's CLI keeps of
+  // the directory it works in on its computer, this one or another of the
+  // reader's (asked there over its channel), started in a terminal or an
+  // editor (computerChat.js sessionsDir; none for a co-author's agent or a
+  // conversation shown in place of the bucket's own), read again each time
+  // History opens, since they change outside Gamma, and never while it is
+  // closed (`sessionsList`: {key, sessions, error, away}, `sessions` null
+  // while read, `away` why another computer answered nothing:
+  // sessionsAway).
+  const sessionsAt = onComputer && !side.shown ? sessionsDir(side.info, side.place) : "";
+  const sessionsKey = sessionsAt ? `${agent.id}\n${sessionsAt}` : "";
+  const [sessionsList, setSessionsList] = useState({ key: "", sessions: null, error: "", away: "" });
+  const [sessionsAsked, setSessionsAsked] = useState(0); // a read asked again (an open that failed)
+  const [openingSession, setOpeningSession] = useState(false); // a session's open on its way: one at a time
+  const openingSessionRef = useRef(false);
+  useEffect(() => {
+    if (!historyOpen || !sessionsKey) return undefined;
+    let cancelled = false;
+    setSessionsList({ key: sessionsKey, sessions: null, error: "", away: "" });
+    const [name, dir] = sessionsKey.split("\n");
+    computerSessions(name, dir)
+      .then((data) => {
+        if (!cancelled) setSessionsList({ key: sessionsKey, sessions: data.sessions || [], error: "", away: data.away || "" });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSessionsList({ key: sessionsKey, sessions: [], away: "",
+            error: t("Couldn't list the sessions: {message}", { message: err.message }) });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [historyOpen, sessionsKey, sessionsAsked]);
   const togglePicked = (id) => setPicked((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -963,11 +999,21 @@ export default function ChatDock({
     }
   }
 
-  // A History row opened, with its agent picked: another agent's current
-  // conversation is shown by picking that agent; an archived one of a
-  // computer's agent becomes the bucket's active one first (the one there
+  // A History row opened, with its agent picked: a co-author's
+  // conversation is shown in place of the bucket's own (chatSide.js
+  // showInChat); any other leaves what was shown so: another agent's
+  // current conversation is shown by picking that agent; an archived one of
+  // a computer's agent becomes the bucket's active one first (the one there
   // archived), as Gamma AI's swaps with the one shown.
   async function openRow(row) {
+    if (row.lent) {
+      setOpenPopover(null);
+      setHistoryRead("");
+      chatStickRef.current = true;
+      showInChat(chatKey, { conversation: row.id }, row.agent);
+      return;
+    }
+    leaveShown();
     if (row.current) {
       setOpenPopover(null);
       setWanted(row.agent);
@@ -987,8 +1033,33 @@ export default function ChatDock({
     setOpenPopover(null);
     setHistoryRead("");
     chatStickRef.current = true;
-    if (agent?.id === row.agent) side.chat.reload();
+    if (agent?.id === row.agent || (agent?.agentId && agent.agentId === row.agent)) side.chat.reload();
     else setWanted(row.agent);
+  }
+
+  // A session of "On {computer}" opened: the bucket's active conversation
+  // now (the server's: its turns read, bound to the session), shown as an
+  // opened History row is; one Gamma continues already is that conversation.
+  // One at a time: a second open of the same session would bind it twice.
+  async function openSession(row) {
+    if (openingSessionRef.current) return;
+    const [name, dir] = sessionsKey.split("\n");
+    openingSessionRef.current = true;
+    setOpeningSession(true);
+    try {
+      await openComputerSession({ bucket: chatKey, agent: name, dir, session: row.id });
+    } catch (err) {
+      setStatus(t("Couldn't open the session: {message}", { message: err.message }));
+      setSessionsAsked((n) => n + 1);
+      return;
+    } finally {
+      openingSessionRef.current = false;
+      setOpeningSession(false);
+    }
+    setOpenPopover(null);
+    setHistoryRead("");
+    chatStickRef.current = true;
+    side.chat.reload();
   }
 
   // A History row's conversation as a file to keep: Gamma AI's (the one
@@ -1092,7 +1163,7 @@ export default function ChatDock({
   // The rows a selection can hold: the listed archived ones ("Select all"
   // takes the search's results, not the whole history). A tick survives
   // only while its row is listed, so Delete never takes a hidden one.
-  const archivedRows = useMemo(() => historyList.filter((s) => !s.active && !s.current), [historyList]);
+  const archivedRows = useMemo(() => historyList.filter((s) => !s.active && !s.current && !s.lent), [historyList]);
   const listedKey = archivedRows.map((s) => s.id).join(",");
   useEffect(() => {
     const listed = new Set(listedKey ? listedKey.split(",") : []);
@@ -1568,45 +1639,32 @@ export default function ChatDock({
     session.stop(chatKey);
   }
 
+  // The recordings' recorder (recording/recorder.js), in one file: the
+  // browser's container, or WAV on an iPad or an iPhone.
   async function startDictation() {
     if (dictation) return;
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    if (!canRecord()) {
       setStatus(t("Voice input needs HTTPS or localhost — the browser blocks the microphone on plain HTTP."));
       return;
     }
+    const context = gestureContext(); // inside the tap, before the wait (recorder.js)
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
+      context?.close().catch(() => {});
       setStatus(t("Microphone access was denied."));
       return;
     }
-    // Chrome/Firefox record webm/opus; Safari only mp4 (m4a to OpenAI).
-    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
     const rec = {
-      recorder: new MediaRecorder(stream, mime ? { mimeType: mime } : undefined),
-      stream, chunks: [], canceled: false, autoSend: false,
+      blob: null, canceled: false, autoSend: false,
       baseText: chatInput, // composer text at record start (the input is hidden while recording)
       amps: [], peak: 0,
     };
-    // Analyser feeds the live waveform; recording works fine without it.
-    try {
-      const audioCtx = new AudioContext();
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
-      audioCtx.createMediaStreamSource(stream).connect(analyser);
-      rec.audioCtx = audioCtx;
-      rec.analyser = analyser;
-    } catch {}
-    recRef.current = rec;
-    rec.recorder.ondataavailable = (e) => { if (e.data?.size) rec.chunks.push(e.data); };
-    rec.recorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      rec.audioCtx?.close().catch(() => {});
-      if (rec.canceled) return;
-      transcribeDictation(new Blob(rec.chunks, { type: rec.recorder.mimeType || mime || "audio/webm" }), rec);
-    };
+    rec.recorder = createRecorder(stream, { context, segmentMs: 0, onSegment: ({ blob }) => { rec.blob = blob; } });
     rec.recorder.start();
+    rec.analyser = rec.recorder.analyser; // feeds the live waveform; recording works without it
+    recRef.current = rec;
     setRecSecs(0);
     setDictation("rec");
   }
@@ -1619,7 +1677,9 @@ export default function ChatDock({
     rec.canceled = mode === "cancel";
     rec.autoSend = mode === "send";
     setDictation(rec.canceled ? "" : "busy");
-    try { rec.recorder.stop(); } catch { setDictation(""); }
+    rec.recorder.stop().then(() => {
+      if (!rec.canceled) transcribeDictation(rec.blob || new Blob([], { type: rec.recorder.mime }), rec);
+    });
     if (rec.canceled) recRef.current = null;
   }
 
@@ -1627,7 +1687,7 @@ export default function ChatDock({
     try {
       if (blob.size > 24 * 1024 * 1024) throw new Error("recording too long (max ~25 MB)");
       const form = new FormData();
-      form.append("file", blob, blob.type.includes("mp4") ? "dictation.m4a" : "dictation.webm");
+      form.append("file", blob, `dictation${extensionFor(blob.type)}`);
       if (dictationModel) form.append("model", dictationModel);
       const language = dictationLang === "auto" ? "" : dictationLang || getLocale();
       if (language) form.append("language", language);
@@ -1713,9 +1773,7 @@ export default function ChatDock({
     const rec = recRef.current;
     if (rec) {
       rec.canceled = true;
-      try { rec.recorder.stop(); } catch {}
-      rec.stream.getTracks().forEach((t) => t.stop());
-      rec.audioCtx?.close().catch(() => {});
+      rec.recorder.stop();
     }
   }, []);
 
@@ -1835,11 +1893,26 @@ export default function ChatDock({
   // History: every agent's conversations of the bucket (historyList). A row
   // opens its conversation with its agent picked; while rows are ticked it
   // ticks instead. Its menu renames (Gamma AI's), exports, selects and
-  // deletes; another agent's current conversation is only opened or
-  // exported, and a computer agent's other rows wait while its turn is to
-  // end, which the server would refuse.
-  const waits = (row) => (!row.current && row.agent !== GAMMA && side.working
+  // deletes; another agent's current conversation and a co-author's
+  // (`lent`, named by whose it is) are only opened or exported, and a
+  // computer agent's other rows wait while its turn is to end, which the
+  // server would refuse.
+  const waits = (row) => (!row.current && !row.lent && row.agent !== GAMMA && side.working
     ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: side.label }) : "");
+  const listedSessions = sessionsKey && sessionsList.key === sessionsKey ? sessionsList
+    : { sessions: null, error: "", away: "" };
+  const computerName = side.where || String(localAgents?.computer || "");
+  const sessionsSection = sessionsKey ? {
+    label: computerName ? t("On {computer}", { computer: computerName }) : t("On this computer"),
+    rows: matchRows(sessionRows(listedSessions.sessions, side.label), historyQuery),
+    loading: listedSessions.sessions == null, onOpen: openSession,
+    error: listedSessions.error || sessionsAway(listedSessions.away, computerName),
+    onRetry: () => setSessionsAsked((n) => n + 1), icon: agentList.length > 1 ? agentIcon(agent.id) : null,
+    disabledReason: (row) => row.busy || (side.working
+      ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: side.label })
+      : picked.size > 0 ? t("Clear the selection to open a session")
+      : openingSession ? t("Opening the session…") : ""),
+  } : null;
   const historyAction = canSave && {
     id: "history", icon: HistoryIcon, label: t("Chat history"), guide: "chat.history", keep: 2, open: historyOpen,
     title: t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") }),
@@ -1847,10 +1920,10 @@ export default function ChatDock({
     popover: { name: "chathistory", content: historyOpen ? (
       <ChatHistoryPop query={historyQuery} onQuery={setHistoryQuery} onClose={() => setOpenPopover(null)}
         rows={historyList} loading={history == null} picking={picked.size > 0}
-        onOpen={pickOrOpen} disabledReason={waits}
+        onOpen={pickOrOpen} disabledReason={waits} section={sessionsSection}
         icon={agentList.length > 1 ? (s) => agentIcon(s.agent) : undefined}
         tip={(s) => `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
-        lead={(s) => (s.active || s.current ? null : (
+        lead={(s) => (s.active || s.current || s.lent ? null : (
           <input type="checkbox" className="chatHistPick" checked={picked.has(s.id)}
             aria-label={t("Select this conversation")} title={t("Select for deleting")}
             onClick={(e) => e.stopPropagation()}
@@ -1866,7 +1939,7 @@ export default function ChatDock({
           ) : null}
           <MenuItem icon={DownloadIcon} title={t("Download this conversation as Markdown, with its pictures")}
             onClick={() => { close(); exportRow(row); }}>{t("Export")}</MenuItem>
-          {row.active || row.current ? null : <>
+          {row.active || row.current || row.lent ? null : <>
             {picked.has(row.id) ? null : (
               <MenuItem icon={SquareCheckIcon} onClick={() => { close(); togglePicked(row.id); }}>{t("Select")}</MenuItem>
             )}
@@ -1915,9 +1988,10 @@ export default function ChatDock({
       onClick: () => exportRow({ agent: agent.id, active: true, title: side.chat.conversation?.title || "" }) },
     findAction,
     historyAction,
-    // a comment thread's conversation shown: back to the page's own chat in New chat's place
-    side.thread ? { id: "back", icon: ArrowLeftIcon, label: t("Back to the chat"), keep: 3,
-      onClick: leaveThread, title: t("Show this page's chat again: this conversation stays with its comment thread") }
+    // a comment thread's or a co-author's conversation shown: back to the page's own chat in New chat's place
+    side.shown ? { id: "back", icon: ArrowLeftIcon, label: t("Back to the chat"), keep: 3, onClick: leaveShown,
+      title: side.shown.thread ? t("Show this page's chat again: this conversation stays with its comment thread")
+        : t("Show your own chat of this page again") }
       : { id: "new", icon: PlusIcon, label: t("New chat"), guide: "chat.new", keep: 3,
         disabled: side.working || side.chat.busy || !side.chat.conversation, onClick: () => side.chat.newChat(),
         title: side.working ? t("Stop {agent} or wait for it to finish to start a new chat", { agent: side.label })
@@ -2142,14 +2216,26 @@ export default function ChatDock({
         {visibleMessages.length ? setupCard : null}
       </div>
       {/* A comment thread's conversation goes on in its thread: its replies
-          sent to the agent are its messages. */}
-      {!readOnly && onComputer && side.thread ? (
+          sent to the agent are its messages. A co-author's is theirs to go
+          on: its agent's owner reads it, stops its turn and answers what
+          it asks. */}
+      {!readOnly && onComputer && side.shown?.thread ? (
         <div className="chatThreadNote" data-testid="chat-thread-note">
           <span className="chatThreadNoteText">{t("This conversation answers a comment thread: reply there to go on.")}</span>
-          <button type="button" className="uiBtn sm" onClick={() => gammaNav?.openThread?.(side.thread, "", chatKey)}>
+          <button type="button" className="uiBtn sm" onClick={() => gammaNav?.openThread?.(side.shown.thread, "", chatKey)}>
             {t("Show the thread")}
           </button>
-          <button type="button" className="uiBtn sm ghost" onClick={leaveThread}>{t("Back to the chat")}</button>
+          <button type="button" className="uiBtn sm ghost" onClick={leaveShown}>{t("Back to the chat")}</button>
+        </div>
+      ) : !readOnly && onComputer && side.shown ? (
+        <div className="chatThreadNote" data-testid="chat-lent-note">
+          <span className="chatThreadNoteText">
+            {t("This is {person}'s chat with {agent}: you can read it, stop it and answer what it asks.", {
+              person: side.chat.conversation?.person || t("Someone"), agent: side.label })}
+          </span>
+          {/* the composer and its Stop give way to this line: its turn is stopped here */}
+          {stop ? <button type="button" className="uiBtn sm" onClick={stop.onClick} title={stop.label}>{t("Stop")}</button> : null}
+          <button type="button" className="uiBtn sm ghost" onClick={leaveShown}>{t("Back to the chat")}</button>
         </div>
       ) : !readOnly ? (
       // One box: the context chips on top, the message at full

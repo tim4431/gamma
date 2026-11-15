@@ -204,7 +204,7 @@ def test_comment_mentions_replies_and_resolves(own, edi, vie, out, lab):
     root = first["thread"]["id"]
     [item] = _items(vie, thread_id=root)
     assert (item["kind"], item["actor"], item["comment_id"], item["block_id"], item["agent"]) == (
-        "comment_mention", "ib_edi", root, "ibCom1", "")
+        "comment_mention", "ib_edi", root, "ibCom1", None)
     # a reply: the thread's author and the people it mentions hear of it
     reply = _comment(own, page, "ibCom1", "fine by me", lab, thread_id=root)["comment"]["id"]
     assert _kinds(edi, comment_id=reply) == ["reply"] and _kinds(vie, comment_id=reply) == ["reply"]
@@ -446,14 +446,16 @@ def test_the_person_hears_what_their_agent_writes(own, edi, lab):
     root = _comment(own, page, page, "lambda is never introduced", lab)["thread"]["id"]
     reply = _comment(agent, page, page, "Defined in 3.1 (method.tex:112).", lab, thread_id=root)["comment"]["id"]
     [item] = _items(own, comment_id=reply)
-    assert (item["kind"], item["actor"], item["agent"]) == ("reply", "ib_own", "Claude Code")
+    assert (item["kind"], item["actor"], item["agent"]["name"], item["agent"]["kind"]) == (
+        "reply", "ib_own", "Claude Code", "connection")
+    assert item["agent"]["id"], "named by its id, worded by the client"
     other = _comment(agent, page, page, "a thread of the agent's own", lab)["thread"]["id"]
-    assert _kinds(own, comment_id=other) == ["comment"] and _items(own, comment_id=other)[0]["agent"] == "Claude Code"
+    assert _kinds(own, comment_id=other) == ["comment"] and _items(own, comment_id=other)[0]["agent"]["name"] == "Claude Code"
     named = _comment(agent, page, page, "@ib_own please decide", lab, thread_id=other)["comment"]["id"]
     assert _kinds(own, comment_id=named) == ["comment_mention"]
     assert agent.post(f"/api/comments/{root}/resolve", json={"resolved": True}, headers=_in(lab)).status_code == 200
     [done] = _items(own, kind="resolved", thread_id=root)
-    assert (done["actor"], done["agent"]) == ("ib_own", "Claude Code")
+    assert (done["actor"], done["agent"]) == ("ib_own", item["agent"])
     # a reopen tells no one, the agent's either
     assert agent.post(f"/api/comments/{root}/resolve", json={"resolved": False}, headers=_in(lab)).status_code == 200
     assert len(_items(own, kind="resolved", thread_id=root)) == 1
@@ -464,6 +466,40 @@ def test_the_person_hears_what_their_agent_writes(own, edi, lab):
     home = make_page(own, "Agent's page at home")["id"]
     at_home = _comment(_token("ib_own", workspace_of("ib_own")), home, home, "a thread at home")["thread"]["id"]
     assert _kinds(own, thread_id=at_home) == ["comment"]
+
+
+def test_an_agents_item_names_it_by_its_id_and_its_computer_as_called_now(own, edi, lab):
+    """An item a computer's agent made keeps the agent's id, name and owner,
+    not its English label: the listing names it as a comment's agent is
+    (``agents.read_all``), its computer as the channel calls it now, and
+    the client words it in the reader's language."""
+    from gamma import agents
+
+    page = _page(edi, "Named agent's page", lab)
+    root = _comment(edi, page, page, "fix it", lab)["thread"]["id"]
+    me = account_of("ib_own")
+    with connect_users_db() as users:
+        users.execute("INSERT INTO computers (token_id, user_id, workspace_id, computer, name, seen_at, created_at) "
+                      "VALUES ('ibTok', ?, ?, 'LAB-ID', 'LAB-PC', ?, ?)", (me, lab, page_now(), page_now()))
+    lent = agents.computer_agent("LAB-ID", "codex", "LAB-PC", owner="ib_edi")
+    with connect_pages_db(lab) as conn:
+        made = comments.create(conn, page, block_id=page, body="done", author=me, author_name="ib_own",
+                               thread_id=root, agent=agents.computer_agent("LAB-ID", "codex", "LAB-PC"))
+    comments.after_write(lab, made["event"])
+    [item] = _items(edi, comment_id=made["comment"]["id"])
+    assert (item["kind"], item["actor"], item["agent"]) == (
+        "reply", "ib_own", {"id": "computer:LAB-ID:codex", "kind": "computer", "name": "Codex", "on": "LAB-PC"})
+    with connect_users_db() as users:
+        stored = users.execute("SELECT agent, agent_id, agent_owner FROM inbox_items WHERE id = ?",
+                               (item["id"],)).fetchone()
+        users.execute("UPDATE computers SET name = 'LAB-PC 2' WHERE token_id = 'ibTok'")
+    assert stored == ("Codex", "computer:LAB-ID:codex", "")
+    assert _items(edi, comment_id=made["comment"]["id"])[0]["agent"]["on"] == "LAB-PC 2", "renamed, read renamed"
+    assert inbox.emit("reply", [account_of("ib_edi")], me, lab, page_id=page, block_id=page, thread_id=root,
+                      comment_id=made["comment"]["id"], snippet="for a co-author", agent=lent)
+    with connect_users_db() as users:
+        assert users.execute("SELECT agent_owner FROM inbox_items WHERE snippet = 'for a co-author'").fetchone() == (
+            "ib_edi",)
 
 
 def test_an_agents_reply_reaches_the_threads_people_and_the_pages_followers(own, edi, vie, lab):
@@ -482,7 +518,7 @@ def test_an_agents_reply_reaches_the_threads_people_and_the_pages_followers(own,
     reply = _comment(agent, page, page, "answered", lab, thread_id=root)["comment"]["id"]
     assert _kinds(edi, comment_id=reply) == ["reply"] and _kinds(vie, comment_id=reply) == ["comment"]
     assert _items(fan, comment_id=reply) == [] and _items(own, comment_id=reply) == []
-    assert _items(vie, comment_id=reply)[0]["agent"] == "Claude Code"
+    assert _items(vie, comment_id=reply)[0]["agent"]["name"] == "Claude Code"
     assert _follows(lab, page).get(account_of("ib_own")) is None
 
 

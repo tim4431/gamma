@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from . import backup_schedule, cloud_auth, cloud_deletions, cloud_sync, comments, config, db_maintenance, downloads
 from . import email_invites, guests, hosted, import_staging, inbox, jobs, migrations, net_proxy, offsite, reports
 from . import sync_engine, trash, upload_gc, version, workspaces, ws_backup, zotero_stream
-from .annotations import listeners as annotation_listeners, requests as feedback_requests
+from .annotations import listeners as annotation_listeners
 from .computers import channel as computer_channel
 from . import local_agents
 from .local_agents import runner as local_agents_runner
@@ -41,7 +41,6 @@ from .routers import (
     collab,
     comments as comments_router,
     export,
-    feedback as feedback_router,
     folders,
     imports,
     inbox as inbox_router,
@@ -250,7 +249,7 @@ def _blocked_app(guide: dict) -> FastAPI:
 def _startup_maintenance():
     """After the data directory is current: create users.db on a fresh
     install (and vaults.db on the desktop app's own server, the one server
-    that keeps it, whose agents' runs a stopped server left fail there:
+    that keeps it, whose agents' turns a stopped server left fail there:
     gamma/local_agents/runner.py ``recover``), seed the first admin, then per workspace: apply the per-file
     schema statements (a restored backup gains page_ops, WAL, ...). A
     workspace behind on its own migration steps is skipped: the background
@@ -264,7 +263,7 @@ def _startup_maintenance():
         connect_vaults_db().close()
     if local_agents.enabled():
         try:
-            local_agents_runner.recover()  # the runs a stopped server left fail; the Sends waiting are taken
+            local_agents_runner.recover()  # the turns a stopped server left fail
         except Exception as e:  # noqa: BLE001 — the agents never stop the server
             log.error(f"[startup] the agents on this computer could not recover their runs: {e}")
     jobs.recover()
@@ -310,15 +309,6 @@ async def read_only_gate(request: Request, call_next):
     return response
 
 
-def sweep_comments() -> None:
-    """The comments' sweep (gamma/comments.py), then the Sends'
-    (gamma/annotations/requests.py), on one timer: the lifespan's ``async
-    with`` is at Python's limit of nested blocks, so the two share a line.
-    The second runs whatever the first did; each logs its own failures."""
-    try:
-        comments.sweep()
-    finally:
-        feedback_requests.sweep()
 
 
 def sweep_temp() -> None:
@@ -326,8 +316,8 @@ def sweep_temp() -> None:
     snapshots' work files a killed process left (gamma/ws_backup.py), the
     import reviews past their TTL (gamma/import_staging.py) and the
     downloads a killed process left (gamma/downloads.py). One timer for the
-    three, as for ``sweep_comments``'s two: the lifespan's ``async with`` is
-    at Python's limit of nested blocks. Each runs whatever the one before
+    three: the lifespan's ``async with`` is at Python's limit of nested
+    blocks. Each runs whatever the one before
     did, and logs its own failure."""
     for fn, failed in ((ws_backup.sweep_stale_temp, "[backups] temp sweep failed"),
                        (import_staging.sweep, "[imports] staging sweep failed"),
@@ -411,7 +401,7 @@ def create_app() -> FastAPI:
                 every(hosted.SYNC_INTERVAL, hosted.tick, "[hosted] the plan sync failed"), \
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
-                every(comments.SWEEP_INTERVAL_S, sweep_comments, "[comments] sweep failed"), \
+                every(comments.SWEEP_INTERVAL_S, comments.sweep, "[comments] sweep failed"), \
                 every(email_invites.SWEEP_INTERVAL_S, email_invites.sweep, "[invites] sweep failed"), \
                 every(reports.SWEEP_INTERVAL_S, reports.tick, "[reports] round failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
@@ -502,10 +492,9 @@ def create_app() -> FastAPI:
     app.include_router(collab.router)
     app.include_router(comments_router.router)
     app.include_router(annotations_router.router)
-    app.include_router(feedback_router.router)
     app.include_router(local_agents_api.router)
-    annotation_listeners.register()  # what keeps the annotation files, requests and kept versions current
-    local_agents_runner.register()  # an agent on this computer takes the Sends of the folders it answers
+    annotation_listeners.register()  # what keeps the annotation files and kept versions current
+    local_agents_runner.register()  # the agents' turns stop when the server does
     app.include_router(reports_router.router)
     app.include_router(sync.router)
     app.include_router(mirrors.router)

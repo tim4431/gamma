@@ -146,10 +146,12 @@ export function Section({ title, scope, prefs, action, guide, tone, children }) 
 // `wide`: the control goes on a second line under the text, spanning to the
 // row's end — a list to type (a textarea) or a pair of fields
 // (.setFieldPair); a lone field and its button stay in the control slot.
+// With no `icon` (a dialog's switch) the row is `noIcon` and gives up the
+// icon's column.
 export function Row({ icon: Icon, label, hint, title, scope, wide = false, className = "", children }) {
   return (
-    <div className={`settingRow setRow${wide ? " wide" : ""} ${className}`} data-setting={label} title={title}>
-      <span className="setIcon">{Icon ? <Icon size={16} /> : null}</span>
+    <div className={`settingRow setRow${wide ? " wide" : ""}${Icon ? "" : " noIcon"} ${className}`} data-setting={label} title={title}>
+      {Icon ? <span className="setIcon"><Icon size={16} /></span> : null}
       <div className="settingText">
         <span className="settingLabel">{label}{scope ? <ScopeTag scope={scope} /> : null}</span>
         {hint ? <span className="settingDesc">{hint}</span> : null}

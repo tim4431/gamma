@@ -10,7 +10,9 @@
 // Shift (sideways), Ctrl / ⌘ (zoom, shared/lib/viewerZoom.js) and a wheel
 // over an inner element that can scroll itself. Anything else that moves the
 // scroller meanwhile (a jump, a zoom holding its anchor, the scrollbar, a
-// key) ends the motion.
+// key) ends the motion. Over a viewer whose pages run across (`across`,
+// pdf/pageLayout.js) with nothing to scroll down, a notch glides the pages
+// across instead; installWheelAcross below moves them for any other wheel.
 //
 // The frame clock, not the wheel's, times the motion. Chromium hands a wheel
 // event to the page inside the frame it belongs to, just before that frame's
@@ -21,7 +23,8 @@
 // notch to a frame, stood still as long as it lasted. Here a notch never
 // resets anything; the first frame after rest is taken as a frame long.
 //
-// installSmoothWheel(el) returns its cleanup.
+// installSmoothWheel(el, { across }) and installWheelAcross(el) return their
+// cleanup.
 
 // A notch at rest closes 95% of its distance in about SMOOTH_MS.
 export const SMOOTH_MS = 150;
@@ -66,35 +69,74 @@ export function innerScrolls(node, el, dy) {
   return false;
 }
 
-export function installSmoothWheel(el) {
+// Whether a scroller has anything to scroll down.
+const scrollsDown = (el) => el.scrollHeight > el.clientHeight + 1;
+
+export function installSmoothWheel(el, { across = false } = {}) {
   let to = null;  // where the motion is heading; null at rest
-  let pos = 0;    // the exact position, which scrollTop rounds
-  let wrote = 0;  // what scrollTop read back after the last write
+  let pos = 0;    // the exact position, which the offset rounds
+  let wrote = 0;  // what the offset read back after the last write
   let last = 0;   // the previous frame's timestamp; 0 at rest
   let frame = 0;
+  let side = "scrollTop"; // the offset the motion moves: scrollLeft across
   const stop = () => { cancelAnimationFrame(frame); frame = 0; to = null; last = 0; };
   const step = (now) => {
     frame = 0;
-    if (Math.abs(el.scrollTop - wrote) > DRIFT_PX) { stop(); return; }
+    if (Math.abs(el[side] - wrote) > DRIFT_PX) { stop(); return; }
     const left = to - pos;
     pos = Math.abs(left) <= DONE_PX ? to : pos + left * approach(last ? now - last : FRAME_MS);
     last = now;
-    el.scrollTop = pos;
-    wrote = el.scrollTop;
+    el[side] = pos;
+    wrote = el[side];
     if (pos === to) stop();
     else frame = requestAnimationFrame(step);
   };
   const onWheel = (e) => {
-    const dy = notchDelta(e, el.clientHeight, globalThis.devicePixelRatio || 1);
+    const sideways = across && !scrollsDown(el);
+    const dy = notchDelta(e, sideways ? el.clientWidth : el.clientHeight, globalThis.devicePixelRatio || 1);
     if (!dy || innerScrolls(e.target, el, dy)) return;
-    const here = to ?? el.scrollTop;
-    const goal = Math.max(0, Math.min(el.scrollHeight - el.clientHeight, here + dy));
+    const next = sideways ? "scrollLeft" : "scrollTop";
+    if (to !== null && next !== side) stop(); // a zoom between two notches gave the pages room down, or took it
+    side = next;
+    const here = to ?? el[side];
+    const end = sideways ? el.scrollWidth - el.clientWidth : el.scrollHeight - el.clientHeight;
+    const goal = Math.max(0, Math.min(end, here + dy));
     if (goal === here) return; // at an end: the browser's own overscroll
     e.preventDefault();
-    if (to === null) pos = wrote = el.scrollTop;
+    if (to === null) pos = wrote = el[side];
     to = goal;
     if (!frame) frame = requestAnimationFrame(step);
   };
   el.addEventListener("wheel", onWheel, { passive: false });
   return () => { stop(); el.removeEventListener("wheel", onWheel); };
+}
+
+// The distance across a wheel event asks of pages that run across: its
+// vertical delta in px (a notch's lines or pages converted, a touchpad's
+// pixels as they are), or 0 for one that is sideways already or carries a
+// modifier (Shift turns it sideways natively, Ctrl / ⌘ is the zoom).
+export function acrossDelta(e, width) {
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || !e.deltaY || Math.abs(e.deltaX || 0) >= Math.abs(e.deltaY)) return 0;
+  if (e.deltaMode === 1) return e.deltaY * LINE_PX;
+  if (e.deltaMode === 2) return e.deltaY * width;
+  return e.deltaY;
+}
+
+// A viewer whose pages run across, with nothing to scroll down (the pages
+// fit its height): a wheel turned down or up moves the pages across, where
+// it would otherwise move nothing. With something to scroll down (a zoom
+// taller than the view) the wheel scrolls down as ever. Smooth wheel
+// scrolling, installed before this, takes a notch itself.
+export function installWheelAcross(el) {
+  const onWheel = (e) => {
+    if (e.defaultPrevented || scrollsDown(el)) return;
+    const dx = acrossDelta(e, el.clientWidth);
+    if (!dx || innerScrolls(e.target, el, dx)) return;
+    const goal = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, el.scrollLeft + dx));
+    if (goal === el.scrollLeft) return; // at an end: nothing to move
+    e.preventDefault();
+    el.scrollLeft = goal;
+  };
+  el.addEventListener("wheel", onWheel, { passive: false });
+  return () => el.removeEventListener("wheel", onWheel);
 }

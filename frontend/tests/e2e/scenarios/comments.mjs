@@ -1032,6 +1032,19 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await strokeEl.dispatchEvent("pointercancel", { bubbles: true }); // (the press the ink layer saw ends, drawing nothing)
     await A.keyboard.press("Escape");
     await active.waitFor({ state: "detached" });
+    // the next stroke starts a new group: the commented one keeps its one stroke
+    const grouped = (await groups()).length;
+    await A.keyboard.press("p");
+    const paths = A.locator('[data-page="1"] .inkLayer path');
+    const drawn = await paths.count();
+    const after = await A.locator('[data-page="1"]').boundingBox(); // (the page moved beside its margin)
+    await A.mouse.move(after.x + 100, after.y + 700);
+    await A.mouse.down();
+    await A.mouse.move(after.x + 250, after.y + 720, { steps: 12 });
+    await A.mouse.up();
+    await until(async () => (await paths.count()) === drawn + 1, { what: "the second stroke drawn" });
+    await until(async () => (await groups()).length === grouped + 1, { what: "a group of its own" });
+    assertEq((await groups()).find((b) => b.id === group.id).properties.ink_strokes, 1, "the commented group took no stroke");
     await A.keyboard.press("Escape"); // the strip
     await until(async () => !(await A.$(".pdfInkBar")), { what: "the strip closed" });
     // the Comments window: the row names the handwriting's page, and a click makes its card the active one and flashes the stroke

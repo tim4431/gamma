@@ -316,7 +316,7 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, onRevert
       tail={first && many ? (
         <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={working || busy} onClick={onRevertMany}
           title={t("Choose changes of this conversation to revert together")}>
-          <UndoIcon size={12} />{t("Revert…")}
+          <UndoIcon size={14} />{t("Revert…")}
         </button>
       ) : null}>
       {list.map(changeRow)}

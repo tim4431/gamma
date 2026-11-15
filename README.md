@@ -30,6 +30,16 @@ Every picture below is clickable and opens the matching part of the [user guide]
 
 → Guide: [AI chat](./docs/user_guide/user_guide.md#ai-chat) · [The library agent](./docs/user_guide/user_guide.md#the-library-agent)
 
+## Work with an agent on your computer
+
+<a href="./docs/user_guide/user_guide.md#comments-and-inbox"><img alt="LaTeX lecture notes in a synced folder, open in Gamma as tabs. A comment on the empty section of a .tex file is sent to Codex on this computer, and the section appears in the source. Then a passage of the compiled PDF is commented and sent too, and the rebuilt PDF shows the equation divided by the square root of d_k with a sentence why; a region of a figure is commented, and the figure turns masked as Codex rebuilds it. Its three answers arrive in the Inbox: the one on the .tex asks about a footnote, a reply in the thread has Codex add it to the source and resolve the thread" src="./docs/assets/demos/demo-agent-collab.webp" width="100%"></a>
+
+- **Comment where you read** — sync a folder of your LaTeX project, notes or code with the desktop app, and comment on what you see: lines of a source file, a passage of the compiled PDF, a region of a figure. Tick **Send to Codex**, or type `@codex`, and Codex or Claude Code, signed in on your computer, works on that comment in the folder: it edits the sources, rebuilds, and answers in the thread.
+- **Read the answers in your Inbox** — each reply is signed with the agent and the computer it ran on, and opens at its passage with the rebuilt PDF already in place. When it needs a decision it asks in the thread, and your reply there continues the same session.
+- **On your terms** — turn an agent on for this computer in **Settings → AI**. It works in the folders you sync or offer it: Codex rebuilds in its sandbox without network, Claude Code only edits and leaves the build to yours, and if you let it ask, a command it wants beyond that waits for your answer.
+
+→ Guide: [Comments and inbox](./docs/user_guide/user_guide.md#comments-and-inbox) · [Working in a synced folder](./docs/user_guide/user_guide.md#working-in-a-synced-folder)
+
 ## Read from any place
 
 <a href="./docs/user_guide/user_guide.md#offline-copies"><img alt="One library on the lab server, open on a desktop, an iPad and a phone; a note typed from the iPad appears on every other device as the sync between them runs" src="./docs/assets/branding/gamma-anywhere-light.svg" width="100%"></a>
@@ -119,7 +129,7 @@ Coming from Zotero? A folder is a collection and a label is a tag. Importing or 
 <a href="./docs/user_guide/user_guide.md#gamma-connector"><img alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label" src="./docs/assets/demos/demo-connector.webp" width="100%"></a>
 
 - **Gamma Connector** — the browser extension ([Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) · [source](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, labels — from the arXiv / DOI / publisher tab, and clips links or selections into your notes. Its cookie button saves your **publisher sign-in per journal**, so the server can fetch that journal's PDFs on its own from then on.
-- **Import** — Zotero libraries, Logseq exports and Notability notes with their annotations and handwriting; Obsidian vaults, Notion exports (Markdown or HTML) and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, a Notability note, a zip for Notion's importer, or a Gamma zip another Gamma can merge.
+- **Import** — Zotero libraries, Logseq exports, Notability notes and GoodNotes notebooks with their annotations and handwriting; Obsidian vaults, Notion exports (Markdown or HTML) and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, a Notability note, a GoodNotes notebook, a zip for Notion's importer, or a Gamma zip another Gamma can merge.
 
 → Guide: [Assistants](./docs/user_guide/user_guide.md#assistants) · [Gamma Connector](./docs/user_guide/user_guide.md#gamma-connector) · [Import and export](./docs/user_guide/user_guide.md#import-and-export) · [Backups and upgrades](./docs/user_guide/user_guide.md#backups-and-upgrades)
 

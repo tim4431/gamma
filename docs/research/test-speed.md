@@ -92,10 +92,48 @@ Declined:
 - **Reduced motion for the first-run tour.** It would cut its 52 s but
   stop checking the demos' animation, which the step exists for.
 
+## November 2026: the shards at their cap
+
+Measured on 15 November, on the merge's CI runs and on the developer's
+Linux machine. Each shard had grown from 5 minutes (23 October) to 14–15,
+and shard 2 of the merge PR ran past the job's 15-minute cap three rounds
+out of four. Two causes, one of them a slowdown of the app:
+
+- **A `:has()` rule that restyled every page on every DOM change.**
+  4f8b044a gave a settings row with no icon the class-free
+  `.setRow:has(> .setIcon:empty)`. Chrome checks a `:has()` again on each
+  DOM change of a page, and that one cost about 50 ms of style recalc a
+  change on a page of 430 text boxes, whether or not a settings row was
+  on it. The text box suite's Zotero sweep, which inserts and measures
+  hidden elements about 900 times a zoom, went from about 35 s in CI to
+  164–332 s (89 s here). `Row` now marks the row `noIcon` and the CSS
+  keys on the class: 12 s here. Measured by deleting the stylesheet's
+  `:has()` rules one at a time in that page and timing a DOM change with
+  Chrome's `RecalcStyleDuration`. With every `:has()` rule gone a change
+  costs 0.04 ms; with the fix, about 6 ms. Of that 6 ms,
+  `.sortableBlockWrap:is(:hover, :focus-within, :has(:hover))` takes
+  about 4 ms (with the pointer over the page), the text box picture rule
+  `:has(.mdImg:not([width]))` about 1.2 ms and `body:has(.reportOverlay)`
+  about 0.4 ms. Before the Zotero sweep's time rose from 5–9 s to about
+  35 s on 14 November, a change cost about 1 ms.
+- **The `s` values had drifted** by up to eight times (`textbox` 42 s
+  against 335, `local-agents` 40 against 198, `motion` 5 against 77),
+  so the shards no longer came out even. They are now the merge run's
+  own seconds, the slower of its two runners'.
+
+With both fixed, the suite comes to about 4,200 s of group time: two
+shards of 3 workers would each take about 12 minutes of steps and 2 of
+install, too near the cap, so CI runs three, about 8 minutes of steps
+each. `notes-pdf-share` (about 7 minutes) is now the longest group.
+
 ## Still open
 
-- `settings` (148 s) bounds a shard. Splitting it in two groups is the
-  next step if the suite grows.
+- `notes-pdf-share` (425 s) is close to a three-way shard's share.
+  Splitting it is the next step if the suite grows.
+- The `:has()` rules above (the row handles' `:has(:hover)`, the text box
+  picture rule, `body:has(.reportOverlay)`) still cost a heavy page a few
+  milliseconds a DOM change. A class set where the state is known, as
+  for the settings row, would take that cost away.
 - `manage.py` imports FastAPI and the backup and job modules for every
   command; lazy imports there would make each call cheaper for the suite
   and for operators alike.

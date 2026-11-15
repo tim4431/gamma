@@ -4,8 +4,8 @@ a new comment thread on a place (``places``), a reply, a thread resolved
 (never reopened) and a highlight. The registry's three tools write through
 it (gamma/ai_tools.py ``comment``, ``resolve`` and ``highlight``: Gamma AI's,
 an MCP connection's at the Comment level, a computer agent's turn), and so
-does a Send's answer until step 3.7 of
-docs/research/agents-as-participants-plan.md (``answer_run``).
+does the end of a thread's turn that its agent left unanswered
+(gamma/local_agents/threads.py ``settle``).
 
 Who writes is a ``Writer``: the account (its id and username) and the
 agent. The account authors the comment and the highlight's op, so every
@@ -35,7 +35,7 @@ from fractional_indexing import generate_key_between
 from .. import agents, colors, comments, highlights, hosted, workspaces
 from ..agents import Agent
 from ..blocks_store import last_child_position, load_props, new_block_id
-from ..db import connect_pages_db, format_stamp
+from ..db import format_stamp
 from ..integrations import EDITING_ROLES
 from ..ops import OpError, after_commit, apply_ops
 from ..work_folders.marks import Tree
@@ -126,20 +126,12 @@ def _check_body(body) -> str:
         raise _refused(e) from None
 
 
-def _seen(event: dict | None, seen: str) -> dict | None:
-    """The write's event, with when the writer read the thread (``seen``,
-    a Send's run): the requests made after it are not answered by it
-    (``requests.answered``)."""
-    return {**event, "seen": seen} if event and seen else event
-
-
-def reply(conn, writer: Writer, ws: str, thread_id: str, body, *, comment_id: str = "", seen: str = "") -> dict:
+def reply(conn, writer: Writer, ws: str, thread_id: str, body, *, comment_id: str = "") -> dict:
     """Write ``body`` as the writer's reply in the thread ``thread_id`` →
     ``{thread, comment, created}``. ``created`` false: the same words were
-    its last moments ago (``REPEAT_S``), or ``comment_id`` (a Send's id for
-    it, the same on a retry) is written already: ``comment`` is that one.
-    ``seen``: when the writer read the thread (``_seen``). ValueError for a
-    refusal."""
+    its last moments ago (``REPEAT_S``), or ``comment_id`` (a turn's end's
+    id for it, the same however often that end is written) is written
+    already: ``comment`` is that one. ValueError for a refusal."""
     may_write(writer, ws)
     found = thread(conn, thread_id)
     body = _check_body(body)
@@ -158,14 +150,14 @@ def reply(conn, writer: Writer, ws: str, thread_id: str, body, *, comment_id: st
     except HTTPException as e:
         raise _refused(e) from None
     if out["created"]:
-        comments.written(ws, found["page_id"], found["block_id"], found["id"], _seen(out["event"], seen))
+        comments.written(ws, found["page_id"], found["block_id"], found["id"], out["event"])
     return {"thread": out["thread"], "comment": out["comment"], "created": out["created"]}
 
 
-def resolve(conn, writer: Writer, ws: str, thread_id: str, *, seen: str = "") -> dict:
+def resolve(conn, writer: Writer, ws: str, thread_id: str) -> dict:
     """Resolve the thread ``thread_id`` as the writer → ``{thread,
     changed}``; a resolved thread stays as it was resolved (``changed``
-    false). ``seen`` as for ``reply``. ValueError for a refusal."""
+    false). ValueError for a refusal."""
     may_write(writer, ws)
     found = thread(conn, thread_id)
     try:
@@ -174,7 +166,7 @@ def resolve(conn, writer: Writer, ws: str, thread_id: str, *, seen: str = "") ->
     except HTTPException as e:
         raise _refused(e) from None
     if out["event"]:
-        comments.written(ws, found["page_id"], found["block_id"], found["id"], _seen(out["event"], seen))
+        comments.written(ws, found["page_id"], found["block_id"], found["id"], out["event"])
     return {"thread": out["thread"], "changed": bool(out["event"])}
 
 
@@ -281,30 +273,3 @@ def highlight(conn, writer: Writer, ws: str, page_id: str, place: Place, *, note
     if style and style != "highlight":
         props["style"] = style
     return {"block_id": _mark(conn, writer, ws, page_id, props, note.strip()), "created": True}
-
-
-def answer_run(writer: Writer, ws: str, replies: list[dict], *, seen: str, read: dict) -> tuple[list[str], str]:
-    """The answers of a computer's Send run, written here as its agent's
-    (gamma/routers/computers.py; ``writer`` the account's, signed as that
-    computer's agent, ``agents.of_channel``): each of ``replies`` (``{id,
-    thread_id, text, resolve}``, the threads its request names) written as
-    a reply with the id the computer minted for it, so a retry writes none
-    twice, and the thread resolved when asked, unless a person said in it
-    what the run did not read (its ``seen``, this server's clock at the
-    claim, and the comment ids it ``read`` by thread: the thread stays open
-    for that word) → ``(the ids of the replies that stand written, now or
-    before; the first refusal's words)``."""
-    from . import requests  # local: the requests reach the comments' listeners, which reach this module
-
-    written, refusal = [], ""
-    for item in replies:
-        thread_id = item["thread_id"]
-        try:
-            with connect_pages_db(ws) as conn:
-                out = reply(conn, writer, ws, thread_id, item["text"], comment_id=item["id"], seen=seen)
-                written.append(out["comment"]["id"])
-                if item["resolve"] and not requests.spoken_after(conn, thread_id, seen, read.get(thread_id)):
-                    resolve(conn, writer, ws, thread_id, seen=seen)
-        except ValueError as e:
-            refusal = refusal or str(e)
-    return written, refusal

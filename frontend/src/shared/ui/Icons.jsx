@@ -298,6 +298,9 @@ export const CloudDownloadIcon = (p) => (
 export const MoveVerticalIcon = (p) => (
   <Icon {...p}><path d="M12 3v18" /><path d="m8 7 4-4 4 4" /><path d="m8 17 4 4 4-4" /></Icon>
 );
+export const MoveHorizontalIcon = (p) => (
+  <Icon {...p}><path d="M3 12h18" /><path d="m7 8-4 4 4 4" /><path d="m17 8 4 4-4 4" /></Icon>
+);
 export const EyeOffIcon = (p) => (
   <Icon {...p}><path d="M10.7 5.1A10 10 0 0 1 12 5c5 0 9 4.5 9 7a11 11 0 0 1-2.2 3.1" /><path d="M6.3 6.4A11.6 11.6 0 0 0 3 12c0 2.5 4 7 9 7a10 10 0 0 0 4.2-.9" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /><path d="m3 3 18 18" /></Icon>
 );
@@ -410,6 +413,10 @@ export const ZoomInIcon = (p) => (
 );
 export const FitWidthIcon = (p) => (
   <Icon {...p}><path d="M3 5v14" /><path d="M21 5v14" /><path d="M7 12h10" /><path d="m9 9-3 3 3 3" /><path d="m15 9 3 3-3 3" /></Icon>
+);
+// The whole page in the view: a page inside the view's corners.
+export const FitPageIcon = (p) => (
+  <Icon {...p}><path d="M3 8V5a2 2 0 0 1 2-2h3" /><path d="M16 3h3a2 2 0 0 1 2 2v3" /><path d="M21 16v3a2 2 0 0 1-2 2h-3" /><path d="M8 21H5a2 2 0 0 1-2-2v-3" /><rect x="8" y="6.5" width="8" height="11" rx="1" /></Icon>
 );
 export const MinimizeIcon = (p) => (
   <Icon {...p}><path d="M8 3v3a2 2 0 0 1-2 2H3" /><path d="M21 8h-3a2 2 0 0 1-2-2V3" /><path d="M3 16h3a2 2 0 0 1 2 2v3" /><path d="M16 21v-3a2 2 0 0 1 2-2h3" /></Icon>

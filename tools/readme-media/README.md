@@ -65,16 +65,20 @@ readback throttles input, and a scripted one-second stroke took three.
 
 ## How a take is recorded
 
-The five README stories below (the two AI demos, the Notability import, the
-collaboration and the Connector) record on `take.mjs`, which holds what they
-share; each recorder holds only its story:
+The six README stories below (the two AI demos, the agent on your computer,
+the Notability import, the collaboration and the Connector) record on
+`take.mjs`, which holds what they share; each recorder holds only its story:
 
 - `library()` starts an isolated server through the e2e harness (free port,
   throwaway data dir; never the developer's 9001, 5173 or 9002) with the
   curated export imported, and stops it again if the setup fails. No demo
-  login, AI key or suite workspace is needed.
+  login, AI key or suite workspace is needed. `curated: false` leaves the
+  library empty for a story that brings its own files, and `computer` names
+  the computer for the server (its host name otherwise, which an agent's
+  byline would show).
 - `openPage()`, `hand()` and `typeText()` give the retina page, a pointer
-  paced by the clock and keys typed at a person's speed.
+  paced by the clock and keys typed at a person's speed; `openPage`'s
+  `userAgent` makes the page another browser's (the desktop app's window).
 - `Take` is one recording. `watch(probe)` marks the moment the viewer sees a
   change (an answer streaming, a card shown, a picture loaded) from inside the
   page; `mark()` marks the recorder's own actions; `frame()` keeps the boxes a
@@ -90,6 +94,12 @@ share; each recorder holds only its story:
   and downloads, real note edits behind their approval cards) and saves the
   chat; only the model's words and tool calls come from `models/<script>.mjs`,
   which checks what it says against the text Gamma sends it.
+- `demo-agent.mjs` is its twin for an agent on this computer: a scripted
+  Codex that Gamma starts as it starts Codex CLI (`GAMMA_AGENT_CODEX`) and
+  drives through Codex's app-server protocol. Its turns come from
+  `agents/<story>.mjs`: each checks the thread Gamma hands it, then really
+  edits the folder's files, runs their build and calls Gamma's tools with the
+  turn's token, so only its words are written in advance.
 
 Every recorder takes `--inspect`, which plays the story without a capture and
 leaves screenshots of its beats in the scratch folder,
@@ -165,6 +175,64 @@ plays each label (Searching, Fetching) from the first frame it rests whole,
 held still to about a second when the real call was quicker, with hard cuts
 between labels; the recorder marks those frames from the DOM (`…Shown`,
 `…Gone`).
+
+## Work with an agent on your computer
+
+```powershell
+node tools/readme-media/record-agent-collab.mjs        # --inspect: the story without a capture
+backend/venv/Scripts/python.exe tools/readme-media/render_feature_demos.py agent-collab
+node tools/readme-media/check-media.mjs agent-collab
+```
+
+It needs TeX Live's `latexmk` and `pdflatex` (with TikZ and `standalone`)
+and `make` on PATH, as a LaTeX author has them; no AI key, no Codex
+installed and no curated export. The story brings its own files: lecture
+notes on attention, `agents/attention-notes/` (`notes.tex`, two sections, a
+TikZ figure built as its own PDF, a `Makefile`), copied to the scratch folder
+and built there off camera. Its subject is the user's own working files, so it
+uses them in place of the curated library.
+
+The server is the desktop app's own as the e2e suite runs it
+(`GAMMA_FOLDER_LINKS`, `GAMMA_LOCAL_AGENTS`, no shell secret, a desktop user
+agent), its computer named `alex-laptop`, with Codex the stand-in
+`demo-agent.mjs attention-notes` and Claude Code absent (whatever this computer
+has), turned on through the account's own session. Off camera the folder is
+synced (its `.gammaignore` tracking the sources and PDFs, not `build/`, where
+latexmk keeps a copy of the PDF) and its three files are opened as tabs. The
+story, at a 130% interface size with no dock, in the order an author works:
+in `sections/multihead.tex`, an empty section, select its heading in the code
+view, *Comment on this passage*, type, tick *Send to Codex* and send; Codex's
+section shows in the source while its thread says it works (the stand-in looks
+over its edit before the build, so its answer comes after, to be read from the
+Inbox); in the notes' tab, rebuilt by then with the new section (the wait is
+cut), select a passage and comment, with KaTeX (the tick stays on), and with
+its thread closed the PDF Codex rebuilds shows (1) with √d_k and the sentence
+why under it; in the figure's tab, Ctrl+drag a region over its future tokens and comment. Codex
+works through the three threads in turn, one directory's queue: each turn
+checks the thread it is handed (the source's quote, the PDF passage's SyncTeX
+line `sections/attention.tex:4`, the region's file and page), edits the
+sources and runs `make`, and Gamma takes the rebuilt PDFs and writes its final
+message in the thread; the figure turns masked in view, its answer in its
+thread. The Inbox then holds three replies from *Codex on alex-laptop*, and
+the one on `multihead.tex` opens its thread on the source: it asks a question,
+and the ticked reply "Yes, as a footnote." resumes the same Codex session,
+which adds the footnote, answers with Gamma's `comment` tool and resolves the
+thread; the popover closes on the footnote in the source.
+
+Each commented passage is left whole by the edits (the agent adds beside it),
+so its highlight is found again solid in the rebuilt PDF; the figure's page
+has wide side margins so that at fit-width it shows whole, and a region on it
+holds text (the key labels) to be found by. The take checks the ticks, each
+turn's run with no problem and its build, the section shown in the source
+before Codex's answer there, the fix shown in the PDF, the session resumed, the edits on disk, every
+reply and the resolve through the API, the three comments as typed, each
+PDF's page holding the last build's bytes after a round, and the source after
+a reload. The edit plays pointer travel at 1.3x and typing at 2x (faster than
+the delivery rules' 1x, at the owner's ask), cuts the loads and the waits for
+Codex's first two edits and the notes' builds (the viewer blanks while it
+reloads a rebuilt PDF, so the page dissolves into its build), plays Codex's
+work on the figure at 3x (it turns masked, its answer lands, the Inbox counts
+to three), and holds each answer to be read: about 32 s, one framing.
 
 ## Ask an AI in the notes
 
@@ -348,8 +416,8 @@ recordings.
 ## Delivery and review
 
 `render-suite.py <name>` re-renders one published slot; `all` renders every
-slot, including the four feature demos (`render_feature_demos.py`:
-`native-agentic`, `agentic-notes`, `collab`, `ink-import`). Notes,
+slot, including the five feature demos (`render_feature_demos.py`:
+`native-agentic`, `agentic-notes`, `agent-collab`, `collab`, `ink-import`). Notes,
 library, search, the connector and the feature demos are retina captures
 composed by `compose.py` (the connector's three captures under a toolbar,
 `render-suite.py`'s `Browser`). Metadata and reference-links are still 1× WebM

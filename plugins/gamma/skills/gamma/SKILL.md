@@ -122,11 +122,9 @@ the comments on this paper”), or when it names you.
    `open.json`) holds the same for its files, rewritten within seconds of a
    change; its pictures are in `.gamma/annotations/img/`, and a PDF a Gamma page
    follows has its own beside it, in `.gamma/annotations/<file name>/`. A
-   request the user sent with Send is `.gamma/annotations/requests/<id>.json`
-   or `list_annotations(request="<id>")`: act on its threads and follow its
-   instruction line; leave one that is `running`, `done` or `failed` alone (its
-   `state_by` names who has it, perhaps Gamma's own agent on the user's
-   computer).
+   thread whose newest comment the user sent to Gamma's own agent on their
+   computer (its reply reads *Codex on TIM-PC*) is that agent's to answer:
+   leave it alone while it works.
 2. Read each item: the place and its quote, the source lines (a source marked
    “as commented” is where the passage was before the last rebuild; an item on
    lines of a text file is its own source), the note and the comments. Without a

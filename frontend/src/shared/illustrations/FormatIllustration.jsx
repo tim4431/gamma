@@ -19,6 +19,7 @@ export function FormatIllustration({ format }) {
   else if (format === "pdf" || format === "annots") icon = <FileGlyph format="pdf" />;
   else if (format === "bibtex") icon = <FileGlyph label="BIB" />;
   else if (format === "notability") icon = <FileGlyph label="NOTE" />;
+  else if (format === "goodnotes") icon = <FileGlyph label="GN" />;
   // the import card that takes both note apps' files: their two glyphs
   else if (format === "noteapps") icon = <span className="formatGlyphPair"><FileGlyph label="NOTE" /><FileGlyph label="GN" /></span>;
   else if (format === "markdown") icon = <MarkdownIcon size={48} strokeWidth={1.5} />;
