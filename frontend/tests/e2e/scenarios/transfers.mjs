@@ -1148,6 +1148,72 @@ open(sys.argv[1], 'wb').write(n.bytes())
     } finally { await ctx.close(); }
   });
 
+  await step("transfer: a page out as a GoodNotes notebook and back in brings its PDF and markup back", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The same imported note: a PDF page with ink on both its pages, a
+      // text box, a picture and a recording, which a notebook leaves out.
+      const titled = async () => (await alice.api("/api/blocks/root/children")).children
+        .filter((p) => p.content === "E2E Notability note");
+      const before = await titled();
+      const original = before[0];
+      await page.goto(`${server.base}/?page=${original.id}&ws=${alice.ws}`);
+      await page.locator(".pdfPageWrap").first().waitFor();
+      const dialog = await openDialog(page, "Export");
+      const card = choice(dialog, "GoodNotes");
+      assert(await card.isVisible(), "GoodNotes is offered beside the notes' formats");
+      const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
+      const download = page.waitForEvent("download");
+      await card.dblclick(); // no switches: it exports straight from the first step
+      assertEq((await request).postDataJSON().mode, "goodnotes");
+      const file = await download;
+      assertEq(file.suggestedFilename(), "E2E Notability note.goodnotes");
+      const saved = path.join(server.dir, "Exported.goodnotes");
+      fs.copyFileSync(await file.path(), saved);
+      assertEq(fs.readFileSync(saved).subarray(0, 2).toString(), "PK");
+      await dialog.getByText("1 page exported.", { exact: true }).waitFor();
+      const said = await dialog.innerText();
+      assert(said.includes("Open it in GoodNotes"), "the step says where the file goes");
+      assert(said.includes("1 recording is left out"), `the step says what stayed behind: ${said}`);
+      await choice(dialog, "Done").click();
+      await dialog.waitFor({ state: "detached" });
+
+      // Back in through the GoodNotes import: the PDF, its strokes, box and picture.
+      const importer = await openDialog(page, "Import");
+      await choice(importer, "Notability & GoodNotes").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(importer, "Choose files…").click();
+      await (await chooser).setFiles(saved);
+      const review = page.getByRole("dialog", { name: "Review Notability & GoodNotes import", exact: true });
+      await review.getByRole("region", { name: "Library after import", exact: true })
+        .getByText("E2E Notability note", { exact: true }).waitFor();
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      await choice(report, "Done").click();
+      const after = await titled();
+      assertEq(after.length, before.length + 1, "the notebook came in as a page of its own");
+      const back = after.find((p) => !before.some((b) => b.id === p.id));
+      assertEq(back.properties.doc?.hash, original.properties.doc?.hash, "the same PDF");
+      const markup = async (pageId) => {
+        const blocks = (await alice.api(`/api/blocks/${pageId}/subtree`)).block.children;
+        const pages = [];
+        for (const b of blocks.filter((b) => b.properties?.ink_url)) {
+          const ink = await alice.api(b.properties.ink_url);
+          pages.push(...ink.strokes.map(() => ink.space.page));
+        }
+        return { strokes: pages.sort(), boxes: blocks.filter((b) => b.properties?.text_box)
+          .map((b) => `${b.properties.pdf_page} ${b.content}`),
+        pictures: blocks.filter((b) => b.properties?.picture).map((b) => b.properties.pdf_page),
+        recordings: blocks.filter((b) => b.properties?.recording).length };
+      };
+      const [was, now] = [await markup(original.id), await markup(back.id)];
+      assertEq(JSON.stringify(now), JSON.stringify({ ...was, recordings: 0 }),
+        "a stroke for every stroke on its page, the box and the picture where they were");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: a Notion HTML export comes in whole, a toggle closed and a database a table", async () => {
     const zip = path.join(server.dir, "Notion HTML export.zip");
     execFileSync(python, ["-c", `
@@ -1200,7 +1266,8 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       await page.getByText("A note for Notion", { exact: true }).waitFor();
       const dialog = await openDialog(page, "Export");
       const card = choice(dialog, "Notion");
-      assertEq(await dialog.getByRole("group", { name: "Notes choices", exact: true }).getByRole("button").count(), 4);
+      // PDF, Markdown, Notability, GoodNotes and Notion
+      assertEq(await dialog.getByRole("group", { name: "Notes choices", exact: true }).getByRole("button").count(), 5);
       assertEq(await card.locator(".formatAppIcon").count(), 1, "the card carries Notion's mark");
       await card.click();
       await choice(dialog, "Next").click();
