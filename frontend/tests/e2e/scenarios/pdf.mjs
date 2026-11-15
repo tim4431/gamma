@@ -1616,20 +1616,51 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         try {
           const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
           await waitForPdf(p, 1);
+          // The pages in view drawn and the frames steady before the notch. A
+          // later pass opens where the last one left the paper (page 3), and a
+          // page rendering under the glide made frames long enough to close
+          // most of a notch in one (CI: 2286 2330 2363 2446).
+          await until(() => p.evaluate(() => {
+            const v = document.querySelector(".pdfViewer"), r = v.getBoundingClientRect();
+            return [...v.querySelectorAll("[data-page]")].filter((d) => {
+              const b = d.getBoundingClientRect();
+              return b.bottom > r.top && b.top < r.bottom;
+            }).every((d) => d.querySelector(".textLayer span"));
+          }), { what: "the pages in view drawn" });
+          await until(() => p.evaluate(() => new Promise((done) => {
+            let prev = 0, calm = 0;
+            const t0 = performance.now();
+            const tick = (now) => {
+              calm = prev && now - prev < 34 ? calm + 1 : 0;
+              prev = now;
+              if (calm >= 10) done(true);
+              else if (now - t0 > 2000) done(false);
+              else requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+          })), { what: "ten steady frames before the notch" });
           const box = await p.locator(".pdfViewer").boundingBox();
           await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-          // The positions one notch passes through, one sample per frame.
+          // The positions one notch passes through, one sample per frame, and
+          // how long each frame took.
           await p.evaluate(() => {
             const v = document.querySelector(".pdfViewer");
             window.wheelTrail = [v.scrollTop];
-            const tick = () => { window.wheelTrail.push(v.scrollTop); if (window.wheelTrail.length < 40) requestAnimationFrame(tick); };
+            window.wheelFrames = [];
+            let prev = 0;
+            const tick = (now) => {
+              if (prev) window.wheelFrames.push(Math.round(now - prev));
+              prev = now;
+              window.wheelTrail.push(v.scrollTop);
+              if (window.wheelTrail.length < 40) requestAnimationFrame(tick);
+            };
             requestAnimationFrame(tick);
           });
           await p.mouse.wheel(0, 200);
           await until(() => p.evaluate(() => window.wheelTrail.length >= 40), { what: "40 frames sampled" });
           const trail = await p.evaluate(() => [...new Set(window.wheelTrail)]);
           assertEq(Math.round(trail.at(-1) - trail[0]), 200 / scale, `one notch scrolls its ${200 / scale} px (${on ? "on" : "off"}, scale ${scale})`);
-          if (on) assert(trail.length >= 5, `on: several positions on the way at scale ${scale}, ${trail.join(" ")}`);
+          if (on) assert(trail.length >= 5, `on: several positions on the way at scale ${scale}, ${trail.join(" ")}; frames ${(await p.evaluate(() => window.wheelFrames)).join(" ")} ms`);
           else assertEq(trail.length, 2, `off: one jump, ${trail.join(" ")}`);
           if (on && scale === 1) {
             // A spin, notches closer than the glide: Chromium hands each
