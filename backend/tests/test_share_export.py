@@ -30,7 +30,7 @@ SHEET = {"width": 595, "height": 842, "pattern": "blank"}
 MODES = sorted(export_router._BUILDERS)
 # The modes that read a [[ref]] as the text it names: the others write it as
 # it is stored, so their owner's export holds no secret either.
-READS_REFS = {"annotated-pdf", "notability", "notes-pdf", "notion", "obsidian", "readable", "zotero-rdf"}
+READS_REFS = {"annotated-pdf", "goodnotes", "notability", "notes-pdf", "notion", "obsidian", "readable", "zotero-rdf"}
 # The modes that bundle an embed's image as a file; a notes PDF draws it.
 BUNDLES_IMAGES = {"notion", "obsidian", "readable"}
 
