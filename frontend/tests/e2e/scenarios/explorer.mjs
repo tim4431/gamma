@@ -137,7 +137,9 @@ export async function explorerScenarios(env) {
     });
 
     await step("explorer: quick open finds a file by name and by path among 20,000, under Files, with its directory and the server's marks", async () => {
-      const seeded = JSON.parse(await server.python("tests/seed_work_folder.py", user.ws, "Big", "20000"));
+      // "--": a workspace id may begin with "-" (one in 64), which argparse
+      // would take for an option
+      const seeded = JSON.parse(await server.python("tests/seed_work_folder.py", "--", user.ws, "Big", "20000"));
       assertEq(seeded.files, 20000, "the seed's files");
       await until(async () => (await allFolders()).some((f) => f.id === seeded.w && f.content === "Big"), { what: "the listing's tree has Big" });
       const target = (await user.api("/api/files?q=file-01234")).files[0];
