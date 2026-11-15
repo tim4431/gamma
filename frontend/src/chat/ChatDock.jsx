@@ -219,7 +219,7 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent, agents 
             {agents.map((a) => (
               <button key={a.id} type="button" className="chatSetupTile" onClick={() => onPick(a.id)}>
                 <span className="chatSetupTileName">{agentChoice(a)}</span>
-                <span className="chatSetupTileHint">{a.ready === false ? a.problem
+                <span className="chatSetupTileHint">{a.ready === false ? <span className="agentProblem">{a.problem}</span>
                   : a.where ? t("Works on {computer}, with no AI service", { computer: a.where }) : t("Works on this computer, with no AI service")}</span>
               </button>
             ))}
@@ -1907,6 +1907,7 @@ export default function ChatDock({
     rows: matchRows(sessionRows(listedSessions.sessions, side.label), historyQuery),
     loading: listedSessions.sessions == null, onOpen: openSession,
     error: listedSessions.error || sessionsAway(listedSessions.away, computerName),
+    onRetry: () => setSessionsAsked((n) => n + 1), icon: agentList.length > 1 ? agentIcon(agent.id) : null,
     disabledReason: (row) => row.busy || (side.working
       ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: side.label })
       : picked.size > 0 ? t("Clear the selection to open a session")

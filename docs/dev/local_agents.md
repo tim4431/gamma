@@ -1109,9 +1109,12 @@ no turn and uses no model.
   announce without `sessions`), is not asked: the section says *TIM-PC is
   offline: its sessions show once it connects.* or *TIM-PC needs a newer
   Gamma to list its sessions here.*, and no answer within 15 s *TIM-PC has
-  not answered yet: open History again in a moment.* (`away`,
-  `computerChat.sessionsAway`); the server keeps the answer that came
-  later for 30 s, and nothing is asked while History is closed.
+  not answered yet.* (`away`, `computerChat.sessionsAway`), each such line
+  and a failed read followed by *Try again*, which asks again; the server
+  keeps the answer that came later for 30 s, and nothing is asked while
+  History is closed. The section's rows lead with the agent's icon as the
+  conversations above do while the chat has several agents, and keep the
+  room of the ⋯ they lack, so every row's age stands in one column.
 - **History** (`ChatDock`, `ChatHistoryPop`'s `section`): while a
   computer's agent is picked (this computer's or another's of the
   reader's; never a co-author's) and its directory has an id, the popover
@@ -1913,7 +1916,8 @@ nobody else learns it exists), 403 for a token or the guest
   drawn from the list's facts (`agents.stripFacts`) until the read lands;
   after it, where the agent works outside a synced folder
   (`computerChat.workPlace`): while the conversation has no turn a menu of
-  the offered directories and *No folder*, sent with its first turn as
+  the offered directories and *Its own directory* (a ghost `MenuSelect`, each
+  row the folder glyph), sent with its first turn as
   `dir`, then the one it works in. Its ⋯ offers Continue in a terminal
   and, on a page of a work folder kept here alone (`revealsFile`), Show in
   folder.
@@ -1931,9 +1935,9 @@ nobody else learns it exists), 403 for a token or the guest
   `command_shown` with its `⟨U+…⟩` marks in the warning colour ("This
   holds 2 characters that do not show: …"), "3 lines" over it, "It reaches
   example.org on the network" for a `host`; the allow buttons stay off
-  ("Scroll to the end first: …") until the command's box and the diff were
-  scrolled to their end (`scrolledToEnd`, the answers' `disabled`). Under
-  them "It runs as you, with your files and the network." or "It changes
+  ("Scroll to the end first: …", said as the first line under them, not
+  in a title alone) until the command's box and the diff were scrolled to
+  their end (`scrolledToEnd`, the answers' `disabled`). Under them "It runs as you, with your files and the network." or "It changes
   files outside the work folder."; the strip reads "Waiting for you: Codex
   wants to run a command" (amber, `asking`), the turn's pill "Codex is
   waiting for you", and the steps "Asked to run latexmk", "Allowed to…",

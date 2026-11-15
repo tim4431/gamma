@@ -41,6 +41,14 @@ export function directionText(vault) {
   return `${vault?.pull ? t("Pull: on") : t("Pull: off")} · ${push}`;
 }
 
+// Whether the page's file can be shown in this computer's file manager
+// (Show in folder, the chip's and the tab menu's): a vault's or an opened
+// file's path, while the file is there.
+export function showsOnDisk(state) {
+  const path = state?.vault ? state.vault.path : state?.reader?.path;
+  return !!path && !state?.reader?.missing;
+}
+
 // The chip in the page header: `{kind, label, title}`, or null for a page
 // that has nothing to do with this computer.
 // `kind` is what the header draws, one icon for how the page stands:

@@ -521,7 +521,7 @@ export async function remoteChatScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
         await until(async () => (await stripLine(dock)) === `Codex on ${name}`, { what: `the strip names the computer: ${await stripText(dock)}` });
-        assertEq(await stripPlace(dock), "No folder", "the computer offers no directory: one of its own");
+        assertEq(await stripPlace(dock), "Its own directory", "the computer offers no directory: one of its own");
         await dock.locator(".chatEmpty", { hasText: `it works in an empty directory of its own on ${name}.` }).waitFor();
         await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(LOOSE_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();

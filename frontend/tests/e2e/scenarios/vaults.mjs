@@ -76,7 +76,7 @@ export async function vaultScenarios(env) {
     const note = path.join(papers.dir, "Attention.md");
     const paper = await until(() => pageTitled("Attention"), { timeout: 15000, what: "the vault's note became a page" });
 
-    await step("vaults: a synced page shows its chip, and its card says where the file is and shows it in its folder", async () => {
+    await step("vaults: a synced page shows its chip, and its card says where the file is and shows it in its folder, as its tab's menu does", async () => {
       const ctx = await desktop();
       const page = await openPage(ctx, at(paper.id));
       try {
@@ -96,6 +96,20 @@ export async function vaultScenarios(env) {
         const sent = await posted(page);
         assertEq(JSON.stringify(sent.map(({ type, ws, page: p }) => ({ type, ws, page: p }))),
           JSON.stringify([{ type: "reveal-on-disk", ws: user.ws, page: paper.id }]), "Show in folder asks the shell");
+        // the tab's right-click menu offers the same
+        await page.locator(".tabStrip .tab", { hasText: "Attention" }).first().click({ button: "right" });
+        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Show in folder" }).click();
+        await page.locator(".ctxMenu").waitFor({ state: "detached" });
+        assertEq(JSON.stringify((await posted(page)).slice(1).map(({ type, page: p }) => ({ type, page: p }))),
+          JSON.stringify([{ type: "reveal-on-disk", page: paper.id }]), "the tab menu's Show in folder asks the shell too");
+        // and Go to folder opens its folder in Gamma, the file selected, with the keys on it
+        await page.locator(".tabStrip .tab", { hasText: "Attention" }).first().click({ button: "right" });
+        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Go to folder" }).click();
+        const fileRow = page.locator(`.fileTreeRow[data-kind="file"][data-id="${paper.id}"]`);
+        await fileRow.waitFor({ timeout: 10000 });
+        await until(async () => (await fileRow.getAttribute("aria-selected")) === "true", { what: "the file's row selected" });
+        assertEq(await fileRow.getAttribute("tabindex"), "0", "the tree's tab stop is the file's row");
+        assert(new URL(page.url()).searchParams.get("folder") === papers.link.folder_id, `the address names its folder: ${page.url()}`);
         assertNoProblems(page);
       } finally { await ctx.close(); }
     });

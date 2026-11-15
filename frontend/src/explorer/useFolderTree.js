@@ -16,7 +16,8 @@ import { useDirectoryRows } from "./useDirectoryRows.js";
 export const WORK_SORTS = ["name", "format", "size", "modified"];
 const orderOf = (sort) => (sort === "modified" ? "desc" : "asc");
 
-// {sort, setSort, expanded, toggle(id), active, setActive(key), dirs, rows}
+// {sort, setSort, expanded, toggle(id), active, setActive(key), dirs, rows,
+// reveal, showFile(dir, pageId), revealDone()}
 // for the directory `folderId` ("" for none: nothing is read). `sort` is
 // the view's own, kept in this browser (`gamma-work-sort`) and never taken
 // from the library's sort of its folders; `expanded` the directories open
@@ -26,7 +27,11 @@ const orderOf = (sort) => (sort === "modified" ? "desc" : "asc");
 // home, on wake and after an Add or a Remove) changes, so the columns (the
 // open comments) stay the server's, a read again reading as many rows as
 // were loaded; `rows` every row read of the directories drawn, for App's
-// lookups. `libTree` the listing's tree.
+// lookups. `libTree` the listing's tree. `showFile(dir, pageId)` shows a
+// file as the view opens on its directory `dir` (a tab's Go to folder): the
+// directory paged until it holds the file (useDirectoryRows find), then its
+// row scrolled into sight with the keys on it (FolderTree), which ends the
+// `reveal` ({dir, pageId}, null for none) with `revealDone()`.
 export function useFolderTree({ folderId, libTree, version }) {
   const [stored, setSort] = usePersistedState("gamma-work-sort", "name");
   const sort = WORK_SORTS.includes(stored) ? stored : "name";
@@ -41,5 +46,12 @@ export function useFolderTree({ folderId, libTree, version }) {
     if (!next.delete(id)) next.add(id);
     return next;
   }), []);
-  return { sort, setSort, expanded, toggle, active, setActive, dirs, rows };
+  const [reveal, setReveal] = useState(null);
+  const { find } = dirs;
+  const showFile = useCallback((dir, pageId) => {
+    find(dir, pageId);
+    setReveal({ dir, pageId });
+  }, [find]);
+  const revealDone = useCallback(() => setReveal(null), []);
+  return { sort, setSort, expanded, toggle, active, setActive, dirs, rows, reveal, showFile, revealDone };
 }

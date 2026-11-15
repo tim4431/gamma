@@ -125,7 +125,8 @@ export function AskCard({ ask, label, onAnswer }) {
   }
   return (
     <ApprovalShell className="chatAsk" icon={ASK_ICONS[ask.kind] || ActivityIcon} title={askTitle(ask, label)}
-      answers={answers} onDecide={onAnswer} agent={label} footnote={askRisk(ask)}>
+      answers={answers} onDecide={onAnswer} agent={label}
+      footnote={read ? askRisk(ask) : <><div>{unread}</div>{askRisk(ask)}</>}>
       {command.main ? (
         <>
           {command.lines ? <div className="chatApprovalNote">{tn("{n} line", "{n} lines", command.lines)}</div> : null}

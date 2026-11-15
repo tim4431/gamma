@@ -19,7 +19,7 @@ import { AlertCircleIcon, CodeIcon, CopyIcon, FolderMinusIcon, FolderOpenIcon, F
 import { MenuItem, MenuScope } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
 import { StateDetail, StateTag } from "../shared/ui/StateTag";
-import { addsToLibrary, agentLine, computerChip, directionText, editsFile, notesLocked, openedNote, opensAsPdf, vaultChip } from "./vaultState.js";
+import { addsToLibrary, agentLine, computerChip, directionText, editsFile, notesLocked, openedNote, opensAsPdf, showsOnDisk, vaultChip } from "./vaultState.js";
 import "./vault.css";
 
 // The chip's icon, by what the page's standing is (vaultState's `kind`):
@@ -94,7 +94,7 @@ export function VaultChip({ state, computers = [], open, onOpenChange, onReveal,
             <div className="popoverHint">{t("Its last new version placed no highlights: {reason}", { reason: reader.relocation_error })}</div>
           ) : null}
           <div className="vaultActions">
-            {path && !reader?.missing ? (
+            {showsOnDisk(state) ? (
               <MenuItem icon={FolderOpenIcon} onClick={() => { onOpenChange(false); onReveal(); }}
                 title={t("Show the file in this computer's file manager")}>{t("Show in folder")}</MenuItem>
             ) : null}

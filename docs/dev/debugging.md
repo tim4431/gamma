@@ -775,6 +775,16 @@ instead of fixing; the fix removes its entry.
   server's tree never matched the screen's, though each of the six edits
   went out as an ops request answered 200. Not seen in four local runs of
   the `notes:` steps.
+- **local-agents: on main.tex of the synced folder a passage commented
+  with Send to Codex ticked is answered…**
+  (`frontend/tests/e2e/scenarios/localAgents.mjs:471`, this machine,
+  2026-11-15): `assertNoProblems` met `GET` and `HEAD
+  /api/uploads/<hash>.tex` answered 404, the URL of main.tex's version
+  from before Codex's edit replaced it: the code view reads the old
+  version once more after the vault's round took it (the GET's 404 turns
+  the pane to its file card, whose HEAD 404s too). Seen while several
+  groups ran at once, on dev's tip as well as with changes beside it (3
+  of 5 such runs); the group run alone passed.
 - **The brand check** (`tools/branding/build.mjs --check`, this machine,
   2026-11-14): one run ended with an uncaught file-system error (its stack
   lost) while the backend suite and the frontend tests ran beside it; 18

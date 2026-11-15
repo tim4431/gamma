@@ -40,16 +40,21 @@ function StripMenu({ bucket, label, session, reveal }) {
   );
 }
 
+// Where the agent works: the directory's name after a folder glyph, or
+// while there is a choice the strip's quiet menu of them, each its glyph.
 function Place({ place, onPick }) {
   if (!place) return null;
-  if (!place.pick) {
-    return <span className="computerPlace" title={t("Where the agent works in this conversation")}><FolderIcon size={14} />{place.text}</span>;
+  if (!place.pick || place.options.length < 2) {
+    return (
+      <span className="computerPlace" title={t("Where the agent works in this conversation")}>
+        <FolderIcon size={14} /><span className="computerPlaceName">{place.pick ? place.options[0][1] : place.text}</span>
+      </span>
+    );
   }
-  if (place.options.length < 2) return <span className="computerPlace"><FolderIcon size={14} />{place.options[0][1]}</span>;
   return (
     <span className="computerPlace">
-      <MenuSelect label={t("Where the agent works")} value={place.value} onChange={onPick} options={place.options}
-        heading={t("Works in")} display={<><FolderIcon size={14} />{place.options.find(([v]) => v === place.value)?.[1]}</>} />
+      <MenuSelect ghost label={t("Where the agent works")} value={place.value} onChange={onPick} heading={t("Works in")}
+        options={place.options.map(([value, name]) => [value, name, FolderIcon])} />
     </span>
   );
 }

@@ -57,7 +57,7 @@ function HistoryRow({ row, off, title, onOpen, onMenu, lead, Icon }) {
       <span className="chatHistTitle">{row.title || t("Untitled")}</span>
       {row.by ? <span className="chatHistBy">{row.by}</span> : null}
       <span className="chatHistAge">{row.active ? t("now") : relAge(row.updated_at)}</span>
-      {onMenu ? <MenuButton open={onMenu} /> : null}
+      {onMenu ? <MenuButton open={onMenu} /> : <span className="chatHistMenuSlot" aria-hidden="true" />}
     </div>
   );
 }
@@ -71,10 +71,12 @@ function HistoryRow({ row, off, title, onOpen, onMenu, lead, Icon }) {
 // menu); `tip(row)` another row's title; `lead(row)` what comes before a
 // row's title (a tick box), `icon(row)` its agent's icon (none: no icon),
 // `editing(row)` what stands in for a row (a rename field), and `picking`
-// while rows are ticked. `section` ({label, rows, loading, error, onOpen,
-// disabledReason}, null for none) is drawn after them under its caption,
-// rows without menus, `error` why its rows could not be read. Escape in
-// the search closes (`onClose`).
+// while rows are ticked. `section` ({label, rows, loading, error, onRetry,
+// onOpen, disabledReason, icon}, null for none) is drawn after them under
+// its caption, rows without menus (a menu-less row keeps the ⋯'s room, so
+// every row's age stands in one column), each led by `icon` as the
+// conversations are, `error` why its rows could not be read, with Try
+// again (`onRetry`). Escape in the search closes (`onClose`).
 export default function ChatHistoryPop({
   query, onQuery, onClose, rows, loading, onOpen, disabledReason = () => "", menuItems, tip = (row) => row.title,
   lead, icon, editing, picking = false, section = null, children,
@@ -110,10 +112,15 @@ export default function ChatHistoryPop({
           <div className="popoverSection">{section.label}</div>
           {section.rows.map((s) => (
             <HistoryRow key={`session:${s.id}`} row={s} off={section.disabledReason(s)} title={s.title}
-              onOpen={openListed} />
+              onOpen={openListed} Icon={section.icon} />
           ))}
           {section.loading ? <div className="popoverHint loadingHint">{t("Loading…")}</div>
-            : section.error ? <div className="popoverHint">{section.error}</div>
+            : section.error ? (
+              <div className="popoverHint">
+                {section.error}{" "}
+                <button type="button" className="uiBtn sm ghost" onClick={section.onRetry}>{t("Try again")}</button>
+              </div>
+            )
             : !section.rows.length ? <div className="popoverHint">{String(query || "").trim()
               ? t("No session matches.") : t("No sessions of this directory.")}</div>
             : null}

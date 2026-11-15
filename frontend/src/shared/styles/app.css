@@ -3852,6 +3852,8 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistBy { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-size: var(--fs-2xs); color: var(--text-dim); }
 .chatHistAge { flex: none; font-size: var(--fs-2xs); color: var(--text-dim); padding-right: 4px; }
+/* A row with no menu keeps the room of the ⋯ the others have. */
+.chatHistMenuSlot { flex: none; width: var(--ctl-icon-btn); }
 /* A section under the conversations (the sessions the agent's CLI keeps
    on its computer, "On TIM-PC"): its caption the shared .popoverSection,
    in line with the rows' titles. */
@@ -5210,7 +5212,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
    in neutral colours, amber only while the agent cannot run or waits for
    the person's answer. After its line where the agent works (the
    directory's name, or while the conversation has no turn the menu of
-   those offered), kept to the strip's line height, then its ⋯ menu. */
+   those offered: a ghost MenuSelect in the strip's colour, its glyph and
+   name as far apart as the name's), kept to the strip's line height and
+   to half its width, a long name ellipsized, then its ⋯ menu. */
 .chatHealthStrip.computerStrip {
   color: var(--text-secondary);
   background: var(--bg-subtle);
@@ -5221,12 +5225,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatHealthStrip.computerStrip .computerPlace {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  flex: none;
+  gap: var(--space-2);
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 50%;
   margin-left: auto;
 }
-.chatHealthStrip.computerStrip .computerPlace .uiSelectBtn { margin: -4px 0; }
+.chatHealthStrip.computerStrip .computerPlace .computerPlaceName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatHealthStrip.computerStrip .computerPlace .uiSelectBtn {
+  gap: var(--space-2); min-width: 0; max-width: 100%; margin: -4px 0; padding-inline: var(--space-3); color: inherit;
+}
 .chatHealthStrip.computerStrip .computerStripMenu {
   flex: none;
   width: var(--ctl-icon-btn-xs);

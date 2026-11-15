@@ -913,6 +913,14 @@ browser, and the filter box keeps the files whose names hold its text.
   is the folder menu. The keys are the Files window's ([ui-design.md](ui-design.md)
   "Keyboard focus", `explorer/useTree.js`): Enter opens a file, Space
   selects it.
+- **Go to folder**, a file's tab's right-click menu in any window
+  (App's `goToFile`): home on the file's directory, the file selected.
+  `useFolderTree`'s `showFile` pages that directory until it holds the file
+  (`useDirectoryRows` `find`), and `FolderTree` scrolls its row into sight
+  and puts the keys on it once it is drawn, letting go when the directory
+  is read that far without drawing it (the filter hides it,
+  `fileTree.js` `pagedFor`). The selection effect that clears a selection
+  on a change of folder keeps this one.
 - **Empty**: "Nothing tracked yet." with Choose files… on the work folder
   itself, "No tracked files here." in a directory, that no file matches the
   filter, "Choosing files…" while the vault still waits for its first

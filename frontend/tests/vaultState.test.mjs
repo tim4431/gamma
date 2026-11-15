@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerChip, directionText, editsFile, folderKeeper, isOpenedFile,
-  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultBanner,
+  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, showsOnDisk, sinceText, vaultBanner,
   vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
@@ -39,6 +39,14 @@ test("a folder vault's page says where it is synced, and what stands in its way"
   assert.match(busy.title, /paused/);
   assert.match(busy.title, /2 conflicts/);
   assert.match(busy.title, /Not written to disk: an open code block/);
+});
+
+test("Show in folder: a vault's or an opened file's path, while its file is there", () => {
+  assert.equal(showsOnDisk(folder()), true);
+  assert.equal(showsOnDisk(opened()), true);
+  assert.equal(showsOnDisk(opened({ missing: true })), false, "a missing file");
+  assert.equal(showsOnDisk(folder({ path: "" })), false, "a member who cannot see the path");
+  assert.equal(showsOnDisk(null), false);
 });
 
 test("a member who cannot see the path reads the vault's name", () => {

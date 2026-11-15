@@ -604,7 +604,8 @@ AI:
   the desktop app **Who else may use Codex** with *Add a person…*, an
   `ActionMenu` of the editors of the workspaces it shares
   (`GET /api/local-agents/people`, read in the desktop app while it owns an
-  agent; `chat/agents.js` `agentPeople`), which asks the shell
+  agent; `chat/agents.js` `agentPeople`; while it offers no one, the row's
+  hint says why: the workspaces still read, or no one left to add), which asks the shell
   (`agent-person`) for its question, the consent of the account's terms in
   its last sentence; then the directories it offers (name, path) and
   *Offer a directory…*. An agent another account lends the account reads
@@ -612,7 +613,8 @@ AI:
   (`askShell`: `set-agent`, `set-agent-runs`, `agent-dirs` "new" or an
   id, `agent-person`), which asks its own question and acts with its word; the pane then
   reads the listing again each second for a minute until it changed. A
-  directory is renamed in place and removed with its trash button
+  directory (*Offered directory*, its path, then its name field, *Move…*
+  and the trash button on one line) is renamed in place and removed with its trash button
   (`PUT /api/local-agents/dirs`, no shell's word needed by an account
   with an agent on here), and *Move…* asks the shell for another path. An
   agent another account turned on says so, and in the desktop app its
@@ -636,7 +638,8 @@ AI:
   changed. Last, one section per computer of the account's
   shown to this server (`GET /api/computers`, one of the pane's reads):
   connected or offline since when, and its agents as it last announced
-  them, read-only ("Change this in Gamma on TIM-PC."); and one per
+  them, read-only ("Change these in Gamma on TIM-PC.", the sentence this
+  computer's rows say elsewhere); and one per
   computer of another account's whose agent serves this one, titled
   *TIM-PC, alice's*, its agent tagged *Lent to you*.
 - **Connections**: the provider list (empty state: one sentence and the Add

@@ -27,9 +27,9 @@ import { agentPeople, computerAgents, localAgent } from "../chat/agents.js";
 import { readLocalAgents, useLocalAgents } from "../chat/useLocalAgents.js";
 import { useSettingsRead } from "./settingsReads.js";
 import { ADD_SERVER, linkRow } from "./answeredServers.js";
-import { Empty, NameInput, Row, Section, Segmented, Toggle } from "./SettingsKit";
+import { Empty, FormNotice, NameInput, Row, Section, Segmented, Toggle } from "./SettingsKit";
 import { ActionMenu } from "../shared/ui/Menus";
-import { BotIcon, FolderIcon, FolderPlusIcon, MonitorIcon, PlusIcon, ServerIcon, SparklesIcon, Trash2Icon, UserIcon,
+import { BotIcon, FolderIcon, FolderPlusIcon, MonitorIcon, PlusIcon, ServerIcon, ShieldIcon, SparklesIcon, Trash2Icon, UserIcon,
   UserPlusIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -39,10 +39,13 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 const WATCH_MS = 60_000;
 const WATCH_EVERY_MS = 1000;
 
-// An agent's line under its name: its version and how it stands.
+// An agent's line under its name: its version and how it stands, a
+// problem in the amber every agent's problem is said in (.agentProblem).
 function agentHint(agent) {
-  const state = agent.ready === true ? t("Signed in") : agent.ready == null ? t("Checking…") : agent.problem;
-  return [agent.version ? t("Version {version}", { version: agent.version }) : "", state].filter(Boolean).join(" · ");
+  const version = agent.version ? t("Version {version}", { version: agent.version }) : "";
+  const state = agent.ready === true ? t("Signed in") : agent.ready == null ? t("Checking…")
+    : agent.problem ? <span className="agentProblem">{agent.problem}</span> : "";
+  return version && state ? <>{version} · {state}</> : version || state;
 }
 
 // What an agent may run, as the segment names it: within its sandbox
@@ -94,7 +97,12 @@ export function SettingsAgents({ connection, signedIn, setStatus }) {
           <span className={`uiTag${connection ? "" : " warn"}`}>{connection ? t("Ready") : t("Not connected")}</span>
         </Row>
         {signedIn && !listing && !error ? <Empty icon={BotIcon} loading>{t("Loading…")}</Empty> : null}
-        {error && !listing ? <p className="setNotice">{t("Could not read the agents on this computer: {message}", { message: error })}</p> : null}
+        {error && !listing ? (
+          <FormNotice>
+            {t("Could not read the agents on this computer: {message}", { message: error })}{" "}
+            <button type="button" className="uiBtn sm" onClick={() => readLocalAgents({ fresh: true })}>{t("Try again")}</button>
+          </FormNotice>
+        ) : null}
       </Section>
       {here ? <ThisComputer listing={listing} desktop={IS_DESKTOP} ask={ask} change={change} /> : null}
       {here && IS_DESKTOP ? <AnsweredServers ask={ask} /> : null}
@@ -108,8 +116,14 @@ export function SettingsAgents({ connection, signedIn, setStatus }) {
 // session's DELETE, in any window); in the desktop app a menu of whom else
 // it may let use it (GET /api/local-agents/people, `places`), each asking
 // the shell (`agent-person`), whose question carries the consent.
-function AgentPeople({ agent, places, desktop, ask, change }) {
+function AgentPeople({ agent, places, placesRead, desktop, ask, change }) {
   const { named, offered } = agentPeople(agent.people, places);
+  // Why Add a person… is off, said where its consequence goes: the
+  // workspaces still read, or no one left to add.
+  const addHint = offered.length ? t("They ask it with @ or Send to on your synced folders' files, in a conversation you can read; what it asks to run is allowed once at most.")
+    : !placesRead ? t("Reading the workspaces you share…")
+    : places.some((p) => p.people?.length) ? t("Everyone who edits a workspace you share may use it already.")
+    : t("No one to add: nobody else edits a workspace you share.");
   const remove = (p) => change(`/local-agents/${agent.name}/people?${new URLSearchParams({
     server: p.server, workspace_id: p.workspace_id, account: p.account })}`, { method: "DELETE" },
   (message) => t("Couldn't take {person} off {agent}: {message}", { person: p.username, agent: agent.label, message }));
@@ -125,8 +139,7 @@ function AgentPeople({ agent, places, desktop, ask, change }) {
         </Row>
       ))}
       {desktop ? (
-        <Row icon={UserPlusIcon} label={t("Who else may use {agent}", { agent: agent.label })}
-          hint={t("They ask it with @ or Send to on your synced folders' files, in a conversation you can read; what it asks to run is allowed once at most.")}>
+        <Row icon={UserPlusIcon} label={t("Who else may use {agent}", { agent: agent.label })} hint={addHint}>
           <ActionMenu label={t("Add a person…")} disabled={!offered.length}
             items={offered.map((o) => ({ label: o.label, onClick: () => ask("agent-person", { agent: agent.name, place: o.place.workspace_id, person: o.person.id }) }))} />
         </Row>
@@ -141,14 +154,15 @@ function ThisComputer({ listing, desktop, ask, change }) {
   const name = listing.computer || t("this computer");
   const agents = (listing.agents || []).map(localAgent);
   const owned = agents.some((a) => a.enabled && a.owner && !a.lentBy);
-  const places = useSettingsRead(desktop && owned ? "/local-agents/people" : null).data?.places || [];
+  const placesRead = useSettingsRead(desktop && owned ? "/local-agents/people" : null);
+  const places = placesRead.data?.places || [];
   const dirs = listing.dirs || [];
   const putDirs = (next) => change("/local-agents/dirs", {
     method: "PUT", body: JSON.stringify(next.map((d) => ({ id: d.id, path: d.path, name: d.name || "" }))),
   }, (message) => t("Couldn't change the directories: {message}", { message }));
   return (
     <Section title={listing.computer ? t("This computer: {computer}", { computer: listing.computer }) : t("This computer")}>
-      {desktop ? null : <p className="setNotice">{t("Change these in Gamma on {computer}.", { computer: name })}</p>}
+      {desktop ? null : <FormNotice tone="info">{t("Change these in Gamma on {computer}.", { computer: name })}</FormNotice>}
       {agents.map((agent) => {
         const mine = agent.enabled && agent.owner && !agent.lentBy;
         const others = agent.enabled && !mine;
@@ -163,28 +177,31 @@ function ThisComputer({ listing, desktop, ask, change }) {
                 : change(`/local-agents/${agent.name}`, { method: "PATCH", body: JSON.stringify({ enabled: false }) },
                   (message) => t("Couldn't turn {agent} off: {message}", { agent: agent.label, message })))} />
             {mine ? (
-              <Row icon={null} label={t("What {agent} may run", { agent: agent.label })}
+              <Row icon={ShieldIcon} label={t("What {agent} may run", { agent: agent.label })}
                 hint={agent.runs === "ask" ? t("It asks you before it runs a command or changes a file outside its directory.")
                   : t("It works in its directory and runs nothing outside its sandbox.")}>
                 <Segmented value={agent.runs} disabled={!desktop} options={RUNS}
                   onChange={(runs) => ask("set-agent-runs", { agent: agent.name, ask: runs === "ask" })} />
               </Row>
             ) : null}
-            {mine ? <AgentPeople agent={agent} places={places} desktop={desktop} ask={ask} change={change} /> : null}
+            {mine ? <AgentPeople agent={agent} places={places} placesRead={!!(placesRead.data || placesRead.error)} desktop={desktop} ask={ask}
+              change={change} /> : null}
           </React.Fragment>
         );
       })}
       {dirs.map((dir) => (
-        <Row key={dir.id} icon={FolderIcon} label={dir.name} hint={dir.path}>
-          {desktop ? <>
-            <NameInput className="aiKeyInput" value={dir.name} aria-label={t("Name of the directory")}
-              onCommit={(next) => putDirs(dirs.map((d) => (d.id === dir.id ? { ...d, name: next } : d)))} />
-            <button type="button" className="uiBtn sm" onClick={() => ask("agent-dirs", { dir: dir.id })}>{t("Move…")}</button>
-            <button type="button" className="uiBtn sm iconSq danger" title={t("Stop offering this directory")}
-              aria-label={t("Stop offering this directory")} onClick={() => putDirs(dirs.filter((d) => d.id !== dir.id))}>
-              <Trash2Icon size={16} />
-            </button>
-          </> : null}
+        <Row key={dir.id} icon={FolderIcon} label={desktop ? t("Offered directory") : dir.name} hint={dir.path}>
+          {desktop ? (
+            <span className="setRowControls">
+              <NameInput className="aiKeyInput" value={dir.name} aria-label={t("Name of the directory")}
+                onCommit={(next) => putDirs(dirs.map((d) => (d.id === dir.id ? { ...d, name: next } : d)))} />
+              <button type="button" className="uiBtn sm" onClick={() => ask("agent-dirs", { dir: dir.id })}>{t("Move…")}</button>
+              <button type="button" className="uiBtn sm iconSq danger" title={t("Stop offering this directory")}
+                aria-label={t("Stop offering this directory")} onClick={() => putDirs(dirs.filter((d) => d.id !== dir.id))}>
+                <Trash2Icon size={16} />
+              </button>
+            </span>
+          ) : null}
         </Row>
       ))}
       {desktop ? (
@@ -215,21 +232,28 @@ function AnsweredServers({ ask }) {
   const rows = links.data?.links || [];
   return (
     <Section title={t("Servers this computer answers")}>
-      {links.error && !links.data ? <p className="setNotice">{t("Could not read the servers this computer answers: {message}", { message: links.error })}</p> : null}
+      {links.error && !links.data ? (
+        <FormNotice>
+          {t("Could not read the servers this computer answers: {message}", { message: links.error })}{" "}
+          <button type="button" className="uiBtn sm" onClick={() => links.reload()}>{t("Try again")}</button>
+        </FormNotice>
+      ) : null}
       {rows.map((link) => {
         const row = linkRow(link);
         return (
           <React.Fragment key={link.id}>
             <Row icon={ServerIcon} label={row.label} hint={row.hint}>
-              {row.reconnect ? (
-                <button type="button" className="uiBtn sm" onClick={() => askLinks(row.reconnect)}>{t("Reconnect…")}</button>
-              ) : null}
-              <button type="button" className="uiBtn sm iconSq danger" title={t("Stop answering {server}", { server: row.server })}
-                aria-label={t("Stop answering {server}", { server: row.server })} onClick={() => askLinks(row.remove)}>
-                <Trash2Icon size={16} />
-              </button>
+              <span className="setRowControls">
+                {row.reconnect ? (
+                  <button type="button" className="uiBtn sm" onClick={() => askLinks(row.reconnect)}>{t("Reconnect…")}</button>
+                ) : null}
+                <button type="button" className="uiBtn sm iconSq danger" title={t("Stop answering {server}", { server: row.server })}
+                  aria-label={t("Stop answering {server}", { server: row.server })} onClick={() => askLinks(row.remove)}>
+                  <Trash2Icon size={16} />
+                </button>
+              </span>
             </Row>
-            <Toggle icon={null} label={row.asks.label} hint={row.asks.hint} checked={row.asks.on}
+            <Toggle icon={ShieldIcon} label={row.asks.label} hint={row.asks.hint} checked={row.asks.on}
               onChange={(on) => askLinks(row.asks.set(on))} />
           </React.Fragment>
         );
@@ -254,12 +278,12 @@ function FarComputer({ computer }) {
     <Section title={lent ? t("{computer}, {owner}'s", { computer: computer.name, owner: lent }) : computer.name}>
       <Row icon={MonitorIcon} label={online ? t("Connected") : when ? t("Offline since {when}", { when }) : t("Offline")}
         hint={lent ? t("{owner} lets you use its agent on the files of the synced folders it keeps.", { owner: lent })
-          : t("Change this in Gamma on {computer}.", { computer: computer.name })} />
+          : t("Change these in Gamma on {computer}.", { computer: computer.name })} />
       {agents.length ? agents.map((agent) => (
         <Row key={agent.name} icon={BotIcon} label={agent.label} hint={agentHint(agent)}>
           <span className="uiTag">{lent ? t("Lent to you") : agent.enabled ? (agent.runs === "ask" ? t("On, asks before more") : t("On")) : t("Off")}</span>
         </Row>
-      )) : <p className="setNotice">{t("No agent found on {computer}.", { computer: computer.name })}</p>}
+      )) : <Empty icon={BotIcon}>{t("No agent found on {computer}.", { computer: computer.name })}</Empty>}
     </Section>
   );
 }

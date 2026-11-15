@@ -236,17 +236,17 @@ test("a message carries the model and effort chosen, neither when it is the agen
 test("where the agent works: a menu of the offered directories until the first turn, then the one it works in", () => {
   const dirs = [{ id: "d1", path: "D:\\scratch", name: "Scratch" }, { id: "d2", path: "/tmp/b", name: "" }];
   const own = { ...ready, folder: "", dir: null };
-  assert.deepEqual(workPlace(own, null, dirs), { pick: true, value: "", options: [["", "No folder"], ["d1", "Scratch"], ["d2", "/tmp/b"]] });
+  assert.deepEqual(workPlace(own, null, dirs), { pick: true, value: "", options: [["", "Its own directory"], ["d1", "Scratch"], ["d2", "/tmp/b"]] });
   assert.equal(workPlace(own, null, dirs, "d2").value, "d2");
   assert.equal(workPlace(own, null, dirs, "gone").value, "", "a directory no longer offered: none");
-  assert.deepEqual(workPlace(own, null, []).options, [["", "No folder"]]);
+  assert.deepEqual(workPlace(own, null, []).options, [["", "Its own directory"]]);
   const said = { messages: [person, agent()] };
-  assert.deepEqual(workPlace(own, said, dirs), { pick: false, text: "No folder" });
+  assert.deepEqual(workPlace(own, said, dirs), { pick: false, text: "Its own directory" });
   assert.deepEqual(workPlace({ ...own, dir: { kind: "offered", id: "d1", name: "Scratch" } }, said, dirs), { pick: false, text: "Scratch" });
   assert.equal(workPlace({ ...ready, dir: { kind: "vault", name: "Thesis" } }, null, dirs), null, "a vault's: named in the strip's line");
   assert.equal(workPlace({ ...remote, dir: { kind: "vault", name: "paper" } }, null, dirs), null, "another computer's vault");
   const far = { ...remote, folder: "", dir: null, dirs: [{ id: "f1", name: "Drafts" }] };
-  assert.deepEqual(workPlace(far, null, dirs).options, [["", "No folder"], ["f1", "Drafts"]], "the directories that computer offers");
+  assert.deepEqual(workPlace(far, null, dirs).options, [["", "Its own directory"], ["f1", "Drafts"]], "the directories that computer offers");
   assert.equal(workPlace({ ...far, lent: { by: "alice" } }, null, dirs), null, "a co-author's: a synced folder's alone");
   assert.equal(workPlace(null, null, dirs), null);
   // the empty transcript says where it works
@@ -530,7 +530,7 @@ test("History lists the CLI's sessions of the directory where the reader's agent
   const own = { ...ready, dir: null };
   assert.equal(sessionsDir(own, { pick: true, value: "d2" }), "d2", "the one picked for a conversation that begins");
   assert.equal(sessionsDir(own, { pick: true, value: "" }), "", "a directory of its own holds Gamma's alone");
-  assert.equal(sessionsDir(own, { pick: false, text: "No folder" }), "");
+  assert.equal(sessionsDir(own, { pick: false, text: "Its own directory" }), "");
   const far = { ...ready, remote: true, computer: "TIM-PC", online: true, folder_id: "W1",
     dir: { kind: "vault", name: "Thesis" } };
   assert.equal(sessionsDir(far), "W1", "another computer's agent, in the reader's own vault there");
@@ -540,7 +540,7 @@ test("History lists the CLI's sessions of the directory where the reader's agent
   assert.equal(sessionsDir(null), "");
   assert.equal(sessionsAway("offline", "TIM-PC"), "TIM-PC is offline: its sessions show once it connects.");
   assert.equal(sessionsAway("older", "TIM-PC"), "TIM-PC needs a newer Gamma to list its sessions here.");
-  assert.equal(sessionsAway("waiting", "TIM-PC"), "TIM-PC has not answered yet: open History again in a moment.");
+  assert.equal(sessionsAway("waiting", "TIM-PC"), "TIM-PC has not answered yet.");
   assert.equal(sessionsAway(undefined, "TIM-PC"), "");
   const rows = sessionRows([
     { id: "s1", title: "Fix the abstract", at: "2026-11-14T10:00:00Z", source: "cli", ours: false, busy: false },

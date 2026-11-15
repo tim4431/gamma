@@ -246,7 +246,7 @@ import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
-import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, vaultConflictsPath } from "../vault/vaultState.js";
+import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, showsOnDisk, vaultConflictsPath } from "../vault/vaultState.js";
 import { chatAgents, commentAgents } from "../chat/agents.js";
 import { useLocalAgents } from "../chat/useLocalAgents.js";
 import { showInChat } from "../chat/computer/chatSide.js";
@@ -308,7 +308,7 @@ import { useFolderTree } from "../explorer/useFolderTree.js";
 import { useSummaries } from "../explorer/useSummaries.js";
 import { layoutKeeping, useFilesWindow } from "../explorer/useFilesWindow.js";
 import { useFilesTree } from "../explorer/useFilesTree.js";
-import { fileCrumbs } from "../explorer/workPaths.js";
+import { fileCrumbs, inKeptFolder, revealPath } from "../explorer/workPaths.js";
 import { PathLinkContext } from "../editor/pathLinkContext.js";
 import { documentView, viewerOf } from "../documents/documentView.js";
 import { VIEWERS } from "../documents/viewers.js";
@@ -1408,6 +1408,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!id) return;
     clearSelection();
     openBlock(id, { restoreScroll: true, block });
+  }
+
+  // A tab's Go to folder: home, on the directory `dir` of the synced
+  // folder's file `id`, which the folder view pages to, scrolls to and
+  // selects (useFolderTree showFile; the selection effect below keeps it
+  // through the folder's change).
+  function goToFile(id, dir) {
+    pushNav();
+    goHome();
+    openFolder(dir);
+    folderTree.showFile(dir, id);
+    setSelectedPages(new Set([id]));
   }
 
   // Container (folder or label) single-click selects, Ctrl/Cmd toggles within
@@ -9671,8 +9683,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
-  // Leaving home or changing folders drops the file-manager selection.
-  useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, labelFilter, homeMode]);
+  // Leaving home or changing folders drops the file-manager selection; a
+  // folder opened by a tab's Go to folder lands with its file selected
+  // (goToFile, the folder view's reveal).
+  useEffect(() => {
+    clearSelection();
+    setHomeMenu(null);
+    const shown = folderTree.reveal;
+    if (homeMode && shown && shown.dir === folderFilter && !labelFilter) setSelectedPages(new Set([shown.pageId]));
+  }, [folderFilter, labelFilter, homeMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // A folder or label the view names that the listing's trees lack (deleted
   // on another device, a stale link, a folder= a share does not reach): the
   // view goes back to the library's root, a share's to its folder.
@@ -14924,6 +14943,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // one of them (fileRules): it has its library rows instead.
         const inside = !!pagesById.get(tabMenu.id)?._parentPage;
         const tabFile = work.fileOf(tabMenu.id);
+        // Show in folder, as the page chip's: in the desktop app, for a page
+        // this computer keeps on disk — the open page by what its chip read,
+        // any other by its row: in a synced folder whose vault this account
+        // made here, or a file opened from it. The shell finds the file.
+        const onDisk = IS_DESKTOP && (tabMenu.id === focusedBlockId && showsOnDisk(vaultState) || openedFile(tabMenu.id)
+          || inKeptFolder(libTree, pagesById.get(tabMenu.id), work.linkOf));
+        // Go to folder: a synced folder's file, its directory opened in the
+        // folder view with the file selected (goToFile), in any window.
+        const tabDir = tabFile ? revealPath(libTree, tabFile).at(-1) || "" : "";
         return (
         <ContextMenu x={tabMenu.x} y={tabMenu.y} onClose={() => setTabMenu(null)}>
           <MenuItem icon={PinIcon} onClick={() => { setTabMenu(null); toggleTabPinned(tabMenu.id); }}>
@@ -14937,6 +14965,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClick={() => { setTabMenu(null); openProps(tabMenu.id, null, { at: { x: tabMenu.x, y: tabMenu.y } }); }}>
             {t("Page properties")}
           </MenuItem>
+          {tabDir ? (
+            <MenuItem icon={FolderIcon} title={t("Open the folder “{name}” in Gamma, with this file selected",
+              { name: libTree.folders.get(tabDir)?.name || t("Untitled") })}
+              onClick={() => { setTabMenu(null); goToFile(tabMenu.id, tabDir); }}>{t("Go to folder")}</MenuItem>
+          ) : null}
+          {onDisk ? (
+            <MenuItem icon={FolderOpenIcon} title={t("Show the file in this computer's file manager")}
+              onClick={() => { setTabMenu(null); askShell("reveal-on-disk", { page: tabMenu.id }); }}>{t("Show in folder")}</MenuItem>
+          ) : null}
           {!isPhone ? (
             // Tab groups (docs/dev/tab_groups.md): one group splits once, this
             // tab into a pane of its own on the right (the only tab of the

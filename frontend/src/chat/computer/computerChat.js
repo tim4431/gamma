@@ -398,17 +398,17 @@ export function diffRows(diff) {
 // own): null for a vault's and a co-author's (a synced folder's alone);
 // else, while the conversation has no turn, the menu of the directories
 // offered (this computer's `dirs`, GET /api/local-agents' [{id, path,
-// name}], or another computer's, the server's `computer.dirs`) and "No
-// folder" ({pick: true, value, options}, `value` the one `picked` while it
+// name}], or another computer's, the server's `computer.dirs`) and "Its
+// own directory" ({pick: true, value, options}, `value` the one `picked` while it
 // is offered, else ""); once it has one, {pick: false, text} naming the
 // one it works in.
 export function workPlace(info, conversation, dirs = [], picked = "") {
   if (!info || info.dir?.kind === "vault" || info.lent) return null;
   if (conversation?.messages?.length) {
-    return { pick: false, text: info.dir?.kind === "offered" ? String(info.dir.name || "") : t("No folder") };
+    return { pick: false, text: info.dir?.kind === "offered" ? String(info.dir.name || "") : t("Its own directory") };
   }
   const offered = ((isRemote(info) ? info.dirs : dirs) || []).filter((d) => d && d.id);
-  const options = [["", t("No folder")], ...offered.map((d) => [d.id, String(d.name || d.path || d.id)])];
+  const options = [["", t("Its own directory")], ...offered.map((d) => [d.id, String(d.name || d.path || d.id)])];
   return { pick: true, value: offered.some((d) => d.id === picked) ? picked : "", options };
 }
 
@@ -434,7 +434,7 @@ export function sessionsDir(info, place = null) {
 export function sessionsAway(away, computer) {
   if (away === "offline") return t("{computer} is offline: its sessions show once it connects.", { computer });
   if (away === "older") return t("{computer} needs a newer Gamma to list its sessions here.", { computer });
-  if (away === "waiting") return t("{computer} has not answered yet: open History again in a moment.", { computer });
+  if (away === "waiting") return t("{computer} has not answered yet.", { computer });
   return "";
 }
 

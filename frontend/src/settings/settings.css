@@ -126,6 +126,11 @@
   transition: color var(--dur-fast), border-color var(--dur-fast);
 }
 .settingRow:hover .setIcon { color: var(--text-secondary); border-color: var(--border-hover); }
+/* A row with no icon (a dialog's switch) gives up the icon's column rather
+   than show an empty tile. */
+.setIcon:empty { display: none; }
+.setRow:has(> .setIcon:empty) { grid-template-columns: minmax(0, 1fr) auto; }
+.setRow.wide:has(> .setIcon:empty) > :last-child:not(.settingText) { grid-column: 1 / -1; }
 .settingsPane .settingRow { flex-shrink: 0; }
 
 /* --- controls sitting in the right-hand cell of a row --- */
