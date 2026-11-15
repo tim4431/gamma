@@ -468,6 +468,13 @@ them only after further relevant changes or when a failure needs investigation.
   several related suites. Broaden further when the impact cannot be bounded.
 - Documentation-only changes: check the diff and referenced commands/paths;
   application tests and builds are unnecessary.
+- Before a feature branch merges into `dev`, once, on its last commit: the
+  [full backend suite](#full-backend-suite) (`-n auto --dist loadfile`,
+  about 4 minutes) and, from `frontend/`, `npm run lint && npm test` (about
+  30 s). A change breaks tests of modules it never touched (a notice's
+  pane, a settings pane's reads, a prompt's words), and `dev` is what the
+  next merge to `main` carries, where each failure costs a CI round. The
+  browser suite stays chosen by `--changed`.
 
 Examples (paths are relative to the indicated directory):
 
@@ -706,6 +713,72 @@ double ref attach shows there, as it does in `npm run dev`. Other React
 rendering and interactions are exercised by the browser suite below, plus one standalone
 browser regression: `npm run e2e:latex` bundles the block
 editor with esbuild over an in-memory fixture ([latex_editing.md](latex_editing.md)).
+
+### Order and timing
+
+A worker runs other files before a test each time (`--dist loadfile` hands
+them out as workers free up), and a CI runner is slower than this machine,
+so a test that depends on either passes here and fails there now and then.
+What releasing 0.4.0 met, and what each needs:
+
+- **A token on the shared client.** `client` carries the last login's
+  cookie, and `auth.py` takes a session cookie before a bearer, so a token
+  sent through it runs as whoever logged in last. A token goes through
+  `anon` or `fresh_client()`.
+- **A module global a test or a request set.** A request sent as from
+  127.0.0.1 to 127.0.0.1 names this server's `/mcp` for every later agent
+  turn of the process (`local_agents/tools.py heard`). conftest resets such
+  state after each test (`_mcp_address_forgotten`, `_shell_secret_forgotten`,
+  `_reset_ratelimit`); one more gets its own fixture there, not a line in
+  the test that met it.
+- **The same bytes in the shared workspace.** Uploads are content-addressed
+  and a pypdf blank page writes the same bytes every time, so a "new"
+  document in the `guest` workspace may be one another file measured or
+  indexed. A test clears what it then asserts is missing, or makes its
+  bytes its own.
+- **Waiting for an earlier state.** Wait for the state the next line
+  needs, not one before it: the job's end hook rather than the manifest it
+  wrote first, the announce with every agent probed rather than the first
+  one. A test that orders two threads makes the order (wraps the call that
+  marks the point, as `test_zotero_sync_pdfs`'s relocation race does), not
+  a sleep.
+
+`GAMMA_TEST_SHUFFLE=<seed>` puts the files in another order (conftest's
+`pytest_collection_modifyitems`; each file's tests stay in theirs):
+
+```bash
+GAMMA_TEST_SHUFFLE=1 python -m pytest tests -q -n auto --dist loadfile
+```
+
+A failure that comes with one seed and not without is an order
+dependence; the seed gives the order again, though a worker's share also
+depends on how many workers there are (`-n`). `flakes.yml` runs the suite
+so twice a week ([github_actions.md](github_actions.md#flakesyml)).
+
+### Known flakes
+
+Failures seen once that a rerun cleared, not yet fixed: what was seen and
+what is known of the cause. The `merge` skill adds one when it reruns
+instead of fixing; the fix removes its entry.
+
+- **collab: two people's Backspace merges never lose a block's text**
+  (`frontend/tests/e2e/scenarios/collab.mjs:456`, CI, 2026-11-14): "bob's
+  refused join gone from his screen" timed out, though his screenshot shows
+  the rows as they should be (`onetwo`, `three of bob's`, `tail`) and the
+  "couldn't be saved" toast: some element of the page, not one on screen,
+  still held "twothree". Its refused save's 404, expected there, then failed
+  the next step's `assertNoProblems` ("a highlight bob makes on the PDF
+  appears on alice's page"), since a failed step leaves its page problems
+  behind.
+- **notes: Backspace right after a list marker takes it in one press**
+  (`frontend/tests/e2e/scenarios/notes.mjs:1272`, CI, 2026-11-14): the
+  server's tree never matched the screen's, though each of the six edits
+  went out as an ops request answered 200. Not seen in four local runs of
+  the `notes:` steps.
+- **The brand check** (`tools/branding/build.mjs --check`, this machine,
+  2026-11-14): one run ended with an uncaught file-system error (its stack
+  lost) while the backend suite and the frontend tests ran beside it; 18
+  runs since, under the same load, passed.
 
 ### What a run leaves behind
 

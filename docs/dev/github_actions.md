@@ -23,6 +23,7 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
 | `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, the backend suite on the apps' Python 3.13 and pins (`backend-mobile`), backend pytest, the frontend lint, unit tests + build + the startup budget and the desktop shell's unit tests, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min); reported only: the timing budgets, a table in the run's summary |
+| `flakes` | `flakes.yml` | Monday and Thursday at 03:17 UTC on `dev`; manual dispatch on any ref | pass/fail, holding nothing: the backend suite twice on each Python (3.12, and 3.13 with the apps' pins) with its files in a shuffled order, and the browser suite's two shards once more; what fails is a flake to fix ([below](#flakesyml)) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the Android APK (when signed), the browser extension's `gamma-connector-<version>.zip` and the AI plugins → GitHub Release `v<version>`; after it, the MSIX to the Microsoft Store and the Android bundle to Google Play's internal track when their secrets exist; a Docker tag `<version>`; from `main`, an empty commit on `main` with the next `ipad-test-release-NNN` marker (TestFlight) |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (from `main`, not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
@@ -476,8 +477,30 @@ guard. No installers. A PR that changes only
 and `site.yml` check those. (A PR touching the brand artwork the site
 copies still runs `check`: its `branding` job owns those files.) The `merge` skill runs the same suites
 locally first and waits for this before merging; a red check, a flaky test
-or a real bug, is fixed on the branch in a commit of its own, pushed, and
-watched again.
+or a real bug, is fixed on the merge's branch in a commit of its own,
+pushed, and watched again. A failure in code the merge does not change,
+which the machine does not show, may instead get one rerun, and goes on
+the list of [known flakes](debugging.md#known-flakes).
+
+## `flakes.yml`
+
+A merge waits for a green `check`, and a failure that comes once in many
+runs turns up there otherwise: the files an xdist worker happens to run
+before a test (a cookie on the shared client, a module global a request
+set, the same bytes uploaded into the shared guest workspace), or a slow
+runner's timing. Releasing 0.4.0 met six of them, one per round. This
+workflow looks for them between merges. On a schedule it checks out
+`dev` (a schedule runs `main`'s copy of the file, so it exists there
+from the next merge on); a dispatch runs the ref it is given
+(`gh workflow run flakes.yml --ref <branch>`). The backend suite runs
+four times, twice on Python 3.12 with `requirements.txt` and twice on
+3.13 with the apps' pins, each with `GAMMA_TEST_SHUFFLE` set to a seed of
+its own (the run id, the Python, the run), so its files go to the
+workers in another order ([debugging.md](debugging.md#order-and-timing));
+the seed is in the job's summary. The browser suite runs its two shards
+as `check.yml` does, with the same `e2e-failures-<shard>` artifact. A
+failure holds nothing: it is a flake to fix, or to list under
+[known flakes](debugging.md#known-flakes) until it is.
 
 ## `ipad.yml`
 

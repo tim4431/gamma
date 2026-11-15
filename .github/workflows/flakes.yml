@@ -1,0 +1,103 @@
+# The suites' rare failures, looked for between merges. A merge to main waits
+# for a green check, and a failure that comes once in many runs (the files a
+# worker happens to run before a test, a slow runner's timing) otherwise
+# turns up there, one per round. Twice a week, and on demand, dev's backend
+# suite runs on both Pythons with its files in a shuffled order
+# (GAMMA_TEST_SHUFFLE, a seed per job: backend/tests/conftest.py), and the
+# browser suite runs once more. A failure here is a flake to fix and to list
+# (docs/dev/debugging.md "Known flakes"), never a merge held. Overview:
+# docs/dev/github_actions.md.
+
+name: flakes
+
+on:
+  schedule:
+    - cron: "17 3 * * 1,4"  # Monday and Thursday, 03:17 UTC
+  workflow_dispatch:  # on the ref chosen (gh workflow run flakes.yml --ref <branch>)
+
+concurrency:
+  group: flakes
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend (${{ matrix.python }}, run ${{ matrix.run }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+        run: [1, 2]
+        include:
+          - python: "3.12"
+            requirements: requirements.txt
+          - python: "3.13"
+            requirements: requirements-mobile.txt  # the apps' pins, as check.yml's backend-mobile
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}  # a schedule runs on main's file
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ${{ matrix.requirements }} -r requirements-dev.txt
+      - working-directory: backend
+        env:
+          GAMMA_TEST_SHUFFLE: ${{ github.run_id }}-${{ matrix.python }}-${{ matrix.run }}
+        run: |
+          echo "Files in the order of seed \`$GAMMA_TEST_SHUFFLE\` (GAMMA_TEST_SHUFFLE=$GAMMA_TEST_SHUFFLE gives it again)" >> "$GITHUB_STEP_SUMMARY"
+          python -m pytest tests -q -n auto --dist loadfile
+
+  e2e:
+    name: e2e (${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          npx playwright install --with-deps chromium-headless-shell
+      - working-directory: frontend
+        env:
+          GAMMA_E2E_PYTHON: python
+          TMPDIR: ${{ runner.temp }}/e2e
+        run: |
+          mkdir -p "$TMPDIR"
+          npm run e2e -- --continue --jobs 3 --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-failures-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e/gamma-e2e-*/failures/
+          if-no-files-found: ignore

@@ -274,6 +274,26 @@ def pytest_sessionfinish(session, exitstatus):
         c.__exit__(None, None, None)
 
 
+def pytest_collection_modifyitems(config, items):
+    """``GAMMA_TEST_SHUFFLE=<seed>``: the files in an order of that seed's,
+    each file's tests kept in theirs, so each worker runs other files before
+    a given one (``--dist loadfile`` hands them out in this order). A test
+    that passes only after some other file, or never after one, shows up
+    (docs/dev/debugging.md "Order and timing"); the seed gives the order
+    again. Every worker collects alike, so the order is the same in each."""
+    seed = os.environ.get("GAMMA_TEST_SHUFFLE")
+    if not seed:
+        return
+    import random
+
+    files: dict = {}
+    for item in items:
+        files.setdefault(item.path, []).append(item)
+    order = list(files)
+    random.Random(seed).shuffle(order)
+    items[:] = [item for path in order for item in files[path]]
+
+
 def fresh_client(**kwargs):
     """A TestClient of its own (its own cookies) on the session client's
     loop. A bare ``TestClient(app)`` opens a loop per request and per
