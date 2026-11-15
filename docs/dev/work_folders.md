@@ -109,8 +109,9 @@ was made one: the computer's directory pushes everything into an empty
 folder of that server, which carries the mark, so the folder's files are
 that server's pages (its explorer, comments and feedback), chosen with
 *Choose files…* on the computer. This is step 4b of
-[agent-collab.md](../research/agent-collab.md); the agents that answer
-such a folder's Sends are its next steps.
+[agent-collab.md](../research/agent-collab.md); the computer's agent
+working in such a folder is its next step ([local_agents.md](local_agents.md)
+"A work folder of another server").
 
 - **An explicit opt-in.** `folder_links.work_vault(link)` is
   `work_folder_link(link)`, or a remote folder vault (not the library's
@@ -1149,12 +1150,13 @@ classes" the class `file`.)
   document still reads in place here.
 - **The annotation files.** Every whole round writes the work folder's
   `.gamma/annotations/` after its sync (`open.json`, `open.md`, the open
-  threads and the bare highlights with their pictures, a file per Send;
-  the summary in `status.annotations`), and the hot loop writes them
-  within a pass of a highlight, a comment, a reply, a resolve, a
-  relocation or a Send ([annotations.md](annotations.md) "The files"); a
-  paused or choosing vault writes none between rounds. The
-  `.gamma/feedback/` they were in before goes at the first round.
+  threads and the bare highlights with their pictures; the summary in
+  `status.annotations`), and the hot loop writes them within a pass of a
+  highlight, a comment, a reply, a resolve or a relocation
+  ([annotations.md](annotations.md) "The files"); a paused or choosing
+  vault writes none between rounds. The `.gamma/feedback/` they were in
+  before, and the Sends' `.gamma/annotations/requests/`, go at the first
+  round.
 - **Opening a file with the app** (`linked_files.open_file`, `POST
   /api/folder-links/open`) inside a work folder opens the page of a file it
   tracks, after a round for one it has not read yet. A file it does not

@@ -7,7 +7,7 @@
 // `onComputer`). Every window of the maker asks, the desktop app's or not:
 // unlike useVault's route, an answer of 404 (a server older than the route)
 // or an error is "none" for that read alone, never for the window. Each
-// vault names the agent that runs the maker's Sends there (`vault.agent`):
+// vault names the agent that works there for the maker (`vault.agent`):
 // the chat's and the comment fields' agent there (chat/agents.js
 // keeperAgent and commentAgents, App's chatAgentList and commentAgentList).
 import { useCallback, useEffect, useRef, useState } from "react";

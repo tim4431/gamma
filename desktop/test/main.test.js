@@ -685,7 +685,7 @@ function agentsHost(name, agents, dirs = []) {
       const body = JSON.parse(init.body);
       s.fake.agents = s.fake.agents.map((a) => (a.name !== agent[1] ? a : {
         ...a, ...(body.enabled !== undefined ? { enabled: body.enabled, runs: 'never' } : {}), ...(body.runs ? { runs: body.runs } : {}) }));
-      return { ...s.fake.agents.find((a) => a.name === agent[1]), queued: body.enabled ? 2 : 0 };
+      return { ...s.fake.agents.find((a) => a.name === agent[1]) };
     }
     if (p === '/api/local-agents/dirs' && init.method === 'PUT') {
       s.fake.dirs = JSON.parse(init.body).map((d, n) => ({ id: d.id || `d${n + 9}`, path: d.path, name: d.name || path.basename(d.path), added_at: '' }));
@@ -715,7 +715,7 @@ test('an agent of this computer from Settings: the page asks the shell, turning 
     const [on] = patches();
     assert.deepEqual([on.path, on.body], ['/api/local-agents/codex', { enabled: true }]);
     assert.equal(on.headers['X-Gamma-Shell'], shell.shellSecret, 'turning an agent on is the computer\'s word');
-    assert.equal(shell.notice(), 'Codex is on: it answers the Sends you make in your synced folders; 2 waiting were handed to it.');
+    assert.equal(shell.notice(), 'Codex is on: it talks with you in the chat and answers the comments you send it.');
 
     // on already changes nothing; a name that is none is refused; off asks nothing and carries the word, so it turns off another account's
     const asks = shell.asked.length;
@@ -726,7 +726,7 @@ test('an agent of this computer from Settings: the page asks the shell, turning 
     assert.deepEqual(off.body, { enabled: false });
     assert.equal(off.headers['X-Gamma-Shell'], shell.shellSecret);
     assert.equal(shell.asked.length, asks, 'nothing asked');
-    assert.equal(shell.notice(), 'Codex is off on this computer: your Sends wait for an agent you run yourself.');
+    assert.equal(shell.notice(), 'Codex is off on this computer.');
 
     // a remote server's page is not asked of
     const remote = server('NAS', [], { remote: 'https://nas.example' });
@@ -2852,7 +2852,7 @@ async function askingWindow({ focused = true } = {}) {
     }
     if (p === '/api/computer-links') return SHOWN;
     if (p === '/api/local-agents') return { agents: host.fake.agents, dirs: [] };
-    if (p === '/api/local-agents/codex' && init.method === 'PATCH') return { ...codexRuns('never')[0], queued: 0 };
+    if (p === '/api/local-agents/codex' && init.method === 'PATCH') return codexRuns('never')[0];
     return null;
   };
   await shell.showWindow();

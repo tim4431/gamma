@@ -13,7 +13,8 @@ an agent there has its turns run on that computer (step 4d, "a turn run on
 another computer" below).
 
 A conversation is the bucket's active one for that account (``archived_at``
-NULL) or an archived one (History), or a comment thread's (``thread_id``,
+NULL) or an archived one (History; a co-author's both are in the History
+of its agent's owner too, ``lent_history``), or a comment thread's (``thread_id``,
 gamma/local_agents/threads.py: its bucket the thread's page, never the
 bucket's active one nor in History), and names where its agent works
 (``dir``), chosen when it starts: a turn in another directory starts a new
@@ -218,6 +219,16 @@ def active(conn, bucket: str, user_id: str) -> dict | None:
     row = conn.execute(f"{_SELECT} WHERE bucket = ? AND user_id = ? AND archived_at IS NULL AND thread_id = '' "
                        "ORDER BY updated_at DESC LIMIT 1", (bucket, user_id)).fetchone()
     return _conversation(row) if row else None
+
+
+def lent_one(conn, conversation_id: str, owner: str) -> dict | None:
+    """The chat conversation ``conversation_id`` of a co-author the agent of
+    ``owner`` serves (``lent_history``), None for any other (one of
+    ``owner``'s own, a thread's, none)."""
+    found = get(conn, conversation_id)
+    if found is None or found["thread_id"] or not lent(found) or found["owner"] != owner:
+        return None
+    return found
 
 
 def of_thread(conn, thread_id: str, user_id: str, *, owner: bool = False) -> dict | None:
@@ -481,6 +492,18 @@ def history(ws: str, bucket: str, user_id: str) -> list[dict]:
     return [listed(_conversation(row)) for row in rows]
 
 
+def lent_history(ws: str, bucket: str, owner: str) -> list[dict]:
+    """The bucket's chat conversations, active or archived, of the
+    co-authors the agents of ``owner`` serve (``readable``, ``lent``),
+    newest first, as ``listed`` with ``user_id``, whose they are; a thread's
+    never. The owner reads, stops, answers and exports them, never opens one
+    as its own or deletes it."""
+    with connect_pages_db(ws) as conn:
+        rows = conn.execute(f"{_SELECT} WHERE bucket = ? AND owner = ? AND user_id != ? AND thread_id = '' "
+                            "ORDER BY updated_at DESC LIMIT ?", (bucket, owner, owner, HISTORY_CAP)).fetchall()
+    return [{**listed(found), "user_id": found["user_id"]} for found in map(_conversation, rows)]
+
+
 def open_one(ws: str, conversation: dict, label: str) -> dict:
     """The archived ``conversation`` becomes its bucket's active one, the
     active one archived → it as written. ChatError 409 while the active
@@ -626,6 +649,17 @@ def run_of(conn, turn_id: str) -> dict | None:
                        "r.user_id) FROM computer_chat_runs r LEFT JOIN computer_chats c ON c.id = r.conversation_id "
                        "WHERE r.turn_id = ?", (turn_id,)).fetchone()
     return dict(zip((*_RUN_COLUMNS, "owner"), row)) if row else None
+
+
+def holds_thread(conn, holder: str, owner: str, thread_id: str) -> bool:
+    """Whether a run of the computer ``holder`` holds running a turn of the
+    thread ``thread_id``'s conversation whose agent is ``owner``'s: what
+    lets that computer fetch the thread's pictures
+    (gamma/routers/computers.py)."""
+    return bool(conn.execute(
+        "SELECT 1 FROM computer_chat_runs r JOIN computer_chats c ON c.id = r.conversation_id "
+        "WHERE r.holder = ? AND r.state = 'running' AND c.thread_id = ? "
+        "AND COALESCE(NULLIF(c.owner, ''), r.user_id) = ? LIMIT 1", (holder, thread_id, owner)).fetchone())
 
 
 def _message_at(conversation: dict | None, turn_id: str) -> int | None:
@@ -901,36 +935,39 @@ def fail_detached(ws: str, pages: list[str]) -> list[str]:
 
 
 def remote_turns(ws: str, user_id: str) -> list[dict]:
-    """The turns of ``user_id``'s in ``ws`` queued or running on another
-    computer, oldest first: ``{ws, turn_id, conversation_id, bucket,
-    agent, title, computer, state, asking, stopping, queued_at,
+    """The turns in ``ws`` queued or running on another computer of
+    ``user_id`` and of the co-authors its agents serve (``readable``),
+    oldest first: ``{ws, turn_id, conversation_id, thread_id, bucket,
+    agent, user_id, title, computer, state, asking, stopping, queued_at,
     started_at}`` (Background tasks' rows, routers/jobs.py), ``agent`` the
-    turn's own, ``title`` the page's, ``computer`` the name of the computer
-    that holds it, or, while it waits, of the one that keeps its work folder
-    for the account, else of the one last known to (the row's
-    ``computer``), ``asking`` whether its agent message says an ask waits
-    for an answer on that computer (``waiting``)."""
+    turn's own, ``user_id`` the account whose turn it is, ``title`` the
+    page's, ``computer`` the name of the computer that holds it, or, while
+    it waits, of the one that keeps its work folder for that account, else
+    of the one last known to (the row's ``computer``), ``asking`` whether
+    its agent message says an ask waits for an answer on that computer
+    (``waiting``)."""
     from ..computers import registry  # local: the registry reaches the workspaces
 
     with connect_pages_db(ws) as conn:
         rows = conn.execute(
-            "SELECT r.turn_id, r.conversation_id, r.bucket, COALESCE(NULLIF(r.agent, ''), c.agent), b.content, "
-            "r.state, r.stop, r.queued_at, r.started_at, r.holder, b.work_folder, r.computer, "
+            "SELECT r.turn_id, r.conversation_id, c.thread_id, r.bucket, COALESCE(NULLIF(r.agent, ''), c.agent), "
+            "r.user_id, b.content, r.state, r.stop, r.queued_at, r.started_at, r.holder, b.work_folder, r.computer, "
             "(SELECT json_extract(m.value, '$.waiting') FROM json_each(c.messages) m "
             " WHERE json_extract(m.value, '$.role') = 'agent' AND json_extract(m.value, '$.turn_id') = r.turn_id) "
             "FROM computer_chat_runs r JOIN computer_chats c ON c.id = r.conversation_id "
-            "LEFT JOIN unified_blocks b ON b.id = r.bucket WHERE r.user_id = ? AND r.state IN ('queued', 'running') "
-            "ORDER BY r.queued_at, r.turn_id", (user_id,)).fetchall()
+            "LEFT JOIN unified_blocks b ON b.id = r.bucket WHERE (r.user_id = ? OR c.owner = ?) "
+            "AND r.state IN ('queued', 'running') ORDER BY r.queued_at, r.turn_id", (user_id, user_id)).fetchall()
 
-    def computer(holder: str, folder: str, known: str) -> str:
+    def computer(holder: str, folder: str, known: str, person: str) -> str:
         if holder:
             return registry.computer_name(holder) or known
-        found = registry.agent_of(ws, folder, user_id, lent=True) if folder else None
+        found = registry.agent_of(ws, folder, person, lent=True) if folder else None
         return found["computer"] if found else known
 
-    return [{"ws": ws, "turn_id": turn_id, "conversation_id": conversation_id, "bucket": bucket, "agent": agent,
-             "title": title or "", "computer": computer(holder or "", folder or "", known or ""), "state": state,
+    return [{"ws": ws, "turn_id": turn_id, "conversation_id": conversation_id, "thread_id": thread_id or "",
+             "bucket": bucket, "agent": agent, "user_id": person, "title": title or "",
+             "computer": computer(holder or "", folder or "", known or "", person), "state": state,
              "asking": state == "running" and bool(waiting), "stopping": bool(stop), "queued_at": queued_at,
              "started_at": started_at}
-            for turn_id, conversation_id, bucket, agent, title, state, stop, queued_at, started_at, holder, folder,
-            known, waiting in rows]
+            for turn_id, conversation_id, thread_id, bucket, agent, person, title, state, stop, queued_at, started_at,
+            holder, folder, known, waiting in rows]

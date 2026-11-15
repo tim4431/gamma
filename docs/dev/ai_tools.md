@@ -114,7 +114,7 @@ connection's Comment level, the four note tools at its Edit level
 | `read_page` | Read pages | folder + page | Read one page, by id or a work folder's file by its `path`: title, the pages it is inside and the pages inside it, properties, the user's highlights and notes, its open comment threads, and its document's text — a PDF's extracted text in windows by page and offset, a text file's numbered lines in windows by `from_line` / `to_line` |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
-| `list_annotations` | Read pages | folder + page | The highlights and comment threads of a page, a folder or the library (a page's or a folder's id, a folder's path, a work folder by name, `home`; the chat's own page or folder without one; a Send request's threads), each with its file, place, source line, note and a thread's comments, as Markdown, in batches (`limit`, `after`) |
+| `list_annotations` | Read pages | folder + page | The highlights and comment threads of a page, a folder or the library (a page's or a folder's id, a folder's path, a work folder by name, `home`; the chat's own page or folder without one), each with its file, place, source line, note and a thread's comments, as Markdown, in batches (`limit`, `after`) |
 | `read_annotation` | Read pages | folder + page | One annotation, a thread in any state or a bare highlight, as Markdown and as JSON, with the pictures of its region now and as it was commented on |
 | `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
@@ -449,8 +449,7 @@ name (exactly, else ignoring case; exactly one), else a folder by its path
 as the tools show it (`_find_folder`); left out, the chat's own: a page
 chat's page, a folder chat's folder, the library at the root. `state` open
 (the default), resolved or all, which filters the threads alone: a bare
-highlight is always listed; `request` a Send request's id, whose
-instruction line and state head its threads. The reach is the chat's: a
+highlight is always listed. The reach is the chat's: a
 page chat reads its own page (and the pages in its context), a folder chat
 the folders and pages below its folder, `home` at the library root alone;
 anything else is "that folder is outside this chat's scope" or the page's

@@ -43,7 +43,7 @@
 // the page draws no card.
 import { t, tn } from "../../shared/i18n/i18n.js";
 import { agentWorking, sinceText } from "../../vault/vaultState.js";
-import { GAMMA } from "../agents.js";
+import { GAMMA, agentLabel } from "../agents.js";
 
 // How long a message may be (the server's cap).
 export const TEXT_MAX = 20000;
@@ -85,13 +85,15 @@ export const waitsThere = (info, message) => isRemote(info) && message?.waiting 
 // folder's, or "home"), with the version of the conversation the side
 // holds (the server then answers `same` while it is still that one), the
 // agent picked (the server shows no conversation of another agent) and the
-// comment thread whose conversation it shows in place of the bucket's own
-// ("" for none: chatSide.js useChatThread).
-export function chatPath(bucket, version = null, agent = "", thread = "") {
+// conversation it shows in place of the bucket's own (`shown`, chatSide.js
+// useChatShown: {thread} a comment thread's, {conversation} a co-author's;
+// null for none).
+export function chatPath(bucket, version = null, agent = "", shown = null) {
   const query = new URLSearchParams({ bucket });
   if (version != null) query.set("version", String(version));
   if (agent) query.set("agent", agent);
-  if (thread) query.set("thread", thread);
+  if (shown?.thread) query.set("thread", shown.thread);
+  else if (shown?.conversation) query.set("conversation", shown.conversation);
   return `/local-agents/chat?${query}`;
 }
 
@@ -580,13 +582,17 @@ export function shownMessages(conversation, info) {
 // current one while another agent is shown (`gammaNow`, {title, preview,
 // updated_at} or null), the computer agents' archived ones and their
 // active one while it is not the one shown (`computer`, GET
-// /api/local-agents/chat/history's {conversations, active}; null unread).
-// `agent` is the agent shown, `shownId` the id of its conversation (a
-// computer agent's). A row is {id, agent, title, preview, updated_at,
-// active, current} (Gamma AI's with its `count`): `agent` its agent's
-// name, `active` the one shown, `current` an agent's own current
-// conversation, which picking that agent shows ("gamma" the id of Gamma
-// AI's).
+// /api/local-agents/chat/history's {conversations, active, lent}; null
+// unread), and the co-authors' chats with the reader's agents (`lent`,
+// each with its `person`). `agent` is the agent shown, `shownId` the id of
+// its conversation (a computer agent's). A row is {id, agent, title,
+// preview, updated_at, active, current, lent, by} (Gamma AI's with its
+// `count`): `agent` its agent's name, `active` the one shown, `current` an
+// agent's own current conversation, which picking that agent shows
+// ("gamma" the id of Gamma AI's), `lent` a co-author's, which the chat
+// shows in place of its own (chatSide.js showInChat) and only reads,
+// stops, answers and exports, `by` what names it ("bob's chat with
+// Codex").
 export function historyRows({ shown = null, agent = GAMMA, shownId = "", gamma = [], gammaNow = null, computer = null } = {}) {
   const at = (row) => Date.parse(row.updated_at || "") || 0;
   const theirs = (c, current = false) => ({ id: c.id, agent: c.agent, title: c.title || "", preview: "", updated_at: c.updated_at || "",
@@ -596,6 +602,8 @@ export function historyRows({ shown = null, agent = GAMMA, shownId = "", gamma =
     ...(agent !== GAMMA && gammaNow ? [{ id: GAMMA, agent: GAMMA, ...gammaNow, current: true }] : []),
     ...(computer?.conversations || []).map((c) => theirs(c)),
     ...(computer?.active && computer.active.id !== shownId ? [theirs(computer.active, true)] : []),
+    ...(computer?.lent || []).filter((c) => c.id !== shownId).map((c) => ({ ...theirs(c), lent: true,
+      by: t("{person}'s chat with {agent}", { person: c.person || t("Someone"), agent: agentLabel(c.agent) }) })),
   ].sort((a, b) => at(b) - at(a));
   return [...(shown ? [{ id: "", agent, ...shown, updated_at: "", active: true }] : []), ...others];
 }

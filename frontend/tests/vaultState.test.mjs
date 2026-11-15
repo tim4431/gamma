@@ -224,9 +224,9 @@ test("a work folder's agent on this computer: named, its problem while it cannot
   assert.deepEqual(agentLine(agent()), { line: "Agent: Codex on this computer", problem: "", working: null });
   assert.equal(agentLine(agent({ ready: false, problem: "Codex is not on this computer." })).problem, "Codex is not on this computer.");
   assert.equal(agentLine(agent({ ready: null, problem: "" })).problem, "", "still checking");
-  assert.deepEqual(agentLine(agent({ running: { request_id: "r1", detail: "Editing main.tex" } })).working,
+  assert.deepEqual(agentLine(agent({ running: { detail: "Editing main.tex" } })).working,
     { label: "Codex is working…", detail: "Editing main.tex", title: "Editing main.tex", tone: "pending", live: true });
-  assert.deepEqual(agentLine(agent({ running: { request_id: "r1", detail: "" } })).working,
+  assert.deepEqual(agentLine(agent({ running: { detail: "" } })).working,
     { label: "Codex is working…", detail: "", title: "Codex is working…", tone: "pending", live: true }, "a member who cannot act on it");
   assert.equal(agentWorking("Codex", "Editing main.tex"), "Codex is working: Editing main.tex");
   assert.equal(agentWorking("Codex"), "Codex is working…");
@@ -315,7 +315,7 @@ test("a synced folder's root names the computer that keeps it and how its sync s
   assert.equal(folderKeeper(null, null, now), null, "nobody this account knows keeps it");
 });
 
-test("the computer's chip names the agent there that runs the work folder's Sends", () => {
+test("the computer's chip names the agent there that works in the work folder", () => {
   const work = (agent) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent } });
   const chip = computerChip([work({ name: "codex", label: "Codex" })]);
   assert.equal(chip.agent, "Agent: Codex on TIM-PC");

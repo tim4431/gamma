@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
-  agentAway, agentOffline, agentWhere, dateLabel, datePending, dateToken, mentionChip, mentionRows, mentionText, mentionTrigger, parseDateQuery, peopleIn, remindAt, scanMentions,
+  agentOffline, agentWhere, dateLabel, datePending, dateToken, mentionChip, mentionRows, mentionText, mentionTrigger, parseDateQuery, peopleIn, remindAt, scanMentions,
 } from "../src/editor/mentions.js";
 
 const shared = JSON.parse(await readFile(new URL("../../tests/shared/mentions.json", import.meta.url), "utf8"));
@@ -197,10 +197,8 @@ test("the agent of the computer that keeps the folder: its row and chip name tha
   const row = rows("", { agents: [there] }).find((r) => r.kind === "agent");
   assert.equal(row.computer, "TIM-PC");
   assert.equal(row.online, false);
-  assert.equal(agentAway(row), "TIM-PC is offline: this runs when it connects.");
   assert.equal(agentWhere(row), "on TIM-PC");
-  assert.equal(agentAway({ ...there, online: true }), "", "online: nothing waits");
-  assert.equal(agentAway(CODEX), "", "this computer's own");
+  assert.equal(agentOffline({ ...there, online: true }), "", "online: nothing waits");
   assert.equal(agentOffline(row), "TIM-PC is offline: send this once it connects.", "a comment sent to it is not taken");
   assert.equal(agentOffline(CODEX), "");
   assert.equal(agentWhere(CODEX), "on this computer");

@@ -118,9 +118,10 @@ All state is SQLite + files on disk under a data directory (env
     folder share's folder —, `thread_id`, `comment_id`, `''` where the kind
     has none), the `share_token` when the recipient reaches the page only
     through a share (one naming it, or the one the event came through), a `snippet` of the text at the time, `at`, the
-    recipient's `read_at` / `archived_at`, and `agent`, the display name of
-    the integration token whose write made the item (`''` for a person's;
-    step 54); indexed per recipient and time,
+    recipient's `read_at` / `archived_at`, and the agent whose write made
+    the item (`''` for a person's): `agent` its name (step 54), `agent_id`
+    its id and `agent_owner` its owner's username where it wrote for a
+    co-author (step 66; `gamma/agents.py`); indexed per recipient and time,
     per recipient's unread rows (partial) and per comment (partial). No
     unique index: the writers dedupe. A listing archives the items that
     lead nowhere any more, a daily sweep deletes old ones, and they go
@@ -439,10 +440,6 @@ All state is SQLite + files on disk under a data directory (env
     Private like `computer_chats` (`ws_backup.PRIVATE_TABLES`), gone with
     its page (`ops._purge`) and with its account's rows; `bucket` was
     `page_id` until step 59;
-  - `feedback_request_runs` — the run of a computer that holds a Send of
-    this server's (step 4c, [computers.md](computers.md) "The Sends"): the
-    request, the holding token, the run, the agent, the `seen` time, the
-    comment ids it read, its end; swept with its request; additive;
   - `chats` / `chat_history` — the AI chat
     ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version
@@ -456,18 +453,20 @@ All state is SQLite + files on disk under a data directory (env
     root's id), its anchor block, the page it was on (a hint for the
     purges), the author's id and username at the time, the text, its
     times, the root's resolution, a tombstone mark and `orphaned_at` (its
-    block was deleted; swept seven days on), the integration token that
-    wrote it or resolved it (`agent`, `agent_id`, `resolved_agent`) and the
-    root's `anchor`, the place it was opened on (step 54). Kept beside the
+    block was deleted; swept seven days on), the agent that wrote it or
+    resolved it (`agent`, `agent_id`, `agent_owner`; `resolved_agent`,
+    `resolved_agent_id`, `resolved_agent_owner`, step 66) and the root's
+    `anchor`, the place it was opened on (step 54). Kept beside the
     blocks, never in them, so no block reader skips them; a backup and a
     Gamma export carry them, a page deleted for good takes its own with
     it, and a comment write touches no page;
-  - `feedback_requests` and `feedback_request_threads` — a work folder's
-    Sends and the threads each names, with when an agent or another
-    account answered each ([annotations.md](annotations.md) "Requests"). From
-    `db.PAGES_SCHEMA` as the file opens (no workspace step); a restore in
-    place copies them, no merge, export or mirror does, and a sweep beside
-    the comments' deletes the finished ones 90 days after their last state;
+  - `agent_stamps` — the stamp (`properties.agent`) of a block an agent
+    made, kept by the block's id with its text when an op deletes it, so an
+    undo's insert of it gets the stamp back from the server and never from
+    the client ([block_centric.md](block_centric.md) "Made by an agent");
+    the block's return takes its row, and one deleted more than
+    `ops.STAMP_KEEP_DAYS` (7) ago goes at the next such delete. Additive;
+    no mirror or Gamma export carries it;
   - `page_follows` — who hears of every comment on a page
     ([comments.md](comments.md) "Following a page"): a row per page and
     account, `level` `all` or `replies`, `at`. A person who creates, edits

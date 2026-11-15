@@ -15,7 +15,7 @@ inert, the paths relative; Stop of a queued and of a running turn, the
 computer told, one away ended at once; a token taken back failing what its
 runs hold; New chat, History and delete; Background tasks rows.
 
-One process plays both sides (as tests/test_computer_sends.py): the
+One process plays both sides (as tests/test_computer_agents.py): the
 routes are driven directly with the computer's token, as the computer's
 runner would."""
 
@@ -193,7 +193,7 @@ def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, 
         assert who.post("/api/local-agents/chat/new", json={"bucket": lab.main}).status_code == status
     # History is the account's own, whatever its seat: nothing of the maker's to another
     assert _ok(lab.editor.get("/api/local-agents/chat/history", params={"bucket": lab.main})) == {
-        "conversations": [], "active": None}
+        "conversations": [], "active": None, "lent": []}
     for status, who in ((403, lab.stranger), (401, anon)):
         assert who.get("/api/local-agents/chat/history", params={"bucket": lab.main}).status_code == status
     script = fresh_client()
@@ -604,13 +604,15 @@ def test_new_chat_history_and_delete(lab, pc):
 # --- Background tasks ---------------------------------------------------------------------------------
 
 def test_background_tasks_list_the_turns_waiting_or_running_there(lab, pc):
-    turn = _say(lab)["turn"]["id"]
+    said = _say(lab)
+    turn = said["turn"]["id"]
     rows = [j for j in _ok(lab.maker.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn"]
     assert len(rows) == 1
     row = rows[0]
     assert (row["id"], row["workspace"], row["title"], row["state"], row["stoppable"], row["stopping"]) == (
         f"computer-{turn}", lab.ws, "Codex · main", "queued", True, False)
     assert row["params"] == {"bucket": lab.main, "turn": turn, "agent": "codex", "label": "Codex", "title": "main",
+                             "conversation": said["conversation"]["id"],
                              "computer": "TIM-PC"}  # the computer that keeps it, named
     assert [j for j in _ok(lab.editor.get("/api/jobs"))["jobs"] if j["kind"] == "computer-turn"] == []
     _claim(pc, turn)

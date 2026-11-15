@@ -1169,8 +1169,8 @@ export default function SettingsDialog({
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
   // What the panes read, kept while the dialog is open (settingsReads.js).
   const reads = React.useMemo(() => createSettingsReads(), [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps
-  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest, lang: papers?.translateLang }),
-    [users?.isAdmin, users?.me, users?.isGuest, papers?.translateLang]);
+  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest, lang: papers?.translateLang,
+    desktop: IS_DESKTOP }), [users?.isAdmin, users?.me, users?.isGuest, papers?.translateLang]);
   const [query, setQuery] = React.useState("");
   const [mobileIndex, setMobileIndex] = React.useState(false);
   const [jump, setJump] = React.useState(null);

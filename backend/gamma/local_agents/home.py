@@ -1,58 +1,15 @@
-"""Where a Send's request lives, as a run of the runner sees it
-(gamma/local_agents/runner.py ``_Run``; docs/dev/local_agents.md): the
-request, its claim, its progress and its end, its entries, the comments
-said since an earlier run and the answers. ``home_for`` gives a run its
-home.
+"""Where a turn's conversation lives, as a turn of the runner sees it
+(gamma/local_agents/runner.py ``_ChatTurn``; docs/dev/local_agents.md):
+``chat_home_for`` gives a turn its home.
 
-``LocalHome`` is a work folder of this server: the runner's in-process reads
-and writes of its pages.db, as they always were (``requests.claim`` and
-``set_state``, ``requests.entries_of``, the comments, ``annotations.hand``'s
-``reply`` and ``resolve`` signed as this computer's agent, ``agents.here``).
-
-``HttpHome`` is a work folder of another Gamma server (a NAS; step 4c of
-docs/research/agent-collab.md), spoken to with this computer's token of that
-server, workspace and account (gamma/computers/channel.py ``of_vault``).
-That server decides whose Send it is and writes the answers; this computer
-runs it:
-
-- **The claim** (``POST /api/computers/sends/{id}/claim {run, agent}``)
-  takes the request for this run, its id minted here (``run_id``), so a
-  claim retried after a lost answer is told it holds it; the answer is the
-  request, its entries (each with its place's page, box, rects and
-  ``doc_id``), ``seen`` (that server's clock when it read them: the
-  requests made since are the next run's, whatever this computer's clock
-  says) and each thread's last speaker. 409 (another run holds it, or it
-  is no longer sent) or 404 (not this computer's): nothing to run.
-- **The entries** are named by their files' paths on this disk (the vault's
-  rows, ``annotations.entries.paths_of``), their source lines computed here
-  from the PDF and the sources on this disk (``annotations.sources.
-  source_in_vault``), the region pictures of the ones put to the agent
-  fetched (``GET /api/computers/threads/{id}/picture?at=now|before``) into
-  the directory's ``.gamma/annotations/img/``, where the prompt finds a local
-  work folder's (``prompt.picture_paths``).
-- **The progress** (``POST .../progress {run, detail}``) and **the end with
-  the answers** (``POST .../answers {run, replies, state, summary, changed,
-  error?}``): the replies, held until the end, are written by that server
-  as the agent's (``annotations.hand.reply`` signed as this computer's
-  agent there, ``agents.of_channel``, with the claim's ``seen``), each with
-  an id minted here once per run and thread
-  (``reply_id``), so a retry writes none twice; ``changed`` names only the
-  files the vault tracks, relative to the folder.
-
-A request that server no longer gives this run (409, 404: withdrawn, failed
-by its maker) is never written again (``lost``). A write that cannot reach
-that server (or that it fails, 5xx) is tried again for ``RETRY_S``, then
-raises: the run's row stays open (a claim never answered too: ``unsure``),
-and the channel's next announce there, or the next start, fails it there
-(``fail_left_open``). Any other refusal raises at once (``Refused``).
-
-A turn of the chat's computer side has a home too (``chat_home_for``, the
-runner's ``_ChatTurn``): ``LocalChatHome`` is a bucket of this server (a
-page, a folder, the library), its conversation in this server's pages.db
-(``chats.reply_of`` and ``write_reply``, the checks its route made, where
-it works: ``chats.place_of``);
-``HttpChatHome`` a page of a work folder of another server (step 4d), whose
-conversation that server keeps and writes:
+``LocalChatHome`` is a bucket of this server (a page, a folder, the
+library), its conversation in this server's pages.db (``chats.reply_of``
+and ``write_reply``, the checks its route made, where it works:
+``chats.place_of``). ``HttpChatHome`` is a page of a work folder of another
+Gamma server (a NAS; step 4d of docs/research/agent-collab.md), spoken to
+with this computer's token of that server, workspace and account
+(gamma/computers/channel.py ``of_vault``), whose conversation that server
+keeps and writes:
 
 - **The claim** (``POST /api/computers/chats/{turn}/claim {run, agent}``)
   takes the queued turn for this computer's run of it (``chat_run_id``: one
@@ -60,11 +17,16 @@ conversation that server keeps and writes:
   restarted, holds it) → the message, its selections, the conversation's
   last messages, the model and effort it asks for, the page's path and
   title, and for a comment thread's turn the thread (its entry with its PDF
-  place, whose source line is computed here as a Send's entries' are).
-  That server decided whose turn it is (the token's account, an editor
-  there); 409 or 404: nothing to run, nothing written. The turn's end
-  written there answers the thread there (gamma/local_agents/threads.py
-  ``settle``): this computer holds no token of that server (step 4.2).
+  place, ``_on_disk``: named by its file's path on this disk, its source
+  line computed here from the PDF and the sources on this disk,
+  ``annotations.sources.source_in_vault``), its region's pictures fetched
+  (``GET /api/computers/threads/{id}/picture?at=now|before``) into the
+  directory's ``.gamma/annotations/img/``, where the prompt finds a local
+  work folder's (``prompt.picture_paths``). That server decided whose turn
+  it is (the token's account, an editor there); 409 or 404: nothing to run,
+  nothing written. The turn's end written there answers the thread there
+  (gamma/local_agents/threads.py ``settle``): this computer holds no token
+  of that server (step 4.2).
 - **The writes** (``POST .../write {run, seq, fields}``): the agent's
   message as the turn goes, at most every ``WRITE_EVERY_S`` (a write lost
   on the way is carried by the next, which holds the whole message), the
@@ -75,14 +37,16 @@ conversation that server keeps and writes:
   restarted, never undoes a newer one. Only the message's fields go, its
   paths relative to the folder; a 409 or 404 (stopped there, taken by
   another run, the conversation gone) stops the turn.
-- **Source lines** of the selections are computed here, as a Send's
-  entries' (``annotations.sources.source_in_vault``).
+- **Source lines** of the selections are computed here, as the thread's
+  (``annotations.sources.source_in_vault``).
 
-A turn there asks only on this computer (its agent's ``ask``, runner.py
-``ask_refusal``): what it asks is drawn and answered in the
-desktop app's window, never written there; the message says ``waiting``
-while an ask waits, and a write that did not reach that server is said
-(``missed``), so the flush tries it again.
+A request that cannot reach that server (or that it fails, 5xx) is tried
+again for ``RETRY_S`` where it is the turn's last; any other refusal raises
+at once (``Refused``). A turn there asks only on this computer (its agent's
+``ask``, runner.py ``ask_refusal``): what it asks is drawn and answered in
+the desktop app's window, never written there; the message says
+``waiting`` while an ask waits, and a write that did not reach that server
+is said (``missed``), so the flush tries it again.
 """
 
 import base64
@@ -90,14 +54,11 @@ import hashlib
 import json
 import re
 import time
-import uuid
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from .. import gamma_sync
 from ..db import account_names, connect_pages_db, connect_users_db, page_now
-from ..annotations import requests
-from ..annotations.entries import AnnotationError
 from ..logbuf import log
 from . import catalog, chats, events, store
 
@@ -107,23 +68,14 @@ RETRY_MAX_S = 30       # up to this
 TIMEOUT_S = 60         # one request's
 WRITE_EVERY_S = 1.0    # a chat turn's message is written to the other server at most this often
 _KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a picture's key (``annotations.pictures.key``)
-_MAX_PICTURE = 16 * 1024 * 1024               # bytes of one picture fetched
 # The agent message's fields a chat turn writes to the other server: never ``asks``, what a turn there asks
 # stays on this computer; ``waiting`` says that one waits (runner.py ``_progress``).
 CHAT_FIELDS = ("text", "steps", "changes", "changed", "built", "error", "fresh", "state", "ended_at", "model",
                "effort", "waiting")
 
 
-def home_for(ws: str, link_id: str):
-    """The home of a run keyed ``(ws, "send", id)`` in the vault
-    ``link_id``'s queue: a remote run's key names its vault in place of the
-    workspace (``runner.queue_remote``), so it never reads as a local
-    workspace's request."""
-    return HttpHome(link_id) if ws == link_id else LocalHome(ws)
-
-
 class Refused(Exception):
-    """The other server refused a request of the run: ``status``, its
+    """The other server refused a request of the turn: ``status``, its
     ``detail``."""
 
     def __init__(self, status: int, detail: str):
@@ -131,125 +83,14 @@ class Refused(Exception):
         self.status, self.detail = status, detail
 
 
-# --- this server's work folder -------------------------------------------------------
-
-class LocalHome:
-    """A work folder of this server: the runner's in-process calls."""
-
-    remote = False
-    run_id = ""         # the store mints the run's id once it is claimed
-    unsure = False      # a claim not taken is never this run's
-
-    def __init__(self, ws: str):
-        self.ws = ws
-
-    def claim(self, run) -> dict | None:
-        """The vault, the requester's agent and its role checked again, the
-        request taken (``requests.claim``) → the request, None when it is
-        not this run's (``run``'s link, agent, label and owner set on the
-        way)."""
-        from .. import workspaces
-        from .runner import _ours, _request_row
-
-        row = _request_row(self.ws, run.request_id)
-        if row is None or row[0] != "sent":
-            return None
-        link = requests._local_link(self.ws, row[3])
-        if link is None or link["id"] != run.link_id or not _ours(link, row[2], row[4]):
-            return None
-        agent = store.agent_for(row[2])
-        if agent is None or not workspaces.at_least(workspaces.role_of(self.ws, row[2]), "editor"):
-            return None
-        run.link, run.agent, run.label = link, agent["agent"], catalog.label(agent["agent"])
-        run.owner = row[2]
-        with connect_users_db() as users:
-            run.owner_name = account_names(users, {run.owner}).get(run.owner, "")
-        run.run["agent"] = run.agent
-        with connect_pages_db(self.ws) as conn:
-            return requests.claim(self.ws, conn, run.request_id, by_name=run.label, detail=f"Starting {run.label}")
-
-    def withdrawn(self, run) -> bool:
-        """Whether the request is no longer running."""
-        from .runner import _request_row
-
-        row = _request_row(self.ws, run.request_id)
-        return row is None or row[0] != "running"
-
-    def write(self, run, state: str, detail: str) -> bool:
-        """The request ``state`` with ``detail``, as the agent, only while
-        it is running → whether it was written (False: withdrawn
-        meanwhile)."""
-        try:
-            with connect_pages_db(self.ws) as conn:
-                requests.set_state(self.ws, conn, run.request_id, state, detail=detail, by_name=run.label,
-                                   writer="agent", only_from=("running",))
-            return True
-        except AnnotationError as e:
-            if e.status == 409 or e.status == 404:
-                return False
-            raise
-
-    def cannot_write(self) -> str:
-        from .runner import _cannot_write
-
-        return _cannot_write(self.ws)
-
-    def entries(self, run, files: dict) -> tuple[str, list[dict]]:
-        """``(when the run read them, the request's entries)``."""
-        from ..annotations import entries
-
-        seen_at = page_now()
-        with connect_pages_db(self.ws) as conn:
-            return seen_at, requests.entries_of(self.ws, conn, run.record, paths=entries.paths_of(files))
-
-    def spoken_after(self, since: dict[str, tuple[str, set[str]]]) -> set[str]:
-        from .runner import _spoken_after
-
-        return _spoken_after(self.ws, since)
-
-    def pictures(self, todo: list[dict], root: Path) -> None:
-        """The annotation files' pass writes a local work folder's."""
-
-    def _signed(self, run):
-        """Who an answer is written as (``hand.Writer``): the owner, signed
-        as this computer's agent (``agents.here``)."""
-        from ..agents import here
-        from ..annotations.hand import Writer
-
-        return Writer(run.owner, run.owner_name, here(run.agent))
-
-    def reply(self, run, thread_id: str, body: str) -> None:
-        """The answer written as the agent's reply, saying when the run read
-        the thread (``seen``), and its thread's session recorded.
-        ValueError for a refusal."""
-        from ..annotations import hand
-        from ..blocks_store import new_block_id
-        from ..db import connect_pages_db
-
-        with connect_pages_db(self.ws) as conn:
-            out = hand.reply(conn, self._signed(run), self.ws, thread_id, body, comment_id=new_block_id(),
-                             seen=run.seen_at)
-        run._answered(thread_id, out["comment"]["id"])
-
-    def resolve(self, run, thread_id: str) -> None:
-        """The fixed thread resolved, unless a person said in it what the
-        run did not read. ValueError for a refusal."""
-        from ..annotations import hand
-        from ..db import connect_pages_db
-        from .runner import _spoken_after
-
-        unread = _spoken_after(self.ws, {thread_id: (run.seen_at, set(run.read.get(thread_id, ())))})
-        if not unread:
-            with connect_pages_db(self.ws) as conn:
-                hand.resolve(conn, self._signed(run), self.ws, thread_id, seen=run.seen_at)
-
-
 # --- another server's work folder -------------------------------------------------------
 
-def reply_id(run_id: str, thread_id: str) -> str:
-    """The id of the run's reply in the thread, the same on every try (a
-    block id's shape: ``blocks_store.new_block_id``'s length)."""
-    digest = hashlib.sha256(f"{run_id}\n{thread_id}".encode("utf-8")).digest()
+def reply_id(turn_id: str, thread_id: str) -> str:
+    """The id of the reply a turn's end writes in its thread
+    (gamma/local_agents/threads.py ``settle``), the same however often that
+    end is written (a block id's shape: ``blocks_store.new_block_id``'s
+    length)."""
+    digest = hashlib.sha256(f"{turn_id}\n{thread_id}".encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest[:9]).decode("ascii")
 
 
@@ -261,8 +102,8 @@ def _place(entry: dict) -> dict:
 
 
 def _on_disk(found: dict, files: dict, paths: dict, root: Path) -> dict:
-    """An entry of that server's (a Send's claim's, a thread turn's) named
-    by its file's path on this disk (the vault's rows, ``paths``) and,
+    """A thread turn's entry as that server's claim gave it, named by its
+    file's path on this disk (the vault's rows, ``paths``) and,
     open and on the PDF as it is built here, with its source line computed
     from the PDF and the sources on this disk (``sources.source_in_vault``)."""
     from ..annotations import entries, sources
@@ -282,18 +123,10 @@ def _on_disk(found: dict, files: dict, paths: dict, root: Path) -> dict:
     return entry
 
 
-def _speakers(threads) -> dict[str, dict]:
-    """The claim's ``threads`` (``[{id, by_agent, at, people: [{id,
-    at}]}]``, who spoke last in each and the comments its people wrote) by
-    thread id."""
-    return {last["id"]: last for last in threads if isinstance(last, dict) and isinstance(last.get("id"), str)} \
-        if isinstance(threads, list) else {}
-
-
 class _Remote:
-    """What the homes of another server's work folder share: the vault
-    ``link_id``'s channel there, its requests tried again while that server
-    cannot be reached."""
+    """A home of another server's work folder: the vault ``link_id``'s
+    channel there, its requests tried again while that server cannot be
+    reached."""
 
     remote = True
 
@@ -352,240 +185,13 @@ class _Remote:
         return True
 
 
-class HttpHome(_Remote):
-    """A work folder of another server, over this computer's channel there
-    (the module doc)."""
-
-    def __init__(self, link_id: str):
-        super().__init__(link_id)
-        self.run_id = uuid.uuid4().hex   # what the claim is keyed by there
-        self.seen = ""                   # that server's clock when the claim read the entries
-        self.lost = False                # that server no longer gives the request to this run
-        self.gave_up = False             # the end could not reach it
-        self.unsure = False              # the claim was sent but never answered: that server may hold it
-        self.found: list[dict] = []      # the claim's entries
-        self.speakers: dict[str, dict] = {}
-        self.staged: list[dict] = []     # the replies the end carries
-
-    # --- the requests ----------------------------------------------------------------
-
-    def _sends(self, request_id: str, what: str) -> str:
-        return f"/api/computers/sends/{quote(request_id, safe='')}/{what}"
-
-    # --- the run's steps ---------------------------------------------------------------
-
-    def claim(self, run) -> dict | None:
-        """The vault and its agent checked again, the request taken there
-        for this run → the request, None when it is not this run's: the
-        vault paused, choosing its files, no work folder of that server any
-        more, its agent off, its computer not shown there ("Show this
-        computer on NAS first."), the request taken by another run or no
-        longer sent, that server not reached (``unsure``: it may have taken
-        the request for this run, which the runner records open for it to
-        be failed there later)."""
-        from .. import folder_links  # local: folder_links imports this package's modules inside functions
-
-        link = folder_links.get_link(self.link_id)
-        if (link is None or not link["remote_url"] or not folder_links.work_vault(link)
-                or link["status"].get(folder_links.PAUSED) or folder_links.choosing(link)):
-            return None
-        agent = store.agent_for(link["created_by"])
-        if agent is None:
-            return None
-        if not self._connect(link):
-            log.warning(f"[agents] a Send of vault {self.link_id} not taken: show this computer on "
-                        f"{folder_links.server_name(link)} first")
-            return None
-        run.link, run.agent, run.label = link, agent["agent"], catalog.label(agent["agent"])
-        run.run["agent"] = run.agent
-        run.run["run_id"] = self.run_id
-        try:
-            answer = self._json("POST", self._sends(run.request_id, "claim"), {"run": self.run_id, "agent": run.agent})
-        except Refused as e:
-            if e.status not in (404, 409):
-                log.warning(f"[agents] the claim of request {run.request_id} refused there: {e}")
-            return None
-        except gamma_sync.SyncError as e:
-            log.warning(f"[agents] the claim of request {run.request_id}: {e}")
-            self.unsure = True
-            return None
-        record = answer.get("request")
-        if not isinstance(record, dict):
-            return None
-        self.found = [e for e in answer.get("entries") or [] if isinstance(e, dict) and isinstance(e.get("id"), str)]
-        self.speakers = _speakers(answer.get("threads"))
-        self.seen = str(answer.get("seen") or "")
-        run.owner = link["created_by"]
-        run.owner_name = str(record.get("by") or self.username or "")
-        return record
-
-    def withdrawn(self, run) -> bool:
-        """Whether that server refused a write of the run: it no longer
-        gives the request to it (a withdraw the channel heard of sets the
-        run's reason itself)."""
-        return self.lost
-
-    def cannot_write(self) -> str:
-        """That server refuses the answers itself (read-only, a workspace
-        being deleted)."""
-        return ""
-
-    def write(self, run, state: str, detail: str) -> bool:
-        """``running``: the progress ``detail``, while the run holds the
-        request (a refusal: False, the run stops; that server not reached:
-        the line is lost, the run goes on). ``done`` or ``failed``: the
-        end, with the replies held (``reply``), ``detail`` its summary or
-        its error; each reply's thread recorded once it is written
-        (``run._answered``) → whether it was written (False: the run no
-        longer holds the request). ``gamma_sync.Unreachable`` past
-        ``RETRY_S``, ``Refused`` for another refusal."""
-        if self.lost:
-            return False
-        if state == "running":
-            try:
-                self._json("POST", self._sends(run.request_id, "progress"), {"run": self.run_id, "detail": detail},
-                           retry=False)
-                return True
-            except Refused as e:
-                if e.status in (404, 409):
-                    self.lost = True
-                    return False
-                log.warning(f"[agents] the progress of request {run.request_id} refused there: {e}")
-                return True
-            except gamma_sync.SyncError as e:
-                log.info(f"[agents] the progress of request {run.request_id}: {e}")
-                return True
-        # That server names the files changed after the summary (the first
-        # five): only those its members can see, the ones the vault tracks.
-        changed = [path for path in run.changes if path.casefold() in run.tracked]
-        body = {"run": self.run_id, "replies": self.staged, "state": state,
-                "summary": (run.summary or detail) if state == "done" else "", "changed": changed}
-        if state != "done":
-            body["error"] = detail
-        if self.gave_up:   # the end was tried for RETRY_S already: the next announce or start fails it
-            raise gamma_sync.Unreachable("the other server was not reached")
-        try:
-            self._json("POST", self._sends(run.request_id, "answers"), body)
-        except Refused as e:
-            if e.status in (404, 409):
-                self.lost = True
-                return False
-            raise
-        except gamma_sync.SyncError:
-            self.gave_up = True
-            raise
-        for staged in self.staged:
-            run._answered(staged["thread_id"], staged["id"])
-        self.staged = []
-        return True
-
-    def entries(self, run, files: dict) -> tuple[str, list[dict]]:
-        """``(the claim's seen, its entries)``, each named by its file's path
-        on this disk and, open, with its source line computed here."""
-        from ..annotations import entries
-
-        paths = entries.paths_of(files)
-        root = Path(run.link["path"])
-        return self.seen, [_on_disk(found, files, paths, root) for found in self.found]
-
-    def spoken_after(self, since: dict[str, tuple[str, set[str]]]) -> set[str]:
-        """``runner._spoken_after`` from the claim's ``threads``: those of
-        ``since`` in which a person (no token, no agent) has a live comment
-        the earlier run did not read, or edited one after it read (both
-        times that server's)."""
-        out = set()
-        for thread_id, (at, read) in since.items():
-            people = (self.speakers.get(thread_id) or {}).get("people")
-            if at and isinstance(people, list) and any(
-                    isinstance(p, dict) and (p.get("id") not in read or str(p.get("at") or "") > at) for p in people):
-                out.add(thread_id)
-        return out
-
-    def pictures(self, todo: list[dict], root: Path) -> None:
-        """The region pictures of ``todo`` fetched into the directory's
-        ``.gamma/annotations/img/<key>.jpg``, each once (write-once by key,
-        as the annotation files' are), the ``.gamma/annotations/.gitignore``
-        a local work folder's annotation files carry written first, so a
-        repository there never lists them; one not fetched is left out of
-        the prompt."""
-        from ..annotations import entries, files
-        from ..vault import disk as vault_disk
-
-        folder = Path(root) / files.IMG
-        ignored = (Path(root) / files.DIR / ".gitignore").is_file()
-        for entry in todo:
-            for at, field in (("now", "picture"), ("before", "before")):
-                key = entries.key_of(entry.get(field) if isinstance(entry.get(field), str) else None)
-                if not key or not _KEY.match(key) or (folder / f"{key}.jpg").is_file():
-                    continue
-                try:
-                    status, data = self._ask("GET", f"/api/computers/threads/{quote(entry['id'], safe='')}/picture?"
-                                             + urlencode({"at": at}), retry=False)
-                except gamma_sync.SyncError as e:
-                    log.info(f"[agents] the picture of thread {entry['id']}: {e}")
-                    continue
-                if status != 200 or not data or len(data) > _MAX_PICTURE:
-                    continue
-                if not ignored:
-                    try:
-                        ignored = vault_disk.write_own(Path(root), f"{files.DIR}/.gitignore", files.GITIGNORE)
-                    except (OSError, vault_disk.Offline) as e:
-                        log.info(f"[agents] the annotation files' .gitignore of vault {self.link_id}: {e}")
-                        ignored = True   # asked once a run
-                folder.mkdir(parents=True, exist_ok=True)
-                part = folder / f".{key}.{uuid.uuid4().hex[:8]}.part"
-                part.write_bytes(data)
-                part.replace(folder / f"{key}.jpg")
-
-    def reply(self, run, thread_id: str, body: str) -> None:
-        """The answer held for the end (``write``), under an id minted once
-        for the run and the thread."""
-        self.staged = [r for r in self.staged if r["thread_id"] != thread_id]
-        self.staged.append({"id": reply_id(self.run_id, thread_id), "thread_id": thread_id, "text": body,
-                            "resolve": False})
-
-    def resolve(self, run, thread_id: str) -> None:
-        """The fixed thread's reply asks that server to resolve it, which it
-        does unless a person said in it what the run did not read (that
-        server knows: ``seen``)."""
-        for staged in self.staged:
-            if staged["thread_id"] == thread_id:
-                staged["resolve"] = True
-
-    # --- the next start ------------------------------------------------------------------
-
-    def fail_left_open(self, run: dict) -> bool:
-        """The run ``run`` (``store.open_runs``' row) a server that stopped
-        left open fails there, its request too ("Gamma stopped before Codex
-        finished.") → whether it is settled: failed, or no longer the run's
-        there, or its vault or its computer's channel gone (forgotten);
-        False when that server cannot be reached (the channel's next
-        announce there, or the next start, tries again)."""
-        from .. import folder_links  # local: folder_links imports this package's modules inside functions
-
-        link = folder_links.get_link(self.link_id)
-        if link is None or not link["remote_url"] or not self._connect(link):
-            return True
-        error = f"Gamma stopped before {catalog.label(run['agent'])} finished."
-        try:
-            self._json("POST", self._sends(run["request_id"], "answers"),
-                       {"run": run["id"], "replies": [], "state": "failed", "summary": "", "changed": [],
-                        "error": error}, retry=False)
-        except Refused as e:
-            log.info(f"[agents] the run {run['id']} left open: {e}")
-        except gamma_sync.SyncError as e:
-            log.warning(f"[agents] the run {run['id']} left open, its server not reached: {e}")
-            return False
-        return True
-
-
 # --- a turn of the chat's computer side ------------------------------------------------------
 
 def chat_home_for(ws: str, link_id: str, turn_id: str):
-    """The home of a chat turn keyed ``(ws, "chat", turn id)``, of the vault
-    ``link_id`` ("" for none): a remote turn's key names its vault in place
-    of the workspace (``runner.queue_remote_chat``), as a remote Send's
-    does."""
+    """The home of a turn keyed ``(ws, turn id)``, of the vault ``link_id``
+    ("" for none): a remote turn's key names its vault in place of the
+    workspace (``runner.queue_remote_chat``), so it never reads as a turn of
+    a workspace here."""
     return HttpChatHome(link_id, turn_id) if ws == link_id else LocalChatHome(ws)
 
 
@@ -968,7 +574,8 @@ class HttpChatHome(_Remote):
     def thread(self, turning, place: dict, context: dict) -> dict | None:
         """The thread a thread's turn answers, as the claim gave it, named
         by its file's path on this disk with its source line computed here
-        (``_on_disk``); None when the claim gave none."""
+        (``_on_disk``), its region's pictures fetched (``_pictures``); None
+        when the claim gave none."""
         from ..annotations import entries
         from ..vault import store as vault_store
 
@@ -976,7 +583,52 @@ class HttpChatHome(_Remote):
         if found is None:
             return None
         files = vault_store.files(place["link"]["id"])
-        return _on_disk(found, files, entries.paths_of(files), Path(place["path"]))
+        root = Path(place["path"])
+        thread = _on_disk(found, files, entries.paths_of(files), root)
+        self._pictures(thread, root)
+        return thread
+
+    def _pictures(self, thread: dict, root: Path) -> None:
+        """The thread's region pictures (now, and as it was commented on)
+        fetched into the directory's ``.gamma/annotations/img/<key>.jpg``,
+        each once (write-once by key, as the annotation files' are), the
+        ``.gamma/annotations/.gitignore`` a local work folder's annotation
+        files carry written first, so a repository there never lists them;
+        one not fetched is left out of the prompt."""
+        from ..annotations import entries, files
+        from ..vault import disk as vault_disk
+
+        root = Path(root)
+        ignored = (root / files.DIR / ".gitignore").is_file()
+        for at, field in (("now", "picture"), ("before", "before")):
+            key = entries.key_of(thread.get(field) if isinstance(thread.get(field), str) else None)
+            if not key or not _KEY.match(key):
+                continue
+            rel = f"{files.IMG}/{key}.jpg"
+            try:
+                if vault_disk.lstat(root, rel) is not None:
+                    continue
+            except OSError as e:   # Outside: a link on the way
+                log.info(f"[agents] the picture of thread {thread['id']}: {e}")
+                continue
+            try:
+                status, data = self._ask("GET", f"/api/computers/threads/{quote(thread['id'], safe='')}/picture?"
+                                         + urlencode({"at": at}), retry=False)
+            except gamma_sync.SyncError as e:
+                log.info(f"[agents] the picture of thread {thread['id']}: {e}")
+                continue
+            if status != 200 or not data or not data.startswith(files.JPEG) or len(data) > files.MAX_PICTURE:
+                continue
+            if not ignored:
+                try:
+                    ignored = vault_disk.write_own(root, f"{files.DIR}/.gitignore", files.GITIGNORE)
+                except (OSError, vault_disk.Offline) as e:
+                    log.info(f"[agents] the annotation files' .gitignore of vault {self.link_id}: {e}")
+                    ignored = True   # asked once a turn
+            try:
+                vault_disk.write_own(root, rel, data)   # False: a reader held it, left out of this prompt
+            except (OSError, vault_disk.Offline, vault_disk.Stopped) as e:   # Outside is an OSError
+                log.info(f"[agents] the picture of thread {thread['id']}: {e}")
 
     def write(self, turning, fields: dict, *, last: bool = False) -> bool:
         """The turn's agent message takes ``fields`` there (``CHAT_FIELDS``

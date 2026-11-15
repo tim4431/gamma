@@ -27,10 +27,9 @@ told (``{t: "computer"}``, content-free, to that account's sockets alone:
 ``collab.publish_account``). The same nudge goes when an announce changes
 what a window shows. A poll is answered ``{announce: true}`` when the
 computer is unknown here (a restart) or announced another version; held
-polls are woken by ``wake``: to announce again, ``sends`` when its
-maker's Send in a work folder it keeps with an agent is made or withdrawn
-(``heard``, step 4c), ``chat`` when a turn of its maker's chat on a page
-there is begun or asked to stop (step 4d), or ``let_go`` when a work folder
+polls are woken by ``wake``: to announce again, ``chat`` when a turn of its
+maker's agent on a page there (a chat's, a comment's sent to it) is begun
+or asked to stop (step 4d), or ``let_go`` when a work folder
 it keeps is detached here (gamma/work_folders/detach.py, ``keepers``), a
 wake while no poll is held answering the next.
 
@@ -359,8 +358,8 @@ def answer(reasons: list) -> dict:
 
 def wake(token_id: str, reason: str) -> None:
     """Answer the computer's held polls now, with ``reason``: ``announce``
-    to have it announce again, ``sends`` for its Sends (``heard``),
-    ``chat`` for its chat turns, or ``let_go`` for a work folder it keeps
+    to have it announce again, ``chat`` for its turns, or ``let_go`` for a
+    work folder it keeps
     that was detached; while none is held, its next poll is answered at
     once. Safe from any thread."""
     with _lock:
@@ -378,9 +377,9 @@ def wake(token_id: str, reason: str) -> None:
 
 def forget(token_id: str) -> None:
     """The computer behind ``token_id`` goes: its row, its presence; its
-    held polls end (and are refused, the token being gone), the Sends its
+    held polls end (and are refused, the token being gone), the turns its
     runs still hold fail (``_fail_held``: no run of it can write them any
-    more), the chat turns queued in its work folders that no other
+    more), the turns queued in its work folders that no other
     computer of the account would take fail (``_end_orphaned``), and the
     account's windows are told."""
     wake(token_id, "gone")
@@ -402,24 +401,17 @@ def forget(token_id: str) -> None:
 
 
 def _fail_held(ws: str, token_id: str) -> None:
-    """The requests of ``ws`` the runs of the computer behind ``token_id``
-    hold fail, those runs stopped (``requests.fail_runs``), and so do the
-    chat turns they hold running (``chats.fail_held``): its channel was
-    taken back (the token revoked, replaced or expired). Never raises."""
-    from ..annotations import requests  # local: the requests' listeners reach this module
+    """The turns of ``ws`` the runs of the computer behind ``token_id`` hold
+    running fail (``chats.fail_held``): its channel was taken back (the
+    token revoked, replaced or expired). Never raises."""
     from ..local_agents import chats
 
-    def words(agent: str) -> tuple[str, str]:
+    def words(agent: str) -> str:
         label = _label(agent) if agent in AGENTS else "the agent"
-        return label, f"The computer's channel was taken back before {label} finished."
+        return f"The computer's channel was taken back before {label} finished."
 
     try:
-        with connect_pages_db(ws) as conn:
-            requests.fail_runs(ws, conn, token_id, words=words)
-    except Exception as e:  # noqa: BLE001 — the computer goes all the same
-        log.warning(f"[computers] the Sends held by computer token {token_id} in workspace {ws}: {e}")
-    try:
-        chats.fail_held(ws, token_id, lambda agent: words(agent)[1])
+        chats.fail_held(ws, token_id, words)
     except Exception as e:  # noqa: BLE001 — the computer goes all the same
         log.warning(f"[computers] the chat turns held by computer token {token_id} in workspace {ws}: {e}")
 
@@ -656,12 +648,12 @@ def of_page(user_id: str, ws: str, page_id: str) -> list[dict]:
     return [computer for computer, _seen in found]
 
 
-# --- the work folders a computer keeps with an agent (step 4c) ---------------------------------
+# --- the work folders a computer keeps with an agent (step 4d) ---------------------------------
 # A work folder of this server kept on a computer with an agent on there
 # for the token's account (an assistant of the announce ``enabled``,
-# ``_agent``): that account's Sends made in Gamma run on that computer,
-# taken over the channel (gamma/routers/computers.py), and this server
-# writes the answers.
+# ``_agent``): that account's turns on its pages run on that computer,
+# taken over the channel (gamma/routers/computers.py), and their messages
+# are written here.
 
 def _label(agent: str) -> str:
     from ..local_agents import catalog  # local: the agents' package is loaded where an agent is named
@@ -840,7 +832,7 @@ def agent_folders(token_id: str, ws: str) -> dict[str, dict]:
 
 def agent_of(ws: str, folder_id: str, user_id: str, *, lent: bool = False) -> dict | None:
     """The computer of the account ``user_id`` (the one mentioning,
-    sending or reading) that keeps the work folder ``folder_id`` of ``ws``
+    sending or chatting) that keeps the work folder ``folder_id`` of ``ws``
     is (or is below), while an agent of it is on there, as announced:
     ``{token_id, user_id, agent, label, computer, online, paused, ready,
     code, lent_by}`` (``user_id`` the computer's account, the agent's
@@ -910,27 +902,6 @@ def serves(token_id: str, ws: str, person: str) -> bool:
     if not rows or not person or not _may_send(ws, person):
         return False
     return rows[0][1] == person or person in _people(_loads(rows[0][4]))
-
-
-def heard(ws: str, request_id: str) -> None:
-    """A request's write (``annotations.requests.change_listeners``): a Send
-    made, or one withdrawn (``failed``), in a work folder its requester's
-    computer keeps with an agent wakes that computer's poll (``sends``).
-    Nothing is read while no computer is known here."""
-    with _lock:
-        if not _live:
-            return
-    with connect_pages_db(ws) as conn:
-        row = conn.execute("SELECT by, state, work_folder FROM feedback_requests WHERE id = ?",
-                           (request_id,)).fetchone()
-    if not row or row[1] not in ("sent", "failed"):
-        return
-    by, _state, w = row
-    with connect_users_db() as conn:
-        rows = _valid_rows(conn, "c.workspace_id = ? AND c.user_id = ?", (ws, by))
-    for token_id, _user_id, _name, vaults, assistants, _seen_at in rows:
-        if w in _agent_vaults(_loads(vaults), _loads(assistants)):
-            wake(token_id, "sends")
 
 
 def reset() -> None:

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { addLocalRow, afterFollow, followed, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished,
   progressFraction, sortTasks, trayBadge, waitsForYou } from "../src/tasks/taskModel.js";
 import { canOpen, exportAgain, kindOf, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
-  stopBody, stopPath, taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
+  stopPath, taskActions, taskInfo, taskTime, taskTitle, turnShown } from "../src/tasks/taskKinds.js";
 
 const at = (minutes) => new Date(Date.UTC(2026, 8, 29, 12, minutes)).toISOString();
 const job = (fields) => ({ kind: "export", state: "running", params: {}, progress: {}, error: "", artifact: null,
@@ -279,7 +279,6 @@ test("a computer turn's row: the agent and the page, waiting for the person whil
   assert.equal(stopPath(turn({ workspace: "", params: { turn: "a b" } })), "/local-agents/chat/turns/a%20b/stop");
   assert.equal(stopPath(job({})), "", "other jobs stop through their cancel");
   assert.equal(stopPath({ local: true, kind: "computer-turn" }), "");
-  assert.deepEqual(stopBody(turn()), {});
   // waiting for the person: nothing spins, and the tray button has the accent dot
   assert.equal(waitsForYou(turn({ progress: { phase: "asking" } })), true);
   assert.equal(waitsForYou(turn()), false);
@@ -287,16 +286,14 @@ test("a computer turn's row: the agent and the page, waiting for the person whil
   assert.equal(trayBadge([job({}), turn()], quietKinds), "running");
 });
 
-test("a Send's run: the agent, the file or folder and its comments, its words, the requester's withdraw as Stop", () => {
-  const params = { request: "r1", label: "Codex", name: "main.tex", scope: { kind: "file", id: "p1" }, comments: 2 };
-  const run = (fields = {}) => job({ id: "feedback-r1", kind: "feedback-run", title: "Codex · main.tex", workspace: "w1",
-    params, readonly: true, ...fields });
-  assert.equal(taskTitle(run()), "Codex on this computer: main.tex · 2 comments");
-  assert.equal(taskTitle(run({ params: { ...params, name: "", comments: 1 } })), "Codex on this computer: Untitled · 1 comment");
-  assert.equal(taskInfo(run({ progress: { item: "Editing main.tex" } })), "Editing main.tex");
-  assert.equal(kindOf(run()).open, "feedback");
-  assert.deepEqual(taskActions(run()), ["stop"]);
-  assert.deepEqual(taskActions(run({ stoppable: false })), [], "another's Send: not the folder maker's to withdraw");
-  assert.equal(stopPath(run()), "/feedback/requests/r1/state?ws=w1");
-  assert.deepEqual(stopBody(run()), { state: "failed", detail: "withdrawn" });
+test("a computer turn's row opens its conversation: its thread's, a co-author's, else the chat's own", () => {
+  const params = { bucket: "p1", turn: "t1", agent: "codex", label: "Codex", title: "Draft", conversation: "c1" };
+  const turn = (more = {}) => job({ id: "computer-t1", kind: "computer-turn", params: { ...params, ...more }, readonly: true });
+  assert.equal(turnShown(turn()), null, "the reader's own chat");
+  assert.deepEqual(turnShown(turn({ thread: "th1" })), { thread: "th1" });
+  assert.deepEqual(turnShown(turn({ thread: "th1", person: "bob" })), { thread: "th1" }, "a co-author's thread turn");
+  assert.deepEqual(turnShown(turn({ person: "bob" })), { conversation: "c1" }, "a co-author's chat");
+  assert.equal(taskTitle(turn({ person: "bob" })), "Codex on this computer, for bob: Draft");
+  assert.equal(taskTitle(turn({ person: "bob", computer: "TIM-PC" })), "Codex on TIM-PC, for bob: Draft");
+  assert.equal(taskTitle(turn({ person: "" })), "Codex on this computer, for Someone: Draft", "an account gone");
 });

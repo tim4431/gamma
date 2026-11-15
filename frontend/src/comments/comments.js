@@ -4,7 +4,7 @@
 // before the server answers. Pure, so node tests it (tests/comments.test.mjs).
 //
 // A thread is the server's `{id, block_id, page_id, resolved_at,
-// resolved_by, resolved_agent, made_on, sent, agent_chat, created_at,
+// resolved_by, resolved_agent, made_on, agent_chat, created_at,
 // last_at, comments}`, its comments oldest first, each `{id, thread_id,
 // author, agent, body, created_at, updated_at, deleted, agent_kind?,
 // agent_id?, agent_on?, agent_owner?}`. A thread's root has `thread_id ===
@@ -12,15 +12,15 @@
 // it for the author ("" for the person's own), with its `agent_kind`
 // (chat/agents.js agentKind's kinds) and, for a computer's agent, its
 // `agent_id`, the computer it runs on, `agent_on`, and its owner where it
-// wrote for a co-author, `agent_owner`; `made_on` the file the thread was opened
-// on, `sent` the Send waiting on it (docs/dev/annotations.md; the Feedback
-// dialog's), `agent_chat` the reader's conversation of it with a
-// computer's agent (`turnChip`), null for none.
+// wrote for a co-author, `agent_owner`; `made_on` the file the thread was
+// opened on, `agent_chat` the reader's conversation of it with a computer's
+// agent (`turnChip`), null for none; `resolved_agent` the agent that
+// resolved it ({id, kind, name, on?, owner?}), null for a person.
 import { t } from "../shared/i18n/i18n.js";
 import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlock, pdfAnchorOf, textSpan } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
 import { agentWorking } from "../vault/vaultState.js";
-import { GAMMA, madeBy } from "../chat/agents.js";
+import { GAMMA, agentWords, madeBy } from "../chat/agents.js";
 
 export const MAX_COMMENT = 20000; // characters, as the server (comments.MAX_BODY)
 
@@ -215,9 +215,13 @@ export function deleteComment(threads, id) {
 // reopened.
 export function resolveThread(threads, id, resolved, by, at) {
   return threads.map((th) => (th.id === id
-    ? { ...th, resolved_at: resolved ? at : null, resolved_by: resolved ? by : null, resolved_agent: "", last_at: later(th.last_at, at) }
+    ? { ...th, resolved_at: resolved ? at : null, resolved_by: resolved ? by : null, resolved_agent: null, last_at: later(th.last_at, at) }
     : th));
 }
+
+// Who a resolved thread says resolved it: the agent, worded in the reader's
+// language (chat/agents.js agentWords), else the person; "" for neither.
+export const resolvedBy = (thread) => agentWords(thread.resolved_agent) || thread.resolved_by || "";
 
 // Whether `me` (a username) may change a comment's text: their own, written
 // by them, not one an agent wrote through their connection, which is the

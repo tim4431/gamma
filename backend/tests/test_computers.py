@@ -119,7 +119,7 @@ def test_a_computer_token_is_minted_with_a_session_and_opens_its_channel_alone(o
     assert listed[item["id"]] == "computer"
     computer = _as(item["token"])
     refused = "This token is a computer's channel; it opens nothing else."
-    for path in (f"/api/blocks/{page['id']}", "/api/sync/whoami", "/api/feedback/requests", "/api/integrations/tokens",
+    for path in (f"/api/blocks/{page['id']}", "/api/sync/whoami", "/api/annotations", "/api/integrations/tokens",
                  f"/api/pages/{page['id']}/computer"):
         r = computer.get(path)
         assert (r.status_code, r.json()["detail"]) == (403, refused), path
@@ -140,6 +140,23 @@ def test_a_computer_token_is_minted_with_a_session_and_opens_its_channel_alone(o
         assert (r.status_code, r.json()["detail"]) == (403, "Only a computer's token opens its channel.")
         assert c.post("/api/computers/announce", json=_body()).status_code == 403
     assert anon.get("/api/computers/poll").status_code == 403
+
+
+def test_the_sends_routes_are_gone(owner):
+    """The Feedback dialog's Send went in step 3.7 of
+    docs/research/agents-as-participants-plan.md: neither a session's
+    ``/api/feedback/requests*`` nor the channel's ``/api/computers/sends*``
+    answers, so a client or computer of before finds no route."""
+    computer = _as(_mint(owner)["token"])
+    for c, method, path in ((owner, "get", "/api/feedback/requests"),
+                            (owner, "post", "/api/feedback/requests"),
+                            (owner, "get", "/api/feedback/requests/rq1"),
+                            (owner, "post", "/api/feedback/requests/rq1/state"),
+                            (computer, "get", "/api/computers/sends"),
+                            (computer, "post", "/api/computers/sends/rq1/claim"),
+                            (computer, "post", "/api/computers/sends/rq1/progress"),
+                            (computer, "post", "/api/computers/sends/rq1/answers")):
+        assert getattr(c, method)(path, **({"json": {}} if method == "post" else {})).status_code == 404, path
 
 
 # --- the announce ---------------------------------------------------------------------------------
@@ -805,7 +822,7 @@ def test_the_server_offers_the_agent_to_the_people_it_names_alone_and_no_longer_
     assert (shown["lent_by"], shown["vault"]["agent"]) == ("cptr_owner", {"name": "codex", "label": "Codex"})
     far = chats.remote_of(ws, page, them)
     assert (far["user_id"], far["lent_by"], far["agent"]) == (me, "cptr_owner", "codex")
-    assert registry.agent_of(ws, w, them) is None                                 # never for the Sends
+    assert registry.agent_of(ws, w, them) is None                                 # none of their own
     lent = (them, "cm-computer-1", "cptr_owner")
     assert registry.names_of({lent}, ws) == {lent: "TIM-PC"}
     # named only by the owner kept with the comment, in its workspace

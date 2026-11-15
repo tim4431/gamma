@@ -41,9 +41,8 @@ from fake_agents import read_log, requests_in, script_agent
 from gamma import config, folder_links, gamma_sync, remote_servers
 from gamma.db import connect_pages_db
 from gamma.local_agents import chats, home, runner, store
-from test_remote_chat import (OWNER, PASSWORD, _chat, _reply, _run_there, _say, _sent, _stop, _turn_row,  # noqa: F401
-                              lab, nas)  # the fixtures
-from test_remote_sends import SECRET, SHELL, _made, _until
+from test_remote_chat import (OWNER, PASSWORD, SECRET, SHELL, _chat, _made, _reply, _run_there, _say, _sent,  # noqa: F401
+                              _stop, _turn_row, _until, lab, nas)  # the fixtures
 
 CURL = "curl -L https://example.org/refs.bib -o refs.bib"
 ASK = {"command": CURL, "reason": "Fetch the bibliography the paper cites.", "host": "example.org"}

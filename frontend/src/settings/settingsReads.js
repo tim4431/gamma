@@ -25,7 +25,8 @@ const NONE = Object.freeze({ data: undefined, error: "", at: 0 });
 // marked `later` goes out with the others but is not waited for: what is
 // far down the pane (the server log) or shows only in a dialog (the
 // account pickers). `who`: {admin, signedIn, lang (the translation's target
-// language, whose glossary the translation pane shows)}.
+// language, whose glossary the translation pane shows), desktop (the
+// desktop app's window)}.
 export const LOG_START = "/admin/logs?after=0";
 export const PANE_READS = {
   account: ({ admin, signedIn }) => [admin && "/admin/users", admin && "/admin/settings",
@@ -39,7 +40,8 @@ export const PANE_READS = {
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
   integrations: () => ["/integrations/tokens"],
-  ai: ({ signedIn }) => [signedIn && "/computers"],
+  // whom an agent's owner may let use it, which the desktop app's rows offer
+  ai: ({ signedIn, desktop }) => [signedIn && "/computers", signedIn && desktop && { path: "/local-agents/people", later: true }],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
   tools: () => ["/ai/search-services"],
   maintenance: () => ["/quota", "/metadata/status"],

@@ -152,7 +152,7 @@ def _start(ws: str, event: dict, to: str, name: str, by_name: str) -> dict:
                                                resume=opener["id"] if opener is not None else "", **begun)
         if new:
             runner.queue_chat(ws, place, reply["turn_id"], conversation_id=conversation["id"], bucket=page_id,
-                              agent=name, user_id=actor)
+                              agent=name, user_id=actor, owner=row["set_by"], thread_id=thread["id"])
     else:
         far = chats.remote_of(ws, page_id, actor)
         held = registry.computer_of(far["token_id"]) if far is not None else None

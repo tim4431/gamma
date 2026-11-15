@@ -12,9 +12,10 @@ from that server yet.
 
 This is step 4a of [agent-collab.md](../research/agent-collab.md) ("How
 the server sees a vault"). The later steps build on the channel: 4b work
-folders of another server, 4c their Sends run on the computer, 4d the
-chat's computer side relayed, and with it the turns of the comments sent to
-its agent (step 3.5 of the agents-as-participants plan). The words below call the
+folders of another server, 4c their agent the computer's, 4d the chat's
+computer side relayed, and with it the turns of the comments sent to its
+agent (step 3.5 of the agents-as-participants plan, whose step 3.7 removed
+the Sends 4c first ran there). The words below call the
 desktop app's own server *the host* (as [synced_vaults.md](synced_vaults.md)
 does) and the vault's server *the server*.
 
@@ -30,7 +31,7 @@ does) and the vault's server *the server*.
 The computer speaks to the server with a token of its own, never the
 vault's sync token. A bearer is identity: a sync token copied into a
 script or a mirror's config must not be able to pose as the computer (and,
-from 4c on, receive the maker's Sends and chats), and a computer's token
+from 4c on, receive the maker's turns), and a computer's token
 must not be able to read or write the library.
 
 - **The scope.** `integrations.SCOPES` has a fourth, `computer`. Such a
@@ -43,7 +44,7 @@ must not be able to read or write the library.
 - **What it opens: its channel and nothing else.** `auth.session_middleware`
   answers a `computer` token 403 "This token is a computer's channel; it
   opens nothing else." on every path but those below `auth.CHANNEL_PREFIX`
-  (`/api/computers/`: the announce, the poll, and the Sends of 4c), reads
+  (`/api/computers/`: the announce, the poll, and the turns of 4d), reads
   included;
   `integrations.resolve_connection` gives it no MCP connection. The
   channel's routes in turn refuse a session and every other token (403
@@ -124,8 +125,7 @@ and the page's route (`lent_by`, the owner's username; that agent alone,
 else it serves; a computer that keeps the page in no work folder left
 out), `chats.remote_of` (`registry.agent_of(…, lent=True)`, after the
 person's own computers: their chat on the page, a comment's turn), and
-`agents.of_account`. The Sends never read them (`agent_of` without
-`lent`). `registry.names_of` names the computer in a comment its agent
+`agents.of_account`. `registry.names_of` names the computer in a comment its agent
 wrote for the person, by a row of the comment's workspace of the owner
 kept with the comment (`comments.agent_owner`) while it serves the person
 and both edit there, as `_lent_rows` reads it. The page's computers list
@@ -143,47 +143,32 @@ alone. An announce that drops a person fails the turns of theirs that wait
 for it (`_end_orphaned` → `chats.fail_queued`, "The owner of Codex on the
 computer that keeps this folder no longer lets you use it."); the computer
 stops the one that runs ([local_agents.md](local_agents.md) "A co-author's
-turn"). A co-author's far turn never asks.
+turn"). A co-author's far turn never asks. On the server that keeps the
+page, the owner reads the person's conversations there as on its own:
+the chat's History lists them under the person's name (`GET
+/api/local-agents/chat/history`'s `lent`), `GET
+/api/local-agents/chat?conversation=` shows one, and the owner's
+Background tasks list the person's turns that wait or run there
+(`chats.remote_turns` by the conversation's `owner`, `params.person`),
+each opening its conversation.
 
-### The Sends (step 4c)
+### The agent's binding (step 4c)
 
 A computer that keeps a work folder while an agent is on there for the
 token's account (`registry._agent`: the first assistant `enabled`, in the
-catalog's order, Codex then Claude Code) takes that account's Sends there
-([local_agents.md](local_agents.md) "A work folder of another server").
-The routes answer only the token's own account's Sends, in the work
-folders that token announced while it has an agent:
-
-| Method | Path | |
-|---|---|---|
-| GET | `/api/computers/sends` | `{sends: [{id, folder_id, page_id?, at}], withdrawn: [{id, run}]}`: the Sends waiting (`sent`, `via: session`, by the token's account, in its agent folders but paused ones, oldest first, at most 50; none while the account cannot edit), and the runs of this computer whose request is no longer running (each listed once). |
-| POST | `/api/computers/sends/{id}/claim` | `{run, agent}` (`run` 1-64 of `[A-Za-z0-9_-]`) → `{request, entries, seen, threads}`: `sent → running` in one locked write, signed with the agent's label; the same run again gets it back; 409 another run holds it, it is no longer sent, another agent is named, or the folder is paused; 404 not this computer's; 403 the account cannot edit. Each entry on a PDF has `place: {page, box, rects, doc_id}`; `seen` is this server's clock; `threads` `[{id, by_agent, at, comment_id, people: [{id, at}]}]` for the resume rule. |
-| POST | `/api/computers/sends/{id}/progress` | `{run, detail}` → `{ok}`: the running detail, one line, 300 characters; 409 from another run or once it is no longer running. |
-| GET | `/api/computers/threads/{id}/picture?at=now\|before` | the region picture of a thread of a request this computer's run holds; 404 otherwise. |
-| POST | `/api/computers/sends/{id}/answers` | `{run, replies: [{id, thread_id, text, resolve}], state: done\|failed, summary, changed, error?}` → `{ok, written}`: the replies written by this server signed as that computer's agent (`agents.of_channel`, `computer:<id>:<agent>`; a reply id already there is skipped; the same answers again write nothing), a thread resolved only when no person wrote in it after the run read it, then the end (`done`: the summary and the changed files named; `failed`: the error). 400 a thread the request does not name, or a changed path that is absolute or climbs; 409 another run or a withdrawn request. |
-
-The claim's key, `seen` and the comments the run read are a pages.db
-`feedback_request_runs` row (additive).
-
-An agent's binding is read when it is asked
-(`registry.agent_folders`, `registry.agent_of`: the computer's agent, for a
-folder it keeps that carries a work folder's mark itself, of an account
-that may edit there; until step 4 of
-[the plan](../research/agents-as-participants-plan.md) only a folder the
-computer keeps), and per account: a member's computer serves only
-that member's Sends. An agent that takes a request that is not running
-ends the open runs of it (their next write refused), and a computer whose
-token goes fails the Sends its runs hold. An older server's 401/403 on
-`/sends` is asked again only after 180 s. The page route's `vault` gains
-`agent: {name, label} | null` (the computer's agent, for a work folder's
-vault); the Feedback document's `agent`, for the
-maker alone, comes from the binding (`{name, label, computer, online,
-ready, problem, takes, why}`); a token's Send to such a folder is refused
-(403, a token of the account whose computer keeps it), and while a
-computer's run holds a request a token's state change is refused (409
-"Codex on TIM-PC is answering this request."), the maker's withdraw
-passing; the document's `problem` says why an online computer's agent is
-not ready (*Codex is not signed in on TIM-PC.*).
+catalog's order, Codex then Claude Code) is that folder's agent for that
+account ([local_agents.md](local_agents.md) "A work folder of another
+server"). The binding is read when it is asked (`registry.agent_folders`,
+`registry.agent_of`: the computer's agent, for a folder it keeps that
+carries a work folder's mark itself, of an account that may edit there;
+until step 4 of [the plan](../research/agents-as-participants-plan.md)
+only a folder the computer keeps), and per account: a member's computer
+serves only that member's turns (and its co-authors', above). The page
+route's `vault` gains `agent: {name, label} | null` (the computer's agent,
+for a work folder's vault), and the chat's strip says why an online
+computer's agent is not ready (*Codex is not signed in on TIM-PC.*). A
+computer whose token goes fails the turns its runs hold
+(`registry._fail_held`).
 
 The chat's computer side on such a page (step 4d,
 [local_agents.md](local_agents.md) "The chat on another server's page")
@@ -194,6 +179,7 @@ alone:
 |---|---|---|
 | GET | `/api/computers/chats` | `{turns: [{id, conversation_id, page_id, folder_id, at}], stops: [{id, run}]}`: the turns queued for its own agent of each folder, of its account's and of the people that agent serves (oldest first, at most 20, the folder not paused), and the runs of its turns asked to stop. |
 | POST | `/api/computers/chats/{turn}/claim` | `{run, agent}` → `{turn: {id, conversation_id, page_id, title, text, selections, model, effort, for: {id, username}, thread_id?, comment_id?}, history, page: {path, title}, seen, thread?}` (`for` the account the turn is for, the token's own or a co-author's; `title` the conversation's, which names a new Codex thread; the computer cuts it as a local title, `chats.title_of`; a comment thread's turn names its thread and the comment it is, and `thread` is the thread's entry with its PDF place, whose source line the computer finds on its own disk: [local_agents.md](local_agents.md) "A comment sent to an agent"): queued → running in one locked write keyed by the run (the same run again: the same answer; another: 409; 404 not this computer's; 409 a paused folder, a turn for another agent, left queued, or a co-author's the agent no longer serves). |
+| GET | `/api/computers/threads/{id}/picture?at=now\|before` | The JPEG of the region of a thread whose turn a run of this computer holds running (`chats.holds_thread`: the run's holder the token, the turn's conversation of that thread, its owner the token's account), as `GET /api/annotations/{id}/picture` draws it, which the computer fetches beside the thread for its prompt; 404 "No thread of a turn on this computer has that id." for any other thread, and when the entry has no such picture; 400 for another `at`. |
 | POST | `/api/computers/chats/{turn}/write` | `{run, seq, fields}` → `{ok}` or `{ok, stale: true}` when `seq` is not above the last written (an end of a thread's turn is answered in its thread here, `threads.settle`: the computer holds no token of this server): the agent message's `text` (through `prompt.inert`), `steps` (a path not relative stored as `outside`), `changes` (a path not relative left out), `changed`, `built`, `error`, `fresh`, `waiting` (a flag: an ask of the turn waits for an answer on the computer, which alone shows and answers it; never the ask itself, [local_agents.md](local_agents.md#asking-on-this-computer)), `state`, `model`, `effort`, its `ended_at` this server's clock (an end writes `waiting` false); 409 another run, a turn no longer running, or a gone conversation. |
 
 The announce's assistants carry their `models` for the chat's model

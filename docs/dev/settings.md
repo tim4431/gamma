@@ -1093,10 +1093,11 @@ again, unless it was edited since.
 top of the pane shows first, since the browser keeps six requests in
 flight to the server. A pane's reads are worked out from `who` (an
 administrator, signed in, the translation's target language for the
-glossary's path). A read may lead to others once it lands (Backups: each
+glossary's path, the desktop app's window). A read may lead to others once it lands (Backups: each
 workspace's snapshots), and one marked `later` (the server log, the account
 pickers' directory, the Users pane's invitations, the Account pane's Zotero
-connection) goes out with the rest without being waited for. They
+connection, the AI pane's people an agent's owner may name, in the desktop
+app alone) goes out with the rest without being waited for. They
 start together from the pointer or the focus reaching a pane's sidebar
 button, so a click mostly finds them in, and from the click itself. A
 pane asked for from the sidebar or a search result keeps the one before on

@@ -7,8 +7,7 @@ block — hidden in Recently deleted, orphaned by a delete and brought back
 by an undo, swept seven days on, moved with its block, purged with its
 page, through the subtree replace, the backup merge and the Gamma export;
 the room's nudge and the write listeners; a client id repeated; the
-anchor a thread keeps, the Send waiting on it, a work folder's threads and
-its open count. The suite's drift checks run after every test as always: a
+anchor a thread keeps, a work folder's threads and its open count. The suite's drift checks run after every test as always: a
 comment write touches no page."""
 
 import io
@@ -306,7 +305,7 @@ def test_after_write_hears_every_kind(own, monkeypatch):
     me = account_of("cm_own")
     # ``via``: the share the writer came through, "" for a member; no token wrote them
     base = {"actor": me, "page_id": page["id"], "block_id": note["id"], "thread_id": root, "via": "", "agent": "",
-            "agent_id": ""}
+            "agent_id": "", "agent_owner": ""}
     assert heard == [
         (ws, {"kind": "create", **base, "comment_id": root, "body": "first"}),
         (ws, {"kind": "reply", **base, "comment_id": reply, "body": "second"}),
@@ -491,15 +490,17 @@ def test_a_token_signs_what_it_writes(own):
     assert reply["comment"]["author"] == "cm_own" and reply["comment"]["agent"] == "Claude Code"
     assert _stored(ws, reply["comment"]["id"]) == ("Claude Code", token_id, "", None)  # a reply keeps no anchor
     resolved = _ok(bearer.post(f"/api/comments/{root}/resolve", json={"resolved": True}), 200)["thread"]
-    assert (resolved["resolved_by"], resolved["resolved_agent"]) == ("cm_own", "Claude Code")
+    assert (resolved["resolved_by"], resolved["resolved_agent"]) == (
+        "cm_own", {"id": token_id, "kind": "connection", "name": "Claude Code"})
     assert _stored(ws, root)[2] == "Claude Code"
     reopened = _ok(own.post(f"/api/comments/{root}/resolve", json={"resolved": False}), 200)["thread"]
-    assert (reopened["resolved_by"], reopened["resolved_agent"]) == (None, "") and _stored(ws, root)[2] == ""
-    # the root keeps where it was opened; the thread says on which file, and no Send waits on it
+    assert (reopened["resolved_by"], reopened["resolved_agent"]) == (None, None) and _stored(ws, root)[2] == ""
+    # the root keeps where it was opened; the thread says on which file
     anchor = json.loads(_stored(ws, root)[3])
     assert (anchor["kind"], anchor["block"], anchor["doc_id"], anchor["page"]) == ("note", note["id"], "", None)
     [thread] = _threads(own, page["id"])
-    assert (thread["made_on"], thread["sent"], thread["resolved_agent"]) == ("", None, "")
+    assert (thread["made_on"], thread["resolved_agent"]) == ("", None)
+    assert "sent" not in thread
     assert [c["agent"] for c in thread["comments"]] == ["", "Claude Code"]
 
 
@@ -553,8 +554,8 @@ def test_a_token_at_the_comment_level_comments_and_writes_nothing_else(own, work
     _ok(_post(bearer, work.paper, work.paper, "answered", thread_id=elsewhere))
     assert _ok(bearer.patch(f"/api/comments/{reply['id']}", json={"body": "Switched (plot.py:12)."}), 200)
     assert bearer.delete(f"/api/comments/{opened}").status_code == 200
-    assert _ok(bearer.post(f"/api/comments/{root}/resolve", json={"resolved": True}), 200)["thread"]["resolved_agent"] \
-        == "Claude Code"
+    assert _ok(bearer.post(f"/api/comments/{root}/resolve", json={"resolved": True}), 200)["thread"]["resolved_agent"][
+        "name"] == "Claude Code"
     assert _ok(bearer.post(f"/api/comments/{root}/resolve", json={"resolved": False}), 200)
     # writes elsewhere stay refused: it is a read token but for these
     assert bearer.post(f"/api/pages/{work.file}/ops", json={"client": "t", "ops": [
@@ -721,37 +722,18 @@ def test_a_work_folders_threads_leave_out_trashed_files_and_orphans(own, work):
     assert own.delete(f"/api/blocks/{gone}").status_code == 200
     with connect_pages_db(ws) as conn:
         scope = entries.resolve_scope(conn, work.w)
-        found = entries.thread_ids(conn, scope, state="all")
+
+        def thread_ids(state):
+            return [e["id"] for e in entries.entries(ws, conn, scope, state=state, sources=False)
+                    if e["type"] == "thread"]
+
+        found = thread_ids("all")
         assert on_file in found and not {orphaned, trashed, library} & set(found)
         _ok(own.post(f"/api/comments/{on_file}/resolve", json={"resolved": True}), 200)
-        assert on_file not in entries.thread_ids(conn, scope, state="open")
-        assert on_file in entries.thread_ids(conn, scope, state="resolved")
+        assert on_file not in thread_ids("open")
+        assert on_file in thread_ids("resolved")
         with pytest.raises(entries.AnnotationError):
-            entries.thread_ids(conn, scope, state="later")
-
-
-def test_the_send_waiting_on_a_thread(own):
-    ws = workspace_of("cm_own")
-    page = make_page(own, "Sent page")
-    first = thread_on(own, page["id"], page["id"], "one")["id"]
-    second = thread_on(own, page["id"], page["id"], "two")["id"]
-    with connect_pages_db(ws) as conn:
-        conn.executemany("INSERT INTO feedback_requests (id, rev, work_folder, scope, scope_kind, by, at, state, "
-                         "state_at, detail, state_by) VALUES (?, ?, 'W', ?, 'file', 'u', ?, ?, ?, ?, ?)",
-                         [("cmReq1", 1, page["id"], "t1", "failed", "t1", "no build", "u"),
-                          ("cmReq2", 2, page["id"], "t2", "running", "t2", "compiling", "Codex"),
-                          ("cmReq3", 3, page["id"], "t3", "done", "t3", "", "Codex")])
-        conn.executemany("INSERT INTO feedback_request_threads (request_id, thread_id, answered_at) VALUES (?, ?, ?)",
-                         [("cmReq1", first, None), ("cmReq2", first, None), ("cmReq1", second, None),
-                          ("cmReq2", second, "t4"), ("cmReq3", second, None)])
-        conn.commit()
-        assert comments._sent(conn, [first, second, "none"]) == {
-            first: {"request_id": "cmReq2", "state": "running", "at": "t2", "detail": "compiling", "state_by": "Codex"},
-            second: {"request_id": "cmReq1", "state": "failed", "at": "t1", "detail": "no build", "state_by": "u"}}
-        assert comments._sent(conn, []) == {}
-    sent = {t["id"]: t["sent"] for t in _threads(own, page["id"])}
-    assert sent[first]["request_id"] == "cmReq2" and sent[second]["state"] == "failed"
-    assert sent[first]["state_by"] == "Codex"
+            thread_ids("later")
 
 
 def test_an_agents_comment_is_its_accounts_and_names_the_agent(own, monkeypatch):
@@ -760,8 +742,8 @@ def test_an_agents_comment_is_its_accounts_and_names_the_agent(own, monkeypatch)
     computer's agent, ``agent_on``, the computer as it is called now (this
     computer where agents run here, a channel's computer by what it last
     announced, none for one no longer known); a person's comment has none
-    of those keys. The write's event carries the agent's label and id, a
-    resolve keeps the label, and a computer renamed reads renamed."""
+    of those keys. The write's event carries the agent's name and id, a
+    resolve keeps them too, and a computer renamed reads renamed."""
     from gamma import agents, local_agents
     from gamma.computers import channel
     from gamma.db import connect_users_db, page_now
@@ -786,7 +768,7 @@ def test_an_agents_comment_is_its_accounts_and_names_the_agent(own, monkeypatch)
         ("cm_own", "Gamma AI", "gamma", None), ("cm_own", "Script", "connection", None)]
     assert "agent_kind" not in got[0] and "agent_on" not in got[3]
     assert [(e["agent"], e["agent_id"]) for e in events] == [
-        ("Codex on TIM-PC", agents.here("codex").id), ("Claude Code", "computer:LAPTOP-ID:claude"),
+        ("Codex", agents.here("codex").id), ("Claude Code", "computer:LAPTOP-ID:claude"),
         ("Codex", "computer::codex"), ("Gamma AI", "gamma"), ("Script", "tok1")]
     with connect_users_db() as users:
         users.execute("UPDATE computers SET name = 'LAPTOP 2' WHERE token_id = 'cmTok'")
@@ -794,7 +776,12 @@ def test_an_agents_comment_is_its_accounts_and_names_the_agent(own, monkeypatch)
         assert comments.thread_of(conn, thread)["comments"][2]["agent_on"] == "LAPTOP 2", "the computer as called now"
         out = comments.resolve(conn, thread, page_id=page["id"], resolved=True, by=me,
                                agent=agents.computer_agent("LAPTOP-ID", "claude", "LAPTOP 2"))
-    assert (out["thread"]["resolved_agent"], out["thread"]["resolved_by"]) == ("Claude Code on LAPTOP 2", "cm_own")
+    assert (out["thread"]["resolved_agent"], out["thread"]["resolved_by"]) == (
+        {"id": "computer:LAPTOP-ID:claude", "kind": "computer", "name": "Claude Code", "on": "LAPTOP 2"}, "cm_own")
+    with connect_users_db() as users:
+        users.execute("UPDATE computers SET name = 'LAPTOP 3' WHERE token_id = 'cmTok'")
+    with connect_pages_db(ws) as conn:
+        assert comments.thread_of(conn, thread)["resolved_agent"]["on"] == "LAPTOP 3", "its resolve's computer too"
 
 
 def test_another_accounts_computer_never_names_an_agents(own, monkeypatch):

@@ -67,17 +67,20 @@
 /* CodeMirror's chrome on the tokens. The editor fills its host; the text is
    the monospace stack at the small size, scaled by Ctrl+wheel through
    --text-scale (shared/ui/Widgets.jsx useTextScale). The scroller keeps
-   room at its foot for the × and the full-screen box over the pane. */
-.docTextView .cm-editor { height: 100%; font-size: calc(var(--fs-sm) * var(--text-scale, 1)); line-height: 1.5; color: var(--text-primary); background: var(--bg-surface); }
-.docTextView .cm-editor.cm-focused { outline: none; }
-.docTextView .cm-scroller { font-family: var(--font-mono); padding-bottom: 56px; overflow: auto; }
-.docTextView .cm-content { padding: var(--space-3) 0; caret-color: transparent; }
-.docTextView .cm-line { padding: 0 var(--space-4); }
-.docTextView .cm-gutters { background: var(--bg-surface); color: var(--text-muted); border-right: 1px solid var(--border-subtle); }
-.docTextView .cm-lineNumbers .cm-gutterElement { padding: 0 var(--space-3) 0 var(--space-4); min-width: 3ch; font-variant-numeric: tabular-nums; }
-.docTextView .cm-specialChar { color: var(--text-muted); }
-.docTextView .cm-panels { background: var(--bg-raised); color: var(--text-primary); border-color: var(--border-subtle); }
-.docTextView .cm-panels.cm-panels-top { border-bottom: 1px solid var(--border-subtle); }
+   room at its foot for the × and the full-screen box over the pane. Each
+   rule names the code's own editor by its children: the comment column
+   (TextOverlay.jsx) stands inside that editor, and its fields are
+   CodeMirror editors of their own, which none of this reaches. */
+.docTextHost > .cm-editor { height: 100%; font-size: calc(var(--fs-sm) * var(--text-scale, 1)); line-height: 1.5; color: var(--text-primary); background: var(--bg-surface); }
+.docTextHost > .cm-editor.cm-focused { outline: none; }
+.docTextHost > .cm-editor > .cm-scroller { font-family: var(--font-mono); padding-bottom: 56px; overflow: auto; }
+.docTextHost > .cm-editor > .cm-scroller > .cm-content { padding: var(--space-3) 0; caret-color: transparent; }
+.docTextHost > .cm-editor > .cm-scroller > .cm-content > .cm-line { padding: 0 var(--space-4); }
+.docTextHost > .cm-editor > .cm-scroller > .cm-gutters { background: var(--bg-surface); color: var(--text-muted); border-right: 1px solid var(--border-subtle); }
+.docTextHost > .cm-editor > .cm-scroller > .cm-gutters .cm-lineNumbers .cm-gutterElement { padding: 0 var(--space-3) 0 var(--space-4); min-width: 3ch; font-variant-numeric: tabular-nums; }
+.docTextHost > .cm-editor > .cm-scroller > .cm-content .cm-specialChar { color: var(--text-muted); }
+.docTextHost > .cm-editor > .cm-panels { background: var(--bg-raised); color: var(--text-primary); border-color: var(--border-subtle); }
+.docTextHost > .cm-editor > .cm-panels.cm-panels-top { border-bottom: 1px solid var(--border-subtle); }
 /* Find (FindPanel.jsx): the app's find row, the search popover's pieces
    (app.css .searchInputWrap, .searchToggle, .searchNavBtn, and the fields'
    focus ring), at the interface's size, not the text's; the field takes
@@ -91,7 +94,7 @@
 /* The lines a line link marks: the PDF citation mark's accent wash
    (app.css .pdfCitationMark), still, with an accent bar at the gutter's
    edge; a wrapped line is marked whole. */
-.docTextView .cm-line.docLineMark {
+.docTextHost > .cm-editor > .cm-scroller > .cm-content > .cm-line.docLineMark {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   box-shadow: inset 3px 0 0 var(--accent);
 }
@@ -175,8 +178,8 @@
 .docTextView .cm-line.docHlLine.approx::before { opacity: 0.6; }
 /* The selection in the armed text highlighter's colour (TextViewer sets
    --selection-color), as over a PDF's text. */
-.docTextView.tinted .cm-content ::selection,
-.docTextView.tinted .cm-content::selection {
+.docTextView.tinted .docTextHost > .cm-editor > .cm-scroller > .cm-content ::selection,
+.docTextView.tinted .docTextHost > .cm-editor > .cm-scroller > .cm-content::selection {
   background: var(--selection-color);
 }
 
@@ -191,8 +194,8 @@
    panel, clipping the cards scrolled past it, its track a line of no width
    at the band's left edge, moved with the text's vertical scroll, so the
    cards stand the gap past it (CommentMargin's left: 100% + the gap). */
-.docTextView .cm-editor { overflow: hidden; }
-.docTextView.withMargin .cm-scroller { margin-right: var(--doc-margin-w); }
+.docTextHost > .cm-editor { overflow: hidden; }
+.docTextView.withMargin .docTextHost > .cm-editor > .cm-scroller { margin-right: var(--doc-margin-w); }
 .docTextOverlay {
   position: absolute;
   z-index: 2;

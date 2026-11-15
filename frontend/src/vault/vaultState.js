@@ -79,7 +79,7 @@ export function vaultChip(state) {
 }
 
 // An agent at work, in the one wording every place that shows it uses (the
-// chip's card, the chat's strip and pill, a Send's tag; the desktop sync
+// chip's card, the chat's strip and pill, a thread's turn's tag; the desktop sync
 // panel copies it): "Codex is working…", with what it is at "Codex is
 // working: Editing sections/intro.tex"; "The agent is working…" unnamed.
 export function agentWorking(agent, detail = "") {
@@ -87,15 +87,14 @@ export function agentWorking(agent, detail = "") {
   return detail ? t("{agent} is working: {detail}", { agent, detail }) : t("{agent} is working…", { agent });
 }
 
-// What the card says of the agent on this computer that answers the work
-// folder's Sends (`vault.agent`, {name, label, ready, problem, running:
-// {kind, request_id, detail} | null, `kind` "send" or "chat"};
-// docs/dev/local_agents.md): {line, problem,
-// working}, `line` naming it, `problem` why it cannot run (the server's
-// English sentence, "" while ready or not known yet), `working` during a
-// run the StateTag's state of it at work ({label, detail, title, tone,
-// live}, as comments.js sendState's running: `detail` what it is at, "" for
-// a member who cannot act on the vault), null otherwise. Null for a vault
+// What the card says of the agent on this computer that works in the work
+// folder (`vault.agent`, {name, label, ready, problem, running: {detail} |
+// null}; docs/dev/local_agents.md): {line, problem, working}, `line`
+// naming it, `problem` why it cannot run (the server's English sentence, ""
+// while ready or not known yet), `working` while a turn of it works there
+// the StateTag's state of it at work ({label, detail, title, tone, live},
+// as comments.js turnChip's working: `detail` what it is at, "" for a
+// member who cannot act on the vault), null otherwise. Null for a vault
 // with no agent.
 export function agentLine(state) {
   const agent = state?.vault?.agent;
@@ -117,7 +116,7 @@ export function agentLine(state) {
 // own channel, `[{id, name, online, since, vault: {kind, name, paused,
 // agent}, assistants: [{name, label, found, ready, version, code}]}]`,
 // online ones first; `vault.agent` ({name, label} | null) the agent that
-// answers the Sends of a work folder of that server there. Only the
+// works in a work folder of that server there. Only the
 // vault's maker is told: `[]` for anyone else, for a server older than the
 // route and for an answer that says nothing.
 export function readComputers(answer) {
@@ -156,7 +155,7 @@ function assistantText(assistant) {
 // went offline; `vault` the folder or file it keeps, as the page's server
 // names it; `paused` whether its vault is paused there ("" if not);
 // `assistants` the assistants found there, a not-ready one saying why (""
-// for none); `agent` the agent there that runs the Sends of the work
+// for none); `agent` the agent there that works in the work
 // folder it keeps ("Agent: Codex on TIM-PC", "" for none); `title` the
 // lines after the label, for the tooltip. Null for a page no computer of
 // the account's keeps.

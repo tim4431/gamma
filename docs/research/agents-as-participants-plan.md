@@ -1,6 +1,6 @@
 # Agents as participants: the build plan
 
-Status: **a plan, partly built**: steps 1, 2 and 3.1-3.6 are built, each
+Status: **a plan, partly built**: steps 1, 2 and 3.1-3.7 are built, each
 step's "As built" saying where the build differs. Written 2026-11-14
 against `dev` @ b4870d47, after a survey of the code behind work folders, local agents,
 computers and feedback. The file and line references were read then, so
@@ -1211,6 +1211,89 @@ person highlights a passage, comments with the tick, and Codex answers in
 the thread under its own name, edits the file where there is one, and
 asks a question of its own as a thread; no Feedback button is left; an
 agent started in a terminal reads `.gamma/annotations/open.md`.
+
+**As built** (3.7). The tables go through a migration rather than by
+leaving them: pages.db workspace step 65 (`drop_requests`, in
+`LOCAL_STEPS`) drops `feedback_requests`, `feedback_request_threads` and
+`feedback_request_runs`, `db.FEEDBACK_SCHEMA` is gone from
+`PAGES_SCHEMA`, and a backup made before the step runs it on its copy and
+restores without them; vaults.db's `agent_runs` and `agent_threads` stay
+in the schema, unread and unwritten (vaults.db is additive).
+`annotations/requests.py`, `routers/feedback.py`, the channel's
+`/api/computers/sends*` (`channel._sends`, `SENDS_EVERY_S`, the `sends`
+wake) and `registry.heard` go; `files.FORMER` is a tuple, `.gamma/feedback`
+and `.gamma/annotations/requests`, both deleted at every round and
+removal. The thread picture route stays, which differs from the list
+above: a far thread's turn needs its region's picture, so
+`GET /api/computers/threads/{id}/picture` is authorized by
+`chats.holds_thread` (the computer's run holds a turn of that thread,
+for the token's account) and `HttpChatHome` fetches the pictures into the
+folder's `.gamma/annotations/img/` (its `.gitignore` first), so a far turn
+sees them as a local one does. The runner keeps one kind of item, a
+`_ChatTurn`, keyed `(ws, turn id)` (a far one `(link id, turn id)`), and
+`at_work` and a link's `agent.running` say `{detail}` alone; `_Run`,
+`waiting`, `queue_waiting`, `queue_folder`, `folder_agent`, `running`,
+`send_runs` and `MAX_THREADS` went with it, and so did `PATCH
+/api/local-agents/{agent}`'s `queued`, `folder_links.try_holding`,
+`agent_folder` and `_hand_waiting`, the jobs' `feedback-run` rows and the
+tasks' `stopBody`. The structured answer goes from the drivers too (the
+schema, Codex's `outputSchema`, Claude Code's `--json-schema` and
+`StructuredOutput`, `done.answer`), with `prompt.build`, `ANSWER_SCHEMA`,
+`pending` and `answers`. The reader loses `sent`, `request_state`, the
+`ids` argument and `thread_ids`; `list_annotations` loses `request` and
+`mcp_links.holders` its requests; `hand.answer_run` and the `seen` stamp
+go; `store.forget_threads` is `forget_sessions` (the conversations'
+sessions alone). The client loses `frontend/src/feedback/` with its two
+test files and the 49 strings only it used (`tools/i18n.mjs --sync`); the
+desktop's `agentChat` goes and `agentSaid` names the chat and the comments.
+The tests the Sends had are thread turns now where the behaviour stays: a
+timeout, the error's record, a detach, recovery waiting for a workspace's
+migrations, a turn behind another in its directory, an agent that may not
+ask, a turn's detail on the links, the source line through the vault's
+rows, a push while paused, *Stop showing*, an `@codex` made on the other
+server, the computer's binding, and the handwriting card's new group in
+the browser; withdraws, claims, progress, answer retries, the 100-comment
+cap, "nothing new", a token's Send refused and the dialog's document are
+the Sends' own and went with them. The browser groups `feedback` and
+`remote-sends` go (`select.mjs` maps their files to `work-folders` and
+`remote-chat`); `local-agents` checks the Done-when: no Feedback button in
+the folder's list bar, the vault chip's menu or the Comments window, a
+ticked comment on a line of a synced folder's `.tex` edited by Codex (the
+code view shows it after the sync), Codex's own question opened as a
+thread on another line, `open.md` naming both threads, and a ticked comment
+on a library PDF's passage answered in its thread. That step found the code
+view's CodeMirror rules (`viewers.css`) reaching the comment column's own
+fields, which stand inside its editor (a field with the code's margin, height
+and hidden caret): they name the code's editor by its children now
+(`.docTextHost > .cm-editor > …`).
+
+The loose ends of 3.3-3.6 close in the same step. The Inbox item and a
+thread's resolving agent keep the agent's name, id and owner (users.db
+`inbox_items` gains `agent_id` and `agent_owner`, pages.db `comments`
+`resolved_agent_id` and `resolved_agent_owner`, step 66 `agent_ids` with
+a global and a workspace part, the latter in `LOCAL_STEPS`), the server
+answers them as `Agent.shown`'s `{id, kind, name, on?, owner?}` named
+through `agents.read_all`, and the client words them with
+`chat/agents.js` `agentWords`; the step rewrites an old label where
+users.db (the Inbox) or the thread's comments (a resolve) name its agent
+and leaves any other as words, and `channel.computer_name` reads the host
+name without the settings so the users.db part can name this computer. A
+thread turn's row in Background tasks opens the thread's conversation:
+`runner._chats` and `chats.remote_turns` keep the turn's thread and the
+conversation's owner, the row's `params` carry `conversation`, `thread`
+and, for a co-author's turn listed in its owner's tasks too, `person`, and
+the client opens it through `chatSide.js` `showInChat`, which replaced
+`showThreadChat` and `pickChatAgent` as the one way to show another
+conversation in a page's chat. An undo of an agent's block's deletion
+keeps its stamp through a tombstone rather than anything the client
+sends: an op's delete writes the stamp to pages.db `agent_stamps` (an
+additive table) with the block's text, and an insert of that id with
+that text takes it back (`_Batch.keep_stamps`, `stamp_back`). The owner's
+History lists a co-author's chat conversations under their name (`GET
+/chat/history`'s `lent`, `chats.lent_history`), opened in place of the
+owner's own (`GET /chat?conversation=`, `chats.lent_one`, the
+`{conversation}` of `showInChat`), exported but never selected, opened as
+the owner's or deleted; the strip offers no terminal on one.
 
 ## 4. Another server
 

@@ -176,7 +176,8 @@ export class Server {
   }
   log() { try { return fs.readFileSync(this.logPath, "utf8"); } catch { return ""; } }
   // The process ended, its data dir kept: start() again runs the same Gamma
-  // on another port (a computer gone and back, remoteSends.mjs).
+  // on another port (a computer gone and back, remoteChat.mjs; a NAS
+  // restarted, https.mjs).
   async halt() {
     if (this.proc && this.proc.exitCode == null) {
       if (process.platform === "win32") { try { execFileSync("taskkill", ["/pid", String(this.proc.pid), "/t", "/f"], { stdio: "ignore" }); } catch {} }

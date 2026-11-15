@@ -25,7 +25,10 @@ test("the read asks for the bucket, with the version held once there is one and 
   assert.equal(chatPath("p1", 7), "/local-agents/chat?bucket=p1&version=7");
   assert.equal(chatPath("home", null, "claude"), "/local-agents/chat?bucket=home&agent=claude");
   assert.equal(chatPath("f1", 3, "codex"), "/local-agents/chat?bucket=f1&version=3&agent=codex");
-  assert.equal(chatPath("p1", null, "codex", "th1"), "/local-agents/chat?bucket=p1&agent=codex&thread=th1", "a thread's conversation");
+  assert.equal(chatPath("p1", null, "codex", { thread: "th1" }), "/local-agents/chat?bucket=p1&agent=codex&thread=th1",
+    "a thread's conversation");
+  assert.equal(chatPath("p1", 4, "codex", { conversation: "b1" }), "/local-agents/chat?bucket=p1&version=4&agent=codex&conversation=b1",
+    "a co-author's chat");
 });
 
 test("a message posts its id, the bucket, the text trimmed and the passages with their place", () => {
@@ -489,4 +492,14 @@ test("History lists every agent's conversations by time, the one shown first", (
     ["", "claude", true, false], ["gamma", "gamma", false, true], ["c1", "codex", false, false], ["g1", "gamma", false, false]]);
   assert.equal(historyRows({ shown: null, gamma: [] }).length, 0, "a computer agent with no conversation yet lists none shown");
   assert.equal(historyRows({ shown: { title: "Now" }, gammaNow: { title: "x" } }).length, 1, "Gamma AI's current one is the one shown");
+});
+
+test("History lists a co-author's chats with the reader's agent under their name", () => {
+  const lent = [{ id: "b1", title: "Fix the caption", agent: "codex", updated_at: "2026-11-08T10:00:00Z", turns: 1, person: "bob" }];
+  const rows = historyRows({ shown: { title: "Now", preview: "" }, computer: { conversations: [], active: null, lent } });
+  const theirs = rows.find((r) => r.id === "b1");
+  assert.deepEqual([theirs.lent, theirs.by, theirs.agent, !!theirs.current], [true, "bob's chat with Codex", "codex", false]);
+  const shown = historyRows({ agent: "codex", shownId: "b1", shown: { title: "Fix the caption", preview: "" },
+    computer: { conversations: [], active: null, lent } });
+  assert.deepEqual(shown.map((r) => r.id), [""], "the one shown in place of the reader's own is listed once");
 });

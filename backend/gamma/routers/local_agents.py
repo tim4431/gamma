@@ -182,9 +182,7 @@ def list_agents(request: Request, fresh: int = 0):
 def set_agent(agent: str, body: AgentPatch, request: Request):
     """``{enabled?, runs?}``: ``agent`` turned on or off for this computer,
     and what it may run (``never`` or ``ask``) → the agent as the listing
-    says it, with ``queued``, how many waiting Sends it took when turned on
-    (the Sends of work folders of other servers are those servers' to hand
-    over). Turning one on takes the desktop shell's word (403
+    says it. Turning one on takes the desktop shell's word (403
     "Only the desktop app may turn on an agent on this computer."), an
     agent that is not another account's (409) and one ready now (400 with
     its problem: this asks it afresh); the account that turns it on owns
@@ -224,17 +222,14 @@ def set_agent(agent: str, body: AgentPatch, request: Request):
                                                         "what it may run.")
         if body.runs == "ask":
             from_shell(request, "Only the desktop app may let an agent ask to run commands on this computer.")
-    queued = 0
     force = body.enabled is False and on and owner != user_id
     if body.enabled is not None and store.set_agent(agent, body.enabled, by=user_id, force=force):
-        if body.enabled:
-            queued = runner.queue_waiting()
-        else:
+        if not body.enabled:
             runner.stop_agent(agent)
         folder_links.agents_changed()
     if body.runs is not None and store.set_runs(agent, body.runs, by=user_id) and body.runs == "never":
         runner.runs_never(agent)
-    return {**_entry(catalog.cached(agent), store.agents().get(agent), user_id, _ws_of(request)), "queued": queued}
+    return _entry(catalog.cached(agent), store.agents().get(agent), user_id, _ws_of(request))
 
 
 # --- the people an agent serves (a co-author's use) -------------------------------------------------
@@ -476,8 +471,8 @@ class AnswerBody(BaseModel):
 MAX_NOTE = 2000   # characters of what a decline tells the agent
 
 
-def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = "",
-          thread: str = "") -> tuple[str, str, dict | None, dict | None, dict | None]:
+def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = "", thread: str = "",
+          lent: str = "") -> tuple[str, str, dict | None, dict | None, dict | None]:
     """``(ws, the account, the place, the far seat, the active conversation)``
     of the bucket for the session's account, one of the place and the far
     seat None: where the account's agent here works (``chats.place_of``, on
@@ -486,8 +481,10 @@ def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = ""
     here keeps, the computer of the account's that keeps it with an agent
     (``chats.remote_of``). With ``thread`` the conversation is the
     account's of that comment thread on the bucket, else a co-author's
-    there with the account's agent (``chats.of_thread`` ``owner``), in
-    place of the active one. With ``agent`` (the one picked in the
+    there with the account's agent (``chats.of_thread`` ``owner``), and
+    with ``lent`` the chat conversation of that id of a co-author the
+    account's agent serves on the bucket (``chats.lent_one``), in place of
+    the active one. With ``agent`` (the one picked in the
     chat), a conversation of another agent counts as none: a conversation
     keeps the agent it began with, and the next turn starts another
     (``chats.begin``). 404 for any other bucket or account; 403 for a token
@@ -498,8 +495,9 @@ def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = ""
     user_id = require_personal_user_id(request, SESSION_ONLY)
     ws = require_ws(request)
     with connect_pages_db(ws) as conn:
-        if thread:
-            conversation = chats.of_thread(conn, thread, user_id, owner=True)
+        if thread or lent:
+            conversation = (chats.of_thread(conn, thread, user_id, owner=True) if thread
+                            else chats.lent_one(conn, lent, user_id))
             conversation = conversation if conversation is not None and conversation["bucket"] == bucket else None
         else:
             conversation = chats.active(conn, bucket, user_id) if bucket else None
@@ -610,7 +608,7 @@ def _computer(ws: str, user_id: str, place: dict, conversation: dict | None, age
     the runner (``runner.chat_state``) or null, ``session`` whether a
     terminal can continue the conversation (``_session_of``; the id itself
     goes only to the shell, ``terminal``; never in a vault another account
-    made), ``folder_id`` the work folder's
+    made, nor for a co-author's conversation), ``folder_id`` the work folder's
     (W, what the changed files' paths are relative to; null outside one),
     ``dir`` where the agent works (``{kind: "vault", name, path}``, the path
     for the vault's maker alone, ``{kind: "offered", id, name}``, or null
@@ -641,8 +639,8 @@ def _computer(ws: str, user_id: str, place: dict, conversation: dict | None, age
             "folder": place["name"] if link is not None else "",
             "paused": link is not None and (bool(link["status"].get(folder_links.PAUSED)) or folder_links.choosing(link)),
             "turn": runner.chat_state(ws, reply["turn_id"]) if reply else None,
-            "session": lent is None and (link is None or link["created_by"] == user_id) and bool(
-                _session_of(place, cwd, name, conversation)),
+            "session": lent is None and not chats.lent(conversation) and (
+                link is None or link["created_by"] == user_id) and bool(_session_of(place, cwd, name, conversation)),
             "folder_id": place["dir"] if link is not None else None, "dir": shown,
             "grants": store.grants_of(conversation["id"], dir=cwd) if cwd and lent is None else [], "lent": lent}
 
@@ -682,23 +680,32 @@ def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
 
 
 @router.get("/chat")
-def read_chat(request: Request, bucket: str = "", version: str = "", agent: str = "", thread: str = ""):
+def read_chat(request: Request, bucket: str = "", version: str = "", agent: str = "", thread: str = "",
+              conversation: str = ""):
     """``{computer, conversation}``: the strip (``_computer``, or
     ``_far_computer`` for an agent on another computer) and the bucket's
     active conversation of the account (``{id, title, agent, thread_id,
     messages, version}``, null for none, and for one of another agent than
     the one picked, ``agent``: ``_seat``), or with ``thread`` the account's
     conversation of that comment thread on the bucket (the chat's *Open in
-    chat*), its turns answered and stopped as a chat's; with ``version``
-    the one stored, ``{computer, same: true}``, so a poll reads little."""
+    chat*), or with ``conversation`` a co-author's chat conversation with
+    the account's agent (History, Background tasks), its turns answered and
+    stopped as a chat's; a co-author's carries ``person``, the co-author's
+    username. With ``version`` the one stored, ``{computer, same: true}``,
+    so a poll reads little."""
+    from ..db import account_names, connect_users_db
     from ..local_agents import chats
 
-    ws, user_id, place, far, conversation = _seat(request, bucket, agent=agent, thread=thread)
-    computer = (_computer(ws, user_id, place, conversation, agent) if place is not None
-                else _far_computer(ws, far, conversation))
-    if version and conversation is not None and str(conversation["version"]) == version:
+    ws, user_id, place, far, found = _seat(request, bucket, agent=agent, thread=thread, lent=conversation)
+    computer = (_computer(ws, user_id, place, found, agent) if place is not None
+                else _far_computer(ws, far, found))
+    if version and found is not None and str(found["version"]) == version:
         return {"computer": computer, "same": True}
-    return {"computer": computer, "conversation": chats.shown(conversation)}
+    shown = chats.shown(found)
+    if found is not None and found["user_id"] != user_id:
+        with connect_users_db() as conn:
+            shown["person"] = account_names(conn, {found["user_id"]}).get(found["user_id"], "")
+    return {"computer": computer, "conversation": shown}
 
 
 @router.post("/chat/turns", status_code=202)
@@ -768,7 +775,7 @@ def start_turn(body: TurnBody, request: Request):
         raise _refused(e) from None
     if new:
         runner.queue_chat(ws, place, reply["turn_id"], conversation_id=conversation["id"], bucket=body.bucket,
-                          agent=name, user_id=user_id, model=model, effort=effort)
+                          agent=name, user_id=user_id, owner=row["set_by"], model=model, effort=effort)
     return {"conversation": chats.shown(conversation), "turn": {"id": reply["turn_id"], "state": reply["state"]}}
 
 
@@ -1046,21 +1053,30 @@ def new_chat(body: BucketBody, request: Request):
 
 @router.get("/chat/history")
 def chat_history(request: Request, bucket: str = ""):
-    """``{conversations: [{id, title, agent, updated_at, turns}], active}``:
-    the bucket's archived conversations of the account, newest first, and
-    its active one as they are listed (null for none), whichever agent it
-    is of: the chat's History lists it while another agent is picked. The
-    account's own, on every server and whatever became of its agents (one
-    turned off, a computer gone): a session's alone."""
-    from ..db import connect_pages_db
+    """``{conversations: [{id, title, agent, updated_at, turns}], active,
+    lent}``: the bucket's archived conversations of the account, newest
+    first, and its active one as they are listed (null for none), whichever
+    agent it is of: the chat's History lists it while another agent is
+    picked; ``lent`` the chat conversations there of the co-authors the
+    account's agents serve, active or archived, each with its ``person``
+    (the co-author's username; ``chats.lent_history``), which the account
+    reads, stops, answers and exports but never opens as its own or
+    deletes. On every server and whatever became of its agents (one turned
+    off, a computer gone): a session's alone."""
+    from ..db import account_names, connect_pages_db, connect_users_db
     from ..local_agents import chats
 
     user_id = require_personal_user_id(request, SESSION_ONLY)
     ws = require_ws(request)
     with connect_pages_db(ws) as conn:
         conversation = chats.active(conn, bucket, user_id) if bucket else None
+    lent = chats.lent_history(ws, bucket, user_id) if bucket else []
+    with connect_users_db() as conn:
+        names = account_names(conn, {c["user_id"] for c in lent}) if lent else {}
     return {"conversations": chats.history(ws, bucket, user_id) if bucket else [],
-            "active": chats.listed(conversation)}
+            "active": chats.listed(conversation),
+            "lent": [{**{k: v for k, v in c.items() if k != "user_id"}, "person": names.get(c["user_id"], "")}
+                     for c in lent]}
 
 
 @router.post("/chat/history/{conversation_id}/open")

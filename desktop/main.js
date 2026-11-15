@@ -2365,8 +2365,8 @@ async function setAgent(serverId, name, on, confirmed) {
   busy = `Checking ${keeping.AGENT_LABELS[name]}…`;
   pushState();
   try {
-    const after = await patch(shellWord(origin));
-    showNotice(keeping.agentSaid(name, true, (after && after.queued) || 0));
+    await patch(shellWord(origin));
+    showNotice(keeping.agentSaid(name, true));
     return true;
   } finally {
     busy = null;

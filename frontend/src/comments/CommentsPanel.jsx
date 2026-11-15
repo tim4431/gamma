@@ -1,20 +1,19 @@
 // The Comments window: the open page's threads, Open or Resolved, the
 // latest activity first, each with what it is on (the note's words, the
 // highlight's quote, the handwriting's page, or the page) and the chip of a
-// Send waiting on it. A click scrolls to the anchor, flashes it and opens
+// turn of an agent still to end. A click scrolls to the anchor, flashes it and opens
 // its thread popover (App's onOpen). A dock window like Notes
 // and Chat, loaded on first use (shared/ui/lazy.jsx;
 // docs/dev/comments.md "In the app"). The list moves as it changes
 // (ListMotion): a thread that comes rises into place, and one with a new
 // reply glides to the top as the others make room. The bell in its header
-// is the page's Notify me, and on a work folder's file Feedback opens the
-// feedback view (docs/dev/annotations.md).
+// is the page's Notify me.
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ListMotion from "../shared/ui/ListMotion";
 import { StateTag } from "../shared/ui/StateTag";
 import { DockWindow } from "../shared/ui/Widgets";
 import { Empty, Segmented } from "../settings/SettingsKit";
-import { BellIcon, BotIcon, CheckIcon, MessageSquareIcon } from "../shared/ui/Icons";
+import { BellIcon, CheckIcon, MessageSquareIcon } from "../shared/ui/Icons";
 import { PersonAvatar } from "../collaboration/Presence";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { API, apiJson } from "../shared/lib/utils";
@@ -59,11 +58,9 @@ function useNotifyLevel(pageId, enabled, onStatus) {
 // labelOf(id): a [[link]]'s label, so a line names the page it links to.
 // `notify`: the reader has an Inbox (a signed-in account, no guest), so the
 // header has the page's Notify me; onStatus(text) says a choice the server
-// refused. onFeedback(), when given (a work folder's file, a reader who may
-// edit), is the header's Feedback. A row's chip is its thread card's: the
-// reader's turn of it with an agent while it is to end (comments.js
-// turnChip).
-export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, onFeedback, ...common }) {
+// refused. A row's chip is its thread card's: the reader's turn of it with
+// an agent while it is to end (comments.js turnChip).
+export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, ...common }) {
   const [filter, setFilter] = useState("open");
   const [level, setLevel] = useNotifyLevel(pageId, notify, onStatus);
   const list = threadsIn(threads || [], filter);
@@ -81,8 +78,6 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
   const actions = [
     notify && { id: "notify", icon: BellIcon, label: t("Notify me"), disabled: !level,
       choice: { value: level, onChange: setLevel, options: [["all", t("All comments")], ["replies", t("Replies and @mentions")]] } },
-    onFeedback && { id: "feedback", icon: BotIcon, label: t("Feedback"), onClick: onFeedback,
-      title: t("Feedback: this file's open comments, to send to an agent") },
   ].filter(Boolean);
   return (
     <DockWindow title={t("Comments")} guide="comments.grip" {...common} onClose={onClose}

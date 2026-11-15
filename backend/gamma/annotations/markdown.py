@@ -1,8 +1,8 @@
 """The Markdown form of an annotations document (docs/dev/annotations.md
 "The Markdown"): what ``.gamma/annotations/open.md``, ``GET
 /api/annotations?format=md`` and the MCP tools give an agent to read. A
-heading per file, an item per highlight and thread with its place, source,
-Send and pictures, a thread's comments quoted line by line (a body's own
+heading per file, an item per highlight and thread with its place, source
+and pictures, a thread's comments quoted line by line (a body's own
 Markdown left as it is), and how to answer at the end.
 
 The pictures are written as the reader can reach them: ``files`` the
@@ -93,12 +93,6 @@ def _facts(entry: dict) -> list[str]:
         span = f"lines {source['line']}–{source['end']}" if source.get("end") else f"line {source['line']}"
         lines.append(f"- source: `{source['file']}`, {span}" + (" (as commented)" if source.get("version") == "commented"
                                                                  else ""))
-    sent = entry.get("sent")
-    if sent:
-        when, detail = _when(sent["at"]), sent.get("detail", "")
-        lines.append("- sent: " + {"sent": f"waiting since {when}",
-                                   "running": f"being worked on{': ' + detail if detail else ''} (sent {when})",
-                                   "failed": f"failed{': ' + detail if detail else ''} (sent {when})"}[sent["state"]])
     return lines
 
 

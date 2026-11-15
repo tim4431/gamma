@@ -187,7 +187,7 @@ def test_the_drivers_stream_a_chat_turns_text(disk, monkeypatch, tmp_path):
         assert said == [{"type": "delta", "text": "Dra"}, {"type": "delta", "text": "ft "},
                         {"type": "delta", "text": "words"}, {"type": "text", "text": "Final words."}], name
         assert got[-1]["ok"]
-        # without stream: the whole message alone (a Send's)
+        # without stream: the whole message alone
         got = list(events.start(name, argv=ARGV[name], cwd=str(work), prompt=chat).events())
         assert [e for e in got if e["type"] in ("delta", "text")] == [{"type": "text", "text": "Final words."}], name
     inits = [m["params"] for m in requests_in(disk.log) if m.get("method") == "initialize"]
@@ -293,7 +293,8 @@ def test_background_tasks_list_the_turns_that_work(lab, disk, monkeypatch):
     store.set_runs("codex", "ask", by=lab.user)
     script_agent(monkeypatch, disk.log, ask=[{"command": "curl https://example.com", "host": "example.com"}])
     assert _rows(lab.owner) == []
-    turn = _say(lab.owner, f.page)["turn"]["id"]
+    said = _say(lab.owner, f.page)
+    turn = said["turn"]["id"]
     _until(lambda: _reply(lab, f.page).get("asks"))
     [row] = _rows(lab.owner)
     with connect_pages_db(lab.ws) as conn:
@@ -301,7 +302,7 @@ def test_background_tasks_list_the_turns_that_work(lab, disk, monkeypatch):
     assert title and row == {
         "id": f"computer-{turn}", "kind": "computer-turn", "owner": lab.user, "workspace": lab.ws,
         "title": f"Codex · {title}", "params": {"bucket": f.page, "turn": turn, "agent": "codex", "label": "Codex",
-                                                    "title": title},
+                                                    "title": title, "conversation": said["conversation"]["id"]},
         "state": "running", "progress": {"phase": "asking"}, "error": "", "created_at": row["created_at"],
         "started_at": row["started_at"], "finished_at": "", "artifact": None, "downloaded": False,
         "stoppable": True, "stopping": False, "readonly": True}
@@ -326,3 +327,40 @@ def test_background_tasks_list_the_turns_that_work(lab, disk, monkeypatch):
     held.release()
     assert runner.wait_idle(30)
     assert _rows(lab.owner) == []
+
+
+def test_a_co_authors_turns_and_chats_reach_the_owner_who_reads_them(lab, disk, monkeypatch):
+    """A co-author's turn with the owner's agent is in the owner's Background
+    tasks too, naming the person and the conversation the row opens; the
+    co-author's conversations are in the owner's History under their name,
+    read there in place of the owner's own (``?conversation=``), stopped and
+    exported, never opened as the owner's or deleted."""
+    f = _folder(lab, disk)
+    editor = account_of(EDITOR)
+    store.name_person("codex", "", lab.ws, editor, EDITOR)
+    try:
+        script_agent(monkeypatch, disk.log, delay=30)
+        made = _say(lab.editor, f.page, "Fix the caption.")
+        turn, conversation = made["turn"]["id"], made["conversation"]["id"]
+        _until(lambda: _rows(lab.owner))
+        [row] = _rows(lab.owner)
+        assert (row["params"]["conversation"], row["params"]["person"], "thread" in row["params"]) == (
+            conversation, EDITOR, False)
+        [theirs] = _rows(lab.editor)
+        assert theirs["params"]["conversation"] == conversation and "person" not in theirs["params"]
+        assert _stop(lab.owner, turn) == {"stopped": True}                     # the owner may stop it
+        assert runner.wait_idle(30)
+        listed = lab.owner.get("/api/local-agents/chat/history", params={"bucket": f.page}).json()
+        assert [(c["id"], c["person"], c["agent"]) for c in listed["lent"]] == [(conversation, EDITOR, "codex")]
+        assert conversation not in [c["id"] for c in listed["conversations"]]
+        assert lab.editor.get("/api/local-agents/chat/history", params={"bucket": f.page}).json()["lent"] == []
+        seen = _chat(lab.owner, f.page, conversation=conversation)
+        assert (seen["conversation"]["id"], seen["conversation"]["person"], seen["computer"]["session"]) == (
+            conversation, EDITOR, False)
+        assert (_chat(lab.owner, f.page)["conversation"] or {}).get("id") != conversation   # never the owner's own
+        assert _chat(lab.editor, f.page, conversation=conversation)["conversation"] is None
+        assert lab.owner.get(f"/api/local-agents/chat/history/{conversation}/export").status_code == 200
+        assert lab.owner.post(f"/api/local-agents/chat/history/{conversation}/open").status_code == 404
+        assert lab.owner.delete(f"/api/local-agents/chat/history/{conversation}").status_code == 404
+    finally:
+        store.unname_person("codex", "", lab.ws, editor)

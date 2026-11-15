@@ -147,10 +147,12 @@ export const TASK_KINDS = {
   // A turn of a computer's agent in the chat's computer side, queued or
   // running on this computer (docs/dev/local_agents.md "The chat's computer
   // side"), read-only: a click opens the chat of its bucket
-  // (`params.bucket`) on that side, and Stop is the turn's own. The
-  // server's title is "<agent> · <page title>". A turn of a work folder another computer keeps (step 4d) names
-  // that computer (`params.computer`), and while it asks there (phase
-  // `asking`) says the answer is given on that computer.
+  // (`params.bucket`) on the turn's conversation (`turnShown`), and Stop is
+  // the turn's own. The server's title is "<agent> · <page title>". A turn
+  // of a work folder another computer keeps (step 4d) names that computer
+  // (`params.computer`), and while it asks there (phase `asking`) says the
+  // answer is given on that computer. A co-author's turn with the reader's
+  // agent names the co-author (`params.person`).
   "computer-turn": {
     icon: "terminal", open: "computer",
     title: ({ title, params }) => {
@@ -159,6 +161,11 @@ export const TASK_KINDS = {
       // row's title from an older server
       const page = params?.bucket === "home" ? t("Library") : typeof params?.title === "string" ? params.title : title;
       const computer = typeof params?.computer === "string" ? params.computer : "";
+      if (typeof params?.person === "string") {
+        const person = params.person || t("Someone");
+        return computer ? t("{agent} on {computer}, for {person}: {title}", { agent, computer, person, title: named(page) })
+          : t("{agent} on this computer, for {person}: {title}", { agent, person, title: named(page) });
+      }
       return computer ? t("{agent} on {computer}: {title}", { agent, computer, title: named(page) })
         : t("{agent} on this computer: {title}", { agent, title: named(page) });
     },
@@ -167,18 +174,6 @@ export const TASK_KINDS = {
     stop: ({ workspace, params }) => `/local-agents/chat/turns/${encodeURIComponent(params?.turn || "")}/stop${
       workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
   },
-  // A Send the work folder's agent answers on this computer (routers/jobs.py
-  // _feedback_runs), read-only: a click opens the Feedback dialog on its
-  // file or folder, and Stop is its requester's withdraw. The agent's own
-  // words come as `progress.item`.
-  "feedback-run": {
-    icon: "terminal", open: "feedback",
-    title: ({ params }) => tn("{agent} on this computer: {title} · {n} comment", "{agent} on this computer: {title} · {n} comments",
-      params?.comments || 0, { agent: params?.label || "", title: named(params?.name || "") }),
-    stop: ({ workspace, params }) => `/feedback/requests/${encodeURIComponent(params?.request || "")}/state${
-      workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,
-    stopBody: () => ({ state: "failed", detail: "withdrawn" }),
-  },
   // This tab's own work (App.jsx adds and updates these rows).
   download: { icon: "download" },
   upload: { icon: "upload" },
@@ -186,6 +181,17 @@ export const TASK_KINDS = {
   ai: { icon: "sparkles", quiet: true },
   batch: { icon: "file" }, // the library's bulk actions over many pages (library/pageBatch.js)
 };
+
+// What a computer turn's row opens in its bucket's chat in place of the
+// chat's own (chat/computer/chatSide.js showInChat): the conversation of
+// its comment thread (`params.thread`), a co-author's chat
+// (`params.person`, `params.conversation`), else null, the reader's own
+// chat.
+export function turnShown(task) {
+  const params = task?.params || {};
+  if (params.thread) return { thread: params.thread };
+  return typeof params.person === "string" && params.conversation ? { conversation: params.conversation } : null;
+}
 
 const UNKNOWN = { icon: "activity" };
 export const kindOf = (task) => TASK_KINDS[task?.kind] || UNKNOWN;
@@ -343,8 +349,6 @@ export const canOpen = (task) => !task.local && Boolean(kindOf(task).open);
 // its own (a computer turn's, in the workspace it runs in), else "": the
 // job's cancel.
 export const stopPath = (task) => (!task.local && kindOf(task).stop?.(task)) || "";
-// What that Stop posts: {} but for a kind that says (a Send's withdraw).
-export const stopBody = (task) => kindOf(task).stopBody?.(task) || {};
 
 // The row's buttons, in order: "stop" while it can be stopped, then for a
 // finished one "download" (its file), "retry" and "dismiss".

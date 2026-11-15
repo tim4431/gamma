@@ -38,24 +38,19 @@ agent turned on or off, nudges the threads (``nudge``), which see it at the
 end of the poll they hold, at most ``POLL_S`` later. Never a path.
 
 The work folders of that server kept here, while an agent of the channel's
-account is on here (step 4c, ``agent_folders``: the first of its agents,
-which the announce says as the first assistant ``enabled``), run its Sends:
-after each announce, on a poll answered ``{wake: ["sends"]}``, when a vault
-takes Sends again (``ask_sends``) and at least every ``SENDS_EVERY_S``, the
-thread asks that server for the Sends that wait (``_sends``), queues each for
-its vault (gamma/local_agents/runner.py ``queue_remote``) and stops the runs
-whose request was withdrawn there; each run speaks to that server with this
-channel's token (``of_vault``, gamma/local_agents/home.py). Each announce
-that succeeds fails there the runs of its vaults left open while that server
-was not reached (``_settle``).
-
-The chat's computer side on a page of such a work folder (step 4d) runs here
-too: after each announce, on a poll answered ``{wake: ["chat"]}`` and at
-least every ``CHATS_EVERY_S``, the thread asks that server for the turns
-that wait (``_chats``), queues each for its vault
-(``runner.queue_remote_chat``) and stops the ones stopped there; the
-announce's assistants name the models each offers (``models``), which that
-server offers the chat's model chip and checks a turn's against.
+account is on here (step 4d of docs/research/agent-collab.md,
+``agent_folders``: the first of its agents, which the announce says as the
+first assistant ``enabled``), run the turns of its pages' chat and of the
+comments sent to that agent there: after each announce, on a poll answered
+``{wake: ["chat"]}`` and at least every ``CHATS_EVERY_S``, the thread asks
+that server for the turns that wait (``_chats``), queues each for its vault
+(gamma/local_agents/runner.py ``queue_remote_chat``) and stops the ones
+stopped there; each turn speaks to that server with this channel's token
+(``of_vault``, gamma/local_agents/home.py). The announce's assistants name
+the models each offers (``models``), which that server offers the chat's
+model chip and checks a turn's against. Each announce that succeeds fails
+there the turns of its vaults left open while that server was not reached
+(``_settle``).
 
 A work folder of that server detached there (gamma/work_folders/detach.py)
 wakes the poll with ``{wake: ["let_go"]}``: each work folder of that server
@@ -69,6 +64,7 @@ import hashlib
 import hmac
 import json
 import re
+import socket
 import threading
 import time
 import uuid
@@ -89,8 +85,7 @@ OLDER_S = 3600           # a server without the channel is asked again after thi
 RETRY_FIRST_S = 5        # an unreachable server is tried again after this, doubling
 RETRY_MAX_S = 300        # up to this
 QUICK_S = 1.0            # a poll answered at once with nothing: the next waits this long
-SENDS_EVERY_S = 180      # the Sends that wait there are asked for at least this often (a wake lost)
-CHATS_EVERY_S = 180      # and the chat turns that wait there
+CHATS_EVERY_S = 180      # the turns that wait there are asked for at least this often (a wake lost)
 MAX_MODELS = 32          # models an assistant's announce names
 _TURN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a chat turn's id there (``blocks_store.new_block_id``'s)
 STATES = ("connecting", "connected", "refused", "older", "unreachable")
@@ -133,7 +128,7 @@ def get(link_id: str, *, with_token: bool = False) -> dict | None:
 def of_vault(vault: dict) -> dict | None:
     """The channel, with its token, that the vault ``vault`` of another
     server is announced on (its server, workspace and local account's),
-    None for none: what a run of its agent speaks to that server with
+    None for none: what a turn of its agent speaks to that server with
     (gamma/local_agents/home.py)."""
     with connect_users_db() as conn:
         r = conn.execute(f"SELECT {_COLS} FROM computer_links WHERE remote_url = ? AND workspace_id = ? AND "
@@ -324,8 +319,9 @@ def state_of(link: dict) -> dict:
 
 def computer_name() -> str:
     """This computer's name as every server sees it: its host name, or
-    "This computer" for one that cannot be shown."""
-    name = device()[1].strip()[:64]
+    "This computer" for one that cannot be shown. Reads no setting, so a
+    users.db step names it too (gamma/migrations.py)."""
+    name = socket.gethostname()[:64].strip()
     return name if name.isprintable() and name else "This computer"
 
 
@@ -368,10 +364,8 @@ class _Channel:
         self.announced = None       # the state last announced, None to announce again
         self.version = ""           # that announce's version, which the polls name
         self.backoff = RETRY_FIRST_S
-        self.sends_due = True       # the Sends that wait there are asked for at the next turn (``_sends``)
-        self.sends_at = 0.0         # time.monotonic() when they were last asked for
-        self.chats_due = True       # the chat turns that wait there are asked for at the next turn (``_chats``)
-        self.chats_at = 0.0
+        self.chats_due = True       # the turns that wait there are asked for at the next turn (``_chats``)
+        self.chats_at = 0.0         # time.monotonic() when they were last asked for
         self.thread: threading.Thread | None = None
 
     def run(self) -> None:
@@ -400,10 +394,8 @@ class _Channel:
                 self.announced, self.version = state, str(answer.get("version") or "")
                 self._account(link, answer.get("account") or {})
                 self._said(link, "connected", "", 0)   # shown there now, before the poll's hold
-                self.sends_due = self.chats_due = True  # what waited for this computer while it was away
+                self.chats_due = True       # what waited for this computer while it was away
                 self._settle(link)
-            if self.sends_due or time.monotonic() - self.sends_at >= SENDS_EVERY_S:
-                self._sends(server, link)
             if self.chats_due or time.monotonic() - self.chats_at >= CHATS_EVERY_S:
                 self._chats(server, link)
             started = time.monotonic()
@@ -431,8 +423,6 @@ class _Channel:
         if got.get("announce"):
             self.announced = None
         elif isinstance(got.get("wake"), list):
-            if "sends" in got["wake"]:
-                self._sends(server, link)
             if "chat" in got["wake"]:
                 self._chats(server, link)
             if "let_go" in got["wake"]:
@@ -440,49 +430,8 @@ class _Channel:
         # A poll answered at once (nothing, or announce again: a server that always asks so) rests a moment.
         return max(0.0, QUICK_S - (time.monotonic() - started))
 
-    def _sends(self, server: gamma_sync.Server, link: dict) -> None:
-        """The Sends that wait there for this computer's agents (``GET
-        /api/computers/sends``: that server decides whose they are), each
-        queued for the vault of its work folder unless it is paused or
-        choosing its files (``runner.queue_remote``), and the runs whose
-        request was withdrawn there meanwhile stopped
-        (``runner.withdraw_remote``). Asked only where a vault of that
-        server has an agent; a server without the route (older), or one not
-        reached, is asked again at a later turn. Never raises."""
-        from ..local_agents import runner
-
-        self.sends_due, self.sends_at = False, time.monotonic()
-        folders = agent_folders(link)
-        if not folders:
-            return
-        try:
-            got = _call(server, "GET", "/api/computers/sends")
-        except (Older, gamma_sync.Denied):
-            # A server from before agents ran there (404, or 403: its
-            # channel opens only the announce and the poll): asked again
-            # after SENDS_EVERY_S; a token it refuses fails the poll anyway.
-            return
-        except gamma_sync.SyncError as e:
-            self.sends_due = True
-            log.info(f"[computers] the Sends of channel {link['id']}: {e}")
-            return
-        try:
-            for send in got.get("sends") if isinstance(got.get("sends"), list) else []:
-                kept = folders.get(send.get("folder_id")) if isinstance(send, dict) else None
-                if kept is None or not isinstance(send.get("id"), str) or not send["id"]:
-                    continue
-                vault = kept[0]
-                if not vault["status"].get(folder_links.PAUSED) and not folder_links.choosing(vault):
-                    runner.queue_remote(vault["id"], send["id"])
-            ids = [vault["id"] for vault, _agent in folders.values()]
-            for gone in got.get("withdrawn") if isinstance(got.get("withdrawn"), list) else []:
-                if isinstance(gone, dict) and isinstance(gone.get("id"), str) and gone["id"]:
-                    runner.withdraw_remote(ids, gone["id"], str(gone.get("run") or ""))
-        except Exception:  # noqa: BLE001 — a Send never stops the channel
-            log.exception(f"[computers] queueing the Sends of channel {link['id']}")
-
     def _chats(self, server: gamma_sync.Server, link: dict) -> None:
-        """The chat turns that wait there for this computer's agents (``GET
+        """The turns that wait there for this computer's agents (``GET
         /api/computers/chats``: that server decides whose they are), each
         queued for the vault of its work folder (``runner.queue_remote_chat``:
         the turn finds the vault as it is when it runs, and fails with why
@@ -541,7 +490,7 @@ class _Channel:
             log.exception(f"[computers] the rounds of channel {link['id']} after a detach there")
 
     def _settle(self, link: dict) -> None:
-        """That server reached again: the runs of its vaults left open while
+        """That server reached again: the turns of its vaults left open while
         it was not (an end or a claim never answered) fail there now
         (``runner.fail_remote_of``), not only at the next start. Never
         raises."""
@@ -552,8 +501,8 @@ class _Channel:
             return
         try:
             runner.fail_remote_of([vault["id"] for vault in _vaults_of(link)])
-        except Exception:  # noqa: BLE001 — a run left open never stops the channel
-            log.exception(f"[computers] the runs left open of channel {link['id']}")
+        except Exception:  # noqa: BLE001 — a turn left open never stops the channel
+            log.exception(f"[computers] the turns left open of channel {link['id']}")
 
     def _said(self, link: dict, state: str, error: str, rest: float, **fields) -> float:
         """The channel's status, with ``fields`` (``gamma_sync.status_fields``:
@@ -629,15 +578,4 @@ def nudge() -> None:
     with _guard:
         running = list(_channels.values())
     for channel in running:
-        channel.nudged.set()
-
-
-def ask_sends() -> None:
-    """A work folder of another server takes Sends again here (its agent
-    turned on, the vault resumed or its files chosen): each channel asks
-    its server for the Sends that wait once its poll ends."""
-    with _guard:
-        running = list(_channels.values())
-    for channel in running:
-        channel.sends_due = True
         channel.nudged.set()

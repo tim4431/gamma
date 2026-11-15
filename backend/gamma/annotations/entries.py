@@ -39,23 +39,22 @@ HOME = "home"           # the library's scope, as the chat's buckets name it
 MAX_ENTRIES = 500       # entries one document carries; the rest is counted as ``truncated``
 MAX_NOTE = 1000         # characters of a note's text in ``where.note``
 STATES = comments.STATES
-WORK_KINDS = ("work_folder", "folder", "file")  # the scopes of a work folder: what a Send names
+WORK_KINDS = ("work_folder", "folder", "file")  # the scopes of a work folder
 PLACED = ("passage", "area", "ink")         # the kinds that have a page
 REGION = "region"                           # the kind that has a place on a picture
 LINED = ("lines",)                          # the kinds that have lines in a text file
 ON_THIS_BUILD = ("exact", "rough", "estimate")  # a place on the page's current file
 
-# How to answer, the same in every document (and in a request's file, with
-# its own state route): the comment routes and the MCP tools (the writing
-# tools of gamma/ai_tools.py, docs/dev/annotations.md "The writing tools").
+# How to answer, the same in every document: the comment routes and the MCP
+# tools (the writing tools of gamma/ai_tools.py, docs/dev/annotations.md
+# "The writing tools").
 ANSWER = {"reply": "POST /api/pages/{page_id}/comments {block_id, thread_id, body}",
           "resolve": "POST /api/comments/{id}/resolve {resolved: true}",
-          "request_state": "POST /api/feedback/requests/{request_id}/state {state, detail}",
           "mcp": ["comment", "resolve", "highlight"]}
 
 
 class AnnotationError(Exception):
-    """A refusal of the reader or the requests: the HTTP status and the
+    """A refusal of the reader: the HTTP status and the
     words. The routes answer it as an HTTPException, the tools as text."""
 
     def __init__(self, status: int, detail: str):
@@ -122,12 +121,12 @@ def resolve_scope(conn, scope_id: str, tree: Tree | None = None) -> Scope:
 
 
 def work_scope(conn, scope_id: str, tree: Tree | None = None) -> Scope:
-    """``resolve_scope`` for what is a work folder's alone (a Send, a far
-    turn's file): AnnotationError 400 for a library page or folder and the
-    library, 404 as ``resolve_scope``."""
+    """``resolve_scope`` for what is a work folder's alone (a vault's
+    files, a far turn's page): AnnotationError 400 for a library page or
+    folder and the library, 404 as ``resolve_scope``."""
     scope = resolve_scope(conn, scope_id, tree)
     if scope.kind not in WORK_KINDS:
-        raise AnnotationError(400, "Feedback is for a work folder's files.")
+        raise AnnotationError(400, "That is no file of a synced folder.")
     return scope
 
 
@@ -207,13 +206,6 @@ def _scoped(conn, scope: Scope, state: str, tree: Tree) -> _Scoped:
         (json.dumps(sorted(pages)),)) if r[0] not in placed]
     threads = [t for t in every if state == "all" or (state == "resolved") == bool(t["resolved_at"])]
     return _Scoped(threads, marks, pages, stored)
-
-
-def thread_ids(conn, scope: Scope, *, state: str = "open", tree: Tree | None = None) -> list[str]:
-    """The ids of the scope's threads in ``state``, oldest first: what a
-    Send names when it names none."""
-    _check_state(state)
-    return [t["id"] for t in _scoped(conn, scope, state, tree or Tree.read(conn)).threads]
 
 
 # --- the place ---------------------------------------------------------------------
@@ -476,8 +468,8 @@ def link_of(ws: str, page_id: str, block_id: str, link_base: str = "", thread_id
 
 def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions: dict | None, memo: dict,
            places: bool = False) -> dict:
-    """The item's entry: a thread's with its state, its Send and its
-    comments; a highlight's with neither state nor Send and no comments."""
+    """The item's entry: a thread's with its state and its comments; a
+    highlight's with no state and no comments."""
     thread, view = item.thread, item.view
     picture, before = _pictures(ws, conn, item, regions, memo)
     out = {"id": item.id, "type": "thread" if thread else "highlight", "file": item.file,
@@ -485,7 +477,6 @@ def _entry(ws, conn, item: _Item, *, link_base: str, live_sources: bool, regions
            "kind": item.kind, "where": item.where, "source": _source(ws, conn, item, live_sources),
            "picture": picture, "before": before,
            "state": ("resolved" if thread["resolved_at"] else "open") if thread else None,
-           "sent": _sent(thread.get("sent")) if thread else None,
            "link": link_of(ws, item.page_id, item.block_id, link_base, item.id if thread else ""),
            "comments": [_comment(c) for c in thread["comments"]] if thread else []}
     if places and item.kind in PLACED and item.place:
@@ -504,17 +495,6 @@ def _comment(c: dict) -> dict:
     if c.get("agent_kind"):
         out.update(agent=Agent("", c["agent_kind"], c["agent"], c.get("agent_on") or "").label,
                    agent_kind=c["agent_kind"])
-    return out
-
-
-def _sent(sent: dict | None) -> dict | None:
-    if not sent:
-        return None
-    out = {"request_id": sent["request_id"], "state": sent["state"], "at": sent["at"]}
-    if sent.get("detail"):
-        out["detail"] = sent["detail"]
-    if sent.get("state_by"):
-        out["state_by"] = sent["state_by"]
     return out
 
 
@@ -555,7 +535,7 @@ def _entries(ws, conn, scope: Scope, *, state: str, paths, link_base: str, sourc
 
 
 def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None = None, link_base: str = "",
-            sources: bool = True, ids=None, regions: dict | None = None, places: bool = False) -> list[dict]:
+            sources: bool = True, regions: dict | None = None, places: bool = False) -> list[dict]:
     """The entries of the scope: its threads in ``state`` (open, resolved
     or all) and its highlights without a thread, whatever ``state``, in the
     document's order (files by name; in a file the whole file's threads,
@@ -563,8 +543,7 @@ def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None =
     ``paths``: ``{page id: path}`` (``paths_of``) for the files' names;
     ``link_base`` goes before each entry's link (MCP's absolute base; ""
     for a link that is its query alone); ``sources`` false leaves the live
-    SyncTeX lookup out (the recorded source stays); ``ids``: only those
-    entries (threads' ids, highlights' block ids); ``regions`` gains
+    SyncTeX lookup out (the recorded source stays); ``regions`` gains
     ``{key: (page id, Region)}`` for each picture named, for whoever draws
     them (``pictures.cached``); ``places``: an entry on a PDF page (a
     passage, an area, ink) gains ``place: {page, box, rects, doc_id}``, its
@@ -573,14 +552,14 @@ def entries(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None =
     its source line itself (gamma/routers/computers.py). AnnotationError
     400 for another state."""
     return _entries(ws, conn, scope, state=state, paths=paths, link_base=link_base, sources=sources,
-                    ids=ids, regions=regions, places=places)[0]
+                    regions=regions, places=places)[0]
 
 
 def document(ws, conn, scope: Scope, *, state: str = "open", paths: dict | None = None, owner: str = "",
              link_base: str = "", sources: bool = True, regions: dict | None = None) -> dict:
     """The scope's annotations as one document (``FORMAT``): its work
     folder (None outside one) and scope, ``owner`` (the username of the
-    account it is written for: whose comments are the requests),
+    account it is written for: whose comments ask it),
     ``updated_at`` (the newest change among its entries, so an unchanged
     document reads byte for byte the same), how to answer, and at most
     ``MAX_ENTRIES`` entries, the threads first: ``truncated`` says how many
@@ -620,8 +599,8 @@ def entry(ws, conn, entry_id: str, *, paths: dict | None = None, link_base: str 
         scope = resolve_scope(conn, page_id)
     except AnnotationError:
         return None
-    found = entries(ws, conn, scope, state="all", paths=paths, link_base=link_base, sources=sources,
-                    ids=[entry_id], regions=regions, places=places)
+    found = _entries(ws, conn, scope, state="all", paths=paths, link_base=link_base, sources=sources,
+                     ids=[entry_id], regions=regions, places=places)[0]
     return found[0] if found else None
 
 

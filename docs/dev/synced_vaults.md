@@ -1510,7 +1510,7 @@ app counts and confirms first, and only the vault's maker may ask.
   until a round covered its page: a vault whose round runs leaves it for
   the next tick, as does a file still being written. The same tick then
   writes the annotation files of the work folders and of the pages a vault
-  of one file follows that a comment write, an op commit or a Send marked
+  of one file follows that a comment write or an op commit marked
   `HOT_S` ago or more (`annotations.files.due`, `_annotations_pass`, under
   the link's lock): a lock a round holds keeps the
   mark for the next tick, as does a pass that left a file a reader held or

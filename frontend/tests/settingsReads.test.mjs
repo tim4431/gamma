@@ -95,7 +95,7 @@ test("every path a section reads through the store is one of a pane's reads", as
   const path = await import("node:path");
   const { fileURLToPath } = await import("node:url");
   const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/settings");
-  const who = { admin: true, signedIn: true };
+  const who = { admin: true, signedIn: true, desktop: true };
   const listed = new Set(Object.values(PANE_READS).flatMap((reads) => reads(who)).filter(Boolean)
     .map((read) => (typeof read === "string" ? read : read.path)));
   for (const file of fs.readdirSync(dir).filter((name) => name.endsWith(".jsx"))) {
@@ -109,6 +109,9 @@ test("every path a section reads through the store is one of a pane's reads", as
     }
   }
   assert.deepEqual(PANE_READS.workspaces(who).filter((read) => Object.values(LINK_BASES).includes(read)), ["/mirrors", "/zotero/links"]);
+  // a server that runs no agents answers 404 for the people an owner may name
+  assert.ok(!PANE_READS.ai({ signedIn: true, desktop: false }).some((read) => read?.path === "/local-agents/people"),
+    "a window other than the desktop app's reads no people");
 });
 
 test("a read asked for again after a change supersedes the one on its way, which lands for nothing", async () => {

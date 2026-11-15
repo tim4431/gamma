@@ -365,9 +365,9 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 //
 // A work folder's agent at work (docs/dev/local_agents.md; the agents are
 // the computer's, set in Gamma's Settings → AI): what the agent of this
-// computer that works there does now (`agentRunning`: the detail of its run
-// while one works, else ""; `agentLabel` its name; `agentChat` when that
-// run is a turn of a page's chat, not a Send), as the link's `agent` says.
+// computer that works there does now (`agentRunning`: the detail of its
+// turn, a chat's or a comment's, while one works, else ""; `agentLabel` its
+// name), as the link's `agent` says.
 //
 // A vault of another server also says whether this computer is shown there
 // (`computer`, computerLine): `computers` is `{ links, name }`, the server's
@@ -412,7 +412,7 @@ function vault(server, link, servers, roles = null, computers = null, net = {}) 
   const run = agent && agent.running;
   Object.assign(item, {
     agentLabel: agent ? agent.label || AGENT_LABELS[agent.name] || agent.name : '',
-    agentRunning: run ? String(run.detail || 'Working') : '', agentChat: Boolean(run && run.kind === 'chat'),
+    agentRunning: run ? String(run.detail || 'Working') : '',
   });
   const failure = s.last_error && !s.running ? failureOf(s, link.remote_url, servers, net) : null;
   const stated = scope === 'file' ? fileState(item, s, failure) : folderState(item, s, left, failure);
@@ -532,7 +532,7 @@ const said = (text) => `${capital(text)}${/[.!?]$/.test(text) ? '' : '.'}`;
 
 // A directory's vault, worst first: a work folder whose files are not chosen
 // yet (Choose files… opens its dialog in Gamma), a round running, its agent
-// answering a Send or working in a page's chat (busy: the files may change
+// working in it (busy: the files may change
 // meanwhile), paused,
 // stopped (its marker gone or another's: Locate… says where it is), held by
 // its guard (Go on), its directory not there, a problem, never synced, up to
@@ -554,7 +554,7 @@ function folderState(item, s, left, failure = null) {
   if (item.away) return awayState(item);
   // A vault's own problem keeps its row while its agent works: the agent's run is said in the title.
   const meanwhile = item.agentRunning
-    ? ` ${item.agentLabel} is working ${item.agentChat ? 'in the chat' : 'on a Send'} meanwhile.` : '';
+    ? ` ${item.agentLabel} is working in this folder meanwhile.` : '';
   if (item.stopped) return { ...item, state: 'error', text: 'Stopped', title: `${item.stopped} Locate… tells Gamma where the directory is now.${meanwhile}` };
   if (item.held) {
     const { removals = 0, total = 0 } = item.held;
@@ -569,7 +569,7 @@ function folderState(item, s, left, failure = null) {
   if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: `${s.last_error}${meanwhile}` };
   if (item.agentRunning) {
     return { ...item, state: 'busy', agentBusy: true, text: `${item.agentLabel} is working · ${item.agentRunning}`,
-      title: `${item.agentLabel} is ${item.agentChat ? 'working in the chat of a file of this folder' : 'answering a Send of this folder'} on this computer: the files here may change meanwhile.` };
+      title: `${item.agentLabel} is working in this folder on this computer: the files here may change meanwhile.` };
   }
   if (!s.last_sync) return { ...item, state: 'new', text: 'Not synced yet', title: 'The first round runs in a moment.' };
   const { changed } = item;
@@ -873,16 +873,15 @@ function agentAsk(name) {
   const label = AGENT_LABELS[name] || name;
   return { message: `Turn on ${label} on this computer?`,
     detail: `${label} will work for you in your chats on this computer, in a synced folder's directory for a page in one, else in a directory you offer it, else in an empty directory of its own: ${AGENT_DOES[name] || 'it edits files in the directory it works in'}. ` +
-      `It answers the Sends you make in your synced folders and talks with you in the chat. On a server this computer is shown on, whoever can sign in there as you, and whoever runs it, can send work to ${label} here: ${label} reads your files, and its answers are stored on that server.`,
+      `It talks with you in the chat and answers the comments you send it. On a server this computer is shown on, whoever can sign in there as you, and whoever runs it, can send work to ${label} here: ${label} reads your files, and its answers are stored on that server.`,
     buttons: [`Turn on ${label}`, 'Cancel'] };
 }
 
-// What turning agent `name` on (`on`, with the `queued` Sends handed to
-// it) or off came to, for the bar.
-function agentSaid(name, on, queued = 0) {
+// What turning agent `name` on (`on`) or off came to, for the bar.
+function agentSaid(name, on) {
   const label = AGENT_LABELS[name] || name;
-  if (!on) return `${label} is off on this computer: your Sends wait for an agent you run yourself.`;
-  return `${label} is on: it answers the Sends you make in your synced folders${queued ? `; ${queued} waiting ${queued === 1 ? 'was' : 'were'} handed to it` : ''}.`;
+  if (!on) return `${label} is off on this computer.`;
+  return `${label} is on: it talks with you in the chat and answers the comments you send it.`;
 }
 
 // What each agent may ask for when it may ask (docs/dev/local_agents.md):

@@ -113,12 +113,12 @@ function announced(a, computer) {
 }
 
 // The agent of the first of the page's computers whose work folder of the
-// page's server has one on (its vault's `agent`), which the page's chat,
-// Sends and mentions run on there: the account's, or another account's
-// whose agent serves it (the server tells only them; the account's own
-// first), as its assistant there was announced (not announced: not known),
-// with `folder` the work folder's name and `paused` whether it is paused
-// there; null for none.
+// page's server has one on (its vault's `agent`), which the page's chat
+// and the comments sent to an agent run on there: the account's, or
+// another account's whose agent serves it (the server tells only them; the
+// account's own first), as its assistant there was announced (not
+// announced: not known), with `folder` the work folder's name and `paused`
+// whether it is paused there; null for none.
 export function keeperAgent(computers) {
   const computer = readComputers({ computers }).find((c) => vaultAgent(c)) || null;
   if (!computer) return null;
@@ -196,6 +196,14 @@ export function madeBy({ id = "", name = "", on = "", person = "", owner = "" })
 // blockModel.js blockAgent); "" for a person's block.
 export const stampLabel = (stamp) => (typeof stamp?.name === "string" && stamp.name ? madeBy({
   id: stamp.id, name: stamp.name, on: stamp.on || "", person: stamp.for || "", owner: stamp.owner || "",
+}) : "");
+
+// The same of an agent the server names beside what it did (an Inbox
+// item's `agent`, a thread's `resolved_agent`: {id, kind, name, on?,
+// owner?}, gamma/agents.py Agent.shown), `person` the account it acted for
+// ("" to leave it out); "" for none.
+export const agentWords = (agent, person = "") => (typeof agent?.name === "string" && agent.name ? madeBy({
+  id: agent.id || "", name: agent.name, on: agent.on || "", person, owner: agent.owner || "",
 }) : "");
 
 // The agents a comment on the page can be sent to (its *Send to* tick and

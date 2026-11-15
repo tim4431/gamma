@@ -58,8 +58,18 @@ class Agent(NamedTuple):
     @property
     def label(self) -> str:
         """"Codex on TIM-PC", or the name alone: what a server's own words
-        (the Inbox, the annotations' Markdown, a resolve) call it."""
+        (the annotations' Markdown, a prompt) call it."""
         return f"{self.name} on {self.on}" if self.on else self.name
+
+    def shown(self) -> dict:
+        """The agent as the API names it beside what it did (an Inbox
+        item's ``agent``, a thread's ``resolved_agent``): ``{id, kind, name,
+        on?, owner?}``, which the client words in the reader's language
+        (frontend/src/chat/agents.js ``madeBy``). An agent known by its
+        words alone (an Inbox item of before step 66 whose agent could not
+        be found) has an empty ``id`` and ``kind``."""
+        return {"id": self.id, "kind": self.kind, "name": self.name, **({"on": self.on} if self.on else {}),
+                **({"owner": self.owner} if self.owner else {})}
 
 
 def kind_of(agent_id: str) -> str:
@@ -87,20 +97,23 @@ def computer_agent(computer: str, name: str, on: str = "", owner: str = "") -> A
     return Agent(f"{COMPUTER}{computer}:{name}", "computer", catalog.label(name), on, owner)
 
 
-def here_id() -> str:
+def here_id(device_id: str = "") -> str:
     """This computer's id as its own server knows it: an HMAC of the
-    install's id (``cloud_auth.device``), as its id for each server it
-    announces itself to is (gamma/computers/channel.py ``computer_id``), so
-    no server can match the ids of one computer."""
-    from .cloud_auth import device  # local: cloud_auth imports the workspaces
+    install's id (``cloud_auth.device``; ``device_id`` where the caller read
+    it itself, a users.db step), as its id for each server it announces
+    itself to is (gamma/computers/channel.py ``computer_id``), so no server
+    can match the ids of one computer."""
+    if not device_id:
+        from .cloud_auth import device  # local: cloud_auth imports the workspaces
 
-    digest = hmac.new(device()[0].encode(), b"this server", hashlib.sha256).digest()
+        device_id = device()[0]
+    digest = hmac.new(device_id.encode(), b"this server", hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:22]
 
 
 def here(name: str, person: str = "") -> Agent:
-    """The agent ``name`` of this computer, a turn or a Send this server
-    runs; with ``person`` (the account the turn is for), its ``owner`` when
+    """The agent ``name`` of this computer, of a turn this server runs;
+    with ``person`` (the account the turn is for), its ``owner`` when
     another account owns it (``_owner_here``)."""
     from .computers.channel import computer_name
 

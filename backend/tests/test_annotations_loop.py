@@ -2,12 +2,12 @@
 the loop end to end on the paper (samples/synctex/paper) in a work folder
 of this computer. The person comments on a passage and on the figure; the
 files below ``.gamma/annotations/`` say where each is in the sources, with a
-picture; a Send; a feedback token takes the request, rebuilds (v2 over the
-build, which the round takes and the kept version places the highlights
-on), answers each thread, resolves them and marks the request done; the
-person's Inbox names the agent, the token's writes made no one follow the
-page, ``open.json`` is empty, the request file says done; a reopen sends a
-thread back without its Sent chip; the removal takes the files."""
+picture; an agent holding a token at the Comment level reads them, rebuilds
+(v2 over the build, which the round takes and the kept version places the
+highlights on), answers each thread and resolves them; the person's Inbox
+names the agent, the token's writes made no one follow the page,
+``open.json`` is empty; a reopen sends a thread back; the removal takes the
+files."""
 
 import json
 import os
@@ -140,23 +140,10 @@ def test_the_loop(owner, disk):
     assert "## main.pdf" in text and "- source: `sections/method.tex`, lines 3–5" in text
     assert (here / ".gitignore").read_bytes() == b"*\n"
 
-    # a Send
-    r = owner.post("/api/feedback/requests", json={"scope": w, "note": "fix these"})
-    assert r.status_code == 201, r.text
-    request = r.json()["request"]
-    assert {t["id"] for t in request["threads"]} == {tp["id"], ta["id"]}
-    file = here / "requests" / f"{request['id']}.json"
-    sent = json.loads(file.read_text(encoding="utf-8"))
-    assert sent["state"] == "sent" and sent["note"] == "fix these" and len(sent["entries"]) == 2
-    chips = {t["id"]: t["sent"] for t in owner.get(f"/api/pages/{page}/comments").json()["threads"]}
-    assert chips[tp["id"]]["state"] == "sent" and chips[ta["id"]]["request_id"] == request["id"]
-
-    # the agent: a script holding a feedback token takes the request and rebuilds
+    # the agent: a script holding a token at the Comment level reads the threads and rebuilds
     agent = _bearer(token_for(owner, "read", "Claude Code", comments=True))
-    polled = agent.get("/api/feedback/requests", params={"after": 0}).json()
-    assert [q["id"] for q in polled["requests"]] == [request["id"]] and polled["cursor"] == request["rev"]
-    r = agent.post(f"/api/feedback/requests/{request['id']}/state", json={"state": "running"})
-    assert r.status_code == 200, r.text
+    listed = {e["id"] for e in agent.get("/api/annotations", params={"scope": w}).json()["entries"]}
+    assert listed == {tp["id"], ta["id"]}
     follows = _follows(ws, page)
     assert follows
     before = _position_of(owner, passage)
@@ -176,7 +163,7 @@ def test_the_loop(owner, disk):
     # what the token may not do: it comments as the Comment level lets it, and changes no note nor another's comment
     assert agent.put(f"/api/blocks/{passage}", json={"properties": {"color": "#000000"}}).status_code == 403
     assert agent.patch(f"/api/comments/{tp['id']}", json={"body": "edited"}).status_code == 403
-    # it answers each thread, resolves them, and the request is done
+    # it answers each thread and resolves them
     for thread, body in ((tp, "Defined in 3.1 (sections/method.tex:6)."), (ta, "Legend moved inside the axes (main.tex:22).")):
         r = agent.post(f"/api/pages/{page}/comments", json={"block_id": thread["block_id"], "thread_id": thread["id"],
                                                              "body": body})
@@ -184,28 +171,22 @@ def test_the_loop(owner, disk):
         assert r.json()["thread"]["comments"][-1]["agent"] == "Claude Code"
         r = agent.post(f"/api/comments/{thread['id']}/resolve", json={"resolved": True})
         assert r.status_code == 200, r.text
-    r = agent.post(f"/api/feedback/requests/{request['id']}/state", json={"state": "done"})
-    assert r.status_code == 200, r.text
 
     # the person sees it: the Inbox names the agent, and the token's writes made no one follow the page
     items = owner.get("/api/inbox", params={"filter": "all", "limit": 100}).json()["items"]
-    mine = sorted((i["kind"], i["actor"], i["agent"]) for i in items if i["page_id"] == page)
+    mine = sorted((i["kind"], i["actor"], i["agent"]["name"]) for i in items if i["page_id"] == page)
     assert mine == sorted([("reply", OWNER, "Claude Code")] * 2 + [("resolved", OWNER, "Claude Code")] * 2)
     assert _follows(ws, page) == follows
     _pass()
     doc = _open(root)
     assert doc["count"] == 0 and doc["entries"] == []
-    done = json.loads(file.read_text(encoding="utf-8"))
-    assert (done["state"], done["state_by"]) == ("done", "Claude Code")
-    assert {e["state"] for e in done["entries"]} == {"resolved"}
-    assert {c["agent"] for e in done["entries"] for c in e["comments"]} == {"", "Claude Code"}
 
-    # a reopen sends the thread back, its request answered: no Sent chip
+    # a reopen sends the thread back
     r = owner.post(f"/api/comments/{tp['id']}/resolve", json={"resolved": False})
     assert r.status_code == 200, r.text
     _pass()
     [entry] = _open(root)["entries"]
-    assert entry["id"] == tp["id"] and entry["sent"] is None and entry["state"] == "open"
+    assert entry["id"] == tp["id"] and entry["state"] == "open"
 
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
     assert not here.exists()

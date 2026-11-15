@@ -12,9 +12,7 @@ The listing also shows the account's scheduled backup tasks while one runs
 kind ``scheduled-backup``; and the account's turns of the chat's computer
 side while an agent on this computer has them queued or running, or they
 wait for or run on another computer of the account's (step 4d): read-only
-rows of kind ``computer-turn``; and the Sends an agent on this computer
-answers in a work folder of the account's: read-only rows of kind
-``feedback-run``.
+rows of kind ``computer-turn``.
 
 A share view's exports are the share's (``auth.share_job_owner``): a
 request carrying the ``?share=`` that started one reads, stops, removes and
@@ -112,15 +110,15 @@ def _waiting_papers(user_id: str) -> list[dict]:
 
 
 def _computer_turns(user_id: str) -> list[dict]:
-    """The account's turns of the chat's computer side that this server's
-    agents have queued or running (gamma/local_agents/runner.py
-    ``chat_turns``), in the jobs' shape: read-only rows titled ``<agent> ·
-    <title>``, the title of the page or the folder the conversation is
-    about (``params.title`` "" for the library, which the row names
-    ``Library``), ``progress.phase`` ``asking`` while an ask
-    waits for the person. A click opens that chat on the agent's side, and
-    Stop is the turn's own (``POST /api/local-agents/chat/turns/{turn}/stop``),
-    never ``cancel``."""
+    """The turns of the chat's computer side that this server's agents have
+    queued or running for the account, and for the co-authors its agents
+    serve (gamma/local_agents/runner.py ``chat_turns``), in the jobs' shape:
+    read-only rows titled ``<agent> · <title>``, the title of the page or
+    the folder the conversation is about (``params.title`` "" for the
+    library, which the row names ``Library``), ``progress.phase`` ``asking``
+    while an ask waits for an answer. A click opens the turn's conversation
+    in the chat (``_turn_row``), and Stop is the turn's own (``POST
+    /api/local-agents/chat/turns/{turn}/stop``), never ``cancel``."""
     from ..db import connect_pages_db
     from ..local_agents import enabled, runner
 
@@ -131,7 +129,7 @@ def _computer_turns(user_id: str) -> list[dict]:
     except Exception:  # noqa: BLE001 — the tray never breaks over the agents
         log.exception("[jobs] could not read the chat turns")
         return []
-    rows = []
+    rows, people = [], _people(user_id, turns)
     for turn in reversed(turns):  # newest first, as the jobs
         try:
             with connect_pages_db(turn["ws"]) as conn:
@@ -139,11 +137,27 @@ def _computer_turns(user_id: str) -> list[dict]:
         except Exception:  # noqa: BLE001 — a workspace that cannot be read names no page
             found = None
         title = found[0] if found else ""
-        rows.append(_turn_row(user_id, turn, title, asking=turn["asking"]))
+        rows.append(_turn_row(user_id, turn, title, people, asking=turn["asking"]))
     return rows
 
 
-def _turn_row(user_id: str, turn: dict, title: str, *, asking: bool = False) -> dict:
+def _people(user_id: str, turns: list[dict]) -> dict[str, str]:
+    """``{account id: username}`` of the co-authors whose turns are among
+    ``turns`` (those not of ``user_id``)."""
+    from ..db import account_names, connect_users_db
+
+    others = {turn["user_id"] for turn in turns if turn["user_id"] != user_id}
+    if not others:
+        return {}
+    with connect_users_db() as conn:
+        return account_names(conn, others)
+
+
+def _turn_row(user_id: str, turn: dict, title: str, people: dict[str, str], *, asking: bool = False) -> dict:
+    """A turn's row: ``params`` name its bucket, the turn, the agent and the
+    conversation the row opens in the chat (``conversation``, and ``thread``
+    for a comment thread's), and for a co-author's turn its ``person``, the
+    co-author's username."""
     from ..local_agents import catalog
 
     label = catalog.label(turn["agent"])
@@ -151,63 +165,21 @@ def _turn_row(user_id: str, turn: dict, title: str, *, asking: bool = False) -> 
         "id": f"computer-{turn['turn_id']}", "kind": "computer-turn", "owner": user_id, "workspace": turn["ws"],
         "title": f"{label} · {title or ('Library' if turn['bucket'] == 'home' else 'Untitled')}",
         "params": {"bucket": turn["bucket"], "turn": turn["turn_id"], "agent": turn["agent"], "label": label,
-                   "title": title, **({"computer": turn["computer"]} if turn.get("computer") else {})},
+                   "title": title, "conversation": turn["conversation_id"],
+                   **({"thread": turn["thread_id"]} if turn["thread_id"] else {}),
+                   **({"person": people.get(turn["user_id"], "")} if turn["user_id"] != user_id else {}),
+                   **({"computer": turn["computer"]} if turn.get("computer") else {})},
         "state": turn["state"], "progress": {"phase": "asking"} if asking else {}, "error": "",
         "created_at": turn["queued_at"], "started_at": turn["started_at"], "finished_at": "", "artifact": None,
         "downloaded": False, "stoppable": not turn["stopping"], "stopping": turn["stopping"], "readonly": True,
     }
 
 
-def _feedback_runs(user_id: str) -> list[dict]:
-    """The Sends an agent on this computer answers now in a work folder the
-    account made (runner ``send_runs``), in the jobs' shape: read-only rows
-    titled ``<agent> · <file or folder>``, ``progress.item`` the agent's
-    own words (the request's detail). A click opens the Feedback dialog on
-    the Send's file or folder; Stop is its requester's withdraw, theirs
-    alone (``POST /api/feedback/requests/{id}/state``)."""
-    from ..db import connect_pages_db
-    from ..annotations import requests
-    from ..folder_links import get_link
-    from ..local_agents import catalog, enabled, runner, store
-
-    if not enabled():
-        return []
-    rows = []
-    try:
-        for held in runner.send_runs():
-            link = get_link(held["link_id"])
-            if not link or link["created_by"] != user_id:
-                continue
-            with connect_pages_db(held["ws"]) as conn:
-                record = requests.get(conn, held["request_id"])
-                mine = requests.requester(conn, held["request_id"]) == user_id
-            if not record or record["state"] != "running":
-                continue
-            run = store.run_of(held["ws"], held["request_id"])
-            label = catalog.label(run["agent"]) if run else record["state_by"]
-            scope = record["scope"]
-            rows.append({
-                "id": f"feedback-{record['id']}", "kind": "feedback-run", "owner": user_id, "workspace": held["ws"],
-                "title": f"{label} · {scope['name'] or 'Untitled'}",
-                "params": {"request": record["id"], "label": label, "name": scope["name"],
-                           "scope": {"kind": "file" if scope["kind"] == "file" else "folder", "id": scope["id"]},
-                           "comments": len(record["threads"])},
-                "state": "running", "progress": {"item": record["detail"]} if record["detail"] else {}, "error": "",
-                "created_at": record["at"], "started_at": (run or {}).get("started_at") or record["state_at"],
-                "finished_at": "", "artifact": None, "downloaded": False,
-                "stoppable": mine and not held["stopping"], "stopping": held["stopping"], "readonly": True,
-            })
-    except Exception:  # noqa: BLE001 — the tray never breaks over the agents
-        log.exception("[jobs] could not read the Sends the agents answer")
-        return []
-    return rows
-
-
 def _far_turns(user_id: str, ws: str) -> list[dict]:
-    """The account's turns of the chat's computer side queued or running on
-    another computer (step 4d, ``chats.remote_turns``: kept in the
-    workspaces its computers keep a work folder of with an agent, and the
-    one the request works in), as ``_computer_turns`` gives them (phase
+    """The turns of the chat's computer side queued or running on another
+    computer for the account and the co-authors its agents serve (step 4d,
+    ``chats.remote_turns``: kept in the workspaces its computers keep a work
+    folder of with an agent, and the one the request works in), as ``_computer_turns`` gives them (phase
     ``asking`` while an ask waits for an answer on that computer), newest
     first; Stop the same route."""
     from ..computers import registry
@@ -216,8 +188,9 @@ def _far_turns(user_id: str, ws: str) -> list[dict]:
     rows = []
     try:
         for each in sorted({*registry.workspaces_of(user_id), *([ws] if ws else [])}):
-            rows += [_turn_row(user_id, turn, turn["title"], asking=turn["asking"])
-                     for turn in chats.remote_turns(each, user_id)]
+            turns = chats.remote_turns(each, user_id)
+            people = _people(user_id, turns)
+            rows += [_turn_row(user_id, turn, turn["title"], people, asking=turn["asking"]) for turn in turns]
     except Exception:  # noqa: BLE001 — the tray never breaks over the agents
         log.exception("[jobs] could not read the chat turns run on other computers")
         return []
@@ -229,12 +202,11 @@ def list_jobs(request: Request):
     """``{jobs: [...]}``: the account's jobs (newest first, without their
     results), the running scheduled backups, the paper fetches waiting for
     their browser, the chat turns this computer's agents have queued or
-    running and those queued or running on another computer, and the Sends
-    this computer's agents answer in the account's work folders, plus the
-    own jobs of the workspace the request works in."""
+    running and those queued or running on another computer, plus the own
+    jobs of the workspace the request works in."""
     user_id, ws, _ = _context(request)
     return {"jobs": _running_backup_tasks(user_id) + _waiting_papers(user_id) + _computer_turns(user_id)
-            + _far_turns(user_id, ws) + _feedback_runs(user_id) + jobs.for_account(user_id, ws)}
+            + _far_turns(user_id, ws) + jobs.for_account(user_id, ws)}
 
 
 @router.post("/clear")

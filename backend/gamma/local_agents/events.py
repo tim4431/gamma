@@ -18,7 +18,7 @@ A turn's ``events()`` gives, in order as they happen:
   (``ask``), ``id`` the driver's own key for the answer, ``step`` the id of
   the tool event it is about ("" for none);
 - ``{"type": "ask_gone", "id"}``: the agent withdrew that ask;
-- ``{"type": "done", "ok", "answer", "text", "error", "stopped", "usage",
+- ``{"type": "done", "ok", "text", "error", "stopped", "usage",
   "gamma_down"}``: exactly one, last, however the turn ends: its end,
   ``stop()``, a crash, a broken pipe, ten minutes of silence, Gamma's tools
   that did not start (``done``).
@@ -110,7 +110,6 @@ CHANGE_REFUSED = "Gamma does not let an agent change that file."
 # why a turn failed; a plain last line usually does.
 _LOG_LINE = re.compile(r"^\W{0,3}(\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}|\d{1,2}:\d{2}:\d{2})")
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-_FENCE = re.compile(r"^```[A-Za-z]*\s*\n(.*?)\n?```\s*$", re.S)
 
 
 def tool(tool_id: str, kind: str, title: str, status: str, *, path: str = "", command: str = "",
@@ -320,12 +319,12 @@ def protected(path: str, cwd: str) -> bool:
     return len(parts) == 1 and parts[0].startswith(".")
 
 
-def done(*, ok: bool, answer=None, text: str = "", error: str = "", stopped: bool = False,
-         usage: dict | None = None, gamma_down: bool = False) -> dict:
+def done(*, ok: bool, text: str = "", error: str = "", stopped: bool = False, usage: dict | None = None,
+         gamma_down: bool = False) -> dict:
     """The turn's end; ``gamma_down``, it failed because Gamma's tools did
     not start or connect (``GammaDown``)."""
-    return {"type": "done", "ok": ok, "answer": answer, "text": text or "", "error": "" if ok else error,
-            "stopped": stopped, "usage": usage or {}, "gamma_down": gamma_down}
+    return {"type": "done", "ok": ok, "text": text or "", "error": "" if ok else error, "stopped": stopped,
+            "usage": usage or {}, "gamma_down": gamma_down}
 
 
 def one_line(text: str, limit: int = MAX_TITLE) -> str:
@@ -351,19 +350,6 @@ def rel_path(path: str, cwd: str) -> str:
         return full.relative_to(base).as_posix()
     except ValueError:
         return str(full)
-
-
-def parse_answer(text: str):
-    """The agent's last message as JSON (a ```json fence around it
-    stripped), None when it is not."""
-    text = (text or "").strip()
-    fenced = _FENCE.match(text)
-    if fenced:
-        text = fenced.group(1).strip()
-    try:
-        return json.loads(text) if text else None
-    except ValueError:
-        return None
 
 
 def stderr_reason(tail: str) -> str:
@@ -601,7 +587,7 @@ class Turn:
 
 def start(name: str, *, title: str = "", **kw) -> Turn:
     """Start a turn of the agent ``name`` (``codex``, ``claude``): the
-    driver's ``start`` with ``argv``, ``cwd``, ``prompt``, ``schema``,
+    driver's ``start`` with ``argv``, ``cwd``, ``prompt``,
     ``session``, ``images``, ``ask``, ``stream`` (its text as it is
     written, ``delta``), ``model`` and ``effort`` (one the agent listed,
     ``catalog.probe``'s ``models``; "" for its default) and ``gamma``

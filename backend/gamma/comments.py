@@ -7,8 +7,8 @@ or the page itself (its root block). It is its root comment, whose
 the place it was opened on (``anchor``, gamma/annotations/anchors.py). A
 comment an agent wrote (gamma/agents.py: Gamma AI, a computer's agent, an
 integration token) is its account's and carries the agent's name and id
-(``agent``, ``agent_id``), and a thread one resolved its label
-(``resolved_agent``). The rows live in the workspace's
+(``agent``, ``agent_id``), and a thread one resolved its name and id too
+(``resolved_agent``, ``resolved_agent_id``). The rows live in the workspace's
 pages.db, table ``comments`` (``db.COMMENTS_SCHEMA``), beside the blocks and
 never inside them, so no block reader (exports, the AI context, search,
 folder sync, the outliner, the merges, undo) has to skip them.
@@ -47,11 +47,13 @@ STATES = ("open", "resolved", "all")
 
 # The stored columns, in the table's order.
 COLUMNS = ("id, thread_id, block_id, page_id, author, author_name, body, created_at, updated_at, "
-           "resolved_at, resolved_by, deleted_at, orphaned_at, agent, agent_id, resolved_agent, anchor, agent_owner")
+           "resolved_at, resolved_by, deleted_at, orphaned_at, agent, agent_id, resolved_agent, anchor, agent_owner, "
+           "resolved_agent_id, resolved_agent_owner")
 _FIELDS = COLUMNS.split(", ")
 _ROW = ", ".join(f"c.{c}" for c in _FIELDS)
-_AGENT, _AGENT_ID, _RESOLVED_AGENT, _ANCHOR, _AGENT_OWNER = (
-    _FIELDS.index(c) for c in ("agent", "agent_id", "resolved_agent", "anchor", "agent_owner"))
+_AGENT, _AGENT_ID, _RESOLVED_AGENT, _ANCHOR, _AGENT_OWNER, _RESOLVED_ID, _RESOLVED_OWNER = (
+    _FIELDS.index(c) for c in ("agent", "agent_id", "resolved_agent", "anchor", "agent_owner", "resolved_agent_id",
+                               "resolved_agent_owner"))
 _PAGE = len(_FIELDS)  # where a ``{_ROW}, b.page_id`` row holds the page its block is on now
 _LIVE_PAGE = "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'"
 
@@ -66,7 +68,7 @@ write_listeners: list = []
 def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     """The threads on the pages ``page_ids`` (the blocks they hold now, the
     page roots included), oldest first, each ``{id, block_id, page_id,
-    resolved_at, resolved_by, resolved_agent, made_on, sent, created_at,
+    resolved_at, resolved_by, resolved_agent, made_on, created_at,
     last_at, comments: [{id, thread_id, author, agent, body, created_at,
     updated_at, deleted, agent_kind?, agent_id?, agent_on?, agent_owner?}]}`` with its
     comments oldest first. ``state``:
@@ -82,12 +84,13 @@ def threads_for(conn, page_ids, *, state: str | None = None) -> list[dict]:
     (left out when it is not known), and ``agent_owner``, the username of
     the agent's owner where it wrote for a co-author (gamma/agents.py
     ``owner``, kept with the comment as it was then); ``resolved_agent`` is the
-    label of the agent that resolved the thread. ``made_on`` is the file the
-    thread was opened on (its anchor's ``doc_id``, "" for none), ``sent``
-    the Send waiting on it (``_sent``) or None. The API and the annotations
-    reader (gamma/annotations/entries.py, which names a scope's pages) are
-    its callers (the other readers leave comments out: docs/dev/comments.md
-    "Not built"). The caller decides which pages are
+    agent that resolved the thread (``Agent.shown``: ``{id, kind, name, on?,
+    owner?}``, named as a comment's agent is), null for a person and while
+    the thread is open. ``made_on`` is the file the
+    thread was opened on (its anchor's ``doc_id``, "" for none). The API and
+    the annotations reader (gamma/annotations/entries.py, which names a
+    scope's pages) are its callers (the other readers leave comments out:
+    docs/dev/comments.md "Not built"). The caller decides which pages are
     readable (a page in Recently deleted is no page of the library)."""
     _check_state(state)
     pages = sorted(set(page_ids))
@@ -135,43 +138,22 @@ def has_open_thread(conn, page_id: str) -> bool:
     return bool(open_counts(conn, [page_id]))
 
 
-def _sent(conn, thread_ids) -> dict[str, dict]:
-    """``{thread id: {request_id, state, at, detail, state_by}}``: the
-    newest Send (gamma/annotations/requests.py) that names each of the threads
-    ``thread_ids`` and waits on it — sent, running or failed, the thread
-    not answered since; threads with none left out. ``state_by`` names who
-    set its state ("" while it is sent)."""
-    ids = sorted(set(thread_ids))
-    if not ids:
-        return {}
-    out = {}
-    for thread_id, request_id, state, at, detail, state_by in conn.execute(
-            "SELECT t.thread_id, r.id, r.state, r.at, r.detail, r.state_by FROM feedback_request_threads t "
-            "JOIN feedback_requests r ON r.id = t.request_id "
-            "WHERE t.thread_id IN (SELECT value FROM json_each(?)) AND t.answered_at IS NULL "
-            "AND r.state IN ('sent', 'running', 'failed') ORDER BY r.rev", (json.dumps(ids),)):
-        out[thread_id] = {"request_id": request_id, "state": state, "at": at, "detail": detail,
-                          "state_by": state_by}
-    return out
-
-
 def _threads(conn, rows, state: str | None) -> list[dict]:
     """``(*COLUMNS, live page id)`` rows, oldest first, folded into threads,
     their agents named in the connection's workspace (``agents.read_all``)."""
     names = _names({r[4] for r in rows} | {r[10] for r in rows if r[10]})
-    writers = agents.read_all({(r[4], r[_AGENT_ID], r[_AGENT_OWNER]): r[_AGENT] for r in rows if r[_AGENT_ID]},
-                              getattr(conn, "ws", ""))
+    stored = {(r[4], r[_AGENT_ID], r[_AGENT_OWNER]): r[_AGENT] for r in rows if r[_AGENT_ID]}
+    stored.update({_resolver(r): r[_RESOLVED_AGENT] for r in rows if r[9] and r[_RESOLVED_ID]})
+    writers = agents.read_all(stored, getattr(conn, "ws", ""))
     threads: dict[str, dict] = {}
     for r in rows:
         if r[0] == r[1]:
             anchor = anchors.parse(r[_ANCHOR])
             threads[r[0]] = {"id": r[0], "block_id": r[2], "page_id": r[_PAGE], "resolved_at": r[9],
                              "resolved_by": names.get(r[10] or "", "") if r[9] else None,
-                             "resolved_agent": r[_RESOLVED_AGENT] if r[9] else "",
-                             "made_on": (anchor or {}).get("doc_id") or "", "sent": None,
+                             "resolved_agent": _resolved_agent(r, writers) if r[9] else None,
+                             "made_on": (anchor or {}).get("doc_id") or "",
                              "created_at": r[7], "last_at": r[9] or r[7], "comments": []}
-    for thread_id, sent in _sent(conn, threads).items():
-        threads[thread_id]["sent"] = sent
     for r in rows:
         thread = threads.get(r[1])
         if thread is None:
@@ -180,6 +162,21 @@ def _threads(conn, rows, state: str | None) -> list[dict]:
         thread["last_at"] = max(thread["last_at"], r[7], r[8])
     return [t for t in threads.values()
             if state in (None, "all") or (state == "resolved") == bool(t["resolved_at"])]
+
+
+def _resolver(row) -> tuple[str, str, str]:
+    """The key of a root's resolving agent in ``agents.read_all``."""
+    return row[10] or "", row[_RESOLVED_ID], row[_RESOLVED_OWNER] or ""
+
+
+def _resolved_agent(row, writers: dict[tuple[str, str, str], Agent]) -> dict | None:
+    """The agent that resolved a root (``Agent.shown``), None for a person:
+    as ``writers`` names it, else by the name kept with the root (one of
+    before step 66 whose agent was not found)."""
+    found = writers.get(_resolver(row)) if row[_RESOLVED_ID] else None
+    if found is None and row[_RESOLVED_AGENT]:
+        found = Agent("", "", row[_RESOLVED_AGENT])
+    return found.shown() if found else None
 
 
 def _comment(row, names: dict, writers: dict[tuple[str, str, str], Agent]) -> dict:
@@ -313,7 +310,7 @@ def create(conn, page_id: str, *, block_id: str, body: str, author: str, author_
         thread_id = thread_id or comment_id
         now = page_now()
         conn.execute(f"INSERT INTO comments ({COLUMNS}) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '', ?, ?)",
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '', ?, ?, '', '')",
                      (comment_id, thread_id, block_id, page_id, author, author_name or "", body, now, now,
                       agent.name if agent else "", agent_id, anchor, agent.owner if agent else ""))
         if not agent_id:
@@ -401,8 +398,9 @@ def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str, age
     """Resolve a thread (``resolved``) or reopen it; ``comment_id`` is its
     root (400 for a reply), on ``page_id`` (the page the caller authorized;
     404 for a hidden thread or one that moved off it). ``agent``: the agent
-    resolving it as ``by``, its label kept as ``resolved_agent`` until a
-    reopen. Resolving a resolved thread keeps who and when.
+    resolving it as ``by``, its name, id and owner kept (``resolved_agent``,
+    ``resolved_agent_id``, ``resolved_agent_owner``) until a reopen.
+    Resolving a resolved thread keeps who and when.
     Returns ``{thread, event}`` (``event`` None when nothing changed).
     Commits."""
     write_lock(conn)
@@ -413,11 +411,13 @@ def resolve(conn, comment_id: str, *, page_id: str, resolved: bool, by: str, age
         event = None
         if resolved != bool(row[9]):
             if resolved:
-                conn.execute("UPDATE comments SET resolved_at = ?, resolved_by = ?, resolved_agent = ? WHERE id = ?",
-                             (page_now(), by, agent.label if agent else "", comment_id))
+                conn.execute("UPDATE comments SET resolved_at = ?, resolved_by = ?, resolved_agent = ?, "
+                             "resolved_agent_id = ?, resolved_agent_owner = ? WHERE id = ?",
+                             (page_now(), by, agent.name if agent else "", agent.id if agent else "",
+                              agent.owner if agent else "", comment_id))
             else:
-                conn.execute("UPDATE comments SET resolved_at = NULL, resolved_by = NULL, resolved_agent = '' "
-                             "WHERE id = ?", (comment_id,))
+                conn.execute("UPDATE comments SET resolved_at = NULL, resolved_by = NULL, resolved_agent = '', "
+                             "resolved_agent_id = '', resolved_agent_owner = '' WHERE id = ?", (comment_id,))
             event = _event("resolve" if resolved else "reopen", by, row[_PAGE], row[2], comment_id, comment_id,
                            thread_author=row[4], agent=agent)
         thread = thread_of(conn, comment_id)  # under the lock, as in ``create``
@@ -432,7 +432,8 @@ def _event(kind: str, actor: str, page_id: str, block_id: str, thread_id: str, c
            agent: Agent | None = None, **more) -> dict:
     return {"kind": kind, "actor": actor, "page_id": page_id, "block_id": block_id,
             "thread_id": thread_id, "comment_id": comment_id, **more,
-            "agent": agent.label if agent else "", "agent_id": agent.id if agent else ""}
+            "agent": agent.name if agent else "", "agent_id": agent.id if agent else "",
+            "agent_owner": agent.owner if agent else ""}
 
 
 def written(ws: str, page_id: str, block_id: str, thread_id: str, event: dict | None, *, client: str = "",
@@ -453,8 +454,8 @@ def after_write(ws: str, event: dict | None) -> None:
     on either, the thread's author on a resolve; a deleted comment's items
     go), then each of the ``write_listeners``. ``event`` is ``{kind,
     actor, page_id, block_id, thread_id, comment_id, agent, agent_id,
-    ...}`` (``agent`` / ``agent_id`` the label and id of the agent that
-    wrote it, "" for a session), ``kind`` one of ``create`` (a new thread; ``body``),
+    agent_owner, ...}`` (the name, id and owner of the agent that wrote it,
+    gamma/agents.py, "" for a session), ``kind`` one of ``create`` (a new thread; ``body``),
     ``reply`` (``body``), ``edit`` (``body``, ``before``), ``delete``
     (``comment_ids``), ``resolve`` / ``reopen`` (``thread_author``) and
     ``sweep`` (``comment_ids``, the orphans ``sweep`` deleted; no page or

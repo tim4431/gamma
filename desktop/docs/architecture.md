@@ -302,8 +302,8 @@ the person, and whoever runs it, can send work to it, buttons *Turn on
 Codex* and *Cancel*), then `PATCH /api/local-agents/<name> {enabled: true}`
 with the shell's word while the bar reads *Checking Codex…* (the server
 asks the agent afresh and refuses one not ready with why), and a notice
-says what came of it (`keeping.agentSaid`: "Codex is on: it answers the
-Sends you make in your synced folders; 2 waiting were handed to it.").
+says what came of it (`keeping.agentSaid`: "Codex is on: it talks with you
+in the chat and answers the comments you send it.").
 Turning it off asks nothing and carries no word. `setAgentRuns(serverId,
 name, runs)` refuses an agent that is off ("Turn Codex on first."); `ask`
 asks first, a warning whose default is Cancel (`keeping.runsAsk`: *Let
@@ -744,7 +744,7 @@ the round knows so far (the status's `progress`, written as the round goes),
 its tooltip the bytes of the PDFs it pushes and the file at hand, or
 *Syncing…* before the round has compared the folder with
 the directory or when its round says nothing of itself; *Codex is working ·
-Editing main.tex* while its agent answers a Send (busy: the files may
+Editing main.tex* while a turn of its agent works there (busy: the files may
 change meanwhile); *Paused · 14:02*;
 *Stopped* (its marker gone or another vault's: *Locate…* says where the
 directory is now); *Held · 12 of 20 files gone* (the guard against many

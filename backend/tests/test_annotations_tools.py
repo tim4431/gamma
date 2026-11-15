@@ -3,8 +3,8 @@ annotations tools (gamma/ai_tools.py, docs/dev/ai_tools.md
 "list_annotations and read_annotation"): the highlights and comment threads
 of a page, a folder or the library in their Markdown form, a batch at a
 time; a work folder, a directory, a file, a work folder by name, a library
-folder by id or path, a library page, the library; a Send request's
-threads; a page chat's page; one item, a thread's or a bare highlight's,
+folder by id or path, a library page, the library; a page chat's page;
+one item, a thread's or a bare highlight's,
 with its JSON form and the pictures of its region; what lies outside the
 chat refused. The MCP side is test_mcp.py's."""
 
@@ -227,25 +227,6 @@ def test_list_annotations_goes_a_batch_at_a_time(tim):
     assert "Nothing more after that one." in text
     text, action = run_agent_tool(_ws(), _folder_chat(), "list_annotations", {"scope": work.w, "after": "nosuchthread"})
     assert action["error"] and "list again without after" in text
-
-
-def test_list_annotations_reads_a_send_request(tim):
-    from gamma.annotations import entries, requests
-
-    work = work_folder(tim, "fbt_tim", "Requested", files=("main.pdf", "other.pdf"))
-    sent = commented(tim, work.files["main.pdf"], "fix this one")
-    left = commented(tim, work.files["other.pdf"], "not sent")
-    with connect_pages_db(_ws()) as conn:
-        record = requests.create(_ws(), conn, entries.resolve_scope(conn, work.files["main.pdf"]),
-                                 by=account_of("fbt_tim"), by_name="fbt_tim", note="fix these")["request"]
-    text, action = run_agent_tool(_ws(), _folder_chat(), "list_annotations", {"request": record["id"]})
-    assert not action.get("error"), text
-    assert text.startswith(f'Send request {record["id"]}: sent, sent by fbt_tim at ')
-    assert 'Its instruction: "fix these"' in text
-    assert sent["id"] in text and left["id"] not in text and "- sent: waiting since" in text
-    assert action["summary"] == "Listed the threads of a Send request"
-    text, action = run_agent_tool(_ws(), _folder_chat(), "list_annotations", {"request": "nosuchrequest"})
-    assert action["error"] and "no Send request" in text
 
 
 def test_read_annotation_gives_one_item_with_its_pictures(tim):

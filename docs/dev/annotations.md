@@ -11,21 +11,19 @@ highlights (those no thread is on) of a page, a folder or the library into
 entries with their file, place, source line, picture and comments, served
 as JSON and Markdown over HTTP, over MCP and the chat's tools, and for a
 work folder or a followed file as files on the disk; the version of the file (a build's
-PDF, a figure) a thread was opened on, kept while the thread is open; Send,
-the person's "go" on a work folder's threads; and a token scope that
-answers a work folder's threads and can do nothing else. Backend: the
-package `gamma/annotations/`, `gamma/routers/annotations.py` (the reader)
-and `gamma/routers/feedback.py` (the Sends). The plan was
+PDF, a figure) a thread was opened on, kept while the thread is open; and a
+token scope that answers threads and can do nothing else. A person asks an
+agent by sending it a comment (the composer's Send to tick): that is a
+turn of the thread's own conversation, [local_agents.md](local_agents.md)
+"A comment sent to an agent". Backend: the package `gamma/annotations/` and
+`gamma/routers/annotations.py`. The plan was
 [research/file-explorer.md](../research/file-explorer.md) section 7 (step 2
-of "In steps"; step 3 adds a picture's regions and the whole picture), and
-the reader of any page is step 3.1 of
-[research/agents-as-participants-plan.md](../research/agents-as-participants-plan.md);
-the surveys behind the SyncTeX reader and the pictures are research notes.
-
-**Going.** Send and its requests ("Requests and their states", the request
-file, the Feedback dialog of "In the app", the routes `/api/feedback/requests*`)
-stay as they are until step 3.7 of that plan removes them, when a comment
-sent to an agent is a turn of its own (step 3.5).
+of "In steps"; step 3 adds a picture's regions and the whole picture); the
+reader of any page is step 3.1 of
+[research/agents-as-participants-plan.md](../research/agents-as-participants-plan.md),
+whose step 3.7 removed Send's requests, the request file and the Feedback
+dialog (migration step 65 drops their tables); the surveys behind the
+SyncTeX reader and the pictures are research notes.
 
 | Module | What |
 |---|---|
@@ -35,7 +33,6 @@ sent to an agent is a turn of its own (step 3.5).
 | `pictures.py` | the region pictures and their cache ("The pictures") |
 | `synctex.py`, `sources.py` | the SyncTeX reader, and a place on a work folder's PDF mapped to its source ("SyncTeX") |
 | `kept.py` | the commented version kept ("The commented version kept") |
-| `requests.py` | Send: the requests and their states ("Requests and their states"; goes in step 3.7) |
 | `files.py` | the files below a work folder's `.gamma/annotations/` and beside a followed file ("The files") |
 | `listeners.py` | the hooks on comment writes and op commits ("What keeps it current") |
 | `hand.py`, `places.py` | the agent's hand: what the writing tools write as the agent, and the places they find ("The writing tools") |
@@ -58,7 +55,7 @@ commented version and `comments.has_open_thread` agree.
 Every page has annotations, a library page as a work folder's file, and a
 page a vault of one file follows has its files on the disk as a work folder
 has ("The files"); what stays a work folder's alone is the repository's
-side: SyncTeX's source lines and Send. An agent answers and asks on any
+side: SyncTeX's source lines. An agent answers and asks on any
 page with the writing tools ("The writing tools"). Threads by other members, and by
 signed-in accounts a folder share admits, are entries too: the entries say
 who wrote each comment (`by`) and the document whose account it is written
@@ -173,9 +170,9 @@ its path from the top, `blocks_store.PATH_SEP` between the names); a live
 root page with `work_folder` is a `file`, any other live root page a
 `page`, named by its title. `AnnotationError(404)` for no such folder or
 live page (a page in Recently deleted is none). `work_scope(conn, scope_id,
-tree=None)` is `resolve_scope` for what is a work folder's alone (a Send,
-a far turn's file, the files' writer, the chat strip's path):
-`AnnotationError(400, "Feedback is for a work folder's files.")` for a
+tree=None)` is `resolve_scope` for what is a work folder's alone (a far
+turn's file, the files' writer, the chat strip's path):
+`AnnotationError(400, "That is no file of a synced folder.")` for a
 library page or folder and the library (`WORK_KINDS`).
 `work_folder_named(conn, name_or_id, tree=None)`: a W by
 its id, or by its name when exactly one carries it (404 for none, 400 for
@@ -203,8 +200,7 @@ A highlight is bare when no thread of any state is placed on it, its own
 block or a block below it (the thread's anchor's `block`, a root from
 before step 54 read from its block): such a highlight is read by its
 thread's id. A highlight block whose position does not read (no place) is
-no entry. `thread_ids(conn, scope, *, state)` gives the threads' ids,
-oldest first: what a Send names when it names none.
+no entry.
 
 ### A file's name
 
@@ -213,7 +209,7 @@ when given, else the tree's path, `work_folders.paths.page_path`
 ([work_folders.md](work_folders.md#paths)): the names of the folders from
 the page's `folders[0]` up to W (W left out) joined with `/`, then its
 `file_name`; a page without a `file_name` (a note page) is named by its
-title, and so is a library page ("Untitled" without one). The disk's override is feedback's alone; the chat's tools and the
+title, and so is a library page ("Untitled" without one). The disk's override is the files' alone; the chat's tools and the
 search name a file by `page_path`. `paths` is `{page id:
 path}` from the vault's rows on this computer (`paths_of(vault.store.files(link_id))`:
 each page at its PDF row's path, else its notes row's; tombstones, a row
@@ -237,8 +233,6 @@ the names are the disk's. Separators are `/`.
  "picture":  "img/<key>.jpg" | null,
  "before":   "img/<key>.jpg" | null,
  "state":    "open" | "resolved" | null,   # null for a highlight
- "sent":     {"request_id": "…", "state": "sent" | "running" | "failed", "at": "…", "detail": "…",
-              "state_by": "…"} | null,
  "link":     "<the entry's Gamma link>",
  "comments": [{"id", "by", "agent", "at", "body", "deleted", "agent_kind"?}]}   # [] for a highlight
 ```
@@ -246,7 +240,7 @@ the names are the disk's. Separators are `/`.
 The keys come in that order, and a `where` key with no value is left out.
 A bare highlight's entry is a thread's without the thread: its place is
 read from its block as a root without an anchor is, `where.note` is the
-text written on the highlight, `state` and `sent` are null, `comments` is
+text written on the highlight, `state` is null, `comments` is
 empty, there is no `before` (nothing kept it) and its link has no
 `thread`.
 
@@ -319,13 +313,6 @@ empty, there is no `before` (nothing kept it) and its link has no
   (it has no page).
 - **`picture`** and **`before`**: "The pictures". HTTP and MCP add
   `picture_url` and `before_url` after them (`entries.with_urls`).
-- **`sent`**: the newest Send waiting on the thread (`comments._sent`: a
-  `feedback_request_threads` row not answered whose request is `sent`,
-  `running` or `failed`), `detail` and `state_by` (who set its state: a
-  token's display name, the label of an agent on this computer, the
-  requester's username) only when the request has them; null otherwise.
-  The comment API's threads carry the same, `state_by` "" while it is
-  sent.
 - **`link`**: `?ws=<ws>&page=<page_id>&block=<block_id>&thread=<id>`
   (without `&thread=` for a highlight), the address the Inbox opens, prefixed by `link_base` (MCP's absolute base;
   "" in the files and over HTTP, where the link is the query alone).
@@ -349,7 +336,7 @@ highlight's block's), then id. Highlights and threads are one order.
 ### The document
 
 ```python
-def entries(ws, conn, scope, *, state="open", paths=None, link_base="", sources=True, ids=None,
+def entries(ws, conn, scope, *, state="open", paths=None, link_base="", sources=True,
             regions=None, places=False) -> list[dict]
 def document(ws, conn, scope, *, state="open", paths=None, owner="", link_base="", sources=True,
              regions=None) -> dict
@@ -357,8 +344,7 @@ def entry(ws, conn, entry_id, *, paths=None, link_base="", sources=True, regions
 ```
 
 `sources=False` leaves the live SyncTeX lookup out (the recorded source
-stays): a picture's read needs none. `ids` keeps only those entries (a
-request's threads, one entry). `regions`, a dict the caller passes, gains `{key:
+stays): a picture's read needs none. `regions`, a dict the caller passes, gains `{key:
 (page id, Region)}` for every picture an entry names, so whoever draws them
 (`pictures.cached`) knows what each key is. `entry` answers one thread in
 any state, or a bare highlight by its block id; None when it is hidden
@@ -372,7 +358,6 @@ live page.
  "count": n, "truncated": m (only when cut), "truncated_threads": k (only when threads were cut),
  "answer": {"reply": "POST /api/pages/{page_id}/comments {block_id, thread_id, body}",
             "resolve": "POST /api/comments/{id}/resolve {resolved: true}",
-            "request_state": "POST /api/feedback/requests/{request_id}/state {state, detail}",
             "mcp": ["comment", "resolve", "highlight"]},
  "entries": [...]}
 ```
@@ -380,13 +365,12 @@ live page.
 `work_folder` is null outside a work folder (a library page or folder,
 the library); `answer` is the same in every document (`entries.ANSWER`),
 the writing tools answering any page's threads. `owner` is the username of the account the document is written for (the
-vault's maker in the files; the requester's own account over HTTP and
+vault's maker in the files; the reader's own account over HTTP and
 MCP): how an agent tells the person's comments from other members'. Past
 `MAX_ENTRIES` (500) the document is cut: the threads fill the cap first,
 then the bare highlights, and the entries kept stay in the document's
 order. `truncated` says how many more entries there were and
-`truncated_threads` how many of those were threads (what the Feedback
-dialog, which lists threads, counts as not shown). No per-round time is written, so an unchanged document is
+`truncated_threads` how many of those were threads. No per-round time is written, so an unchanged document is
 byte-identical, which is what lets the files' writer leave an unchanged
 file alone.
 
@@ -415,7 +399,6 @@ with the note written on it: read it as context.
 
 - id: `0d7c…` · passage · placed exactly
 - source: `sections/method.tex`, lines 118–120
-- sent: waiting since 2026-11-10 13:59
 
 ![Page 3, the comment's region](img/3f9a2c1b7d4e6a01.jpg)
 
@@ -506,9 +489,7 @@ after the note; an item with a
 `before` picture adds `the figure was rebuilt` (an area), `the PDF was
 rebuilt` (a passage) or `the picture was rebuilt` (a thread on a picture's
 page); a resolved item says so. The source line reads `lines a–b` when
-`end` is there and `(as commented)` when its `version` is `commented`; a
-`sent` line reads `waiting since`, `being worked on` or `failed`, with the
-request's detail. The picture lines read `Page {n}, the comment's region`
+`end` is there and `(as commented)` when its `version` is `commented`. The picture lines read `Page {n}, the comment's region`
 (`the highlight's region` for a highlight)
 (`now` when a `before` follows) and `Page {n}, the region as it was
 commented on`, without the page for a region of a picture, and `The
@@ -715,124 +696,6 @@ whether the caller passes the properties or not), and a `lines` anchor
 holds no file. A work folder's file in the library keeps its bytes whatever
 its format, as a library document does.
 
-## Requests and their states
-
-This section, the request file and the Sends' routes go in step 3.7 of
-[research/agents-as-participants-plan.md](../research/agents-as-participants-plan.md).
-
-Send is the person's "go": a request that an agent act on a scope's open
-threads, with a line of instruction. `gamma/annotations/requests.py`, in the
-workspace's pages.db (`db.FEEDBACK_SCHEMA`, additive: no migration step;
-[user_db.md](user_db.md) "pages.db"):
-
-| Table | Columns |
-|---|---|
-| `feedback_requests` | `id` (a block id's shape; the client may mint it, so a retried Send writes once), `rev` (the listing's cursor: the workspace's next number at the insert and at every change of state, under the write lock), `work_folder` (W), `scope` and `scope_kind` (`file` or `folder`: the page or folder id the person sent), `by` (the requester's account id) and `by_name`, `at`, `note` (at most 2000 characters), `state` (`sent`, `running`, `done`, `failed`), `state_at`, `state_by` (a token's display name, the label of an agent on this computer, or the requester's username), `detail` (`failed`: the reason; `running`: a line of progress; at most 500 characters), `via` (how it was made: `session` or `token`, `''` before migration step 58; not in the record) |
-| `feedback_request_threads` | `request_id`, `thread_id`, `answered_at` (a reply or a resolve after the request, by a token or another account) |
-
-A request record, as the API answers it: `{id, rev, work_folder: {id,
-name}, scope: {kind, id, name}, by, at, note, state, state_at, state_by,
-detail, threads: [{id, answered}]}`, `by` the username.
-
-- **`create(ws, conn, scope, *, by, by_name, note, threads, request_id,
-  via)`** → `{request, created}`, commits. `threads` omitted: every open
-  thread in the scope; given: each must be an open thread there (400
-  otherwise), at most 500. 400 "Nothing to send: no open comments here." for
-  none; 413 past the note's length. A repeated `request_id` by the same
-  account answers the stored request with `created` false; another
-  account's id is a 409. `via` (`requests.VIA`) is how the Send was made,
-  stored in the row's `via` column and not in the record: `session` (a
-  person in Gamma) or `token` (an integration token), as the route says;
-  `''` for a Send from before migration step 58. An agent on this computer
-  takes a session's alone ([local_agents.md](local_agents.md#claiming-and-the-run)).
-- **`listing(conn, *, after, scope, state, limit)`** → `{requests, cursor}`:
-  `rev > after`, oldest first, `limit` 50 by default and at most 100;
-  `scope` a W's or a file's id filters by `work_folder` or `scope`; `cursor`
-  is the last `rev` given, else `after`. So a new request and a state change
-  alike show past a cursor. `get(conn, id)` is one.
-- **`set_state(ws, conn, id, state, *, detail, by_name, writer,
-  only_from=())`**: `writer` is `agent` (an integration token that
-  comments in the workspace, `auth.token_comments`, or an agent on this computer) or
-  `requester` (the session of `by`), and `TRANSITIONS` says who may make
-  which change:
-
-  | from \ to | running | done | failed |
-  |---|---|---|---|
-  | sent | agent | agent | agent; the requester (a withdraw) |
-  | running | agent (a new `detail` line) | agent | agent; the requester |
-  | failed | agent (a retry) | agent | — |
-  | done | — | — | — |
-
-  A refused change is a 409 "A {from} request cannot become {to}.". An
-  agent's same state with the same detail again changes nothing (no
-  `rev`), and so does a repeated withdraw; a requester's `failed` sets the
-  detail `withdrawn` whatever they sent, and the withdraw is their only
-  change (their `running` or `done`, repeated or not, is the 409). A
-  write takes the next `rev`, sets `state_at`, `state_by` and `detail`.
-  `only_from` names the states the writer expects the request in, checked
-  under the lock: a stored state outside it is a 409 "The request is
-  {state} now.". Every write of an agent on this computer passes
-  `("running",)`, so a request withdrawn between two of them is never
-  overwritten; an outside agent's writes pass none and are unchanged.
-- **`claim(ws, conn, id, *, by_name, detail)`** → the request, or None:
-  an agent on this computer takes a `sent` request
-  ([local_agents.md](local_agents.md#claiming-and-the-run)), `running` with
-  `detail`, `state_by` its label, the next `rev` and `state_at`, in one
-  step under the write lock; a request that is no longer `sent` (taken,
-  withdrawn, answered, gone) is rolled back and None, so of two takers, or
-  a taker and a withdraw, one wins. Commits, then `_changed`.
-- **After every write** (`_changed`): `collab.publish(ws, page, {t:
-  "comments", block_id: "", thread_id: ""})` to each page whose threads are
-  in the request (open tabs refetch their threads and Sent chips),
-  `files.mark_folder(ws, W)`, and for a work folder of this computer whose
-  vault may write now (not paused, not choosing its files)
-  `files.write_request(link, id)` at once, best effort: the hot pass
-  rewrites it on a failure. Then each of `change_listeners` hears
-  `fn(ws, request_id)`, on the early-return path too, each in its own
-  `try` that logs and never raises: `local_agents.runner.on_request`, which
-  queues the Sends an agent on this computer answers and stops a run whose
-  request was withdrawn, is the one listener.
-- **Answered.** `answered(ws, event)`, the listener's part: a `reply` or a
-  `resolve` sets `answered_at` on every row of the thread not answered whose
-  request was made before the comment and whose requester is not the actor
-  or whose event carries an `agent` (a token's write answers whoever it
-  belongs to); then the work folder's files are due. An event that says
-  when its writer read the thread (`seen`: an agent on this computer's run,
-  [local_agents.md](local_agents.md) "A word while a Send's run works")
-  answers only the requests made by then. A reopen answers
-  nothing. So a thread shows as sent (`sent` on its entry and on the comment
-  API's thread) until an agent or another member answers it, and a later
-  Send waits on it again.
-- **Travel.** Requests are not synced by the mirror, not published, not in
-  a share export, not in a backup merge or a Gamma export (`copy_rows`
-  mints fresh thread ids, so the join rows would name nothing); a restore
-  in place copies them with the file; gone with the workspace. **The
-  sweep**, `requests.sweep`, runs on the comments' timer, at startup and
-  hourly (`app.sweep_comments`: after `comments.sweep`, whatever that one
-  did, since the lifespan's chain of timers is at Python's limit of nested
-  blocks) and, as that one does, remembers each workspace's file stamp and
-  next expiry: it deletes `done` and `failed` requests 90 days after
-  `state_at` (`KEEP_DAYS`) and the rows of threads that no longer exist.
-
-### The request file
-
-`requests.document_of(ws, conn, request_id)` is what `.gamma/annotations/requests/<id>.json`
-holds, written by `files.write_request` and rewritten by every pass whose
-request changed (a state change, an answer), under the same name, so a
-watcher sees a create and then modifications:
-
-```text
-{"format": "gamma-feedback-request-1", "id", "rev", "workspace", "work_folder": {id, name},
- "scope": {kind, id, name}, "by", "at", "note", "state", "state_at", "state_by", "detail",
- "answer": {…as in the document…, "state": "POST /api/feedback/requests/<id>/state {state, detail}"},
- "entries": [the entries of its threads as they are now, in any state]}
-```
-
-`requests.entries_of` gives those entries (a thread gone since is left
-out); `GET /api/feedback/requests/{id}` answers the same pair. The newest
-100 request files are kept; older ones are deleted only when `done` or
-`failed`.
-
 ## The files
 
 For a work folder of this computer, and for a page that follows one file
@@ -848,7 +711,6 @@ own ([work_folders.md](work_folders.md)); `files.place(link)` says where:
   open.json           document(W, state="open", owner=<the vault's maker>), 2-space JSON, UTF-8, "\n" at the end
   open.md             markdown.render(that, pictures="files")
   img/<key>.jpg       write-once by key
-  requests/<id>.json  one per Send (until step 3.7)
 
 <the file's directory>/.gamma/annotations/<file name>/
   .gitignore, open.json, open.md, img/    the same, of the followed page (its scope a page's, its file the file's name)
@@ -870,8 +732,9 @@ makes is hidden as a vault's is. A directory no vault may have
 (`place_refusal`: a drive's root, the home directory or one around it,
 Gamma's data directory, a system or temporary place) gets no files:
 `folder_links.annotated` is false there. A work folder's files were below
-`.gamma/feedback/` before step 3.2 (`files.FORMER`): every write and every
-removal deletes that directory where it is still there.
+`.gamma/feedback/` before step 3.2, and its Sends' request files in
+`.gamma/annotations/requests/` until step 3.7 (`files.FORMER`): every write
+and every removal deletes those directories where they are still there.
 
 - **When.** (a) Every whole round of a work folder
   (`folder_links._vault_round`, after `vault.sync.sync`, under the link's
@@ -894,7 +757,7 @@ removal deletes that directory where it is still there.
   with the monotonic time the pass began, so a mark newer than the pass
   stays. `due` keeps the newest mark of each scope (a burst of writes is
   one pass, once the last is `HOT_S` old). So a highlight, a comment, a
-  reply, a resolve, a relocation or a Send reaches `open.json` within
+  reply, a resolve or a relocation reaches `open.json` within
   about 2–4 s. A vault of another server has no hot pass: its rounds are
   what read the files again, a work folder's at every whole round and, on a
   round of push alone, at most every `REMOTE_POLL_S`
@@ -902,19 +765,17 @@ removal deletes that directory where it is still there.
   summary), a followed file's every `REMOTE_POLL_S` while the file rests
   (`folder_links.due`). The document is asked for within `ASK_TIMEOUT_S`, a
   question between rounds, so a silent server holds the link's lock no
-  longer than that; its pictures wait as a round's requests do.
+  longer than that; its pictures wait as a round's do.
 - **What `write` does**, in order: the place answers as the vault's
   (`vault.disk.check_marker` for a folder vault: a copy of the directory or
   an empty mount never gets files; for a vault of one file the file there,
   `gamma_sync.NOT_THERE` otherwise, and on this server its maker still a
   member of the workspace); the document: on this server
   `entries.document`, sources on, of W named by the vault's rows, or of
-  the followed page named by the file's name, a work folder's request files
-  due this pass with it, then `kept.repair` for the entries' pages; for a
+  the followed page named by the file's name, then `kept.repair` for the entries' pages; for a
   vault of another server `GET /api/annotations?scope=<its folder or
   page>&state=open` there with the vault's token (`files._far`: cut to the
-  document's own fields, so the Feedback dialog's `agent` stays out, each
-  picture named by its key alone and its route kept to fetch it, a file
+  document's own fields, each picture named by its key alone and its route kept to fetch it, a file
   named by the vault's rows where they name its page, the entries sorted by
   file again; an answer of another format is an error). Then the pictures
   the entries name that `img/` lacks, drawn through `pictures.cached` or
@@ -923,19 +784,17 @@ removal deletes that directory where it is still there.
   most `PICTURES_PER_WRITE` (20) a write (a picture not written yet is null
   in this write's document, and the next pass fills it; one that cannot be
   had now, a build being written, waits for the next whole round);
-  `.gitignore`, `open.json`, `open.md` and the request files, each written
+  `.gitignore`, `open.json` and `open.md`, each written
   only when its bytes differ from the file's (a replace that keeps failing
   under a reader on Windows is left for the next pass, and is no error of
-  the vault's); a work folder's request files past the newest
-  `REQUEST_FILES` (100, by `rev`) deleted once their request is done,
-  failed or gone; `img/` pruned of the pictures named by neither this
-  `open.json`, the one it replaced nor any request file (a work folder of
+  the vault's); `img/` pruned of the pictures named by neither this
+  `open.json` nor the one it replaced (a work folder of
   another server's is not pruned while an agent works in it,
-  `runner.at_work`: its run fetched pictures there that no document here
-  names, `local_agents/home.py` `pictures`); Gamma's own stale
-  temporary files in the files' directory, `img/` and `requests/` swept
+  `runner.at_work`: its turn fetched pictures there that no document here
+  names, `local_agents/home.py` `_pictures`); Gamma's own stale
+  temporary files in the files' directory and `img/` swept
   (`vault.disk.sweep_own`; the vault's scan never enters a dot directory);
-  a work folder's `FORMER` directory deleted. The summary is `{"open": n}`,
+  a work folder's `FORMER` directories deleted. The summary is `{"open": n}`,
   the open threads, with `"left": m` when `m` pictures or files wait for
   the next pass (the cap, a reader's hold), which the hot pass reads to
   keep the mark; errors are caught into `{"open": n, "error": …}`, logged
@@ -949,16 +808,6 @@ removal deletes that directory where it is still there.
   server"): a member's read of the workspace there, which `GET
   /api/annotations` and its pictures are for every token of any scope in
   its own workspace ("The routes"). Nothing more is asked of it.
-- **The request files.** Of the newest `REQUEST_FILES` requests, a pass
-  reads a `sent` or `running` one again every time (an answer changes its
-  entries) and a `done` or `failed` one only while its file is missing,
-  its stored `rev` is behind the row's, or an entry of it placed on this
-  build has no picture yet (a Send answered before a pass drew them, or
-  past the cap). A Send also writes its file at once
-  (`write_request`, `folder_links.try_holding`: only when the link's lock
-  is free, else the hot pass writes it, the work folder being marked), with
-  the pictures `img/` holds already and the rest null. A vault of another
-  server writes none: its Sends are that server's.
 - **Removal.** `files.remove(link)` deletes a vault's files: from
   `folder_links._remove_vault`, when the marker is ours, before the marker
   is unlinked; from the release of a work folder whose push was lowered
@@ -981,7 +830,7 @@ removal deletes that directory where it is still there.
   [comments.md](comments.md) "The API"): `files.mark(ws, page_id)` (the
   files of the page's work folder, or of the vault of one file that follows
   it, are due; cheap, no IO; nothing on a `sweep`
-  event, which names no page), `requests.answered(ws, event)` and
+  event, which names no page) and
   `kept.after_comment(ws, event)`, each in its own `try` with its module
   loaded when first asked for, so a missing piece or a failing one never
   stops the others, and none fails the write.
@@ -999,9 +848,7 @@ mark.
 
 ## The routes
 
-`gamma/routers/annotations.py`, prefix `/api/annotations` (the reader), and
-`gamma/routers/feedback.py`, prefix `/api/feedback` (the Sends, until step
-3.7). Every route is for the workspace's members of any role and for
+`gamma/routers/annotations.py`, prefix `/api/annotations`. Every route is for the workspace's members of any role and for
 integration tokens of any scope, a token in its own workspace as on every
 route of the HTTP API; a share visitor, signed in or not, gets 403
 "annotations belong to the workspace's members". Every handler is a sync
@@ -1010,33 +857,12 @@ loop. `AnnotationError` becomes the `HTTPException` of its status.
 
 | Method | Path | Answer |
 |---|---|---|
-| GET | `/api/annotations?scope=<id>&state=open\|resolved\|all&format=json\|md` | the document of a page, a folder or the library (`scope` a page's or a folder's id, or `home`; `entries.document`, `owner` the reader's username, the entries with `picture_url` / `before_url`), or with `format=md` its Markdown (`text/markdown; charset=utf-8`, the pictures as their routes). For a work folder's scope the JSON adds what the Feedback dialog sends to (`agent`, `agents_found`: below the table), until the dialog goes; never the files' document. 400 for another state or format; 404 for no such folder or live page |
+| GET | `/api/annotations?scope=<id>&state=open\|resolved\|all&format=json\|md` | the document of a page, a folder or the library (`scope` a page's or a folder's id, or `home`; `entries.document`, `owner` the reader's username, the entries with `picture_url` / `before_url`), or with `format=md` its Markdown (`text/markdown; charset=utf-8`, the pictures as their routes). 400 for another state or format; 404 for no such folder or live page |
 | GET | `/api/annotations/{id}?format=json\|md` | `{entry}`: a thread's in any state, or a bare highlight's by its block id; or its Markdown (the file's heading, then the item); 404 for one hidden, gone, a reply's id, a highlight that has a thread, or on no live page |
 | GET | `/api/annotations/{id}/picture?at=now\|before&v=<key>` | `image/jpeg`, `Cache-Control: private, max-age=86400`; 404 when the entry has no such picture or it cannot be drawn now; 400 for another `at`. `v`, the picture's key, only busts a browser's cache |
-| POST | `/api/feedback/requests` | `{id?, scope, note?, threads?}` → 201 `{request}` (200 for a repeated `id` of the same account, answered as stored). `require_ws(write=True)`: a member who may edit, or a `write` token; never a `read` token, a viewer or a share visitor (a Send starts work on the owner's computer). 400 for a scope outside a work folder, nothing to send, a thread that is no open one in the scope or a malformed id; 403 for a token's Send to a work folder whose vault here has an agent on this computer ("An agent on this computer takes Sends made in Gamma, not with a token."); 404 for no such scope; 409 for another account's id; 413 past the note's length |
-| GET | `/api/feedback/requests?after=<rev>&scope=<id>&state=<s>&limit=<n>` | `{requests, cursor}` ("Requests and their states"); on a server that runs agents each record adds `local`, whether an agent on this computer holds it now; 400 for another state |
-| GET | `/api/feedback/requests/{id}` | `{request, entries}`, the entries of its threads as they are now (with their picture routes): what its file holds; the record's `local` as in the listing; 404 |
-| POST | `/api/feedback/requests/{id}/state` | `{state, detail?}` → `{request}`: an agent (a token that comments in its own workspace, `auth.token_comments`) any change `TRANSITIONS` lets it make, the requester's session a withdraw (`failed`); 403 for a read token ("this token is read-only"), another member, a viewer or a share visitor; 404; 409 for a change refused, and for a token's change while an agent on this computer answers the request ("Codex on this computer is answering this request."); 413 past the detail's length; 423 while a delete holds the workspace |
 
 `picture_url` is `/api/annotations/{id}/picture?at=now&v=<key>`,
 `before_url` the same with `at=before`.
-
-`doc.agent` and `doc.agents_found` are `routers/feedback.py`'s
-(`dialog_agent`), read by the reader's route for a work folder's scope.
-`doc.agent`, on the desktop app's own server only (`_agent_of`): null when
-no vault on this computer keeps the work folder or no agent is on here;
-else the agent that takes this account's Sends there (its first agent on,
-else another account's: [local_agents.md](local_agents.md) "Who turns it
-on") as `{name, label, ready, problem, takes, why}`, `ready` and `problem`
-as last asked (`local_agents.catalog.cached`: nothing runs, `ready` null
-while still checking), `takes` whether this account's Send would reach the
-agent now (its own agent, the vault writing its directory), and `why`,
-English, when not: "Only the person who turned on Codex on this computer
-can send to it." or "The work folder is paused on this computer: Codex starts
-once it syncs again.". `doc.agents_found` says whether this computer has
-either agent. Both are on this route alone: `open.json`, the request files
-and MCP's `read_annotation` stay as they are
-([local_agents.md](local_agents.md#the-routes)).
 
 ## The writing tools
 
@@ -1106,10 +932,6 @@ account's Gamma AI highlights that place too.
 comment, a new highlight) and the entry's link as `list_annotations` gives
 it (`entries.link_of`).
 
-A Send's run writes its answers through the same hand until step 3.7
-(`hand.answer_run`, `reply` and `resolve` with the run's `seen`), the
-local home's and the channel's alike.
-
 ## Tokens and MCP
 
 - **The Comment level** (`integration_tokens.comments`,
@@ -1159,84 +981,39 @@ local home's and the channel's alike.
 
 On the desktop app's own server Gamma itself can be the connector: the
 vault's maker turns on Codex or Claude Code for a work folder in the sync
-panel, and from then on a Send of that folder made in Gamma by the maker is
-claimed by this server (`requests.claim`, `sent` to `running` in one
-step), worked by the agent in the vault's directory, answered with replies
-signed by its label and set `done` or `failed`
-([local_agents.md](local_agents.md)); a comment sent to the agent (its
-tick, or `@codex`) is no Send but a turn of its thread (local_agents.md "A
-comment sent to an agent"). While a folder has such an agent, a
-token's Send to it is refused (403), and so is a token's change of a
-request a run holds (409); the requests it has taken read `state_by`
-`Codex` or `Claude Code`, and an outside agent leaves them alone.
-
-A work folder of another server (a NAS) whose keeping computer
-announces an agent for it works the same way from that server: the
-maker's Sends made there, in any window, are taken by that
-computer over its channel and answered there, a token of the maker's Send is refused
-(403 "Codex on TIM-PC takes Sends made in Gamma, not with a token."),
-and a token's change of a request the computer's run holds too (409
-"Codex on TIM-PC is answering this request."); the maker's Feedback
-document names the agent with the computer and whether it is online
+panel (or for the library), and from then on a comment the maker sends to
+the agent (the composer's Send to tick, or `@codex`) is a turn of its
+thread's conversation, worked by the agent in the vault's directory and
+ended by its reply in the thread, signed by its label
+([local_agents.md](local_agents.md) "A comment sent to an agent"). A work
+folder of another server (a NAS) whose keeping computer announces an agent
+for it works the same way from that server: the turns sent there are taken
+by that computer over its channel and answered there
 ([local_agents.md](local_agents.md) "A work folder of another server",
-[computers.md](computers.md) "The Sends").
+[computers.md](computers.md)).
 
-Anywhere else, and for a folder with no agent on this computer, Gamma
-starts no process. The owner builds the part that starts an agent (a
-watcher, a timer, a shell hook), and what it finds here is:
+Anywhere else, Gamma starts no process. The owner builds the part that
+starts an agent (a watcher, a timer, a shell hook), and what it finds here
+is:
 
-1. **A request appearing.** On this computer, a work folder's
-   `.gamma/annotations/requests/<id>.json` ("The request file", `format:
-   "gamma-feedback-request-1"`): a Send writes it at once, and every
-   change of the request rewrites the same file with its `rev` moved, so a
-   watcher sees a create, then modifications, and a `rev` it has seen is
-   nothing new. On any server, `GET /api/feedback/requests?after=<cursor>`
-   with a token that comments there: the requests made or changed since the cursor,
-   oldest first, with the `cursor` to pass back next time (`state=sent`
-   keeps the new ones); the HTTP API reads the token's own workspace, so
-   one token per workspace polled.
-2. **What to do.** The request record ("Requests and their states"):
-   `note`, the person's line of instruction; `scope`, the file or folder
-   they sent; `threads`, each with `answered`; `by`, their username. Its
-   entries come in two forms: JSON (the request file's `entries`, their
-   pictures named `../img/<key>.jpg`; `GET /api/feedback/requests/{id}`;
-   the scope's `open.json` or `GET /api/annotations?scope=`) and Markdown
-   (`open.md`, `GET /api/annotations?scope=<W>&format=md`,
-   `GET /api/annotations/{id}?format=md`), each entry with its id,
-   file, place, source line, pictures and comments ("An entry"). The
-   document's `owner` says whose comments are the requests, and its
-   `answer` names the routes below.
-3. **Saying it started.** `POST /api/feedback/requests/{id}/state
-   {state: "running"}` as the agent: an integration token that comments
-   in its own workspace (a `write` one, or a `read` one at the Comment
-   level); again with a
-   `detail` line as it goes. Gamma shows it beside the request ("The agent
-   is working…").
-4. **Answering.** Through the comment API with the same token, each entry
-   carrying its `page_id` and `block_id`: a reply is
-   `POST /api/pages/{page_id}/comments {block_id, thread_id, body}`, a
-   resolve `POST /api/comments/{id}/resolve {resolved: true}`; or over MCP
-   with `comment` (its `thread_id`) and `resolve` at the Comment level.
-   Each answer is signed with the token's name, reaches the person's
-   Inbox, and marks the thread answered in every request waiting on it
-   (`threads[].answered`, the entry's `sent` gone), which rewrites the
-   request file.
-5. **Saying it is done.** `POST …/state {state: "done"}`, or
-   `{state: "failed", detail: <why>}`; a failed request may be set
-   `running` again (a retry) and then `done`; `done` is final. A request
-   the person withdrew reads `failed` with the detail `withdrawn`, set by
-   the requester's session (`state_by` their name): the connector stops on
-   it and may not change it. A request `running`, `done` or `failed` that
-   the connector did not set is someone else's (its `state_by` names who
-   has it): it leaves it alone. The table of changes and who makes each is
-   `TRANSITIONS`; a change refused is a 409. Gamma shows the state beside
-   the request, with the detail.
+1. **What to do.** A work folder's `.gamma/annotations/open.json` and
+   `open.md` on this computer ("The files"), rewritten within seconds of a
+   comment, so a watcher sees them change; on any server, `GET
+   /api/annotations?scope=<id>` with a token of the workspace (the JSON),
+   `&format=md` (the Markdown), and `GET /api/annotations/{id}` for one
+   entry. Each entry carries its id, file, place, source line, pictures and
+   comments ("An entry"); the document's `owner` says whose comments are
+   the requests, and its `answer` names the routes below.
+2. **Answering.** Through the comment API with an integration token that
+   comments in its own workspace (a `write` one, or a `read` one at the
+   Comment level), each entry carrying its `page_id` and `block_id`: a
+   reply is `POST /api/pages/{page_id}/comments {block_id, thread_id,
+   body}`, a resolve `POST /api/comments/{id}/resolve {resolved: true}`; or
+   over MCP with `comment` (its `thread_id`) and `resolve` at the Comment
+   level. Each answer is signed with the token's name and reaches the
+   person's Inbox; a resolved thread leaves `open.json`.
 
 ## In the app
-
-The Feedback dialog below goes in step 3.7; it reads the reader's route and
-lists the document's threads alone (`feedbackView.threadsOf`), never a bare
-highlight.
 
 The client's side is the comments' ([comments.md](comments.md) "In the
 app", [ui-design.md](ui-design.md)): an ink group takes a thread (Comment
@@ -1246,18 +1023,10 @@ refuses a merge, [handwriting.md](handwriting.md)); a thread's card shows
 its agent's comments under the token's name, the chip of the reader's
 turn of an agent while one is to end on it ([comments.md](comments.md)
 "Sent to an agent"), and whether its passage moved or was not found in the
-new version; the Feedback dialog (`frontend/src/feedback/`:
-`FeedbackDialog.jsx` over the pure `feedbackView.js`,
-`tests/feedbackView.test.mjs`; its state a module store, `useFeedback.js`,
-that each opener calls and `FeedbackHost.jsx` renders; the words in
-`feedbackText.js`, its Sent chip `sendState` among them), opened from
-the work folder's list view, the Comments window's header on a file and
-the vault chip's card, lists a scope's entries with their thumbnails and
-sends them with a line of instruction, the requests below with their
-states and a Withdraw; while open it reads the scope's document and the
-work folder's requests again every `POLL_MS` (5 s), so an agent's answers
-show as they come. The Inbox names the agent on its items. The user
-guide's "Comments and inbox" says it for people.
+new version; the composer's Send to tick sends a comment to an agent
+([local_agents.md](local_agents.md) "A comment sent to an agent"). The
+Inbox names the agent on its items. The user guide's "Comments and inbox"
+says it for people.
 
 ## Known gaps
 
@@ -1276,8 +1045,7 @@ guide's "Comments and inbox" says it for people.
 - Not built: a figure's own file mapped to the line that includes it;
   widening an `\end{…}` line to its `\begin{…}`; the `\includegraphics`
   path in `source`; re-finding a vector figure by its SyncTeX line after a
-  rebuild; an Inbox item when a request is done; a palette command for
-  Feedback.
+  rebuild.
 - Comments made in a phone's clone, on the share host or on a publication
   never reach the desktop's files or its agent: comments do not travel.
   The routes of the server that holds them serve them. A vault of another
@@ -1308,7 +1076,7 @@ guide's "Comments and inbox" says it for people.
   picture's regions and the whole picture through a rebuild, a text file's
   ranges by their own lines through a change (exact, rough with `was`,
   lost, pending, the block gone), the file's
-  name from the vault's rows and from the tree, the order, `sent`, a
+  name from the vault's rows and from the tree, the order, a
   tombstone, the cut, the scopes and their refusals, the states, a root from
   before step 54, the source live or as commented, the pictures' keys; a
   library folder, a library page and the library with their bare
@@ -1323,15 +1091,12 @@ guide's "Comments and inbox" says it for people.
 - `tests/test_annotations_routes.py`: JSON and Markdown, one thread, the
   picture route, who reads, a library folder, a library page and the
   library with a bare highlight.
-- `tests/test_annotations_requests.py`: who may send, a retry, "Nothing to
-  send", every change of state by each writer, the cursor, `answered_at`,
-  the room publish, the listeners, the sweep, `claim`, `only_from` and the
-  `change_listeners`. An agent on this computer has its own suites,
+- An agent on this computer has its own suites,
   `tests/test_local_agents_*.py` ([local_agents.md](local_agents.md#tests)).
 - `tests/test_annotations_pictures.py`, `test_annotations_kept.py` (a text file's
   thread keeps no version), `test_synctex.py`, `test_annotations_sources.py`,
   `test_annotations_files.py` (a work folder's files written, rewritten and
-  removed, the `.gamma/feedback/` of before gone, a bare highlight listed,
+  removed, the `FORMER` directories of before gone, a bare highlight listed,
   an entry on lines of a tracked `.tex`, a followed file's files beside it:
   written, rewritten, never a vault, gone with the vault, at a relink and
   at a take-in, none inside a folder vault's directory),
@@ -1339,11 +1104,13 @@ guide's "Comments and inbox" says it for people.
   another server, read there with the vault's token, a server before the
   reader the files' error alone),
   `test_annotations_tools.py`, and the gate `test_annotations_loop.py` (a work
-  folder with a paper, two comments, a Send, a commenting token's state and
-  answers, a rebuild, the Inbox, `open.json` empty at the end).
+  folder with a paper, two comments, a commenting token's answers, a
+  rebuild, the Inbox, `open.json` empty at the end).
 - `tests/test_annotations_hand.py`: the writing tools (each place, a quote
   not there refused with the closest, a reply, a resolve, a highlight in a
   colour and a style, a call made again, Gamma AI's permission and a
   viewer's chat, the Comment level of a read, a commenting, a write and a
   turn token).
-- The browser group `feedback` (`frontend/tests/e2e/scenarios/feedback.mjs`).
+- The browser groups `work-folders` (a highlight in `open.md` on the
+  disk), `comments` (a thread on handwriting) and `local-agents` (a comment
+  sent to an agent on a `.tex` and on a library PDF).

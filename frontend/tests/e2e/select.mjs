@@ -60,12 +60,10 @@ export const GROUPS = [
   { id: "recording", files: ["recording.mjs"], s: 10 },
   { id: "vaults", files: ["vaults.mjs"], s: 20 },
   { id: "work-folders", files: ["workFolders.mjs"], s: 30 },
-  { id: "feedback", files: ["feedback.mjs"], s: 60 },
   { id: "local-agents", files: ["localAgents.mjs"], s: 40 },
   { id: "computers", files: ["computers.mjs"], s: 45 },
   { id: "https", files: ["https.mjs"], s: 60 },
   { id: "remote-work", files: ["remoteWork.mjs"], s: 30 },
-  { id: "remote-sends", files: ["remoteSends.mjs"], s: 75 },
   { id: "remote-chat", files: ["remoteChat.mjs"], s: 90 },
   { id: "remote-asks", files: ["remoteAsks.mjs"], s: 90 },
   { id: "viewers", files: ["viewers.mjs"], s: 60 },
@@ -172,26 +170,21 @@ export const RULES = [
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
   ["frontend/src/recording/**", ["recording"]],
   // the row control, the thread popover, the Comments window, the page's threads over the socket;
-  // feedback: an agent's comments, the Sent chip, the ink cards and the Feedback button;
-  // local-agents: the byline of a reply an agent on this computer wrote; text-anchors: the code view's
-  // column and badges, a thread's place after its file changed
-  // remote-sends: a Send waiting for the computer that keeps the folder (the thread's chip)
-  ["frontend/src/comments/**", ["comments", "collab", "inbox", "feedback", "local-agents", "text-anchors", "remote-sends"]],
-  // the bell, its panel and the jumps (a thread's opens through comments/); feedback: an agent's items
-  ["frontend/src/inbox/**", ["inbox", "feedback"]],
-  // the feedback view and Send (docs/dev/annotations.md "In the app"); local-agents: Send naming the
-  // folder's agent on this computer, its lines and the request it works; remote-sends: on the computer
-  // that keeps a work folder of this server
-  ["frontend/src/feedback/**", ["feedback", "local-agents", "remote-sends"]],
+  // local-agents: the byline of a reply an agent on this computer wrote, a comment sent to it and its
+  // thread's chip; text-anchors: the code view's column and badges, a thread's place after its file
+  // changed; remote-chat: a comment sent to the agent of the computer that keeps the folder
+  ["frontend/src/comments/**", ["comments", "collab", "inbox", "work-folders", "local-agents", "text-anchors", "remote-chat"]],
+  // the bell, its panel and the jumps (a thread's opens through comments/)
+  ["frontend/src/inbox/**", ["inbox", "work-folders"]],
   ["frontend/src/pdf/**", PDF_VIEW],
   // (a text box's editor and read mode are the notes')
   // the "N pages inside" panel and the crumbs over a sub-page's title (/page makes one in notes)
   ["frontend/src/editor/SubPagesPanel.jsx", ["sub-pages", "notes-pdf-share"]],
   ["frontend/src/editor/PageCrumbs.jsx", ["sub-pages", "notes-pdf-share", "explorer"]],
-  // the @ menu and its chips (the reminders are App's, under app/**); remote-sends: the agent row and
+  // the @ menu and its chips (the reminders are App's, under app/**); remote-chat: the agent row and
   // chip of the computer that keeps the folder
-  ["frontend/src/editor/mentions.js", ["note-mentions", "notes-pdf-share", "remote-sends"]],
-  ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share", "inbox", "remote-sends"]],
+  ["frontend/src/editor/mentions.js", ["note-mentions", "notes-pdf-share", "remote-chat"]],
+  ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share", "inbox", "remote-chat"]],
   // the @ menu's state and keys, a note row's and a comment field's
   ["frontend/src/editor/useMentionMenu.js", ["note-mentions", "notes-pdf-share", "comments", "inbox"]],
   // a note's link by path, opened through the work folder it is in (the e2e explorer group)
@@ -204,8 +197,8 @@ export const RULES = [
   // remote-asks: what it asks there, said to wait on that computer, no card)
   ["frontend/src/chat/computer/**", ["local-agents", "remote-chat", "remote-asks"]],
   // the agents the chat, the comment fields and Settings list, and the chip that picks one
-  // (remote-sends: the agent a comment names on another server's page)
-  ["frontend/src/chat/agents.js", [...CHAT, "local-agents", "remote-chat", "remote-asks", "remote-sends"]],
+  // (remote-chat: the agent a comment names on another server's page)
+  ["frontend/src/chat/agents.js", [...CHAT, "local-agents", "remote-chat", "remote-asks"]],
   ["frontend/src/chat/useLocalAgents.js", [...CHAT, "local-agents", "settings"]],
   ["frontend/src/chat/AgentChip.jsx", [...CHAT, "local-agents", "remote-chat", "remote-asks"]],
   // the picker of that side; text-anchors: a selection of lines as the chat's chip
@@ -239,10 +232,10 @@ export const RULES = [
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
   // (local-agents: the agent the maker's comments name and the chat's computer side talks to)
   // (computers: on any other server, the chip of the computer that keeps the page, read by usePageComputer.js)
-  // (remote-sends, remote-chat: the agent of the computer that keeps the page, vaultAgent, read by chat/agents.js)
-  ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents", "computers", "remote-sends", "remote-chat"]],
-  ["frontend/src/vault/usePageComputer.js", ["computers", "remote-sends", "remote-chat"]],
-  ["frontend/src/vault/**", ["vaults", "work-folders", "computers", "remote-sends", "remote-chat"]],
+  // (remote-chat: the agent of the computer that keeps the page, vaultAgent, read by chat/agents.js)
+  ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents", "computers", "remote-chat"]],
+  ["frontend/src/vault/usePageComputer.js", ["computers", "remote-chat"]],
+  ["frontend/src/vault/**", ["vaults", "work-folders", "computers", "remote-chat"]],
   // the pages the listing does not carry, merged into every page list the app has
   ["frontend/src/explorer/knownPages.js", ALL],
   // the work-folder rules every page and folder menu, drop and the open page's title ask
@@ -308,7 +301,7 @@ export const RULES = [
   // the 20,000 files the explorer group's quick open searches
   ["backend/tests/seed_work_folder.py", ["explorer"]],
   // the stand-ins for Codex and Claude Code the local agents scenario's server starts
-  ["backend/tests/fake_agents/**", ["local-agents", "remote-sends", "remote-chat", "remote-asks"]],
+  ["backend/tests/fake_agents/**", ["local-agents", "remote-chat", "remote-asks"]],
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
@@ -328,58 +321,55 @@ export const RULES = [
   ["backend/gamma/routers/integrations.py", ["mcp", "mirror", "settings", "computers"]],
   // synced vaults and PDFs read where they are: the routes a page reads and the engine behind them
   // (the vaults scenario; the shell's side is the desktop app's suite, desktop/test/e2e.js);
-  // feedback: a work folder's rounds write its feedback files and keep the commented version;
+  // work-folders: a work folder's rounds write its annotation files and keep the commented version;
   // viewers: the engine's class `file` makes a page of every file a work folder tracks;
   // local-agents: a work folder's agent on this computer, turned on and off by the PATCH
   // computers: a vault of another server is what the computer's channel announces there
   // remote-work: a work folder of another server made, chosen and pushed there
-  // remote-sends: an agent turned on for a work folder of another server
+  // remote-chat: an agent turned on for a work folder of another server
   // https: a vault of a NAS over https refused, with what was in its way
-  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "feedback", "local-agents", "computers", "remote-work", "remote-sends", "https"]],
-  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents", "computers", "remote-work", "remote-sends", "remote-asks", "https"]],
-  ["backend/gamma/linked_files.py", ["vaults", "work-folders", "feedback"]],
+  ["backend/gamma/folder_links.py", ["vaults", "work-folders", "local-agents", "computers", "remote-work", "remote-chat", "https"]],
+  ["backend/gamma/routers/folder_links.py", ["vaults", "work-folders", "local-agents", "computers", "remote-work", "remote-chat", "remote-asks", "https"]],
+  ["backend/gamma/linked_files.py", ["vaults", "work-folders"]],
   // (text-anchors: a text file's ranges placed again inside the round that replaced it)
   // (remote-work: the rounds over HTTP into a work folder of another server, vault/http_remote.py)
   // (https: a vault of a NAS over https, what is in its way named in its status)
-  ["backend/gamma/vault/http_remote.py", ["vaults", "work-folders", "feedback", "viewers", "explorer", "text-anchors", "remote-work", "https"]],
-  ["backend/gamma/vault/**", ["vaults", "work-folders", "feedback", "viewers", "explorer", "text-anchors", "remote-work"]],
-  // feedback on a work folder's files: the reader, the pictures, the SyncTeX map, the requests, the files and the routes
+  ["backend/gamma/vault/http_remote.py", ["vaults", "work-folders", "viewers", "explorer", "text-anchors", "remote-work", "https"]],
+  ["backend/gamma/vault/**", ["vaults", "work-folders", "viewers", "explorer", "text-anchors", "remote-work"]],
+  // the annotations of a page or a folder: the reader, the pictures, the SyncTeX map, the files and the routes
   // (viewers: a region of a picture and a thread on a picture's page as entries with their pictures)
-  // (local-agents: a request claimed and worked by an agent on this computer, the document's `agent`)
+  // (local-agents: a thread a turn of an agent on this computer is told of and answers)
   // (text-anchors: a range of a text file's lines as an entry, placed again after a change)
-  // (remote-sends: a Send of a work folder a computer keeps, its claim, its run's state and the
-  // computer woken; the replies it posts, the source line found on the computer)
-  ["backend/gamma/annotations/requests.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
-  ["backend/gamma/annotations/hand.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends", "comments", "mcp"]],
-  ["backend/gamma/annotations/places.py", ["feedback", "comments", "mcp"]],
-  ["backend/gamma/annotations/sources.py", ["feedback", "viewers", "local-agents", "text-anchors", "remote-sends"]],
+  // (remote-chat: a thread's turn of a work folder a computer keeps, its entry claimed there and its
+  // source line found on the computer)
+  ["backend/gamma/annotations/hand.py", ["work-folders", "viewers", "local-agents", "text-anchors", "remote-chat", "comments", "mcp"]],
+  ["backend/gamma/annotations/places.py", ["work-folders", "comments", "mcp"]],
+  ["backend/gamma/annotations/sources.py", ["work-folders", "viewers", "local-agents", "text-anchors", "remote-chat"]],
   // (work-folders: a highlight in a synced folder's file reaching its .gamma/annotations/open.md)
-  ["backend/gamma/annotations/files.py", ["feedback", "viewers", "local-agents", "text-anchors", "work-folders", "remote-sends"]],
-  ["backend/gamma/annotations/**", ["feedback", "viewers", "local-agents", "text-anchors"]],
-  ["backend/gamma/routers/annotations.py", ["feedback", "local-agents", "remote-sends"]],
-  ["backend/gamma/routers/feedback.py", ["feedback", "local-agents", "remote-sends"]],
-  // an agent on this computer answering a Send (docs/dev/local_agents.md): finding the CLIs, the
+  ["backend/gamma/annotations/files.py", ["work-folders", "viewers", "local-agents", "text-anchors", "remote-chat"]],
+  ["backend/gamma/annotations/**", ["work-folders", "viewers", "local-agents", "text-anchors"]],
+  ["backend/gamma/routers/annotations.py", ["work-folders", "local-agents", "remote-chat"]],
+  // the agents on this computer (docs/dev/local_agents.md): finding the CLIs, the
   // drivers, the runner, what this computer keeps, and GET /api/local-agents
-  // (remote-sends: the runner's home of another server's work folder, home.py, and a mention made there)
   // (remote-chat: the chat's computer side there: the seat, the turn run on the computer, its chat home)
-  ["backend/gamma/local_agents/home.py", ["local-agents", "remote-sends", "remote-chat", "remote-asks"]],
-  ["backend/gamma/local_agents/mention.py", ["local-agents", "remote-sends"]],
-  ["backend/gamma/local_agents/runner.py", ["local-agents", "remote-sends", "remote-chat", "remote-asks"]],
+  ["backend/gamma/local_agents/home.py", ["local-agents", "remote-chat", "remote-asks"]],
+  ["backend/gamma/local_agents/mention.py", ["local-agents", "remote-chat"]],
+  ["backend/gamma/local_agents/runner.py", ["local-agents", "remote-chat", "remote-asks"]],
   ["backend/gamma/local_agents/**", ["local-agents", "remote-chat", "remote-asks"]],
   ["backend/gamma/routers/local_agents.py", ["local-agents", "remote-chat", "remote-asks"]],
   // a computer's channel and presence (docs/dev/computers.md): the server's registry and routes, the
   // computer's links and their threads
-  // (remote-sends: the binding of a work folder to its computer's agent, the channel's Sends;
-  // remote-chat: the channel's chat turns, the models announced)
+  // (remote-chat: the binding of a work folder to its computer's agent, the channel's chat turns,
+  // the models announced)
   // (https: the channel to a NAS over https, a redirect or a certificate in its way, the id kept across a move)
-  ["backend/gamma/computers/channel.py", ["computers", "remote-sends", "remote-chat", "remote-asks", "https", "remote-work"]],
-  ["backend/gamma/computers/**", ["computers", "remote-sends", "remote-chat", "remote-asks", "remote-work"]],
-  ["backend/gamma/routers/computers.py", ["computers", "remote-sends", "remote-chat", "remote-asks"]],
+  ["backend/gamma/computers/channel.py", ["computers", "remote-chat", "remote-asks", "https", "remote-work"]],
+  ["backend/gamma/computers/**", ["computers", "remote-chat", "remote-asks", "remote-work"]],
+  ["backend/gamma/routers/computers.py", ["computers", "remote-chat", "remote-asks"]],
   ["backend/gamma/routers/computer_links.py", ["computers", "https"]],
   ["backend/gamma/md_lens.py", ["vaults"]],
-  // a file's path in its work folder: the feedback entries' file, a search hit's path, read_page(path=…),
+  // a file's path in its work folder: the annotation entries' file, a search hit's path, read_page(path=…),
   // quick open's file rows and a path link's file
-  ["backend/gamma/work_folders/paths.py", ["work-folders", "vaults", "feedback", "text-search", "explorer"]],
+  ["backend/gamma/work_folders/paths.py", ["work-folders", "vaults", "text-search", "explorer"]],
   // work folders: the library rule, the op rule, .gammaignore, the takeover (docs/dev/work_folders.md);
   // files by name (file_search.py)
   // (remote-work: a work folder of another server, its mark refused in a clone or a Zotero-linked workspace
@@ -494,15 +484,15 @@ export const RULES = [
   // comments: their storage and API, and the hooks every block writer runs
   // (orphan, place and purge on deletes, moves and page purges; the copies
   // of a backup merge and an import; after_write feeds the inbox)
-  // feedback: an agent's writes, the anchors and the listeners that keep the feedback files current
-  // local-agents: a computer agent's comment (agent_kind, agent_on) and a Send's state_by on its threads
-  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers", "feedback", "local-agents"]],
+  // work-folders: an agent's writes, the anchors and the listeners that keep the annotation files current
+  // local-agents: a computer agent's comment (agent_kind, agent_on) and a thread's turn
+  ["backend/gamma/comments.py", ["comments", "inbox", "notes-pdf-share", "collab", "transfers", "work-folders", "local-agents"]],
   // who an agent is: the comments it signs, here and on another server, the Inbox's items and the blocks it stamps
-  ["backend/gamma/agents.py", ["comments", "inbox", "local-agents", "remote-sends", "mcp"]],
-  // (remote-sends: a mention of the agent of the computer that keeps the folder)
-  ["backend/gamma/routers/comments.py", ["comments", "inbox", "feedback", "remote-sends"]],
-  // the Inbox: its producers' items, the listing and its settle, the marks; feedback: an agent's items
-  ["backend/gamma/inbox.py", ["inbox", "comments", "feedback"]],
+  ["backend/gamma/agents.py", ["comments", "inbox", "local-agents", "remote-chat", "mcp"]],
+  // (remote-chat: a mention of the agent of the computer that keeps the folder)
+  ["backend/gamma/routers/comments.py", ["comments", "inbox", "work-folders", "remote-chat"]],
+  // the Inbox: its producers' items, the listing and its settle, the marks
+  ["backend/gamma/inbox.py", ["inbox", "comments", "work-folders"]],
   ["backend/gamma/routers/inbox.py", ["inbox"]],
   ["backend/gamma/publisher_sessions.py", ["settings"]],
   ["backend/gamma/routers/publisher_sessions.py", ["settings"]],

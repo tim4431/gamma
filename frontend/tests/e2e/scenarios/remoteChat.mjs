@@ -6,10 +6,11 @@ import { waitForPdf } from "./pdf.mjs";
 
 // The chat's computer side on another server's page (step 4d of
 // docs/research/agent-collab.md; docs/dev/local_agents.md "A work folder of
-// another server"): the two Gammas of remoteSends.mjs, a NAS (a plain
-// server, its grace before a computer reads offline cut to 3 s) and a
-// computer (the desktop app's own server with local agents on and the
-// stand-in Codex of backend/tests/fake_agents/). On the NAS a shared
+// another server"): two Gammas, a NAS (a plain server, its grace before a
+// computer reads offline cut to 3 s) and a computer (the desktop app's own
+// server: the vaults recipe of GAMMA_FOLDER_LINKS with no shell secret,
+// local agents on, the stand-in Codex of backend/tests/fake_agents/ found
+// and Claude Code not). On the NAS a shared
 // workspace holds the folder "Paper", its maker alice and an editor, bob; the
 // computer's own account makes a work folder of it from the SyncTeX sample
 // paper's directory, shows the computer there and turns Codex on for it.
@@ -18,7 +19,10 @@ import { waitForPdf } from "./pdf.mjs";
 // PDF passage runs on the computer and its reply and steps come back into the
 // conversation the NAS keeps; a tab closed mid-turn finds the turn again and
 // the follow-up resumes Codex's session there; Stop of a running turn ends
-// it; New chat and History work as locally. Bob has no Codex side, until
+// it; New chat and History work as locally. An @codex in alice's reply on
+// the NAS ticks Send to Codex and is a turn of its thread, which the
+// computer takes over its channel, the thread's region's picture fetched
+// for the prompt, and the NAS answers in the thread. Bob has no Codex side, until
 // the computer's owner lets him use Codex there (a co-author, step 3.6 of
 // docs/research/agents-as-participants-plan.md): his @codex in a comment on
 // the paper then runs on the computer, and the answer in his thread reads
@@ -251,7 +255,6 @@ export async function remoteChatScenarios(env) {
       assert(prompt.includes('"message": "tighten this sentence"') && prompt.includes("The penalty") && prompt.includes("main.pdf"),
         `the message, the passage and the file reach Codex: ${prompt.slice(0, 800)}`);
       assert(prompt.includes("sections/method.tex"), `the passage's source line, computed on the computer: ${prompt.slice(0, 1200)}`);
-      assert(!turns[0].in.params.outputSchema, "a chat turn answers in prose");
     });
 
     await step("remote-chat: a tab closed mid-turn finds the turn and its reply in a new one, and the follow-up resumes Codex's session on the computer", async () => {
@@ -311,6 +314,67 @@ export async function remoteChatScenarios(env) {
       assert(heard().slice(before).some((e) => e.in?.method === "turn/interrupt"), "Codex was interrupted on the computer");
       assertEq((await alice.api(`/api/local-agents/chat/history?bucket=${pdf}`)).conversations.length, 0,
         "the opened conversation is the active one again");
+    });
+
+    // Step 3.5 of docs/research/agents-as-participants-plan.md, over the channel.
+    await step("remote-chat: in alice's reply on the NAS the @ menu lists Codex on the computer, @codex ticks Send to Codex, and the reply is a turn of its thread run there, its region's picture in the prompt", async () => {
+      const area = await alice.api("/api/blocks", { method: "POST", body: { parent_id: pdf, content: "",
+        properties: { pdf_position: areaOf(PLACES.v1.figure.rect), color: "rgba(255, 226, 143, 0.65)" } } });
+      const caption = (await alice.api(`/api/pages/${pdf}/comments`, { method: "POST",
+        body: { block_id: area.id, body: "the caption says 2025" } })).thread;
+      const threadsOf = async () => (await alice.api(`/api/pages/${pdf}/comments?state=all`)).threads;
+      const before = heard().length;
+      const ctx = await alice.context(browser);
+      const page = await openPage(ctx, at());
+      try {
+        await waitForPdf(page, 1);
+        if (!(await page.locator(".commentsPanel").count())) {
+          await page.getByRole("button", { name: "View", exact: true }).click();
+          await page.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+          await page.keyboard.press("Escape");
+        }
+        const panelRow = page.locator(`.commentsPanelRow[data-thread-id="${caption.id}"]`);
+        await panelRow.waitFor({ timeout: 10000 });
+        await panelRow.click();
+        const thread = page.locator(".commentThread").first();
+        await thread.locator(".commentBody").first().click();
+        const field = thread.locator(".commentField .cm-content").last();
+        await field.waitFor();
+        await field.click();
+        await page.keyboard.type("@cod");
+        const menu = page.locator(".mentionMenu");
+        const row = menu.locator(".refPopupItem.selected");
+        await until(async () => (await row.locator(".refPopupText").innerText().catch(() => "")).startsWith("Codex"),
+          { what: "the @ menu offers the folder's agent" });
+        assertEq((await row.locator(".mentionAside").innerText()).trim(), `on ${name}`, "where it runs");
+        await page.keyboard.press("Enter");
+        await menu.waitFor({ state: "detached" });
+        await thread.locator(".cmMentionChip", { hasText: "@codex" }).waitFor();
+        const tick = thread.locator(".commentSendTo input[type=checkbox]");
+        await until(() => tick.isChecked(), { what: "@codex ticks the box" });
+        assertEq((await thread.locator(".commentSendTick").innerText()).trim(), "Send to Codex", "the tick names the agent");
+        await page.keyboard.type("fix this only");
+        await page.keyboard.press("Shift+Enter");
+        // the computer takes the turn over its channel; its end is the agent's reply in the thread there
+        const answer = thread.locator(".commentItem.reply", { hasText: CHAT_REPLY });
+        await answer.waitFor({ timeout: 60000 });
+        assertEq((await answer.locator(".commentAuthor").textContent()).trim(), "Codex", "the reply is Codex's");
+        // the reply's own @codex is the agent's chip, titled with the computer
+        const chip = thread.locator(".commentItem.reply .mentionChip.mention-agent", { hasText: "@codex" }).first();
+        await chip.waitFor();
+        assertEq(await chip.getAttribute("title"), `Agent: Codex on ${name}`, "the chip names the computer");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const reply = (await threadsOf()).find((th) => th.id === caption.id).comments.at(-1);
+      assertEq(JSON.stringify([reply.agent, reply.agent_kind, reply.author, reply.agent_on]),
+        JSON.stringify(["Codex", "computer", "rc-alice", name]), "signed as the computer's agent there, for alice");
+      const turn = heard().slice(before).filter((e) => e.in?.method === "turn/start").at(-1).in.params;
+      const told = turn.input.map((p) => p.text || "").join("\n");
+      assert(told.includes('"message": "fix this only"') && told.includes(`"thread_id": "${caption.id}"`),
+        `the comment and its thread reach Codex on the computer: ${told.slice(0, 600)}`);
+      const pictures = turn.input.filter((p) => p.type === "localImage").map((p) => p.path);
+      assert(pictures.length && pictures.every((p) => p.startsWith(path.join(dir, ".gamma", "annotations", "img"))),
+        `the region's picture, fetched into the folder on the computer: ${JSON.stringify(pictures)}`);
     });
 
     await step("remote-chat: bob, another member, has no Codex side on the page, and the chat routes refuse him and a token", async () => {

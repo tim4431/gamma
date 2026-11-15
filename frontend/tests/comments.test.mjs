@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import {
   abandonedCommentHighlight, addComment, agentFor, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, cardedAnchors,
   commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, keepThreads,
-  laterComments, popoverThreads, resolveThread, shortCount, threadLink, threadPlace, threadsIn, turnChip, turnRefusal, upsertThread,
+  laterComments, popoverThreads, resolveThread, resolvedBy, shortCount, threadLink, threadPlace, threadsIn, turnChip, turnRefusal, upsertThread,
 } from "../src/comments/comments.js";
 
 const c = (id, thread, author, at, extra = {}) => ({
@@ -165,11 +165,15 @@ test("an agent's comment: its name on the line, then its computer and its person
 });
 
 test("a thread resolved here names no agent; an agent's resolve is the server's", () => {
-  const list = page().map((x) => (x.id === "t3" ? { ...x, resolved_agent: "Claude Code" } : x));
+  const codex = { id: "computer:pc:codex", kind: "computer", name: "Codex", on: "TIM-PC" };
+  const list = page().map((x) => (x.id === "t3" ? { ...x, resolved_by: "ann", resolved_agent: codex } : x));
+  assert.equal(resolvedBy(list.find((x) => x.id === "t3")), "Codex on TIM-PC", "the agent, worded here");
   const reopened = resolveThread(list, "t3", false, "ann", "2026-10-10T00:00:00.000000Z");
-  assert.equal(reopened.find((x) => x.id === "t3").resolved_agent, "");
+  assert.equal(reopened.find((x) => x.id === "t3").resolved_agent, null);
   const again = resolveThread(list, "t3", true, "ann", "2026-10-10T00:00:00.000000Z");
-  assert.equal(again.find((x) => x.id === "t3").resolved_agent, "");
+  assert.equal(again.find((x) => x.id === "t3").resolved_agent, null);
+  assert.equal(resolvedBy(again.find((x) => x.id === "t3")), "ann", "the person");
+  assert.equal(resolvedBy({ resolved_by: null, resolved_agent: { id: "gamma", kind: "gamma", name: "Gamma AI" } }), "Gamma AI");
 });
 
 test("what a thread is on, in words: the quote, the text, else a caption-less ink group's page", () => {

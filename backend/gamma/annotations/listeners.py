@@ -1,13 +1,11 @@
-"""What keeps the annotation files and the requests current
-(docs/dev/annotations.md "What keeps it current"): two listeners, registered by ``register`` (app.create_app calls
-it, so every server process has them).
+"""What keeps the annotation files current (docs/dev/annotations.md "What
+keeps it current"): two listeners, registered by ``register``
+(app.create_app calls it, so every server process has them).
 
 - On every committed comment write (``comments.write_listeners``): the
   files of the page's work folder, or of the vault of one file that
-  follows it, are due (gamma/annotations/files.py), the
-  requests waiting on the thread hear a reply or a resolve
-  (gamma/annotations/requests.py ``answered``), and the commented version is
-  kept or released (gamma/annotations/kept.py).
+  follows it, are due (gamma/annotations/files.py), and the commented
+  version is kept or released (gamma/annotations/kept.py).
 - On every committed op batch (``ops.commit_listeners``): the page's files
   are due, whoever wrote it, a vault included: a relocation, a trash or a
   restore and an orphaning delete move an entry, and a highlight made or
@@ -34,17 +32,11 @@ def _on_comment(ws: str, event: dict) -> None:
         except Exception as e:  # noqa: BLE001 — each part on its own
             log.warning(f"[annotations] marking page {page_id} of workspace {ws}: {e}")
     try:
-        from . import requests
-
-        requests.answered(ws, event)
-    except Exception as e:  # noqa: BLE001
-        log.warning(f"[feedback] the requests after a {event.get('kind')} in workspace {ws}: {e}")
-    try:
         from . import kept
 
         kept.after_comment(ws, event)
     except Exception as e:  # noqa: BLE001
-        log.warning(f"[feedback] the kept version after a {event.get('kind')} in workspace {ws}: {e}")
+        log.warning(f"[annotations] the kept version after a {event.get('kind')} in workspace {ws}: {e}")
 
 
 def _on_commit(ws: str, client: str, page_id: str) -> None:
