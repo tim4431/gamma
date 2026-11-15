@@ -189,6 +189,18 @@ def _shell_secret_forgotten():
 
 
 @pytest.fixture(autouse=True)
+def _mcp_address_forgotten():
+    """The address of this server's /mcp a test's request named
+    (gamma/local_agents/tools.py ``heard``: one sent as from 127.0.0.1 to
+    127.0.0.1, as test_zotero_routes' and test_cloud_auth's are) is
+    forgotten after it, so a later agent turn runs without Gamma's tools
+    unless its own test names an address."""
+    yield
+    from gamma.local_agents import tools
+    tools._url = ""
+
+
+@pytest.fixture(autouse=True)
 def _reset_ratelimit():
     """The whole suite shares one TestClient source IP, so the per-IP login
     throttle would trip mid-run. Clear counters before each test — production
