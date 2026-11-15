@@ -554,7 +554,12 @@ fails the read.
 (a data directory of the test's own, for the migration, backup and startup
 tests that must not touch the worker's shared one; the upload GC's timed
 full pass is off for the session, since it would open whichever test's
-databases are current a minute after import), `at_once` / `together`
+databases are current a minute after import; and a background job ends
+within the test that started it: the autouse `_jobs_end_with_their_test`
+waits for every job still running after a test, before its patches are
+undone, and fails the test whose job is still running 30 s on, since a
+job that ended during the next test recorded itself in that test's
+users.db), `at_once` / `together`
 (callables in threads started on one barrier), `slowed` (widens a writer's
 window between its check and its write, so a race test fails without the
 lock) and `recv` (the next message of a kind on a page socket).
