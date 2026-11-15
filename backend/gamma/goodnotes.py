@@ -697,7 +697,11 @@ class _PageReader:
         shown = body.msg(3)  # the visible rect {centre, size} and its turn
         turn = (shown.f32(3) or 0.0) if shown is not None else 0.0
         visible = _rect(shown)
-        if visible is not None and (abs(visible[2] - box[2]) > 0.5 or abs(visible[3] - box[3]) > 0.5):
+        if visible is not None and abs(turn) > 1e-4:
+            # turned: #2 is the turned frame's bounding box, #3 the frame (the codec's writer, which GoodNotes shows)
+            if visible[2] > 0 and visible[3] > 0:
+                box = (visible[0] - visible[2] / 2, visible[1] - visible[3] / 2, visible[2], visible[3])
+        elif visible is not None and (abs(visible[2] - box[2]) > 0.5 or abs(visible[3] - box[3]) > 0.5):
             notebook.left_out["cropped picture"] += 1
         self.page.media.append(nb.Media("picture", *box, rotation=turn if abs(turn) > 1e-4 else 0.0,
                                         z=self.z, picture=member))
@@ -779,8 +783,9 @@ def _is_metadata(record: gc.Message) -> bool:
 
 def _runs(content: gc.Message, default: gc.Message | None, scale: float, budget: Budget) -> list[nb.Run] | None:
     """A #21 element's runs (``#32.#1.#2``, a run list, Apple LZ4 or plain):
-    each its text, colour, size (canvas units, ``scale`` applied) and bold
-    (#60, a weight, −30 bold), a style value of −404 the default style's."""
+    each its text, colour, size (canvas units, ``scale`` applied), bold
+    (#60, a weight, −30 bold) and italic (#50 1), a style value of −404 the
+    default style's."""
     blob = content.msg(1).bytes(2) if content.msg(1) is not None else None
     if blob is None:
         return None
@@ -804,7 +809,8 @@ def _runs(content: gc.Message, default: gc.Message | None, scale: float, budget:
         color = rgba(style.msg(3), None) if style is not None and style.msg(3) is not None else None
         weight = style.signed(60) if style is not None else None
         weight = base_weight if weight in (None, INHERIT) else weight
-        out.append(nb.Run(text, bold=weight == -30, size=size * scale, rgba=color or base_color))
+        italic = style is not None and style.int(50) == 1
+        out.append(nb.Run(text, bold=weight == -30, italic=italic, size=size * scale, rgba=color or base_color))
     return out
 
 

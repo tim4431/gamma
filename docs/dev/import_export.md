@@ -2,7 +2,7 @@
 
 The View menu's (≡) Import…/Export… dialogs and every pipeline behind them: embedded
 PDF annotations, Logseq graphs, Zotero libraries, Markdown notes (Obsidian
-vaults, Notion exports), Notability notes, GoodNotes notebooks, Markdown, Obsidian vault and Notion export, the notes
+vaults, Notion exports), Notability notes and GoodNotes notebooks both ways, Markdown, Obsidian vault and Notion export, the notes
 typeset as their own PDF, the BibTeX bibliography, and the annotated-PDF
 writer (its internals and the shared typesetting engine are in
 [pdf_typesetting.md](pdf_typesetting.md)). Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
@@ -11,7 +11,8 @@ writer (its internals and the shared typesetting engine are in
 `gamma/notability_import.py`, `gamma/notability.py`, `gamma/notability_archive.py`,
 `gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`,
 `gamma/note_app_import.py` (what the Notability and GoodNotes imports share), `gamma/goodnotes_import.py`,
-`gamma/goodnotes.py`, `gamma/goodnotes_codec.py`, `gamma/goodnotes_map.py`, `gamma/rtf.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/notion_export.py`, `gamma/export_walk.py`, `gamma/pdf_export.py`,
+`gamma/goodnotes.py`, `gamma/goodnotes_codec.py`, `gamma/goodnotes_map.py`, `gamma/goodnotes_export.py`,
+`gamma/goodnotes_write.py`, `gamma/rtf.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/notion_export.py`, `gamma/export_walk.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py`,
@@ -1667,7 +1668,7 @@ brought. Geometry is in canvas units of 6/11 pt, from the page's top-left.
 
 | The notebook | Becomes |
 |---|---|
-| Every page on one of GoodNotes' papers: blank, dotted, squared, narrow or wide ruled, or a cover | A notebook: a sheet per page of the page's size, with its paper's colour and rule colour (read from its PDF) and its pattern and pitch (16 pt dots and squares, 17.5 and 25 pt rules); a cover is a blank sheet of its colour |
+| Every page on one of GoodNotes' papers: blank, dotted, squared, narrow or wide ruled, or a cover | A notebook: a sheet per page of the page's size, with its paper's colour and rule colour (read from its PDF) and its pattern and pitch (16 pt dots and squares, 17.5 and 25 pt rules); a cover is a blank sheet of its colour. A page on a paper Gamma's [GoodNotes export](#goodnotes-export) drew is a sheet of that paper (its PDF carries it under `/GammaPaper`) |
 | Its pages exactly one PDF's, 1..n in order | A page carrying that PDF as it is |
 | Anything else: a paper the import does not know (Cornell, music, planners, a custom template), PDF pages among papers, pages reordered or repeated | A page carrying one PDF composed of the pages in order (`compose_pdf`), each copied from the PDF page it is bound to, GoodNotes' own papers among them |
 
@@ -1675,7 +1676,9 @@ brought. Geometry is in canvas units of 6/11 pt, from the page's top-left.
   paper of its size, with a warning. A turned page is imported upright
   (counted).
 - The preview reads the journal and the indexes but no page, so the kind
-  it shows (Page or PDF) follows from the templates alone.
+  it shows (Page or PDF) follows from the templates alone: a notebook
+  Gamma's export wrote shows as PDF, and becomes a notebook once the
+  commit reads its papers.
 
 **Handwriting.** Each stroke becomes one gamma-ink v2 stroke per sub-path
 (an old file keeps the eraser's cuts as sub-paths), in GoodNotes' drawing
@@ -1728,7 +1731,9 @@ Widths scale with the page when its PDF is drawn at another size than
   AVIF as a PNG ([Limits](#notability-notes)), and once however many
   pictures show it; its frame (`#2`) through the page's and kept on the
   page, a side under 8 pt grown to it; its turn (`#3.#3`, in radians) as
-  `angle` in degrees. A die-cut sticker, a one-page PDF, is rendered
+  `angle` in degrees, a turned picture's frame then `#3`'s centre and
+  size, `#2` being the turned frame's bounding box (goodnotes-codec writes
+  it so, and GoodNotes shows such pictures as placed). A die-cut sticker, a one-page PDF, is rendered
   through PyMuPDF to a PNG, transparent around the art, once for all the
   pictures that show it: its longer side twice that of the largest of
   their frames, in points, and at most 1,024 px
@@ -1950,6 +1955,116 @@ picture block, its Obsidian size no part of its caption. The browser suite
 exports a page from the dialog and imports it back
 (`transfer: a page out as a Notability note and back in is the page it
 was`).
+
+## GoodNotes export
+
+`?mode=goodnotes` (`_GoodNotesBuilder`, which shares `_NoteAppBuilder` with
+the Notability export; `gamma/goodnotes_export.py` maps the page,
+`gamma/goodnotes_write.py` writes the file) is each page as a GoodNotes
+notebook, the `.goodnotes` GoodNotes' own Export → GoodNotes writes, for
+GoodNotes to open. One page: the notebook itself, `<Title>.goodnotes`. A
+folder, or a page with the pages inside it: a zip of them, filed as the
+annotated PDFs are. The job's result lists what each page lost
+(`warnings`), and a page with neither a PDF nor a sheet is left out
+("page has no PDF and no sheets of paper"). There are no switches.
+
+**The file** is the one goodnotes-codec (MIT) builds from nothing in
+`Document.new`, whose import its author checked in GoodNotes for Mac
+7.0.60: a deflated zip of `schema.pb` (schema 24), `document.info.pb`,
+the page and attachment indexes, the event journal, a `notes/<N>` member
+per page and the attachments. The events come in the codec's order (the
+document made, each attachment and a PDF's search index, each template,
+each page with its notes group's store, index and update, the current
+page, the versioned store and index of every page that holds elements),
+each with the fields GoodNotes' own export has
+(`tests/samples/goodnotes/gn-mac-mixed-pens.goodnotes`), none it lacks.
+Only the element kinds the codec saw GoodNotes show are written: ball pen
+and highlighter strokes (#7, the constant-width geometry), pictures (#1)
+and schema-35 boxes (#21). Whether GoodNotes opens what Gamma writes has
+not been checked in the app yet ([research](../research/goodnotes-onenote-import.md#still-open)).
+
+**Pages.** Every place is the page's own in points times 11/6, GoodNotes'
+canvas unit.
+
+- A PDF page: a page per page of the PDF, each drawn on that page of one
+  attachment, the stored PDF as it is, at its size as shown.
+- A notebook: a page per sheet, drawn on a one-page PDF of its paper
+  (`goodnotes_export.paper_pdf`, `notebook.paper_ops`), which carries the
+  paper as JSON under `/GammaPaper` so the [GoodNotes
+  import](#goodnotes-notebooks) makes it that sheet again. Sheets of one
+  paper share its PDF.
+
+**Handwriting.**
+
+- A stroke is a ball pen stroke through its samples (a quadratic per
+  segment, its control at the middle), W twice the median of its drawn
+  widths: GoodNotes' ball pen has one width. One whose width varies (its
+  pressure, a pencil, a calligraphy nib) is counted.
+- Its colour and opacity are as the screen draws it (`ink.drawn_alpha`, a
+  pencil at the mean of its shades). The highlighter is GoodNotes'
+  highlighter (#5 1) at GoodNotes' alpha, 0.5.
+- A dash is GoodNotes' line style (#11: Gamma's dash lengths in widths,
+  round caps), which the iPad draws and the Mac app draws solid.
+- A shape is its outline's samples (an arrow's head among them); a closed
+  shape's fill is a filled polygon box (#21) under it, at the fill's colour
+  and opacity.
+- A surface's strokes go band 0 of every group, then band 1, after its
+  pictures, text boxes and highlights.
+
+**Highlights.** A highlight, handwriting, a text box or a picture that
+came from the PDF and is still embedded in it is the PDF's own: the
+notebook carries the stored PDF as it is, and GoodNotes draws its
+annotations. Any other highlight, on its page:
+
+- the wash: a highlighter stroke along the middle of each of its lines, as
+  wide as the line is high, its round caps within the line's ends;
+- an underline, a strikethrough or a wavy underline: a pen line in the
+  colour's line tone (`colors.line_color`) where the viewer draws it
+  (app.css: 9 % of the line thick at its foot, 8 % at 56 % of its height,
+  a wave in its lowest 24 %);
+- an area note: a rectangle box under a wash of its colour at a quarter of
+  its alpha (`AREA_FILL_SHARE`), outlined 2 pt wide.
+
+A highlight's notes stay behind, counted as notes.
+
+**Boxes and pictures.**
+
+- A text box is a text box (#21, #9 1) at a fixed size, placed so its text
+  starts where Gamma's does (GoodNotes insets it 10 units, Gamma by its
+  padding), its fill its colour. Its Markdown is the Notability export's
+  runs (`box_runs`): bold a weight of −30, italic #50, code in Menlo, a
+  list item led by its marker as text, a `[[ref]]` as what it names; a
+  strike, an underline, a mark and a link are plain text.
+- A picture is a picture (#1): `#2` its turned frame's bounding box, `#3`
+  its centre, size and turn, as the codec writes one. A PNG or JPEG shown
+  whole goes as it is; any other is its pixels upright (the EXIF
+  orientation the browser applies), cut to its crop and flipped, a JPEG
+  again for a JPEG and a PNG for anything else, an SVG drawn first
+  (`SVG_PNG_SIDE`). One file per picture file and look.
+
+**Left out, and said:** the notes (beside the page, under a highlight or
+a recording), recordings, a sheet on a PDF page, handwriting or a picture
+on no page, a file missing on the server, a picture's caption and its
+opacity, an SVG that does not draw. Changed, and said: a stroke whose
+width varies.
+
+**Back into Gamma.** The GoodNotes import brings a PDF page back as that
+PDF and a notebook as its sheets. Strokes come back as Ballpoint and
+highlighter strokes of one width each (no pressure, time or brush), a
+dashed one dashed, a shape a plain outline; the fills and area notes are
+boxes the import leaves out (counted as Shape tool shapes). Text boxes and
+pictures come back where they were, a picture's crop and flips in its
+file.
+
+**Tests.** `test_goodnotes_export.py` exports a PDF page of three sizes
+with every kind of stroke, highlight, a text box, a cropped, flipped and
+turned picture and notes, reads it back with the GoodNotes reader and
+imports it; holds every event and element to the fields of GoodNotes' own
+export; exports a notebook whose sheets come back as sheets; and checks
+the warnings, a page with nothing to draw on, a folder's zip and the
+encodings. The browser suite exports a page from the dialog and imports
+it back (`transfer: a page out as a GoodNotes notebook and back in brings
+its PDF and markup back`).
 
 ## Zotero RDF export
 
@@ -2375,7 +2490,7 @@ token can already download, and the import takes what it is given.
 
 The View menu's single "Export…" entry → `ExportDialog` in `transfers/ImportExport.jsx`.
 Step one is a format card. The PDF row holds Annotated PDF, the Notes row PDF,
-Markdown, Notability and Notion, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
+Markdown, Notability, GoodNotes and Notion, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
 Next confirms. Formats with editable options get a review step: the
 Highlights, Notes and Bundle-the-files switches beside an illustrative page
 (`shared/illustrations/TransferPreview.jsx`, an example of the options, not
@@ -2390,9 +2505,9 @@ While the open page shows its translation, the Annotated PDF's summary says
 that the translation replaces the original text, in which language and on
 how many pages; there is no switch for it (hiding the translation exports
 the original). A folder's says how many of its papers go translated, once
-they are read as the dialog opens. Gamma and Notability have fixed contents, and a
+they are read as the dialog opens. Gamma, Notability and GoodNotes have fixed contents, and a
 PDF without a stored copy can only be the original file, so these export
-straight from step one, Gamma and Notability unless the page has pages
+straight from step one, Gamma, Notability and GoodNotes unless the page has pages
 inside it (below). Logseq
 shows only the bundle switch. BibTeX has no switches but still gets a step:
 it previews the real bibliography

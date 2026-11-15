@@ -49,7 +49,16 @@ Tags:
   users arrive this way whatever else is built.
 - **Out**: writing either format. Nothing GoodNotes added in 2026 (Layers,
   Whiteboards, Text Documents, Quick Diagramming connectors, the Selective
-  Eraser) has a published sample; its encoding is unknown.
+  Eraser) has a published sample; its encoding is unknown. Writing
+  GoodNotes was built later (2026-11) on goodnotes-codec's `Document.new`,
+  the one writer whose output its author saw GoodNotes for Mac import:
+  [dev/import_export.md](../dev/import_export.md#goodnotes-export). Of the
+  three writers, inkterop's never imported a foreign (schema-24) file in
+  its 2026-07 trials and gnnote's GoodNotes output was not opened on a
+  device; the codec (2026-10) lists ball pen and highlighter ink, shapes
+  with fill and outline, text boxes, placed and turned pictures and pages
+  on a PDF background as seen working, and its fountain pen as crashing
+  the app, so the export writes only the former.
 
 ## Sources
 
@@ -1716,6 +1725,12 @@ straight shape has its annotation's width and lies within 2 pt of it, and
   PDF and `0x200035C1`; the Mac backup files; the cloud cipher; whether
   `includeInkML` is supported on v1.0; the run-index byte layout, read
   from gnnote's reader rather than the spec; `.onex`.
+- The GoodNotes export: whether GoodNotes (iPad and Mac) opens what Gamma
+  writes, which no one has tried in the app yet; whether it draws a
+  template PDF's `/Rotate` and crop box as Gamma shows the page; whether a
+  ball pen with an alpha below 1 is drawn translucent; `#11` dashes on a
+  ball pen; a `#21` text box with `#9 1` at a fixed size, which GoodNotes
+  writes for sticker labels and the codec never wrote.
 - Gamma: stickies with text, recognised handwriting as search text,
   outline entries as sheet titles, strokes placed on a recording once the
   tick's unit is known, a cover read as a sheet, a vector sticker kept as

@@ -84,6 +84,12 @@ const EXPORT_FORMATS = [
     hint: T("A .note with the handwriting, to open in Notability"), editable: [],
     fixed: { highlights: false, notes: true, bundle: true },
     folder: { hint: T("Each page as a .note, in one .zip") } },
+  // A notebook holds the page's highlights, handwriting, boxes and pictures,
+  // never its notes, so it has no switches either.
+  { id: "goodnotes", mode: "goodnotes", label: "GoodNotes", category: "Notes",
+    hint: T("A .goodnotes with the handwriting, to open in GoodNotes"), editable: [],
+    fixed: { highlights: true, notes: false, bundle: true },
+    folder: { hint: T("Each page as a .goodnotes, in one .zip") } },
   // Its zip holds the images the switches leave (notionFiles) and never the
   // PDFs (routers/export.py _NotionBuilder), so it has no Bundle switch.
   { id: "notion", mode: "notion", label: "Notion", category: "Notes",
@@ -281,6 +287,10 @@ function formatSummary({ payload, noPdfCopy, translated }, folder) {
       return folder
         ? t("Every page in the folder as a Notability note, in one .zip, its subfolders as folders: each page's PDF or sheets of paper, its handwriting, shapes, text boxes, pictures, notes and recordings. Highlights stay behind: Notability keeps none on a PDF's text.")
         : t("This page as a Notability note: its PDF or sheets of paper, its handwriting (pressure and tilt included), shapes, text boxes, pictures, notes and recordings. Highlights stay behind: Notability keeps none on a PDF's text. Importing the note into Gamma brings the page back as it was.");
+    case "goodnotes":
+      return folder
+        ? t("Every page in the folder as a GoodNotes notebook, in one .zip, its subfolders as folders: each page's PDF or sheets of paper, with its highlights, handwriting, text boxes and pictures for GoodNotes to edit. Notes and recordings stay behind, and pages with neither a PDF nor sheets are left out.")
+        : t("This page as a GoodNotes notebook: its PDF or sheets of paper, with its highlights as highlighter strokes, its handwriting as pen strokes of one width each, its text boxes and its pictures, all editable in GoodNotes. Notes and recordings stay behind.");
     case "logseq":
       return t("Highlights and notes are always included in a Logseq graph. Choose whether to include the PDF and images too.");
     case "obsidian":
