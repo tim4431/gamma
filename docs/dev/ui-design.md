@@ -301,6 +301,8 @@ is held over it, so the outcome is visible before the click lands.
 `useAltVariant()` ([altVariant.js](../../frontend/src/shared/ui/altVariant.js))
 reports Alt held under the pointer or the keyboard's focus, and nowhere
 else, so an Alt held over the PDF (the translation peek) restyles nothing.
+An Alt already down when the control engages counts: the window's key
+events keep whether it is, for the render a pointer's arrival waits on.
 The control swaps its icon for the variant's; a destructive variant adds
 `danger` and takes its own name and `title`. The click still reads
 `e.altKey`. The chat header's New chat, which becomes Discard chat, is the
