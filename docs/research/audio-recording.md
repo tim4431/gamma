@@ -585,6 +585,56 @@ a recording ends:
 Stage 2 is a refactor that ships on its own with no visible change;
 1 to 4 are the feature; 5 and 6 can follow in their own changes.
 
+### Apple's WebKit: a recorder that records nothing
+
+Recordings made in the iPad app came out without sound (November 2026,
+the iPadOS 27 releases). No iPad was at hand, so this is what WebKit's
+source and other people's reports say, and what the recorder does since.
+
+- **WebM, not MP4.** WebKit turns WebM on for `MediaRecorder` on every
+  Apple platform (`MediaRecorderEnabledWebM`, true for `PLATFORM(COCOA)`
+  since Safari 18.4), so `pickMime` chose `audio/webm;codecs=opus` there,
+  not the AAC in MP4 this design expected of Safari. Both containers go
+  through one encoder (`MediaRecorderPrivateEncoder`, Opus resampled to
+  48 kHz), so the container alone explains nothing.
+- **A start outside the tap stalls the microphone.** [WebKit bug
+  325916][wk-325916] (open, filed 2026-10-01 on iPadOS 27.0.1): after a
+  tap, a `MediaRecorder.start()` or `resume()` that runs outside the
+  tap's handler stalls capture. An audio-only recorder gets no more
+  chunks (an MP4 with `start(1000)` gave one empty chunk at the stop),
+  and the track ends about 40 s later with a capture failure. A start
+  inside the handler works; MP4 instead of WebM, echo cancellation off
+  and `navigator.audioSession` did not help. Gamma's recorder started
+  after `await getUserMedia`, and every five minutes from a timer:
+  outside a handler both times.
+- **Silence while the meter moves.** Another web app [found Safari's
+  `MediaRecorder` saving silence][luach] while a Web Audio meter on the
+  same stream moved, and fixed it by taking the samples through Web Audio
+  into WAV on Apple devices.
+- **The audio session is WebKit's.** On iOS the GPU process sets the
+  category itself (`shouldManageAudioSessionCategory`, turned on in
+  `GPUProcess::initializeGPUProcess`): `PlayAndRecord` while capturing
+  (a capture unit refuses to start otherwise), `MediaPlayback` while an
+  `<audio>` element is audible, so it plays in silent mode as in
+  Safari. The iPad app's own `AVAudioSession` has no say in either.
+- **Gestures.** An `AudioContext` on iOS runs only when made or resumed
+  in a gesture, and one made after `await getUserMedia` may stay
+  suspended. WKWebView keeps the rule that an `<audio>` element starts
+  only from a gesture, element by element
+  (`mediaTypesRequiringUserActionForPlayback` defaults to all), so the
+  second of a recording's two players would be refused at the first join.
+
+So on Apple's WebKit with a touch screen the recorder starts no
+`MediaRecorder` at all: the `AudioContext` is made in the tap, an
+`AudioWorklet` posts the samples, and they are written as 16 kHz mono
+16-bit WAV segments ([dev/recording.md](../dev/recording.md#client-frontendsrcrecording)).
+Dictation uses the same recorder. The player plays its idle element
+muted in the tap that starts it, so the joins go on. The cost is size:
+about 115 MB an hour, five times the 48 kbps WebM. If that matters,
+WebCodecs' `AudioEncoder` with a small WebM muxer would bring Opus back.
+The native capture below stays the last resort. Device check 6 in
+[dev/ipad.md](../dev/ipad.md#device-checks) is what confirms it.
+
 ### Decisions this leaves to take
 
 - **The default display mode.** Spotlight (faded) is recommended, as
@@ -603,7 +653,9 @@ Stage 2 is a refactor that ships on its own with no visible change;
   answer is a server job with `ffmpeg` present or a WebCodecs transcode
   in the browser; both are deferred until a real device shows the gap.
 - **The iPad's native capture** (`AVAudioRecorder`, the same block) if the
-  web app's own recorder in the iPad shell falls short.
+  web app's own recorder in the iPad shell falls short. Its Web Audio
+  capture ([above](#apples-webkit-a-recorder-that-records-nothing)) is
+  the step before that.
 
 [n-rec]: https://support.gingerlabs.com/hc/en-us/articles/206060617-Recording-and-Playing-Audio
 [n-import]: https://support.gingerlabs.com/hc/en-us/articles/360044640052-Importing-Audio
@@ -618,3 +670,5 @@ Stage 2 is a refactor that ships on its own with no visible change;
 [noted]: https://www.notedapp.io/faq/how-to-use-timetag/
 [a-rec]: https://support.apple.com/guide/ipad/record-and-transcribe-audio-ipadd0bde806/ipados
 [g-feature]: https://www.goodnotes.com/features/audio-recording
+[wk-325916]: https://bugs.webkit.org/show_bug.cgi?id=325916
+[luach]: https://github.com/AllInsideconstruction/Luach-/pull/4

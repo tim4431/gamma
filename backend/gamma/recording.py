@@ -4,7 +4,7 @@ A recording is a block whose ``properties.recording`` is an object:
 ``{started, segments: [{url, started, dur, bytes, mime}], state, by, at,
 dur}``. ``started`` is the wall-clock ms its first segment's audio began;
 each segment is a standalone audio file (``/api/uploads/<hash>.webm``,
-``.m4a`` or ``.ogg``) with the wall-clock ms its own audio began, its
+``.m4a``, ``.ogg`` or ``.wav``) with the wall-clock ms its own audio began, its
 length in ms, its size and its container type, in order; ``state`` is
 ``recording`` or ``paused`` while a tab holds the microphone (``by``, with
 its heartbeat ``at``) and ``done`` after; ``dur`` is the sum of the
