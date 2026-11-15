@@ -448,9 +448,17 @@ export async function localAgentScenarios(env) {
           "the reply is Codex's, for the person");
         const computer = reply.agent_on;
         assert(computer, "the reply names the computer Codex ran on");
-        // the file edited on disk, and the code view shows it once the vault's round takes it
+        // the file edited on disk, and the code view shows it once the vault's round takes it. A file
+        // written less than gamma_sync.SETTLE_S ago is still being written and waits for a later
+        // round, so the page is reloaded only once its document carries the new bytes: before, it
+        // asks for the ones the disk no longer holds (404)
         assert(fs.readFileSync(path.join(paperDir, "main.tex"), "utf8").includes(SHORT), "the edit is in the directory");
-        await sync();
+        const was = tex.properties?.doc?.hash;
+        assert(was, `main.tex's page names its file: ${JSON.stringify(tex.properties?.doc)}`);
+        await until(async () => {
+          await sync();
+          return (await user.api(`/api/blocks/${tex.id}`)).properties?.doc?.hash !== was;
+        }, { timeout: 20000, what: "the vault's round took the edit" });
         await page.reload();
         await codeShown();
         await until(async () => (await page.locator(`${CODE} > .cm-line`, { hasText: SHORT }).count()) > 0,
