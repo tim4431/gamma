@@ -84,14 +84,15 @@ test("settings search finds controls on nested AI pages without exposing inacces
 });
 
 test("a section entry point opens its pane at a row the pane has; any other name is a pane's own", () => {
-  const sections = { handwriting: ["reading", "Reset presets"], topbar: ["appearance", "Top bar"], "viewer-tools": ["appearance", "Viewer tools"] };
+  const sections = { topbar: ["toolbars", "Top bar"], "viewer-tools": ["toolbars", "Viewer tools"], highlighters: ["toolbars", "Text highlighters"] };
   for (const [name, [pane, label]] of Object.entries(sections)) {
     assert.equal(resolveSettingsPane(name), pane, name);
     assert.equal(settingsSection(name), label, name);
     // the jump focuses the row whose data-setting is the label: a row's label or a section's title on that pane
     assert.ok(SETTINGS_SEARCH.some((entry) => entry.pane === pane && (entry.label === label || entry.section === label)), `${name}: ${label} on ${pane}`);
   }
-  for (const id of ["appearance", "reading", "assistant", "tools", "account", "server"]) {
+  // the strip's Handwriting settings… names the Handwriting pane itself
+  for (const id of ["appearance", "toolbars", "reading", "handwriting", "assistant", "tools", "account", "users", "server"]) {
     assert.equal(resolveSettingsPane(id), id);
     assert.equal(settingsSection(id), "");
   }

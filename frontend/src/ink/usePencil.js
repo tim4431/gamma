@@ -25,7 +25,7 @@ export function usePencil({ readOnly, takesInk, inkUi, inkVisible, previousTool,
   // (docs/dev/ipad.md "Gestures"; the host's `pencil`, and `squeeze` for a
   // squeeze's start and cancel): each goes through pencilStep, over
   // pencilAction, with this browser's choice for the gesture (Settings →
-  // Reading & editing › Apple Pencil, or Stylus; the action the shell sends
+  // Handwriting › Apple Pencil, or Stylus; the action the shell sends
   // by default) — a tool armed, the armed tool's options row, the strip's
   // Undo — only where a page takes ink, and none while a stroke or a claim
   // is in progress (InkLayer.jsx inkBusy). A held squeeze (squeezeRef:

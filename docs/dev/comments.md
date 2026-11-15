@@ -738,7 +738,7 @@ author (Delete for the workspace's owner too), Copy link, and Report… on
 anyone else's (`canReportComment`; a link visitor's too): the report dialog
 (`support/ReportContentDialog.jsx`) asks why and posts it to `POST
 /api/reports`, where the server reads the comment's text and author
-itself, keeps it for its admins (Settings → Server → Reports) and, with
+itself, keeps it for its admins (Settings → Users → Reports) and, with
 Gamma Cloud sign-in on, sends it on ([api.md](api.md) "Reports"). "New comment"
 starts another thread. A link visitor without an account reads, with "Sign
 in to comment" (the share's sign-in gate) in place of the fields.
@@ -993,7 +993,9 @@ moves left by half of what the column takes (`marginLeft`,
 `comments/marginLayout.js`). A page that would leave less than `EDGE`
 (16 px) at either side has no margin and stays centred: a page at
 fit-width, a narrow pane, a high zoom. A phone has none (App passes no
-`commentMargin`). With no open thread in the document every page stays
+`commentMargin`), nor do pages that run across, side by side
+([pdf_loading.md](pdf_loading.md) "Pages that run across"): the column
+runs down beside the pages. With no open thread in the document every page stays
 centred. The viewer reads its own width (a ResizeObserver) and
 hands each page its left edge (`PdfPage`'s `marginLeft`, null for none),
 and the zoom anchor's horizontal arithmetic reads the same layout

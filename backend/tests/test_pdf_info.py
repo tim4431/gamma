@@ -85,7 +85,7 @@ def test_a_reader_that_does_not_load_stores_no_manifest_and_no_index(guest, monk
     import pytest
 
     from gamma.search import indexer
-    from gamma.search.index import Doc, doc_info, store_docs
+    from gamma.search.index import Doc, doc_info, drop_docs, store_docs
 
     doc_id = _upload(guest, _pdf(pages=2))
     ws = workspace_of(guest_name())
@@ -93,8 +93,11 @@ def test_a_reader_that_does_not_load_stores_no_manifest_and_no_index(guest, monk
         if pdf_meta.get(ws, doc_id):
             break
         time.sleep(0.05)
+    # neither measured nor indexed: a blank PDF's bytes are the same in every test, and another test in the
+    # guest's workspace may have indexed them
     with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
         conn.execute("DELETE FROM pdf_docs WHERE doc_id = ?", (doc_id,))
+        drop_docs(conn, [doc_id])
         conn.commit()
 
     def indexed():

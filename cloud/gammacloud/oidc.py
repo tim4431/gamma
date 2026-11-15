@@ -295,7 +295,7 @@ def begin(conn, params: dict) -> dict:
         if client["kind"] == "desktop" and redirect_uri.startswith("https://"):
             # a Gamma server at a public address, still on the desktop client
             raise OAuthError("invalid_request", "This Gamma server is not connected to Gamma Cloud yet. Its admin "
-                             "connects it in Gamma's Settings → Server → Sign-in.", 400)
+                             "connects it in Gamma's Settings, under Sign-in.", 400)
         raise OAuthError("invalid_request", "redirect_uri is not registered for this client", 400)
     try:
         if params.get("response_type") != "code":

@@ -231,13 +231,13 @@ def cloud_link(user_id):
 @source(admin_only=True)
 def cloud_setup(_user_id):
     """Cloud sign-in is off here, or on but the server still has to be
-    connected (info, seen once per state): Server → Sign-in turns it on."""
+    connected (info, seen once per state): Users → Sign-in turns it on."""
     cfg = cloud_auth.settings()
     if not cfg["enabled"]:
-        return notice("cloud-setup", "off", "info", "server",
+        return notice("cloud-setup", "off", "info", "users",
                       "Turn on Gamma Cloud sign-in to publish pages for free and carry your settings to your other servers")
     if cloud_auth.needs_connect():
-        return notice("cloud-setup", "connect", "info", "server",
+        return notice("cloud-setup", "connect", "info", "users",
                       "Connect this server to Gamma Cloud to finish turning on its sign-in")
     return None
 
@@ -245,11 +245,11 @@ def cloud_setup(_user_id):
 @source(admin_only=True)
 def join_requests_waiting(_user_id):
     """Gamma Cloud accounts ask to join this server (gamma/join_requests.py;
-    info, seen once per newest request): Server → Sign-in lists them."""
+    info, seen once per newest request): Users → Sign-in lists them."""
     count, newest = join_requests.waiting()
     if not count:
         return None
-    return notice("join-requests", newest, "info", "server",
+    return notice("join-requests", newest, "info", "users",
                   "{n} person asks to join this server" if count == 1 else "{n} people ask to join this server",
                   n=count)
 
@@ -257,11 +257,11 @@ def join_requests_waiting(_user_id):
 @source(admin_only=True)
 def reports_waiting(user_id):
     """Reports someone else made here wait for review (gamma/reports.py;
-    info, seen once per newest report): Server → Reports lists them."""
+    info, seen once per newest report): Users → Reports lists them."""
     count, newest = reports.waiting(user_id)
     if not count:
         return None
-    return notice("reports", newest, "info", "server",
+    return notice("reports", newest, "info", "users",
                   "{n} report waits for review" if count == 1 else "{n} reports wait for review", n=count)
 
 

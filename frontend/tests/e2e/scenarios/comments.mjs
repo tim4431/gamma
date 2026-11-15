@@ -256,13 +256,13 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       "comment harassment cm-ann cm-ben Not the first time", "what it says, as the server read it");
     assertEq(listed.content, "A remark worth reporting", "the comment's own text");
     if (await popover(B).count()) await closePopover(B);  // the dialog took the focus from it, which may close it
-    // the admin's Server pane: the report, then Resolve
+    // the admin's Users pane: the report, then Resolve
     const ctx = await adm.context(browser);
     const M = await openPage(ctx, server.base);
     try {
       await M.getByRole("button", { name: "Account & settings", exact: true }).click();
       await M.getByRole("menuitem", { name: "Settings…", exact: true }).click();
-      await settingsPane(M, "Server");
+      await settingsPane(M, "Users");
       const row = M.locator(`.aiProvRow[data-report="${listed.id}"]`);
       await row.locator(".aiProvName", { hasText: "Harassment, bullying or hate" }).waitFor();
       await row.getByText("reported by cm-ben", { exact: false }).waitFor();

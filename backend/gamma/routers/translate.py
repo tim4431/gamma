@@ -109,7 +109,7 @@ class AITranslateRequest(StorableBody):
     # this request never makes it.
     wait_brief: bool = True
     # Whether this request's new translations may be kept with the paper
-    # (Settings → Language and Translation → Keep translations). Kept ones
+    # (Settings → Language & translation → Keep translations). Kept ones
     # are read either way.
     keep: bool = True
     # True: the reader asked for these texts afresh (the paragraph menu's
@@ -150,7 +150,7 @@ def _model_levels(listing, rt: dict, entry: dict, what: str) -> list:
 
 def _translate_effort(requested: str, rt: dict, entry: dict) -> str:
     """The effort a translation call asks for: the user's pick
-    (Settings → Language and Translation), else the model's lowest level
+    (Settings → Language & translation), else the model's lowest level
     (translate_context.default_effort; "" when its levels are unknown)."""
     if (requested or "").strip():
         return resolve_effort(requested)
@@ -573,7 +573,7 @@ def ai_translate_brief(payload: AITranslateBriefRequest, request: Request):
                              media_type="application/x-ndjson")
 
 
-# --- Kept translations (Settings → Language and Translation) ------------------
+# --- Kept translations (Settings → Language & translation) ------------------
 # The workspace's, like its PDFs: any member reads what is kept, an editor
 # clears it.
 
@@ -695,7 +695,7 @@ def translations_forget(doc_id: str, request: Request, page: str = ""):
     return {"removed": removed}
 
 
-# --- The workspace's glossary (Settings → Language and Translation › Glossary)
+# --- The workspace's glossary (Settings → Language & translation › Glossary)
 # Like the kept translations, the workspace's: any member reads it, an
 # editor changes it. Each write answers the language's terms as the read
 # does, so the settings pane shows what the server holds.
@@ -755,7 +755,7 @@ def translate_term_remove(request: Request, lang: str = "zh-CN", source: str = "
     return _term_write(request, lang, lambda ws, lang: translate_terms.remove(ws, lang, source))
 
 
-# --- Machine-translation engine credentials (Settings → Language and Translation)
+# --- Machine-translation engine credentials (Settings → Language & translation)
 # Write-only like the AI keys: GET masks the secrets. Guests can't store keys
 # (a guest account is a throwaway, docs/dev/guests.md).
 

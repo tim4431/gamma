@@ -1,15 +1,16 @@
-// Settings → Server (admins only): everything that is about the server
-// rather than one account — the dashboard (build, uptime, warnings, the
-// update check), the reports people made here (SettingsReports.jsx), on a
-// hosted container the plan its limits come from (HostedPlan), the storage
-// defaults every account inherits, guests and demo mode (SettingsGuests.jsx),
-// the shared AI provider every account may use (SettingsAi.jsx), the shared
-// workspaces (SettingsWorkspacesAdmin.jsx), the database check,
-// whole-data-directory snapshots (SettingsBackups.jsx ServerBackups) and the
-// scrubbed server log with a level filter. Per-account things — including
-// each account's personal workspaces — stay in Users; per-workspace backups
-// in Backups.
-// The sections read through the dialog's store (settingsReads.js), so the
+// Settings → Server (admins only): the server itself rather than its people
+// — the dashboard (build, uptime, warnings, the update check), the public
+// URL assistants reach it at, on a hosted container the plan its limits come
+// from (HostedPlan), the shared AI provider every account may use
+// (SettingsAi.jsx), the shared workspaces (SettingsWorkspacesAdmin.jsx), the
+// database check, whole-data-directory snapshots (SettingsBackups.jsx
+// ServerBackups) and the scrubbed server log with a level filter.
+// Who may come in and what they may keep — the storage defaults every account
+// inherits, Gamma Cloud sign-in (SettingsCloudSignIn.jsx), guests and demo
+// mode (SettingsGuests.jsx) and the reports people made here
+// (SettingsReports.jsx) — is AccessSettings, under the accounts in Users.
+// Per-workspace backups stay in Backups.
+// The sections read through the dialog's store (settingsReads.js), so a
 // pane's reads go out together and /api/admin/settings is read once for
 // all the sections over it.
 import React from "react";
@@ -32,7 +33,6 @@ import { isActive } from "../tasks/taskModel.js";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
 export function ServerSettings({ value }) {
-  const [signInAction, setSignInAction] = React.useState(null);
   return (
     <>
       <PaneHead icon={ServerIcon} title={t("Server")} />
@@ -42,17 +42,7 @@ export function ServerSettings({ value }) {
       <Section title={t("Assistant connections")}>
         <PublicUrlSettings setStatus={value.setStatus} />
       </Section>
-      <Section title={t("Sign-in")} action={signInAction}>
-        <CloudSignInSettings setStatus={value.setStatus} action={setSignInAction} />
-      </Section>
-      <Section title={t("Reports")}>
-        <ContentReports setStatus={value.setStatus} confirm={value.confirm} />
-      </Section>
       <HostedPlan setStatus={value.setStatus} onSynced={() => value.refreshQuota?.()} />
-      <Section title={t("Storage defaults")}>
-        <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
-      </Section>
-      <GuestSettings setStatus={value.setStatus} />
       <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
       <WorkspacesAdmin value={value} />
       <Section title={t("Databases")}>
@@ -61,6 +51,26 @@ export function ServerSettings({ value }) {
       <ServerBackups setStatus={value.setStatus} confirm={value.confirm} tasks={value.tasks} />
       <Section title={t("Log")}>
         <ServerLogBox setStatus={value.setStatus} />
+      </Section>
+    </>
+  );
+}
+
+// Users, under the accounts: what every account starts with, who may sign
+// in (Gamma Cloud's accounts, guests) and what people reported here.
+export function AccessSettings({ value }) {
+  const [signInAction, setSignInAction] = React.useState(null);
+  return (
+    <>
+      <Section title={t("Storage defaults")}>
+        <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
+      </Section>
+      <Section title={t("Sign-in")} action={signInAction}>
+        <CloudSignInSettings setStatus={value.setStatus} action={setSignInAction} />
+      </Section>
+      <GuestSettings setStatus={value.setStatus} />
+      <Section title={t("Reports")}>
+        <ContentReports setStatus={value.setStatus} confirm={value.confirm} />
       </Section>
     </>
   );

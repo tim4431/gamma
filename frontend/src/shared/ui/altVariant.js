@@ -11,6 +11,18 @@
 //   </button>
 import { useEffect, useState } from "react";
 
+// Whether Alt is down, from the window's own key events: a control that
+// becomes engaged reads it as its listener starts. The render a pointer's
+// arrival asks for can come a frame later, and an Alt pressed in between
+// would otherwise go unseen until it is pressed again.
+let altDown = false;
+if (typeof window !== "undefined") {
+  const track = (e) => { if (e.key === "Alt") altDown = e.type === "keydown"; };
+  window.addEventListener("keydown", track, true);
+  window.addEventListener("keyup", track, true);
+  window.addEventListener("blur", () => { altDown = false; });
+}
+
 export function useAltVariant() {
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -27,6 +39,7 @@ export function useAltVariant() {
     window.addEventListener("keydown", key);
     window.addEventListener("keyup", key);
     window.addEventListener("blur", off);
+    if (altDown) setAlt(true);
     return () => {
       window.removeEventListener("keydown", key);
       window.removeEventListener("keyup", key);

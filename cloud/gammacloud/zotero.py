@@ -87,7 +87,7 @@ def check(conn, server: str, state: str, challenge: str) -> str:
     if not known(conn, origin):
         raise Problem(403, f"Gamma Cloud connects Zotero only for a Gamma server it knows: one on this computer, a "
                            f"hosted server, or one connected to Gamma Cloud, which {origin} is not. Its admin can "
-                           "connect it under Settings → Server → Sign-in; until then, paste a Zotero API key in Gamma.")
+                           "connect it under Sign-in in Gamma's Settings; until then, paste a Zotero API key in Gamma.")
     return origin
 
 

@@ -215,7 +215,7 @@ def set_guest_ttl_hours(hours) -> None:
 
 def guest_logins_settings() -> dict:
     """``{guest_logins, guest_logins_source}``: the admin's switch for guest
-    sign-in (Settings → Server → Guests), on unless it was turned off
+    sign-in (Settings → Users → Guests), on unless it was turned off
     ("saved" once an admin has set it either way, else "default"). What a
     server can do at all — ``GAMMA_GUEST_MAX``, a hosted container, a share
     host — is ``guests.logins_possible()``, and no switch turns that on."""

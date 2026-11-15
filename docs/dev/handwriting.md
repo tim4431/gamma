@@ -121,8 +121,7 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
       page* (Ctrl+A);
     - a divider, *Ruler* (R), *Stamp line*, *Shapes* (S) and *Zoom window*
       (Z);
-    - a divider, and *Handwriting settings…* (Settings → Reading & editing,
-      at the Handwriting section).
+    - a divider, and *Handwriting settings…* (Settings → Handwriting).
   - *Paste handwriting* is greyed, titled "Copy or cut handwriting first",
     until the handwriting clipboard holds strokes or pictures. *Stamp
     line* is greyed, titled "Show the ruler first", while the ruler is
@@ -225,7 +224,7 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   is armed stays with the session, the list follows the account):
   [settings.md](settings.md#text-highlighters).
 - **Presets follow the account.** `inkTools` lives in the profile
-  ([settings.md](settings.md) "Reading & editing"): a browser that signs
+  ([settings.md](settings.md) "Handwriting"): a browser that signs
   in takes the account's list, and an account without one is seeded from
   the browser.
   - When a load's first pull puts the account's list in place of a list
@@ -796,10 +795,10 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
       nothing to undo it does nothing.
     - The first chord of a session says "Two fingers undid a stroke." with
       a *Turn off* action.
-- **Settings** for handwriting sit under Reading & editing
-  ([settings.md](settings.md) "Reading & editing"). More → *Handwriting
-  settings…* opens the section.
-  - **Handwriting**, the account's: *Reset presets* (with a confirm),
+- **Settings** for handwriting sit in the Handwriting pane
+  ([settings.md](settings.md) "Handwriting"). More → *Handwriting
+  settings…* opens the pane.
+  - **Pens & eraser**, the account's: *Reset presets* (with a confirm),
     *Eraser returns to the last tool*, *Erases*, *Draw and hold*,
     *Scribble to erase*. The presets themselves (`inkTools`) are the
     account's too, though they are edited on the strip.
@@ -812,7 +811,7 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     on the iPad ([ipad.md](ipad.md) "The pen"), *Pen button* and *Second
     pen button* in the Android app (below), each only where the host
     forwards its gesture (`pencilGestures`), and *Haptics* where the host
-    plays them ([settings.md](settings.md) "Reading & editing").
+    plays them ([settings.md](settings.md) "Handwriting").
   - Set on the strip and the zoom window's panel instead: presets,
     smoothing, the straight highlighter and the nib angle, the Shapes
     tool's kind and fill, the ruler's units and the zoom window's height.
@@ -832,7 +831,7 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     and in the zoom window's panel, there is no text to select, so it
     writes, with the last pen preset armed on the strip.
   - Its eraser end and barrel button erase with nothing armed too.
-  - *Stylus draws on PDFs right away* (Settings → Reading & editing → This
+  - *Stylus draws on PDFs right away* (Settings → Handwriting → This
     device, `inkPenWritesPdf`, off by default) makes a PDF page write as
     paper does. Its key is new: every browser had stored the on that
     `gamma-ink-auto-pen` defaulted to (`usePersistedState` stores a default
@@ -4387,9 +4386,8 @@ reach.
       rows between the dividers are below ("The ruler, the Shapes tool and
       the zoom window").
     - *Handwriting settings…* is `SettingsIcon` and `onOpenSettings()`,
-      which App wires to `openSettingsPane("handwriting")`. That is the
-      section entry point (`settings/settingsNavigation.js`) for the Reading
-      & editing pane, scrolled to the section's first row, *Reset presets*.
+      which App wires to `openSettingsPane("handwriting")`, the Handwriting
+      pane's own name (`settings/settingsNavigation.js`).
     - A preset's ⋯ (`ctlBtn`, `MoreIcon`, aria-label "Tool menu", title
       "Move, hide, reset or remove this tool", `aria-haspopup`,
       `aria-expanded`) lists these, each through `onChangeTools(list)` with
@@ -4652,7 +4650,7 @@ reach.
   - The page tools (`pageActions`, the `pageTools` memo, `inkKeys`, the
     marks with `inkFlash`), and the jumps between the notes and the page
     (`showOnPage`, `showInNotes`).
-  - The other prefs ([settings.md](settings.md) "Reading & editing"):
+  - The other prefs ([settings.md](settings.md) "Handwriting"):
     - the eraser's mode and size, the lasso mode and whether the lasso
       takes pictures (`inkLassoPictures`);
     - the account's `inkDrawHold`, `inkScribbleErase`, `inkEraserReturn`

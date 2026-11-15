@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SMOOTH_MS, approach, installSmoothWheel, notchDelta, wholeNotches } from "../src/shared/lib/smoothWheel.js";
+import { SMOOTH_MS, acrossDelta, approach, installSmoothWheel, installWheelAcross, notchDelta, wholeNotches } from "../src/shared/lib/smoothWheel.js";
 
 // A scroller 1000 px tall over 5000 px of content, with the frame clock and
 // requestAnimationFrame in the test's hands.
-function fixture(t, scrollTop = 100, devicePixelRatio = 1) {
+function fixture(t, scrollTop = 100, devicePixelRatio = 1, { across = false, smooth = true } = {}) {
   let clock = 0, queued = [];
   const stubs = {
     devicePixelRatio,
@@ -20,8 +20,12 @@ function fixture(t, scrollTop = 100, devicePixelRatio = 1) {
     restore.push(() => old ? Object.defineProperty(globalThis, key, old) : delete globalThis[key]);
   }
   const el = new EventTarget();
-  Object.assign(el, { scrollTop, scrollHeight: 5000, clientHeight: 1000, nodeType: 1 });
-  const cleanup = installSmoothWheel(el);
+  // Across: pages side by side that fit the view's height, 6000 px of them.
+  Object.assign(el, across
+    ? { scrollTop: 0, scrollHeight: 1000, clientHeight: 1000, scrollLeft: scrollTop, scrollWidth: 6000, clientWidth: 1200, nodeType: 1 }
+    : { scrollTop, scrollHeight: 5000, clientHeight: 1000, nodeType: 1 });
+  const offs = [smooth ? installSmoothWheel(el, { across }) : null, across ? installWheelAcross(el) : null].filter(Boolean);
+  const cleanup = () => offs.forEach((off) => off());
   t.after(() => { cleanup(); restore.forEach((fn) => fn()); });
   const wheel = (props) => {
     const e = new Event("wheel", { cancelable: true });
@@ -37,7 +41,7 @@ function fixture(t, scrollTop = 100, devicePixelRatio = 1) {
       clock += 16;
       const due = queued; queued = [];
       for (const fn of due) fn(clock);
-      seen.push(el.scrollTop);
+      seen.push(across ? el.scrollLeft : el.scrollTop);
     }
     return seen;
   };
@@ -162,4 +166,37 @@ test("cleanup stops the motion and the listener", (t) => {
   assert.equal(notch(200), false);
   frames(SMOOTH_MS);
   assert.equal(el.scrollTop, at);
+});
+
+test("pages across that fit the height: a notch glides them across, a touchpad's or a plain wheel's delta moves them at once", (t) => {
+  const { el, notch, wheel, settle } = fixture(t, 100, 1, { across: true });
+  assert.equal(notch(200), true);
+  settle();
+  assert.equal(el.scrollLeft, 300, "the notch's 200 px, across");
+  assert.equal(el.scrollTop, 0, "nothing written down");
+  assert.equal(wheel({ deltaY: 30 }), true, "a touchpad's pixels");
+  assert.equal(el.scrollLeft, 330);
+  assert.equal(wheel({ deltaY: 3, deltaMode: 1 }), true, "Firefox's lines, a notch");
+  settle();
+  assert.equal(el.scrollLeft, 450);
+  assert.equal(wheel({ deltaY: 5, deltaX: 40 }), false, "sideways already: the browser's");
+  assert.equal(wheel({ deltaY: 100, shiftKey: true }), false, "Shift: the browser's");
+  assert.equal(wheel({ deltaY: 100, ctrlKey: true }), false, "the zoom's");
+  el.scrollLeft = 0;
+  assert.equal(wheel({ deltaY: -30 }), false, "at the start: nothing to move");
+  // A zoom taller than the view gives the pages room down: the wheel's own.
+  el.scrollHeight = 2400;
+  assert.equal(wheel({ deltaY: 30 }), false);
+  assert.equal(notch(200), true, "a notch glides down");
+  settle();
+  assert.equal(el.scrollTop, 200);
+  assert.equal(el.scrollLeft, 0);
+});
+
+test("pages across without smooth scrolling: a notch moves them across in one jump", (t) => {
+  const { el, notch, pending } = fixture(t, 100, 1, { across: true, smooth: false });
+  assert.equal(notch(200), true);
+  assert.equal(el.scrollLeft, 300);
+  assert.equal(pending(), 0, "no glide");
+  assert.equal(acrossDelta({ deltaMode: 2, deltaY: 1 }, 1200), 1200, "a page is the view's width");
 });

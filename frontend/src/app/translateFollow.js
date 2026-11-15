@@ -24,7 +24,7 @@ export const SLOW_MS = 20000;
 // document on screen; `rerun()` runs the last job asked for there again
 // (one that stopped, a paragraph's); `translateReferences()` asks it for the
 // reference lists left original there; `followsChat`: "Translate with"
-// follows the chat model; `openSettings()` opens Settings → Language and Translation;
+// follows the chat model; `openSettings()` opens Settings → Language & translation;
 // `exportsTranslation()`: the open page's annotated PDF would carry the
 // translation shown (the count the Export dialog reads); `openExport()` opens
 // that dialog on Annotated PDF; `statusFree()`: no error or button holds the
@@ -159,7 +159,7 @@ function follow(host, source, url, st, row, hint) {
     sayRefs(t("Nothing else to translate here: the references stay in the original."));
   } else if (hint.owed && st.error == null && !left && !unchanged) {
     hint.owed = false;
-    h.setStatus(t("Translation follows the chat model; a faster model can be picked in Settings → Language and Translation."),
+    h.setStatus(t("Translation follows the chat model; a faster model can be picked in Settings → Language & translation."),
       { label: t("Open settings"), run: () => host().openSettings() });
   } else if (refsLeft && !hint.refsSaid && h.statusFree()) {
     sayRefs(t("The references stay in the original."));

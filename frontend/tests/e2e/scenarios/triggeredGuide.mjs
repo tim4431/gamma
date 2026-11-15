@@ -825,7 +825,7 @@ export async function triggeredGuideScenarios(env) {
     try {
       await home.page.click('[data-guide="header.account"]');
       await home.page.getByRole("menuitem", { name: "Settings…" }).click();
-      await home.page.locator(".settingsNavBtn", { hasText: "Appearance" }).click();
+      await home.page.locator(".settingsNavBtn", { hasText: "Help & diagnostics" }).click();
       const toggle = home.page.getByRole("checkbox", { name: "Suggest tours" });
       assert(await toggle.isChecked(), "on by default");
       await toggle.click({ force: true });

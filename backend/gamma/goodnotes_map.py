@@ -82,15 +82,20 @@ def colours_of(content: bytes, rules: bytes | None) -> tuple[str | None, str | N
     return fill, drawn[0] if drawn else None
 
 
-def paper_of(template: gn.Template | None, colours: tuple | None) -> dict | None:
+def paper_of(template: gn.Template | None, colours: tuple | dict | None) -> dict | None:
     """A catalogue template's sheet paper, normalized: its size (the
     template's canvas in points), its colour and its rules' colour (the
     PDF's, ``colours_of``), its pattern and pitch (the design's, the pitch
     as the writing guide states it when it does); a cover a blank sheet of
-    its colour. None for any other template: a user's PDF, a design not
-    known."""
+    its colour. A template whose PDF Gamma's GoodNotes export drew
+    (``colours`` the paper that PDF carries, a dict) is that paper at the
+    template's size. None for any other template: a user's PDF, a design
+    not known."""
     if template is None:
         return None
+    if isinstance(colours, dict):
+        width, height = _canvas_pt(template)
+        return normalize_paper({**colours, "width": width, "height": height})
     design = template.design
     if design in gn.PAPERS:
         pattern, pitch = gn.PAPERS[design]
@@ -120,7 +125,7 @@ def _canvas_pt(template: gn.Template | None) -> tuple[float, float]:
 def plan_notebook(notebook: gn.Notebook, pdf_pages: dict, colours: dict) -> NotebookPlan:
     """What the notebook becomes, and each page's frame. ``pdf_pages`` holds
     the display sizes of each readable attachment PDF's pages, ``colours``
-    each catalogue paper's (``colours_of``), both by attachment id; with
+    each paper's look (``paper_of``), both by attachment id; with
     neither (a preview) the kind still follows from the templates. A page
     whose template, or its PDF or its page, cannot be read is blank paper
     of its size, with a warning; a turned page is imported upright

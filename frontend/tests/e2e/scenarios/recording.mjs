@@ -7,8 +7,10 @@
 // sheet being written on; with no viewer shown, the player docks over the
 // notes; with Record hidden from the strip, its ⋯ menu starts one and the
 // button stays while it records. The browser has no microphone and no decoder
-// here: an init script stands in for MediaRecorder and Audio. The server's
-// side is backend/tests/test_recordings.py.
+// here: an init script stands in for MediaRecorder and Audio. Presented as
+// Apple's WebKit on a touch screen, the recorder takes a real tone through
+// Web Audio into a WAV that holds it, and the player plays that file. The
+// server's side is backend/tests/test_recordings.py.
 import { waitForPdf } from "./pdf.mjs";
 import { assertMenuFrom, assertMenuRoles } from "../harness.mjs";
 import { encodeStroke, newCanvasInk } from "../../../src/ink/ink.js";
@@ -62,6 +64,36 @@ export function fakeMedia() {
     load() {}
   }
   window.Audio = FakeAudio;
+}
+
+// Runs in the page before the app: the browser presented as Apple's WebKit
+// on a touch screen (an iPad), a microphone that is a 440 Hz tone (a real
+// MediaStream, so Web Audio captures it for real), and a MediaRecorder that
+// throws, since the recorder must not use one there.
+export function appleTouchMedia() {
+  Object.defineProperty(Navigator.prototype, "vendor", { configurable: true, get: () => "Apple Computer, Inc." });
+  Object.defineProperty(Navigator.prototype, "maxTouchPoints", { configurable: true, get: () => 5 });
+  window.MediaRecorder = class {
+    constructor() { throw new Error("MediaRecorder used on Apple's WebKit with a touch screen"); }
+    static isTypeSupported() { return true; }
+  };
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: async () => {
+        const tone = new AudioContext();
+        tone.resume();
+        const osc = tone.createOscillator();
+        const level = tone.createGain();
+        osc.frequency.value = 440;
+        level.gain.value = 0.5;
+        const out = tone.createMediaStreamDestination();
+        osc.connect(level).connect(out);
+        osc.start();
+        return out.stream;
+      },
+    },
+  });
 }
 
 export async function recordingScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }) {
@@ -304,7 +336,7 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
   });
 
   await step("recording: with Record hidden from the strip, ⋯ starts a recording, and its button stays on the strip until it stops", async () => {
-    // Settings → Appearance › Viewer tools, Record "Hidden" (docs/dev/settings.md "Bars: order and modes")
+    // Settings → Toolbars › Viewer tools, Record "Hidden" (docs/dev/settings.md "Bars: order and modes")
     await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { viewerTools: VIEWER_TOOLS.setMode(VIEWER_TOOLS.DEFAULT, "record", "hidden") } } });
     const up = await account.upload("/api/uploads", makePdf([["Recorded from the menu"]]), "menu.pdf", "application/pdf");
     const created = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Menu recording", source_url: up.source_url } });
@@ -331,5 +363,58 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
       await mctx.close();
       await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { viewerTools: VIEWER_TOOLS.DEFAULT } } });
     }
+  });
+
+  await step("recording: on Apple's WebKit with a touch screen, a tone comes through Web Audio into a WAV that holds it, and plays", async () => {
+    // recorder.js capturesPcm: no MediaRecorder (appleTouchMedia's throws), an AudioWorklet's samples
+    // written as 16 kHz mono WAV segments (wav.js); the card plays the file through a real <audio>.
+    const up = await account.upload("/api/uploads", makePdf([["Recorded on an iPad"]]), "ipad.pdf", "application/pdf");
+    const created = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "iPad recording", source_url: up.source_url } });
+    const actx = await account.context(browser);
+    await actx.addInitScript(appleTouchMedia);
+    try {
+      const apage = await openPage(actx, `${server.base}/?page=${created.id}&ws=${account.ws}`);
+      await waitForPdf(apage, 1);
+      await apage.click("button[aria-label='Record audio']");
+      await apage.waitForSelector(".recordingPill.live", { timeout: 5000 });
+      await sleep(3000);
+      await apage.click("button[aria-label='Stop recording']");
+      const rec = await until(async () => {
+        const b = ((await account.api(`/api/blocks/${created.id}/subtree`)).block.children || []).find((x) => x.properties?.recording);
+        return b?.properties.recording.state === "done" && b.properties.recording.segments.length === 1 ? b : null;
+      }, { what: "a finished recording with one WAV segment", timeout: 15000 });
+      const seg = rec.properties.recording.segments[0];
+      assert(seg.url.endsWith(".wav") && seg.mime === "audio/wav" && seg.dur >= 2000 && seg.dur <= 4500, `a WAV segment of the recorded length: ${JSON.stringify(seg)}`);
+      assert(Math.abs(seg.bytes - (44 + seg.dur * 32)) <= 32, `16 kHz mono 16-bit, its length the samples': ${seg.bytes} bytes for ${seg.dur} ms`);
+      const file = await apage.evaluate(async (url) => {
+        const r = await fetch(url);
+        const bytes = new Uint8Array(await r.arrayBuffer());
+        const view = new DataView(bytes.buffer);
+        const tag = (at) => String.fromCharCode(...bytes.subarray(at, at + 4));
+        let peak = 0, crossings = 0, last = 0;
+        const n = (bytes.length - 44) / 2;
+        for (let i = 0; i < n; i++) {
+          const v = view.getInt16(44 + i * 2, true);
+          peak = Math.max(peak, Math.abs(v));
+          if (i > n / 4 && (v >= 0) !== (last >= 0)) crossings++; // over the last three quarters
+          last = v;
+        }
+        return { type: r.headers.get("content-type") || "", inline: !(r.headers.get("content-disposition") || "").startsWith("attachment"),
+          riff: tag(0), wave: tag(8), rate: view.getUint32(24, true), data: view.getUint32(40, true), length: bytes.length, peak,
+          hz: crossings / 2 / ((n * 3) / 4 / 16000) };
+      }, seg.url);
+      assert(file.type.startsWith("audio/wav") && file.inline, `served inline as audio/wav: ${file.type}`);
+      assertEq(JSON.stringify([file.riff, file.wave, file.rate, file.data]), JSON.stringify(["RIFF", "WAVE", 16000, file.length - 44]), "a WAV with its sizes");
+      assert(file.peak > 0.25 * 32767, `the tone is in the file, not silence: peak ${file.peak}`);
+      assert(Math.abs(file.hz - 440) < 20, `at its pitch: ${file.hz.toFixed(1)} Hz`);
+      // Played through a real <audio>: the clock moves and nothing fails.
+      await apage.waitForSelector(".recordingCard button[aria-label='Play recording']", { timeout: 5000 });
+      await apage.click(".recordingCard button[aria-label='Play recording']");
+      await apage.waitForSelector(".replayBar", { timeout: 5000 });
+      await until(async () => (await apage.textContent(".replayBar .replayTime"))?.startsWith("0:01"), { what: "the WAV plays", timeout: 10000 });
+      await apage.keyboard.press("Escape");
+      await until(async () => !(await apage.$(".replayBar")), { what: "the player closed" });
+      assertNoProblems(apage);
+    } finally { await actx.close(); }
   });
 }

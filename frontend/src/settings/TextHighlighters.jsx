@@ -1,4 +1,4 @@
-// Settings → Appearance › Text highlighters (docs/dev/settings.md "Text
+// Settings → Toolbars › Text highlighters (docs/dev/settings.md "Text
 // highlighters"; shared/model/markStyle.js): the account's highlighters in
 // their order, the ones on the strip first and the hidden ones under a
 // line, each a row — its grip (drag it, or its arrow keys, within its
@@ -141,7 +141,7 @@ export function TextHighlighters({ hl, presets, palette }) {
   const [said, setSaid] = React.useState("");
   const shown = shownPresets(list), hidden = hiddenPresets(list);
   return (
-    <Section title={t("Text highlighters")} scope="account" prefs={SECTION_PREFS.appearance["Text highlighters"]}
+    <Section title={t("Text highlighters")} scope="account" prefs={SECTION_PREFS.toolbars["Text highlighters"]}
       action={(
         <button type="button" className="uiBtn sm" disabled={!presets?.length}
           title={t("Back to the one highlighter an account starts with")} onClick={hl.reset}>

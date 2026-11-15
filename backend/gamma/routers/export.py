@@ -2,8 +2,9 @@
 subtrees and feeds them to the format's ``_Builder`` — Markdown, an Obsidian
 vault, a Logseq graph, a Zotero RDF library, a zip for Notion's importer, a
 scoped Gamma backup, a BibTeX bibliography, the notes typeset as a PDF document,
-or the annotated PDFs themselves. Most builders produce a zip; a bare .md (nothing to bundle), the
-.bib, the notes PDF and one page's annotated PDF are single files. A page's
+Notability notes, GoodNotes notebooks, or the annotated PDFs themselves. Most
+builders produce a zip; a bare .md (nothing to bundle), the .bib, the notes
+PDF, one page's annotated PDF, note and notebook are single files. A page's
 export takes the pages inside it too when asked (``sub_pages``), laid out
 as a folder's pages are. The same builders serve the downloads
 (``/pages/{id}/export``, ``/folders/{id}/export``: an import by link, scripts)
@@ -29,7 +30,8 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
-from .. import comments, jobs, notability_export, notebook, notion_export, pdf_text, pdf_translated, storage
+from .. import (comments, goodnotes_export, jobs, notability_export, notebook, notion_export, pdf_text,
+                pdf_translated, storage)
 from ..auth import (link_ratelimit, require_user, require_ws, resolve_ws, share_job_owner, share_lookup,
                     share_scope)
 from ..blocks_store import (
@@ -1124,19 +1126,19 @@ class _AnnotatedPdfBuilder(_Builder):
         return super().save(dest, progress)
 
 
-class _NotabilityBuilder(_Builder):
-    """Each page as a Notability note (``notability_export``): its PDF or
-    its sheets of paper, its handwriting, boxes, pictures, notes and
-    recordings, which Gamma's Notability import brings back as they were.
-    One note: the .note itself. A folder, or a page with the pages inside
-    it: a zip of them, ``<dir>/<Title>.note``, filed as the annotated PDFs
-    are (``directory``): the directories mirroring the page's folders
-    below the exported folder, a sub-page's note inside its parent's
-    directory. What a page loses on the
-    way (its highlights, a recording that is no .m4a, …) is listed under
-    its title in the result's ``warnings``; a page that cannot be a note (a
+class _NoteAppBuilder(_Builder):
+    """Each page as a note app's file, written by the format's module
+    (``exporter``: its ``write_page`` and ``ExportError``). One page: the
+    file itself, ``<Title><ext>``. A folder, or a page with the pages
+    inside it: a zip of them, ``<dir>/<Title><ext>``, filed as the
+    annotated PDFs are (``directory``): the directories mirroring the
+    page's folders below the exported folder, a sub-page's file inside its
+    parent's directory. What a page loses on the way is listed under its
+    title in the result's ``warnings``; a page that cannot be written (a
     PDF page whose file is gone) is left out."""
-    suffix = "-notability.zip"
+    exporter = None
+    ext = ""
+    noun = ""   # what one file is, for the refusal when no page could be one
 
     def __init__(self, ws, base, opts):
         super().__init__(ws, base, opts)
@@ -1153,15 +1155,15 @@ class _NotabilityBuilder(_Builder):
             self._spool = Path(tempfile.mkdtemp(prefix="gamma-export-"))
         path = self._spool / f"{len(self.files)}.part"
         try:
-            warnings = notability_export.write_page([block_to_dict(r) for r in rows], page["id"], self.stored,
-                                                    path, self.resolve_ref)
-        except notability_export.ExportError as e:
+            warnings = self.exporter.write_page([block_to_dict(r) for r in rows], page["id"], self.stored,
+                                                path, self.resolve_ref)
+        except self.exporter.ExportError as e:
             path.unlink(missing_ok=True)
             self.skip(page, str(e))
             return
         title = (page.get("content") or "").strip() or "Untitled"
         self.warnings += [{"page_id": page["id"], "title": title, "reason": reason} for reason in warnings]
-        name = self.file_name(page, ".note")
+        name = self.file_name(page, self.ext)
         self.single_name = name.rsplit("/", 1)[-1]
         self.files.append((name, path, ""))
 
@@ -1170,8 +1172,8 @@ class _NotabilityBuilder(_Builder):
             reasons = {s["reason"] for s in self.skipped}
             self.discard()
             raise HTTPException(status_code=400, detail=next(iter(reasons)) if len(reasons) == 1 else
-                                "none of these pages could be written as a note")
-        if self.opts.get("folder_scope") is None and len(self.files) == 1:  # one page's note: the .note itself
+                                f"none of these pages could be written as a {self.noun}")
+        if self.opts.get("folder_scope") is None and len(self.files) == 1:  # one page's file: the file itself
             try:
                 shutil.copyfile(self.files[0][1], dest)
             finally:
@@ -1181,6 +1183,30 @@ class _NotabilityBuilder(_Builder):
 
     def summary(self) -> dict:
         return {**super().summary(), "warnings": self.warnings}
+
+
+class _NotabilityBuilder(_NoteAppBuilder):
+    """Each page as a Notability note (``notability_export``): its PDF or
+    its sheets of paper, its handwriting, boxes, pictures, notes and
+    recordings, which Gamma's Notability import brings back as they were;
+    what it loses on the way (its highlights, a recording that is no .m4a,
+    …) is in the warnings."""
+    exporter = notability_export
+    ext = ".note"
+    noun = "note"
+    suffix = "-notability.zip"
+
+
+class _GoodNotesBuilder(_NoteAppBuilder):
+    """Each page as a GoodNotes notebook (``goodnotes_export``): its PDF or
+    its sheets of paper, its handwriting, highlights, text boxes and
+    pictures as GoodNotes draws them; its notes and recordings stay behind,
+    said in the warnings. A page with neither a PDF nor a sheet is left
+    out."""
+    exporter = goodnotes_export
+    ext = ".goodnotes"
+    noun = "notebook"
+    suffix = "-goodnotes.zip"
 
 
 class _NotionBuilder(_Builder):
@@ -1315,6 +1341,7 @@ _BUILDERS = {
     "notes-pdf": _NotesPdfBuilder,
     "annotated-pdf": _AnnotatedPdfBuilder,
     "notability": _NotabilityBuilder,
+    "goodnotes": _GoodNotesBuilder,
     "notion": _NotionBuilder,
 }
 
@@ -1583,8 +1610,10 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     Logseq file graph, both switches pinned on), ``zotero-rdf`` (a one-item
     Zotero RDF library), ``bibtex`` (the page's citation entry as a .bib
     file), ``notion`` (a zip for Notion's importer: the page as ``<Title>.md``
-    with its images, always a zip), or ``gamma`` (a scoped account backup any
-    Gamma imports via /api/import-data?mode=merge). ``sub_pages=1`` exports every page inside
+    with its images, always a zip), ``notability`` or ``goodnotes`` (the page
+    as a Notability .note or a GoodNotes .goodnotes), or ``gamma`` (a scoped
+    account backup any Gamma imports via /api/import-data?mode=merge).
+    ``sub_pages=1`` exports every page inside
     it too, laid out as a folder export lays out its pages: a format that
     writes one file for one page writes a zip for several, named for the
     page."""

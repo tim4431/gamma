@@ -67,8 +67,8 @@ in the PDF zoom column does everything by state:
   any page.
 - The button is one of the strip's tools (`translate` in the `viewerTools`
   preference, [settings.md](settings.md#bars-order-and-modes)): its place
-  is the user's order, and hidden (Settings → Language and Translation ›
-  Translation button off, or Appearance › Viewer tools) it is a Translate
+  is the user's order, and hidden (Settings → Language & translation ›
+  Translation button off, or Toolbars › Viewer tools) it is a Translate
   row of the strip's ⋯ menu that opens the option menu beside the row, as a
   flyout would (a `SubMenuItem` cannot hold the language flyout: a menu's
   flyouts share one open state). While it translates or a translation is
@@ -87,7 +87,7 @@ style:
   its chunks to one flat list. A paragraph that runs into the next page needs
   that page, and whether a block there is in a reference list can take that
   page's neighbour to tell.
-- N workers (Settings → Language and Translation → parallel requests,
+- N workers (Settings → Language & translation → parallel requests,
   1–`TRANSLATE_PARALLEL_MAX` = 4 in `app/prefDefs.js`) stream through the
   list across page boundaries: the first request is in flight while later
   pages are still segmenting, chunks paint as they land, and progress by
@@ -190,7 +190,7 @@ a stopped retry of the untranslated paragraphs for their pages alone.
 Once a session, a hint follows a job's end. When "Translate with" follows
 the chat model and the session's first job that reached the model had a
 median request over 20 s (`SLOW_MS`), the status line says a faster model
-can be picked. Its action opens Settings → Language and Translation. It
+can be picked. Its action opens Settings → Language & translation. It
 waits for a job's end with nothing else to say. Replies the server had
 cached or kept are not counted in the median.
 
@@ -1197,7 +1197,7 @@ order: no joined paragraph touched one of these blocks.
 - `wait_brief`: false for a text that must not wait while the paper's brief
   is being made (a job's first chunk, a selection), else true.
 - `keep`: whether the server may keep the translations in the workspace
-  (Settings → Language and Translation › Keep translations).
+  (Settings → Language & translation › Keep translations).
 - `fresh`: sent only true, by a job on one paragraph (its menu's Translate
   again and Translate this paragraph): the server answers from neither
   memory nor the kept translations, and its answer replaces them ("Kept
@@ -1469,7 +1469,7 @@ translation service takes none.
 - **Errors**: a glossary that cannot be read translates as if it were
   empty, logged; it never fails a translation.
 
-The client: Settings → Language and Translation › Glossary
+The client: Settings → Language & translation › Glossary
 ([settings.md](settings.md)) lists the terms of the language Translate into
 names, with Add term, Edit and delete for a writer of the workspace and the
 rows alone for a reader. The selection translator's Add to glossary
@@ -1508,13 +1508,13 @@ and the kept translations in `gamma/translate.py` over
   language's conventions follow for Chinese (full-width punctuation, a space
   between Chinese and Latin text), Japanese (である調) and Korean. The brief
   closes it.
-- **Effort**: the user's pick in Settings → Language and Translation, else the model's
+- **Effort**: the user's pick in Settings → Language & translation, else the model's
   lowest level (`_translate_effort`: `ai_catalog.reasoning_efforts`, then
   `translate_context.default_effort` — on the Anthropic wire the first level
   after `none`, which would leave the parameter out). A model whose levels are
   unknown, or that takes none, gets no effort parameter.
 - **Speed**: the separate account preference `translateSpeed` in Settings →
-  Language and Translation → Speed sends `speed` (`""`, `flex`, or `fast`).
+  Language & translation → Speed sends `speed` (`""`, `flex`, or `fast`).
   `_translate_speed` checks the resolved model's `ai_catalog.speed_tiers`;
   Default, an unsupported tier, or a failed lookup uses the provider's usual
   routing. The same tier applies to the paper's brief, streamed and plain
@@ -1661,7 +1661,7 @@ a writer clears it):
   keeps nothing: every text is `null`.
 - `GET /api/translations/stats` → `{documents, paragraphs, bytes}`, the
   bytes being the kept text's UTF-8 size, translations and briefs. Settings
-  → Language and Translation › Service shows it under "Keep translations"
+  → Language & translation › Service shows it under "Keep translations"
   (`translateKeep`, account, default on), with Clear
   ([settings.md](settings.md)). Clear sends the next route, then drops
   every document's entries in the viewer (`clearTranslations`,
@@ -1691,7 +1691,7 @@ a writer clears it):
 The text-selection popup (`PlainTip` in `pdf/PdfViewer.jsx`: the highlight
 style row, a line, the colors and their fold, a line, then Copy (in the iPad app, whose system menu is off over
 the PDF), Comment and the link) carries a 文A button, last, when
-Settings → Language and Translation › "Translate a selection" is on
+Settings → Language & translation › "Translate a selection" is on
 (`selTranslate`, account pref, default on), and the selection is not in a
 translation, which is translated already ("Selecting translated text").
 Its buttons act on the mouse's press, which keeps the PDF's selection, and

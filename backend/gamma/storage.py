@@ -199,9 +199,10 @@ def is_pdf(data: bytes) -> bool:
     return len(data) >= 4 and data[:4] == b"%PDF"
 
 
-# The containers MediaRecorder writes (and their Ogg kin), stored under these
-# extensions only when they are that container (``is_audio``).
-RECORDING_EXTENSIONS = (".webm", ".m4a", ".ogg", ".opus")
+# The containers the recorder writes — MediaRecorder's (and their Ogg kin),
+# and the WAV it writes where it captures through Web Audio — stored under
+# these extensions only when they are that container (``is_audio``).
+RECORDING_EXTENSIONS = (".webm", ".m4a", ".ogg", ".opus", ".wav")
 
 
 def is_audio(ext: str, data: bytes) -> bool:

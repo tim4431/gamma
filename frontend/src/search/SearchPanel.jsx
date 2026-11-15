@@ -82,7 +82,7 @@ export function MarkedText({ text, query, opts, lead = 0, parts }) {
   ));
 }
 
-// `button` false: the topbar's Search is off the bar (Settings → Appearance ›
+// `button` false: the topbar's Search is off the bar (Settings → Toolbars ›
 // Top bar), so only the popover lives here, opened by its shortcut or the
 // account menu's row. `openPageLink(id, target)` opens a page at a place
 // (App's, the route of a Gamma link); without it a file's hit opens its

@@ -301,6 +301,8 @@ is held over it, so the outcome is visible before the click lands.
 `useAltVariant()` ([altVariant.js](../../frontend/src/shared/ui/altVariant.js))
 reports Alt held under the pointer or the keyboard's focus, and nowhere
 else, so an Alt held over the PDF (the translation peek) restyles nothing.
+An Alt already down when the control engages counts: the window's key
+events keep whether it is, for the render a pointer's arrival waits on.
 The control swaps its icon for the variant's; a destructive variant adds
 `danger` and takes its own name and `title`. The click still reads
 `e.altKey`. The chat header's New chat, which becomes Discard chat, is the
@@ -2074,8 +2076,9 @@ page's notes refuse what the single-block action refuses
 | `settings/settingsReads.js` | what the panes read through one store while the dialog is open: `PANE_READS` (each pane's paths, in order), `useSettingsRead(path, {poll})` for a section, `useSettingsReads` for one whose paths it learns as it goes ([settings.md](settings.md) "What a pane reads") |
 | `settings/sectionPrefs.js`, `settings/syncState.js` | which account preferences each settings section holds (`SECTION_PREFS`), and how their sync reads: a section's scope tag (`profileSyncState`) and the Settings sync row's hint (`cloudSyncHint`) ([settings.md](settings.md)) |
 | `settings/SettingsAppearance.jsx`, `settings/SettingsLibraryDisplay.jsx` | the Appearance pane (theme cards + PDF sample) and its Library section (a live `PageCard` beside its switches) ([settings.md](settings.md)) |
+| `settings/SettingsToolbars.jsx` | the Toolbars pane: Top bar, Viewer tools and Text highlighters ([settings.md](settings.md)) |
 | `settings/BackupTasks.jsx` | Settings → Backups' task table and its editor `SubDialog` (scope `Segmented`, workspace and weekday `ToggleGroup`s, frequency and retention `MenuSelect`s, the cron preview); each row's `ActionMenu` ([settings.md](settings.md)) |
-| `settings/SettingsCloudSignIn.jsx` | Settings → Server › Sign-in (the account server, the server client, the unknown-accounts policy) and the Account pane's Gamma Cloud row ([cloud_accounts.md](cloud_accounts.md)) |
+| `settings/SettingsCloudSignIn.jsx` | Settings → Users › Sign-in (the account server, the server client, the unknown-accounts policy) and the Account pane's Gamma Cloud row ([cloud_accounts.md](cloud_accounts.md)) |
 | `transfers/ImportExport.jsx`, `transfers/transferFormats.js`, `shared/illustrations/` | the Import/Export dialogs, their format/source rules (`resolveExport` / `resolveImport`) and the decorative previews ([import_export.md](import_export.md)) |
 | `transfers/ImportReviewDialog.jsx`, `transfers/ImportTree.jsx`, `transfers/importApi.js`, `transfers/importReview.js` | the import review: upload → review → import → summary in one `SubDialog` (filter `Segmented`, source and destination trees with checkboxes), the `/api/jobs/import-preview` and `/api/import/review` calls, and the pure selection/filter/tree helpers ([import_export.md](import_export.md)); `ImportTree` also draws the tracking dialog's tree, whose folders are read as they open (`onOpenFolder`) and whose boxes are its own (`boxOf`) |
 | `shared/lib/xhrUpload.js` | the one multipart upload: progress, a processing callback, abort by function or `AbortSignal`, the workspace and tab-identity headers; behind `FileChip.postFile`, PDF uploads, backup restores and the import review |
@@ -2084,7 +2087,7 @@ page's notes refuse what the single-block action refuses
 | `shared/model/gammaLinks.js`, `GammaLinkCard` / `CitationPill` in `shared/ui/Widgets.jsx` | links into this library (page / block / citation / line) classified once and drawn the same in the chat and in notes: a page or block link as a card, a citation of a PDF passage or of a text file's lines as a compact pill with a hover preview ([pdf_citations.md](pdf_citations.md)) |
 | `pdf/pdfCitation.js`, `pdf/PdfCitationOverlay.jsx` | a citation link → the quoted passage highlighted on the cited PDF page ([pdf_citations.md](pdf_citations.md)) |
 | `shared/lib/copyImage.js` | a shown picture (an `<img>` or an inline `<svg>`) to the clipboard as an image: the async clipboard writes only `image/png` and, in current Chromium, `image/svg+xml`, so a PNG goes as it is, another bitmap is redrawn as a PNG pixel for pixel, and a vector picture goes as its SVG at the shown size on the shown background (`shownSvg`) plus a PNG of that at twice the size. The `ClipboardItem` takes promised blobs, so Safari keeps the click's gesture; `canCopyImage` is false outside a secure context, where no legacy copy carries an image |
-| `shared/lib/canvasSize.js`, `pdf/verticalScrollSnap.js` | the canvas backing-store cap and the one-finger vertical scroll alignment ([pdf_loading.md](pdf_loading.md)) |
+| `shared/lib/canvasSize.js`, `pdf/scrollSnap.js` | the canvas backing-store cap and the one-finger scroll alignment along the pages' run ([pdf_loading.md](pdf_loading.md)) |
 | `shared/lib/viewerZoom.js`, `shared/model/zoom.js` | the Ctrl+wheel and two-finger pinch/pan gestures both zooming viewers read, and the zoom limits every entry point clamps to (above) |
 | `shared/lib/stableActions.js`, `shared/lib/keepIfSame.js` | what a memoized row or page relies on: one stable wrapper per handler name calling the latest handler (`useStableActions` for the page tools, `makeStableActions` for the outliner's `rowProps`), and a derived map or object kept by identity while it reads the same (`keepIfSame` with `sameMap` / `sameObject`) ([frontend-refactor.md](frontend-refactor.md)) |
 | `chat/ChatDock.jsx` | the AI chat panel (incl. agent wiring); header = a `.ctlBtnRow` of `.ctlBtn` icon buttons (the PDF zoom column's buttons laid flat) with the ⚙ settings popover |

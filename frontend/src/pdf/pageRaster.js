@@ -34,16 +34,18 @@ const SLACK = 2; // CSS px
 const RENDER_MARGIN_PX = 900;
 export const RENDER_MARGIN = `${RENDER_MARGIN_PX}px`;
 // Renders of pages away from the view wait while the scroller moves faster
-// than this many viewport heights a second, over the last MOTION_WINDOW_MS.
+// than this many viewport lengths a second (heights down, widths across),
+// over the last MOTION_WINDOW_MS.
 const FAST_VIEWS_PER_S = 2;
 const MOTION_WINDOW_MS = 120;
 // Past the look-ahead a page keeps the pixels it has, as far out as
 // KEEP_MARGIN (PdfPage's observer) and within KEEP_BUDGET_BYTES of canvas
 // over the whole document, so a scroll back over read pages redraws nothing.
 // Only on an engine with the roomy canvas limits: a touch-first device or
-// WebKit releases a page as soon as it leaves the look-ahead.
+// WebKit releases a page as soon as it leaves the look-ahead. Three viewport
+// lengths each way, whichever way the pages run (pdf/pageLayout.js).
 const ROOMY = CANVAS_MAX_PIXELS >= 16 * 1024 * 1024;
-export const KEEP_MARGIN = ROOMY ? "300% 0px" : RENDER_MARGIN;
+export const KEEP_MARGIN = ROOMY ? "300%" : RENDER_MARGIN;
 const KEEP_BUDGET_BYTES = ROOMY ? 256 * 1024 * 1024 : 0;
 
 // Canvas pixels per CSS pixel that count as sharp on this screen. Past 3
@@ -258,19 +260,21 @@ const SHARED = new WeakMap();
 function sharedFor(scroller) {
   let shared = SHARED.get(scroller);
   if (shared) return shared;
-  const samples = []; // [time, scrollTop] over the last MOTION_WINDOW_MS
+  const samples = []; // [time, scrollTop, scrollLeft] over the last MOTION_WINDOW_MS
   let timer = 0, frame = 0;
   const fast = () => {
     const now = performance.now();
     while (samples.length && now - samples[0][0] > MOTION_WINDOW_MS) samples.shift();
     if (samples.length < 2) return false;
-    const [t0, y0] = samples[0], [t1, y1] = samples[samples.length - 1];
-    return t1 > t0 && Math.abs(y1 - y0) / (t1 - t0) * 1000 > scroller.clientHeight * FAST_VIEWS_PER_S;
+    const [t0, y0, x0] = samples[0], [t1, y1, x1] = samples[samples.length - 1];
+    if (t1 <= t0) return false;
+    const views = Math.max(Math.abs(y1 - y0) / scroller.clientHeight, Math.abs(x1 - x0) / scroller.clientWidth);
+    return views / (t1 - t0) * 1000 > FAST_VIEWS_PER_S;
   };
   const queue = new RenderQueue({ fast });
   const poke = () => { frame = 0; queue.poke(); };
   scroller.addEventListener("scroll", () => {
-    samples.push([performance.now(), scroller.scrollTop]);
+    samples.push([performance.now(), scroller.scrollTop, scroller.scrollLeft]);
     if (!frame) frame = requestAnimationFrame(poke);
     // Once the scroll stops the speed reads zero, and what waited for that starts.
     clearTimeout(timer); timer = setTimeout(poke, MOTION_WINDOW_MS + 20);
@@ -362,11 +366,13 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
 
   const dpr = () => window.devicePixelRatio || 1;
   const report = (e) => { if (want) console.error("PdfPage render error:", e); };
-  // How far the page box is from the view, vertically, in CSS px; 0 touching it.
+  // How far the page box is from the view, in CSS px: the farther of its
+  // gaps down and across, so it reads the same whichever way the pages run
+  // (pdf/pageLayout.js); 0 touching it.
   const distance = () => {
     const p = wrap.getBoundingClientRect(), s = scroller.getBoundingClientRect();
-    const top = s.top + scroller.clientTop;
-    return Math.max(0, top - p.bottom, p.top - (top + scroller.clientHeight));
+    const top = s.top + scroller.clientTop, left = s.left + scroller.clientLeft;
+    return Math.max(0, top - p.bottom, p.top - (top + scroller.clientHeight), left - p.right, p.left - (left + scroller.clientWidth));
   };
   const holder = { distance, bytes: () => bytesOf(base.front) + bytesOf(detail.front), pinned: () => !!want?.pinned, release: () => show(null) };
   // Fresh pixels landed: the page holds them, within the budget.

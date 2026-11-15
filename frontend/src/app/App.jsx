@@ -7,6 +7,7 @@ import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf,
 import PdfViewer, { openPdfDocument, preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { penSelecting } from "../pdf/penSelect.js";
+import { pageInMiddle, pageLanded } from "../pdf/pageLayout.js";
 import { addTerm, briefRequest, chunkRequest, endTranslations, forgetTranslation, lookupRequest, useTranslateJobs } from "./translateClient.js";
 import { createRecall, langOfKey, modelOfKey, openKey } from "../pdf/translateRecall.js";
 import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from "../pdf/translateState.js";
@@ -85,7 +86,7 @@ import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
-  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
+  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitPageIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
@@ -2996,7 +2997,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return {
       pageId, title: openTabs.find((tab) => tab.id === pageId)?.title,
       overlay: (id, children) => collabRef.current.overlay(id, children),
-      scroll: tabScrollRef.current[pageId], startPage: readPosRef.current[pageId]?.page || 0,
+      scroll: inThisFlow(tabScrollRef.current[pageId]) ? tabScrollRef.current[pageId] : undefined, startPage: readPosRef.current[pageId]?.page || 0,
       zoom: saved?.pdfScale || pdfScale, pdfHidden: !!saved?.pdfHidden, notebookView: nbViewPages.has(pageId),
       notesPlace: notesPlaceRef.current[pageId], shared: paneShared,
       onScroll: paneScroll, onZoom: paneZoom, onNotesPlace: paneNotesPlace,
@@ -3084,7 +3085,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
     const ratio = (scale || pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1);
     const targetTop = p.entry.top * ratio;
-    if (scroller && scroller.scrollHeight > targetTop) {
+    // laid out far enough down, and across (pages that run across)
+    if (scroller && scroller.scrollHeight > targetTop && scroller.scrollWidth > (p.entry.left || 0) * ratio) {
       // and across, when it was kept (a zoom wider than the viewer)
       scroller.scrollTo({ top: targetTop, ...(p.entry.left != null ? { left: p.entry.left * ratio } : null), behavior: "instant" });
       pendingRestoreRef.current = null;
@@ -3354,7 +3356,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     language, setLanguage,
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal, openAddsToLibrary, setOpenAddsToLibrary,
-    embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
+    embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel, pdfFlow, setPdfFlow,
     inkPenOnly, setInkPenOnly, inkPenWritesPdf, setInkPenWritesPdf, inkPressure, setInkPressure,
     inkFingerUndo, setInkFingerUndo, inkDrawHold, setInkDrawHold, inkScribbleErase, setInkScribbleErase,
     inkEraserReturn, setInkEraserReturn, inkEraserFilter, setInkEraserFilter,
@@ -7110,6 +7112,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // were, not just to the same page. blockId -> {top, scale}, or for a page
   // with sheets {place} (notebook/sheetPlace.js), whichever view shows them.
   const tabScrollRef = useRef({});
+  // A PDF's exact place is measured in the layout its pages ran in (`flow`,
+  // Settings → Reading › PDFs › Page direction): once they run the other
+  // way it is no place, and the page falls back to its last-read page (the
+  // open one's viewer keeps its page itself). Its notebook {place} is any.
+  const inThisFlow = (entry) => !!entry && (entry.top == null || (entry.flow || "down") === pdfFlow);
   // The press a view of a page handed over as it made its group live
   // (PagePane's {edit: {id, clickPos}}): the editor of that note opening
   // on the page takes it (BlockTree's takeClickPos), so the caret lands
@@ -7226,7 +7233,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!pdfUrl || pdfRenderedUrlRef.current !== pdfUrl) return;
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
     if (focusedBlockId && scroller) {
-      tabScrollRef.current[focusedBlockId] = { top: scroller.scrollTop, left: scroller.scrollLeft, scale: pdfEffScale };
+      tabScrollRef.current[focusedBlockId] = { top: scroller.scrollTop, left: scroller.scrollLeft, scale: pdfEffScale, flow: pdfFlow };
     }
   }
   function cancelPdfRestore() {
@@ -7260,7 +7267,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // stable for two ticks (pages get real heights asynchronously). The jump
   // itself is instant, after the new document is visible.
   function restorePdfScroll(entry, blockId, targetUrl) {
-    if (entry?.top == null || !targetUrl) return;
+    if (entry?.top == null || !targetUrl || !inThisFlow(entry)) return;
     dbg("exact restore: pending for", blockId, "top", Math.round(entry.top));
     const token = ++restoreTokenRef.current;
     restoringForRef.current = blockId || null;
@@ -7269,23 +7276,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // fallback (already-rendered documents, layout not tall enough yet).
     pendingRestoreRef.current = { url: targetUrl, entry, blockId, token };
     let tries = 0;
-    let lastH = -1;
+    let lastH = "";
     const finish = () => { if (restoringForRef.current === blockId) restoringForRef.current = null; };
     const tryScroll = () => {
       if (restoreTokenRef.current !== token) { dbg("exact restore: superseded by navigation"); return; }
       if (pdfRenderedUrlRef.current === targetUrl) {
         const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
-        const h = scroller ? scroller.scrollHeight : 0;
+        const h = scroller ? scroller.scrollHeight : 0, w = scroller ? scroller.scrollWidth : 0;
         const ratio = (pdfEffScaleRef.current || entry.scale || 1) / (entry.scale || 1);
         const targetTop = entry.top * ratio;
-        if (scroller && h > targetTop && h === lastH) {
+        // the extent both ways, which pages that run across grow sideways
+        const extent = `${w}x${h}`;
+        if (scroller && h > targetTop && w > (entry.left || 0) * ratio && extent === lastH) {
           scroller.scrollTo({ top: targetTop, ...(entry.left != null ? { left: entry.left * ratio } : null), behavior: "instant" });
           pendingRestoreRef.current = null;
           dbg("exact restore: applied, top", Math.round(targetTop));
           finish();
           return;
         }
-        lastH = h;
+        lastH = extent;
         // Only the settle-after-render window is budgeted; waiting for the
         // document itself is uncounted (same reasoning as the coarse
         // restore: a big PDF on a slow load outlives any fixed budget, and
@@ -7312,7 +7321,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       blockId: focusedBlockId || null,
       folder: folderFilter,
       top: scroller ? scroller.scrollTop : null,
+      left: scroller ? scroller.scrollLeft : null,
       scale: pdfEffScale,
+      flow: pdfFlow,
       place: ownPane ? tabScrollRef.current[focusedBlockId] || null : null,
     };
   }
@@ -8218,6 +8229,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // pane's word for the View menu and the phone tab ("PDF" before a PDF has
   // its address).
   const ownPane = !!docView.viewer && !docView.spec?.host;
+  // A PDF whose pages run across (Settings → Reading › PDFs › Page
+  // direction) fits a whole page into the viewer, not its width.
+  const fitsPage = pdfFlow === "across" && docView.viewer === "pdf" && !docView.notebook;
   const paneWord = docView.spec ? t(docView.spec.word) : "PDF";
 
   // --- Handwriting ----------------------------------------------------------
@@ -8394,7 +8408,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const position = tb || pic ? { pageNumber: b.properties.pdf_page } : b.properties.pdf_position;
     const wasHidden = pdfHidden;
     if (wasHidden) setPdfHidden(false);
-    setTimeout(() => scrollToRef.current?.({ position, box: tb || (pic ? { y: box[1] } : undefined), offset: 120 }), wasHidden ? 300 : 0);
+    setTimeout(() => scrollToRef.current?.({ position, box: tb || (pic ? { x: box[0], y: box[1] } : undefined), offset: 120 }), wasHidden ? 300 : 0);
     flash();
   }
   function showInNotes(id) {
@@ -8820,7 +8834,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function zoomTo(next) {
     if (next === "page-width") {
       setPdfScale("page-width");
-      postPill("pdf-zoom", { msg: t("Fit to width"), final: true });
+      postPill("pdf-zoom", { msg: fitsPage ? t("Fit page") : t("Fit to width"), final: true });
       return;
     }
     const s = clampZoom(next);
@@ -10366,7 +10380,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const fid = focusedBlockIdRef.current;
     // Tab switches restore an exact per-page position (tabScrollRef) — the
     // coarse last-read page is only for (re)opening a paper cold.
-    if (tabScrollRef.current[fid]) { dbg("restore: exact tab position exists for", fid); return; }
+    if (inThisFlow(tabScrollRef.current[fid])) { dbg("restore: exact tab position exists for", fid); return; }
     dbg("restore: waiting for doc;", fid, "entry:", readPosRef.current[fid] || null);
     coarseRestorePendingRef.current = true;
     let cancelled = false;
@@ -10413,9 +10427,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // computed before the fit-width scale applies, and late page-height
       // measurements shift the layout under the set scrollTop, either of
       // which leaves the viewport a page off. So verify against the live
-      // DOM: the target page's top must sit at the viewport top (+80px, the
-      // viewer's own jump offset), re-asserting until that holds for two
-      // ticks. Real user input (wheel/touch/scrollbar grab) hands control
+      // DOM: the target page must stand where the viewer's own jump puts it
+      // (its top 80px under the viewport top, or across, its left edge 80px
+      // in or the page in the middle; pageLanded), re-asserting until that
+      // holds for two ticks. Real user input (wheel/touch/scrollbar grab) hands control
       // over instead of being fought, and the tracker stays paused until
       // done(), so no transient position is ever recorded.
       let stable = 0, settleTries = 0, userTookOver = false, inputEl = null;
@@ -10435,15 +10450,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           inputEl = scroller;
           for (const ev of INPUT_EVS) inputEl.addEventListener(ev, onUserInput, { passive: true });
         }
+        // A page near the end of the document can't reach its place — the
+        // clamped end-of-document position is as good as it gets.
         const pageEl = scroller.querySelector(`[data-page="${saved}"]`);
-        const off = pageEl
-          ? pageEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-          : null;
-        // A page near the end of the document can't reach the viewport top —
-        // the clamped bottom-of-document position is as good as it gets.
-        const atEnd = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
-        const aligned = off != null && (Math.abs(off - 80) <= 150 || (atEnd && off <= 80));
-        if (aligned) {
+        if (pageEl && pageLanded(scroller, pageEl)) {
           if (++stable >= 2) { dbg("restore: settled at page", saved); unhookInput(); done(); return; }
         } else {
           stable = 0;
@@ -10477,19 +10487,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (!target.isConnected) return;
         const pages = target.querySelectorAll('[data-page]');
         if (pages.length === 0) return;
-        const cr = target.getBoundingClientRect();
-        const midY = cr.top + cr.height / 2;
-        // The pages are stacked top to bottom: a binary search over their
-        // boxes finds the one under the middle of the view in a few layout
-        // reads instead of one per page above it.
-        let lo = 0, hi = pages.length - 1, found = null;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          const r = pages[mid].getBoundingClientRect();
-          if (r.bottom < midY) lo = mid + 1;
-          else if (r.top > midY) hi = mid - 1;
-          else { found = pages[mid]; break; }
-        }
+        // the page under the middle of the view, down or across
+        const found = pageInMiddle(target, pages);
         const n = found ? parseInt(found.dataset.page) : 0;
         if (!n) return;
         // Every scroll records, within one page too: that re-asserts this
@@ -10540,10 +10539,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   paneFnsRef.current = { onFetchRefs, onCacheRef };
   const paneShared = useMemo(() => ({
     refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages: pageBlocks,
-    textScaleStyle: notesTextScale.style, darkPage: pdfDarkPage, hideEmbeddedAnnots: embAnnots === "hide",
+    textScaleStyle: notesTextScale.style, darkPage: pdfDarkPage, hideEmbeddedAnnots: embAnnots === "hide", pageFlow: pdfFlow,
     canWrite: !readOnly, labels: !shareMode,
     onFetchRefs: (...a) => paneFnsRef.current.onFetchRefs(...a), onCacheRef: (...a) => paneFnsRef.current.onCacheRef(...a),
-  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, readOnly, shareMode]);
+  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, pdfFlow, readOnly, shareMode]);
 
   // A share link that can't open yet: sign in (signed-in / specific-people
   // shares), or explain why not. "signin" is the blocked page's own sign-in,
@@ -12857,7 +12856,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   );
 
   // Where each of the topbar's items goes (app/topbarItems.js, Settings →
-  // Appearance › Top bar), in the order the user gave them: on the bar, or
+  // Toolbars › Top bar), in the order the user gave them: on the bar, or
   // a row of the account menu — the phone's More sheet, where Background
   // tasks, the Inbox and the View menu always go (the bottom bar keeps Add,
   // Search, a page's Share and the sync pill). An item off the bar keeps
@@ -13299,7 +13298,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   ) : null);
 
   // The viewer's side strip, the PDF's and the notebook's (app/viewerToolItems.js,
-  // Settings → Appearance › Viewer tools): its tools in the user's order,
+  // Settings → Toolbars › Viewer tools): its tools in the user's order,
   // each on the strip or a row of the ⋯ menu at its end. A tool that does
   // not apply here is in neither: Paper and Notes view are a notebook's,
   // Translate a PDF's outside a share, the selection mode a touch screen's,
@@ -13532,7 +13531,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
   const toolsMore = docView.shown && stripMenuTools.length > 0;
   // Each tool's button on the strip, by id: zoom is its three buttons,
-  // kept together (the tour points at them).
+  // kept together (the tour points at them). Its fit is the width's, or a
+  // whole page's while a PDF's pages run across (PdfViewer's fitScale).
+  const FitIcon = fitsPage ? FitPageIcon : FitWidthIcon;
+  const fitLabel = fitsPage ? t("Fit page") : t("Fit to width");
   const viewerTool = {
     zoom: () => (
       <div className="pdfCtlGroup" data-guide="viewer.zoom">
@@ -13542,8 +13544,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
           <ZoomInIcon size={16} />
         </button>
-        <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
-          <FitWidthIcon size={16} />
+        <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={fitLabel} aria-label={fitLabel}>
+          <FitIcon size={16} />
         </button>
       </div>
     ),
@@ -13649,7 +13651,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     zoom: () => [
       <MenuItem key="zoomOut" icon={ZoomOutIcon} onClick={stripRow(() => zoomStep(-1))}>{t("Zoom out")}</MenuItem>,
       <MenuItem key="zoomIn" icon={ZoomInIcon} onClick={stripRow(() => zoomStep(1))}>{t("Zoom in")}</MenuItem>,
-      <MenuItem key="fit" icon={FitWidthIcon} onClick={stripRow(() => zoomTo("page-width"))}>{t("Fit to width")}</MenuItem>,
+      <MenuItem key="fit" icon={FitIcon} onClick={stripRow(() => zoomTo("page-width"))}>{fitLabel}</MenuItem>,
     ],
     ink: () => <MenuItem key="ink" icon={PenIcon} onClick={stripRow(openInkTools)}>{t("Handwriting tools")}</MenuItem>,
     record: () => (
@@ -13677,7 +13679,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ),
   };
   // A right-click or a held finger on a bar's own background offers its
-  // Customize… row (Settings → Appearance at the bar's section). `pane` is
+  // Customize… row (Settings → Toolbars at the bar's section). `pane` is
   // the Settings target; `space(el)` says whether the press landed on the
   // bar itself. A control's own menu answers first, and what a portal of
   // the bar's shows (a popover's menu) is not the bar. The bar is no
@@ -14155,6 +14157,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               citation={pageTarget?.kind === "citation" && pageTarget.pageId === focusedBlockId ? pageTarget : null}
               hideEmbeddedAnnots={embAnnots === "hide"}
               smoothWheel={smoothWheel}
+              pageFlow={pdfFlow}
               onPageInView={onPageInView}
               zoomHeight={appPrefs.inkZoomHeight} onZoomHeight={appPrefs.setInkZoomHeight} onZoomChange={changeInkZoom}
               darkPage={pdfDarkPage}
@@ -14659,6 +14662,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setEmbAnnots,
           smoothWheel,
           setSmoothWheel,
+          pdfFlow,
+          setPdfFlow,
           // the server's relocate-highlights run reads these from the profile
           relocateMinMatch: appPrefs.relocateMinMatch,
           setRelocateMinMatch: appPrefs.setRelocateMinMatch,

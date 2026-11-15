@@ -1,5 +1,5 @@
 // The viewer's side strip (the PDF's and the notebook's, Settings →
-// Appearance › Viewer tools): its configurable items in the strip's
+// Toolbars › Viewer tools): its configurable items in the strip's
 // default order. Pure (no React, no DOM), so node tests it
 // (tests/viewerToolItems.test.mjs): App places the strip's buttons with
 // VIEWER_TOOLS.place, the pane draws one row per item and drags them into
@@ -50,7 +50,7 @@ export const VIEWER_TOOL_ITEMS = Object.freeze([
   },
   {
     id: "highlighter", label: T("Text highlighter buttons"),
-    hint: T("A button per highlighter on the strip (Appearance › Text highlighters); with one on, what you select in a PDF or a text file is marked at once in its style and colour."),
+    hint: T("A button per highlighter on the strip (Text highlighters, below); with one on, what you select in a PDF or a text file is marked at once in its style and colour."),
     keywords: "highlight marker colour color select text quick preset underline wavy squiggly strikethrough definition question copy duplicate",
     modes: ["always", "hidden"],
   },
