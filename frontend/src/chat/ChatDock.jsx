@@ -60,9 +60,10 @@ import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { UsageRing } from "../shared/ui/UsageRing";
 import { showInChat, useChatAgent, useChatShown } from "./computer/chatSide.js";
 import {
-  computerExportPath, computerHistory, deleteComputerChat, newComputerChat, openComputerChat, useComputerSide,
+  computerExportPath, computerHistory, computerSessions, deleteComputerChat, newComputerChat, openComputerChat,
+  openComputerSession, useComputerSide,
 } from "./computer/useComputerChat.js";
-import { historyRows, sourceNote } from "./computer/computerChat.js";
+import { historyRows, sessionRows, sessionsAway, sessionsDir, sourceNote } from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
 import AgentChip, { agentIcon } from "./AgentChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
@@ -852,6 +853,38 @@ export default function ChatDock({
   useEffect(() => { setHistoryRead(""); }, [agent?.id, side.chat.conversation?.id]);
   // The selection belongs to the open popover: closing it drops the ticks.
   useEffect(() => { if (!historyOpen) setPicked(new Set()); }, [historyOpen]);
+  // History's "On {computer}": the sessions the picked agent's CLI keeps of
+  // the directory it works in on its computer, this one or another of the
+  // reader's (asked there over its channel), started in a terminal or an
+  // editor (computerChat.js sessionsDir; none for a co-author's agent or a
+  // conversation shown in place of the bucket's own), read again each time
+  // History opens, since they change outside Gamma, and never while it is
+  // closed (`sessionsList`: {key, sessions, error, away}, `sessions` null
+  // while read, `away` why another computer answered nothing:
+  // sessionsAway).
+  const sessionsAt = onComputer && !side.shown ? sessionsDir(side.info, side.place) : "";
+  const sessionsKey = sessionsAt ? `${agent.id}\n${sessionsAt}` : "";
+  const [sessionsList, setSessionsList] = useState({ key: "", sessions: null, error: "", away: "" });
+  const [sessionsAsked, setSessionsAsked] = useState(0); // a read asked again (an open that failed)
+  const [openingSession, setOpeningSession] = useState(false); // a session's open on its way: one at a time
+  const openingSessionRef = useRef(false);
+  useEffect(() => {
+    if (!historyOpen || !sessionsKey) return undefined;
+    let cancelled = false;
+    setSessionsList({ key: sessionsKey, sessions: null, error: "", away: "" });
+    const [name, dir] = sessionsKey.split("\n");
+    computerSessions(name, dir)
+      .then((data) => {
+        if (!cancelled) setSessionsList({ key: sessionsKey, sessions: data.sessions || [], error: "", away: data.away || "" });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSessionsList({ key: sessionsKey, sessions: [], away: "",
+            error: t("Couldn't list the sessions: {message}", { message: err.message }) });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [historyOpen, sessionsKey, sessionsAsked]);
   const togglePicked = (id) => setPicked((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -1002,6 +1035,31 @@ export default function ChatDock({
     chatStickRef.current = true;
     if (agent?.id === row.agent || (agent?.agentId && agent.agentId === row.agent)) side.chat.reload();
     else setWanted(row.agent);
+  }
+
+  // A session of "On {computer}" opened: the bucket's active conversation
+  // now (the server's: its turns read, bound to the session), shown as an
+  // opened History row is; one Gamma continues already is that conversation.
+  // One at a time: a second open of the same session would bind it twice.
+  async function openSession(row) {
+    if (openingSessionRef.current) return;
+    const [name, dir] = sessionsKey.split("\n");
+    openingSessionRef.current = true;
+    setOpeningSession(true);
+    try {
+      await openComputerSession({ bucket: chatKey, agent: name, dir, session: row.id });
+    } catch (err) {
+      setStatus(t("Couldn't open the session: {message}", { message: err.message }));
+      setSessionsAsked((n) => n + 1);
+      return;
+    } finally {
+      openingSessionRef.current = false;
+      setOpeningSession(false);
+    }
+    setOpenPopover(null);
+    setHistoryRead("");
+    chatStickRef.current = true;
+    side.chat.reload();
   }
 
   // A History row's conversation as a file to keep: Gamma AI's (the one
@@ -1841,6 +1899,19 @@ export default function ChatDock({
   // server would refuse.
   const waits = (row) => (!row.current && !row.lent && row.agent !== GAMMA && side.working
     ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: side.label }) : "");
+  const listedSessions = sessionsKey && sessionsList.key === sessionsKey ? sessionsList
+    : { sessions: null, error: "", away: "" };
+  const computerName = side.where || String(localAgents?.computer || "");
+  const sessionsSection = sessionsKey ? {
+    label: computerName ? t("On {computer}", { computer: computerName }) : t("On this computer"),
+    rows: matchRows(sessionRows(listedSessions.sessions, side.label), historyQuery),
+    loading: listedSessions.sessions == null, onOpen: openSession,
+    error: listedSessions.error || sessionsAway(listedSessions.away, computerName),
+    disabledReason: (row) => row.busy || (side.working
+      ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: side.label })
+      : picked.size > 0 ? t("Clear the selection to open a session")
+      : openingSession ? t("Opening the session…") : ""),
+  } : null;
   const historyAction = canSave && {
     id: "history", icon: HistoryIcon, label: t("Chat history"), guide: "chat.history", keep: 2, open: historyOpen,
     title: t("Chat history — earlier conversations of {scope}", { scope: folderChat ? t("this folder") : t("this page") }),
@@ -1848,7 +1919,7 @@ export default function ChatDock({
     popover: { name: "chathistory", content: historyOpen ? (
       <ChatHistoryPop query={historyQuery} onQuery={setHistoryQuery} onClose={() => setOpenPopover(null)}
         rows={historyList} loading={history == null} picking={picked.size > 0}
-        onOpen={pickOrOpen} disabledReason={waits}
+        onOpen={pickOrOpen} disabledReason={waits} section={sessionsSection}
         icon={agentList.length > 1 ? (s) => agentIcon(s.agent) : undefined}
         tip={(s) => `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
         lead={(s) => (s.active || s.current || s.lent ? null : (

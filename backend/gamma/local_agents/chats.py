@@ -37,6 +37,14 @@ above every version of the bucket's conversations of that account, and
 never below the clock (``_next_version``), so a client that polls with the
 version it holds learns of any change, an opened conversation's included.
 
+A conversation can also begin as a session its agent's CLI keeps, started
+in a terminal or an editor (gamma/local_agents/sessions.py), on this
+computer or on another one of the reader's (gamma/computers/sessions.py):
+``adopt`` writes the session's turns as its first messages (each
+``from_session``, the CLI's own history, which no turn's prompt repeats,
+``earlier_of``), and the session is bound to it where its agent runs, so
+its next turn resumes that session.
+
 These are not the AI chats (gamma/routers/chats.py): no member, share,
 export, backup, mirror or read_chats reads them (ws_backup.PRIVATE_TABLES),
 they go with their page deleted for good (ops._purge), and a deleted
@@ -128,6 +136,32 @@ def own_dir(ws: str, conversation_id: str) -> Path:
     return config.AGENTS_DIR / ws / conversation_id
 
 
+def _keeping(ws: str, w: str, user_id: str) -> list[dict]:
+    """The vaults here that keep the work folder ``w`` of ``ws``, the ones
+    ``user_id`` made first."""
+    from .. import folder_links  # local: folder_links imports this package's modules inside functions
+
+    links = [link for link in folder_links.all_links() if link["workspace_id"] == ws
+             and link["folder_id"] == w and folder_links.work_folder_link(link)]
+    links.sort(key=lambda link: link["created_by"] != user_id)
+    return links
+
+
+def place_named(ws: str, user_id: str, dir: str) -> dict | None:
+    """The directory ``dir`` names as the chat's picker does, where the
+    account's agent works and keeps sessions of its CLI's
+    (gamma/local_agents/sessions.py): a work folder's id (W) whose vault here
+    the account made, or a directory this computer offers its agents
+    (``store.dirs``) → ``{kind: vault | offered, dir, path, link}``; None for
+    any other (a vault another account made is its maker's to name, as the
+    terminal's is; a directory of its own holds Gamma's alone)."""
+    offered = next((entry for entry in store.dirs() if entry["id"] == dir), None) if dir else None
+    if offered is not None:
+        return {"kind": "offered", "dir": offered["id"], "path": offered["path"], "link": None}
+    links = [link for link in _keeping(ws, dir, user_id) if link["created_by"] == user_id] if dir else []
+    return {"kind": "vault", "dir": dir, "path": links[0]["path"], "link": links[0]} if links else None
+
+
 def place_of(ws: str, bucket: str, user_id: str, dir: str = "", conversation_id: str = "") -> dict | None:
     """Where ``user_id``'s agent works for a conversation of ``bucket`` that
     names ``dir`` (decision 14 of docs/research/agents-as-participants-plan.md),
@@ -160,9 +194,7 @@ def place_of(ws: str, bucket: str, user_id: str, dir: str = "", conversation_id:
         return None
     mine = store.agent_for(user_id) is not None
     if found["w"]:
-        links = [link for link in folder_links.all_links() if link["workspace_id"] == ws
-                 and link["folder_id"] == found["w"] and folder_links.work_folder_link(link)]
-        links.sort(key=lambda link: link["created_by"] != user_id)
+        links = _keeping(ws, found["w"], user_id)
         if links and (mine or links[0]["created_by"] == user_id or store.lent_to(ws, user_id)):
             return {"kind": "vault", "dir": found["w"], "path": links[0]["path"],
                     "name": found["work_folder"] or folder_links.dest_of(links[0]).name, "link": links[0],
@@ -349,6 +381,16 @@ def title_of(text: str) -> str:
     return line if len(line) <= TITLE_CHARS else line[:TITLE_CHARS - 1] + "…"
 
 
+def earlier_of(messages: list[dict], at: int, person: dict) -> list[dict]:
+    """The conversation's last ``EARLIER`` messages before the turn's
+    (``at``), the person's own aside, as the prompt takes them: ``{role:
+    owner | agent, text}``; never one read from the CLI's session
+    (``from_session``, its own history: ``adopt``)."""
+    return [{"role": "owner" if m.get("role") == "user" else "agent", "text": m.get("text") or ""}
+            for m in messages[:at] if m is not person and not m.get("from_session")
+            and (m.get("text") or "").strip()][-EARLIER:]
+
+
 def _turn_of(conversation: dict, message_id: str) -> dict | None:
     """The agent's message that answers the person's message
     ``message_id``, None when the conversation has none."""
@@ -406,15 +448,8 @@ def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: 
             _archive(conn, conversation)
             conversation = None
         if conversation is None:
-            conversation = {"id": new_block_id(), "bucket": bucket, "dir": dir, "user_id": user_id, "agent": agent,
-                            "title": title_of(text), "messages": [], "version": 0, "created_at": now,
-                            "updated_at": now, "archived_at": None, "thread_id": thread_id, "owner": owner,
-                            "computer": computer_id}
-            conn.execute("INSERT INTO computer_chats (id, bucket, dir, user_id, agent, title, messages, version, "
-                         "created_at, updated_at, thread_id, owner, computer) "
-                         "VALUES (?, ?, ?, ?, ?, ?, '[]', 0, ?, ?, ?, ?, ?)",
-                         (conversation["id"], bucket, dir, user_id, agent, conversation["title"], now, now, thread_id,
-                          owner, computer_id))
+            conversation = _insert(conn, bucket=bucket, dir=dir, user_id=user_id, agent=agent, title=title_of(text),
+                                   now=now, thread_id=thread_id, owner=owner, computer=computer_id)
             opener = get(conn, resume) if resume and thread_id else None
             session = store.conversation_of(resume) if opener is not None else None
             if (session is not None and busy(opener) is None and opener["user_id"] == user_id
@@ -440,6 +475,61 @@ def begin(ws: str, *, bucket: str, dir: str, user_id: str, link_id: str, agent: 
         store.add_turn(turn_id, ws=ws, link_id=link_id, conversation_id=conversation["id"], page_id=bucket,
                        agent=agent)
     return conversation, reply, True
+
+
+def _insert(conn, *, bucket: str, dir: str, user_id: str, agent: str, title: str, now: str, owner: str,
+            thread_id: str = "", computer: str = "", conversation_id: str = "") -> dict:
+    """A conversation begun, with no messages yet, of the id
+    ``conversation_id`` ("" for a new one) → it as written. Inside the
+    caller's write lock."""
+    conversation = {"id": conversation_id or new_block_id(), "bucket": bucket, "dir": dir, "user_id": user_id,
+                    "agent": agent,
+                    "title": title, "messages": [], "version": 0, "created_at": now, "updated_at": now,
+                    "archived_at": None, "thread_id": thread_id, "owner": owner, "computer": computer}
+    conn.execute("INSERT INTO computer_chats (id, bucket, dir, user_id, agent, title, messages, version, created_at, "
+                 "updated_at, thread_id, owner, computer) VALUES (?, ?, ?, ?, ?, ?, '[]', 0, ?, ?, ?, ?, ?)",
+                 (conversation["id"], bucket, dir, user_id, agent, title, now, now, thread_id, owner, computer))
+    return conversation
+
+
+def adopt(ws: str, *, bucket: str, dir: str, user_id: str, agent: str, label: str, title: str, messages: list[dict],
+          conversation_id: str = "", computer: str = "") -> dict:
+    """A session the agent's CLI keeps, opened: a new conversation of the
+    bucket for the account (of the id ``conversation_id``, "" for a new
+    one), its agent's own (``dir`` where it works, as ``place_of`` keeps
+    it, or ``far_dir`` for the agent of another computer, ``computer``),
+    titled ``title``, holding ``messages`` (gamma/local_agents/sessions.py
+    ``messages``), the bucket's active one archived → the conversation,
+    which the caller binds to the session (``store.ran_conversation``; for
+    another computer's, that computer did when it read the session), so its
+    next turn resumes it. ChatError 409 while the active one's turn is
+    queued or running."""
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        current = active(conn, bucket, user_id)
+        if busy(current) is not None:
+            raise ChatError(409, f"{label} is still working: stop it first.")
+        _archive(conn, current)
+        conversation = _insert(conn, bucket=bucket, dir=dir, user_id=user_id, agent=agent, title=title or label,
+                               now=page_now(), owner=user_id, computer=computer, conversation_id=conversation_id)
+        return _save(conn, conversation, messages)
+
+
+def titles(ws: str, conversation_ids: list[str], *, user_id: str = "", computer: str = "",
+           agent: str = "") -> dict[str, str]:
+    """The titles of the conversations of ``ws`` among ``conversation_ids``,
+    by id; with ``user_id``, of that account's with the agent ``agent`` of
+    the computer ``computer`` alone (a far conversation's: "" this
+    server's own)."""
+    if not conversation_ids:
+        return {}
+    where, args = "", ()
+    if user_id:
+        where, args = " AND user_id = ? AND computer = ? AND agent = ?", (user_id, computer, agent)
+    with connect_pages_db(ws) as conn:
+        rows = conn.execute("SELECT id, title FROM computer_chats WHERE id IN (SELECT value FROM json_each(?))"
+                            + where, (json.dumps(sorted(set(conversation_ids))), *args)).fetchall()
+    return dict(rows)
 
 
 def write_reply(ws: str, conversation_id: str, turn_id: str, fields: dict) -> bool:
@@ -951,8 +1041,7 @@ def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str,
             reply = {**reply, "state": "running"}
             _save(conn, conversation, [*messages[:at], reply, *messages[at + 1:]])
         person = next((m for m in reversed(messages[:at]) if m.get("role") == "user"), None) or {}
-        earlier = [{"role": "owner" if m.get("role") == "user" else "agent", "text": m.get("text") or ""}
-                   for m in messages[:at] if m is not person and (m.get("text") or "").strip()][-EARLIER:]
+        earlier = earlier_of(messages, at, person)
         thread = threads.entry_of(ws, conn, conversation["thread_id"], places=True) if conversation["thread_id"] else None
     with connect_users_db() as users:
         username = account_names(users, {row["user_id"]}).get(row["user_id"], "")

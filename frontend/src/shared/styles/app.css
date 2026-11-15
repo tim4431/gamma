@@ -3852,6 +3852,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistBy { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-size: var(--fs-2xs); color: var(--text-dim); }
 .chatHistAge { flex: none; font-size: var(--fs-2xs); color: var(--text-dim); padding-right: 4px; }
+/* A section under the conversations (the sessions the agent's CLI keeps
+   on its computer, "On TIM-PC"): its caption the shared .popoverSection,
+   in line with the rows' titles. */
+.chatHistList .popoverSection { padding: var(--space-4) 8px var(--space-1); }
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }
 /* Deleting several at once: a row menu's Select ticks the first, and every

@@ -180,6 +180,17 @@ active conversation) and `/api/chat-history` (the archive).
   are greyed, with why in their title. Rename is Gamma AI's; Export, Select
   and Delete (`DELETE /api/local-agents/chat/history/{id}`) work on either,
   and a bulk Delete sends each to its own table.
+- **Sessions started elsewhere.** With a computer's agent picked (this
+  computer's, or another computer's of the reader's, asked over its
+  channel), History lists under *On {computer}* the sessions its CLI keeps
+  of the directory it works in, started in a terminal or an editor (`GET
+  /api/local-agents/sessions`, read each time the popover opens), in the
+  same rows: title, time, what it was started from or *In Gamma*, a busy
+  one greyed with why (and every row while conversations are ticked or an
+  open is on its way); another computer offline, too old to be asked or
+  not answering yet says so in place of the rows. A row opens it as the bucket's conversation, whose
+  next turn resumes the session ([local_agents.md](local_agents.md)
+  "Sessions started elsewhere").
 - History follows its bucket: a folder delete moves its entries into
   `home`'s with the active rows, and `ops.delete_page` drops the active row
   and the entries of a page deleted for good, in the deleting transaction

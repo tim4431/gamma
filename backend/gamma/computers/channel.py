@@ -59,6 +59,15 @@ chat's model chip and checks a turn's against. Each announce that succeeds
 fails there the turns of this channel left open while that server was not
 reached (``_settle``).
 
+That server asks of the sessions of this computer's agents too (step 5 of
+the plan: History's *On {computer}* there): woken ``{wake: ["sessions"]}``,
+the thread takes the asks (``_sessions``) and answers each in a thread of
+its own (``_answer_session``, gamma/local_agents/sessions.py
+``answer_far``): the sessions of a directory named by an id, and one's
+turns to open it there, whose conversation is then the session's here. The
+announce says it answers them (``sessions``); a release before this step
+never does.
+
 A work folder of that server detached there (gamma/work_folders/detach.py)
 wakes the poll with ``{wake: ["let_go"]}``: each work folder of that server
 kept here has a round at once (``_let_go``), which finds the mark gone and
@@ -96,6 +105,7 @@ CHATS_EVERY_S = 180      # the turns that wait there are asked for at least this
 MAX_MODELS = 32          # models an assistant's announce names
 _TURN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a chat turn's id there (``blocks_store.new_block_id``'s)
 _ANSWER = ("id", "run", "ask", "decision")        # an answer's fields there (``chats.answers_of``), and its note
+_ASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")    # an ask's id there (gamma/computers/sessions.py)
 STATES = ("connecting", "connected", "refused", "older", "unreachable")
 
 _COLS = ("id, remote_url, workspace_id, created_by, token, token_id, account, username, created_at, status, asks, "
@@ -350,9 +360,11 @@ def state_of(link: dict) -> dict:
     whether it is on for the channel's account (``assistants``): that
     server offers them to that account on its buckets
     (gamma/computers/registry.py), whether that server may answer what
-    they ask (``asks``, the link's), and the directories offered them
-    (``dirs``, ``offered``). A work folder's vault also names its agent
-    (``agent``) for an older server, which reads it from there."""
+    they ask (``asks``, the link's), the directories offered them
+    (``dirs``, ``offered``), and that it answers what that server asks of
+    its agents' sessions (``sessions``, ``_sessions``). A work folder's
+    vault also names its agent (``agent``) for an older server, which reads
+    it from there."""
     vaults, agents = [], agent_folders(link)
     for vault in vaults_of(link):
         key, target = ("folder_id", vault["folder_id"]) if vault["kind"] == "folder" else ("page_id", vault["page_id"])
@@ -361,7 +373,7 @@ def state_of(link: dict) -> dict:
             vaults[-1]["agent"] = agents[vault["folder_id"]][1]
     return {"computer": {"id": computer_id(link["remote_url"]), "name": computer_name()},
             "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link),
-            "asks": bool(link.get("asks")), "dirs": offered(link)}
+            "asks": bool(link.get("asks")), "dirs": offered(link), "sessions": True}
 
 
 def offered(link: dict) -> list[dict]:
@@ -488,6 +500,8 @@ class _Channel:
                 self._chats(server, link)
             if "let_go" in got["wake"]:
                 self._let_go(link)
+            if "sessions" in got["wake"]:
+                self._sessions(server, link)
         # A poll answered at once (nothing, or announce again: a server that always asks so) rests a moment.
         return max(0.0, QUICK_S - (time.monotonic() - started))
 
@@ -554,6 +568,26 @@ class _Channel:
         except Exception:  # noqa: BLE001 — a chat turn never stops the channel
             log.exception(f"[computers] queueing the chat turns of channel {link['id']}")
 
+    def _sessions(self, server: gamma_sync.Server, link: dict) -> None:
+        """What that server asks of the sessions of this computer's agents
+        (``{wake: ["sessions"]}``: ``GET /api/computers/sessions``,
+        History's *On {computer}* there), each answered in a thread of its
+        own (``_answer_session``), so a slow listing never holds the poll.
+        Nothing where agents do not run; never raises."""
+        from .. import local_agents
+
+        if not local_agents.enabled():
+            return
+        try:
+            got = _call(server, "GET", "/api/computers/sessions")
+        except gamma_sync.SyncError as e:
+            log.info(f"[computers] the session asks of channel {link['id']}: {e}")
+            return
+        for ask in got.get("asks") if isinstance(got.get("asks"), list) else []:
+            if isinstance(ask, dict) and isinstance(ask.get("id"), str) and _ASK_ID.match(ask["id"]):
+                threading.Thread(target=_answer_session, args=(link["id"], ask), daemon=True,
+                                 name=f"computer-sessions-{link['id'][:8]}").start()
+
     def _let_go(self, link: dict) -> None:
         """That server detached a work folder a vault here keeps (``{wake:
         ["let_go"]}``): each work folder of that server kept here, unless
@@ -606,6 +640,28 @@ class _Channel:
             with connect_users_db() as conn:
                 conn.execute("UPDATE computer_links SET account = ?, username = ?, workspace_name = ? WHERE id = ?",
                              (*found, link["id"]))
+
+
+def _answer_session(link_id: str, ask: dict) -> None:
+    """This computer's answer to an ask of its channel ``link_id``'s server
+    of its agent's sessions (gamma/local_agents/sessions.py ``answer_far``:
+    for the channel's account alone, in a directory named by an id),
+    written there (``POST /api/computers/sessions/{id}``). Never raises."""
+    from ..local_agents import sessions
+
+    link = get(link_id, with_token=True)
+    if link is None or not link["token"]:
+        return
+    try:
+        answer = sessions.answer_far(link, ask)
+    except Exception:  # noqa: BLE001 — that server is told, and the channel goes on
+        log.exception(f"[computers] answering a session ask of channel {link_id}")
+        answer = {"error": "This computer could not read its sessions.", "status": 409}
+    server = gamma_sync.Server(link["remote_url"], link["token"], timeout=folder_links.ASK_TIMEOUT_S)
+    try:
+        _call(server, "POST", f"/api/computers/sessions/{ask['id']}", answer)
+    except gamma_sync.SyncError as e:
+        log.info(f"[computers] the answer to a session ask of channel {link_id}: {e}")
 
 
 _channels: dict[str, _Channel] = {}

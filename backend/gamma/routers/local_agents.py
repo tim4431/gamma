@@ -9,8 +9,12 @@ conversation with the person's agent (a page's, a folder's, the library's
 ``home``), where the agent works (the work folder's vault, an offered
 directory, one of its own: ``chats.place_of``), its turns, the answers to
 what they ask, Stop, New chat and History, the command line the desktop
-shell opens the conversation with in a terminal, and the source lines of
-the composer's selections. Only a server that runs agents answers
+shell opens the conversation with in a terminal, the source lines of the
+composer's selections, and the CLI's own sessions of the directory the
+agent works in (``/sessions``: those started in a terminal or an editor,
+History's *On this computer*, opened as a conversation whose next turn
+resumes the session; gamma/local_agents/sessions.py), the agent's owner
+alone. Only a server that runs agents answers
 (``local_agents.enabled``) for its own vaults; any other answers 404, but
 for the listing, which says it runs none (``here`` false). A
 signed-in account's session only: an integration token and the guest are
@@ -31,7 +35,9 @@ What such a turn asks is answered on that computer and, where it lets this
 server answer (step 4.3 of the plan), here too: kept with the turn's run
 for the computer to take (``chats.answer_run``), allowed once or declined;
 the terminal and the selections' source lines are the computer's own (404,
-nulls).
+nulls). The sessions its CLI keeps there (``/sessions``) are asked of that
+computer over its channel, for its own account alone
+(gamma/computers/sessions.py).
 
 A co-author (decision 13 of docs/research/agents-as-participants-plan.md):
 the owner of an agent here names, with the shell's word, the people of a
@@ -76,6 +82,7 @@ FRESH_EVERY_S = 10   # a re-probe asked for runs at most this often on this serv
 
 _fresh_lock = threading.Lock()
 _fresh_at = 0.0       # when the last re-probe asked for began (monotonic)
+_opening = threading.Lock()   # one session opened at a time here: two at once would both bind it
 
 
 class AgentPatch(BaseModel):
@@ -1091,6 +1098,298 @@ def _session_of(place: dict, cwd: str, name: str | None, conversation: dict | No
             or not events.SESSION.match(ran["session"] or "")):
         return ""
     return ran["session"]
+
+
+# --- the CLI's own sessions --------------------------------------------------------------------
+
+class SessionBody(BaseModel):
+    bucket: str
+    agent: str = Field(max_length=160)   # as a turn names it (``TurnBody.agent``)
+    dir: str = Field(max_length=64)
+    session: str = Field(max_length=128)
+
+
+OLDER = "{computer} needs a newer Gamma to open its sessions here."
+UNANSWERED = "{computer} did not answer: try again."
+
+
+def _session_place(request: Request, agent: str, dir: str) -> tuple[str, str, dict]:
+    """``(ws, the account, the place)`` of the CLI's sessions the request
+    names: ``agent`` (``codex``, ``claude``) the account turned on here, the
+    directory ``dir`` as the chat's picker names it (``chats.place_named``:
+    a work folder whose vault the account made, an offered directory). 404
+    for any other agent, account (a co-author, another account) or
+    directory; 403 for a token or the guest; 404 on a server that runs no
+    agents."""
+    from ..local_agents import catalog, chats, store
+
+    user_id = _agents_account(request)
+    ws = require_ws(request)
+    place = chats.place_named(ws, user_id, dir) if agent in catalog.AGENTS and store.owns(user_id, agent) else None
+    if place is None:
+        raise HTTPException(status_code=404, detail=NOT_HERE)
+    return ws, user_id, place
+
+
+def _far_session_place(request: Request, agent: str, computer_id: str, dir: str) -> tuple[str, str, dict, dict]:
+    """``(ws, the account, the computer, the directory)`` of the sessions
+    the request names of the agent ``agent`` of another computer of the
+    account's (``registry.own_computer``: its own, never one another
+    account lends it), the directory ``dir`` by its id as a far
+    conversation keeps it (``chats.far_dir``): a work folder that computer
+    keeps (``{kind: "vault", id}``) or a directory it offers (``{kind:
+    "offered", id}``). 404 for any other agent, computer or directory (a
+    path among them); 403 for a token or the guest."""
+    from ..computers import registry
+
+    user_id = require_personal_user_id(request, SESSION_ONLY)
+    ws = require_ws(request)
+    found = registry.own_computer(user_id, ws, computer_id) if agent in registry.AGENTS else None
+    where = None if found is None or agent not in found["agents"] else (
+        {"kind": "vault", "id": dir} if dir in found["folders"] else
+        {"kind": "offered", "id": dir} if dir in found["dirs"] else None)
+    if where is None:
+        raise HTTPException(status_code=404, detail=NOT_HERE)
+    return ws, user_id, found, where
+
+
+@router.get("/sessions")
+async def agent_sessions(request: Request, agent: str = "", dir: str = ""):
+    """``{sessions: [{id, title, at, created, source, ours, busy}]}``: the
+    sessions the CLI of ``agent`` keeps whose directory is the one ``dir``
+    names (``_session_place``), the most recently used first
+    (``sessions.listed``, ``shown``: ``source`` what each was started from,
+    ``ours`` whether a conversation of Gamma's continues it, ``busy``
+    whether another process has it open). 409 when Codex is not here or
+    cannot list them. For an agent of another computer of the account's
+    (``agent`` its id, ``_far_session_place``), asked of that computer over
+    its channel (gamma/computers/sessions.py ``listing``), ``ours`` for a
+    conversation of the account's here with that agent, and ``away`` with
+    no session while it cannot answer: ``offline``, ``older`` (a release
+    before this), ``waiting`` (no answer yet: History opened again reads it
+    once it came); a refusal there is its status and its words."""
+    from ..local_agents import chats, sessions
+
+    name, computer = _named(agent)
+    if not computer:
+        return await asyncio.to_thread(_local_sessions, request, name, dir)
+    from ..computers import registry, sessions as asked
+
+    ws, user_id, found, where = await asyncio.to_thread(_far_session_place, request, name, computer, dir)
+    if not found["online"]:
+        return {"sessions": [], "away": "offline"}
+    if not registry.answers(found["token_id"]):
+        return {"sessions": [], "away": "older"}
+    answer = await asked.listing(found["token_id"], name, where)
+    if answer is None:
+        return {"sessions": [], "away": "waiting"}
+    if "error" in answer:
+        raise HTTPException(status_code=answer["status"], detail=answer["error"])
+    rows = answer["sessions"]
+    titles = await asyncio.to_thread(chats.titles, ws, [row["conversation"] for row in rows if row["conversation"]],
+                                     user_id=user_id, computer=computer, agent=name)
+    return {"sessions": sessions.shown(rows, titles)}
+
+
+def _local_sessions(request: Request, agent: str, dir: str) -> dict:
+    """``agent_sessions`` for this computer's agent: ``ours`` for a session
+    a conversation of this workspace continues, titled as it is there; one
+    bound to a conversation the workspace does not have (gone, another
+    workspace's, another server's over the channel) is listed as any other,
+    to be opened (``_local_open``)."""
+    from ..local_agents import chats, sessions
+
+    ws, _, place = _session_place(request, agent, dir)
+    try:
+        rows = sessions.listed(agent, place["path"])
+    except chats.ChatError as e:
+        raise _refused(e) from None
+    return {"sessions": sessions.shown(rows, chats.titles(ws, [row["conversation"] for row in rows
+                                                               if row["conversation"]]))}
+
+
+@router.post("/sessions/open")
+async def open_session(body: SessionBody, request: Request):
+    """A session of the CLI's (``agent``, ``dir``: ``_session_place``)
+    opened in the chat of ``bucket``, whose agent works in that directory →
+    ``{conversation}``: a new conversation of the bucket, its active one
+    archived, holding the session's turns (the person's text, the agent's
+    text and its steps; ``sessions.read``, ``messages``) and bound to it, so
+    its next turn resumes it (``chats.adopt``). A session a conversation of
+    the account's in this bucket continues already is that conversation,
+    made the bucket's active one (``chats.open_one``); one bound to a
+    conversation the workspace does not have is opened as any other, that
+    conversation letting go of it (``store.unbound``). 400 for a bucket
+    whose agent works elsewhere; 404 for no such session of that directory;
+    409 while another process holds it (``sessions.held``: why), while a
+    conversation elsewhere in the workspace continues it, while the bucket's active
+    conversation's turn is queued or running, and when Codex is not here
+    or cannot read it; 403 when the account is no editor or the workspace
+    takes no writes. For an agent of another computer of the account's
+    (``_far_open``) the same, that computer reading the session and binding
+    it to the conversation made here; 409 too while that computer is
+    offline or older (``OLDER``), or when it does not answer in time
+    (``UNANSWERED``)."""
+    name, computer = _named(body.agent)
+    if computer:
+        return await _far_open(request, body, name, computer)
+    return await asyncio.to_thread(_local_open, request, body, name)
+
+
+def _local_open(request: Request, body: SessionBody, agent: str) -> dict:
+    """``open_session`` for this computer's agent."""
+    from ..local_agents import catalog, chats, events, sessions, store
+
+    ws, user_id, place = _session_place(request, agent, body.dir)
+    seat = chats.place_of(ws, body.bucket, user_id, body.dir)
+    if seat is None or (seat["kind"], seat["dir"]) != (place["kind"], place["dir"]):
+        raise HTTPException(status_code=400, detail="This chat's agent works in another directory.")
+    if not events.SESSION.match(body.session):
+        raise HTTPException(status_code=404, detail=sessions.NO_SESSION)
+    label = catalog.label(agent)
+    _may_write(ws, user_id, label)
+    with _opening:
+        bound = store.bound(agent, [body.session]).get(body.session)
+        here = bool(bound) and bool(chats.titles(ws, [bound]))
+        try:
+            if here:
+                return {"conversation": chats.shown(_continued(ws, user_id, body.bucket, bound, label))}
+            held = sessions.held(agent, body.session)
+            if held:
+                raise HTTPException(status_code=409, detail=held)
+            read = sessions.read(agent, place["path"], body.session)
+            conversation = chats.adopt(ws, bucket=body.bucket, dir=place["dir"], user_id=user_id, agent=agent,
+                                       label=label, title=read["title"],
+                                       messages=sessions.messages(agent, read["turns"], place["path"]))
+        except chats.ChatError as e:
+            raise _refused(e) from None
+        if bound:   # a conversation this workspace does not have lets go of it
+            store.unbound(agent, body.session)
+        link = place["link"]
+        store.ran_conversation(conversation["id"], link_id=link["id"] if link is not None else "", agent=agent,
+                               session=body.session, cwd=place["path"])
+    return {"conversation": chats.shown(conversation)}
+
+
+async def _far_open(request: Request, body: SessionBody, agent: str, computer_id: str) -> dict:
+    """``open_session`` for the agent of another computer of the account's
+    (``_far_session_place``), on a bucket whose far seat is that computer's
+    agent working in that directory (``_far_open_seat``): that computer
+    asked to open it for a conversation of a new id
+    (gamma/computers/sessions.py ``opening``), which it binds to the
+    session there before it answers with its turns, and the conversation
+    made here with them (``chats.adopt``, of that computer). A session it
+    names as a conversation's already is that conversation where this
+    server has it (``_far_continued``: the account's here with that agent,
+    else 409); one this server does not have (one of that computer's own
+    server, or one gone here) is opened again, bound to the new one in its
+    place (``rebind``)."""
+    from ..blocks_store import new_block_id
+    from ..computers import registry, sessions as asked
+    from ..local_agents import catalog, chats, events, sessions
+
+    ws, user_id, found, where = await asyncio.to_thread(_far_session_place, request, agent, computer_id, body.dir)
+    label, computer = catalog.label(agent), found["name"]
+    await asyncio.to_thread(_far_open_seat, ws, user_id, body.bucket, agent, computer_id, where, label)
+    if not events.SESSION.match(body.session):
+        raise HTTPException(status_code=404, detail=sessions.NO_SESSION)
+    if not found["online"]:
+        raise HTTPException(status_code=409, detail=chats.OFFLINE.format(computer=computer))
+    if not registry.answers(found["token_id"]):
+        raise HTTPException(status_code=409, detail=OLDER.format(computer=computer))
+    conversation_id, rebind = new_block_id(), ""
+    while True:
+        answer = await asked.opening(found["token_id"], agent, where, body.session, conversation_id, rebind)
+        if answer is None:
+            raise HTTPException(status_code=409, detail=UNANSWERED.format(computer=computer))
+        if "error" in answer:
+            raise HTTPException(status_code=answer["status"], detail=answer["error"])
+        if answer.get("busy"):
+            raise HTTPException(status_code=409, detail=events.BUSY.format(agent=label))
+        if "conversation" not in answer:
+            break
+        continued = await asyncio.to_thread(_far_continued, ws, user_id, body.bucket, answer["conversation"],
+                                            computer_id, agent, label)
+        if continued is not None:
+            return {"conversation": chats.shown(continued)}
+        if rebind:   # named again once rebound: never asked a third time
+            raise HTTPException(status_code=409, detail="Another chat of Gamma's continues this session.")
+        rebind = answer["conversation"]
+    try:
+        conversation = await asyncio.to_thread(
+            chats.adopt, ws, bucket=body.bucket, dir=where["id"], user_id=user_id, agent=agent, label=label,
+            title=answer["title"], messages=answer["messages"], conversation_id=conversation_id, computer=computer_id)
+    except chats.ChatError as e:
+        raise _refused(e) from None
+    return {"conversation": chats.shown(conversation)}
+
+
+def _far_open_seat(ws: str, user_id: str, bucket: str, agent: str, computer_id: str, where: dict, label: str) -> None:
+    """404 for a bucket whose chat has no seat of that computer's agent
+    (``chats.remote_of``); 400 for one whose far conversation works
+    elsewhere than ``where`` (``chats.far_dir``); ``_may_write``'s 403;
+    ``chats.adopt``'s 409 while the bucket's active conversation's turn is
+    queued or running, before that computer is asked (it binds the session
+    before it answers)."""
+    from ..db import connect_pages_db
+    from ..local_agents import chats
+
+    seat = chats.remote_of(ws, bucket, user_id, computer_id, agent)
+    if seat is None:
+        raise HTTPException(status_code=404, detail=NOT_HERE)
+    try:
+        dir = chats.far_dir(seat, where["id"], None)
+    except chats.ChatError:
+        dir = None
+    if dir != where["id"]:
+        raise HTTPException(status_code=400, detail="This chat's agent works in another directory.")
+    _may_write(ws, user_id, label)
+    with connect_pages_db(ws) as conn:
+        working = chats.busy(chats.active(conn, bucket, user_id))
+    if working is not None:
+        raise HTTPException(status_code=409, detail=f"{label} is still working: stop it first.")
+
+
+def _far_continued(ws: str, user_id: str, bucket: str, conversation_id: str, computer_id: str, agent: str,
+                   label: str) -> dict | None:
+    """``_continued`` for a conversation another computer names as its
+    session's, where this server has it: 409 for one of another computer
+    or agent, and as ``_continued`` refuses (another account's, a co-author's
+    among them; a thread's; another bucket's); None where this server has
+    no such conversation."""
+    from ..db import connect_pages_db
+    from ..local_agents import chats
+
+    with connect_pages_db(ws) as conn:
+        found = chats.get(conn, conversation_id)
+    if found is None:
+        return None
+    if (found["computer"], found["agent"]) != (computer_id, agent):
+        raise HTTPException(status_code=409, detail="Another chat of Gamma's continues this session.")
+    return _continued(ws, user_id, bucket, conversation_id, label)
+
+
+def _continued(ws: str, user_id: str, bucket: str, conversation_id: str, label: str) -> dict:
+    """The conversation ``conversation_id`` that continues a session
+    already, opened in the chat of ``bucket``: the bucket's active one, an
+    archived one made so (``chats.open_one``). 409 for one elsewhere (of
+    another bucket or account, a comment thread's, none), which says
+    where."""
+    from ..db import connect_pages_db
+    from ..local_agents import chats
+
+    with connect_pages_db(ws) as conn:
+        found = chats.get(conn, conversation_id)
+        about = chats.about(conn, found["bucket"]) if found is not None else None
+    if found is None or found["user_id"] != user_id or found["thread_id"]:
+        raise HTTPException(status_code=409, detail="Another chat of Gamma's continues this session.")
+    if found["bucket"] != bucket:
+        where = (about or {}).get("title") or (about or {}).get("name") or ""
+        raise HTTPException(status_code=409, detail=(
+            f"The chat of {where} continues this session: open it there." if where
+            else "The library's chat continues this session: open it there." if (about or {}).get("kind") == "library"
+            else "Another chat of Gamma's continues this session."))
+    return found if found["archived_at"] is None else chats.open_one(ws, found, label)
 
 
 @router.post("/chat/sources")

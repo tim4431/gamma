@@ -12,7 +12,9 @@ its route checked (where it works, the vault not paused, the turn's agent on
 and the person's, the person an editor, the agent ready, writes taken),
 makes a directory of its own the first time, resumes the conversation's
 session in that directory as it is now (``store.conversation_of``; a
-refused resume starts afresh once, said ``fresh``), and writes the agent's
+refused resume starts afresh once, said ``fresh``; one another process
+holds, a terminal's or an editor's, fails the turn and is never started
+afresh: ``sessions.held``, Codex's own refusal), and writes the agent's
 message as the turn goes: its text, its steps (relative paths, a command's
 program), what changed, its end. Its agent streams (``delta``): the
 message's last paragraph grows as the agent writes it, and the whole
@@ -117,7 +119,7 @@ from .. import agents, config, integrations, remote_servers
 from ..blocks_store import new_block_id
 from ..db import format_stamp, page_now
 from ..logbuf import log
-from . import catalog, chats, enabled, events, home, procs, prompt, store, threads, tools
+from . import catalog, chats, enabled, events, home, procs, prompt, sessions, store, threads, tools
 
 RUN_TIMEOUT_S = 1800              # env GAMMA_AGENT_RUN_TIMEOUT: a turn running this long is stopped
 MAX_RUNS = 2                      # turns at once on this server, at most one per directory
@@ -1169,9 +1171,10 @@ class _Turning:
         session this computer no longer has: before any step, neither
         stopped nor out of time, and not because Gamma's tools did not start
         (``gamma_down``: a session afresh would fail alike, and the
-        conversation's would be lost)."""
-        return bool(session and not done["ok"] and not done.get("gamma_down") and not self.steps
-                    and not self.stop.is_set() and not self.timed_out)
+        conversation's would be lost) nor because another process holds it
+        (``busy``: afresh would fork it)."""
+        return bool(session and not done["ok"] and not done.get("gamma_down") and not done.get("busy")
+                    and not self.steps and not self.stop.is_set() and not self.timed_out)
 
     def _started(self, pid: int) -> None:
         """The turn's process is ``pid``: what the record keeps."""
@@ -1493,6 +1496,9 @@ class _ChatTurn(_Turning):
         self.file = self.home.vault_file(self, link) if link is not None else ""
         earlier = context["earlier"]
         session = self._session(place)
+        held = sessions.held(self.agent, session) if session else ""
+        if held:   # open in a terminal or an editor: two writers would fork it
+            self._fail(held)
         self.fresh = bool(earlier) and not session
         self._tools()   # the prompt says whether the turn has them
         thread, images, pictures = None, [], None
@@ -1538,6 +1544,8 @@ class _ChatTurn(_Turning):
         if not done["ok"]:
             if self.timed_out:
                 self._fail(f"{self.label} took longer than {_span(_run_timeout())} and was stopped.", record)
+            if done.get("busy"):
+                self._fail(done["error"], record)
             first = events.one_line(_redact(done.get("error") or "", self.root), 500)
             self._fail(f"{self.label} could not finish: {first or 'it stopped unexpectedly.'}", record)
         if not any(p.strip() for p in self.paragraphs) and (done.get("text") or "").strip():
@@ -1615,7 +1623,7 @@ class _ChatTurn(_Turning):
                 elif text:
                     self.paragraphs.append(text)
         elif kind == "tool":
-            step = _step(event)
+            step = step_of(event)
             with self._asking:
                 at = self._step_at.get(step["id"])
                 if at is not None:
@@ -1759,11 +1767,11 @@ class _ChatTurn(_Turning):
         # a step's id never the ask's: a remote turn's steps reach the other server
         step_id = str(event.get("step") or "") or f"ask:{new_block_id()}"
         if kind == "command":
-            step = _step({"id": step_id, "kind": "run", "command": command, "status": "asked"})
+            step = step_of({"id": step_id, "kind": "run", "command": command, "status": "asked"})
         elif kind == "files":
-            step = _step({"id": step_id, "kind": "edit", "path": (event.get("paths") or [""])[0], "status": "asked"})
+            step = step_of({"id": step_id, "kind": "edit", "path": (event.get("paths") or [""])[0], "status": "asked"})
         else:
-            step = _step({"id": step_id, "kind": "other", "status": "asked"})
+            step = step_of({"id": step_id, "kind": "other", "status": "asked"})
         card = self._card(event, shown, link) if remote or self.lent else None
         with self._asking:
             self.held += 1
@@ -1990,12 +1998,12 @@ class _ChatTurn(_Turning):
         alone) and ``fresh``."""
         relays = self.home.remote and self._relays()
         with self._asking:
-            paragraphs = [p.strip() for p in self.paragraphs]
+            paragraphs = list(self.paragraphs)
             steps = [dict(s) for s in self.steps]
             asks = [dict(held["shown"]) for held in self.asks.values()]
         said = [self.preface] if self.preface else []
-        text = prompt.inert(_redact("\n\n".join(said + [p for p in paragraphs if p]), self.root)) if self.root else ""
-        out = {"text": text[:chats.MAX_TEXT], "steps": steps, "asks": asks, "fresh": self.fresh}
+        text = reply_text(said + paragraphs, self.root) if self.root else ""
+        out = {"text": text, "steps": steps, "asks": asks, "fresh": self.fresh}
         if self.home.remote:
             out["asks"], out["waiting"] = (asks, False) if relays else ([], bool(asks))
         return out
@@ -2032,7 +2040,15 @@ class _ChatTurn(_Turning):
                 self.stop.set()
 
 
-def _step(event: dict) -> dict:
+def reply_text(paragraphs: list[str], root: Path | str) -> str:
+    """An agent's paragraphs as its message keeps them: the empty left out,
+    this computer's paths made relative to the directory ``root`` or
+    named outside it (``_redact``), loading nothing where they are drawn
+    (``prompt.inert``), within ``chats.MAX_TEXT``."""
+    return prompt.inert(_redact("\n\n".join(p.strip() for p in paragraphs if p.strip()), root))[:chats.MAX_TEXT]
+
+
+def step_of(event: dict) -> dict:
     """A tool event as the chat's message keeps it: ``{id, kind, status}``
     with ``path`` for a read or an edit (relative to the folder, "outside"
     for a file outside it), ``program`` for a command (its name alone,

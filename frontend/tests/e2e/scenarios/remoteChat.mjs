@@ -32,7 +32,10 @@ import { waitForPdf } from "./pdf.mjs";
 // directory of its own and comments on a passage through the turn's token
 // of the NAS, the thread reading Codex on <host>. The computer stopped, the
 // strip says it is offline and the composer holds a message until it is
-// back, when it runs.
+// back, when it runs. Before that, alice's History there lists under "On
+// <host>" the thread a terminal on the computer left of the paper's
+// directory (step 5 of the plan, over the channel): opened, it is the
+// chat's conversation, and her next message resumes that thread there.
 const FAKES = path.join(ROOT, "backend", "tests", "fake_agents");
 const PAPER = path.join(ROOT, "backend", "tests", "samples", "synctex", "paper");
 const PLACES = JSON.parse(fs.readFileSync(path.join(PAPER, "places.json"), "utf8"));
@@ -44,6 +47,12 @@ const BUILD = "latexmk -pdf main.tex";
 const LOOSE_ASK = "ask the authors about noon";
 const NOON = "Marigolds open at noon";
 const LOOSE_QUESTION = "Is noon right here?";
+// Step 5 over the channel: a thread a person's Codex keeps of the paper's
+// directory on the computer (the stand-in's `sessions`), and the message
+// the opened one's next turn takes there.
+const TERMINAL = { id: "019b-term-fix", name: "Fix the abstract", ask: "fix the abstract's typo", reply: "Fixed it in main.tex:9." };
+const SESSION_ASK = "and the conclusion";
+const SESSION_REPLY = "Concluded in main.tex.";
 
 // An area on page 1 of the paper from places.json's fraction rect, in the
 // page's points as the viewer stores it.
@@ -57,16 +66,25 @@ export async function remoteChatScenarios(env) {
   if (!wanted("remote-chat")) return;
   const disk = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-remote-chat-"));
   const agentLog = path.join(disk, "agent.jsonl");
+  const dir = path.join(disk, "Paper");
   const nas = new Server({ env: { GAMMA_COMPUTER_GRACE_S: String(GRACE_S) } });
   const computer = new Server({ env: {
     GAMMA_FOLDER_LINKS: "1", GAMMA_SHELL_SECRET: "", GAMMA_LOCAL_AGENTS: "1",
     GAMMA_AGENT_CODEX: JSON.stringify([PYTHON, path.join(FAKES, "fake_codex.py")]),
     // no Claude Code here: a path that is no file, so the computer finds none
     GAMMA_AGENT_CLAUDE: path.join(disk, "no-claude.exe"),
+    CODEX_HOME: path.join(disk, "codex"),   // where the computer looks for a thread's writer lock
     // a chat turn reports one command and answers after a pause long enough
     // to be seen working, stopped, and found again from another tab; each new
     // session is a thread of its own id, so a resumed one shows
-    FAKE_AGENT: JSON.stringify({ chat: CHAT_REPLY, commands: [BUILD], delay: 8, log: agentLog, distinct: true, turns: {
+    FAKE_AGENT: JSON.stringify({ chat: CHAT_REPLY, commands: [BUILD], delay: 8, log: agentLog, distinct: true,
+      // step 5: what a terminal on the computer left of the paper's directory
+      sessions: { threads: [{ id: TERMINAL.id, name: TERMINAL.name, preview: TERMINAL.ask, cwd: dir, source: "cli",
+        originator: "codex-tui", createdAt: 1794000000, updatedAt: 1794000060, turns: [{ id: "t1", status: "completed",
+          startedAt: 1794000000, completedAt: 1794000060, items: [
+            { type: "userMessage", id: "u1", content: [{ type: "text", text: TERMINAL.ask }] },
+            { type: "agentMessage", id: "a1", text: TERMINAL.reply, phase: "final_answer" }] }] }] }, turns: {
+      [SESSION_ASK]: { commands: [], delay: 0, chat: SESSION_REPLY },
       [LOOSE_ASK]: { gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: NOON, pdf_page: 1, body: LOOSE_QUESTION } }],
         commands: [], delay: 0, chat: "Commented:\n\n{gamma}" } } }),
   } });
@@ -89,7 +107,6 @@ export async function remoteChatScenarios(env) {
     const filesOf = async (folder) => (await alice.api(`/api/folders/${folder}/pages?limit=500`)).pages;
     const heard = () => fs.readFileSync(agentLog, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
     // written as an editor that finished a while ago, so a round takes it at once
-    const dir = path.join(disk, "Paper");
     for (const rel of ["main.tex", "sections/method.tex", "figures/fig1.pdf", "main.pdf", "main.synctex.gz"]) {
       const file = path.join(dir, rel);
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -527,6 +544,47 @@ export async function remoteChatScenarios(env) {
         JSON.stringify(["rc-alice", "Codex", "computer", name]), "written for alice, as Codex on the computer");
       const stored = (await alice.api(`/api/local-agents/chat?bucket=${paper.id}`)).conversation;
       assertEq(stored?.messages.at(-1).state, "done", "the conversation the NAS keeps");
+      assert(!JSON.stringify(stored).includes(disk), "no path of the computer reaches the NAS");
+    });
+
+    await step("remote-chat: alice's History on the NAS lists the sessions Codex keeps of the folder on the computer, asked over its channel: a terminal's opens as the chat's conversation, and the next message resumes it there", async () => {
+      const before = heard().length;
+      const ctx = await alice.context(browser);
+      const page = await openPage(ctx, at());
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        const history = async () => {
+          await dock.getByRole("button", { name: "Chat history", exact: true }).click();
+          const pop = page.locator(".chatHistoryPop");
+          await pop.locator(".popoverSection", { hasText: `On ${name}` }).waitFor();
+          return pop;
+        };
+        let pop = await history();
+        const terminal = pop.locator(".chatHistRow", { hasText: TERMINAL.name });
+        await terminal.waitFor({ timeout: 30000 });
+        assertEq((await terminal.locator(".chatHistBy").innerText()).trim(), "Terminal", "started in a terminal there");
+        await terminal.click();
+        await pop.waitFor({ state: "detached" });
+        await dock.locator(".chatBubble.user", { hasText: TERMINAL.ask }).waitFor({ timeout: 30000 });
+        await dock.locator(".chatBubble.ai", { hasText: TERMINAL.reply }).waitFor();
+        await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(SESSION_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.locator(".chatBubble.ai", { hasText: SESSION_REPLY }).waitFor({ timeout: 60000 });
+        pop = await history();
+        await pop.locator(".chatHistRow", { hasText: TERMINAL.name })
+          .filter({ has: page.locator(".chatHistBy", { hasText: "In Gamma" }) }).waitFor({ timeout: 30000 });
+        await page.keyboard.press("Escape");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const since = heard().slice(before);
+      assertEq(JSON.stringify(since.filter((e) => e.in?.method === "thread/resume").map((e) => e.in.params.threadId)),
+        JSON.stringify([TERMINAL.id]), "the next turn resumed the terminal's thread on the computer");
+      assertEq(since.filter((e) => e.in?.method === "thread/start").length, 0, "no thread started in its place");
+      const prompt = since.find((e) => e.in?.method === "turn/start").in.params.input.map((p) => p.text || "").join("\n");
+      assert(!prompt.includes(TERMINAL.ask), "the terminal's history stays the CLI's: the prompt does not repeat it");
+      const stored = await conversation();
+      assertEq(stored.title, TERMINAL.name, "the conversation is titled as the session is");
       assert(!JSON.stringify(stored).includes(disk), "no path of the computer reaches the NAS");
     });
 

@@ -176,7 +176,8 @@ def far_place(link: dict, dir, conversation_id: str) -> dict:
     - ``offered``: the directory this computer offers its agents of that id
       (``store.dirs``, while the channel's account has an agent on here:
       ``channel.offered``);
-    - ``own``: an empty directory of its own (``far_dir``).
+    - ``own``: an empty directory of its own (``far_dir``), the
+      conversation ``conversation_id``'s.
 
     ValueError with why for anything else: a kind or an id of another shape
     (a path never names a directory here), a work folder no vault of this
@@ -185,8 +186,8 @@ def far_place(link: dict, dir, conversation_id: str) -> dict:
     from ..computers import channel
 
     kind, dir_id = (dir.get("kind"), dir.get("id")) if isinstance(dir, dict) else ("", None)
-    if not isinstance(dir_id, str) or not _ID.match(conversation_id or "") or (
-            kind in ("vault", "offered") and not _ID.match(dir_id)) or (kind == "own" and dir_id):
+    if not isinstance(dir_id, str) or (kind in ("vault", "offered") and not _ID.match(dir_id)) or (
+            kind == "own" and (dir_id or not _ID.match(conversation_id or ""))):
         raise ValueError(NO_SUCH_DIR)
     if kind == "vault":
         vault = next((v for v in channel.vaults_of(link) if v["kind"] == "folder" and v["folder_id"] == dir_id
@@ -226,14 +227,6 @@ def chat_run_id(turn_id: str) -> str:
     return base64.urlsafe_b64encode(digest[:16]).decode("ascii").rstrip("=")
 
 
-def _earlier(messages: list[dict], at: int, person: dict) -> list[dict]:
-    """The conversation's last six messages before the turn's (``at``), the
-    person's own aside, as the prompt takes them: ``{role: owner | agent,
-    text}``."""
-    return [{"role": "owner" if m.get("role") == "user" else "agent", "text": m.get("text") or ""}
-            for m in messages[:at] if m is not person and (m.get("text") or "").strip()][-6:]
-
-
 class LocalChatHome:
     """A bucket of this server: the conversation in its pages.db, the
     checks the turn's route made."""
@@ -262,7 +255,7 @@ class LocalChatHome:
         person = next((m for m in reversed(messages[:at]) if m.get("role") == "user"), None) or {}
         return {"user_id": conversation["user_id"], "owner": conversation["owner"] or conversation["user_id"],
                 "text": person.get("text") or "",
-                "selections": person.get("selections") or [], "earlier": _earlier(messages, at, person),
+                "selections": person.get("selections") or [], "earlier": chats.earlier_of(messages, at, person),
                 "title": conversation["title"], "thread_id": conversation["thread_id"]}
 
     def place(self, turning, context: dict) -> dict:
@@ -551,13 +544,16 @@ class HttpChatHome:
 
     def place(self, turning, context: dict) -> dict:
         """Where the turn works, from the id the claim named (``far_place``),
-        while the channel is kept (else the turn fails, as it does with
-        ``far_place``'s why)."""
+        while the channel is kept and the claim's conversation id has an
+        id's shape (its session's key here: ``store.conversation_of``); else
+        the turn fails, as it does with ``far_place``'s why."""
         from ..computers import channel
 
         link = channel.get(self.link_id)
         if link is None:
             turning._fail(UNLINKED)
+        if not _ID.match(turning.conversation_id or ""):
+            turning._fail(NO_SUCH_DIR)
         try:
             place = far_place(link, self.dir, turning.conversation_id)
         except ValueError as e:

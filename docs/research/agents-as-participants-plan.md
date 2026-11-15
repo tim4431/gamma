@@ -1,7 +1,8 @@
 # Agents as participants: the build plan
 
-Status: **a plan, partly built**: steps 1-4 are built, each step's "As
-built" saying where the build differs; step 5 is next. Written 2026-11-14
+Status: **a plan, built**: steps 1-5 are all built, step 5 over the
+channel too, each step's "As built" saying where the build differs.
+Written 2026-11-14
 against `dev` @ b4870d47, after a survey of the code behind work folders, local agents,
 computers and feedback. The file and line references were read then, so
 check them again before building. This file says what to build and in
@@ -685,7 +686,7 @@ Gamma that did not start or connect fails the turn as `events.GammaDown`
 (the done's `gamma_down`), which the runner never takes for a refused
 resume: a turn afresh would fail alike and replace the conversation's
 session. A call is a step of a new kind, `gamma`, with the tool's
-name (`events.gamma_step`, `runner._step`, the channel's `_step`,
+name (`events.gamma_step`, `runner.step_of`, the channel's `_step`,
 `chat_export.step_text`: "Read Gamma: read_page"); the chat's chip takes
 the kind of Gamma AI's own call of that tool (`computerChat.stepChip`), so
 the steps pill counts it as a read, and `chat/agentSteps.js` needed no
@@ -1508,6 +1509,107 @@ turn give its own asks (`turns`' `ask`), for the browser scenario's build.
 - A session another process holds is refused with why.
 - First on the desktop app's own server; over the channel after.
 - Tests: `test_local_agents_extras.py` with fake session stores.
+
+**As built** (5.1, sessions on this computer). `local_agents/sessions.py`
+reads both stores as C4 found them, `GET /api/local-agents/sessions?agent=&dir=`
+lists them and `POST /api/local-agents/sessions/open {bucket, agent, dir,
+session}` opens one, a route of its own rather than a `session` field on
+the turn's, since opening runs no turn. `dir` is the id the picker names
+(`chats.place_named`): a work folder's W whose vault the account made (the
+terminal's rule: a vault another account made lists none), or an offered
+directory; a directory of its own lists none, as it holds Gamma's sessions
+alone, and the page's bucket must work in that same directory (400). Each
+session is `{id, title, at, created, source, ours, busy}`, `source` one of
+`cli`, `vscode`, `exec`, `app`, `gamma`, `other` (Codex's originator first,
+since its TUI's threads say `source: "vscode"`: C3); no turn count, which
+Claude Code's files would give only read whole. `busy` is a flag the
+client words, not the server's sentence. Codex's lock is read as held, not
+as present: on Windows Codex holds a byte-range lock on the file (a read
+of it is refused, which a file left by a killed Codex is not), elsewhere a
+shared `flock` is tried, so a stale lock never makes a session look busy;
+the turn checks it too (`sessions.held`, before any process for either
+CLI), and Codex's own -32600 refusal fails the turn as
+`events.SessionBusy` (the done's `busy`), which neither the driver nor the
+runner restarts afresh. The fallback to `thread/start` stays for any other
+refused resume. A live Claude Code process must also have the entry's
+`procStart` as its creation time on Windows. The messages read from a
+session are marked `from_session`: a turn's earlier messages leave them
+out (`chats.earlier_of`), so a resume that fails and starts afresh is told
+the conversation's own messages and never the session's. The opened
+conversation is written by `chats.adopt` (the bucket's active one archived,
+`_insert` shared with `begin`), its agent's text and steps through the
+runner's own wording (`reply_text`, `step_of`, made public), the drivers'
+tool mappings shared with it (`codex.item_steps`, `claude.tool_started`,
+`tool_ended`). A session a conversation of this bucket continues already
+opens that conversation (`chats.open_one` when archived); one of another
+bucket, another account's or a thread's is refused with where. Nothing is
+stored anew (`agent_conversations` binds the session, `store.bound` reads
+it back), so no migration. History draws the sessions as a `section` of
+`ChatHistoryPop` under a `popoverSection` caption *On {computer}*, read
+each time the popover opens, searched with the rest. The browser step
+holds a thread's lock from another process (`tests/fake_agents/hold_lock.py`),
+and the stand-in Codex keeps a `sessions` store (`thread/list`,
+`thread/read`, `thread/turns/list`, the held thread's refusal).
+
+**As built** (5.2, over the channel). The server asks the computer in
+memory, never in a table (`gamma/computers/sessions.py`): an ask waits
+there, the poll is woken with `sessions`, the computer takes the asks
+(`GET /api/computers/sessions`, each handed out once) and answers each by
+its id (`POST /api/computers/sessions/{id}`, the token it was asked of
+alone, checked and capped by `routers/computers.py` `_session_answer` as a
+turn's writes are). The routes of 5.1 keep their paths and became `async`:
+`agent` names another computer's agent by its id, as the chat's routes do
+(`_named`), and the route waits on the event loop for the answer (a
+listing 15 s, an opening 30 s), so a NAS's worker threads are never held.
+"The client asks again on opening History": a listing's answer is kept
+30 s and one that comes after the wait is kept for the next opening (a
+listing asked while one waits joins it), and nothing is asked while
+History is closed; the client words why no session shows (`away`:
+`offline`, `older`, `waiting`; `computerChat.sessionsAway`). An older
+computer is told apart by its announce, not by a silence: the computer
+says `sessions: true`, which the server keeps in memory alone
+(`registry._live.sessions`, `answers`), so no users.db step. Only the
+account's own computer is asked (`registry.own_computer`: never a lent
+one), in a work folder it keeps or a directory it offers, by id. The
+computer answers in a thread of its own (`channel._answer_session`,
+`local_agents/sessions.answer_far`) for the channel's account with its
+agent on, in the place `home.far_place` resolves (which now checks the
+conversation's id for a directory of its own alone; a far turn's claim
+checks its id's shape itself, `FarChatHome.place`). The binding is the
+computer's: the server mints the conversation's id, the computer binds the
+session it read to that id in `agent_conversations` before it answers, and
+`runner._session` resumes it at the next far claim as it resumes any far
+conversation's, so the server never names the session a turn resumes. Not
+asked for but needed: the computer's listing names the conversation each
+session is bound to (`conversation`), and the server makes `ours` of its
+own alone (`sessions.listed` and `shown` split, `chats.titles` by account,
+computer and agent); a session bound to a conversation the server lacks
+(one of the computer's own server, or deleted there, which the computer
+never hears) is opened again with `rebind`, since the computer cannot
+tell which server a conversation is of; `chats.adopt` takes the id and
+the computer and no longer binds (the local route binds after it); the
+claim's earlier messages leave `from_session` ones out with the rule
+`home` used (`chats.earlier_of`, one function for both), so a far resume
+that fails and starts afresh is told none of the session. The browser
+step is in `remoteChat.mjs`: the computer's stand-in Codex keeps a
+terminal's thread of the paper's directory, opened from alice's History
+on the NAS and resumed by her next message there.
+
+**As built** (5.1 and 5.2, after review). One conversation resumes a
+session: opening a session bound to a conversation elsewhere moves the
+binding (`store.unbound` clears the session of every conversation that
+had it, which then starts afresh), on the rebind over the channel and on
+the desktop alike. A binding outlives its conversation (a page deleted for
+good, a far open that failed after the computer bound it), so the
+desktop's History counts a session as *In Gamma* only where the workspace
+has its conversation (`chats.titles`), and opens any other as a new one.
+Over the channel, a conversation the server has but that is not the
+account's with that agent (a co-author's among them) is refused rather
+than rebound, and the bucket's turn at work is refused before the computer
+is asked. The desktop's opens run one at a time (`_opening`), and
+History's session rows wait while conversations are ticked or an open is
+on its way. Claude Code's compaction summary (`isCompactSummary`) is no
+prompt.
 
 ## Data, in one table
 

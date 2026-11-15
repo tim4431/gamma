@@ -6,7 +6,7 @@ import {
   CHANGES_SHOWN, NOTE_MAX, SOURCES_MAX, answerBody, askCommand, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, chatPath,
   currentStep, diffRows, emptyLine, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, markParts, modelChoice, modelDisplay,
   offersMenu, retryOf, revealsFile, scrolledToEnd, sourceNote, sourcesBody, stepNow, stepText, stripLine, turnBody, turnChanges, workPlace,
-  turnLabel, waitsThere, historyRows, shownMessages, stepChip,
+  turnLabel, waitsThere, historyRows, sessionRows, sessionsAway, sessionsDir, shownMessages, stepChip,
 } from "../src/chat/computer/computerChat.js";
 import { isChange, splitActions } from "../src/chat/agentSteps.js";
 import { failureCopy } from "../src/chat/chatErrors.js";
@@ -520,4 +520,39 @@ test("History lists a co-author's chats with the reader's agent under their name
   const shown = historyRows({ agent: "codex", shownId: "b1", shown: { title: "Fix the caption", preview: "" },
     computer: { conversations: [], active: null, lent } });
   assert.deepEqual(shown.map((r) => r.id), [""], "the one shown in place of the reader's own is listed once");
+});
+
+test("History lists the CLI's sessions of the directory where the reader's agent works on its computer", () => {
+  const vault = { ...ready, folder_id: "W1", dir: { kind: "vault", name: "Thesis", path: "C:/thesis" } };
+  assert.equal(sessionsDir(vault), "W1", "a synced folder's, as its id");
+  assert.equal(sessionsDir({ ...vault, dir: { kind: "vault", name: "Thesis" } }), "", "a vault another account made");
+  assert.equal(sessionsDir({ ...ready, dir: { kind: "offered", id: "d1", name: "Scratch" } }), "d1");
+  const own = { ...ready, dir: null };
+  assert.equal(sessionsDir(own, { pick: true, value: "d2" }), "d2", "the one picked for a conversation that begins");
+  assert.equal(sessionsDir(own, { pick: true, value: "" }), "", "a directory of its own holds Gamma's alone");
+  assert.equal(sessionsDir(own, { pick: false, text: "No folder" }), "");
+  const far = { ...ready, remote: true, computer: "TIM-PC", online: true, folder_id: "W1",
+    dir: { kind: "vault", name: "Thesis" } };
+  assert.equal(sessionsDir(far), "W1", "another computer's agent, in the reader's own vault there");
+  assert.equal(sessionsDir({ ...far, folder_id: null, dir: { kind: "offered", id: "d1", name: "Scratch" } }), "d1");
+  assert.equal(sessionsDir({ ...far, lent: { by: "alice" } }), "", "a co-author's");
+  assert.equal(sessionsDir({ ...vault, lent: { by: "alice" } }), "", "a co-author's");
+  assert.equal(sessionsDir(null), "");
+  assert.equal(sessionsAway("offline", "TIM-PC"), "TIM-PC is offline: its sessions show once it connects.");
+  assert.equal(sessionsAway("older", "TIM-PC"), "TIM-PC needs a newer Gamma to list its sessions here.");
+  assert.equal(sessionsAway("waiting", "TIM-PC"), "TIM-PC has not answered yet: open History again in a moment.");
+  assert.equal(sessionsAway(undefined, "TIM-PC"), "");
+  const rows = sessionRows([
+    { id: "s1", title: "Fix the abstract", at: "2026-11-14T10:00:00Z", source: "cli", ours: false, busy: false },
+    { id: "s2", title: "", at: "", source: "vscode", ours: false, busy: true },
+    { id: "s3", title: "Shorten the title", at: "", source: "gamma", ours: true, busy: false },
+    { id: "s4", title: "x", at: "", source: "other", ours: false, busy: false },
+  ], "Codex");
+  assert.deepEqual(rows.map((r) => [r.id, r.title, r.updated_at, r.by, r.busy]), [
+    ["s1", "Fix the abstract", "2026-11-14T10:00:00Z", "Terminal", ""],
+    ["s2", "", "", "VS Code", "Codex has this session open in another window: close it there first."],
+    ["s3", "Shorten the title", "", "In Gamma", ""],
+    ["s4", "x", "", "", ""],
+  ]);
+  assert.deepEqual(sessionRows(null, "Codex"), []);
 });

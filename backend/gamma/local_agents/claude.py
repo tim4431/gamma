@@ -65,6 +65,10 @@ other flags hold as they are). ``system/init`` must then name
 ``gamma`` step named by its tool. In a
 turn with ``ask`` an allowed Bash call can read the variable: the token
 reads only and lives for the turn (docs/dev/local_agents.md "Trust").
+
+A session's tool calls are worded as steps alike whether a turn makes them
+or they are read from its file (``tool_started``, ``tool_ended``:
+gamma/local_agents/sessions.py).
 """
 
 import json
@@ -119,6 +123,42 @@ def allowed_input(args: dict) -> dict:
     if isinstance(args.get("timeout"), int) and not isinstance(args.get("timeout"), bool):
         out["timeout"] = args["timeout"]
     return out
+
+
+def tool_started(block: dict, cwd: str, *, gamma: bool) -> dict:
+    """A ``tool_use`` block as its step's started tool event: a read, an
+    edit (paths relative to ``cwd``), a command, a search, with ``gamma`` a
+    call of Gamma's own server a ``gamma`` step, any other tool's use."""
+    name, tool_id = str(block.get("name") or ""), str(block.get("id") or "")
+    args = block.get("input") if isinstance(block.get("input"), dict) else {}
+    if name == "Read":
+        path = events.rel_path(str(args.get("file_path") or ""), cwd)
+        return events.tool(tool_id, "read", f"Read {path}", "started", path=path)
+    if name in EDITS:
+        path = events.rel_path(str(args.get("file_path") or args.get("notebook_path") or ""), cwd)
+        return events.tool(tool_id, "edit", f"Edit {path}", "started", path=path)
+    if name == "Bash":
+        command_line = str(args.get("command") or "")
+        return events.tool(tool_id, "run", f"Run {command_line}", "started", command=command_line)
+    if name in ("Glob", "Grep"):
+        return events.tool(tool_id, "search", f"Search {args.get('pattern') or 'the files'}", "started")
+    if gamma and name.startswith(GAMMA_PREFIX):
+        return events.gamma_step(tool_id, name[len(GAMMA_PREFIX):], "started")
+    return events.tool(tool_id, "other", f"Use {name}", "started")
+
+
+def tool_ended(begun: dict, block: dict) -> dict:
+    """The step ``begun`` (``tool_started``'s) once its ``tool_result``
+    block came: failed for an error, a command's output its content."""
+    status = "failed" if block.get("is_error") else "completed"
+    output = None
+    if begun["kind"] == "run":
+        content = block.get("content")
+        if isinstance(content, list):
+            content = "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
+        output = str(content or "")
+    return events.tool(begun["id"], begun["kind"], begun["title"], status, path=begun.get("path", ""),
+                       command=begun.get("command", ""), output=output, name=begun.get("tool", ""))
 
 
 def mcp_config(url: str) -> str:
@@ -230,40 +270,13 @@ class ClaudeTurn(events.Turn):
                 return
 
     def _started(self, block: dict) -> dict | None:
-        name, tool_id = str(block.get("name") or ""), str(block.get("id") or "")
-        args = block.get("input") if isinstance(block.get("input"), dict) else {}
-        if name == "Read":
-            path = events.rel_path(str(args.get("file_path") or ""), self.cwd)
-            event = events.tool(tool_id, "read", f"Read {path}", "started", path=path)
-        elif name in EDITS:
-            path = events.rel_path(str(args.get("file_path") or args.get("notebook_path") or ""), self.cwd)
-            event = events.tool(tool_id, "edit", f"Edit {path}", "started", path=path)
-        elif name == "Bash":
-            command_line = str(args.get("command") or "")
-            event = events.tool(tool_id, "run", f"Run {command_line}", "started", command=command_line)
-        elif name in ("Glob", "Grep"):
-            event = events.tool(tool_id, "search", f"Search {args.get('pattern') or 'the files'}", "started")
-        elif self.gamma_url and name.startswith(GAMMA_PREFIX):
-            event = events.gamma_step(tool_id, name[len(GAMMA_PREFIX):], "started")
-        else:
-            event = events.tool(tool_id, "other", f"Use {name}", "started")
-        self._tools[tool_id] = event
+        event = tool_started(block, self.cwd, gamma=bool(self.gamma_url))
+        self._tools[event["id"]] = event
         return event
 
     def _ended_tool(self, block: dict) -> dict | None:
-        tool_id = str(block.get("tool_use_id") or "")
-        begun = self._tools.pop(tool_id, None)
-        if begun is None:
-            return None
-        status = "failed" if block.get("is_error") else "completed"
-        output = None
-        if begun["kind"] == "run":
-            content = block.get("content")
-            if isinstance(content, list):
-                content = "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
-            output = str(content or "")
-        return events.tool(tool_id, begun["kind"], begun["title"], status, path=begun.get("path", ""),
-                           command=begun.get("command", ""), output=output, name=begun.get("tool", ""))
+        begun = self._tools.pop(str(block.get("tool_use_id") or ""), None)
+        return tool_ended(begun, block) if begun is not None else None
 
     def _connected(self, line: dict) -> None:
         """Where the turn has Gamma's tools, ``system/init``'s MCP servers
