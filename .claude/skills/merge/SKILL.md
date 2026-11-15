@@ -1,6 +1,6 @@
 ---
 name: merge
-description: Merge the branch's committed work into main via a PR and report the Docker publish the merge started. Runs the PR's suites locally first and fixes what fails, flaky test or real bug, in commits of its own; a red PR check gets the same fix and another try. Never commits the tree's uncommitted work, never releases the desktop app, the Android app or the extension — that is the `release` skill.
+description: Merge a snapshot of the branch's committed work (a merge/<date> branch in a worktree, so later pushes to dev stay out) into main via a PR, bring dev up to main after, and report the Docker publish the merge started. Runs the PR's suites locally first and fixes what fails, flaky test or real bug, in commits of its own; a red PR check gets the same fix and another try, and a flake in code the merge does not change may get one rerun and a line in the known flakes. Never commits the tree's uncommitted work, never releases the desktop app, the Android app or the extension — that is the `release` skill.
 ---
 
 # Merge to main
@@ -27,12 +27,16 @@ server and the website do not need a merge at all: `update-account-server`
 / `build-site` publish them from the branch. Details:
 `docs/dev/github_actions.md`.
 
-**Scope: existing commits, plus the fixes this skill makes.** Uncommitted
-changes are ongoing work — leave them in the tree, never commit them here;
-a fix's commit stages only the fix's own files (`git add <paths>`, never
-`-A`). A failure whose fix would touch a file with uncommitted changes is a
-question for the user. If there is nothing committed beyond `origin/main`,
-stop and say so.
+**Scope: the commits on the branch when the merge starts, plus the fixes
+this skill makes.** The merge takes a snapshot of the branch (step 1) and
+merges that: work merged into `dev` while the PR runs waits for the next
+merge, rather than restarting the checks on code nobody tested here
+(releasing 0.4.0 took seven rounds, three of them for two features merged
+into `dev` meanwhile). Uncommitted changes are ongoing work — leave them in
+the tree, never commit them here; a fix's commit stages only the fix's own
+files (`git add <paths>`, never `-A`). A failure whose fix would touch a
+file with uncommitted changes is a question for the user. If there is
+nothing committed beyond `origin/main`, stop and say so.
 
 **Fixing a failure.** Find the cause before touching anything; a red test
 is either:
@@ -50,25 +54,41 @@ is either:
   change (the [test policy](../../../docs/dev/debugging.md#local-changes-test-the-affected-modules),
   the `verify` skill for UI behavior), docs updated with the behavior.
 
-Each fix is its own commit on the branch, its message saying what failed
-and why. A failure that needs a product decision, or one whose cause is
+Each fix is its own commit on the snapshot's branch, its message saying
+what failed and why. A failure that needs a product decision, or one whose cause is
 outside the repo and that a rerun does not clear, is reported to the user
 instead, and the merge waits.
 
 ## Steps
 
-1. **Check**: `git status --short`, `git fetch -q origin`,
-   `git log --oneline origin/main..HEAD`. On `main` itself: create a branch
-   first (`git checkout -b <short-topic>`); the normal case is `dev`. No
-   commits ahead of main → "nothing to merge", stop.
-
-2. **Test locally**: what the PR's checks will run, on this machine first
-   (Node through `fnm`, the backend venv's Python: CLAUDE.md; `$SCRATCH`
-   is the session's scratchpad directory):
+1. **Check, and take the snapshot**: `git status --short`,
+   `git fetch -q origin`, `git log --oneline origin/main..HEAD`. No commits
+   ahead of main → "nothing to merge", stop. Then give the branch's head a
+   branch of its own, in a worktree, without leaving the checkout's branch
+   (another session may be committing on `dev` there, and its commits must
+   stay on `dev`):
 
    ```bash
-   # backend/ — check: backend (~1.5 min)
-   venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadfile
+   git branch merge/<yyyy-mm-dd> HEAD
+   git worktree add .claude/worktrees/merge-<yyyy-mm-dd> merge/<yyyy-mm-dd>
+   ```
+
+   Everything from here (the suites, the fixes, the commits, the pushes)
+   happens in that worktree. On `main` itself the same: the snapshot is the
+   branch.
+
+2. **Test locally**: what the PR's checks will run, on this machine first,
+   in the worktree (Node through `fnm`: CLAUDE.md; `$MAIN` is the main
+   checkout, `git worktree list | head -1`, whose `backend/venv` runs the
+   backend and whose ignored `backend/venv313` — made once with
+   `uv venv -p 3.13 backend/venv313` and `uv pip install -r
+   requirements-mobile.txt -r requirements-dev.txt` — the apps' Python;
+   `npm ci` once in the worktree's `frontend/`; `$SCRATCH` is the session's
+   scratchpad directory):
+
+   ```bash
+   # backend/ — check: backend (~4 min)
+   "$MAIN/backend/venv/Scripts/python.exe" -m pytest tests -q -n auto --dist loadfile
    # frontend/ — check: frontend
    npm run lint && npm test
    # repository root — check: branding, frontend (desktop), extension
@@ -80,23 +100,22 @@ instead, and the merge waits.
    # under a Windows Python, pip asks for pywin32, which no device has)
    bash tools/check_mobile_pins.sh
    # backend/ — check: backend-mobile, when the branch changes backend/: the
-   # suite under the apps' Python and pins, in a Python 3.13 venv made once
-   # in the scratchpad from requirements-mobile.txt + requirements-dev.txt
-   "$SCRATCH/venv313/Scripts/python.exe" -m pytest tests -q -n auto --dist loadfile
-   # frontend/ — check: e2e (~5 min), built into the scratchpad: a build
-   # into frontend/dist would empty what the developer's 9001 server serves
-   npx vite build --outDir "$SCRATCH/dist" --emptyOutDir
-   npm run budget -- --dist "$SCRATCH/dist"  # check: frontend
-   GAMMA_E2E_DIST="$SCRATCH/dist" npm run e2e -- --continue
+   # suite under the apps' Python and pins
+   "$MAIN/backend/venv313/Scripts/python.exe" -m pytest tests -q -n auto --dist loadfile
+   # frontend/ — check: e2e (~12 min), the worktree's own build (the
+   # developer's 9001 server serves the main checkout's frontend/dist, not this one)
+   npm run build
+   npm run budget  # check: frontend
+   GAMMA_E2E_PYTHON="$MAIN/backend/venv/Scripts/python.exe" npm run e2e -- --continue
    # cloud/, when the branch changes it — cloud.yml
-   ../backend/venv/Scripts/python.exe -m pytest tests -q
+   "$MAIN/backend/venv/Scripts/python.exe" -m pytest tests -q
    # sites/, when the branch changes sites/, docs/, desktop/ui/fonts/, docker-compose.yml.example, PRIVACY.md or TERMS.md — site.yml
    node build.mjs --strict
    # android/, when the branch changes what android.yml watches (android/,
    # backend/requirements*.txt, backend/gamma_mobile.py, desktop/ui/, the
-   # ink fixtures) — android.yml, JDK 21 and a Python 3.13 on PATH; its
-   # emulator job runs on the PR. prebuilt takes frontend/dist as it is:
-   # the default would rebuild it under the developer's 9001 server
+   # ink fixtures) — android.yml, JDK 21, the Android SDK and a Python 3.13
+   # (CLAUDE.md says where); its emulator job runs on the PR. prebuilt
+   # takes the worktree's frontend/dist, built above
    bash ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug -Pgamma.webBuild=prebuilt
    ```
 
@@ -106,9 +125,9 @@ instead, and the merge waits.
    worth fixing, but find it apart from the noise). A failure → fix it (above),
    rerun what the fix touches, and go on once everything is green.
 
-3. **Push**: `git push -u origin <branch>`.
+3. **Push**: `git push -u origin merge/<yyyy-mm-dd>`.
 
-4. **PR**: `gh pr create --base main --head <branch> --title "<title>" --body "<bullets>"`
+4. **PR**: `gh pr create --base main --head merge/<yyyy-mm-dd> --title "<title>" --body "<bullets>"`
    — title from the commit subjects, body a few bullets of what changed.
    If a PR for the branch is already open, reuse it.
 
@@ -135,7 +154,15 @@ instead, and the merge waits.
    is a flake still: the log, the screenshots and the code find its cause.
    One whose cause is outside the repo (a runner, npm or PyPI outage, a
    GitHub incident; the log says so) gets one `gh run rerun <id> --failed`,
-   named in the report. After three red rounds, stop and report what is
+   named in the report. So may one in code the merge does not change —
+   neither the failing test nor what it exercises is in
+   `git diff origin/main...HEAD` — that the machine does not show and whose
+   cause is not found within the round: rerun it once, and add it to
+   [debugging.md "Known flakes"](../../../docs/dev/debugging.md#known-flakes)
+   (what was seen, what is known of the cause) in a commit of its own on
+   the branch, named in the report. A failure in code the merge changes is
+   always fixed first, and a second failure of the same step is no flake
+   to rerun. After three red rounds, stop and report what is
    still failing. Never merge over a red check. The `perf` job is green
    even when one of its suites failed, so `gh pr checks` never shows a
    breach: read `gh run view <id>`, whose annotations name each case over
@@ -176,14 +203,19 @@ instead, and the merge waits.
    link. Do not wait for them unless asked (`gh run watch <id>
    --exit-status`).
 
-8. **Clean up the worktree.** Once a branch's work is merged — here into
-   `main`, or a feature branch's into `dev` — remove its worktree and the
-   branch without asking: `git worktree remove .claude/worktrees/<name>`
-   then `git branch -d <name>` (the plain `-d` refuses an unmerged branch,
-   which is the one case to stop and ask; never `-D` or `--force` on your
-   own). A worktree with uncommitted changes is likewise a question, not a
-   deletion. Run this from the main checkout, after leaving the worktree
-   session if the work was done in one.
+8. **Bring `dev` up, and clean up.** The fixes the merge made are on
+   `main` now and not on `dev`: in the main checkout, on `dev`,
+   `git fetch -q origin && git merge origin/main`, then `git push origin dev`
+   (a conflict, or uncommitted changes in the files the merge brings, is a
+   question for the user). Then remove the snapshot without asking:
+   `git worktree remove .claude/worktrees/merge-<yyyy-mm-dd>`,
+   `git branch -d merge/<yyyy-mm-dd>`, `git push origin --delete merge/<yyyy-mm-dd>`.
+   The same goes for any branch whose work is merged — a feature branch
+   into `dev` too: its worktree removed, then `git branch -d <name>` (the
+   plain `-d` refuses an unmerged branch, which is the one case to stop and
+   ask; never `-D` or `--force` on your own). A worktree with uncommitted
+   changes is likewise a question, not a deletion. Run this from the main
+   checkout, after leaving the worktree session if the work was done in one.
 
 Follow-ups to offer, not to run: `update-server`, `update-demo-server` and
 `update-share-host` once the Docker run has published (they deploy that

@@ -73,8 +73,9 @@ tests `backend/tests/test_recordings.py`, `frontend/tests/replay.test.mjs`,
   or the desktop app), so a server reached over plain HTTP on a LAN cannot
   record and the status pill says so; iPad Safari suspends capture when
   the tab is hidden or the screen locks, so recording there is a
-  foreground activity. Read-only viewers and view shares can play; writers
-  record.
+  foreground activity. On an iPad or an iPhone a recording is WAV, about
+  115 MB an hour against WebM's 22 (below, `recorder.js`). Read-only
+  viewers and view shares can play; writers record.
 
 ## Model
 
@@ -84,7 +85,7 @@ A recording is a block with a `recording` property, among the page's notes
 | key | value |
 |---|---|
 | `recording.started` | wall-clock ms when the first file's audio began |
-| `recording.segments[]` | `{url, started, dur, bytes, mime}` in order: the uploaded file (`/api/uploads/<hash>.webm` or `.m4a`), the wall-clock ms its audio began, its measured length in ms, its size, its container type |
+| `recording.segments[]` | `{url, started, dur, bytes, mime}` in order: the uploaded file (`/api/uploads/<hash>.webm`, `.m4a` or `.wav`), the wall-clock ms its audio began, its measured length in ms, its size, its container type |
 | `recording.state` | `recording`, `paused` or `done`; while not done, `by` is the recording tab's id and `at` when it last wrote the block (its lease: stale after a segment's length plus a minute, `recording.js LEASE_STALE_MS`) |
 | `recording.dur` | the segments' total |
 | content | the title ("Recording · <date>" by default); children allowed, and a transcript's paragraphs are children with `transcript: true` and their `t0` |
@@ -137,7 +138,9 @@ strokes' wall clock and back (`toWall(t)`, `toT(wall)`):
 
 A **source** keeps the time: a stopwatch for a compressed clock, the
 audio for a recording (`recording/audioSource.js`: two `<audio>` elements
-take turns so the next segment is loaded before the join). The store ticks
+take turns so the next segment is loaded before the join; the tap that
+plays also plays the idle one muted and pauses it, since iOS lets an
+element start only from a gesture and the join would stop). The store ticks
 on animation frames and publishes `t`; `seek`, `seekWall`, `seekBefore`
 (the lead-in before a written moment), `setRate`, `setMode` and `stop(id)`
 are the same calls for every clock. While a recording plays the store
@@ -166,14 +169,32 @@ What a user sees of the group and sheet replays is unchanged.
 - `recording.js` (pure): the shape (`normalizeRecording`,
   `isRecordingBlock`, `heldElsewhere`, `recordingAt`, `extensionFor`), the
   segment length and the lease's staleness.
-- `recorder.js`: a `MediaRecorder` over the stream at 48 kbps mono, no
-  echo cancellation (a lecture, not a call), in segments: `start(1000)`
-  delivers a chunk a second (`onChunk`, for the spool), a segment ends on
-  a pause, a stop or the five-minute rollover (`onSegment` with the
-  wall-clock start, the measured `dur` and the container type), a level
-  meter from an `AudioContext` analyser. The container is the browser's
-  (`pickMime`): Opus in WebM on Chrome, Edge and Firefox, AAC in MP4 on
-  Safari, named `.webm` / `.m4a` by `extensionFor`.
+- `recorder.js`: the microphone in segments, no echo cancellation (a
+  lecture, not a call): a chunk a second (`onChunk`, for the spool), a
+  segment ended by a pause, a stop or the five-minute rollover
+  (`onSegment` with the wall-clock start, the measured `dur` and the
+  container type), a level meter from an `AudioContext` analyser. The
+  `AudioContext` is made in the tap that starts it (`gestureContext`,
+  before `getUserMedia` is awaited): iOS runs one only from a gesture.
+  Two ways in behind one interface:
+  - a `MediaRecorder` per segment at 48 kbps mono, `start(1000)`, in the
+    browser's container (`pickMime`): Opus in WebM on Chrome, Edge and
+    Firefox, AAC in MP4 on Safari on a Mac, named `.webm` / `.m4a` by
+    `extensionFor`;
+  - on Apple's WebKit with a touch screen (`capturesPcm`: the iPad app,
+    Safari on an iPad or an iPhone), no `MediaRecorder`: an `AudioWorklet`
+    posts the samples (a `ScriptProcessor` where none loads), and
+    `createPcmSegmenter` writes them as 16 kHz mono 16-bit WAV, the
+    rollover at the sample, the next segment's `started` where the last
+    one's audio ended, `dur` from the sample count. There a
+    `MediaRecorder` started outside the tap's handler, as one must be
+    after `getUserMedia` and at each rollover, saved silence or stalled
+    the microphone ([research](../research/audio-recording.md#apples-webkit-a-recorder-that-records-nothing)).
+  The chat composer's dictation uses the same recorder in one file
+  (`segmentMs: 0`).
+- `wav.js` (pure): the WAV header, `withWavSizes` (a recovered segment's
+  sizes made true to its length: its first chunk's header said "to the
+  end") and the area-averaging downsampler.
 - `webm.js` (pure): a WebM from `MediaRecorder` carries no length, so an
   `<audio>` element reports Infinity and seeks poorly; `withDuration`
   writes the measured length into the file's Info element before upload
@@ -196,7 +217,8 @@ What a user sees of the group and sheet replays is unchanged.
   a 404 (the insert still queued) retries in two seconds. `pause`,
   `resume`, `stop` (the block marked `done` once the last segment is up),
   `bookmark`; `leftBehind` and `recover` for a crashed tab's segments
-  (their length from decoding the file, else a second per chunk).
+  (a WAV's sizes put right first; their length from decoding the file,
+  else a second per chunk).
   `configure` takes App's `setStatus`, `insertBlock`, the lead-in and
   `onDone` (the automatic transcription).
 - `RecordingPill.jsx`, `RecordingCard.jsx` (the row's card; reads the
@@ -225,7 +247,7 @@ What a user sees of the group and sheet replays is unchanged.
 ## Server
 
 - `storage.py`: `.webm` (`audio/webm`), `.m4a` (`audio/mp4`), `.ogg` /
-  `.opus` (`audio/ogg`) in `FILE_MEDIA_TYPES`; the audio extensions are
+  `.opus` (`audio/ogg`), `.wav` (`audio/wav`) in `FILE_MEDIA_TYPES`; the audio extensions are
   served inline (`INLINE_EXTENSIONS`) so an `<audio>` element plays them,
   with the usual Range support and cache headers; `POST /api/upload-file`
   checks a recorder's container by its magic bytes (`is_audio`) as it

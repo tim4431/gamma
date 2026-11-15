@@ -134,7 +134,7 @@ def test_audio_is_served_inline_with_its_type_and_by_range(owner):
 
 
 def test_an_audio_upload_must_be_its_container(owner):
-    for name in ("fake.webm", "fake.m4a", "fake.ogg", "fake.opus"):
+    for name in ("fake.webm", "fake.m4a", "fake.ogg", "fake.opus", "fake.wav"):
         r = owner.post("/api/upload-file", files={"file": (name, b"<html>not audio</html>", "audio/webm")})
         assert r.status_code == 400 and r.json()["detail"] == "not a valid audio file", name
     assert is_audio(".mp3", b"ID3\x04\x00") and is_audio(".mp3", b"\xff\xfb\x90\x00")

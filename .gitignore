@@ -5,6 +5,7 @@ STATUS.md
 node_modules/
 venv/
 .venv/
+venv313/
 uploads-flat/
 __pycache__/
 *.pyc

@@ -66,6 +66,8 @@ import { historyRows, sourceNote } from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
 import AgentChip, { agentIcon } from "./AgentChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
+import { canRecord, createRecorder, gestureContext } from "../recording/recorder.js";
+import { extensionFor } from "../recording/recording.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 // A conversation this tab has nothing of yet (one array, never written).
@@ -632,7 +634,7 @@ export default function ChatDock({
   // into the input via /api/ai/transcribe, ↑ transcribes and sends, × discards.
   const [dictation, setDictation] = useState(""); // "" | "rec" | "busy"
   const [recSecs, setRecSecs] = useState(0);
-  const recRef = useRef(null); // {recorder, stream, chunks, canceled, autoSend, baseText, analyser, audioCtx, amps}
+  const recRef = useRef(null); // {recorder, blob, canceled, autoSend, baseText, analyser, amps}
   const waveCanvasRef = useRef(null);
   // The latest render's send to the agent shown, for the record-view ↑
   // button — the recorder's onstop fires from the render that started it,
@@ -1568,45 +1570,32 @@ export default function ChatDock({
     session.stop(chatKey);
   }
 
+  // The recordings' recorder (recording/recorder.js), in one file: the
+  // browser's container, or WAV on an iPad or an iPhone.
   async function startDictation() {
     if (dictation) return;
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    if (!canRecord()) {
       setStatus(t("Voice input needs HTTPS or localhost — the browser blocks the microphone on plain HTTP."));
       return;
     }
+    const context = gestureContext(); // inside the tap, before the wait (recorder.js)
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
+      context?.close().catch(() => {});
       setStatus(t("Microphone access was denied."));
       return;
     }
-    // Chrome/Firefox record webm/opus; Safari only mp4 (m4a to OpenAI).
-    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
     const rec = {
-      recorder: new MediaRecorder(stream, mime ? { mimeType: mime } : undefined),
-      stream, chunks: [], canceled: false, autoSend: false,
+      blob: null, canceled: false, autoSend: false,
       baseText: chatInput, // composer text at record start (the input is hidden while recording)
       amps: [], peak: 0,
     };
-    // Analyser feeds the live waveform; recording works fine without it.
-    try {
-      const audioCtx = new AudioContext();
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
-      audioCtx.createMediaStreamSource(stream).connect(analyser);
-      rec.audioCtx = audioCtx;
-      rec.analyser = analyser;
-    } catch {}
-    recRef.current = rec;
-    rec.recorder.ondataavailable = (e) => { if (e.data?.size) rec.chunks.push(e.data); };
-    rec.recorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      rec.audioCtx?.close().catch(() => {});
-      if (rec.canceled) return;
-      transcribeDictation(new Blob(rec.chunks, { type: rec.recorder.mimeType || mime || "audio/webm" }), rec);
-    };
+    rec.recorder = createRecorder(stream, { context, segmentMs: 0, onSegment: ({ blob }) => { rec.blob = blob; } });
     rec.recorder.start();
+    rec.analyser = rec.recorder.analyser; // feeds the live waveform; recording works without it
+    recRef.current = rec;
     setRecSecs(0);
     setDictation("rec");
   }
@@ -1619,7 +1608,9 @@ export default function ChatDock({
     rec.canceled = mode === "cancel";
     rec.autoSend = mode === "send";
     setDictation(rec.canceled ? "" : "busy");
-    try { rec.recorder.stop(); } catch { setDictation(""); }
+    rec.recorder.stop().then(() => {
+      if (!rec.canceled) transcribeDictation(rec.blob || new Blob([], { type: rec.recorder.mime }), rec);
+    });
     if (rec.canceled) recRef.current = null;
   }
 
@@ -1627,7 +1618,7 @@ export default function ChatDock({
     try {
       if (blob.size > 24 * 1024 * 1024) throw new Error("recording too long (max ~25 MB)");
       const form = new FormData();
-      form.append("file", blob, blob.type.includes("mp4") ? "dictation.m4a" : "dictation.webm");
+      form.append("file", blob, `dictation${extensionFor(blob.type)}`);
       if (dictationModel) form.append("model", dictationModel);
       const language = dictationLang === "auto" ? "" : dictationLang || getLocale();
       if (language) form.append("language", language);
@@ -1713,9 +1704,7 @@ export default function ChatDock({
     const rec = recRef.current;
     if (rec) {
       rec.canceled = true;
-      try { rec.recorder.stop(); } catch {}
-      rec.stream.getTracks().forEach((t) => t.stop());
-      rec.audioCtx?.close().catch(() => {});
+      rec.recorder.stop();
     }
   }, []);
 

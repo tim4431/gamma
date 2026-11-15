@@ -16,7 +16,8 @@ import { inkPenDown } from "../ink/InkLayer";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
 import { KEEP_MARGIN, RENDER_MARGIN, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
-import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
+import { installScrollSnap } from "./scrollSnap.js";
+import { ACROSS, FALLBACK_H, FALLBACK_W, PAGE_GAP, crossStart, pageAt, pageStartAt } from "./pageLayout.js";
 import { selectionParagraphs, textRuns } from "./pdfTranslate";
 import * as translateState from "./translateState.js";
 import { langOfKey, sameModel } from "./translateRecall.js";
@@ -57,7 +58,7 @@ import { TipComment, TipCopy, TipDivider, TipMoveHere, TipTool } from "../shared
 import { t } from "../shared/i18n/i18n.js";
 import { ZOOM_MIN, clampZoom } from "../shared/model/zoom.js";
 import { SCALE_VAR, installViewerZoom, scaledPx } from "../shared/lib/viewerZoom.js";
-import { installSmoothWheel } from "../shared/lib/smoothWheel.js";
+import { installSmoothWheel, installWheelAcross } from "../shared/lib/smoothWheel.js";
 // The engine: pdf.js (the legacy build, not the default one: it ships the
 // core-js polyfills the modern build assumes — Promise.withResolvers is
 // Safari 17.4+, and pdf.js calls it the moment a loading task is created) and
@@ -100,14 +101,11 @@ const openParams = (params) => (PDF_WORKER ? { ...params, worker: PDF_WORKER } :
 
 const EMPTY_MARKS = [];
 
-// Page layout model shared by the placeholder styles and all scroll math:
-// page boxes stack with a fixed gap, and unmeasured pages assume page 1's
-// size (FALLBACK_* is the last resort before even that is known).
-const PAGE_GAP = 8;
-// How far past the view (each way, in viewport heights) a page keeps its
+// The page layout model (page boxes PAGE_GAP apart, down or across, the
+// FALLBACK_* size for a page not measured yet) is pdf/pageLayout.js.
+// How far past the view (each way, in viewport lengths) a page keeps its
 // text layer; pdf.js's own viewer keeps about ten pages.
-const FAR_MARGIN = "400% 0px";
-const FALLBACK_H = 800, FALLBACK_W = 600;
+const FAR_MARGIN = "400%";
 // A page's text layer is built once its scroller has sent no scroll event
 // for this long.
 const TEXT_REST_MS = 100;
@@ -154,29 +152,28 @@ function useWithin(wrapRef, margin, pageNumber, initial = false) {
   return [within, assume];
 }
 
-// Content-y of page idx's top edge at the given scale.
-function pageTopAt(heights, idx, scale) {
-  let y = 0;
-  for (let i = 0; i < idx; i++) y += (heights[i] || FALLBACK_H) * scale + PAGE_GAP;
-  return y;
-}
-
-// The page boxes the scroller shows from `top` when its pages, of natural
-// `heights`, are laid out at `scale`. Worked out in the layout model above,
-// not from the boxes' rectangles, so it answers for the layout the reader
-// saw even in a commit that has already laid the boxes out at another zoom.
-function pagesInView(scroller, heights, scale, top) {
+// The page boxes the scroller shows from run position `from` (its scrollTop
+// down, its scrollLeft across) when its pages, of natural lengths `sizes`
+// along the run (heights down, widths across), are laid out at `scale`.
+// Worked out in the layout model (pdf/pageLayout.js), not from the boxes'
+// rectangles, so it answers for the layout the reader saw even in a commit
+// that has already laid the boxes out at another zoom.
+function pagesInView(scroller, sizes, scale, from, across) {
   const out = [];
   if (!scroller) return out;
-  const bottom = top + scroller.clientHeight;
-  for (let i = 0, y = 0; i < heights.length && y < bottom; i++) {
-    const h = (heights[i] || FALLBACK_H) * scale;
-    const wrap = y + h > top && scroller.querySelector(`.pdfPageWrap[data-page="${i + 1}"]`);
+  const to = from + (across ? scroller.clientWidth : scroller.clientHeight);
+  for (let i = 0, at = 0; i < sizes.length && at < to; i++) {
+    const len = (sizes[i] || (across ? FALLBACK_W : FALLBACK_H)) * scale;
+    const wrap = at + len > from && scroller.querySelector(`.pdfPageWrap[data-page="${i + 1}"]`);
     if (wrap) out.push(wrap);
-    y += h + PAGE_GAP;
+    at += len + PAGE_GAP;
   }
   return out;
 }
+
+// The tallest of the pages' natural `heights`: across, the line every page
+// stands centred in, once it is taller than the view.
+const tallestOf = (heights) => heights.reduce((m, h) => Math.max(m, h || FALLBACK_H), 0);
 
 // The bytes of the document most recently downloaded, so a reopen while the
 // IndexedDB copy below is still being written never re-downloads. One entry
@@ -613,15 +610,21 @@ export async function openPdfDocument(url) {
 // that one and opens its card (the Document menu's Review, `follow`; App
 // after a move started from the card, `done` what it did and scroll
 // false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, anchors = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateSelection = null, onTranslateBrief, onTranslateLookup, translateRecall = null, translateKeeps = true, onAddTerm = null, translateCtlRef, onTranslateState, onParagraphContext, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, anchors = null, marginRef = null, onMarginLost, onPageInView, pageFlow = "down", zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
+  // Which way the pages run (pdf/pageLayout.js; Settings → Reading › PDFs ›
+  // Page direction): down, one under another, or across, side by side.
+  const across = pageFlow === ACROSS;
+  const acrossRef = useRef(across);
+  acrossRef.current = across;
   const [pdfDoc, setPdfDoc] = useState(null);
   const [numPages, setNumPages] = useState(0);
   const [docSeq, setDocSeq] = useState(0); // bumped per document — keys the page tree so swaps are atomic
   // The page in view (docs/dev/handwriting.md "Copy, cut and paste"): of the
   // page boxes intersecting the scroller, the one whose centre lies nearest
-  // the scroller's centre, reported as onPageInView(pageNumber, {width,
+  // the scroller's centre (down or across, whichever way the pages run),
+  // reported as onPageInView(pageNumber, {width,
   // height} at scale 1) whenever it changes — the intersections from one
   // observer over every page box, the nearest re-judged per scroll frame.
   const onPageInViewRef = useRef(onPageInView);
@@ -633,10 +636,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     let last = 0, raf = 0;
     const report = () => {
       raf = 0;
-      const r = root.getBoundingClientRect(), mid = r.top + r.height / 2;
+      const r = root.getBoundingClientRect(), midX = r.left + r.width / 2, midY = r.top + r.height / 2;
       let best = 0, dist = Infinity;
       for (const [el, n] of seen) {
-        const b = el.getBoundingClientRect(), d = Math.abs((b.top + b.bottom) / 2 - mid);
+        const b = el.getBoundingClientRect(), d = Math.hypot((b.left + b.right) / 2 - midX, (b.top + b.bottom) / 2 - midY);
         if (d < dist) { dist = d; best = n; }
       }
       if (!best || best === last) return;
@@ -669,6 +672,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const heightsExactRef = useRef(true); // false while a long doc's tail heights are estimates still refining
   const lastScrollRef = useRef(0); // scrollTop as of the last scroll event — the pre-clamp value during a zoom commit
   const lastScrollLeftRef = useRef(0);
+  // The pages' natural lengths along the run: their heights down, their widths across.
+  const runSizes = () => (acrossRef.current ? pageWidthsRef.current : pageHeightsRef.current);
 
   // Stable callback identities so memoized pages don't re-render every time a
   // parent state change recreates the handler closures. The wrappers always
@@ -766,18 +771,22 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   }, []);
 
   // A notched mouse wheel glides instead of jumping while the setting is on
-  // (shared/lib/smoothWheel.js; Settings → Reading › PDFs).
+  // (shared/lib/smoothWheel.js; Settings → Reading › PDFs). While the pages
+  // run across and fit the view's height, a wheel turned down moves them
+  // across, gliding or not.
   useEffect(() => {
     const el = viewerRef.current;
-    if (el && smoothWheel) return installSmoothWheel(el);
-  }, [smoothWheel]);
+    if (!el) return undefined;
+    const offs = [smoothWheel ? installSmoothWheel(el, { across }) : null, across ? installWheelAcross(el) : null];
+    return () => offs.forEach((off) => off?.());
+  }, [smoothWheel, across]);
 
   // Reset pending touch alignment on zoom/document changes. The helper never
   // writes scroll offsets while a finger or native momentum is moving.
   useEffect(() => {
     const el = viewerRef.current;
-    if (el) return installVerticalScrollSnap(el);
-  }, [pdfScaleValue, pdfDoc]);
+    if (el) return installScrollSnap(el, { across });
+  }, [pdfScaleValue, pdfDoc, across]);
 
   // Group find marks per page once, sharing one frozen empty array so pages
   // without marks keep referentially-equal props (memo stays effective).
@@ -839,7 +848,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // or a new comment's card is open, each page with room for the card
   // column stands beside it, the two centred together
   // (comments/marginLayout.js); pages without room are centred and keep the
-  // badge and the popover.
+  // badge and the popover. The column runs down beside the pages, so pages
+  // that run across have none: their threads open in the popover.
   const [viewerW, setViewerW] = useState(0);
   useEffect(() => {
     const el = viewerRef.current;
@@ -852,12 +862,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   }, []);
   const marginTarget = commentMargin?.target || null;
   const withMargin = useMemo(() => {
-    if (!commentMargin) return false;
+    if (!commentMargin || across) return false;
     for (const list of anchorsByPage.values()) {
       if (list.some((a) => a.threadCount > 0 || (marginTarget?.compose && a.id === marginTarget.blockId))) return true;
     }
     return false;
-  }, [anchorsByPage, commentMargin, marginTarget]);
+  }, [anchorsByPage, commentMargin, marginTarget, across]);
   const withMarginRef = useRef(withMargin);
   withMarginRef.current = withMargin;
 
@@ -974,8 +984,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   }, [pdfDoc, captureRef]);
   // Resolve scale: numeric value as-is, "page-width" computes a scale that
   // fits the typical page (typicalPageIndex: the most common width, not
-  // page 1, which may be a cover of another size) to the viewer width.
-  // Recomputed on viewer resize so it adapts to sidebar drags / phone rotation.
+  // page 1, which may be a cover of another size) to the viewer width, and
+  // while the pages run across, the whole page into the viewer (its height
+  // too). Recomputed on viewer resize so it adapts to sidebar drags / phone
+  // rotation.
   const [fitWidthScale, setFitWidthScale] = useState(1);
   const numericScale = parseFloat(pdfScaleValue);
   const isFitWidth = isNaN(numericScale);
@@ -991,11 +1003,18 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   useEffect(() => { viewerZoomRef.current?.sync(scale); }, [scale]);
   useEffect(() => { onEffectiveScale?.(scale); }, [scale, onEffectiveScale]);
   // The scale that fits the typical page of `widths` to the viewer's width,
-  // or null while the viewer has none.
-  const fitScale = (widths) => {
-    const naturalW = widths[typicalPageIndex(widths)];
-    const containerW = viewerRef.current?.clientWidth;
-    return naturalW > 0 && containerW > 0 ? Math.max(ZOOM_MIN, containerW / naturalW) : null;
+  // or, across, the whole page (of `heights`) into the viewer; null while
+  // the viewer has no size. Across, the scroller keeps its horizontal
+  // scrollbar's room (overflow-x: scroll), so its height is the same with
+  // the pages in as in an empty viewer.
+  const fitScale = (widths, heights) => {
+    const i = typicalPageIndex(widths), v = viewerRef.current;
+    const naturalW = widths[i], containerW = v?.clientWidth;
+    if (!(naturalW > 0 && containerW > 0)) return null;
+    let fit = containerW / naturalW;
+    const naturalH = heights[i], containerH = v.clientHeight;
+    if (acrossRef.current && naturalH > 0 && containerH > 0) fit = Math.min(fit, containerH / naturalH);
+    return Math.max(ZOOM_MIN, fit);
   };
   // Before paint, so a document is never seen at the scale the one before
   // it fitted.
@@ -1004,14 +1023,14 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // The widths are in pageWidthsRef, measured before the doc was shown —
     // no async worker round trip per sidebar drag / rotation.
     const compute = () => {
-      const fit = fitScale(pageWidthsRef.current);
+      const fit = fitScale(pageWidthsRef.current, pageHeightsRef.current);
       if (fit) setFitWidthScale(fit);
     };
     compute();
     const ro = new ResizeObserver(compute);
     ro.observe(viewerRef.current);
     return () => ro.disconnect();
-  }, [isFitWidth, pdfDoc, skeletonUrl]);
+  }, [isFitWidth, pdfDoc, skeletonUrl, across]);
 
   // Tell the host which document's pages are in the DOM. Layout effect on
   // purpose: it fires after the swap commit but BEFORE paint, so the host can
@@ -1028,7 +1047,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       // already, and no "Rendering page…" rises. Without one the pill stays
       // until a page paints, as for any document.
       const v = viewerRef.current;
-      if (v && pagesInView(v, pageHeightsRef.current, scale, v.scrollTop).some(showsKept)) onPagePainted();
+      if (v && pagesInView(v, runSizes(), scale, across ? v.scrollLeft : v.scrollTop, across).some(showsKept)) onPagePainted();
     }
   }, [pdfDoc]);
 
@@ -1056,7 +1075,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // skeleton on screen holds none of its.
   const keepLeaving = () => {
     if (!displayedDocRef.current || skeletonRef.current) return;
-    keepPixels(displayedDocRef.current, pagesInView(viewerRef.current, pageHeightsRef.current, prevScaleRef.current, lastScrollRef.current));
+    const runs = acrossRef.current;
+    keepPixels(displayedDocRef.current, pagesInView(viewerRef.current, runSizes(), prevScaleRef.current,
+      runs ? lastScrollLeftRef.current : lastScrollRef.current, runs));
   };
   const commitLayout = (heights, widths, exact) => {
     heightsExactRef.current = exact;
@@ -1104,7 +1125,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (!live || docUrlRef.current === url) return;
     onLoadState?.(url, { phase: "open" });
     onLoadState?.(url, { phase: "cached" });
-    const fit = isFitWidth && fitScale(live.widths);
+    const fit = isFitWidth && fitScale(live.widths, live.heights);
     if (fit) setFitWidthScale(fit);
     commitDoc(url, live.doc, live.heights, live.widths, true);
   }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1286,6 +1307,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // paint means no visible jump at all.
   const prevScaleRef = useRef(scale);
   const anchorRafRef = useRef(0); // live settle-loop frame — cancelled on re-zoom AND on document swap
+  // A page the pages' turn to the other way lands on once its fit settles
+  // (the flow effect below), else 0.
+  const flowPageRef = useRef(0);
   useLayoutEffect(() => {
     const prev = prevScaleRef.current;
     prevScaleRef.current = scale;
@@ -1293,60 +1317,60 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     zoomAnchorRef.current = null;
     const docSwap = docSwapPendingRef.current;
     docSwapPendingRef.current = false;
+    const flowPage = flowPageRef.current;
+    flowPageRef.current = 0;
     if (prev === scale || docSwap === scale || !viewerRef.current) return;
     const v = viewerRef.current;
-    const heights = pageHeightsRef.current;
+    const heights = pageHeightsRef.current, widths = pageWidthsRef.current;
     if (heights.length === 0) return;
+    if (flowPage) { landOnPage(flowPage, scale); return; }
     const ax = docSwap ? 0 : anchor ? anchor.x : v.clientWidth / 2;
     const ay = docSwap ? 0 : anchor ? anchor.y : v.clientHeight / 2;
+    const runs = acrossRef.current;
 
-    // Find the page covering the anchor's content-y at the OLD scale. The
-    // anchor may sit in the fixed 8px gap below the page — that slice does
-    // NOT scale with the zoom, so it's kept separate (gapPx) instead of being
-    // folded into the page fraction.
-    const oldY = lastScrollRef.current + ay;
-    let acc = 0, anchorIdx = 0, fracInPage = 0, gapPx = 0;
-    for (let i = 0; i < heights.length; i++) {
-      const ph = (heights[i] || FALLBACK_H) * prev;
-      if (acc + ph + PAGE_GAP > oldY) {
-        anchorIdx = i;
-        fracInPage = Math.min(1, (oldY - acc) / ph);
-        gapPx = Math.max(0, oldY - acc - ph);
-        break;
-      }
-      acc += ph + PAGE_GAP;
-    }
+    // Along the run (pdf/pageLayout.js), the page covering the anchor at the
+    // OLD scale. The anchor may sit in the fixed 8px gap after the page —
+    // that slice does NOT scale with the zoom, so it's kept separate (gap)
+    // instead of being folded into the page fraction.
+    const sizes = runs ? widths : heights, fallback = runs ? FALLBACK_W : FALLBACK_H;
+    const { idx: anchorIdx, frac: fracInPage, gap: gapPx } = pageAt(sizes, prev,
+      runs ? lastScrollLeftRef.current + ax : lastScrollRef.current + ay, fallback);
 
-    // Content-x under the anchor, in base (scale-1) page coordinates. A page
-    // narrower than the viewport is centered by its auto margins, or stands
-    // beside its comment margin; a wider one sits at x=0 — pageLeft covers
-    // the three layouts, before and after.
-    const clientW = v.clientWidth;
-    const pw = pageWidthsRef.current[anchorIdx] || FALLBACK_W;
-    const oldLeft = pageLeft(clientW, pw * prev, withMarginRef.current);
-    const baseX = (lastScrollLeftRef.current + ax - oldLeft) / prev;
+    // Across the run, the content under the anchor, in base (scale-1) page
+    // coordinates. Down, a page narrower than the viewport is centered by
+    // its auto margins, or stands beside its comment margin; a wider one
+    // sits at x=0 — pageLeft covers the three layouts, before and after.
+    // Across, a page shorter than its line (the viewport, or the tallest
+    // page once that is taller) is centred in it, a taller one at y=0.
+    const clientW = v.clientWidth, clientH = v.clientHeight;
+    const pw = widths[anchorIdx] || FALLBACK_W, ph = heights[anchorIdx] || FALLBACK_H;
+    const tallest = runs ? tallestOf(heights) : 0;
+    const crossAt = (k) => (runs ? crossStart(Math.max(clientH, tallest * k), ph * k) : pageLeft(clientW, pw * k, withMarginRef.current));
+    const baseCross = ((runs ? lastScrollRef.current + ay : lastScrollLeftRef.current + ax) - crossAt(prev)) / prev;
 
     const place = () => {
-      v.scrollTop = pageTopAt(heights, anchorIdx, scale)
-        + fracInPage * (heights[anchorIdx] || FALLBACK_H) * scale + gapPx - ay;
-      const newLeft = pageLeft(clientW, pw * scale, withMarginRef.current);
-      v.scrollLeft = newLeft + baseX * scale - ax;
+      const along = pageStartAt(sizes, anchorIdx, scale, fallback) + fracInPage * (sizes[anchorIdx] || fallback) * scale + gapPx;
+      const cross = crossAt(scale) + baseCross * scale;
+      if (runs) { v.scrollLeft = along - ax; v.scrollTop = cross - ay; }
+      else { v.scrollTop = along - ay; v.scrollLeft = cross - ax; }
       lastScrollRef.current = v.scrollTop;
       lastScrollLeftRef.current = v.scrollLeft;
     };
     place();
     if (heightsExactRef.current) return; // every height is measured — nothing can shift, skip the settle loop
-    // Safety net: estimated heights (long docs) can still refine right after
-    // a zoom and shift the layout — re-place while scrollHeight settles. The
-    // cleanup cancel is load-bearing: without it, each step of a continuous
-    // Ctrl+scroll leaves this loop alive, and the NEXT step's layout change
-    // trips the stale loop into re-placing old-scale coordinates over the
-    // fresh ones — the zoom visibly slides off the anchor.
+    // Safety net: estimated sizes (long docs) can still refine right after
+    // a zoom and shift the layout — re-place while the scroll extent
+    // settles. The cleanup cancel is load-bearing: without it, each step of
+    // a continuous Ctrl+scroll leaves this loop alive, and the NEXT step's
+    // layout change trips the stale loop into re-placing old-scale
+    // coordinates over the fresh ones — the zoom visibly slides off the
+    // anchor.
     let tries = 0;
-    let lastSH = v.scrollHeight;
+    const extent = () => `${viewerRef.current.scrollWidth}x${viewerRef.current.scrollHeight}`;
+    let lastExtent = extent();
     const tick = () => {
       if (!viewerRef.current) return;
-      if (viewerRef.current.scrollHeight !== lastSH) { lastSH = viewerRef.current.scrollHeight; place(); }
+      if (extent() !== lastExtent) { lastExtent = extent(); place(); }
       if (tries++ < 30) anchorRafRef.current = requestAnimationFrame(tick);
     };
     anchorRafRef.current = requestAnimationFrame(tick);
@@ -1364,8 +1388,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const [pageWidths, setPageWidths] = useState([]);
 
   // A page's left edge beside its comment margin at this zoom, or null when
-  // it has no room for the column (comments/marginLayout.js).
-  const pageMargin = (pn) => besideMargin(viewerW, (pageWidths[pn - 1] || 0) * scale);
+  // it has no room for the column (comments/marginLayout.js), as pages that
+  // run across never have.
+  const pageMargin = (pn) => (across ? null : besideMargin(viewerW, (pageWidths[pn - 1] || 0) * scale));
   // The pages' margins stack as one column: each page's top, and where the
   // cards of the pages above end (comments/marginSlot.jsx).
   const [marginStack] = useState(createMarginStack);
@@ -1392,6 +1417,38 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   lostRef.current = onMarginLost;
   useEffect(() => { if (marginTarget && !targetRoom) lostRef.current?.(); }, [marginTarget, targetRoom]);
 
+  // Where a jump to `position` (its page, and a place on it: its
+  // boundingRect, or `box` in page points) puts the scroller while its pages
+  // are laid out at `k`, `offset` px of context before the place: its
+  // {top} down, its {left, top} across. Worked out from the cached sizes
+  // (accurate even for unrendered pages), the pages at scale 1, the frame a
+  // box's points are in.
+  const jumpTarget = (position, box, offset, k) => {
+    const v = viewerRef.current, pn = position.pageNumber, r = position.boundingRect;
+    const heights = pageHeightsRef.current, widths = pageWidthsRef.current;
+    const curH = (heights[pn - 1] || FALLBACK_H) * k, curW = (widths[pn - 1] || FALLBACK_W) * k;
+    const spotY = box ? (box.y || 0) * k : r ? r.y1 * curH / (position.height || 1) : 0;
+    if (!acrossRef.current) return { top: pageStartAt(heights, pn - 1, k, FALLBACK_H) + spotY - offset };
+    // Across, a page the view holds whole stands in its middle; a wider one
+    // shows its place `offset` in from the view's left edge. Down the page,
+    // the place `offset` under the view's top, as down.
+    const start = pageStartAt(widths, pn - 1, k, FALLBACK_W);
+    const spotX = box ? (box.x || 0) * k : r ? r.x1 * curW / (position.width || 1) : 0;
+    return {
+      left: curW <= v.clientWidth ? start - (v.clientWidth - curW) / 2 : start + spotX - offset,
+      top: crossStart(Math.max(v.clientHeight, tallestOf(heights) * k), curH) + spotY - offset,
+    };
+  };
+  // Puts the scroller on page `pn`'s start at once (laid out at `k`), and the
+  // scroll refs with it: what the zoom anchor reads before the scroll event.
+  const landOnPage = (pn, k) => {
+    const v = viewerRef.current, to = jumpTarget({ pageNumber: pn }, null, 0, k);
+    if (to.left != null) v.scrollLeft = to.left;
+    v.scrollTop = to.top;
+    lastScrollRef.current = v.scrollTop;
+    lastScrollLeftRef.current = v.scrollLeft;
+  };
+
   // Scroll to exact highlight position. Long jumps snap instantly — smooth
   // scrolling across many pages is what made find-next feel sluggish.
   const scrollToPositionRef = useRef(null);
@@ -1399,28 +1456,24 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     scrollToPositionRef.current = async ({ position, box, behavior, offset }) => {
       const pn = position?.pageNumber;
       if (!pn || !viewerRef.current || !pdfDoc) return;
-      const r = position?.boundingRect;
       const heights = pageHeightsRef.current;
 
-      // Lazy-compute missing page heights up to target page
+      // Lazy-compute missing page sizes up to target page
+      const widths = pageWidthsRef.current;
       for (let i = heights.length; i < pn; i++) {
         try {
-          const page = await pdfDoc.getPage(i + 1);
-          heights[i] = page.getViewport({ scale: 1 }).height;
+          const vp = (await pdfDoc.getPage(i + 1)).getViewport({ scale: 1 });
+          heights[i] = vp.height;
+          widths[i] = vp.width;
         } catch {
           heights[i] = FALLBACK_H;
+          widths[i] = FALLBACK_W;
         }
       }
 
-      // Compute page-top from cached heights (accurate even for unrendered pages)
-      const pageTop = pageTopAt(heights, pn - 1, scale);
-      const curH = (heights[pn - 1] || FALLBACK_H) * scale;
-      const storedH = position?.height || 1;
-      // (the cached heights are the pages at scale 1, the frame a box's points are in)
-      const highlightY = box ? box.y * scale : r ? r.y1 * curH / storedH : 0;
-      const targetTop = pageTop + highlightY - (offset ?? 80);
-      const dist = Math.abs(targetTop - viewerRef.current.scrollTop);
-      viewerRef.current.scrollTo({ top: targetTop, behavior: behavior || (dist > 1500 ? "auto" : "smooth") });
+      const v = viewerRef.current, to = jumpTarget(position, box, offset ?? 80, scale);
+      const dist = Math.hypot(to.top - v.scrollTop, (to.left ?? v.scrollLeft) - v.scrollLeft);
+      v.scrollTo({ ...to, behavior: behavior || (dist > 1500 ? "auto" : "smooth") });
 
       // Force-render target page if not yet visible
       const pageEl = viewerRef.current.querySelector(`[data-page="${pn}"]`);
@@ -1522,29 +1575,40 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
 
   // Current-page widget (top-right): tracks scrolling, and typing a number
   // jumps. The "current" page is the one covering a point a third of the way
-  // down the viewport — closer to "the page I'm reading" than the strict top
-  // edge, which flips the counter while the previous page still fills most of
-  // the screen. setState bails out when the value is unchanged, so scroll
-  // events don't re-render.
+  // down the viewport (across it, while the pages run across) — closer to
+  // "the page I'm reading" than the strict top edge, which flips the counter
+  // while the previous page still fills most of the screen. setState bails
+  // out when the value is unchanged, so scroll events don't re-render.
   const [curPage, setCurPage] = useState(1);
   const [pageInput, setPageInput] = useState(null); // non-null while the box is being edited
   const syncCurPage = () => {
     const v = viewerRef.current;
     if (!v || !numPages) return;
-    const heights = pageHeightsRef.current;
-    const y = v.scrollTop + v.clientHeight / 3;
-    let acc = 0, pn = numPages;
-    for (let i = 0; i < numPages; i++) {
-      acc += (heights[i] || FALLBACK_H) * scale + PAGE_GAP;
-      if (acc > y) { pn = i + 1; break; }
-    }
-    setCurPage(pn);
+    const runs = acrossRef.current;
+    const at = runs ? v.scrollLeft + v.clientWidth / 3 : v.scrollTop + v.clientHeight / 3;
+    setCurPage(Math.min(numPages, pageAt(runSizes(), scale, at, runs ? FALLBACK_W : FALLBACK_H).idx + 1));
   };
+  // The pages turned the other way (Settings → Reading › PDFs › Page
+  // direction): the page being read is the one in view again, laid out the
+  // new way before paint. At a fit, the fit of the new way (a whole page
+  // across, the width down) comes in the commit after, which this one's
+  // fit effect asks for: that page waits in flowPageRef for it, and the
+  // zoom anchor lands on it there instead of holding the view's middle.
+  const flowRef = useRef(across);
+  useLayoutEffect(() => {
+    if (flowRef.current === across) return;
+    flowRef.current = across;
+    if (!viewerRef.current || !numPages) return;
+    const fit = isFitWidth ? fitScale(pageWidthsRef.current, pageHeightsRef.current) : null;
+    flowPageRef.current = fit && fit !== scale ? curPage : 0;
+    landOnPage(curPage, scale);
+  }, [across]); // eslint-disable-line react-hooks/exhaustive-deps
   // Resync outside of scroll events: document swaps (a restore to the same
-  // scrollTop fires no scroll event), zoom changes, and height refinement on
-  // long documents can all move the page under the reference point. Before
-  // paint, after the restore, so a document comes back with its own number.
-  useLayoutEffect(() => { syncCurPage(); }, [docSeq, scale, numPages, pageHeights]);
+  // scrollTop fires no scroll event), zoom changes, a turn of the pages and
+  // height refinement on long documents can all move the page under the
+  // reference point. Before paint, after the restore, so a document comes
+  // back with its own number.
+  useLayoutEffect(() => { syncCurPage(); }, [docSeq, scale, numPages, pageHeights, across]);
   const jumpToPage = (pn) => {
     if (!numPages || !Number.isFinite(pn)) return;
     const p = Math.max(1, Math.min(numPages, pn));
@@ -2291,8 +2355,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           scrollbar arriving with them would fit them a second time, which
           the zoom anchor re-places about the viewport's centre, and each
           return to the tab would land a few px higher. */}
-      <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "") + (moveMode ? " pdfMoving" : "")}
-        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none", scrollbarGutter: "stable",
+      <div ref={viewerRef} data-guide="pdf.viewer" data-flow={across ? ACROSS : undefined}
+        className={"pdfViewer" + (across ? " pdfAcross" : "") + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "") + (moveMode ? " pdfMoving" : "")}
+        // Across, the horizontal scrollbar's room is kept too, so the fit
+        // of a whole page into the viewer is the same with the pages in.
+        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: across ? "scroll" : "auto", overflowAnchor: "none", scrollbarGutter: "stable",
           // the selection in the colour the highlighter will give it (app.css)
           ...(highlighter && !moveMode ? { "--selection-color": highlighter } : null) }}
         onScroll={(e) => {
@@ -2316,7 +2383,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       <MarginStackContext.Provider value={marginStack}>
       {Array.from({ length: numPages }, (_, i) => (
         <PdfPage key={`${docSeq}-${i + 1}`} pageNumber={i + 1} pdfDoc={pdfDoc} zoom={pageScale}
-          baseWidth={pageWidths[i] || 0} baseHeight={pageHeights[i] || 0}
+          baseWidth={pageWidths[i] || 0} baseHeight={pageHeights[i] || 0} across={across}
           marginLeft={withMargin ? pageMargin(i + 1) : null} pageTop={pageTops[i] || 0} marginScale={withMargin ? scale : 0}
           activeHl={targetPage === i + 1 ? activeHl : null}
           highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} anchors={anchorsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump}
@@ -2461,7 +2528,8 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
 // anchors: the page's comment anchors, which its margin's cards stand beside.
 // zoom: the viewer's pageScale store; baseWidth × baseHeight: the page's
 // size at scale 1 as the viewer knows it, until pdf.js measures it.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, highlights, anchors, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
+// across: the pages run across, side by side (pdf/pageLayout.js).
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom, highlights, anchors, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, baseWidth = 0, baseHeight = 0, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, onParaMenu = null, toolArmed, marks, across = false, marginLeft = null, pageTop = 0, marginScale = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2798,10 +2866,13 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, zoom
       onPointerDown={(e) => { if (e.pointerType !== "pen") beginAreaDrag(e); }}
       onContextMenu={onTransMenu}
       style={{
-        margin: marginLeft != null ? `0 0 ${PAGE_GAP}px ${marginLeft}px` : `0 auto ${PAGE_GAP}px`, position: "relative", background: "#fff",
+        // down, centred under one another (or beside the comment margin);
+        // across, side by side, the line centring them (app.css .pdfAcross)
+        margin: across ? `0 ${PAGE_GAP}px 0 0` : marginLeft != null ? `0 0 ${PAGE_GAP}px ${marginLeft}px` : `0 auto ${PAGE_GAP}px`, position: "relative", background: "#fff",
         width: baseW ? scaledPx(baseW) : undefined,
         height: baseH ? scaledPx(baseH) : undefined,
         minHeight: baseH ? undefined : 200,
+        minWidth: baseW || !across ? undefined : 200,
       }}>
       {/* The page's bitmaps, drawn by the raster: the whole page and, at high
           zoom, a sharp one over the part in view. Both are sized in percent

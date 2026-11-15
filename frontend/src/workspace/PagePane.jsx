@@ -27,6 +27,7 @@
 // with its unsent edits (`overlay`, the collab session's).
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import PdfViewer from "../pdf/PdfViewer";
+import { pageLanding } from "../pdf/pageLayout.js";
 import { NotebookViewer, readPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
 import { PageToolsContext } from "../markup/PageTools.jsx";
@@ -223,12 +224,12 @@ function PdfView({ pageId, url, children_, marks, zoomIn, scroll, startPage, sha
     if (entry.page) {
       const box = el.querySelector(`[data-page="${entry.page}"]`);
       if (!box) return;
-      el.scrollTo({ top: Math.max(0, box.offsetTop - 80), behavior: "instant" });
+      el.scrollTo({ ...pageLanding(el, box), behavior: "instant" });
     } else {
       const ratio = (st.scale || effRef.current || 1) / (entry.scale || 1);
-      const top = entry.top * ratio;
-      if (el.scrollHeight <= top) return;
-      el.scrollTo({ top, left: (entry.left || 0) * ratio, behavior: "instant" });
+      const top = entry.top * ratio, left = (entry.left || 0) * ratio;
+      if (el.scrollHeight <= top || el.scrollWidth <= left) return;
+      el.scrollTo({ top, left, behavior: "instant" });
     }
     if (st.phase === "rendered") restoreRef.current = null;
   };
@@ -237,7 +238,7 @@ function PdfView({ pageId, url, children_, marks, zoomIn, scroll, startPage, sha
     const report = () => {
       const s = scroller();
       if (!s || restoreRef.current) return;
-      onScroll?.(pageId, { top: s.scrollTop, left: s.scrollLeft, scale: effRef.current });
+      onScroll?.(pageId, { top: s.scrollTop, left: s.scrollLeft, scale: effRef.current, flow: shared?.pageFlow || "down" });
     };
     reportRef.current = report;
     if (!el) return undefined;
@@ -245,12 +246,12 @@ function PdfView({ pageId, url, children_, marks, zoomIn, scroll, startPage, sha
     const onScrollEvent = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; report(); }); };
     el.addEventListener("scroll", onScrollEvent, { passive: true });
     return () => { el.removeEventListener("scroll", onScrollEvent); cancelAnimationFrame(raf); reportRef.current = noop; };
-  }, [url, pageId, onScroll, reportRef]);
+  }, [url, pageId, onScroll, reportRef, shared?.pageFlow]);
   return (
     <div className="viewerWrap pagePaneViewer" ref={wrapRef}>
       <PdfViewer url={url} highlights={highlights} marks={marks} pdfScaleValue={zoom}
         onEffectiveScale={(s) => { effRef.current = s; }} onZoomTo={zoomTo} onLoadState={onLoadState}
-        darkPage={shared?.darkPage} hideEmbeddedAnnots={shared?.hideEmbeddedAnnots} pageId={pageId} />
+        darkPage={shared?.darkPage} hideEmbeddedAnnots={shared?.hideEmbeddedAnnots} pageFlow={shared?.pageFlow} pageId={pageId} />
     </div>
   );
 }

@@ -58,10 +58,12 @@ export function recordingAt(blocks, wall) {
   return null;
 }
 
-// The stored file's extension for a MediaRecorder's container type.
+// The stored file's extension for the recorder's container type (a
+// MediaRecorder's, or the WAV the PCM capture writes).
 export function extensionFor(mime) {
   const type = String(mime || "").toLowerCase();
   if (type.includes("webm")) return ".webm";
+  if (type.includes("wav")) return ".wav";
   if (type.includes("mp4") || type.includes("aac")) return ".m4a";
   if (type.includes("ogg") || type.includes("opus")) return ".ogg";
   return ".webm";
