@@ -407,11 +407,11 @@ def add_turn(turn_id: str, *, ws: str, link_id: str, conversation_id: str, page_
 
 
 def claimed_turn(turn_id: str, *, link_id: str, conversation_id: str, page_id: str, agent: str) -> None:
-    """A turn of a page of another server that this computer claimed there
-    for the vault ``link_id`` (gamma/local_agents/home.py ``HttpChatHome``),
-    its row keyed by the vault in place of the workspace (as the runner
-    keys it), queued again when it had one: a claim taken once more after
-    its first was settled."""
+    """A turn of another server that this computer claimed there over its
+    channel ``link_id`` (gamma/local_agents/home.py ``HttpChatHome``), its
+    row keyed by the channel in place of the workspace (as the runner keys
+    it), queued again when it had one: a claim taken once more after its
+    first was settled."""
     with connect_vaults_db() as conn:
         conn.execute("INSERT INTO agent_turns (id, ws, link_id, conversation_id, page_id, agent, state, started_at) "
                      "VALUES (?, ?, ?, ?, ?, ?, 'queued', ?) ON CONFLICT(id) DO UPDATE SET ws = excluded.ws, "

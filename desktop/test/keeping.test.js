@@ -645,3 +645,22 @@ test('a round asked for is said in the words: pushed, pulled files, conflicts; s
   assert.equal(keeping.roundSaid(f, { counts: {}, waiting: 'still being written' }), 'main.pdf is not pushed yet: still being written.');
   assert.equal(keeping.roundSaid(f, { counts: {} }), 'main.pdf: nothing new to push.');
 });
+
+test('the questions of the servers this computer answers: which server, one button each or one named, then Cancel; letting one answer the agents\' asks names it and what it can then allow', () => {
+  const one = keeping.serverAsk([{ name: 'NAS' }], 'TIM-PC');
+  assert.deepEqual([one.message, one.buttons], ['Let TIM-PC answer NAS?', ['Answer NAS', 'Cancel']]);
+  assert.match(one.detail, /for the account you are signed in as there alone/);
+  assert.match(one.detail, /the agents you turned on here and the names of the directories you offer them\./);
+  assert.match(one.detail, /can then send work to those agents here\. No path is sent, unless you let that server answer what the agents ask\.$/);
+  const two = keeping.serverAsk([{ name: 'NAS' }, { name: 'Lab' }], 'TIM-PC');
+  assert.deepEqual([two.message, two.buttons], ['Which server should TIM-PC answer?', ['NAS', 'Lab', 'Cancel']]);
+  assert.deepEqual(keeping.serverSignIn('NAS').buttons, ['Open NAS', 'Cancel']);
+  const asks = keeping.linkAsksAsk('NAS');
+  assert.equal(asks.message, 'Let NAS answer what the agents here ask to run?');
+  assert.match(asks.detail, /any window signed in to NAS as you, not only on this computer/);
+  assert.match(asks.detail, /runs here as you, with your files and the network/);
+  assert.match(asks.detail, /shown there with its command, the paths it names \(outside its directory too\) and the changes/);
+  assert.match(asks.detail, /A person you let use an agent there can allow, once, what their own turn asks/);
+  assert.deepEqual(asks.buttons, ['Let it answer', 'Cancel']);
+  assert.equal(keeping.linkAsksSaid('NAS', false), 'What the agents here ask to run is answered on this computer only, not on NAS.');
+});

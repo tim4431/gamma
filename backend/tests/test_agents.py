@@ -61,14 +61,18 @@ def test_this_computers_agent(tim):
     assert (here.name, here.on, here.label) == ("Codex", "TIM-PC", "Codex on TIM-PC")
 
 
-def test_a_channels_computer_agent(tim):
-    """A run a computer holds is its agent there, by the computer's id for
-    this server and the name it announced; a token no computer announced
-    with is an agent on a computer not known."""
+def test_a_far_turns_token_writes_as_that_computers_agent(tim):
+    """The token a server hands another computer's turn (step 4.2: named
+    with that computer's agent's id) writes as that agent, its computer
+    named as it announced itself to the token's workspace; one no computer
+    of the account's there announced is an agent on a computer not known."""
     _computer(tim, "agTok1", "LAPTOP-ID", "LAPTOP")
-    assert agents.of_channel("agTok1", "claude") == agents.Agent(
-        "computer:LAPTOP-ID:claude", "computer", "Claude Code", "LAPTOP")
-    assert agents.of_channel("agTokNone", "codex") == agents.Agent("computer::codex", "computer", "Codex")
+    token_id, _ = integrations.mint_turn(tim.id, tim.ws, "computer:LAPTOP-ID:claude", 60)
+    turn = integrations.Connection(tim.id, [tim.ws], integrations.TURN, token_id, "computer:LAPTOP-ID:claude", USER)
+    assert agents.of_connection(turn) == agents.Agent("computer:LAPTOP-ID:claude", "computer", "Claude Code", "LAPTOP")
+    assert agents.of_token(token_id, "computer:GONE-PC:codex", integrations.TURN, tim.id, tim.ws) == agents.Agent(
+        "computer:GONE-PC:codex", "computer", "Codex")
+    assert agents.of_token(token_id, "computer:LAPTOP-ID:codex", integrations.TURN, tim.id, "another-ws").on == ""
 
 
 def test_reading_agents_names_their_computers_as_now(tim):

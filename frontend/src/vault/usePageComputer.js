@@ -1,23 +1,28 @@
-// The computers that keep the open page in a synced vault of the account's
-// (vaultState.js readComputers), read from the page's own server (GET
-// /api/pages/{id}/computer, docs/dev/computers.md) as the page opens, again
-// on the account's `{t: "computer"}` nudge, which a computer announcing
-// itself or going offline sends, and on each (re)join of the page's socket
-// or round of its poll, which may have missed one (App's usePageCollab
-// `onComputer`). Every window of the maker asks, the desktop app's or not:
-// unlike useVault's route, an answer of 404 (a server older than the route)
-// or an error is "none" for that read alone, never for the window. Each
-// vault names the agent that works there for the maker (`vault.agent`):
-// the chat's and the comment fields' agent there (chat/agents.js
-// keeperAgent and commentAgents, App's chatAgentList and commentAgentList).
+// The open page's computers of the account's (vaultState.js readComputers):
+// those that keep it in a synced vault and those with an agent on for it,
+// read from the page's own server (GET /api/pages/{id}/computer,
+// docs/dev/computers.md) as the page opens; where no page is open (a
+// folder's or the library's chat), the account's computers (GET
+// /api/computers), without another account's lent ones, which work only on
+// a page of a work folder their computer keeps. Read again on the account's `{t:
+// "computer"}` nudge, which a computer announcing itself or going offline
+// sends, and on each (re)join of the page's socket or round of its poll,
+// which may have missed one (App's usePageCollab `onComputer`). Every
+// window of the account asks, the desktop app's or not: unlike useVault's
+// route, an answer of 404 (a server older than the route) or an error is
+// "none" for that read alone, never for the window. Their agents are the
+// chat's and the comment fields' there (chat/agents.js farAgents and
+// commentAgents, App's chatAgentList and commentAgentList), a vault that
+// keeps a work folder (`vault.work`) naming where they work.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { readComputers } from "./vaultState.js";
+import { readAccountComputers, readComputers } from "./vaultState.js";
 
 const NONE = [];
 
 // `{computers, refresh}`:
-//   computers  the page's computers, `[]` for none and wherever it is not
+//   computers  the page's computers (the account's with no page open: none
+//              keeps a vault), `[]` for none and wherever it is not
 //              asked (`enabled` false: signed out, a guest, a share's
 //              visitor). The answer is kept with the page it is of, as
 //              useVault's is: the next page shows none until its own comes.
@@ -30,10 +35,11 @@ export function usePageComputer(pageId, enabled) {
   const refresh = useCallback(async () => {
     const { pageId, enabled } = open.current;
     const n = ++asked.current;
-    if (!enabled || !pageId) { setHeld({ pageId, computers: NONE }); return; }
+    if (!enabled) { setHeld({ pageId, computers: NONE }); return; }
     try {
-      const answer = await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/computer`);
-      if (n === asked.current) setHeld({ pageId, computers: readComputers(answer) });
+      const computers = pageId ? readComputers(await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/computer`))
+        : readAccountComputers(await apiJson(`${API}/computers`));
+      if (n === asked.current) setHeld({ pageId, computers });
     } catch {
       if (n === asked.current) setHeld({ pageId, computers: NONE });
     }

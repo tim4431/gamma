@@ -766,11 +766,15 @@ out, the PATCH answers 404 and the DELETE `revoked: false`.
 Codex or Claude Code turned on for this computer
 ([local_agents.md](local_agents.md) "Gamma's tools") reads Gamma through
 this endpoint during a turn of this server, with a token of the turn's
-own (`integrations.mint_turn`, scope `turn`):
+own (`integrations.mint_turn`, scope `turn`); so does the agent of another
+computer during a turn of this server's it takes over its channel, with a
+token this server minted at the claim ([computers.md](computers.md) "The
+agents' turns there"):
 
 - the turn owner's, of the turn's workspace alone (`workspaces` `''`,
   `edits` `''`), named with the agent's id (`computer:<this
-  computer>:<name>`, so what it writes is that agent's: `agents.of_token`),
+  computer>:<name>`, or the other computer's id here, so what it writes is
+  that agent's, on the computer as it is called here: `agents.of_token`),
   so `list_workspaces` names
   that one workspace and the read tools (`READ_TOOLS`, with
   `list_workspaces`, `read_gamma_link` and `export_page`) are offered and
@@ -779,9 +783,10 @@ own (`integrations.mint_turn`, scope `turn`):
   highlights are signed and stamped as that computer's agent, for the turn's
   owner; the note tools are refused;
 - living the run's timeout and a minute, renewed at each start of the
-  agent and while an ask holds the turn, deleted
-  when the turn ends however it ends (`integrations.drop`) and, for what a
-  server that stopped left, at the next start (`integrations.drop_turns`);
+  agent and while an ask holds the turn (a far turn's by its writes),
+  deleted when the turn ends however it ends (`integrations.drop`) and,
+  for what a desktop app's server that stopped left, at the next start
+  (`integrations.drop_turns`);
 - refused by every route of the HTTP API (403 `auth.TURN_ONLY`), its reads
   included, as a `computer` token is outside `auth.CHANNEL_PREFIX`: a read
   token opens the API's reads as well as MCP, and this one should not;

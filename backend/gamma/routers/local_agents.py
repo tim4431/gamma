@@ -18,12 +18,18 @@ refused, as on the folder-links routes. The chat answers only an account
 with an agent on here, or a vault's maker on that vault's files and
 folders; anyone else gets 404, so nobody else learns it exists.
 
-Every server's chat also answers for a page whose work folder a computer
-of the session's account keeps with an agent there (step 4d,
-``chats.remote_of``, gamma/computers/registry.py ``agent_of``): the same
-routes and answers, the conversation kept here and its turns run on that
-computer, which takes them over its channel (gamma/routers/computers.py);
-what such a turn asks is answered on that computer, never here (409), and
+Every server's chat also answers for the agents of the session's
+account's computers shown to the workspace, on any bucket (step 4d, step
+4.2 of docs/research/agents-as-participants-plan.md: ``chats.remote_of``,
+gamma/computers/registry.py ``seats``; a request names one by its id,
+``computer:<computer>:<name>``): the same routes and answers, the
+conversation kept here and its turns run on that computer, which takes
+them over its channel (gamma/routers/computers.py), in the vault of the
+work folder the bucket is in where it keeps it, else in a directory it
+offers or one of its own; a turn for a computer offline is refused (409).
+What such a turn asks is answered on that computer and, where it lets this
+server answer (step 4.3 of the plan), here too: kept with the turn's run
+for the computer to take (``chats.answer_run``), allowed once or declined;
 the terminal and the selections' source lines are the computer's own (404,
 nulls).
 
@@ -61,6 +67,7 @@ SESSION_ONLY = "Sign in with an account to talk to the agent on this computer."
 SEE_AGENTS = "Sign in with an account to see the agents on this computer."
 NOT_HERE = "no such page or folder of yours with an agent on this computer"
 FAR_ASKS = "This is answered on the computer that runs the agent."   # runner.FAR_ASKS
+FAR_ONCE = "A turn on another computer is allowed once at most."
 NO_AGENTS = "Agents run on the desktop app's own server."
 NONE_ON = "Turn on Codex or Claude Code in Settings → AI first."
 LENT_FOLDER = "{agent} works for you only on the files of a synced folder."   # threads.start's ``folder``
@@ -264,12 +271,13 @@ def _co_authors_here(user_id: str) -> list[dict]:
 def _co_authors_there(link: dict) -> dict:
     """The workspace of the account's channel ``link`` on another server,
     with the people who edit it there (``channel.members``): ``{server,
-    workspace_id, name, origin, people, error}``, ``error`` why that server
+    workspace_id, name, origin, people, error}``, ``name`` the workspace's
+    as that server last named it ("" before it did), ``error`` why that server
     did not answer ("" when it did)."""
     from .. import gamma_sync, remote_servers
     from ..computers import channel
 
-    place = {"server": link["remote_url"], "workspace_id": link["workspace_id"], "name": "",
+    place = {"server": link["remote_url"], "workspace_id": link["workspace_id"], "name": link["workspace_name"],
              "origin": remote_servers.origin_of(link["remote_url"]), "people": [], "error": ""}
     try:
         place["people"] = channel.members(link)
@@ -396,8 +404,10 @@ def set_dirs(body: list[DirEntry], request: Request):
     this computer or another directory of the list (one place, one queue:
     ``runner._place``), and for more than ``store.MAX_DIRS`` or one given
     twice. A chat turn working in a directory no longer offered there stops
-    (``runner.stop_dirs``)."""
+    (``runner.stop_dirs``), and the channels announce the list again
+    (gamma/computers/channel.py ``state_of``'s ``dirs``)."""
     from .. import folder_links
+    from ..computers import channel
     from ..local_agents import runner, store
 
     user_id = _agents_account(request)
@@ -435,6 +445,7 @@ def set_dirs(body: list[DirEntry], request: Request):
         raise HTTPException(status_code=400, detail=str(e)) from None
     now = {entry["id"]: entry["path"] for entry in kept}
     runner.stop_dirs([path for dir_id, path in offered.items() if now.get(dir_id) != path])
+    channel.nudge()   # the other servers hear the directories offered by id and name
     return {"dirs": kept}
 
 
@@ -445,8 +456,9 @@ class TurnBody(BaseModel):
     text: str = ""
     selections: list | None = None
     id: str = ""
-    # the agent picked for the conversation (``codex``, ``claude``); "" for the account's first on
-    agent: str = Field(default="", max_length=32)
+    # the agent picked for the conversation: this computer's by its name (``codex``, ``claude``), another
+    # computer's by its id (``computer:<computer>:<name>``, gamma/agents.py); "" for the account's first
+    agent: str = Field(default="", max_length=160)
     model: str = ""
     effort: str = ""
     # where a conversation that starts works: an offered directory's id, "" for one of its own; none (null)
@@ -471,24 +483,42 @@ class AnswerBody(BaseModel):
 MAX_NOTE = 2000   # characters of what a decline tells the agent
 
 
+def _named(agent: str) -> tuple[str, str]:
+    """``(name, computer)`` of the agent a chat request names: this
+    computer's by its name (``codex``) or by its id, another computer's by
+    its id (``computer:<computer>:<name>``, gamma/agents.py), ``computer``
+    "" for this computer's own."""
+    from .. import agents
+
+    if agents.kind_of(agent) != "computer":
+        return agent, ""
+    computer, name = agents.parts(agent)
+    return name, "" if computer == agents.here_id() else computer
+
+
 def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = "", thread: str = "",
           lent: str = "") -> tuple[str, str, dict | None, dict | None, dict | None]:
     """``(ws, the account, the place, the far seat, the active conversation)``
     of the bucket for the session's account, one of the place and the far
-    seat None: where the account's agent here works (``chats.place_of``, on
-    a server that runs agents, for the active conversation's ``dir``, or
-    the ``dir`` a turn names), else, for a file of a work folder no vault
-    here keeps, the computer of the account's that keeps it with an agent
-    (``chats.remote_of``). With ``thread`` the conversation is the
-    account's of that comment thread on the bucket, else a co-author's
-    there with the account's agent (``chats.of_thread`` ``owner``), and
-    with ``lent`` the chat conversation of that id of a co-author the
-    account's agent serves on the bucket (``chats.lent_one``), in place of
-    the active one. With ``agent`` (the one picked in the
-    chat), a conversation of another agent counts as none: a conversation
-    keeps the agent it began with, and the next turn starts another
-    (``chats.begin``). 404 for any other bucket or account; 403 for a token
-    or the guest."""
+    seat None. The agent is the one ``agent`` names (the one picked in the
+    chat, ``_named``), else the active conversation's while its computer
+    still offers it: another computer's is its far seat
+    (``chats.remote_of``, that computer's agent there); this computer's
+    works where ``chats.place_of`` says (on a server that runs agents, for
+    the active conversation's ``dir``, or the ``dir`` a turn names). With no
+    agent named or kept, a work folder a vault here keeps
+    has this computer's agent, else a computer that keeps the bucket's work
+    folder has its (the first far seat's), else this computer's, else the
+    first far seat's. With
+    ``thread`` the conversation is the account's of that comment thread on
+    the bucket, else a co-author's there with the account's agent
+    (``chats.of_thread`` ``owner``), and with ``lent`` the chat conversation
+    of that id of a co-author the account's agent serves on the bucket
+    (``chats.lent_one``), in place of the active one. With ``agent``, a
+    conversation of another agent or of another computer counts as none: a
+    conversation keeps the agent it began with, and the next turn starts
+    another (``chats.begin``). 404 for any other bucket or account; 403 for
+    a token or the guest."""
     from ..db import connect_pages_db
     from ..local_agents import chats
 
@@ -501,13 +531,25 @@ def _seat(request: Request, bucket: str, dir: str | None = None, agent: str = ""
             conversation = conversation if conversation is not None and conversation["bucket"] == bucket else None
         else:
             conversation = chats.active(conn, bucket, user_id) if bucket else None
-    if agent and conversation is not None and conversation["agent"] != agent:
+    name, computer = _named(agent)
+    if agent and conversation is not None and (conversation["agent"], conversation["computer"]) != (name, computer):
         conversation = None
+    if computer:
+        far = chats.remote_of(ws, bucket, user_id, computer, name)
+        if far is None:
+            raise HTTPException(status_code=404, detail=NOT_HERE)
+        return ws, user_id, None, far, conversation
+    if not agent and conversation is not None and conversation["computer"]:
+        far = chats.remote_of(ws, bucket, user_id, conversation["computer"], conversation["agent"])
+        if far is not None:
+            return ws, user_id, None, far, conversation
     chosen = dir if dir is not None else (conversation or {}).get("dir", "")
     place = chats.place_of(ws, bucket, user_id, chosen) if local_agents.enabled() else None
-    far = chats.remote_of(ws, bucket, user_id) if place is None or place["link"] is None else None
-    if far is not None:
+    far = chats.remote_of(ws, bucket, user_id) if not name and (place is None or place["link"] is None) else None
+    if far is not None and (far["folder_id"] or place is None):
         place = None
+    else:
+        far = None
     if place is None and far is None:
         raise HTTPException(status_code=404, detail=NOT_HERE)
     return ws, user_id, place, far, conversation
@@ -575,17 +617,17 @@ def _local_turn(turn_id: str) -> dict | None:
 
 
 def _claimed_here(request: Request, turn_id: str) -> bool:
-    """Whether the turn is one of another server's page that this computer
-    claimed for a vault the account made (``store.claimed_of``): what it
-    asks is answered in the desktop app's window (``/asks``), never on this
+    """Whether the turn is one of another server that this computer claimed
+    over a channel the account made (``store.claimed_of``): what it asks is
+    answered in the desktop app's window (``/asks``), never on this
     server's chat route."""
-    from .. import folder_links
+    from ..computers import channel
     from ..local_agents import store
 
     row = store.claimed_of(turn_id) if local_agents.enabled() else None
     if row is None:
         return False
-    link = folder_links.get_link(row["link_id"])
+    link = channel.get(row["link_id"])
     return link is not None and link["created_by"] == require_personal_user_id(request, SESSION_ONLY)
 
 
@@ -646,37 +688,46 @@ def _computer(ws: str, user_id: str, place: dict, conversation: dict | None, age
 
 
 def _far_computer(ws: str, far: dict, conversation: dict | None) -> dict:
-    """What the strip says for a page whose agent runs on another computer
-    (``far``, ``chats.remote_of``): ``_computer``'s fields as that computer
-    last announced them (``ready``, the ``models`` it offers; ``problem``
-    while it is online and its agent is not ready, in the words the @ menu
-    says it), ``turn`` where the conversation's turn stands here
+    """What the strip says for a conversation whose agent runs on another
+    computer (``far``, ``chats.remote_of``): ``_computer``'s fields as that
+    computer last announced them (``ready``, the ``models`` it offers;
+    ``problem`` while it is online and its agent is not ready, in the words
+    the @ menu says it), ``turn`` where the conversation's turn stands here
     (``{turn_id, state, ahead: false}``, ``computer_chat_runs``), no
-    ``session``, no ``grants`` (it never asks), ``folder_id`` the work
-    folder's, ``dir`` that work folder by its name, ``lent`` ``{by}`` for a
-    co-author's (the agent's owner by name), else null, and ``computer`` its
-    name, ``online``, ``since`` when it went offline (null while online),
+    ``session``, no ``grants`` (what it asks is allowed once at most),
+    ``folder_id`` the work
+    folder's where that computer keeps the one the bucket is in (null
+    otherwise), ``dir`` where its agent works (that work folder by its
+    name, an offered directory by its id and name, null for one of its
+    own), ``dirs`` the directories it offers (``[{id, name}]``, which a new
+    conversation picks among), ``lent`` ``{by}`` for a co-author's (the
+    agent's owner by name), else null, and ``computer`` its name,
+    ``online``, ``since`` when it went offline (null while online),
     ``remote: true``."""
     from ..computers import registry
     from ..db import connect_pages_db
     from ..local_agents import chats
 
-    assistants, seen_at = registry.said_of(far["token_id"])
+    assistants, _seen = registry.said_of(far["token_id"])
     said = next((a for a in assistants if isinstance(a, dict) and a.get("name") == far["agent"]), {})
     reply = chats.busy(conversation)
     with connect_pages_db(ws) as conn:
-        named = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (far["folder_id"],)).fetchone()
+        named = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (far["folder_id"],)).fetchone() \
+            if far["folder_id"] else None
         row = chats.run_of(conn, reply["turn_id"]) if reply else None
     folder = (named[0] if named else "") or ""
+    kept = (conversation or {}).get("dir") or ""
+    offered = next((d for d in far["dirs"] if d.get("id") == kept), None) if not far["folder_id"] else None
+    shown = ({"kind": "vault", "name": folder} if far["folder_id"]
+             else {"kind": "offered", "id": kept, "name": offered["name"]} if offered else None)
     return {"agent": far["agent"], "label": far["label"], "ready": far["ready"],
             "problem": chats.far_problem(far) if far["online"] else "", "models": said.get("models") or [],
             "folder": folder, "paused": far["paused"],
             "turn": {"turn_id": row["turn_id"], "state": row["state"], "ahead": False}
             if row and row["state"] in chats.BUSY else None,
-            "session": False, "folder_id": far["folder_id"], "dir": {"kind": "vault", "name": folder}, "grants": [],
-            "lent": {"by": far["lent_by"]} if far.get("lent_by") else None,
-            "computer": far["computer"], "online": far["online"],
-            "since": None if far["online"] else (seen_at or None), "remote": True}
+            "session": False, "folder_id": far["folder_id"] or None, "dir": shown, "dirs": far["dirs"],
+            "grants": [], "lent": {"by": far["lent_by"]} if far.get("lent_by") else None,
+            "computer": far["computer"], "online": far["online"], "since": far["since"], "remote": True}
 
 
 @router.get("/chat")
@@ -685,8 +736,9 @@ def read_chat(request: Request, bucket: str = "", version: str = "", agent: str 
     """``{computer, conversation}``: the strip (``_computer``, or
     ``_far_computer`` for an agent on another computer) and the bucket's
     active conversation of the account (``{id, title, agent, thread_id,
-    messages, version}``, null for none, and for one of another agent than
-    the one picked, ``agent``: ``_seat``), or with ``thread`` the account's
+    messages, version}``, null for none, and for one of another agent or
+    another computer than the one picked, ``agent``: ``_seat``), or with
+    ``thread`` the account's
     conversation of that comment thread on the bucket (the chat's *Open in
     chat*), or with ``conversation`` a co-author's chat conversation with
     the account's agent (History, Background tasks), its turns answered and
@@ -697,7 +749,7 @@ def read_chat(request: Request, bucket: str = "", version: str = "", agent: str 
     from ..local_agents import chats
 
     ws, user_id, place, far, found = _seat(request, bucket, agent=agent, thread=thread, lent=conversation)
-    computer = (_computer(ws, user_id, place, found, agent) if place is not None
+    computer = (_computer(ws, user_id, place, found, _named(agent)[0]) if place is not None
                 else _far_computer(ws, far, found))
     if version and found is not None and str(found["version"]) == version:
         return {"computer": computer, "same": True}
@@ -730,12 +782,13 @@ def start_turn(body: TurnBody, request: Request):
     lent on a page of no synced folder, the folder is paused or chooses its
     files, or the agent is not ready (its problem); 403 when the account is no editor or the
     server or the workspace takes no writes. For an agent on another
-    computer (``_far_turn_started``) the turn waits here for it, ``agent``
-    unread: that computer's agent is the page's."""
+    computer (``agent`` its id, or with none the bucket's first far seat:
+    ``_seat``, ``_far_turn_started``) the turn waits here for it to take,
+    ``dir`` one of the directories it offers."""
     from .. import folder_links
     from ..local_agents import catalog, chats, runner
 
-    ws, user_id, place, far, _ = _seat(request, body.bucket, body.dir, body.agent)
+    ws, user_id, place, far, conversation = _seat(request, body.bucket, body.dir, body.agent)
     text = body.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Write a message first.")
@@ -744,13 +797,14 @@ def start_turn(body: TurnBody, request: Request):
     if body.id and not chats.MESSAGE_ID.match(body.id):
         raise HTTPException(status_code=400, detail="That message id is not one Gamma makes.")
     if far is not None:
-        return _far_turn_started(ws, user_id, far, body, text)
+        return _far_turn_started(ws, user_id, far, body, text, conversation)
     if body.dir and place["kind"] == "own":
         raise HTTPException(status_code=400, detail="No directory offered on this computer has that id.")
-    row = _agent_of(user_id, body.agent, ws)
+    named = _named(body.agent)[0]
+    row = _agent_of(user_id, named, ws)
     if row is None:
-        raise HTTPException(status_code=409, detail=f"Turn on {catalog.label(body.agent)} in Settings → AI first."
-                            if body.agent in catalog.AGENTS else NONE_ON)
+        raise HTTPException(status_code=409, detail=f"Turn on {catalog.label(named)} in Settings → AI first."
+                            if named in catalog.AGENTS else NONE_ON)
     name, label = row["agent"], catalog.label(row["agent"])
     if row["set_by"] != user_id and place["kind"] != "vault":
         raise HTTPException(status_code=409, detail=LENT_FOLDER.format(agent=label))
@@ -796,22 +850,25 @@ def _may_write(ws: str, user_id: str, label: str) -> None:
         raise HTTPException(status_code=403, detail=refused)
 
 
-def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: str) -> dict:
-    """``start_turn`` for an agent on another computer (``far``): the same
-    checks against what it last announced (paused there; its agent known
-    not ready while it is online; the model and the effort among the ones
-    it offers), the turn written here to wait for it (``chats.begin``
-    ``remote``, the conversation working in the work folder) and the
-    computer woken (``chat``): it takes the turn over its channel, now or
-    when it connects."""
+def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: str, conversation: dict | None) -> dict:
+    """``start_turn`` for an agent on another computer (``far``): refused
+    while that computer is offline (no turn is queued for one away), and
+    the same checks against what it last announced (the work folder paused
+    there; its agent known not ready; the model and the effort among the
+    ones it offers; the directory among those it offers, ``far_dir``), the
+    turn written here to wait for it (``chats.begin`` ``remote``, the
+    conversation with that computer's agent) and the computer woken
+    (``chat``): it takes the turn over its channel."""
     from ..computers import registry
     from ..local_agents import catalog, chats
 
     name, label, computer = far["agent"], far["label"], far["computer"]
+    if not far["online"]:
+        raise HTTPException(status_code=409, detail=chats.OFFLINE.format(computer=computer))
     if far["paused"]:
         raise HTTPException(status_code=409,
                             detail=f"The synced folder is paused on {computer}: {label} starts once it syncs again.")
-    if far["online"] and far["ready"] is False:
+    if far["ready"] is False:
         raise HTTPException(status_code=409, detail=chats.far_problem(far))
     assistants, _seen = registry.said_of(far["token_id"])
     said = next((a for a in assistants if isinstance(a, dict) and a.get("name") == name), {})
@@ -821,11 +878,12 @@ def _far_turn_started(ws: str, user_id: str, far: dict, body: TurnBody, text: st
         raise HTTPException(status_code=400, detail=refusal.replace("on this computer", f"on {computer}"))
     _may_write(ws, user_id, label)
     try:
-        conversation, reply, new = chats.begin(ws, bucket=body.bucket, dir=far["folder_id"], user_id=user_id,
-                                               link_id="", agent=name, label=label, text=text,
+        dir = chats.far_dir(far, body.dir, conversation)
+        conversation, reply, new = chats.begin(ws, bucket=body.bucket, dir=dir, user_id=user_id, link_id="",
+                                               agent=name, label=label, text=text,
                                                selections=chats.selections_of(body.selections), message_id=body.id,
-                                               model=model, effort=effort, remote=True, computer=far["computer"],
-                                               owner=far["user_id"])
+                                               model=model, effort=effort, remote=True, computer=computer,
+                                               computer_id=far["computer_id"], owner=far["user_id"])
     except chats.ChatError as e:
         raise _refused(e) from None
     if new:
@@ -866,28 +924,50 @@ def answer_ask(turn_id: str, ask_id: str, body: AnswerBody, request: Request):
     true}``; ``chat`` allows that command again in this conversation,
     ``note`` (at most ``MAX_NOTE`` characters) is what a decline tells the
     agent (``runner.answer_chat``); a co-author's turn is answered by that
-    person or the agent's owner, ``once`` or ``deny`` alone. 404 for a turn
+    person or the agent's owner, ``once`` or ``deny`` alone. A turn that
+    runs on another computer that relays its asks (its message's ``asks``)
+    is answered the same way, ``once`` or ``deny`` alone, the answer kept
+    with its run and the computer woken to take it (``chats.answer_run``);
+    the first answer, here or on that computer, is the one. 404 for a turn
     of no conversation the account reads or no such ask; 409 for one
-    answered already or no longer waited for, and a turn that ended, and
-    for a turn that runs on another computer (``FAR_ASKS``: what it asks is
-    answered there, in its desktop app's window); 400 for another decision,
-    too long a note, or ``chat`` on what is not a command or in a
-    co-author's turn."""
+    answered already or no longer waited for, and a turn that ended, and,
+    on this computer, for a turn of another server's it runs (``FAR_ASKS``:
+    answered in the desktop app's window and on that server); 400 for
+    another decision, too long a note, or ``chat`` on what is not a command,
+    in a co-author's turn or in one on another computer."""
+    from ..computers import registry
     from ..local_agents import chats, events, runner
+
+    def noted() -> str:
+        if body.decision not in events.DECISIONS:
+            raise HTTPException(status_code=400, detail="Answer once, chat or deny.")
+        note = body.note.strip()
+        if len(note) > MAX_NOTE:
+            raise HTTPException(status_code=400, detail=f"A note is at most {MAX_NOTE} characters.")
+        return note
 
     turn = _local_turn(turn_id)
     if turn is None:
-        if not _claimed_here(request, turn_id):
-            _far_turn(request, turn_id)
-        raise HTTPException(status_code=409, detail=FAR_ASKS)
+        try:
+            ws, conversation, _ = _far_turn(request, turn_id)
+        except HTTPException:
+            if _claimed_here(request, turn_id):
+                raise HTTPException(status_code=409, detail=FAR_ASKS) from None
+            raise
+        note = noted()
+        if body.decision == "chat":
+            raise HTTPException(status_code=400, detail=runner.ONCE_ONLY if chats.lent(conversation) else FAR_ONCE)
+        try:
+            holder = chats.answer_run(ws, turn_id, ask_id, body.decision, note,
+                                      require_personal_user_id(request, SESSION_ONLY))
+        except chats.ChatError as e:
+            raise _refused(e) from None
+        registry.wake(holder, "chat")
+        return {"answered": True}
     ws, _, _ = _conversation_of(request, turn["conversation_id"], owner=True)
     if turn["ws"] != ws:
         raise HTTPException(status_code=404, detail="No turn has that id.")
-    if body.decision not in events.DECISIONS:
-        raise HTTPException(status_code=400, detail="Answer once, chat or deny.")
-    note = body.note.strip()
-    if len(note) > MAX_NOTE:
-        raise HTTPException(status_code=400, detail=f"A note is at most {MAX_NOTE} characters.")
+    note = noted()
     try:
         runner.answer_chat(ws, turn_id, ask_id, body.decision, note)
     except chats.ChatError as e:

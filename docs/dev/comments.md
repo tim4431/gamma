@@ -115,7 +115,7 @@ its name in `agent` (`gamma/agents.py`, which keeps no table):
 | Kind | `agent_id` | `agent` | Written by |
 |---|---|---|---|
 | `gamma` | `gamma` | Gamma AI | the chat's writing tools (`comment`, `resolve`, `highlight`: the chat's stamp, `agents.of_stamp`) |
-| `computer` | `computer:<computer>:<name>` | the catalog's label (Codex, Claude Code) | a turn's token through MCP's writing tools (`integrations.mint_turn` names it with this id), the end of a thread's turn of this computer's (`agents.here`) or of a computer of the channel (`agents.of_channel`) |
+| `computer` | `computer:<computer>:<name>` | the catalog's label (Codex, Claude Code) | a turn's token through MCP's writing tools (`integrations.mint_turn` names it with this id), the end of a thread's turn of this computer's (`agents.here`) or of another computer's (the conversation's `computer`, `chats.agent_id_of`) |
 | `connection` | the integration token's id | its display name (`integrations.display_name`) | the HTTP API and MCP's writing tools with a token (`agents.of_request`, `of_connection`) |
 
 The writing tools write through `gamma/annotations/hand.py` (a `Writer`: the

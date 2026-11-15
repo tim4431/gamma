@@ -7,10 +7,14 @@ where they are kept.
 The credential is a token of that server of the ``computer`` scope, which
 opens the channel and nothing else, minted there with the window's session
 and handed over by the desktop app with the shell's word
-(routers/computer_links.py): one users.db ``computer_links`` row per server,
+(routers/computer_links.py), when a vault of that server is made or from
+Settings → AI → Agents: one users.db ``computer_links`` row per server,
 workspace there and local account, the token sealed
-(``publisher_sessions.seal``, as a vault's is), the account there the
-server named, and the channel's ``status``, ``{state, error, at}`` and,
+(``publisher_sessions.seal``, as a vault's is), the account there and the
+workspace's name as the server named them, whether that server may answer
+what this computer's agents ask (``asks``, ``set_asks``: off until the
+shell's word turns it on, and announced), and the channel's ``status``,
+``{state, error, at}`` and,
 for a server not reached as that server, what was in the way
 (``gamma_sync.status_fields``: ``error_kind`` and its fields):
 ``connecting`` until an announce succeeds (``connected``, while the polls
@@ -31,26 +35,29 @@ name, the app's version, the vaults of that server, workspace and account
 with whether each is paused, and the assistants as the catalog last found
 them, ``catalog.known``: a probe only when none was ever made, each with
 whether it is on for the channel's account, what it may run and the people
-of that workspace its owner lets use it, ``people``), announces
-it when it differs from what was last announced or the server asked, then
-polls (held up to ``POLL_S``). A vault added, paused or removed, or an
-agent turned on or off, nudges the threads (``nudge``), which see it at the
-end of the poll they hold, at most ``POLL_S`` later. Never a path.
+of that workspace its owner lets use it, ``people``, and the directories
+offered them, by id and name, ``dirs``), announces it when it differs from
+what was last announced or the server asked, then polls (held up to
+``POLL_S``). A vault added, paused or removed, an agent turned on or off, or
+the directories offered changed, nudges the threads (``nudge``), which see
+it at the end of the poll they hold, at most ``POLL_S`` later. Never a path.
 
-The work folders of that server kept here, while an agent of the channel's
-account is on here (step 4d of docs/research/agent-collab.md,
-``agent_folders``: the first of its agents, which the announce says as the
-first assistant ``enabled``), run the turns of its pages' chat and of the
-comments sent to that agent there: after each announce, on a poll answered
-``{wake: ["chat"]}`` and at least every ``CHATS_EVERY_S``, the thread asks
-that server for the turns that wait (``_chats``), queues each for its vault
-(gamma/local_agents/runner.py ``queue_remote_chat``) and stops the ones
-stopped there; each turn speaks to that server with this channel's token
-(``of_vault``, gamma/local_agents/home.py). The announce's assistants name
-the models each offers (``models``), which that server offers the chat's
-model chip and checks a turn's against. Each announce that succeeds fails
-there the turns of its vaults left open while that server was not reached
-(``_settle``).
+The agents on here for the channel's account are that account's on every
+bucket of that server's workspace (step 4.2 of
+docs/research/agents-as-participants-plan.md): after each announce, on a
+poll answered ``{wake: ["chat"]}`` and at least every ``CHATS_EVERY_S``,
+the thread asks that server for the turns that wait for them (``_chats``),
+queues each where it works here (gamma/local_agents/runner.py
+``queue_remote_chat``: the vault of that server's work folder, a directory
+offered, one of its own, each named by an id), stops the ones stopped
+there and hands the running ones the answers given there to what they ask
+(where ``asks`` lets that server answer: step 4.3); each turn speaks to
+that server with this channel's token
+(gamma/local_agents/home.py ``HttpChatHome``). The announce's assistants
+name the models each offers (``models``), which that server offers the
+chat's model chip and checks a turn's against. Each announce that succeeds
+fails there the turns of this channel left open while that server was not
+reached (``_settle``).
 
 A work folder of that server detached there (gamma/work_folders/detach.py)
 wakes the poll with ``{wake: ["let_go"]}``: each work folder of that server
@@ -88,9 +95,11 @@ QUICK_S = 1.0            # a poll answered at once with nothing: the next waits 
 CHATS_EVERY_S = 180      # the turns that wait there are asked for at least this often (a wake lost)
 MAX_MODELS = 32          # models an assistant's announce names
 _TURN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a chat turn's id there (``blocks_store.new_block_id``'s)
+_ANSWER = ("id", "run", "ask", "decision")        # an answer's fields there (``chats.answers_of``), and its note
 STATES = ("connecting", "connected", "refused", "older", "unreachable")
 
-_COLS = "id, remote_url, workspace_id, created_by, token, token_id, account, username, created_at, status"
+_COLS = ("id, remote_url, workspace_id, created_by, token, token_id, account, username, created_at, status, asks, "
+         "workspace_name")
 
 
 class Older(gamma_sync.SyncError):
@@ -102,7 +111,8 @@ class Older(gamma_sync.SyncError):
 
 def _row(r, with_token: bool = False) -> dict:
     link = {"id": r[0], "remote_url": r[1], "workspace_id": r[2], "created_by": r[3], "token_id": r[5],
-            "account": r[6], "username": r[7], "created_at": r[8], "status": folder_links._object_of(r[9])}
+            "account": r[6], "username": r[7], "created_at": r[8], "status": folder_links._object_of(r[9]),
+            "asks": bool(r[10]), "workspace_name": r[11]}
     if with_token:
         try:
             link["token"] = unseal(r[4])
@@ -123,17 +133,6 @@ def get(link_id: str, *, with_token: bool = False) -> dict | None:
     with connect_users_db() as conn:
         r = conn.execute(f"SELECT {_COLS} FROM computer_links WHERE id = ?", (link_id,)).fetchone()
     return _row(r, with_token) if r else None
-
-
-def of_vault(vault: dict) -> dict | None:
-    """The channel, with its token, that the vault ``vault`` of another
-    server is announced on (its server, workspace and local account's),
-    None for none: what a turn of its agent speaks to that server with
-    (gamma/local_agents/home.py)."""
-    with connect_users_db() as conn:
-        r = conn.execute(f"SELECT {_COLS} FROM computer_links WHERE remote_url = ? AND workspace_id = ? AND "
-                         "created_by = ?", (vault["remote_url"], vault["workspace_id"], vault["created_by"])).fetchone()
-    return _row(r, True) if r else None
 
 
 def clean_url(url: str) -> str:
@@ -170,12 +169,15 @@ def make(url: str, workspace: str, token: str, token_id: str, user_id: str) -> t
     if not kept:
         remote_servers.fresh_id_origin(url)   # an address a server left: this computer's id there is a new one
     server = gamma_sync.Server(url, token, timeout=folder_links.ASK_TIMEOUT_S)
-    # Checked with no vault named: whose token it is decides first whether it may name them (the thread does).
+    # Checked with no vault nor directory named and nothing answered there: whose token it is decides first
+    # whether it may be told them (the thread does).
     answer = _call(server, "POST", "/api/computers/announce",
-                   {**state_of({"remote_url": url, "workspace_id": workspace, "created_by": user_id}), "vaults": []})
+                   {**state_of({"remote_url": url, "workspace_id": workspace, "created_by": user_id}), "vaults": [],
+                    "dirs": [], "asks": False})
     if (answer.get("workspace") or {}).get("id") != workspace:
         raise ValueError("The token belongs to another workspace of that server.")
     account = answer.get("account") or {}
+    named = _workspace_name(answer)
     status = json.dumps({"state": "connecting", "error": "", "at": page_now()})
     with connect_users_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -187,30 +189,71 @@ def make(url: str, workspace: str, token: str, token_id: str, user_id: str) -> t
                              "stop showing it first.")
         link_id = old[0] if old else uuid.uuid4().hex
         if old:
-            conn.execute("UPDATE computer_links SET token = ?, token_id = ?, account = ?, username = ?, status = ? "
-                         "WHERE id = ?", (seal(token), token_id, str(account.get("id") or ""),
-                                          str(account.get("username") or ""), status, link_id))
+            conn.execute("UPDATE computer_links SET token = ?, token_id = ?, account = ?, username = ?, status = ?, "
+                         "workspace_name = ? WHERE id = ?",
+                         (seal(token), token_id, str(account.get("id") or ""), str(account.get("username") or ""),
+                          status, named, link_id))
         else:
-            conn.execute(f"INSERT INTO computer_links ({_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            conn.execute(f"INSERT INTO computer_links ({_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
                          (link_id, url, workspace, user_id, seal(token), token_id, str(account.get("id") or ""),
-                          str(account.get("username") or ""), page_now(), status))
+                          str(account.get("username") or ""), page_now(), status, named))
     stop(link_id)
     start(link_id)
     return get(link_id), {"token_id": old[1]} if old and old[1] != token_id else None
 
 
+def _workspace_name(answer: dict) -> str:
+    """The workspace's name an announce's answer gives (``{workspace: {id,
+    name}}``), "" from a server that names none."""
+    name = (answer.get("workspace") or {}).get("name")
+    return name.strip()[:200] if isinstance(name, str) else ""
+
+
 def delete(link_id: str, user_id: str) -> str | None:
     """The account's channel ``link_id`` stops and is forgotten: its token's
-    id there (the desktop app revokes it), None when it is no channel of
-    that account. The agents stay the computer's: that server, no longer
-    told of this computer, gives it no work."""
+    id there (the desktop app revokes it, and that server then fails what
+    the token's runs held: registry.py ``_fail_held``), None when it is no
+    channel of that account. The turns of that server run here stop
+    (``unlinked``), since no write of theirs reaches it any more, and the
+    directories of their own its conversations had here go
+    (``home.remove_far_dirs``). The agents stay the computer's: that
+    server, no longer told of this computer, gives it no work."""
+    from .. import local_agents
+    from ..local_agents import home, runner
+
     link = get(link_id)
     if link is None or link["created_by"] != user_id:
         return None
     stop(link_id)
+    if local_agents.enabled():
+        runner.stop_channel(link_id, "unlinked")
     with connect_users_db() as conn:
         conn.execute("DELETE FROM computer_links WHERE id = ?", (link_id,))
+    home.remove_far_dirs(link_id)
     return link["token_id"]
+
+
+def set_asks(link_id: str, user_id: str, asks: bool) -> dict | None:
+    """Whether the server of the account's channel ``link_id`` may answer
+    what this computer's agents ask (decision 7 of
+    docs/research/agents-as-participants-plan.md): kept, announced at the
+    channel's next turn (``nudge``), and the messages there of its turns
+    running here written again with what they ask or without it
+    (``runner.relays_changed``) → the link, None when it is no channel of
+    that account."""
+    from .. import local_agents
+    from ..local_agents import runner
+
+    link = get(link_id)
+    if link is None or link["created_by"] != user_id:
+        return None
+    if link["asks"] != asks:
+        with connect_users_db() as conn:
+            conn.execute("UPDATE computer_links SET asks = ? WHERE id = ?", (int(asks), link_id))
+        nudge()
+        if local_agents.enabled():
+            runner.relays_changed(link_id)
+    return get(link_id)
 
 
 # --- what this computer announces -------------------------------------------------------------
@@ -273,7 +316,7 @@ def members(link: dict) -> list[dict]:
             for p in people if isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"]]
 
 
-def _vaults_of(link: dict) -> list[dict]:
+def vaults_of(link: dict) -> list[dict]:
     """The vaults of the channel ``link``'s server, workspace and account."""
     return [vault for vault in folder_links.all_links()
             if (vault["remote_url"], vault["workspace_id"], vault["created_by"])
@@ -283,9 +326,10 @@ def _vaults_of(link: dict) -> list[dict]:
 def agent_folders(link: dict) -> dict[str, tuple[dict, str]]:
     """``{folder id: (vault, agent)}``: the work folders of the channel
     ``link``'s server that a vault here keeps (``folder_links.work_vault``),
-    paused or not, each with the agent that works there, the first of the
-    channel's account's on here (``store.agent_for``); none while it has
-    none, and where agents do not run (``local_agents.enabled``)."""
+    paused or not, each with the first of the channel's account's agents on
+    here (``store.agent_for``), which the vault names for an older server
+    (``state_of``); none while it has none, and where agents do not run
+    (``local_agents.enabled``)."""
     from .. import local_agents
     from ..local_agents import store
 
@@ -294,7 +338,7 @@ def agent_folders(link: dict) -> dict[str, tuple[dict, str]]:
     agent = store.agent_for(link["created_by"])
     if agent is None:
         return {}
-    return {vault["folder_id"]: (vault, agent["agent"]) for vault in _vaults_of(link)
+    return {vault["folder_id"]: (vault, agent["agent"]) for vault in vaults_of(link)
             if vault["remote_url"] and folder_links.work_vault(vault)}
 
 
@@ -302,19 +346,36 @@ def state_of(link: dict) -> dict:
     """What this computer announces on the channel ``link``: its id for
     that server and its name, the app's version, the vaults of that server,
     workspace and account (``{kind, folder_id | page_id, paused}``, the
-    pause as the sync panel shows it) and the assistants, each with
+    pause as the sync panel shows it), the assistants, each with
     whether it is on for the channel's account (``assistants``): that
-    server reads the agent of the work folders kept here from them
-    (gamma/computers/registry.py). A work folder's vault also names its
-    agent (``agent``) for an older server, which reads it from there."""
+    server offers them to that account on its buckets
+    (gamma/computers/registry.py), whether that server may answer what
+    they ask (``asks``, the link's), and the directories offered them
+    (``dirs``, ``offered``). A work folder's vault also names its agent
+    (``agent``) for an older server, which reads it from there."""
     vaults, agents = [], agent_folders(link)
-    for vault in _vaults_of(link):
+    for vault in vaults_of(link):
         key, target = ("folder_id", vault["folder_id"]) if vault["kind"] == "folder" else ("page_id", vault["page_id"])
         vaults.append({"kind": vault["kind"], key: target, "paused": bool(vault["status"].get(folder_links.PAUSED))})
         if vault["kind"] == "folder" and vault["folder_id"] in agents:
             vaults[-1]["agent"] = agents[vault["folder_id"]][1]
     return {"computer": {"id": computer_id(link["remote_url"]), "name": computer_name()},
-            "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link)}
+            "app": version.label()[:64], "vaults": vaults, "assistants": assistants(link),
+            "asks": bool(link.get("asks")), "dirs": offered(link)}
+
+
+def offered(link: dict) -> list[dict]:
+    """The directories this computer offers its agents (``store.dirs``), by
+    id and name, never a path, while the channel ``link``'s account has one
+    on here: what a conversation there may work in besides a vault
+    (gamma/local_agents/home.py ``far_place``); ``[]`` otherwise, and where
+    agents do not run."""
+    from .. import local_agents
+    from ..local_agents import store
+
+    if not local_agents.enabled() or store.agent_for(link["created_by"]) is None:
+        return []
+    return [{"id": entry["id"], "name": entry["name"]} for entry in store.dirs()]
 
 
 def computer_name() -> str:
@@ -392,7 +453,7 @@ class _Channel:
             if state != self.announced:
                 answer = _call(server, "POST", "/api/computers/announce", state)
                 self.announced, self.version = state, str(answer.get("version") or "")
-                self._account(link, answer.get("account") or {})
+                self._account(link, answer)
                 self._said(link, "connected", "", 0)   # shown there now, before the poll's hold
                 self.chats_due = True       # what waited for this computer while it was away
                 self._settle(link)
@@ -433,21 +494,29 @@ class _Channel:
     def _chats(self, server: gamma_sync.Server, link: dict) -> None:
         """The turns that wait there for this computer's agents (``GET
         /api/computers/chats``: that server decides whose they are), each
-        queued for the vault of its work folder (``runner.queue_remote_chat``:
-        the turn finds the vault as it is when it runs, and fails with why
-        when it is paused, as a turn here does), and the turns stopped there
-        meanwhile, or no longer queued or running there, stopped
-        (``runner.stop_remote_chat``); one stopped there that no vault here
-        queues or runs (left open: its claim or its end never answered)
-        ends stopped there and here (``runner.end_stopped_remote``), so its
-        Stop never waits for the next announce. Asked only where a vault of that
-        server has an agent; a server without the route (older), or one not
-        reached, is asked again at a later turn. Never raises."""
-        from ..local_agents import runner
+        of an agent of the catalog queued where it works here
+        (``runner.queue_remote_chat``, with the id the listing names it by:
+        the turn finds the place as it is when it runs, and fails with why
+        when it is no longer kept or offered, or paused, as a turn here
+        does), and the turns stopped there meanwhile, or no longer queued or
+        running there, stopped (``runner.stop_remote_chat``); one stopped
+        there that this channel neither queues nor runs (left open: its
+        claim or its end never answered) ends stopped there and here
+        (``runner.end_stopped_remote``), so its Stop never waits for the
+        next announce; the answers that server keeps for what the turns
+        running here ask (``answers``, where this channel relays asks)
+        handed to them (``runner.answer_relayed``: the first answer is the
+        one). A server from before the agents' buckets lists a turn by its
+        work folder alone: it is queued in the vault here that keeps that
+        folder, with the agent the vault names (``agent_folders``). Asked
+        only while the channel's account has an agent
+        on here; a server without the route (older), or one not reached, is
+        asked again at a later turn. Never raises."""
+        from .. import local_agents
+        from ..local_agents import catalog, runner, store
 
         self.chats_due, self.chats_at = False, time.monotonic()
-        folders = agent_folders(link)
-        if not folders:
+        if not local_agents.enabled() or store.agent_for(link["created_by"]) is None:
             return
         try:
             got = _call(server, "GET", "/api/computers/chats")
@@ -458,20 +527,30 @@ class _Channel:
             log.info(f"[computers] the chat turns of channel {link['id']}: {e}")
             return
         try:
+            folders = agent_folders(link)
             for turn in got.get("turns") if isinstance(got.get("turns"), list) else []:
-                kept = folders.get(turn.get("folder_id")) if isinstance(turn, dict) else None
-                if kept is None or not isinstance(turn.get("id"), str) or not _TURN_ID.match(turn["id"]):
+                if not isinstance(turn, dict) or not isinstance(turn.get("id"), str) or not _TURN_ID.match(turn["id"]):
                     continue
-                runner.queue_remote_chat(kept[0]["id"], turn["id"], agent=kept[1],
+                agent, bucket, dir = turn.get("agent"), turn.get("bucket"), turn.get("dir")
+                if "agent" not in turn:   # a server from before the agents' buckets: {id, conversation_id, page_id, folder_id, at}
+                    kept = folders.get(turn.get("folder_id"))
+                    if kept is None:
+                        continue
+                    agent, bucket, dir = kept[1], turn.get("page_id"), {"kind": "vault", "id": turn["folder_id"]}
+                if agent not in catalog.AGENTS:
+                    continue
+                runner.queue_remote_chat(link["id"], turn["id"], agent=agent,
                                          conversation_id=str(turn.get("conversation_id") or ""),
-                                         page_id=str(turn.get("page_id") or ""))
-            ids = [vault["id"] for vault, _agent in folders.values()]
-            everywhere = [vault["id"] for vault in _vaults_of(link)]
+                                         bucket=str(bucket or ""), dir=dir)
             for gone in got.get("stops") if isinstance(got.get("stops"), list) else []:
                 if isinstance(gone, dict) and isinstance(gone.get("id"), str) and _TURN_ID.match(gone["id"]):
                     run = str(gone.get("run") or "")
-                    if not runner.stop_remote_chat(ids, gone["id"], run):
-                        runner.end_stopped_remote(everywhere, gone["id"], run)
+                    if not runner.stop_remote_chat(link["id"], gone["id"], run):
+                        runner.end_stopped_remote(link["id"], gone["id"], run)
+            for said in got.get("answers") if isinstance(got.get("answers"), list) else []:
+                if isinstance(said, dict) and all(isinstance(said.get(k), str) for k in _ANSWER):
+                    runner.answer_relayed(link["id"], said["id"], said["run"], said["ask"], said["decision"],
+                                          said["note"] if isinstance(said.get("note"), str) else "")
         except Exception:  # noqa: BLE001 — a chat turn never stops the channel
             log.exception(f"[computers] queueing the chat turns of channel {link['id']}")
 
@@ -483,15 +562,15 @@ class _Channel:
         too; the desktop app then forgets that vault as Detach… does. A paused one
         finds it at its next round, as the tick holds. Never raises."""
         try:
-            for vault in _vaults_of(link):
+            for vault in vaults_of(link):
                 if folder_links.work_vault(vault) and not vault["status"].get(folder_links.PAUSED):
                     folder_links.run_in_background(vault["id"])
         except Exception:  # noqa: BLE001 — a round never stops the channel
             log.exception(f"[computers] the rounds of channel {link['id']} after a detach there")
 
     def _settle(self, link: dict) -> None:
-        """That server reached again: the turns of its vaults left open while
-        it was not (an end or a claim never answered) fail there now
+        """That server reached again: the turns of this channel left open
+        while it was not (an end or a claim never answered) fail there now
         (``runner.fail_remote_of``), not only at the next start. Never
         raises."""
         from .. import local_agents
@@ -500,7 +579,7 @@ class _Channel:
         if not local_agents.enabled():
             return
         try:
-            runner.fail_remote_of([vault["id"] for vault in _vaults_of(link)])
+            runner.fail_remote_of(link["id"])
         except Exception:  # noqa: BLE001 — a turn left open never stops the channel
             log.exception(f"[computers] the turns left open of channel {link['id']}")
 
@@ -516,12 +595,17 @@ class _Channel:
                              (json.dumps(link["status"]), link["id"]))
         return rest
 
-    def _account(self, link: dict, account: dict) -> None:
-        """The account there the server named, kept when it changed."""
-        found = (str(account.get("id") or ""), str(account.get("username") or ""))
-        if found != (link["account"], link["username"]) and not self.stopped.is_set():
+    def _account(self, link: dict, answer: dict) -> None:
+        """The account there and the workspace's name an announce's
+        ``answer`` named, kept when they changed (a server that names no
+        workspace keeps the name it had)."""
+        account = answer.get("account") or {}
+        found = (str(account.get("id") or ""), str(account.get("username") or ""),
+                 _workspace_name(answer) or link["workspace_name"])
+        if found != (link["account"], link["username"], link["workspace_name"]) and not self.stopped.is_set():
             with connect_users_db() as conn:
-                conn.execute("UPDATE computer_links SET account = ?, username = ? WHERE id = ?", (*found, link["id"]))
+                conn.execute("UPDATE computer_links SET account = ?, username = ?, workspace_name = ? WHERE id = ?",
+                             (*found, link["id"]))
 
 
 _channels: dict[str, _Channel] = {}

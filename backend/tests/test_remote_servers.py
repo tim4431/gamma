@@ -135,7 +135,7 @@ def test_a_move_takes_the_vaults_the_channel_and_the_copies_to_the_new_address(o
     link = _computer(owner)
     copy = _mirror(nas)
     before = channel.computer_id(NAS)
-    assert channel.of_vault(vault)["id"] == link["id"]
+    assert [v["id"] for v in channel.vaults_of(channel.get(link["id"]))] == [vault["id"]]
 
     # the dry run counts and asks nothing
     nas["calls"].clear()
@@ -168,7 +168,7 @@ def test_a_move_takes_the_vaults_the_channel_and_the_copies_to_the_new_address(o
     assert not {"error_kind", "move_to", "upgrade", "failed_at"} & set(folder_links.get_link(vault["id"])["status"])
     assert sync_engine.get_mirror(copy)["remote_url"] == MOVED
     moved = folder_links.get_link(vault["id"])
-    assert channel.of_vault(moved)["id"] == link["id"]                     # vault and channel still a pair
+    assert [v["id"] for v in channel.vaults_of(channel.get(link["id"]))] == [moved["id"]]   # still a pair
 
     # this computer is the same one there, and again once moved back
     assert channel.computer_id(MOVED) == before

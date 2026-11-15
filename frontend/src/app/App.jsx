@@ -4912,9 +4912,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const vaultConflicts = vaultConflictsPath(vaultState);
   const vaultConflictCount = vaultState?.vault?.conflicts || 0;
   // The agents the chat talks to (chat/agents.js chatAgents): Gamma AI, the
-  // agents this computer runs that the account turned on (GET
-  // /api/local-agents, chat/useLocalAgents.js), or on a page of a work
-  // folder another computer keeps, that computer's. The comment fields'
+  // agents of the account's computers shown to the page's server (the
+  // page's computers, those that keep its work folder first), and the agents
+  // this computer runs that the account turned on (GET /api/local-agents,
+  // chat/useLocalAgents.js). The comment fields'
   // `links.agents` are those a comment on the page can be sent to (its
   // Send to tick and `@codex`, commentAgents: the chat's computer agents,
   // "Codex on TIM-PC" or this computer's), never MentionContext, which
@@ -5294,7 +5295,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // reader's conversation of the thread with its agent
   // (chat/computer/chatSide.js showInChat), where its asks are answered.
   function openThreadChat(thread) {
-    showInChat(thread.page_id, { thread: thread.id }, thread.agent_chat?.agent || "");
+    showInChat(thread.page_id, { thread: thread.id }, thread.agent_chat?.agent_id || thread.agent_chat?.agent || "");
     if (thread.page_id === focusedBlockId) showChat();
     else openBlock(thread.page_id, { then: "ask" });
   }

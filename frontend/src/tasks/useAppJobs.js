@@ -157,7 +157,7 @@ export function useAppJobs({
     } else if (open === "computer") {
       const page = task.params?.bucket || "";
       if (!page) return;
-      showInChat(page, turnShown(task), task.params?.agent || "");
+      showInChat(page, turnShown(task), task.params?.agent_id || task.params?.agent || "");
       if (task.workspace && workspaceId && task.workspace !== workspaceId) {
         window.location.href = `${window.location.pathname}?page=${encodeURIComponent(page)}&ws=${encodeURIComponent(task.workspace)}`;
       } else openPageChat?.(page);

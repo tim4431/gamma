@@ -3,10 +3,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  GAMMA, agentChoice, agentKind, agentPeople, asksNewChat, chatAgents, computerAgents, gammaAgent, keeperAgent, localAgent, madeBy,
+  GAMMA, agentChoice, agentKind, agentPeople, asksNewChat, chatAgents, computerAgents, farAgents, gammaAgent, localAgent, madeBy,
   commentAgents, newChatQuestion, pickAgent, stampLabel,
 } from "../src/chat/agents.js";
 import { blockAgent } from "../src/shared/model/blockModel.js";
+import { readAccountComputers } from "../src/vault/vaultState.js";
 
 const models = [{ id: "gpt-5.5", label: "GPT-5.5", efforts: ["low", "high"], effort: "high", default: true },
   { id: "gpt-mini", label: "GPT Mini", efforts: [], effort: null, default: false }];
@@ -15,7 +16,7 @@ const found = (over = {}) => ({ name: "codex", label: "Codex", found: true, vers
 const listing = (...agents) => ({ here: true, computer: "TIM-PC", agents, dirs: [] });
 const codexThere = { name: "codex", label: "Codex", found: true, ready: true, version: "0.167.0", code: "", models, enabled: true, runs: "ask" };
 const pc = (over = {}) => ({ id: "c1", name: "TIM-PC", online: true, since: null,
-  vault: { kind: "folder", name: "cavity", paused: false, agent: { name: "codex", label: "Codex" } }, assistants: [codexThere], ...over });
+  vault: { kind: "folder", name: "cavity", paused: false, work: true }, assistants: [codexThere], dirs: [], ...over });
 const aiOn = { enabled: true, efforts: ["low", "high"] };
 const aiModels = [{ id: "demo:model", provider: "demo", provider_name: "Demo", model: "model" }];
 
@@ -56,29 +57,41 @@ test("another computer's agents, as it announced them: those found, by their cod
   assert.deepEqual(computerAgents({ name: "X" }), []);
 });
 
-test("the page's computer agent: the first computer's whose work folder of the page's server has one", () => {
-  const agent = keeperAgent([pc()]);
-  assert.deepEqual([agent.name, agent.label, agent.where, agent.ready, agent.folder, agent.paused, agent.owner, agent.remote],
-    ["codex", "Codex", "TIM-PC", true, "cavity", false, true, true]);
-  assert.equal(keeperAgent([pc({ id: "c0", name: "LAPTOP", vault: { kind: "folder", name: "x", paused: false } }), pc()]).where, "TIM-PC",
-    "the first with an agent");
-  assert.equal(keeperAgent([pc({ vault: { kind: "folder", name: "cavity", paused: false, agent: null } })]), null, "no agent on");
-  assert.equal(keeperAgent([]), null);
-  assert.equal(keeperAgent(undefined), null);
-  assert.equal(keeperAgent([pc({ assistants: [] })]).ready, null, "not announced: not known");
-  assert.equal(keeperAgent([pc({ assistants: [{ ...codexThere, found: false, ready: false, code: "missing" }] })]).problem,
-    "Codex is not on TIM-PC.");
-  assert.equal(keeperAgent([pc({ vault: { kind: "folder", name: "cavity", paused: true, agent: { name: "codex" } } })]).paused, true);
+test("the page's computers' agents: each agent on of each computer, a work folder's keeper's with its folder", () => {
+  const [agent] = farAgents([pc()]);
+  assert.deepEqual([agent.id, agent.name, agent.label, agent.where, agent.ready, agent.folder, agent.paused, agent.keeps, agent.owner,
+    agent.remote], ["computer:c1:codex", "codex", "Codex", "TIM-PC", true, "cavity", false, true, true, true]);
+  const claude = { ...codexThere, name: "claude", label: "Claude Code" };
+  assert.deepEqual(farAgents([pc({ id: "c0", name: "LAPTOP", vault: null, assistants: [codexThere, claude] }), pc()])
+    .map((a) => [a.id, a.folder || "", !!a.keeps]),
+  [["computer:c0:codex", "", false], ["computer:c0:claude", "", false], ["computer:c1:codex", "cavity", true]],
+  "a computer that keeps no page of it, every agent on there: the server's order");
+  assert.deepEqual(farAgents([pc({ vault: { kind: "file", name: "x.pdf", paused: false, work: false } })]).map((a) => a.keeps), [undefined],
+    "a vault of no work folder keeps nothing its agents work in");
+  assert.deepEqual(farAgents([pc({ assistants: [{ ...codexThere, enabled: false }] })]), [], "off for this account there");
+  assert.deepEqual(farAgents([pc({ assistants: [{ ...codexThere, found: false, ready: false, code: "missing" }] })]), [], "not there");
+  assert.deepEqual(farAgents([]), []);
+  assert.deepEqual(farAgents(undefined), []);
+  const away = farAgents([pc({ online: false, since: "2026-11-13T14:02:00Z" })])[0];
+  assert.deepEqual([away.online, away.ready, away.since], [false, null, "2026-11-13T14:02:00Z"], "offline: listed offline");
+  assert.equal(farAgents([pc({ vault: { kind: "folder", name: "cavity", paused: true, work: true } })])[0].paused, true);
 });
 
-test("the chat's list: Gamma AI, then the agents here the account turned on, or the page's computer's", () => {
+test("the chat's list: Gamma AI, the keepers' agents, the agents here the account turned on, the other computers'", () => {
   const ids = (list) => list.map((a) => `${a.id}${a.where ? `@${a.where}` : ""}`);
   const here = listing(found(), found({ name: "claude", label: "Claude Code", enabled: false, mine: false }));
   assert.deepEqual(ids(chatAgents({ aiInfo: aiOn, models: aiModels, local: here })), ["gamma", "codex"]);
   assert.deepEqual(ids(chatAgents({ local: listing(found(), found({ name: "claude", label: "Claude Code" })) })), ["gamma", "codex", "claude"]);
   assert.deepEqual(ids(chatAgents({ local: listing(found({ mine: false })) })), ["gamma"], "another account's agent");
-  assert.deepEqual(ids(chatAgents({ local: here, computers: [pc()] })), ["gamma", "codex@TIM-PC"],
-    "the page's computer keeps its work folder: the server binds the chat to it");
+  assert.deepEqual(ids(chatAgents({ local: here, computers: [pc()] })), ["gamma", "computer:c1:codex@TIM-PC", "codex"],
+    "the page's computer keeps its work folder: its agent first");
+  assert.deepEqual(ids(chatAgents({ local: here, computers: [pc({ vault: null })] })), ["gamma", "codex", "computer:c1:codex@TIM-PC"],
+    "a page of no synced folder of it: after this computer's");
+  const account = { computers: [{ id: "c1", name: "TIM-PC", online: true, since: null, assistants: [codexThere], asks: false, dirs: [] },
+    { id: "c9", name: "ALICE-PC", online: true, since: null, assistants: [codexThere], asks: false, dirs: [], lent_by: "alice" }] };
+  assert.deepEqual(ids(chatAgents({ local: here, computers: readAccountComputers(account) })), ["gamma", "codex", "computer:c1:codex@TIM-PC"],
+    "no page open: the account's computers, after this computer's, without a lent one");
+  assert.deepEqual(readAccountComputers({}), []);
   assert.deepEqual(ids(chatAgents({ local: here, readOnly: true })), ["gamma"], "a viewer");
   assert.deepEqual(ids(chatAgents()), ["gamma"]);
   assert.deepEqual(ids(chatAgents({ local: { here: false, computer: "", agents: [], dirs: [] } })), ["gamma"], "a server that runs none");
@@ -89,6 +102,9 @@ test("the agent shown: the one picked while it is listed, else Gamma AI, else an
   assert.equal(pickAgent(list, "codex").id, "codex");
   assert.equal(pickAgent(list, "").id, "gamma");
   assert.equal(pickAgent(list, "claude").id, "gamma", "picked once, turned off since");
+  const far = chatAgents({ aiInfo: aiOn, local: listing(found({ id: "computer:here1:codex" })), computers: [pc({ vault: null })] });
+  assert.equal(pickAgent(far, "computer:c1:codex").where, "TIM-PC", "another computer's, by its id");
+  assert.equal(pickAgent(far, "computer:here1:codex").id, "codex", "this computer's, by the id the server names it with");
   const noAi = chatAgents({ aiInfo: { enabled: false }, local: listing(found()) });
   assert.equal(pickAgent(noAi, "").id, "codex", "no AI service: the agent here");
   assert.equal(pickAgent(noAi, "gamma").id, "gamma", "picked all the same");
@@ -107,7 +123,7 @@ test("another agent picked in a conversation with messages asks first, naming it
     message: "A conversation keeps the agent it began with. This one stays in Chat history.",
   });
   assert.equal(agentChoice(codex), "Codex");
-  assert.equal(agentChoice(keeperAgent([pc()])), "Codex on TIM-PC");
+  assert.equal(agentChoice(farAgents([pc()])[0]), "Codex on TIM-PC");
 });
 
 test("the agents a comment can be sent to: the page's computer's, else the account's here, each by its id", () => {
@@ -149,7 +165,7 @@ test("an agent another account lends: offered to the person it serves as theirs 
   const mine = localAgent(found({ people: [{ agent: "codex", server: "", workspace_id: "w1", account: "u_bob", username: "bob" }] }));
   assert.deepEqual([mine.lentBy, mine.people.length], ["", 1]);
   // another account's computer that serves this one, its agent alone
-  const far = keeperAgent([pc({ lent_by: "alice", assistants: [{ ...codexThere, runs: "never" }] })]);
+  const [far] = farAgents([pc({ lent_by: "alice", assistants: [{ ...codexThere, runs: "never" }] })]);
   assert.deepEqual([far.owner, far.lentBy, far.where], [true, "alice", "TIM-PC"]);
   assert.deepEqual(commentAgents(chatAgents({ computers: [pc({ lent_by: "alice" })] })).map((a) => a.id), ["computer:c1:codex"]);
 });

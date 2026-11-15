@@ -23,7 +23,7 @@ import pytest
 
 from conftest import account_of, fresh_client, login, make_user, token_for
 from fake_agents import ARGV, requests_in, script_agent, turns_in
-from gamma import workspaces
+from gamma import agents, workspaces
 from gamma.db import connect_pages_db
 from gamma.local_agents import catalog, chats, claude, codex, events, runner, store
 from test_local_agents_chat import PLACES, _chat, _reply, _say, _stop
@@ -301,7 +301,8 @@ def test_background_tasks_list_the_turns_that_work(lab, disk, monkeypatch):
         title = conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (f.page,)).fetchone()[0]
     assert title and row == {
         "id": f"computer-{turn}", "kind": "computer-turn", "owner": lab.user, "workspace": lab.ws,
-        "title": f"Codex · {title}", "params": {"bucket": f.page, "turn": turn, "agent": "codex", "label": "Codex",
+        "title": f"Codex · {title}", "params": {"bucket": f.page, "turn": turn, "agent": "codex",
+                                                    "agent_id": agents.here("codex").id, "label": "Codex",
                                                     "title": title, "conversation": said["conversation"]["id"]},
         "state": "running", "progress": {"phase": "asking"}, "error": "", "created_at": row["created_at"],
         "started_at": row["started_at"], "finished_at": "", "artifact": None, "downloaded": False,

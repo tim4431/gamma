@@ -150,8 +150,9 @@ export const TASK_KINDS = {
   // (`params.bucket`) on the turn's conversation (`turnShown`), and Stop is
   // the turn's own. The server's title is "<agent> · <page title>". A turn
   // of a work folder another computer keeps (step 4d) names that computer
-  // (`params.computer`), and while it asks there (phase `asking`) says the
-  // answer is given on that computer. A co-author's turn with the reader's
+  // (`params.computer`), and while it asks there alone (phase `asking`,
+  // `there`) says the answer is given on that computer; one it relays is
+  // waiting for you, answered in the chat. A co-author's turn with the reader's
   // agent names the co-author (`params.person`).
   "computer-turn": {
     icon: "terminal", open: "computer",
@@ -169,7 +170,7 @@ export const TASK_KINDS = {
       return computer ? t("{agent} on {computer}: {title}", { agent, computer, title: named(page) })
         : t("{agent} on this computer: {title}", { agent, title: named(page) });
     },
-    phase: ({ progress, params }) => (progress?.phase === "asking" && typeof params?.computer === "string" && params.computer
+    phase: ({ progress, params }) => (progress?.phase === "asking" && progress.there && typeof params?.computer === "string" && params.computer
       ? t("Waiting for your answer on {computer}", { computer: params.computer }) : ""),
     stop: ({ workspace, params }) => `/local-agents/chat/turns/${encodeURIComponent(params?.turn || "")}/stop${
       workspace ? `?ws=${encodeURIComponent(workspace)}` : ""}`,

@@ -65,7 +65,8 @@ export const computerExportPath = (id) => `${API}/local-agents/chat/history/${en
 
 // The side's state for the bucket `pageId` (a page's id, a folder's, or
 // "home"; "" while the side is not shown: nothing is read) with the agent
-// picked for it (`agent`, chat/agents.js: its `name` asked for, its `label`
+// picked for it (`agent`, chat/agents.js: its `id` asked for, this
+// computer's agent's name or another computer's agent's id, its `label`
 // what the words name before the read), or with `shown` another
 // conversation in place of its own ({thread} that comment thread's, its
 // Open in chat; {conversation} a co-author's with the reader's agent).
@@ -99,7 +100,7 @@ export const computerExportPath = (id) => `${API}/local-agents/chat/history/${en
 // `setStatus` says what failed, naming the agent as the server read it, or
 // before a read as the agent picked.
 export function useComputerChat(pageId, agent, setStatus, shown = null) {
-  const name = agent?.name || "";
+  const name = agent?.id || "";
   const known = agent?.label || "";
   // What is held is kept with the bucket, the agent and the conversation
   // shown (`seat`), so another one never shows the last one's.
@@ -152,6 +153,19 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
     turnId.current = "";
     load();
   }, [seat, load]);
+
+  // Another computer coming back or going away, or its agent getting ready
+  // or not, as the page's computers say it once read again on the
+  // account's nudge (vault/usePageComputer.js): read again at once, since
+  // no message waits for a computer away and so no turn's poll would
+  // notice.
+  const presence = agent?.remote ? JSON.stringify([agent.online === true, agent.ready ?? null, agent.code || ""]) : "";
+  const presenceSeen = useRef(presence);
+  useEffect(() => {
+    if (presenceSeen.current === presence) return;
+    presenceSeen.current = presence;
+    if (presence) load();
+  }, [presence, load]);
 
   const state = held.seat === seat ? held : { computer: null, conversation: null, read: false, error: "" };
   const live = !!pageId && (!!state.computer?.turn || !!liveTurn(state.conversation));

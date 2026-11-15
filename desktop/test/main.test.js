@@ -1005,7 +1005,7 @@ function computerRoutes(host, nas, { replace = null, fail = null } = {}) {
     if (p === '/api/computer-links' && init.method === 'POST') {
       if (state.fail) return state.fail;
       const body = JSON.parse(init.body);
-      const link = { id: `c${state.links.length + 1}`, remote_url: body.remote_url, workspace_id: body.workspace, account: 'admin', username: 'admin',
+      const link = { id: `c${state.links.length + 1}`, remote_url: body.remote_url, workspace_id: body.workspace, account: 'admin', username: 'admin', asks: false,
         status: { state: 'connected', error: '', at: '2026-11-13T10:00:00Z' }, created_at: '2026-11-13T10:00:00Z', token_id: body.token_id };
       state.links = [...state.links.filter((c) => !(c.remote_url === link.remote_url && c.workspace_id === link.workspace_id)), link];
       const { token_id: _t, ...listed } = link;
@@ -1017,6 +1017,10 @@ function computerRoutes(host, nas, { replace = null, fail = null } = {}) {
       const link = state.links.find((c) => c.id === decodeURIComponent(gone[1]));
       state.links = state.links.filter((c) => c !== link);
       return { ok: true, token_id: link.token_id };
+    }
+    if (gone && init.method === 'PATCH') {
+      state.links = state.links.map((c) => (c.id === decodeURIComponent(gone[1]) ? { ...c, asks: JSON.parse(init.body).asks } : c));
+      return state.links.find((c) => c.id === decodeURIComponent(gone[1]));
     }
     return routes(p, init);
   };
@@ -1182,6 +1186,91 @@ test('from the panel, Show this computer there and Stop showing on a vault of an
     nas.fake.routes = routes;
   } finally {
     delete electron.session.defaultSession.fetch;
+  }
+});
+
+test('Settings → AI\'s servers this computer answers: Add a server… asks which and for which workspace and mints with the window\'s session, no vault needed; one refused gets a new token; letting it answer the asks is asked first with the shell\'s word; Remove revokes its token there', async () => {
+  fresh();
+  const host = server('Host');
+  const nas = server('NAS', [], { remote: 'http://nas.lan:9001' });
+  nas.fake.workspaces = [{ id: 'team', name: 'Team', personal: false, role: 'editor', mirror_of: '' },
+    { id: 'nas_mine', name: 'My NAS', personal: true, role: 'owner', mirror_of: '' },
+    { id: 'clone', name: 'A clone', personal: false, role: 'owner', mirror_of: 'http://elsewhere' }];
+  const shown = computerRoutes(host, nas);
+  // the window's session is signed into NAS, as in the launcher
+  electron.session.defaultSession.fetch = async (url, init = {}) => nas.fake.answer(new URL(url).pathname, init, new URL(url));
+  shell.pretendShown(host.srv, windowOn(host.fake));
+  const linkCalls = (method) => host.fake.calls.filter((c) => c.path.startsWith('/api/computer-links') && c.method === method);
+  try {
+    // which server (the only one), then which workspace: the personal one first, a clone never
+    shell.answers.push(0, 1);
+    assert.equal(await shell.addServerFromPage('mine', 'new'), true);
+    const pick = keeping.serverAsk([{ name: 'NAS' }], shell.computerName);
+    assert.deepEqual(shell.asked.slice(-2), [`${pick.message} ${pick.detail}`,
+      `${keeping.serverPlaceAsk('NAS', []).message} ${keeping.serverPlaceAsk('NAS', []).detail}`]);
+    assert.deepEqual(keeping.serverPlaceAsk('NAS', [{ name: 'My NAS' }, { name: 'Team' }]).buttons, ['My NAS', 'Team', 'Cancel']);
+    const [minted] = shown.minted;
+    assert.deepEqual([minted.scope, minted.name], ['computer', `Gamma desktop: ${shell.computerName}`]);
+    const mint = nas.fake.calls.find((c) => c.path === '/api/integrations/tokens' && c.method === 'POST');
+    assert.equal(mint.headers['X-Gamma-Workspace'], 'team');
+    const [hand] = linkCalls('POST');
+    assert.deepEqual(hand.body, { remote_url: 'http://nas.lan:9001', workspace: 'team', token: minted.token, token_id: minted.id });
+    assert.equal(hand.headers['X-Gamma-Shell'], shell.shellSecret);
+    assert.equal(shell.notice(), `${shell.computerName} is shown on NAS: only your account there sees it, with the vaults it keeps and the assistants here.`);
+    assert.equal(shell.registry.getSettings().folderHost, host.srv.id, 'its channel runs at launch');
+    for (const c of nas.fake.calls) assert.equal(c.headers['X-Gamma-Shell'], undefined, 'the word never goes to the remote');
+
+    // letting NAS answer the agents' asks: asked first, Cancel the default under the harness
+    assert.equal(await shell.linkAsksFromPage('mine', 'c1', true), null);
+    assert.deepEqual(linkCalls('PATCH'), []);
+    assert.equal(shell.asked.at(-1), `${keeping.linkAsksAsk('NAS').message} ${keeping.linkAsksAsk('NAS').detail}`);
+    shell.answers.push(0);
+    assert.equal(await shell.linkAsksFromPage('mine', 'c1', true), true);
+    const [on] = linkCalls('PATCH');
+    assert.deepEqual([on.path, on.body, on.headers['X-Gamma-Shell']], ['/api/computer-links/c1', { asks: true }, shell.shellSecret]);
+    assert.equal(shell.notice(), 'NAS may now answer what the agents here ask to run.');
+    const asks = shell.asked.length;
+    assert.equal(await shell.setLinkAsks(host.srv.id, 'c1', true), false, 'so already');
+    assert.equal(await shell.linkAsksFromPage('mine', 'c1', false), true);
+    const off = linkCalls('PATCH').at(-1);
+    assert.deepEqual([off.body, off.headers['X-Gamma-Shell']], [{ asks: false }, undefined]);
+    assert.equal(shell.asked.length, asks, 'off asks nothing');
+    assert.equal(shell.notice(), 'What the agents here ask to run is answered on this computer only, not on NAS.');
+    await assert.rejects(shell.setLinkAsks(host.srv.id, 'gone', true, true), /no longer answers that server/);
+
+    // a link NAS refused is handed a new token, asked nothing
+    shown.links = shown.links.map((c) => ({ ...c, status: { state: 'refused', error: '', at: '' } }));
+    const before = shell.asked.length;
+    assert.equal(await shell.addServerFromPage('mine', 'c1'), true);
+    assert.equal(shell.asked.length, before);
+    assert.equal(shown.minted.length, 2);
+    assert.deepEqual(linkCalls('POST').at(-1).body.workspace, 'team');
+
+    // signed out of NAS: it offers to open NAS to sign in (Cancel under the harness), and mints nothing
+    const routes = nas.fake.routes;
+    nas.fake.routes = (p, init) => (p === '/api/session' ? { user: null } : routes(p, init));
+    assert.equal(await shell.addServerFromPage('mine', 'new'), null);
+    assert.match(shell.asked.at(-1), /^Sign in to NAS first You are not signed in to NAS in this window\./);
+    assert.equal(shown.minted.length, 2);
+    nas.fake.routes = routes;
+
+    // Remove: the link forgotten with the shell's word, its token revoked on NAS; the host no longer starts at launch for it
+    const id = shown.links[0].id;
+    const tokenId = shown.links[0].token_id;
+    assert.equal(await shell.removeLinkedServer(host.srv.id, id), true);
+    const stop = linkCalls('DELETE').at(-1);
+    assert.deepEqual([stop.path, stop.headers['X-Gamma-Shell']], [`/api/computer-links/${id}`, shell.shellSecret]);
+    assert.deepEqual(revoked(nas), [`${tokenId}@team`]);
+    assert.equal(shell.notice(), `${shell.computerName} is no longer shown on NAS; its token there is revoked.`);
+    assert.equal(shell.registry.getSettings().folderHost, '');
+    assert.equal(await shell.removeLinkedServer(host.srv.id, id), false, 'gone already');
+
+    // no remote server in the launcher: nothing to answer
+    shell.registry.remove(nas.srv.id);
+    await assert.rejects(shell.addServerFromPage('mine', 'new'), /Add the other server in the launcher first/);
+  } finally {
+    delete electron.session.defaultSession.fetch;
+    shell.pretendShown(null, null);
   }
 });
 
@@ -2841,7 +2930,7 @@ const fire = (t) => { t.cleared = true; t.fn(); };
 // at `version`; its answer route answers `answerWith(id, body)`.
 async function askingWindow({ focused = true } = {}) {
   const host = server('Host');
-  Object.assign(host.fake, { asks: [], version: 0, fail: null, agents: codexRuns('ask') });
+  Object.assign(host.fake, { asks: [], version: 0, fail: null, agents: codexRuns('ask'), shown: SHOWN });
   shell.forgetSurfaced();
   host.fake.routes = (p, init) => {
     if (p === '/api/local-agents/asks') return { version: host.fake.version, asks: host.fake.asks };
@@ -2850,7 +2939,7 @@ async function askingWindow({ focused = true } = {}) {
       host.fake.version += 1;
       return { answered: true, version: host.fake.version };
     }
-    if (p === '/api/computer-links') return SHOWN;
+    if (p === '/api/computer-links') return host.fake.shown;
     if (p === '/api/local-agents') return { agents: host.fake.agents, dirs: [] };
     if (p === '/api/local-agents/codex' && init.method === 'PATCH') return codexRuns('never')[0];
     return null;
@@ -3029,7 +3118,7 @@ test('what an answer says: gone meanwhile nothing was allowed and a list read be
     armedCard('a1');
     shell.pressed('mouseDown');
     await shell.answerAgentAsk('a1', 'deny');
-    assert.equal(shell.notice(), 'Codex no longer waits for that: nothing was allowed.');
+    assert.equal(shell.notice(), 'Codex no longer waits for that: nothing was allowed here.');
     assert.equal(shell.agentAsk().key, 'a2');
     assert.equal(shell.agentAsk().notes.some((n) => /went away/.test(n)), false, 'answered here: no replacement to say');
     shell.pretendAsks([askOf('a1'), askOf('a2', { at: '2026-11-13T10:05:00Z' })]);
@@ -3091,7 +3180,7 @@ test('what an answer says: gone meanwhile nothing was allowed and a list read be
   }
 });
 
-test('the asks are followed on the host while it keeps a work folder of another server and an agent may ask, with the shell\'s word, each read held; the host stopping empties the queue', async () => {
+test('the asks are followed on the host while it answers another server or keeps a work folder of one and an agent may ask, with the shell\'s word, each read held; the host stopping empties the queue', async () => {
   fresh();
   registry.addRemote('NAS', 'https://nas.lab:5001');
   const { host } = await askingWindow();
@@ -3102,9 +3191,14 @@ test('the asks are followed on the host while it keeps a work folder of another 
     Object.assign(host.fake, { vaults: [farWork()], agents: codexRuns('never') });
     await shell.refreshKeeping();
     assert.equal(shell.following(), '', 'no agent may ask: nothing followed');
-    Object.assign(host.fake, { vaults: [farWork({ remote_url: '', workspace_id: 'mine' })], agents: codexRuns('ask') });
+    Object.assign(host.fake, { vaults: [farWork({ remote_url: '', workspace_id: 'mine' })], agents: codexRuns('ask'),
+      shown: { links: [] } });
     await shell.refreshKeeping();
     assert.equal(shell.following(), '', 'a work folder of the host\'s own asks in the chat: nothing followed');
+    Object.assign(host.fake, { vaults: [], shown: SHOWN });
+    await shell.refreshKeeping();
+    assert.equal(shell.following(), host.srv.id, 'a server this computer answers, no vault of it: any chat there asks here');
+    shell.stopAsks();
     // the host holds a read until its list changes
     const answerOf = host.fake.answer.bind(host.fake);
     host.fake.answer = async (p, init, url) => {

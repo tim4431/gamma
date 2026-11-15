@@ -153,23 +153,31 @@ def _people(user_id: str, turns: list[dict]) -> dict[str, str]:
         return account_names(conn, others)
 
 
-def _turn_row(user_id: str, turn: dict, title: str, people: dict[str, str], *, asking: bool = False) -> dict:
-    """A turn's row: ``params`` name its bucket, the turn, the agent and the
-    conversation the row opens in the chat (``conversation``, and ``thread``
-    for a comment thread's), and for a co-author's turn its ``person``, the
-    co-author's username."""
+def _turn_row(user_id: str, turn: dict, title: str, people: dict[str, str], *, asking: bool = False,
+              there: bool = False) -> dict:
+    """A turn's row: ``params`` name its bucket, the turn, the agent (its
+    name and, ``agent_id``, its id: another computer's, ``computer_id``, or
+    this one's) and the conversation the row opens in the chat
+    (``conversation``, and ``thread`` for a comment thread's), and for a
+    co-author's turn its ``person``, the co-author's username; ``progress``
+    phase ``asking`` while an ask waits (``asking``), ``there`` where it
+    waits for an answer on the other computer alone."""
+    from .. import agents
     from ..local_agents import catalog
 
     label = catalog.label(turn["agent"])
+    agent_id = agents.computer_agent(turn.get("computer_id") or agents.here_id(), turn["agent"]).id
     return {
         "id": f"computer-{turn['turn_id']}", "kind": "computer-turn", "owner": user_id, "workspace": turn["ws"],
         "title": f"{label} · {title or ('Library' if turn['bucket'] == 'home' else 'Untitled')}",
-        "params": {"bucket": turn["bucket"], "turn": turn["turn_id"], "agent": turn["agent"], "label": label,
+        "params": {"bucket": turn["bucket"], "turn": turn["turn_id"], "agent": turn["agent"], "agent_id": agent_id,
+                   "label": label,
                    "title": title, "conversation": turn["conversation_id"],
                    **({"thread": turn["thread_id"]} if turn["thread_id"] else {}),
                    **({"person": people.get(turn["user_id"], "")} if turn["user_id"] != user_id else {}),
                    **({"computer": turn["computer"]} if turn.get("computer") else {})},
-        "state": turn["state"], "progress": {"phase": "asking"} if asking else {}, "error": "",
+        "state": turn["state"], "progress": {"phase": "asking", **({"there": True} if there else {})} if asking else {},
+        "error": "",
         "created_at": turn["queued_at"], "started_at": turn["started_at"], "finished_at": "", "artifact": None,
         "downloaded": False, "stoppable": not turn["stopping"], "stopping": turn["stopping"], "readonly": True,
     }
@@ -180,8 +188,9 @@ def _far_turns(user_id: str, ws: str) -> list[dict]:
     computer for the account and the co-authors its agents serve (step 4d,
     ``chats.remote_turns``: kept in the workspaces its computers keep a work
     folder of with an agent, and the one the request works in), as ``_computer_turns`` gives them (phase
-    ``asking`` while an ask waits for an answer on that computer), newest
-    first; Stop the same route."""
+    ``asking`` while an ask waits for an answer, in the chat where that
+    computer relays it, else on that computer, ``there``), newest first;
+    Stop the same route."""
     from ..computers import registry
     from ..local_agents import chats
 
@@ -190,7 +199,8 @@ def _far_turns(user_id: str, ws: str) -> list[dict]:
         for each in sorted({*registry.workspaces_of(user_id), *([ws] if ws else [])}):
             turns = chats.remote_turns(each, user_id)
             people = _people(user_id, turns)
-            rows += [_turn_row(user_id, turn, turn["title"], people, asking=turn["asking"]) for turn in turns]
+            rows += [_turn_row(user_id, turn, turn["title"], people, asking=turn["asking"], there=turn["there"])
+                     for turn in turns]
     except Exception:  # noqa: BLE001 — the tray never breaks over the agents
         log.exception("[jobs] could not read the chat turns run on other computers")
         return []

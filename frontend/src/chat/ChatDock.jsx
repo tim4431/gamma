@@ -998,7 +998,7 @@ export default function ChatDock({
     setOpenPopover(null);
     setHistoryRead("");
     chatStickRef.current = true;
-    if (agent?.id === row.agent) side.chat.reload();
+    if (agent?.id === row.agent || (agent?.agentId && agent.agentId === row.agent)) side.chat.reload();
     else setWanted(row.agent);
   }
 

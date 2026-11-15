@@ -13,8 +13,10 @@ opened in a turn of this computer (to ask a decision) resumes the session
 of the conversation that opened it (``opener_of``). Its turns run as a
 chat's do: queued
 for this computer's runner (gamma/local_agents/runner.py ``_ChatTurn``), or
-for the computer that keeps the page's work folder with that agent, which
-claims it over its channel (``chats.claim``). A co-author the agent's owner
+for the other computer whose agent ``to`` names (``chats.remote_of``), which
+claims it over its channel (``chats.claim``) and works in the vault of the
+page's work folder where it keeps it, else where the page's chat with it
+works. A co-author the agent's owner
 named on the computer (decision 13 of
 docs/research/agents-as-participants-plan.md) sends comments to it as the
 owner does, on the files of a synced folder alone; the conversation is the
@@ -154,21 +156,26 @@ def _start(ws: str, event: dict, to: str, name: str, by_name: str) -> dict:
             runner.queue_chat(ws, place, reply["turn_id"], conversation_id=conversation["id"], bucket=page_id,
                               agent=name, user_id=actor, owner=row["set_by"], thread_id=thread["id"])
     else:
-        far = chats.remote_of(ws, page_id, actor)
-        held = registry.computer_of(far["token_id"]) if far is not None else None
-        if far is None or far["agent"] != name or held is None or held[0] != computer:
+        far = chats.remote_of(ws, page_id, actor, computer, name) if computer else None
+        if far is None:
             return refused(name, "elsewhere", f"{label} on that computer does not work on this page.")
         if not far["online"]:
-            return refused(name, "offline", f"{far['computer']} is offline: send this again once it connects.",
-                           far["computer"])
+            return refused(name, "offline", chats.OFFLINE.format(computer=far["computer"]), far["computer"])
         if far["paused"]:
             return refused(name, "paused", f"The synced folder is paused on {far['computer']}: {label} starts once "
                                            "it syncs again.", far["computer"])
         if far["ready"] is False:
             return refused(name, "not_ready", chats.far_problem(far))
-        conversation, reply, new = chats.begin(ws, dir=far["folder_id"], link_id="", remote=True,
-                                               computer=far["computer"], owner=far["user_id"],
-                                               agent_id=agents.of_channel(far["token_id"], name).id, **begun)
+        # where the thread's conversation works, else the page's chat with that computer's agent
+        kept = next((c for c in (mine, chat) if c is not None and (c["computer"], c["agent"]) == (computer, name)),
+                    None)
+        try:
+            dir = chats.far_dir(far, None, kept)
+        except chats.ChatError as e:
+            return refused(name, "folder" if e.status == 409 else "other", e.detail)
+        conversation, reply, new = chats.begin(ws, dir=dir, link_id="", remote=True, computer=far["computer"],
+                                               computer_id=computer, owner=far["user_id"],
+                                               agent_id=agents.computer_agent(computer, name).id, **begun)
         if new:
             registry.wake(far["token_id"], "chat")
     return {"agent": label, "conversation_id": conversation["id"], "turn_id": reply["turn_id"],
@@ -281,7 +288,7 @@ def opened(ws: str, agent_id: str, user_id: str, since: str) -> list[dict]:
 
 
 def chats_of(ws: str, user_id: str, thread_ids) -> dict[str, dict]:
-    """``{thread id: {conversation_id, agent, label, turn, for?}}``: the
+    """``{thread id: {conversation_id, agent, agent_id, label, turn, for?}}``: the
     account's conversations of the threads ``thread_ids``, else those of a
     co-author its agent talks in (``for`` the co-author's username: the
     owner reads them, ``chats.readable``); ``turn`` its turn still to end,
@@ -312,6 +319,7 @@ def chats_of(ws: str, user_id: str, thread_ids) -> dict[str, dict]:
                 turn = {"turn_id": busy["turn_id"], "state": busy.get("state"), "asking": bool(busy.get("asks")),
                         "waiting": bool(busy.get("waiting")), "computer": run["computer"] if run else ""}
             out[conversation["thread_id"]] = {"conversation_id": conversation["id"], "agent": conversation["agent"],
+                                              "agent_id": chats.agent_id_of(conversation),
                                               "label": catalog.label(conversation["agent"]), "turn": turn,
                                               **({"for": names.get(conversation["user_id"], "")}
                                                  if conversation["user_id"] != user_id else {})}

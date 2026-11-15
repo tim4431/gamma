@@ -173,7 +173,6 @@ function ComputerChip({ computers, open, onOpenChange, detach }) {
           {chip.vault ? <div className="popoverHint">{chip.vault}</div> : null}
           {chip.paused ? <div className="popoverHint">{chip.paused}</div> : null}
           {chip.assistants ? <div className="popoverHint vaultAgent">{chip.assistants}</div> : null}
-          {chip.agent ? <div className="popoverHint vaultAgent">{chip.agent}</div> : null}
           {detach ? <div className="vaultActions"><DetachRow detach={detach} onOpenChange={onOpenChange} /></div> : null}
         </Popover>
       ) : null}

@@ -267,8 +267,10 @@ test("a computer turn's row: the agent and the page, waiting for the person whil
   assert.equal(taskTitle(turn({ params: { ...params, computer: "TIM-PC" } })), "Codex on TIM-PC: Thesis · draft",
     "a turn the computer that keeps another server's work folder runs");
   assert.equal(taskInfo(turn({ progress: { phase: "asking" } })), "Waiting for you");
-  assert.equal(taskInfo(turn({ progress: { phase: "asking" }, params: { ...params, computer: "TIM-PC" } })), "Waiting for your answer on TIM-PC",
-    "a turn on another computer is answered there");
+  assert.equal(taskInfo(turn({ progress: { phase: "asking", there: true }, params: { ...params, computer: "TIM-PC" } })),
+    "Waiting for your answer on TIM-PC", "a turn on another computer is answered there");
+  assert.equal(taskInfo(turn({ progress: { phase: "asking" }, params: { ...params, computer: "TIM-PC" } })), "Waiting for you",
+    "one it relays is answered in the chat");
   assert.equal(taskInfo(turn({ params: { ...params, computer: "TIM-PC" } })), "Working…");
   assert.equal(taskInfo(turn()), "Working…");
   assert.equal(taskInfo(turn({ state: "queued" })), "Waiting for its turn…");

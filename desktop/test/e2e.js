@@ -1565,7 +1565,7 @@ async function main() {
         await waitFor(() => hook(app, (s) => s.agentAsk() === null), 'the card goes', 10_000, 100);
         assert.deepEqual(await hook(app, (s) => s.askAnswers.slice()), [{ id: 'e2e-ask', decision: 'deny' }], 'Decline sent once');
         // the host knows no such ask: nothing was allowed, said so
-        assert.equal(await hook(app, (s) => s.notice()), 'Codex no longer waits for that: nothing was allowed.');
+        assert.equal(await hook(app, (s) => s.notice()), 'Codex no longer waits for that: nothing was allowed here.');
         assert.equal((await hook(app, (s) => s.bounds())).contentVisible, true, 'the page back');
         return 'card drawn, read, declined once';
       } finally {

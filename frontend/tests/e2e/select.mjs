@@ -217,6 +217,9 @@ export const RULES = [
   ["frontend/src/settings/ZoteroLinkDialog.jsx", ["zotero-link"]],
   // the translation speed and Keep translations, which the translated view's scenario sets
   ["frontend/src/settings/SettingsTranslation.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "zotero-link", "translation"]],
+  // Settings → AI → Agents: this computer's agents, and the servers it answers (remote-asks drives the desktop window's)
+  ["frontend/src/settings/SettingsAgents.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link", "remote-asks"]],
+  ["frontend/src/settings/answeredServers.js", ["settings", "remote-asks"]],
   // ipad: Apple Pencil, under its host; android: the Stylus section and the server inside the app (SettingsServer.jsx)
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "android", "zotero-link"]],
   // the sync pill and its popover, the conflict cards: a clone's, a publication's, a Zotero link's
@@ -232,7 +235,7 @@ export const RULES = [
   // a page's standing with this computer in the desktop app: the chip, its card and dialogs, the banner, the notes lock
   // (local-agents: the agent the maker's comments name and the chat's computer side talks to)
   // (computers: on any other server, the chip of the computer that keeps the page, read by usePageComputer.js)
-  // (remote-chat: the agent of the computer that keeps the page, vaultAgent, read by chat/agents.js)
+  // (remote-chat: the page's computers, whose agents chat/agents.js farAgents reads)
   ["frontend/src/vault/vaultState.js", ["vaults", "work-folders", "local-agents", "computers", "remote-chat"]],
   ["frontend/src/vault/usePageComputer.js", ["computers", "remote-chat"]],
   ["frontend/src/vault/**", ["vaults", "work-folders", "computers", "remote-chat"]],

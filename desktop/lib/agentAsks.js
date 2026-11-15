@@ -149,7 +149,7 @@ function notice(card, decision) {
   if (decision === 'stop') return `Declined, and ${card.label} no longer asks to run more, here or in the chat.`;
   return `Declined: ${card.label} goes on without it.`;
 }
-const stale = (card) => `${card.label} no longer waits for that: nothing was allowed.`;
+const stale = (card) => `${card.label} no longer waits for that: nothing was allowed here.`;
 const unsure = (card) => `Gamma did not hear whether ${card.label} got your answer: see the chat on ${card.from.name}.`;
 const couldNot = (card, message) => `Could not answer ${card.label}: ${String(message || 'no answer').replace(/\.$/, '')}.` +
   (card.expires ? ` Without an answer it is declined at ${card.expires}.` : ' Without an answer it is declined.');

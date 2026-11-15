@@ -142,18 +142,25 @@ def test_the_announced_agent_is_its_work_folders_shown_to_its_account_alone(lab)
                       {"kind": "file", "page_id": lab.other, "paused": False}]
     assert [(a["name"], a["enabled"], a["runs"]) for a in assistants] == [("codex", True, "never"),
                                                                           ("claude", True, "never")]
-    # only a work folder's root here counts, with the first agent on, in the catalog's order
-    assert registry.agent_folders(item["id"], lab.ws) == {lab.W: {"agent": "codex", "paused": False}}
-    found = registry.agent_of(lab.ws, lab.W, account_of(MAKER))
-    assert found == {
-        "token_id": item["id"], "user_id": account_of(MAKER), "agent": "codex", "label": "Codex", "computer": "TIM-PC",
-        "online": True, "paused": False, "ready": True, "code": "", "lent_by": ""}
-    assert registry.agent_of(lab.ws, lab.W, account_of(EDITOR)) is None        # another account's computer: none
-    assert registry.agent_of(lab.ws, lab.W2, account_of(MAKER)) is None
-    assert registry.agent_of(lab.ws, lab.plain, account_of(MAKER)) is None
+    # what it takes: its agents on, in the catalog's order, and of its folders a work folder's root here alone
+    assert {k: v for k, v in registry.taking(item["id"], lab.ws).items() if k != "assistants"} == {
+        "user_id": account_of(MAKER), "computer_id": "cps-pc", "name": "TIM-PC", "agents": ["codex", "claude"],
+        "folders": {lab.W: False}, "dirs": set()}
+    # each agent on is the account's on every page, working in the vault of a work folder its computer keeps
+    seats = registry.seats(lab.ws, lab.main, account_of(MAKER))
+    assert [(s["agent"], s["folder_id"]) for s in seats] == [("codex", lab.W), ("claude", lab.W)]
+    assert {k: v for k, v in seats[0].items() if k != "label"} == {
+        "token_id": item["id"], "user_id": account_of(MAKER), "computer_id": "cps-pc", "computer": "TIM-PC",
+        "agent": "codex", "online": True, "since": None, "paused": False, "ready": True, "code": "", "lent_by": "",
+        "folder_id": lab.W, "dirs": []}
+    assert [(s["agent"], s["folder_id"]) for s in registry.seats(lab.ws, lab.other, account_of(MAKER))] == [
+        ("codex", ""), ("claude", "")]                                       # a work folder it does not keep
+    assert [s["folder_id"] for s in registry.seats(lab.ws, lab.plain, account_of(MAKER))] == ["", ""]
+    assert registry.seats(lab.ws, lab.main, account_of(EDITOR)) == []        # another account's computer: none
+    assert registry.seat_of(lab.ws, lab.main, account_of(MAKER), agent="claude")["agent"] == "claude"
+    assert registry.seat_of(lab.ws, lab.main, account_of(MAKER), "another-pc") is None
     shown = _ok(lab.maker.get(f"/api/pages/{lab.main}/computer"))["computers"]
-    assert shown[0]["vault"] == {"kind": "folder", "name": "cps-paper", "paused": False,
-                                 "agent": {"name": "codex", "label": "Codex"}}
+    assert shown[0]["vault"] == {"kind": "folder", "name": "cps-paper", "paused": False, "work": True}
     assert _ok(lab.editor.get(f"/api/pages/{lab.main}/computer"))["computers"] == []
     # every channel route takes the computer's token alone, and it opens nothing outside the channel
     for c in (lab.maker, _bearer(token_for(lab.maker, "write"))):
@@ -170,10 +177,10 @@ def test_an_older_apps_announce_names_its_agent_on_the_work_folders_vault(lab):
     old = [{k: v for k, v in CODEX[0].items() if k not in ("enabled", "runs")},
            {"name": "claude", "label": "Claude Code", "found": True, "ready": True}]
     _announce(_bearer(item["token"]), _kept(lab, agent="codex"), assistants=old)
-    assert registry.agent_folders(item["id"], lab.ws) == {lab.W: {"agent": "codex", "paused": False}}
-    assert registry.agent_of(lab.ws, lab.W, account_of(MAKER))["agent"] == "codex"
+    assert registry.taking(item["id"], lab.ws)["agents"] == ["codex"]
+    assert registry.seat_of(lab.ws, lab.main, account_of(MAKER))["agent"] == "codex"
     _announce(_bearer(item["token"]), _kept(lab), assistants=old)          # no vault names one: none on
-    assert registry.agent_folders(item["id"], lab.ws) == {}
+    assert registry.taking(item["id"], lab.ws)["agents"] == []
 
 
 def test_another_members_computer_never_takes_the_makers_binding(lab, pc):
@@ -181,8 +188,8 @@ def test_another_members_computer_never_takes_the_makers_binding(lab, pc):
     serves that editor's own turns alone; a viewer's keeps no agent."""
     evil = _mint(lab.editor, "Gamma desktop: EVIL-PC")
     _announce(_bearer(evil["token"]), _kept(lab), name="EVIL-PC", computer_id="cps-evil")   # announced last, online
-    assert registry.agent_of(lab.ws, lab.W, account_of(MAKER))["computer"] == "TIM-PC"
-    assert registry.agent_of(lab.ws, lab.W, account_of(EDITOR))["computer"] == "EVIL-PC"
+    assert registry.seat_of(lab.ws, lab.main, account_of(MAKER))["computer"] == "TIM-PC"
+    assert registry.seat_of(lab.ws, lab.main, account_of(EDITOR))["computer"] == "EVIL-PC"
     # the maker's mention (a turn of its thread) still goes to TIM-PC
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments",
                            json={"block_id": _passage(lab), "body": "@codex please tighten the intro"}), 201)
@@ -206,12 +213,12 @@ def test_another_members_computer_never_takes_the_makers_binding(lab, pc):
             kept = json.loads(conn.execute("SELECT vaults FROM computers WHERE token_id = ?",
                                            (seen["id"],)).fetchone()[0])
         assert kept == [{"kind": "folder", "folder_id": lab.W, "paused": False}]
-        assert registry.agent_folders(seen["id"], lab.ws) == {}
-        assert registry.agent_of(lab.ws, lab.W, account_of(viewer)) is None
+        assert registry.taking(seen["id"], lab.ws) is None
+        assert registry.seats(lab.ws, lab.main, account_of(viewer)) == []
         # an editor demoted to viewer: their computer serves nothing from then on
         workspaces.set_member(lab.ws, account_of(EDITOR), "viewer", by=account_of(MAKER))
-        assert registry.agent_folders(evil["id"], lab.ws) == {}
-        assert registry.agent_of(lab.ws, lab.W, account_of(EDITOR)) is None
+        assert registry.taking(evil["id"], lab.ws) is None
+        assert registry.seats(lab.ws, lab.main, account_of(EDITOR)) == []
     finally:
         workspaces.set_member(lab.ws, account_of(EDITOR), "editor", by=account_of(MAKER))
         with connect_users_db() as conn:
@@ -238,6 +245,6 @@ def test_a_mention_made_here_is_a_turn_of_its_thread_the_computer_takes(lab, pc)
     assert "turn" not in _ok(script.post(f"/api/pages/{lab.main}/comments", json={"block_id": lab.main,
                                                                                    "body": "@codex hi"}), 201)
     _announce(pc.c, _kept(lab), assistants=OFF)
-    assert registry.agent_folders(pc.id, lab.ws) == {} and registry.workspaces_of(account_of(MAKER)) == []
+    assert registry.taking(pc.id, lab.ws)["agents"] == [] and registry.workspaces_of(account_of(MAKER)) == []
     r = _ok(lab.maker.post(f"/api/pages/{lab.main}/comments", json={"block_id": lab.main, "body": "@codex hi"}), 201)
     assert "turn" not in r

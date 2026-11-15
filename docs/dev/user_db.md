@@ -145,7 +145,8 @@ All state is SQLite + files on disk under a data directory (env
     workspace (with a `scope` — `read`, `write`, `computer`, a
     computer's channel to this server, which opens nothing else
     ([computers.md](computers.md)), or `turn`, the token of one turn of an
-    agent on this computer, which opens MCP alone and lives for the turn
+    agent on this computer or on another one that takes the turn over its
+    channel, which opens MCP alone and lives for the turn
     ([local_agents.md](local_agents.md) "Gamma's tools"); free text, so a scope
     this server does not know reads as `read` — and `workspaces`, what a read
     token's MCP connection reads beside it: `''`, `'*'` or a JSON list; of
@@ -198,14 +199,17 @@ All state is SQLite + files on disk under a data directory (env
   - `computers` — what each computer announced over its channel, a row per
     `computer` token: the account, the workspace, the computer's id for
     this server and its name, the vaults it keeps here (folder and page ids,
-    paused or not), the assistants there, the app's version and when it was
-    last seen; whether it is online is in memory. Gone with its token, its
-    workspace and its account; additive, never migrated
-    ([computers.md](computers.md));
+    paused or not), the assistants there, the app's version, when it was last seen,
+    whether the computer lets this server answer what its agents ask
+    (`asks`, step 67) and the directories it offers its agents there, by
+    id and name (`dirs`, step 68); whether it is online is in memory. Gone with its
+    token, its workspace and its account ([computers.md](computers.md));
   - `computer_links` — on the desktop app's own server, this computer's
     channels to other servers, a row per server, workspace there and local
     account: the address, the `computer` token (sealed like a vault's) and
-    its id, the account there and the channel's status; additive
+    its id, the account there and the workspace's name there, the
+    channel's status, and whether that server may answer what this
+    computer's agents ask (`asks`, off until the shell's word; step 67)
     ([computers.md](computers.md#the-host));
   - `server_addresses` — on the desktop app's own server, the other
     servers' addresses this computer's links moved from or to
@@ -422,24 +426,32 @@ All state is SQLite + files on disk under a data directory (env
     account's conversations with its agent on the computer, one row a
     conversation: its `bucket` (a page's id, a folder's or `home`, as
     `chats`), `dir` (where its agent works: the work folder's id, an
-    offered directory's id, or "" for an empty one of its own), its
-    messages as JSON, a `version`, `archived_at` null for the active one.
+    offered directory's id, or "" for an empty one of its own),
+    `computer` (the other computer whose agent it talks to, "" for this
+    server's own), its messages as JSON, a `version`, `archived_at` null
+    for the active one.
     Private to the account (`ws_backup.PRIVATE_TABLES`: a backup has it
     empty, a restore keeps the live rows), read by no export, mirror or
     share, gone with its page deleted for good (`ops._purge`), filed into
     the library's History with its folder deleted, and an account's rows go
     when its membership ends or the account is deleted
     (`db.delete_workspace_prefs`). Step 59 renamed `page_id` to `bucket`
-    and added `dir` ([migrations.md](migrations.md));
+    and added `dir`, step 68 `computer` ([migrations.md](migrations.md));
   - `computer_chat_runs` — a turn of such a conversation run on another
     computer (step 4d, [local_agents.md](local_agents.md) "The chat on
-    another server's page"): the turn, its conversation, its `bucket` (a
-    page) and account, the turn's agent and the computer last known to take
-    it, the computer token holding it and its run once claimed, the last
-    write's `seq`, a stop flag, its state, when it was queued and started.
+    another server's page"): the turn, its conversation, its `bucket` and
+    account, the turn's agent and the computer last known to take it, the
+    computer token holding it and its run once claimed, the last write's
+    `seq`, a stop flag, its state, when it was queued and started, and the
+    id of the turn's token of this server (`token`, Gamma's tools for that
+    computer's agent, deleted at the turn's end), and the answers given here
+    to what its agent asks, kept for that computer to take (`answers`, JSON
+    `{ask id: {decision, note, by, at}}`, emptied at the turn's end:
+    [computers.md](computers.md) "What the agents ask, answered here").
     Private like `computer_chats` (`ws_backup.PRIVATE_TABLES`), gone with
     its page (`ops._purge`) and with its account's rows; `bucket` was
-    `page_id` until step 59;
+    `page_id` until step 59, `token` came with step 68, `answers` with step
+    69;
   - `chats` / `chat_history` — the AI chat
     ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version

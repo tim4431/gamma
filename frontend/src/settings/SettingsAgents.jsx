@@ -12,7 +12,9 @@
 // the same rows are read-only and say to change them in Gamma on that
 // computer, but the owner may turn an agent off, or take a person off it,
 // with the account's session. In the desktop app any agent on may be
-// turned off, another account's too (the shell's word lets it). On another
+// turned off, another account's too (the shell's word lets it), and the
+// servers this computer answers follow (AnsweredServers), which no other
+// window shows. On another
 // server, the account's computers shown to it and their agents as each last
 // announced them (GET /api/computers), read-only, and those of another
 // account's computers that serve it, with who lends them.
@@ -24,9 +26,11 @@ import { sinceText } from "../vault/vaultState.js";
 import { agentPeople, computerAgents, localAgent } from "../chat/agents.js";
 import { readLocalAgents, useLocalAgents } from "../chat/useLocalAgents.js";
 import { useSettingsRead } from "./settingsReads.js";
+import { ADD_SERVER, linkRow } from "./answeredServers.js";
 import { Empty, NameInput, Row, Section, Segmented, Toggle } from "./SettingsKit";
 import { ActionMenu } from "../shared/ui/Menus";
-import { BotIcon, FolderIcon, FolderPlusIcon, MonitorIcon, SparklesIcon, Trash2Icon, UserIcon, UserPlusIcon } from "../shared/ui/Icons";
+import { BotIcon, FolderIcon, FolderPlusIcon, MonitorIcon, PlusIcon, ServerIcon, SparklesIcon, Trash2Icon, UserIcon,
+  UserPlusIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -55,16 +59,17 @@ export function SettingsAgents({ connection, signedIn, setStatus }) {
   const listingRef = React.useRef(listing);
   listingRef.current = listing;
 
-  // After an ask of the shell: the listing read again until it changed.
+  // After an ask of the shell: what it changes (the listing, unless `read`
+  // and `current` name another read) read again until it changed.
   const watching = React.useRef(null);
   React.useEffect(() => () => clearInterval(watching.current), []);
-  function ask(type, fields) {
+  function ask(type, fields, { read = readLocalAgents, current = () => listingRef.current } = {}) {
     askShell(type, fields);
     clearInterval(watching.current);
-    const before = JSON.stringify(listingRef.current);
+    const before = JSON.stringify(current());
     const until = Date.now() + WATCH_MS;
     watching.current = setInterval(async () => {
-      const now = await readLocalAgents();
+      const now = await read().catch(() => current());
       if (Date.now() > until || JSON.stringify(now) !== before) clearInterval(watching.current);
     }, WATCH_EVERY_MS);
   }
@@ -92,6 +97,7 @@ export function SettingsAgents({ connection, signedIn, setStatus }) {
         {error && !listing ? <p className="setNotice">{t("Could not read the agents on this computer: {message}", { message: error })}</p> : null}
       </Section>
       {here ? <ThisComputer listing={listing} desktop={IS_DESKTOP} ask={ask} change={change} /> : null}
+      {here && IS_DESKTOP ? <AnsweredServers ask={ask} /> : null}
       {far.map((computer) => <FarComputer key={computer.id || computer.name} computer={computer} />)}
     </>
   );
@@ -187,6 +193,51 @@ function ThisComputer({ listing, desktop, ask, change }) {
           <button type="button" className="uiBtn sm" onClick={() => ask("agent-dirs", { dir: "new" })}>{t("Offer a directory…")}</button>
         </Row>
       ) : null}
+    </Section>
+  );
+}
+
+// The servers this computer answers (step 4.1 of
+// docs/research/agents-as-participants-plan.md), the desktop app's alone:
+// its links to other servers (GET /api/computer-links, one per server,
+// workspace there and account), each with its address, the account there
+// and how its channel stands, Remove, a new token for one that server
+// refused, and whether that server may answer what the agents here ask
+// (decision 7), off to begin with; then Add a server…. Every control asks
+// the shell (`add-server`, `remove-server`, `link-asks`: answeredServers.js
+// linkRow), which asks its own question and acts with its word; the section
+// then reads the links again until they changed.
+function AnsweredServers({ ask }) {
+  const links = useSettingsRead("/computer-links");
+  const linksRef = React.useRef(links.data);
+  linksRef.current = links.data;
+  const askLinks = ([type, fields]) => ask(type, fields, { read: links.reload, current: () => linksRef.current });
+  const rows = links.data?.links || [];
+  return (
+    <Section title={t("Servers this computer answers")}>
+      {links.error && !links.data ? <p className="setNotice">{t("Could not read the servers this computer answers: {message}", { message: links.error })}</p> : null}
+      {rows.map((link) => {
+        const row = linkRow(link);
+        return (
+          <React.Fragment key={link.id}>
+            <Row icon={ServerIcon} label={row.label} hint={row.hint}>
+              {row.reconnect ? (
+                <button type="button" className="uiBtn sm" onClick={() => askLinks(row.reconnect)}>{t("Reconnect…")}</button>
+              ) : null}
+              <button type="button" className="uiBtn sm iconSq danger" title={t("Stop answering {server}", { server: row.server })}
+                aria-label={t("Stop answering {server}", { server: row.server })} onClick={() => askLinks(row.remove)}>
+                <Trash2Icon size={16} />
+              </button>
+            </Row>
+            <Toggle icon={null} label={row.asks.label} hint={row.asks.hint} checked={row.asks.on}
+              onChange={(on) => askLinks(row.asks.set(on))} />
+          </React.Fragment>
+        );
+      })}
+      <Row icon={PlusIcon} label={t("Another server")}
+        hint={t("Its chats can then send work to the agents you turned on here, for your account there. No synced folder is needed.")}>
+        <button type="button" className="uiBtn sm" onClick={() => askLinks(ADD_SERVER)}>{t("Add a server…")}</button>
+      </Row>
     </Section>
   );
 }

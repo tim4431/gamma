@@ -602,7 +602,21 @@ AI:
   switch still turns it off (the shell's word). In any other window the rows are
   read-only under "Change these in Gamma on TIM-PC.", but the owner's
   switch, which turns the agent off with the session (`PATCH`
-  `{enabled: false}`). Last, one section per computer of the account's
+  `{enabled: false}`). In the desktop app alone, below it, **Servers this
+  computer answers** (`AnsweredServers`, `GET /api/computer-links`, a read
+  of the pane only where `who.desktop`: no other server keeps links,
+  [computers.md](computers.md) "The servers this computer answers"): one
+  row per link, its host and the workspace there, its address, the account
+  there and how its channel stands (*Connected*, *Not reachable since
+  2:02 PM*), *Reconnect…* for one that server refused, and its trash button
+  (*Stop answering nas.lan*); under it the toggle *nas.lan may answer what
+  the agents ask*, off to begin with; then *Add a server…*. Each asks the
+  shell (`add-server` with `link` "new" or the refused link's id,
+  `remove-server`, `link-asks`; the rows' words and asks are
+  `settings/answeredServers.js` `linkRow`, pure, `tests/answeredServers.test.mjs`), which asks its own question (which server
+  and workspace, or before letting one answer) and acts with its word, and
+  the section reads the links again each second for a minute until they
+  changed. Last, one section per computer of the account's
   shown to this server (`GET /api/computers`, one of the pane's reads):
   connected or offline since when, and its agents as it last announced
   them, read-only ("Change this in Gamma on TIM-PC."); and one per

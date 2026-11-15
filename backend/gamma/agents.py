@@ -79,7 +79,7 @@ def kind_of(agent_id: str) -> str:
     return "gamma" if agent_id == GAMMA else "computer" if agent_id.startswith(COMPUTER) else "connection"
 
 
-def _parts(agent_id: str) -> tuple[str, str]:
+def parts(agent_id: str) -> tuple[str, str]:
     """A computer agent's id as ``(computer, name)``."""
     computer, _, name = agent_id[len(COMPUTER):].rpartition(":")
     return computer, name
@@ -135,24 +135,25 @@ def _owner_here(name: str, person: str) -> str:
         return account_names(conn, {owner}).get(owner, "")
 
 
-def of_channel(token_id: str, name: str) -> Agent:
-    """The agent ``name`` of the computer whose channel token is
-    ``token_id`` (a run a computer holds of this server's request)."""
-    from .computers import registry
-
-    found = registry.computer_of(token_id)
-    return computer_agent(found[0], name, found[1]) if found else computer_agent("", name)
-
-
-def of_token(token_id: str, token_name: str, scope: str, user_id: str = "") -> Agent:
+def of_token(token_id: str, token_name: str, scope: str, user_id: str = "", ws: str = "") -> Agent:
     """The agent an integration token of the account ``user_id`` writes
     as: a turn's token is its agent's (``integrations.mint_turn`` names it
-    with the agent's id; a co-author's turn names its owner, ``here``), any
-    other its connection, named by ``integrations.display_name``."""
+    with the agent's id): this computer's (a co-author's turn names its
+    owner, ``here``), or another computer's whose turn this server handed
+    it (gamma/routers/computers.py), named as that computer announced
+    itself in the token's workspace ``ws`` (``registry.far_name``: the
+    owner too for a co-author's); any other its connection, named by
+    ``integrations.display_name``."""
     from .integrations import TURN, display_name
 
     if scope == TURN and kind_of(token_name) == "computer":
-        return here(_parts(token_name)[1], user_id)
+        computer, name = parts(token_name)
+        if computer == here_id() and _runs_agents():
+            return here(name, user_id)
+        from .computers import registry
+
+        on, owner = registry.far_name(ws, user_id, computer)
+        return computer_agent(computer, name, on, owner)
     return Agent(token_id, "connection", display_name(token_name))
 
 
@@ -164,12 +165,14 @@ def of_request(request) -> Agent | None:
     if not is_token(request):
         return None
     return of_token(request.state.token_id, request.state.token_name, request.state.token_scope,
-                    request.state.user_id)
+                    request.state.user_id, getattr(request.state, "token_ws", "") or "")
 
 
 def of_connection(connection) -> Agent:
-    """The agent an MCP connection (``integrations.Connection``) writes as."""
-    return of_token(connection.token_id, connection.name, connection.scope, connection.user_id)
+    """The agent an MCP connection (``integrations.Connection``) writes as
+    (a turn's token is of one workspace, its first)."""
+    return of_token(connection.token_id, connection.name, connection.scope, connection.user_id,
+                    connection.workspaces[0] if connection.workspaces else "")
 
 
 def read_all(stored: dict[tuple[str, str, str], str], ws: str) -> dict[tuple[str, str, str], Agent]:
@@ -189,8 +192,8 @@ def read_all(stored: dict[tuple[str, str, str], str], ws: str) -> dict[tuple[str
     from .computers.channel import computer_name
 
     this = here_id() if _runs_agents() else None
-    names = registry.names_of({(user, _parts(i)[0], owner) for user, i, owner in stored
-                               if kind_of(i) == "computer" and _parts(i)[0] not in ("", this)}, ws)
+    names = registry.names_of({(user, parts(i)[0], owner) for user, i, owner in stored
+                               if kind_of(i) == "computer" and parts(i)[0] not in ("", this)}, ws)
     out = {}
     for (user, agent_id, owner), name in stored.items():
         kind = kind_of(agent_id)
@@ -198,7 +201,7 @@ def read_all(stored: dict[tuple[str, str, str], str], ws: str) -> dict[tuple[str
         if kind == "gamma":
             out[key] = gamma()
         elif kind == "computer":
-            computer, agent = _parts(agent_id)
+            computer, agent = parts(agent_id)
             on = computer_name() if computer == this else names.get((user, computer, owner), "")
             out[key] = (computer_agent(computer, agent, on, owner) if agent
                         else Agent(agent_id, kind, name or "an agent"))

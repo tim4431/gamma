@@ -64,7 +64,7 @@ key optional):
   ``failed`` when the variable is not set (or ``fail`` is ``gamma_down``);
 - ``turns``: ``{message: {keys}}``, a chat turn of that message scripted
   by those keys in place of the others' (``gamma``, ``edits``,
-  ``commands``, ``chat``, ``delay``, ``typing``);
+  ``commands``, ``chat``, ``ask``, ``delay``, ``typing``);
 - ``log``: a file receiving one JSON line per thing seen: ``{"argv",
   "cwd", "env"}`` (the GAMMA_* and agent-session variable names it got),
   ``{"in": message}``, ``{"answer": message}`` (to a request it made),
@@ -418,7 +418,7 @@ def run_turn() -> None:
         item("item/started", thread, body)
         item("item/completed", thread, {**body, "status": "completed", "aggregatedOutput": "ok\n", "exitCode": 0})
     decisions = []
-    for n, asked in enumerate((FAKE.get("ask") or []) if state["policy"] == "on-request" else []):
+    for n, asked in enumerate((script.get("ask") or []) if state["policy"] == "on-request" else []):
         decision = ask_one(thread, n, asked, cwd)
         if decision is None or decision == "cancel":
             complete(thread, "interrupted")

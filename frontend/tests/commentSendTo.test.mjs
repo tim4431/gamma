@@ -31,6 +31,9 @@ test("the agent it names: the one chosen, else the thread's last agent, else the
   assert.equal(tickAgent(agents, { thread: thread(said("x", { agent_kind: "computer", agent_id: "computer:gone:codex" })) }), CODEX,
     "an agent no longer listed");
   assert.equal(tickAgent([], { picked: "codex" }), null);
+  // the chat names this computer's agent by its name, another computer's by its id
+  assert.equal(tickAgent([FAR, CODEX], { picked: "codex" }), CODEX, "this computer's Codex, not another's of that name");
+  assert.equal(tickAgent([CODEX, FAR], { picked: FAR.id }), FAR, "another computer's, picked in the chat");
 });
 
 test("@name typed ticks the box for that agent, outside code and newly", () => {

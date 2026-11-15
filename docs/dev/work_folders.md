@@ -109,9 +109,9 @@ was made one: the computer's directory pushes everything into an empty
 folder of that server, which carries the mark, so the folder's files are
 that server's pages (its explorer, comments and feedback), chosen with
 *Choose files…* on the computer. This is step 4b of
-[agent-collab.md](../research/agent-collab.md); the computer's agent
-working in such a folder is its next step ([local_agents.md](local_agents.md)
-"A work folder of another server").
+[agent-collab.md](../research/agent-collab.md); the computer's agents
+work in such a folder for that server's chats and comments
+([local_agents.md](local_agents.md) "Another server's chat").
 
 - **An explicit opt-in.** `folder_links.work_vault(link)` is
   `work_folder_link(link)`, or a remote folder vault (not the library's

@@ -1,7 +1,7 @@
 // The agent each bucket's chat was picked with, for the tab's life, as the
 // computer agent's model and effort are (chat/agents.js `id`: "gamma",
-// "codex", "claude"); a bucket never picked shows chat/agents.js
-// pickAgent's. And the conversation a page's chat shows in place of its
+// this computer's "codex" or "claude", another computer's agent's id); a
+// bucket never picked shows chat/agents.js pickAgent's. And the conversation a page's chat shows in place of its
 // own, until it is left: its comment thread's (a thread's *Open in chat*,
 // docs/dev/local_agents.md "A comment sent to an agent") or a co-author's
 // chat with the reader's agent (History, Background tasks: "A co-author's

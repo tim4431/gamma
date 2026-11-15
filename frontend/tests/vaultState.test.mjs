@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerChip, directionText, editsFile, folderKeeper, isOpenedFile,
-  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultAgent, vaultBanner,
+  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, sinceText, vaultBanner,
   vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
@@ -315,20 +315,10 @@ test("a synced folder's root names the computer that keeps it and how its sync s
   assert.equal(folderKeeper(null, null, now), null, "nobody this account knows keeps it");
 });
 
-test("the computer's chip names the agent there that works in the work folder", () => {
-  const work = (agent) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent } });
-  const chip = computerChip([work({ name: "codex", label: "Codex" })]);
-  assert.equal(chip.agent, "Agent: Codex on TIM-PC");
-  assert.equal(chip.title, "Connected\nFolder: cavity\nAssistants there: Codex\nAgent: Codex on TIM-PC");
-  assert.equal(computerChip([work({ name: "claude" })]).agent, "Agent: Claude Code on TIM-PC", "no label: its name's");
-  assert.equal(computerChip([work(null)]).agent, "");
-  assert.equal(computerChip([pc()]).agent, "", "an announce without the field");
-});
-
-test("a computer's agent on the work folder it keeps of the page's server", () => {
-  const work = (agent) => pc({ vault: { kind: "folder", name: "cavity", paused: false, agent } });
-  assert.deepEqual(vaultAgent(work({ name: "codex", label: "Codex" })), { name: "codex", label: "Codex" });
-  assert.deepEqual(vaultAgent(work({ name: "claude" })), { name: "claude", label: "Claude Code" }, "no label: its name's");
-  assert.equal(vaultAgent(work(null)), null);
-  assert.equal(vaultAgent(pc()), null, "an announce without the field");
+test("the computer's chip names the first computer that keeps the page, not one whose agents alone it offers", () => {
+  const desk = pc({ id: "c0", name: "DESK", vault: null });
+  const chip = computerChip([desk, pc({ vault: { kind: "folder", name: "cavity", paused: false, work: true } })]);
+  assert.equal(chip.label, "Synced folder on TIM-PC");
+  assert.equal(chip.title, "Connected\nFolder: cavity\nAssistants there: Codex");
+  assert.equal(computerChip([desk]), null, "none keeps it");
 });

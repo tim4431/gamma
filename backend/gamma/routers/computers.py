@@ -13,25 +13,35 @@ GET, so a read-only hosted server lets it through. The page's route,
 signed-in account's alone: a session, never a token, a guest or a share,
 and only that account's computers.
 
-The turns (step 4d of docs/research/agent-collab.md): a work folder of
-this server the computer keeps while an agent is on there (the first of its
-announce's assistants ``enabled``, ``registry.agent_folders``) has its
-maker's chat with that agent on its pages (gamma/routers/local_agents.py),
-and the comments the maker sends to it (gamma/local_agents/threads.py), run
-on that computer. ``GET /chats`` lists the turns waiting and the runs asked
+The turns (step 4d of docs/research/agent-collab.md, step 4.2 of
+docs/research/agents-as-participants-plan.md): the agents a computer
+announces on for the token's account are that account's in the chat of
+every bucket of the workspace (gamma/routers/local_agents.py) and for the
+comments it sends them (gamma/local_agents/threads.py), each conversation
+with one computer's agent (``computer_chats.computer``), whose turns run on
+that computer. ``GET /chats`` lists the turns waiting and the runs asked
 to stop; a run takes one with ``/chats/{turn}/claim``, keyed by the id the
 computer minted for it (a retry is told it holds it; another taker 409),
-and gets the message, the earlier ones, the page's path and, for a
-thread's turn, the thread; it writes the agent's message with
+and gets the message, the earlier ones, what the bucket is, where its
+agent works by an id (the work folder's, an offered directory's, or none:
+never a path), for a thread's turn the thread, and Gamma's tools (a turn
+token of this server for the account the turn is for, and this server's
+MCP address, ``_tools``); it writes the agent's message with
 ``/chats/{turn}/write``, each write numbered (``seq``), so this server
 takes only the newest one of the run that holds the turn running
-(gamma/local_agents/chats.py). ``GET /threads/{id}/picture`` is a region's
-picture for the thread of a turn it holds. What a turn asks never comes
-here: the message says ``waiting`` while an ask waits for an answer on the
-computer (step 5b). Every route answers only for the token's own account's
-turns, and its co-authors'; none ever names a path of the computer but the
-relative ones a message names. Each is a sync ``def``: it reads the
-pages.db off the event loop.
+(gamma/local_agents/chats.py), the turn's token deleted at its end. ``GET
+/threads/{id}/picture`` is a region's picture for the thread of a turn it
+holds. What a turn asks comes here only where the computer lets this
+server answer it (its ``asks``, decision 7 of
+docs/research/agents-as-participants-plan.md, step 4.3): the message holds
+it (``asks``, as a chat turn's), answered in the chat, the answer kept with
+the run and listed to the computer (``answers``); else the message says
+only ``waiting`` while an ask waits for an answer on the computer. Every route
+answers only for the token's own account's turns, and its co-authors';
+none ever names a path of the computer but the relative ones a message
+names, and those of a relayed ask (its ``cwd`` and ``paths``, outside the
+directory too, which the shell's question before the computer relays asks
+says). Each is a sync ``def``: it reads the pages.db off the event loop.
 
 A co-author's turns (decision 13 of
 docs/research/agents-as-participants-plan.md): the people of the token's
@@ -45,11 +55,12 @@ import json
 import re
 from contextlib import contextmanager
 from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import workspaces
+from .. import agents, workspaces
 from ..auth import _api_bearer, _off_loop, is_token, read_body, require_personal_user_id, require_ws
 from ..computers import registry
 from ..db import connect_pages_db
@@ -76,8 +87,9 @@ async def announce(request: Request):
     """``{computer: {id, name}, app, vaults: [{kind: "folder", folder_id,
     paused, agent?} | {kind: "file", page_id, paused}], assistants: [{name,
     label, found, ready, version, code, models?: [{id, label, efforts,
-    effort, default}]}]}`` → ``{account: {id, username},
-    computer: {id, name}, workspace: {id}, version, wait}``
+    effort, default}]}], asks}`` (``asks`` whether this server may answer
+    what its agents ask) → ``{account: {id, username}, computer: {id,
+    name}, workspace: {id, name}, version, wait}``
     (``registry.announce``): what its polls name as ``v``, and the longest
     hold. 400 for a malformed body (more than ``registry.MAX_MODELS`` models
     an assistant), 413 past ``MAX_ANNOUNCE``."""
@@ -142,8 +154,9 @@ def channel_people(request: Request):
 @router.get("/pages/{page_id}/computer")
 def page_computers(page_id: str, request: Request):
     """``{computers: [{id, name, online, since, vault: {kind, name, paused},
-    assistants: [{name, label, found, ready, version, code}]}]}``: the
+    assistants: [{name, label, found, ready, version, code}], asks}]}``: the
     signed-in account's computers that keep the page (``registry.of_page``),
+    ``asks`` whether the computer lets this server answer what its agents ask,
     ``[]`` for none. A share's reader 404, a token or a guest 403."""
     if request.query_params.get("share"):
         raise HTTPException(status_code=404, detail="Not found")
@@ -154,9 +167,11 @@ def page_computers(page_id: str, request: Request):
 @router.get("/computers")
 def account_computers(request: Request):
     """``{computers: [{id, name, online, since, assistants: [{name, label,
-    found, ready, version, code, models, enabled, runs}]}]}``: the signed-in
-    account's computers shown to the workspace (``registry.of_account``),
-    each with its agents as it last announced them, for Settings → AI.
+    found, ready, version, code, models, enabled, runs}], asks, dirs}]}``:
+    the signed-in account's computers shown to the workspace
+    (``registry.of_account``), each with its agents as it last announced
+    them and the directories it offers them, for Settings → AI and a chat
+    with no page open.
     ``[]`` for none; a token or a guest 403."""
     user_id = require_personal_user_id(request, "Sign in with your own account to see your computers.")
     return {"computers": registry.of_account(user_id, require_ws(request))}
@@ -208,12 +223,13 @@ def _is_relative(path: str) -> bool:
 
 MAX_STEP_TEXT = 200    # characters of a step's path, program or status
 MAX_ERROR = 2000       # characters of a turn's failure
+MAX_ASK_PLACE = 500    # characters of an ask's directory, host or path (runner._ChatTurn._shown_path)
 TURN_STATES = ("running", "done", "failed", "stopped")
 
 
 class ChatClaim(BaseModel):
     run: str      # the id the computer minted for its run: a retry names it again
-    agent: str    # the folder's agent there (``codex``, ``claude``)
+    agent: str    # the turn's agent there (``codex``, ``claude``), as the listing named it
 
 
 class ChatWrite(BaseModel):
@@ -234,67 +250,127 @@ def _chat_refusals():
 
 @router.get("/computers/chats")
 def waiting_chats(request: Request):
-    """``{turns: [{id, conversation_id, page_id, folder_id, at}], stops:
-    [{id, run}]}``: the turns of the token's account's chat, and of the
-    people its agent serves there (``registry.people_of``), that wait in
-    pages of the work folders this computer keeps with an agent (not paused
-    there; each a turn of that agent's; oldest first, at most
-    ``chats.MAX_WAITING``; none while the account may not edit,
-    ``registry.agent_folders``), and the runs of it
-    whose turns were asked to stop (listed until the run writes its end)."""
+    """``{turns: [{id, conversation_id, bucket, agent, dir: {kind, id},
+    at}], stops: [{id, run}], answers: [{id, run, ask, decision, note}]}``:
+    the turns that wait for this computer's
+    agents (``chats.waiting_turns``), of the token's account's
+    conversations with this computer and of the people its agent serves
+    there (``registry.people_of``), each of an agent it has on, none in a
+    work folder paused there (oldest first, at most ``chats.MAX_WAITING``;
+    none while the account may not edit, ``registry.taking``), ``dir``
+    where its agent works by an id; the runs of it whose turns were asked
+    to stop (listed until the run writes its end); and the answers given
+    here to what its running turns ask (``chats.answers_of``)."""
     from ..local_agents import chats
 
     user_id, _username, ws, token_id = _computer(request)
-    folders = registry.agent_folders(token_id, ws)
-    taking = {w: folder["agent"] for w, folder in folders.items() if not folder["paused"]}
-    people = {p for p in registry.people_of(token_id) if workspaces.at_least(workspaces.role_of(ws, p), "editor")}
+    taking = registry.taking(token_id, ws)
     with connect_pages_db(ws) as conn:
-        turns = chats.waiting_turns(conn, user_id, taking, people) if taking else []
+        turns = []
+        if taking is not None and taking["agents"]:
+            people = {p for p in registry.people_of(token_id)
+                      if workspaces.at_least(workspaces.role_of(ws, p), "editor")}
+            paused = [w for w, held in taking["folders"].items() if held]
+            turns = [turn for turn in chats.waiting_turns(conn, user_id, taking["computer_id"], people, paused)
+                     if turn["agent"] in taking["agents"]]
         stops = chats.stops_of(conn, token_id)
-    return {"turns": turns, "stops": stops}
+        answers = chats.answers_of(conn, token_id)
+    return {"turns": turns, "stops": stops, "answers": answers}
 
 
 @router.post("/computers/chats/{turn_id}/claim")
 def claim_chat(turn_id: str, payload: ChatClaim, request: Request):
-    """``{run, agent}`` → ``{turn: {id, conversation_id, page_id, text,
-    selections, model, effort, for}, history, page: {path, title}, seen}``
-    (``chats.claim``): the turn taken for the run ``run`` (it and its
-    message ``running``) in one write, or held by that run already (a
-    retry: answered again). 400 for a run's id of another shape; 403 while
-    the account may not edit; 404 for no turn for an agent of the token's
-    account's in a page of a work folder this computer keeps with an agent;
-    409 when another run holds it, it is no longer queued, the folder's
-    agent there is another, the turn is another agent's (left queued), it
-    is a co-author's the agent no longer serves (``registry.serves``) or
-    the folder is paused there; 423 while a delete holds the workspace."""
+    """``{run, agent}`` → ``{turn: {id, conversation_id, bucket, title,
+    text, selections, model, effort, for, thread_id?, comment_id?},
+    history, about, dir: {kind, id}, seen, thread?, tools: {url, token} |
+    null}`` (``chats.claim``, ``_tools``): the turn taken for the run
+    ``run`` (it and its message ``running``) in one write, or held by that
+    run already (a retry: answered again, with a new token in place of the
+    one the lost answer carried). 400 for a run's id of another shape; 403
+    while the account may not edit; 404 for no turn of the token's
+    account's with this computer; 409 when another run holds it, it is no
+    longer queued, the turn is another agent's or that agent is off here
+    (left queued), it is a co-author's the agent no longer serves
+    (``registry.serves``), this computer does not keep its work folder or
+    it is paused there, or it no longer offers its directory; 423 while a
+    delete holds the workspace."""
     from ..local_agents import chats
+    from ..work_folders.marks import Tree
 
     user_id, _username, ws, token_id = _computer(request)
     run = _run_id(payload.run)
-    folders = registry.agent_folders(token_id, ws)
     workspaces.refuse_writes(ws)
     with _chat_refusals():
-        with connect_pages_db(ws) as conn:
-            row = chats.run_of(conn, turn_id)
-            page = conn.execute("SELECT work_folder FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
-                                (row["bucket"],)).fetchone() if row else None
-        if row is None or row["owner"] != user_id:
-            raise chats.ChatError(404, chats.NO_TURN)
-        if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):   # agent_folders then has none
+        if not workspaces.at_least(workspaces.role_of(ws, user_id), "editor"):
             raise chats.ChatError(403, f"Only an owner or an editor of this workspace can talk to "
                                        f"{_label(payload.agent) if payload.agent in registry.AGENTS else 'an agent'}.")
-        if not page or page[0] not in folders:
+        taking = registry.taking(token_id, ws)
+        with connect_pages_db(ws) as conn:
+            row = chats.run_of(conn, turn_id)
+            where = chats.dir_of(Tree.read(conn), {"dir": row["dir"]}) if row else None
+        if row is None or taking is None or row["owner"] != user_id or row["computer_id"] != taking["computer_id"]:
             raise chats.ChatError(404, chats.NO_TURN)
-        folder = folders[page[0]]
-        label = _label(folder["agent"])
-        if payload.agent != folder["agent"]:
-            raise chats.ChatError(409, f"This synced folder's agent is {label}.")
-        if not registry.serves(token_id, ws, row["user_id"]):
+        label, name = _label(payload.agent) if payload.agent in registry.AGENTS else "the agent", taking["name"]
+        if payload.agent not in taking["agents"]:
+            raise chats.ChatError(409, f"{label} is not on for you on {name}.")
+        if not registry.serves(token_id, ws, row["user_id"], payload.agent):
             raise chats.ChatError(409, f"The owner of {label} no longer lets this person use it.")
-        if folder["paused"]:
+        if where["kind"] == "vault" and where["id"] not in taking["folders"]:
+            raise chats.ChatError(409, f"{name} does not keep this synced folder.")
+        if where["kind"] == "vault" and taking["folders"][where["id"]]:
             raise chats.ChatError(409, f"The synced folder is paused: {label} starts once it syncs again.")
-        return chats.claim(ws, turn_id, user_id=user_id, holder=token_id, run=run, agent=folder["agent"],
-                           computer=registry.computer_name(token_id))
+        if where["kind"] == "offered" and where["id"] not in taking["dirs"]:
+            raise chats.ChatError(409, f"{name} no longer offers that directory.")
+        answer = chats.claim(ws, turn_id, user_id=user_id, holder=token_id, computer_id=taking["computer_id"],
+                             run=run, agent=payload.agent, computer=name)
+    answer["tools"] = _tools(request, ws, turn_id, run, answer["turn"]["for"]["id"],
+                             agents.computer_agent(taking["computer_id"], payload.agent).id)
+    return answer
+
+
+def _mcp_url(request: Request) -> str:
+    """This server's MCP endpoint as another computer reaches it: its
+    public address (Settings → Administration → Server, ``public_url``),
+    else the loopback address the claim came to (a server on the computer
+    itself); "" for none, the transport refusing any other host
+    (``server_settings.mcp_allowed_hosts``)."""
+    from ..server_settings import LOOPBACK_HOSTS, public_url_settings, validate_public_url
+
+    configured = public_url_settings()["public_url"]
+    if configured:
+        try:
+            return validate_public_url(configured).rstrip("/") + "/mcp"
+        except ValueError:
+            return ""
+    url = urlsplit(str(request.base_url))
+    return f"{url.scheme}://{url.netloc}/mcp" if url.hostname in LOOPBACK_HOSTS else ""
+
+
+def _tools(request: Request, ws: str, turn_id: str, run: str, person: str, agent_id: str) -> dict | None:
+    """Gamma's tools for the far turn ``turn_id`` the run ``run`` holds
+    (step 4.2 of docs/research/agents-as-participants-plan.md): ``{url,
+    token}``, a turn token minted for the account ``person`` the turn is for
+    (``integrations.mint_turn``: of ``ws`` alone, named with the agent's id
+    ``agent_id``, so what it writes is that agent's, living
+    ``chats.TOKEN_S``) in place of one an earlier claim of the run minted,
+    and this server's MCP address (``_mcp_url``), which the computer takes
+    only where its origin is the server it speaks to. None where this server
+    has no address another computer reaches: the turn runs without them."""
+    from .. import integrations
+    from ..local_agents import chats
+
+    url = _mcp_url(request)
+    if not url:
+        return None
+    token_id, token = integrations.mint_turn(person, ws, agent_id, chats.TOKEN_S)
+    try:
+        old = chats.keep_token(ws, turn_id, run, token_id)
+    except chats.ChatError:
+        integrations.drop(token_id)   # the turn ended meanwhile
+        return None
+    if old:
+        integrations.drop(old)
+    return {"url": url, "token": token}
 
 
 def _step(raw) -> dict:
@@ -323,17 +399,58 @@ def _step(raw) -> dict:
     return step
 
 
+def _ask(raw) -> dict:
+    """An ask of the agent's message as a run writes it, kept as the chat's
+    messages keep one (runner.py ``_ChatTurn._asked``'s ``shown``): ``{id,
+    kind, once, command?, command_shown?, marked?, lines?, inner?, shell?,
+    background?, cwd?, host?, paths?, diff?, reason?, at, expires_at}``, a
+    command or a file change alone, allowed once or declined (``once``: no
+    grant is kept for a turn of another computer). 400 for another shape,
+    and for a command, a place or a diff longer than the computer shows
+    whole: what runs is never cut."""
+    from ..local_agents import events, runner
+
+    if (not isinstance(raw, dict) or not _RUN_ID.match(str(raw.get("id") or ""))
+            or raw.get("kind") not in ("command", "files")):
+        raise HTTPException(status_code=400, detail="An ask is a command or a file change, with its id.")
+    ask = {"id": raw["id"], "kind": raw["kind"], "once": True}
+    # a marked character reads ⟨U+202E⟩ in ``command_shown`` (events.shown_text)
+    limits = {"command": runner.FAR_MAX_COMMAND, "inner": runner.FAR_MAX_COMMAND,
+              "command_shown": 10 * runner.FAR_MAX_COMMAND, "shell": 64, "cwd": MAX_ASK_PLACE, "host": MAX_ASK_PLACE,
+              "diff": events.MAX_DIFF, "reason": events.MAX_REASON, "at": 64, "expires_at": 64}
+    for key, limit in limits.items():
+        if key in raw:
+            if not isinstance(raw[key], str) or len(raw[key]) > limit:
+                raise HTTPException(status_code=400, detail=f"An ask's {key} is text the computer shows whole.")
+            ask[key] = raw[key]
+    for key in ("marked", "lines"):
+        if key in raw:
+            if not isinstance(raw[key], int) or isinstance(raw[key], bool) or raw[key] < 0:
+                raise HTTPException(status_code=400, detail=f"An ask's {key} is a count.")
+            ask[key] = raw[key]
+    if raw.get("background") is True:
+        ask["background"] = True
+    if "paths" in raw:
+        paths = raw["paths"]
+        if not isinstance(paths, list) or len(paths) > runner.FAR_MAX_PATHS or not all(
+                isinstance(p, str) and len(p) <= MAX_ASK_PLACE for p in paths):
+            raise HTTPException(status_code=400, detail="An ask's paths are the files it changes.")
+        ask["paths"] = paths
+    return ask
+
+
 def _turn_fields(raw: dict) -> dict:
     """The agent message's fields a run writes, as kept: ``text`` (made
     inert again, ``prompt.inert``, at most ``chats.MAX_TEXT``), ``steps``,
     ``changes`` (paths in the folder: one named otherwise, which the
     computer's own file system may allow, left out), ``changed``, ``built``, ``error``,
-    ``fresh``, ``waiting`` (an ask of the turn waits for an answer on the
-    computer, which alone shows it: never ``asks``), ``state`` (running or
+    ``fresh``, ``asks`` (what the agent asks that this server may answer:
+    ``_ask``, at most ``runner.MAX_ASKS``), ``waiting`` (an ask of the turn
+    waits for an answer on the computer alone), ``state`` (running or
     an end), ``model``, ``effort``; ``ended_at`` is this server's clock
     (``chats.write_run``), any other field left out. 400 for one of another
     shape."""
-    from ..local_agents import chats, prompt, store
+    from ..local_agents import chats, prompt, runner, store
 
     out: dict = {}
 
@@ -366,6 +483,10 @@ def _turn_fields(raw: dict) -> dict:
         if not isinstance(raw["steps"], list):
             raise HTTPException(status_code=400, detail="steps is a list.")
         out["steps"] = [_step(step) for step in raw["steps"][:store.MAX_STEPS]]
+    if "asks" in raw:
+        if not isinstance(raw["asks"], list):
+            raise HTTPException(status_code=400, detail="asks is a list.")
+        out["asks"] = [_ask(ask) for ask in raw["asks"][:runner.MAX_ASKS]]
     if "changes" in raw:
         if not isinstance(raw["changes"], list) or not all(isinstance(p, str) for p in raw["changes"]):
             raise HTTPException(status_code=400, detail="changes is a list of paths.")

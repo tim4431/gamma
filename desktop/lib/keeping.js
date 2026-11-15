@@ -506,6 +506,52 @@ function computerOtherAccount(remote, name, who) {
   return `${name} is shown on ${remote} to ${who}, not to the account signed in there now: sign in there as ${who}, or Stop showing first.`;
 }
 
+// The question before this computer (`name`) answers one of `servers` (the
+// launcher's remote servers, `{ name }`), Settings → AI's Add a server…
+// (main.js addLinkedServer): what that server then sees and can do, one button a
+// server (its index), then Cancel.
+function serverAsk(servers, name) {
+  return { message: servers.length > 1 ? `Which server should ${name} answer?` : `Let ${name} answer ${servers[0].name}?`,
+    detail: `The server sees, for the account you are signed in as there alone, that ${name} is online, the synced vaults it keeps of that server, the agents you turned on here and the names of the directories you offer them. ` +
+      'Whoever can sign in there as you, and whoever runs that server, can then send work to those agents here. No path is sent, unless you let that server answer what the agents ask.',
+    buttons: [...servers.map((s) => (servers.length > 1 ? s.name : `Answer ${s.name}`)), 'Cancel'] };
+}
+
+// The question when the window is signed out of server `remote`: opening it
+// shows its sign-in.
+function serverSignIn(remote) {
+  return { message: `Sign in to ${remote} first`,
+    detail: `You are not signed in to ${remote} in this window. Open it, sign in, then add it again from Settings → AI on this computer.`,
+    buttons: [`Open ${remote}`, 'Cancel'] };
+}
+
+// The question when the account there has several workspaces (`places`,
+// `{ name }`): this computer answers one, as its token is one workspace's.
+function serverPlaceAsk(remote, places) {
+  return { message: `Answer which workspace of ${remote}?`,
+    detail: 'This computer answers a server for one workspace at a time; add the server again for another.',
+    buttons: [...places.map((p) => p.name), 'Cancel'] };
+}
+
+// The question before server `remote` may answer what the agents of this
+// computer ask to run (decision 7 of docs/research/agents-as-participants-plan.md;
+// main.js linkAsks): `{ message, detail, buttons }`, button 0 letting it
+// (Cancel the default).
+function linkAsksAsk(remote) {
+  return { message: `Let ${remote} answer what the agents here ask to run?`,
+    detail: `When an agent here works on a turn started on ${remote} and asks to run something (a command, a change outside its directory), the question can then be answered in any window signed in to ${remote} as you, not only on this computer. ` +
+      `Whoever can sign in there as you, and whoever runs ${remote}, can then allow it, and what is allowed runs here as you, with your files and the network. ` +
+      `The question is shown there with its command, the paths it names (outside its directory too) and the changes. ` +
+      `A person you let use an agent there can allow, once, what their own turn asks. An agent asks only where you let it ask.`,
+    buttons: ['Let it answer', 'Cancel'] };
+}
+
+// What letting server `remote` answer the agents' asks (`on`) or not came to, for the bar.
+function linkAsksSaid(remote, on) {
+  return on ? `${remote} may now answer what the agents here ask to run.`
+    : `What the agents here ask to run is answered on this computer only, not on ${remote}.`;
+}
+
 // The agents of this computer, by name, in the server's catalog's order
 // (gamma/local_agents/catalog.py).
 const AGENT_LABELS = { codex: 'Codex', claude: 'Claude Code' };
@@ -973,5 +1019,5 @@ function roundSaid(item, status) {
 
 module.exports = { PUSH, pushWord, clone, zotero, vault, itemsOf, summarize, REMOTE_RULE, REMOTE_WORK_RULE, remoteWorkRefused, WHOLE_RULE, firstRound, removalAsk, farRemovalAsk, forceAsk,
   goOnAsk, roundSaid, AGENT_LABELS, agentAsk, agentSaid, runsAsk, runsSaid, personAsk, personSaid, placeName, dirSaid,
-  computerLine, computerFailed, computerSaid,
+  computerLine, computerFailed, computerSaid, serverAsk, serverSignIn, serverPlaceAsk, linkAsksAsk, linkAsksSaid,
   computerStranded, computerOtherAccount, upgradeOf, failureOf, plainAsk, moveAsk, moveSaid };

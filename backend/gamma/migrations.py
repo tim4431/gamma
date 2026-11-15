@@ -2296,6 +2296,95 @@ def _v66_resolved_agents(ws: str, pages: sqlite3.Connection, data) -> None:
                           "WHERE id = ?", (*found, root))
 
 
+def _v67_computer_asks(conn: sqlite3.Connection) -> None:
+    """A computer linked to another server (docs/dev/computers.md) lets that
+    server answer what its agents ask, or not (decision 7 of
+    docs/research/agents-as-participants-plan.md): ``computer_links``, the
+    desktop app's own server's, gains ``asks`` (0 on every link so far: off
+    until the shell's word turns it on) and ``workspace_name`` (the name of
+    the workspace there, '' until that server names it at the next
+    announce); ``computers``, every server's record of what a computer
+    announced, gains ``asks`` (0 until it announces otherwise). Re-runnable:
+    a column is added only where ``_columns()`` has the table and lacks it.
+    No workspace is touched."""
+    wanted = {"computer_links": (("asks", "INTEGER NOT NULL DEFAULT 0"), ("workspace_name", "TEXT NOT NULL DEFAULT ''")),
+              "computers": (("asks", "INTEGER NOT NULL DEFAULT 0"),)}
+    for table, columns in wanted.items():
+        have = _columns(conn, table)
+        for name, kind in columns:
+            if have and name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+    conn.commit()
+
+
+def _v68_computer_dirs(conn: sqlite3.Connection) -> None:
+    """A computer's agent is offered on any page of a server it is linked
+    to (step 4.2 of docs/research/agents-as-participants-plan.md), working
+    in a directory the computer offers it there: ``computers``, every
+    server's record of what a computer announced, gains ``dirs``, those
+    directories by id and name (``'[]'`` until it announces them). The
+    workspace part (``_v68_far_chats``) binds each conversation to its
+    computer. Re-runnable: the column is added only where ``_columns()`` has
+    the table and lacks it."""
+    have = _columns(conn, "computers")
+    if have and "dirs" not in have:
+        conn.execute("ALTER TABLE computers ADD COLUMN dirs TEXT NOT NULL DEFAULT '[]'")
+    conn.commit()
+
+
+def _v68_far_chats(ws: str, pages: sqlite3.Connection, data) -> None:
+    """A conversation with a computer's agent names the computer it talks
+    to, as it names its agent (docs/dev/local_agents.md "The chat on another
+    server's page"): ``computer_chats`` gains ``computer`` (the computer's
+    id as users.db ``computers`` has it, "" for this server's own agent) and
+    ``computer_chat_runs`` gains ``token`` (the id of a far turn's token of
+    this server, "" for every turn so far: none had one). Every far
+    conversation so far worked in a work folder: it takes the computer of
+    its newest run's holder, else the computer of its owner's that announced
+    a vault of its work folder in this workspace last, else none (its next
+    turn then begins another conversation). Re-runnable: a column is added
+    where ``_columns()`` has the table and lacks it, and only a conversation
+    whose ``computer`` is "" is filled. Neither table leaves a workspace's
+    own copy (``LOCAL_STEPS``)."""
+    chats = _columns(pages, "computer_chats")
+    if chats and "computer" not in chats:
+        pages.execute("ALTER TABLE computer_chats ADD COLUMN computer TEXT NOT NULL DEFAULT ''")
+    runs = _columns(pages, "computer_chat_runs")
+    if runs and "token" not in runs:
+        pages.execute("ALTER TABLE computer_chat_runs ADD COLUMN token TEXT NOT NULL DEFAULT ''")
+    if not chats or not runs:
+        return
+    far = pages.execute(
+        "SELECT c.id, COALESCE(NULLIF(c.owner, ''), c.user_id), c.dir, (SELECT r.holder FROM computer_chat_runs r "
+        "WHERE r.conversation_id = c.id AND r.holder != '' ORDER BY r.started_at DESC LIMIT 1) FROM computer_chats c "
+        "WHERE c.computer = '' AND EXISTS (SELECT 1 FROM computer_chat_runs r WHERE r.conversation_id = c.id)").fetchall()
+    if not far:
+        return
+    with connect_users_db() as users:
+        for conversation_id, owner, folder, holder in far:
+            found = users.execute("SELECT computer FROM computers WHERE token_id = ?", (holder,)).fetchone() \
+                if holder else None
+            if found is None and folder:
+                found = users.execute("SELECT computer FROM computers WHERE user_id = ? AND workspace_id = ? "
+                                      "AND vaults LIKE ? ORDER BY seen_at DESC LIMIT 1",
+                                      (owner, ws, f'%"{folder}"%')).fetchone()
+            if found:
+                pages.execute("UPDATE computer_chats SET computer = ? WHERE id = ?", (found[0], conversation_id))
+
+
+def _v69_far_answers(ws: str, pages: sqlite3.Connection, data) -> None:
+    """What a far turn's agent asks is answered here where its computer
+    relays its asks (step 4.3 of docs/research/agents-as-participants-plan.md,
+    docs/dev/computers.md "The agents' turns there"): ``computer_chat_runs``
+    gains ``answers`` (``'{}'`` on every turn so far: none was answered
+    here), the answers kept for that computer to take. Re-runnable: the
+    column is added only where ``_columns()`` has the table and lacks it.
+    The table never leaves a workspace's own copy (``LOCAL_STEPS``)."""
+    runs = _columns(pages, "computer_chat_runs")
+    if runs and "answers" not in runs:
+        pages.execute("ALTER TABLE computer_chat_runs ADD COLUMN answers TEXT NOT NULL DEFAULT '{}'")
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -2328,6 +2417,8 @@ STEPS = [
     (57, "integration_asks", _v57_integration_asks),
     (61, "integration_comments", _v61_integration_comments),
     (66, "agent_ids", _v66_inbox_agents),
+    (67, "computer_asks", _v67_computer_asks),
+    (68, "far_chats", _v68_computer_dirs),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
@@ -2353,6 +2444,8 @@ WORKSPACE_STEPS = [
     (64, "comment_agent_owners", _v64_comment_agent_owners),
     (65, "drop_requests", _v65_drop_requests),
     (66, "agent_ids", _v66_resolved_agents),
+    (68, "far_chats", _v68_far_chats),
+    (69, "far_answers", _v69_far_answers),
 ]
 
 # The workspace steps that only add a column SQLite derives from the rows
@@ -2364,4 +2457,4 @@ DERIVED_STEPS = {47, 48, 53}
 # in step with another (comments, the Inbox's rows, the Sends of before step 65, a computer
 # agent's conversations): a mirror never sends them, so two copies on either
 # side of one still agree.
-LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64, 65, 66}
+LOCAL_STEPS = {54, 58, 59, 60, 62, 63, 64, 65, 66, 68, 69}

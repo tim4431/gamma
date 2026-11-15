@@ -1,9 +1,11 @@
 """Asking on this computer (step 5b of docs/research/agent-collab.md): a
 chat turn of a page of another server's work folder (test_remote_chat.py's
 loop) asks to run a command, and the ask is held here, listed and answered
-by the desktop app alone (``GET`` and ``POST /api/local-agents/asks``,
-runner.py ``computer_asks``, ``answer_computer``), never written there:
-that server's message says ``waiting``.
+by the desktop app (``GET`` and ``POST /api/local-agents/asks``, runner.py
+``computer_asks``, ``answer_computer``), and, where the link lets that
+server answer (step 4.3 of docs/research/agents-as-participants-plan.md),
+relayed there too; else never written there: that server's message says
+``waiting``.
 
 One process plays both, as test_remote_chat.py does (its ``lab`` and
 ``nas``), the NAS reached at http://testserver, read here as reached
@@ -23,7 +25,15 @@ Stop there declining what waits here; an answer never waiting on that
 server; a lost write of ``waiting`` written again, a refused one not; a turn's wait moving its
 deadline ten minutes at most; the read held until a change; no grant for a
 remote turn; the maker alone; Background tasks there; ``waiting`` false at
-every end; the card's file from this computer's rows alone."""
+every end; the card's file from this computer's rows alone. Relayed: the
+ask in that server's message, allowed once there by the turn's person or
+the agent's owner (another account refused, Allow in this chat refused),
+the answer kept with the run, listed to this computer and taken by the
+waiting turn, the bar's card closing; the first answer the one, here or
+there; an answer there waiting out a channel down; a Stop from either side
+ending the ask, an answer after it refused; the link off relaying nothing,
+a co-author's turn then asking nothing; a co-author's ask relayed, once at
+most, answered by them or the owner, no grant kept."""
 
 import json
 import os
@@ -36,13 +46,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import fresh_client, login
+from conftest import account_of, fresh_client, login
 from fake_agents import read_log, requests_in, script_agent
 from gamma import config, folder_links, gamma_sync, remote_servers
-from gamma.db import connect_pages_db
+from gamma.computers import channel
+from gamma.db import connect_pages_db, connect_vaults_db
 from gamma.local_agents import chats, home, runner, store
-from test_remote_chat import (OWNER, PASSWORD, SECRET, SHELL, _chat, _made, _reply, _run_there, _say, _sent,  # noqa: F401
-                              _stop, _turn_row, _until, lab, nas)  # the fixtures
+from test_remote_chat import (EDITOR, OWNER, PASSWORD, SECRET, SHELL, _chat, _made, _reply,  # noqa: F401
+                              _run_there, _say, _sent, _stop, _turn_row, _until, lab, nas)  # the fixtures
 
 CURL = "curl -L https://example.org/refs.bib -o refs.bib"
 ASK = {"command": CURL, "reason": "Fetch the bibliography the paper cites.", "host": "example.org"}
@@ -118,8 +129,9 @@ def _steers(log) -> list[str]:
 
 def test_a_turn_there_asks_while_its_agent_may_over_https_with_the_secret(lab, nas, monkeypatch):
     f = _made(lab, nas, "RA policy")
-    link = folder_links.get_link(f.id)
+    link = folder_links.get_link(f.id)["remote_url"]
     assert runner.ask_refusal(link, True, "codex") == runner.RUNS_NEVER     # never until it is let ask
+    assert runner.ask_refusal("", True, "codex") == runner.RUNS_NEVER       # its channel gone
     r = lab.owner.patch("/api/local-agents/codex", json={"runs": "ask"}, headers=SHELL)
     assert r.status_code == 200 and r.json()["runs"] == "ask", r.text
     assert runner.ask_refusal(link, True, "codex") == runner.NOT_SECURE     # http://testserver: plain http
@@ -153,11 +165,12 @@ def test_a_turn_there_asks_and_only_this_computer_sees_and_answers_it(lab, nas, 
     assert step["program"] == "curl" and card["id"] not in step["id"]
     there = json.dumps(_chat(lab.owner, f.page))
     assert "example.org" not in there and "refs.bib" not in there and str(f.root).replace("\\", "\\\\") not in there
-    # only the shell answers: the NAS's route, this server's own chat route and the rule, a session alone
+    # only the shell answers: the NAS's route (the link relays no asks), this server's own chat route and the
+    # rule, a session alone
     r = lab.owner.post(f"/api/local-agents/chat/turns/{turn_id}/asks/{card['id']}", json={"decision": "once"})
-    assert (r.status_code, r.json()["detail"]) == (409, "This is answered on the computer that runs the agent.")
+    assert (r.status_code, r.json()["detail"]) == (409, "Codex no longer waits for that.")
     with pytest.raises(chats.ChatError) as refused:
-        runner.answer_chat(f.id, turn_id, card["id"], "once")
+        runner.answer_chat(f.turn.link_id, turn_id, card["id"], "once")
     assert (refused.value.status, refused.value.detail) == (409, runner.FAR_ASKS)
     session = login(OWNER, PASSWORD)
     assert session.get("/api/local-agents/asks").status_code == 403
@@ -349,6 +362,179 @@ def test_a_remote_turn_waits_ten_minutes_at_most_past_its_deadline(lab, nas, she
     _until(lambda: shell.last["asks"] == [])
 
 
+# --- relayed to that server (step 4.3 of docs/research/agents-as-participants-plan.md) -----------------
+
+def _relaying(lab, f, on: bool = True) -> None:
+    """The link lets the NAS answer what this computer's agents ask (on: the
+    shell's word), announced there."""
+    r = lab.owner.patch(f"/api/computer-links/{f.turn.link_id}", json={"asks": on}, headers=SHELL)
+    assert r.status_code == 200 and r.json()["asks"] is on, r.text
+    f.turn.once()
+
+
+def _there(who, turn_id, ask_id, decision="once", status=200, **body) -> dict:
+    """An answer on the NAS's chat route."""
+    r = who.post(f"/api/local-agents/chat/turns/{turn_id}/asks/{ask_id}", json={"decision": decision, **body})
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def _relayed(lab, page) -> dict:
+    """The ask the NAS's message holds, once the computer wrote it there."""
+    return _until(lambda: (_reply(lab, page).get("asks") or [None])[0])
+
+
+def test_a_turn_there_relays_its_ask_where_the_link_lets_that_server_answer_and_takes_the_answer_given_there(
+        lab, nas, shell, monkeypatch):
+    f = _asking(lab, nas, "RA relayed", monkeypatch)
+    _relaying(lab, f)
+    assert next(c for c in lab.owner.get(f"/api/pages/{f.page}/computer").json()["computers"])["asks"] is True
+    turn_id = _started(lab, f)
+    card = _card(shell)                                                    # this computer's bar shows it still
+    ask = _relayed(lab, f.page)
+    # the chat's ask, as a turn of the NAS's own writes it: allowed once at most, its folder relative
+    assert {k: ask[k] for k in ("id", "kind", "command", "host", "reason", "once")} == {
+        "id": card["id"], "kind": "command", "command": CURL, "host": "example.org",
+        "reason": "Fetch the bibliography the paper cites.", "once": True}
+    reply = _reply(lab, f.page)
+    assert (reply["state"], reply["waiting"]) == ("running", False)
+    assert str(f.root).replace("\\", "\\\\") not in json.dumps(_chat(lab.owner, f.page))
+    row = next(j for j in lab.owner.get("/api/jobs").json()["jobs"] if j["id"] == f"computer-{turn_id}")
+    assert row["progress"] == {"phase": "asking"}                          # waiting for you, in the chat
+    # there: never in this chat, another account refused, allowed once alone
+    assert _there(lab.owner, turn_id, ask["id"], "chat", 400)["detail"] == (
+        "A turn on another computer is allowed once at most.")
+    assert _there(lab.editor, turn_id, ask["id"], status=404)["detail"] == "No turn has that id."
+    assert _there(lab.owner, turn_id, ask["id"], "once") == {"answered": True}
+    assert _reply(lab, f.page)["asks"] == []                               # its card closes there at once
+    assert _there(lab.owner, turn_id, ask["id"], "deny", 409)["detail"] == "That was answered already."
+    assert [a["id"] for a in _bearer_chats(f)["answers"] if a["id"] == turn_id] == [turn_id]
+    # this computer takes it at its next turn of the channel: the agent goes on, the bar's card goes
+    f.turn.once()
+    assert runner.wait_idle(60)
+    reply = _reply(lab, f.page)
+    assert (reply["state"], reply["text"], reply["asks"], reply["waiting"]) == ("done", "Ran it.", [], False)
+    assert [a["result"] for a in _answers(nas.log)] == [{"decision": "accept"}]
+    _until(lambda: shell.last["asks"] == [])
+    assert _post(shell.client, card["id"], "once", 404)["detail"] == "No question on this computer has that id."
+    assert _run_there(lab, turn_id)["answers"] == "{}"
+
+
+def _bearer_chats(f) -> dict:
+    """What the NAS lists to this computer on its channel."""
+    r = fresh_client(headers={"Authorization": f"Bearer {f.token['token']}"}).get("/api/computers/chats")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_the_first_answer_is_the_one_here_or_there(lab, nas, shell, monkeypatch):
+    f = _asking(lab, nas, "RA first", monkeypatch, ASK, ASK, ASK)
+    _relaying(lab, f)
+    turn_id = _started(lab, f)
+    first = _card(shell)
+    assert _relayed(lab, f.page)["id"] == first["id"]
+    _there(lab.owner, turn_id, first["id"], "deny", note="Use the bibliography in the repository.")
+    f.turn.once()                                                          # taken here: the bar's card goes
+    second = _card(shell, {first["id"]})
+    assert _post(shell.client, first["id"], "once", 409)["detail"] == "Codex no longer waits for that."
+    assert _steers(nas.log) == ["The owner declined that: Use the bibliography in the repository."]
+    # the second answered on this computer first: there it is no longer waited for
+    _until(lambda: _relayed(lab, f.page)["id"] == second["id"])
+    _post(shell.client, second["id"], "once")
+    third = _card(shell, {first["id"], second["id"]})
+    _until(lambda: _relayed(lab, f.page)["id"] == third["id"])
+    assert _there(lab.owner, turn_id, second["id"], "deny", 409)["detail"] == "Codex no longer waits for that."
+    _there(lab.owner, turn_id, third["id"], "once")
+    f.turn.once()
+    assert runner.wait_idle(60)
+    assert [a["result"] for a in _answers(nas.log)] == [{"decision": "decline"}, {"decision": "accept"},
+                                                         {"decision": "accept"}]
+    assert _reply(lab, f.page)["text"] == "Ran it."
+
+
+def test_an_answer_there_waits_for_a_channel_down_and_a_stop_from_either_side_ends_the_ask(lab, nas, monkeypatch):
+    monkeypatch.setattr(remote_servers, "plain", lambda url: "")
+    f = _asking(lab, nas, "RA down", monkeypatch)
+    _relaying(lab, f)
+    monkeypatch.setenv("GAMMA_SHELL_SECRET", "")                           # no window here: that server alone answers
+    turn_id = _started(lab, f)
+    ask = _relayed(lab, f.page)
+    nas.down.append(True)                                                  # the channel drops while it waits
+    _there(lab.owner, turn_id, ask["id"], "once")
+    assert f.turn.once() == channel.RETRY_FIRST_S
+    assert list(runner._active[(f.turn.link_id, turn_id)]["chat"].asks) == [ask["id"]]   # it waits with the turn here
+    nas.down.clear()
+    f.turn.once()                                                          # back: the answer is taken
+    assert runner.wait_idle(60) and _reply(lab, f.page)["text"] == "Ran it."
+
+    turn_id = _started(lab, f, "Again.")                                   # Stop there while it waits
+    ask = _relayed(lab, f.page)
+    assert _stop(lab.owner, turn_id) == {"stopped": True}
+    f.turn.once()
+    assert runner.wait_idle(30)
+    reply = _reply(lab, f.page)
+    assert (reply["state"], reply["asks"]) == ("stopped", [])
+    assert [a["result"] for a in _answers(nas.log)][-1] == {"decision": "cancel"}
+    assert _there(lab.owner, turn_id, ask["id"], status=409)["detail"] == "This turn has ended."
+
+    turn_id = _started(lab, f, "Once more.")                               # stopped here: the agent turned off
+    ask = _relayed(lab, f.page)
+    store.set_agent("codex", False, by=lab.user)
+    runner.stop_agent("codex")
+    assert runner.wait_idle(30)
+    assert (_reply(lab, f.page)["state"], _reply(lab, f.page)["asks"]) == ("failed", [])
+    assert _there(lab.owner, turn_id, ask["id"], status=409)["detail"] == "This turn has ended."
+
+
+def test_with_the_link_off_a_turn_there_relays_nothing_and_a_co_authors_asks_nothing(lab, nas, monkeypatch):
+    monkeypatch.setattr(remote_servers, "plain", lambda url: "")
+    f = _asking(lab, nas, "RA off", monkeypatch)
+    named = {"server": nas.url, "workspace_id": lab.ws, "account": account_of(EDITOR)}
+    assert lab.owner.post("/api/local-agents/codex/people", json=named, headers=SHELL).status_code == 200
+    f.turn.once()
+    _say(lab.editor, f.page, "Fetch it for me.")
+    f.turn.once()
+    assert runner.wait_idle(60)
+    assert _sent(nas.log, "thread/start")[-1]["approvalPolicy"] == "never"   # a co-author's turn asks nothing
+    assert next(c for c in lab.owner.get(f"/api/pages/{f.page}/computer").json()["computers"])["asks"] is False
+    _relaying(lab, f, False)
+    monkeypatch.setattr(runner, "SHELL_GRACE_S", 0.3)
+    _started(lab, f)                                                        # the owner's: on this computer alone
+    assert runner.wait_idle(60)
+    reply = _reply(lab, f.page)
+    assert (reply["text"], reply["asks"]) == ("Did not run it.", [])
+    assert _steers(nas.log) == [f"Gamma declined that: {runner.NOBODY_HERE}"]
+
+
+def test_a_co_authors_ask_there_is_relayed_allowed_once_and_answered_by_them_or_the_owner(lab, nas, shell, monkeypatch):
+    f = _asking(lab, nas, "RA lent", monkeypatch, ASK, ASK)
+    named = {"server": nas.url, "workspace_id": lab.ws, "account": account_of(EDITOR)}
+    assert lab.owner.post("/api/local-agents/codex/people", json=named, headers=SHELL).status_code == 200
+    _relaying(lab, f)
+    turn_id = _say(lab.editor, f.page, "Fetch it for me.")["turn"]["id"]
+    f.turn.once()
+    card = _card(shell)                                                    # the owner's bar, for the editor
+    assert card["for"] == EDITOR
+    def asked(seen=()):   # the ask the editor's conversation there holds, one not in ``seen``
+        return _until(lambda: next((a for a in [m for m in _chat(lab.editor, f.page)["conversation"]["messages"]
+                                                if m["role"] == "agent"][-1].get("asks") or [] if a["id"] not in seen),
+                                   None))
+
+    first = asked()
+    assert (first["id"], first["once"]) == (card["id"], True)
+    assert _there(lab.editor, turn_id, first["id"], "chat", 400)["detail"] == runner.ONCE_ONLY
+    _there(lab.editor, turn_id, first["id"], "once")                       # the person's own answer
+    f.turn.once()
+    second = asked({first["id"]})
+    assert _card(shell, {card["id"]})["id"] == second["id"]
+    _there(lab.owner, turn_id, second["id"], "deny")                       # and the agent's owner's
+    f.turn.once()
+    assert runner.wait_idle(60)
+    assert [a["result"] for a in _answers(nas.log)] == [{"decision": "accept"}, {"decision": "decline"}]
+    with connect_vaults_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM agent_dir_grants").fetchone() == (0,)   # no grant kept
+
+
 # --- the rest -----------------------------------------------------------------------------------------
 
 def test_the_asks_read_waits_for_a_change(lab, nas, shell):
@@ -403,7 +589,8 @@ def test_background_tasks_there_say_the_turn_waits_on_that_computer(lab, nas, sh
     card = _card(shell)
     _until(lambda: _reply(lab, f.page).get("waiting"))
     row = next(j for j in lab.owner.get("/api/jobs").json()["jobs"] if j["id"] == f"computer-{turn_id}")
-    assert (row["state"], row["progress"]) == ("running", {"phase": "asking"}) and row["params"]["computer"]
+    assert (row["state"], row["progress"]) == ("running", {"phase": "asking", "there": True})
+    assert row["params"]["computer"]
     _post(shell.client, card["id"], "deny")
     assert runner.wait_idle(60)
 
@@ -427,7 +614,7 @@ def test_an_end_or_a_failure_left_open_leaves_waiting_false(lab, nas, monkeypatc
     run = home.chat_run_id(turn_id)
     computer.post(f"/api/computers/chats/{turn_id}/claim", json={"run": run, "agent": "codex"})
     computer.post(f"/api/computers/chats/{turn_id}/write", json={"run": run, "seq": 1, "fields": {"waiting": True}})
-    assert home.HttpChatHome(f.id, turn_id).fail_left_open({"id": turn_id, "agent": "codex"})
+    assert home.HttpChatHome(f.turn.link_id, turn_id).fail_left_open({"id": turn_id, "agent": "codex"})
     assert (_reply(lab, f.page)["state"], _reply(lab, f.page)["waiting"]) == ("failed", False)
 
 

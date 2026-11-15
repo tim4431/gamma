@@ -219,13 +219,14 @@ def create_token(user_id: str, ws: str, name: str, days: int, *, oauth_resource:
 
 
 def mint_turn(user_id: str, ws: str, name: str, seconds: float) -> tuple[str, str]:
-    """The token of one turn of an agent on this computer
-    (gamma/local_agents/tools.py) → ``(its id, the token)``: the account's,
-    of ``ws`` alone, named ``name`` (the agent's id, gamma/agents.py),
-    living ``seconds``. It reads and comments through MCP and opens nothing
-    else (``auth.TURN_ONLY``), is
-    never listed and does not count toward the account's connections; the
-    turn deletes it at its end (``drop``), the next start any a crash left
+    """The token of one turn of an agent, on this computer
+    (gamma/local_agents/tools.py) or on another one that takes the turn
+    over its channel (gamma/routers/computers.py) → ``(its id, the
+    token)``: the account's, of ``ws`` alone, named ``name`` (the agent's
+    id, gamma/agents.py), living ``seconds``. It reads and comments through
+    MCP and opens nothing else (``auth.TURN_ONLY``), is never listed and
+    does not count toward the account's connections; the turn deletes it at
+    its end (``drop``), a desktop app's next start any a crash left
     (``drop_turns``)."""
     token = "gamma_" + secrets.token_urlsafe(32)
     token_id = secrets.token_hex(16)
@@ -237,12 +238,16 @@ def mint_turn(user_id: str, ws: str, name: str, seconds: float) -> tuple[str, st
     return token_id, token
 
 
-def renew_turn(token_id: str, seconds: float) -> None:
+def renew_turn(token_id: str, seconds: float, *, within: float | None = None) -> None:
     """A turn's token lives ``seconds`` more from now (its turn's deadline
-    moved: it waited for the person, or its agent started again)."""
+    moved: it waited for the person, or its agent started again; a far
+    turn wrote); with ``within``, only one that would expire within that
+    many seconds, so a renewal at every write writes once in a while."""
+    now = time.time()
+    soon = "" if within is None else f" AND expires_at < {int(now + within)}"
     with connect_users_db() as conn:
-        conn.execute("UPDATE integration_tokens SET expires_at = ? WHERE id = ? AND scope = ?",
-                     (int(time.time() + max(1.0, seconds)), token_id, TURN))
+        conn.execute(f"UPDATE integration_tokens SET expires_at = ? WHERE id = ? AND scope = ?{soon}",
+                     (int(now + max(1.0, seconds)), token_id, TURN))
 
 
 def drop(token_id: str) -> None:

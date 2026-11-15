@@ -2457,7 +2457,8 @@ async function agentPerson(serverId, name, placeId, account, confirmed) {
 }
 
 // Settings → AI's asks about the agents of this computer (preload.js
-// PAGE_ASKS `set-agent`, `set-agent-runs`, `agent-dirs`, `agent-person`):
+// PAGE_ASKS `set-agent`, `set-agent-runs`, `agent-dirs`, `agent-person`, and
+// below, `add-server`, `remove-server`, `link-asks`):
 // only on a page of a server on this computer, the shell then asking its
 // own question.
 function pageAgents() {
@@ -2599,8 +2600,18 @@ async function releaseRemote(origin, api, serverId, link, remoteName) {
     const hidden = await hideComputer({ origin, api }, remote, remoteOrigin, link.workspace_id).catch(() => null);
     if (hidden && !hidden.revoked) stranded = keeping.computerStranded(remoteName || remoteOrigin, COMPUTER_NAME);
   }
-  if (!left.length && registry.getSettings().folderHost === serverId) registry.setSettings({ folderHost: '' });
+  if (!left.length) await releaseHost(api, origin, serverId);
   return stranded;
+}
+
+// The host `serverId` (at `origin`, through `api`) no longer starts at launch
+// for remote servers once it keeps no vault of one (the caller knows) and
+// no computer link: a link's channel runs only while the host does.
+async function releaseHost(api, origin, serverId) {
+  if (registry.getSettings().folderHost !== serverId) return;
+  const vaults = ((await api(origin, '/api/folder-links')).links || []).filter((l) => l.remote_url);
+  const links = await computerLinks({ origin, api }).catch(() => null); // not read: kept, so a channel is not left down
+  if (!vaults.length && links && !links.length) registry.setSettings({ folderHost: '' });
 }
 
 // ------------------------------------------------ this computer, shown -----
@@ -2620,11 +2631,20 @@ async function releaseRemote(origin, api, serverId, link, remoteName) {
 // channel announces it.
 const COMPUTER_NAME = String(os.hostname() || '').trim().slice(0, 64) || 'Gamma desktop';
 
+// The host's computer links for the account `host.api` is signed in as.
+async function computerLinks(host) {
+  return (await host.api(host.origin, '/api/computer-links')).links || [];
+}
+
 // The host's computer link of server `remoteOrigin` and workspace `wsId`
 // for the account `host.api` is signed in as, or null.
 async function computerLinkOf(host, remoteOrigin, wsId) {
-  const links = (await host.api(host.origin, '/api/computer-links')).links || [];
-  return links.find((c) => registry.originOf(c.remote_url) === remoteOrigin && c.workspace_id === wsId) || null;
+  return (await computerLinks(host)).find((c) => registry.originOf(c.remote_url) === remoteOrigin && c.workspace_id === wsId) || null;
+}
+
+// A server as the bar names it: the launcher's name, else its host name.
+function serverNameOf(url) {
+  return (remoteAt(url) || {}).name || hostOnly(url);
 }
 
 // Show this computer on `remoteOrigin` (`remoteName`, as the bar names it)
@@ -2677,11 +2697,18 @@ async function showComputer({ remote, remoteOrigin, remoteName, wsId, host, alwa
 // token then left for the person to remove in that server's Settings.
 async function hideComputer(host, remote, remoteOrigin, wsId) {
   const had = await computerLinkOf(host, remoteOrigin, wsId);
-  if (!had) return null;
-  const gone = await host.api(host.origin, `/api/computer-links/${encodeURIComponent(had.id)}`, {
+  return had ? dropComputerLink(host, remote, had) : null;
+}
+
+// The host's computer link `link` forgotten (its channel stops, and the turns
+// its vaults run for that server), and its token revoked there through
+// `remote`, which fails there what the token's runs held. → `{ revoked }`, as
+// hideComputer's.
+async function dropComputerLink(host, remote, link) {
+  const gone = await host.api(host.origin, `/api/computer-links/${encodeURIComponent(link.id)}`, {
     method: 'DELETE', headers: shellWord(host.origin),
   });
-  return { revoked: !(gone && gone.token_id) || await revokedToken(remote, remoteOrigin, wsId, gone.token_id) };
+  return { revoked: !(gone && gone.token_id) || await revokedToken(remote, registry.originOf(link.remote_url), link.workspace_id, gone.token_id) };
 }
 
 // The panel's Show this computer there, on the server and workspace of the
@@ -2714,6 +2741,119 @@ async function hideComputerOf(serverId, linkId) {
   refreshKeeping().catch(() => {});
   return !!had;
 }
+
+// Settings → AI → Agents' Servers this computer answers, on local server
+// `serverId` (step 4.1 of docs/research/agents-as-participants-plan.md): a
+// link to a server needs no vault of it. The shell's own session reads and
+// changes the host's links, as agentsOf does; the window's session, signed
+// into that server, mints and revokes its token there.
+
+// Add a server… (`linkId` 'new'): the shell asks which of the launcher's
+// remote servers this computer answers (keeping.serverAsk), with the account
+// the window is signed in as there (signed out, it offers to open that
+// server to sign in) and, where the account has several, for which
+// workspace; then showComputer mints the computer token there and hands it
+// to the host. A link's id in place of 'new' hands that link's server a new
+// token (one it refused: revoked or expired there). The host then starts at
+// launch, as for a vault of another server. → true when shown, false when it
+// failed (said in the bar), null when nothing was asked of that server.
+async function addLinkedServer(serverId, linkId) {
+  const host = await localServer(serverId);
+  const remote = serverApi(session.defaultSession);
+  let srvName;
+  let origin;
+  let wsId;
+  if (linkId !== 'new') {
+    const link = (await computerLinks(host)).find((l) => l.id === linkId);
+    if (!link) throw new Error('This computer no longer answers that server.');
+    origin = remoteOf(registry.originOf(link.remote_url));
+    srvName = serverNameOf(origin);
+    wsId = link.workspace_id;
+  } else {
+    const servers = registry.load().servers.filter((s) => s.type === 'remote');
+    if (!servers.length) throw new Error('Add the other server in the launcher first: this computer answers the servers Gamma knows.');
+    const q = keeping.serverAsk(servers, COMPUTER_NAME);
+    const r = await ask({ type: 'question', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 0, cancelId: servers.length }, 0);
+    if (!(r >= 0 && r < servers.length)) return null;
+    const srv = servers[r];
+    srvName = srv.name;
+    origin = remoteOf(registry.originOf(srv.url));
+    const info = await remote(origin, '/api/session').catch(() => null);
+    if (!info || !info.user) {
+      const s = keeping.serverSignIn(srvName);
+      if (await ask({ type: 'question', message: s.message, detail: s.detail, buttons: s.buttons, defaultId: 0, cancelId: 1 }, 1) === 0) {
+        await openServer(srv.id);
+        buildMenu();
+      }
+      return null;
+    }
+    const all = (info.workspaces || []).filter((w) => !w.mirror_of);
+    const places = [...all.filter((w) => w.personal), ...all.filter((w) => !w.personal)];
+    if (!places.length) throw new Error(`Your account on ${srvName} has no workspace.`);
+    let place = places[0];
+    if (places.length > 1) {
+      const p = keeping.serverPlaceAsk(srvName, places);
+      const r2 = await ask({ type: 'question', message: p.message, detail: p.detail, buttons: p.buttons, defaultId: 0, cancelId: places.length }, 0);
+      if (!(r2 >= 0 && r2 < places.length)) return null;
+      place = places[r2];
+    }
+    wsId = place.id;
+  }
+  busy = `Showing this computer on ${srvName}…`;
+  pushState();
+  try {
+    const failed = await showComputer({ remote, remoteOrigin: origin, remoteName: srvName, wsId, host, always: linkId !== 'new' });
+    if (!failed) registry.setSettings({ folderHost: serverId }); // its channel runs while the host does: at launch too
+    showNotice(failed || keeping.computerSaid(srvName, COMPUTER_NAME, true));
+    return !failed;
+  } finally {
+    busy = null;
+    pushState();
+    refreshKeeping().catch(() => {});
+  }
+}
+
+// Remove: the host forgets the link `linkId` and its token is revoked on
+// that server (dropComputerLink); the bar says when that server did not
+// revoke it. Asks nothing: it takes nothing more from this computer.
+async function removeLinkedServer(serverId, linkId) {
+  const host = await localServer(serverId);
+  const link = (await computerLinks(host)).find((l) => l.id === linkId);
+  if (!link) return false;
+  const name = serverNameOf(link.remote_url);
+  const { revoked } = await dropComputerLink(host, serverApi(session.defaultSession), link);
+  await releaseHost(host.api, host.origin, serverId);
+  showNotice(revoked ? keeping.computerSaid(name, COMPUTER_NAME, false) : keeping.computerStranded(name, COMPUTER_NAME));
+  refreshKeeping().catch(() => {});
+  return true;
+}
+
+// Whether the server of link `linkId` may answer what this computer's agents
+// ask (`on`: decision 7 of docs/research/agents-as-participants-plan.md).
+// Letting it is the computer's decision: asked first, naming the server
+// (keeping.linkAsksAsk, Cancel the default; `confirmed` answers in tests),
+// and the PATCH carries the shell's word. Off asks nothing. → false when it
+// was so already, null when cancelled.
+async function setLinkAsks(serverId, linkId, on, confirmed) {
+  const host = await localServer(serverId);
+  const link = (await computerLinks(host)).find((l) => l.id === linkId);
+  if (!link) throw new Error('This computer no longer answers that server.');
+  if (Boolean(link.asks) === Boolean(on)) return false;
+  const name = serverNameOf(link.remote_url);
+  if (on && !confirmed) {
+    const q = keeping.linkAsksAsk(name);
+    if (await ask({ type: 'warning', message: q.message, detail: q.detail, buttons: q.buttons, defaultId: 1, cancelId: 1 }, 1) !== 0) return null;
+  }
+  await host.api(host.origin, `/api/computer-links/${encodeURIComponent(link.id)}`, {
+    method: 'PATCH', headers: { ...JSON_TYPE, ...(on ? shellWord(host.origin) : {}) }, body: JSON.stringify({ asks: Boolean(on) }),
+  });
+  showNotice(keeping.linkAsksSaid(name, Boolean(on)));
+  return true;
+}
+
+const addServerFromPage = async (wsId, linkId) => addLinkedServer(pageAgents(), linkId);
+const removeServerFromPage = async (wsId, linkId) => removeLinkedServer(pageAgents(), linkId);
+const linkAsksFromPage = async (wsId, linkId, asks) => setLinkAsks(pageAgents(), linkId, asks);
 
 // Remove the vault…, a work folder's Detach…: its directory stays as it is
 // but for Gamma's own .gamma folder, and the token the shell minted on a
@@ -2964,7 +3104,7 @@ function refreshKeeping() {
     const moves = new Map(); // a redirected address -> the same server over https (autoUpgrade)
     const net = netState();
     const host = servers.find((s) => s.type === 'local');
-    let asksHere = null; // whether the host keeps a work folder of another server while an agent may ask; null: not read
+    let asksHere = null; // whether an agent may ask while the host answers another server (any link), keeps a work folder of one or serves a co-author; null: not read
     const detached = []; // the vaults of work folders their other server detached, forgotten here once read
     for (const srv of servers) {
       if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
@@ -2993,8 +3133,10 @@ function refreshKeeping() {
         // did not come leaves that as it was.
         if (z) zoteroHosts.set(srv.id, kept.some((i) => i.kind === 'zotero' && !i.paused));
         if (host && srv.id === host.id && agents) {
-          // a work folder of another server, or a co-author of this one (its asks are this computer's too)
-          asksHere = agents.some((a) => a.enabled && a.runs === 'ask') && (kept.some((i) => i.kind === 'vault' && i.remoteUrl && i.work)
+          // a server this computer answers (any chat there asks here), a work folder of another server, or a
+          // co-author of this one (its asks are this computer's too)
+          asksHere = agents.some((a) => a.enabled && a.runs === 'ask') && (((computers && computers.links) || []).length > 0
+            || kept.some((i) => i.kind === 'vault' && i.remoteUrl && i.work)
             || agents.some((a) => a.enabled && a.runs === 'ask' && (a.people || []).some((p) => !p.server)));
         }
         detached.push(...kept.filter((i) => i.kind === 'vault' && i.letGo && i.mine));
@@ -4935,7 +5077,9 @@ function registerIpc() {
   // the tracking dialog of a work folder of another server answered in the
   // host's window, `flag` saying whether it was cancelled; Settings → AI's
   // agents of this computer turned on or off, let ask or not, a directory
-  // offered to them), passed on by the page preload: only from the content
+  // offered to them, a person let use one; the servers this computer
+  // answers added, removed, let answer its agents' asks or not), passed on
+  // by the page preload: only from the content
   // view's page of the open server, with plain ids, one action at a time
   // (oneAsk: none while a picker, a question or the vault dialog is up), and
   // at most one a second, so a page asking in a loop opens no row of file
@@ -4970,6 +5114,9 @@ function registerIpc() {
     'shell:agent-runs-from-page': ['Could not change what the agent may run.', agentRunsFromPage],
     'shell:agent-dirs-from-page': ['Could not offer the directory.', agentDirsFromPage],
     'shell:agent-person-from-page': ['Could not let that person use the agent.', agentPersonFromPage],
+    'shell:add-server-from-page': ['Could not show this computer on that server.', addServerFromPage],
+    'shell:remove-server-from-page': ['Could not stop answering that server.', removeServerFromPage],
+    'shell:link-asks-from-page': ['Could not change what that server may answer.', linkAsksFromPage],
   };
   for (const [channel, [message, run]] of Object.entries(PAGE_ASKS)) {
     ipcMain.on(channel, (event, wsId, id, flag, ...more) => {
@@ -5241,6 +5388,11 @@ if (process.env.GAMMA_SHELL_TEST) {
     agentDirsFromPage,
     agentPerson,
     agentPersonFromPage,
+    addLinkedServer,
+    removeLinkedServer,
+    setLinkAsks,
+    addServerFromPage,
+    linkAsksFromPage,
     forceVault,
     goOnVault,
     locateVault,

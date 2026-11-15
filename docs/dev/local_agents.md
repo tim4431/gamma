@@ -39,7 +39,7 @@ tables, unread: "What this computer keeps").
 | `threads.py` | a comment sent to an agent: its thread's turn, the thread's prompt's entry, its end written in the thread ("A comment sent to an agent") |
 | `mention.py` | a comment's `@name` read as the agent it is sent to ("A comment sent to an agent") |
 | `chats.py` | the chat's computer side: a bucket's conversations with the agent, and a thread's ("The chat's computer side") |
-| `home.py` | where a turn's conversation lives: this server's pages.db, or another server's over the channel ("A work folder of another server") |
+| `home.py` | where a turn's conversation lives: this server's pages.db, or another server's over the channel ("Another server's chat") |
 | `store.py` | what this computer keeps, in vaults.db, the people an agent serves among it ("What this computer keeps", "A co-author's turn") |
 | `info.py` | what a vault says of its agent, for the links and a page's chip ("The routes") |
 
@@ -357,12 +357,14 @@ holds the turn and its end, `mention.py` the `@name`.
   and names the comment (`comment_id`), a new comment's id its id, so a
   retried POST makes no second turn; the agent's message names the
   agent that answers in the thread (`agent_id`: `agents.here`, or the far
-  computer's `agents.of_channel`). It is queued for this computer's runner
-  (`runner.queue_chat`), or, for the computer that keeps the page's work
-  folder, written to wait for it (`chats.begin(remote=True)`) and that
-  computer woken: it claims it over its channel as a chat's turn, the
-  claim carrying the thread (`chats.claim`'s `thread`, its entry with its
-  PDF place, whose source line it computes from its own disk). The answer
+  computer's agent's, `to` itself). It is queued for this computer's runner
+  (`runner.queue_chat`), or, for another computer whose agent `to` names
+  (`chats.remote_of`, refused while it is offline), written to wait for
+  it (`chats.begin(remote=True)`, working where the thread's conversation
+  or the page's chat with it works, `chats.far_dir`) and that computer
+  woken: it claims it over its channel as a chat's turn, the claim
+  carrying the thread (`chats.claim`'s `thread`, its entry with its PDF
+  place, whose source line it computes from its own disk). The answer
   is `{agent, conversation_id, turn_id, state}`.
 - **The prompt** (`prompt.build_thread`): the comment as the request; what
   the page is (`about`), and the thread as data, its entry as
@@ -478,7 +480,8 @@ use and the vendors' terms").
   once at most.", no grant is looked up or kept, and the ask is answered by
   the person in their chat or by the owner, in the chat's card or on this
   computer (a card of `computer_asks` with `for`). A far co-author's turn
-  asks nothing (step 4.3 of the plan relays asks).
+  asks only where the link relays asks to that server, once at most there
+  too ("Asking on this computer").
 - **What it writes** is the person's, signed as the agent: a comment's
   `author` is the person and the reader names the agent's owner
   (`agent_owner`, gamma/agents.py `Agent.owner`, kept with the comment as
@@ -490,17 +493,18 @@ use and the vendors' terms").
 Gamma AI and connections are not lent this way: a connection is its
 account's alone.
 
-## A work folder of another server
+## Another server's chat
 
-A work folder of another Gamma server (a NAS: [work_folders.md](work_folders.md)
-"Work folders of another server") kept here has the computer's agent too,
-once this computer is shown on that server ([computers.md](computers.md)):
-the first agent on of the account the channel belongs to (the vault's
-maker, `channel.agent_folders`); from then on that account's chat turns
-and comments sent to the agent **on the NAS, in any window**, run here and
+Once this computer is shown on another Gamma server (a NAS:
+[computers.md](computers.md), a vault of that server or a link made in
+Settings), the agents on here for the account the channel belongs to are
+that account's on **every bucket of that server's workspace** (a synced
+folder's file or not, a library PDF, a note, a folder, the library), in
+any window: its chat turns and the comments it sends them run here and
 answer there, taken as turns over the channel ("The chat on another
 server's page", "A comment sent to an agent"). This is step 4c of the
-research note.
+research note and step 4.2 of
+[the plan](../research/agents-as-participants-plan.md).
 
 - **Turning it on** is the computer's (`PATCH /api/local-agents/{agent}`,
   "Who turns it on"); nothing is set per folder. The shell's question
@@ -511,26 +515,55 @@ research note.
   local network, each time for a public host an existing link keeps; a
   new link to a public host over plain http is refused,
   [https.md](https.md#plain-http)). A turn there asks on this computer
-  while its agent may ask, over https alone ("Asking on this computer").
-- **The binding.** The channel's announce names the computer's agents
-  (`assistants`, each with `enabled`, on for the channel's account, and
-  `runs`), never a vault's; the NAS keeps them with the computer's row,
-  so it knows the folders it keeps have an agent while the computer is
-  away: the first assistant on, for a folder that carries a work folder's
-  mark itself and an account that may edit there, and **per account**
-  (`registry.agent_of(ws, folder, user_id)`): one member's computer
-  announcing another's work folder never changes that member's binding,
-  and only ever serves its own account's turns. Until step 4 of the plan
-  it answers only for a folder that computer keeps.
+  while its agent may ask, over https alone, and there too where the link
+  lets that server answer ("Asking on this computer").
+- **What that server learns.** The channel's announce names the
+  computer's agents (`assistants`, each with `enabled`, on for the
+  channel's account, and `runs`) and the directories offered them by id
+  and name alone (`dirs`, `channel.offered`, while the account has an
+  agent on here; never a path), never a vault's agent; the NAS keeps them
+  with the computer's row (`registry.seats`), so it lists the computer's
+  agents while it is away, shown offline, and queues nothing for it then.
+  It is **per account**: one member's computer serves only its own
+  account's turns (and the co-authors its owner named, "A co-author's
+  turn", on a synced folder's files alone).
+- **Where a turn works** is named by the NAS by an id, never a path (the
+  listing's and the claim's `dir`, `chats.dir_of` there) and resolved here
+  (`home.far_place`): `vault`, a work folder of that server, the vault of
+  it this channel's account made here (`channel.vaults_of`,
+  `folder_links.work_vault`: a vault of another channel never answers for
+  it); `offered`, a directory of `store.dirs` while the channel's account
+  has an agent on here; `own`, an empty directory of its own,
+  `<data>/agents/<channel id>/<conversation id>/` (`home.far_dir`, removed
+  with the channel, `home.remove_far_dirs`, and at start once the channel
+  is gone, `chats.sweep_dirs`: that server never says a conversation
+  went). A kind or an id of another shape, a work folder no vault of this
+  channel keeps, a directory not offered: the turn is claimed and fails
+  with why ("The synced folder is no longer kept on this computer.",
+  "The directory this conversation works in is no longer offered on this
+  computer.", "That server named no directory this computer offers it:
+  Gamma ran nothing."); the runner queues it in a queue of its own
+  (`runner.queue_remote_chat`), so it waits behind no directory's turns.
+- **Gamma's tools** of that server come with the claim (`tools: {url,
+  token}`: a turn token that server minted for the account the turn is
+  for, and its MCP address, [computers.md](computers.md) "The agent's
+  turns there"); this computer takes them only where the address's origin
+  is the one its channel speaks to that server at, its path `/mcp`
+  (`HttpChatHome.gamma`), and the token reaches the agent's process alone,
+  in `events.TOKEN_ENV`, as a local turn's ("Gamma's tools"). An address
+  at another origin is never given the token: the turn runs without the
+  tools and its message says why first (`home.FAR_TOOLS`, the turn's
+  `preface`). That server deletes the token at the turn's end; this
+  computer never keeps it.
 - **The conversation's home** (`local_agents/home.py`): a turn of this
   server's reads and writes its conversation through `LocalChatHome`, a
-  turn of another server's page through `HttpChatHome`, which speaks the
+  turn of another server's through `HttpChatHome`, which speaks the
   channel's routes with the link's computer token: the claim (one locked
   write there keyed by the run id minted here, so the same run claiming
   again holds it and another is refused), the turn's message written at
   most every `home.WRITE_EVERY_S`, and its end. A thread's turn's claim
   carries the thread's entry with its PDF place's page, box, rects and
-  document; its **source line** is computed here
+  document; in a vault its **source line** is computed here
   (`annotations.sources.source_in_vault`: the page's one PDF row in the
   vault's files, its hash the place's document and its size and time
   unchanged, and the sources on disk), and its **region pictures** are
@@ -539,63 +572,91 @@ research note.
   `.gamma/annotations/img/` (its `.gitignore` written first), which the
   work folder's rounds prune as they prune a local one's, reading that
   server's annotations, but never while a turn works there
-  ([annotations.md](annotations.md) "The files"). The NAS writes the
-  thread's reply itself when the turn ends (`threads.settle`).
-- **After the turn** a push round starts at once when files changed
-  (remote vaults get no fast rounds), so the NAS sees the rebuilt PDF;
-  none while the vault is paused, choosing its files or gone (the next
-  round after resume pushes).
+  ([annotations.md](annotations.md) "The files"). Outside a vault the
+  claim's entry goes to the prompt as it came, its pictures none. The
+  agent answers the thread with its token there; a turn that wrote no
+  reply is answered there by the NAS at its end (`threads.settle`).
+- **After the turn** in a vault a push round starts at once when files
+  changed (remote vaults get no fast rounds), so the NAS sees the rebuilt
+  PDF; none while the vault is paused, choosing its files or gone (the
+  next round after resume pushes).
 - **Recovery.** An open remote turn is failed through its home ("Gamma
   stopped before Codex finished.") at start and again whenever that
   channel's announce succeeds, so one left open while the NAS was away is
   failed once it is back; a claim whose answer never came is recorded
-  open for that. A computer's token that goes (revoked, replaced, expired)
-  fails on the NAS the turns its runs held ("The computer's channel was
-  taken back before Codex finished."); *Stop showing* leaves the
-  computer's agents on, and that server, told nothing more of this
-  computer, gives it no work.
+  open for that (vaults.db `agent_turns`, its `ws` and `link_id` the
+  channel's id). A computer's token that goes (revoked, replaced,
+  expired) fails on the NAS the turns its runs held ("The computer's
+  channel was taken back before Codex finished."); *Remove* in Settings
+  stops the turns of that server running here (`runner.stop_channel`,
+  "Stopped: this computer no longer answers that server."); *Stop showing*
+  leaves the computer's agents on, and that server, told nothing more of
+  this computer, gives it no work.
 
 ### The chat on another server's page
 
-On a page of such a work folder the chat's computer side works too, in
-any window of the maker on the NAS (step 4d): the composer's chip lists
-*Codex on TIM-PC* beside Gamma AI, and a message is a turn that runs on the computer,
-its reply, steps and changed files coming back into the conversation,
-which the NAS keeps (pages.db `computer_chats`, the maker's alone), so it
-reads while the computer is off.
+On any bucket of such a server the chat's computer side works too, in
+any window of the account on the NAS (step 4d, step 4.2 of the plan): the
+composer's chip lists *Codex on TIM-PC* beside Gamma AI for each agent on
+of each of the account's computers shown there (those keeping the page's
+work folder first), and a message is a turn that runs on the computer
+picked, its reply, steps and changed files coming back into the
+conversation, which the NAS keeps (pages.db `computer_chats`, the
+account's alone, its `computer` the computer it talks to), so it reads
+while the computer is off.
 
 - **The seat.** The chat routes (`routers/local_agents.py`, registered on
-  every server) take the host's own vault first, where this server runs
-  agents, else the binding of the page's work folder for the session's
-  account (`chats.remote_of` → `registry.agent_of`); neither: 404, a token
-  or the guest 403, as locally.
+  every server) take the agent a request names (`agent`: this computer's
+  by its name, another computer's by its id, `computer:<computer>:<name>`),
+  else the active conversation's while its computer still offers it, else
+  the host's own vault, else a computer that keeps the bucket's work
+  folder, else this server's own agent, else the first far seat
+  (`chats.remote_of` → `registry.seat_of`); none: 404, a token or the
+  guest 403, as locally. A conversation keeps its computer as it keeps
+  its agent: another one picked begins a new conversation
+  (`chats.begin`).
 - **The strip** (`GET /api/local-agents/chat`, `computer.remote: true`)
   names the computer and its presence (`computer`, `online`, `since`),
   offers the models the computer announced with its assistants (`models`,
-  at most 32), and says why an online computer's agent is not ready. The
-  composer stays open while the computer is off: a message waits
-  (*Waiting for TIM-PC*) and runs when it connects; the window reads the
-  conversation every 10 s while it waits.
-- **A turn.** `POST /chat/turns` checks the folder is not paused there,
-  the agent ready while the computer is online, the model and effort
-  among the announced ones, then writes the person's message and the
-  queued agent message (`chats.begin(remote=True)`) with a pages.db
-  `computer_chat_runs` row (the turn, its conversation and its bucket, a page,
-  the account, the turn's agent and the computer last known to take it,
-  the holder and run once claimed, a `seq`, a `stop` flag, its state, when
-  queued and started), and wakes the computer (`{wake: ["chat"]}`). A
-  computer is offered only the turns of its own agent for that folder; a
-  claim for another agent leaves the turn queued.
+  at most 32) and the directories it offers (`dirs`, `[{id, name}]`, which
+  a conversation that begins picks among: the strip's menu, as locally),
+  says where the agent works (`dir`: the work folder by its name, an
+  offered directory by its id and name, null for one of its own) and why
+  an online computer's agent is not ready. While the computer is off the
+  composer holds a message (*TIM-PC is offline: send this once it
+  connects.*), and the NAS refuses one (409): nothing is queued for a
+  computer away. With no turn to poll, the side reads the conversation
+  again when the page's computers, read again on the account's nudge
+  (`vault/usePageComputer.js`), say the computer came back or went away,
+  or its agent got ready or not (`useComputerChat`).
+- **A turn.** `POST /chat/turns` checks the computer is online, the work
+  folder not paused there, the agent ready, the model and effort among
+  the announced ones and `dir` among the directories offered
+  (`chats.far_dir`: the work folder where that computer keeps it, else the
+  one named, else the conversation's while that computer still offers it,
+  else one of its own, so a conversation whose directory is no longer kept
+  or offered is archived and a new one begins; a co-author's turn outside
+  a synced folder is refused), then writes the person's
+  message and the queued agent message (`chats.begin(remote=True)`) with
+  a pages.db `computer_chat_runs` row (the turn, its conversation and its
+  bucket, the account, the turn's agent and the computer last known to
+  take it, the holder and run once claimed, a `seq`, a `stop` flag, its
+  state, the turn's token once claimed, the answers given here to what it
+  asks, when queued and started), and
+  wakes the computer (`{wake: ["chat"]}`). A computer is offered only the
+  turns of its own conversations with it; a claim for an agent off there
+  leaves the turn queued.
 - **On the computer** the channel thread asks `GET /api/computers/chats`
   (after an announce, on a wake, at least every `CHATS_EVERY_S`, 180 s,
-  while a vault there has an agent), queues each turn for its link
-  under `(link_id, turn_id)`, claims it for a run it names (the
-  message, the selections with their places, the last 6 messages, the
-  model and effort, the page's path), computes the selections' source
-  lines from its disk, resumes the conversation's session from its own
-  vaults.db as locally, runs the agent confined as a local turn (asking only
-  while its agent may ask, on this computer: "Asking on this computer"),
-  and writes the agent message back at most every second,
+  while the channel's account has an agent on here), queues each turn
+  where it works (`home.far_place`) under `(channel id, turn id)`, claims
+  it for a run it names (the message, the selections with their places,
+  the last 6 messages, the model and effort, what the bucket is, where it
+  works, Gamma's tools), computes the selections' source lines from its
+  disk in a vault, resumes the conversation's session from its own
+  vaults.db as locally, runs the agent confined as a local turn (asking
+  only while its agent may ask, on this computer: "Asking on this
+  computer"), and writes the agent message back at most every second,
   each write with the next `seq` (an older one changes nothing: `stale`),
   the last always sent, retried while the NAS cannot be reached, a lost
   one by the next flush (`home.missed`; one refused there waits for the
@@ -607,27 +668,35 @@ reads while the computer is off.
   refused. Stop is the account's on its own turn's row, with no seat
   needed, so a turn stays stoppable after the agent is turned off, the
   token goes or the page is deleted.
-- **Not on another server's page**: answering what the agent asks (409
-  "This is answered on the computer that runs the agent.": the page says
-  *Waiting for your answer on TIM-PC* while the message's `waiting` is
-  true, and draws no card), *Continue in a terminal* and *Show in folder*
-  (the strip's ⋯ menu is hidden; `/chat/terminal` 404), and the passage
-  chips' source lines (`/chat/sources` answers nulls; the turn's prompt
-  still gets them, computed on the computer).
+- **What the agent asks** is answered on the page where the computer's
+  link relays asks to that server (step 4.3: the message's `asks`, the
+  chat's card with *Allow once* and *Decline* alone, as a local turn's,
+  "Asking on this computer"); else the page says *Waiting for your answer
+  on TIM-PC* while the message's `waiting` is true and draws no card, and
+  an answer is refused (409 "Codex no longer waits for that.").
+- **Not on another server's page**: *Continue in a terminal* and *Show in
+  folder* (the strip's ⋯ menu is hidden; `/chat/terminal` 404), and the
+  passage chips' source lines (`/chat/sources` answers nulls; the turn's
+  prompt still gets them, computed on the computer in a vault).
 - **Background tasks** lists the account's queued and running remote
-  turns from `computer_chat_runs`, named with the computer that holds or
-  keeps them (*Codex on TIM-PC: main*), in the phase `asking` while the
-  message says `waiting`, Stop the same route.
-- **Recovery**: an open remote turn is failed through its
-  home at start and whenever its channel's announce succeeds again; a
-  computer's token taken back fails the turns its runs hold and the
-  queued ones no other computer of the account would take; an announce
-  that drops or changes a folder's agent fails that folder's queued turns
-  ("Codex was turned off on the computer that keeps this folder.", or
-  "Codex is no longer this folder's agent." when another is on), and so
-  does the computer when one waiting there finds its agent off ("Codex
-  was turned off on this computer."), so none runs later unasked. The watcher of a remote turn never waits on a network write
-  (a writer thread flushes), so Stop and the deadline stay prompt.
+  turns from `computer_chat_runs`, named with the computer that holds
+  them or was picked for them (*Codex on TIM-PC: main*), in the phase
+  `asking` while an ask waits (`there` while the message says `waiting`),
+  Stop the same route; a row's
+  `params.agent_id` picks that computer's agent when it opens the chat.
+- **Recovery**: an open remote turn is failed through its home at start
+  and whenever its channel's announce succeeds again; a computer's token
+  taken back fails the turns its runs hold and the queued ones no other
+  token of that computer there takes (a link's new token announces before
+  the old one is revoked); an announce that turns the turn's agent off,
+  drops a person it served, or no longer keeps its work folder or offers
+  its directory fails the turns queued for that computer
+  (`registry._refusal`: "Codex was turned off on TIM-PC.", "TIM-PC no
+  longer keeps this synced folder.", "TIM-PC no longer offers that
+  directory."), and so does the computer when one waiting there finds its
+  agent off ("Codex was turned off on this computer."), so none runs later
+  unasked. The watcher of a remote turn never waits on a network write (a
+  writer thread flushes), so Stop and the deadline stay prompt.
 
 ## The chat's computer side
 
@@ -1020,26 +1089,29 @@ once and run with the network.
 
 ## Asking on this computer
 
-A chat turn of a page of another server's work folder ("The chat on
-another server's page") may ask too, as a local turn does, but the card is
-drawn and answered on the computer itself, in the desktop app's bar, with
-the server's page hidden while it is up
-([desktop architecture](../../desktop/docs/architecture.md)). That server
-starts the turn and learns that it waits, never what it asks: nothing it
-sends draws, words or answers the card. Step 5b of
-[agent-collab](../research/agent-collab.md).
+A chat turn of another server's ("The chat on another server's page") may
+ask too, as a local turn does, and the card is drawn and answered on the
+computer itself, in the desktop app's bar, with the server's page hidden
+while it is up ([desktop architecture](../../desktop/docs/architecture.md)).
+Step 5b of [agent-collab](../research/agent-collab.md). Where the link lets
+that server answer what this computer's agents ask (its `asks`, decision 7
+of [the plan](../research/agents-as-participants-plan.md), step 4.3), the
+ask is relayed there too and answered in the chat there ("Relayed" below);
+else that server starts the turn and learns that it waits, never what it
+asks: nothing it sends draws, words or answers the card.
 
 - **What it may run** is the turn's agent's, the computer's (`runs`
   `ask`, "Asking in the chat"): one setting lets it ask in the chat here
-  and on this computer for a turn there; nothing is set per server or per
-  folder (a per-server switch is step 4.1 of
-  [the plan](../research/agents-as-participants-plan.md)).
+  and on this computer for a turn there; per server, only whether that
+  server answers too (the link's `asks`, [computers.md](computers.md) "The
+  servers this computer answers").
 - **Who may ask** (`runner.ask_refusal`, at the turn's start and at every
-  ask): the agent's `ask`, the shell's secret set (`NOBODY_HERE` without:
-  no window to ask in), and that server reached securely now
-  (`NOT_SECURE`: `remote_servers.plain` must be "", https or this
-  computer, [https.md](https.md)). A turn that may not starts its agent
-  without `ask`.
+  ask): the agent's `ask`, that server reached securely now (`NOT_SECURE`:
+  `remote_servers.plain` must be "", https or this computer,
+  [https.md](https.md)), and, unless the link relays asks, the shell's
+  secret set (`NOBODY_HERE` without: no window to ask in); a co-author's
+  turn only where the link relays them. A turn that may not starts its
+  agent without `ask`.
 - **Each ask**, in `_ChatTurn._asked`'s order, is declined unseen ("Gamma
   declined that: …") for: its agent or the address no longer allowing it;
   a kind other than a command or a file change; a `grantRoot` (every
@@ -1047,12 +1119,13 @@ sends draws, words or answers the card. Step 5b of
   `FAR_MAX_LINES` (200), a cut diff or more than `FAR_MAX_PATHS` (20)
   paths (`TOO_LONG`: what this computer cannot show whole); a network host
   that does not read as one (`events.host_ok`: `HOST_UNREAD`); the caps of
-  every turn; and the desktop app not there to answer: unless it read the
-  asks within `SHELL_SEEN_S` (60 s), the ask waits up to `SHELL_GRACE_S`
-  (15 s) for its first read, else `NOBODY_HERE`. No grant is looked up for
-  a remote turn: only *Allow once*, *Decline* and the shell's *Stop
-  asking*, which declines and sets what the agent may run back to `never`
-  (`PATCH /api/local-agents/{agent}` `{runs: "never"}`, as its owner).
+  every turn; and, where the link relays no asks, the desktop app not there
+  to answer: unless it read the asks within `SHELL_SEEN_S` (60 s), the ask
+  waits up to `SHELL_GRACE_S` (15 s) for its first read, else
+  `NOBODY_HERE`. No grant is looked up for a remote turn: only *Allow
+  once*, *Decline* and the shell's *Stop asking*, which declines and sets
+  what the agent may run back to `never` (`PATCH /api/local-agents/{agent}`
+  `{runs: "never"}`, as its owner).
 - **What is held** is the ask with its card (`_ChatTurn._card`): `{id,
   turn_id, link_id, agent, label, kind, command?, lines?, inner?, shell?,
   marked?, background?, dir, folder, file, host?, paths?, diff?, reason?,
@@ -1064,11 +1137,29 @@ sends draws, words or answers the card. Step 5b of
   `reason` the agent's one line (300 characters), `server.origin` the
   link's, `server.account` the channel's account there (64 characters):
   the one word in it that server chose.
-- **What that server learns**: the message's `waiting` (`home.CHAT_FIELDS`;
-  `_turn_fields` takes it as a flag, `chats.write_run` and `_end_run` set it
-  false at every end) and the steps as for any turn (`{id, kind, status,
-  program | path | tool}`, a step id never this computer's ask id); never `asks`.
-  Integrity, not secrecy: the agent's next words may say what it did.
+- **What that server learns**, the link relaying no asks: the message's
+  `waiting` (`home.CHAT_FIELDS`; `_turn_fields` takes it as a flag,
+  `chats.write_run` and `_end_run` set it false at every end) and the steps
+  as for any turn (`{id, kind, status, program | path | tool}`, a step id
+  never this computer's ask id); never `asks`. Integrity, not secrecy: the
+  agent's next words may say what it did.
+- **Relayed** (the link's `asks` on, read at each ask and each write:
+  `_ChatTurn._relays`): the message there takes the asks as the chat's
+  message holds them (`_progress`' `asks`, each `once`, its paths relative
+  to the directory, under `~` or whole; `waiting` false), so the chat there
+  draws the card and a thread's chip says it waits for the person. Its
+  answer there (the turn's person or the agent's owner, `once` or `deny`
+  with a note; [computers.md](computers.md) "What the agents ask, answered
+  here") is kept with the run, and the computer is woken: the channel's
+  listing hands it to the turn (`channel._chats` → `runner.answer_relayed`:
+  this run's, the ask still waiting, the link still relaying, else
+  nothing). The bar lists the ask all the same, and the first answer is
+  the one: the other card closes (the bar's list loses it, the message
+  there is written without it), and an answer after it is refused (409).
+  The link turned off or on while a turn runs writes its message there
+  again without the asks or with them (`runner.relays_changed`). Neither
+  the bar nor the desktop app's secret is needed then: with no window here,
+  that server alone answers. A co-author's far turn asks only so.
 - **The routes** are the computer's alone (404 where agents do not run),
   with the shell's word, never unchecked (403), and a session of the
   account that made the vaults (the shell's own partition): `GET
@@ -1081,10 +1172,11 @@ sends draws, words or answers the card. Step 5b of
   for another account's; 400 "On this computer an ask is allowed once or
   declined."; 409 as an answer in the chat). `version` rises at every
   change of what waits (`_asks_changed`), so the shell drops a held list
-  older than an answer. The chat's own answer route refuses every remote
-  turn (409 "This is answered on the computer that runs the agent."), by
-  rule too: `_ChatTurn.answer` refuses it, only `answer_computer` reaches
-  `_answer_here`.
+  older than an answer. This computer's own chat route refuses every
+  remote turn (409 "This is answered on the computer that runs the
+  agent."), by rule too: `_ChatTurn.answer` refuses it; only
+  `answer_computer` reaches `_answer_here`, and `answer_relayed`
+  `_decide`.
 - **The answer never waits on that server**: after an ask or an answer a
   remote turn's message is written by the flush thread (`_show_later`),
   so the POST returns once the driver has the answer; a write that did not
@@ -1095,7 +1187,9 @@ sends draws, words or answers the card. Step 5b of
   `ASK_TIMEOUT_S` as in the chat. Stop there declines what waits here (the
   drivers' stop), and the list loses it at once.
 - **Background tasks** there read the turn's phase `asking` while its
-  message says `waiting` (`chats.remote_turns`' `asking`).
+  message says `waiting` or holds an ask (`chats.remote_turns`' `asking`),
+  with `there` for `waiting` (*Waiting for your answer on TIM-PC*; else
+  *Waiting for you*).
 
 ## Gamma's tools
 
@@ -1154,10 +1248,27 @@ and the owner can delete it; notes it changes only through the turn's asks.
   `stepText` and `stepNow` alike), and the chat's chip is the kind Gamma
   AI's own call of that tool is (`computerChat.stepChip`), a writing tool's
   the kind `write`, which lists no change under the reply.
-- **A far turn** (one this computer runs for another server's work folder
-  over the channel, "A work folder of another server") gets no token here:
-  this server's token reads this server, not that one. Step 4.2 has that
-  server mint one at the claim and hand it over with its own address.
+- **A far turn** (one this computer runs for another server over the
+  channel, "Another server's chat") gets that server's tools, never this
+  one's (step 4.2 of the plan): that server mints the turn's token at the
+  claim (`integrations.mint_turn` for the account the turn is for, of its
+  workspace alone, named with this computer's agent's id there,
+  `computer:<its id there>:codex`, so what it writes reads *Codex on
+  TIM-PC* there: `agents.of_token`, `registry.far_name`), living
+  `chats.TOKEN_S` (the run's timeout and a minute) and renewed by the
+  run's writes at most once a minute, replaced by a retried claim's, and
+  deleted at the turn's end, however it ends (a write that ends it, a Stop
+  that ends it there, the computer's token taken back: `chats._close`);
+  its address is that server's own `/mcp`, its public address
+  (Settings → Administration → Server) or the loopback address the claim
+  came to, else none (`routers/computers.py` `_mcp_url`: the transport
+  takes no other host), and the turn runs without tools. This computer
+  takes them only where the address's origin is the channel's
+  (`HttpChatHome.gamma`, else the message says why), and hands the token
+  to the agent as a local turn's: `events.TOKEN_ENV` of its process alone.
+  A restart of that server's desktop app deletes every turn token there
+  (`integrations.drop_turns`), a far turn's with them: its next call is
+  refused.
 
 ## The drivers
 
@@ -1455,7 +1566,7 @@ directories of their own of conversations gone meanwhile are removed
 (`migrations.is_behind`) is waited for, every `RECOVER_POLL_S` (5 s) and at
 most `RECOVER_WAIT_S` (600 s), while the background walk upgrades it; a
 turn not failed by then stays open for the next start. A turn of another
-server's work folder fails there ("A work folder of another server").
+server's turn fails there ("Another server's chat").
 
 ## What this computer keeps
 
@@ -1550,13 +1661,19 @@ nobody else learns it exists), 403 for a token or the guest
   `GET /api/local-agents` once for the window and again when it comes back
   (`chat/useLocalAgents.js`, a store every reader shares: the chat, the
   comments and Settings, which reads it afresh and after each change it
-  makes) and the page's computers (`vault/usePageComputer.js`), and builds
+  makes) and the page's computers (`vault/usePageComputer.js`; where no
+  page is open, a folder's or the library's chat, the account's computers,
+  `GET /api/computers`, without another account's lent ones:
+  `vaultState.readAccountComputers`), and builds
   `chatAgents`: Gamma AI (`gammaAgent`, from the AI info and its
-  connection's models), then on a page of a work folder another computer
-  keeps that computer's agent there (`keeperAgent`, by its announce's
-  codes; the server binds such a page's chat to it), else the agents this
-  computer runs that the account turned on (`localAgent`: `enabled` and
-  `mine`). Each agent's state is worded from its code (`checking`,
+  connection's models), then the agents of the page's computers that keep
+  its work folder (`farAgents`, by their announce's codes, each agent on
+  of each computer, `id` its `agentId`, which the chat's routes take),
+  then the agents this computer runs that the account turned on
+  (`localAgent`: `enabled` and `mine`, `id` its name), then the other
+  computers' agents, an offline one's listed offline. The picker names a
+  computer's agent with its computer (*Codex on TIM-PC*), so two
+  computers' read apart. Each agent's state is worded from its code (`checking`,
   `missing`, `signed_out`, `not_ready`); this computer's own problem
   sentence is shown as it came, since it names the command that mends it.
 - **A comment sent to an agent.** App derives the agents the open page's
@@ -1564,8 +1681,8 @@ nobody else learns it exists), 403 for a token or the guest
   `{id, name, label, ready, problem}` of each computer agent the chat
   lists for the page (`id` its `agentId`, `computer:<computer>:<name>`:
   this computer's from the listing's `id`, another computer's from the
-  page's computers' `id`), with `computer` and `online` for the computer
-  that keeps the page's work folder. They reach every comment field as
+  page's computers' `id`), with `computer` and `online` for another
+  computer's. They reach every comment field as
   `links.agents` (the popover's and the margin's) with `links.sendTo` (the
   tick as the person left it last, the account preference
   `commentSendTo`), never `MentionContext`, which reaches the notes. There
@@ -1672,8 +1789,10 @@ nobody else learns it exists), 403 for a token or the guest
   the rest to the next poll, so the card says "Allowed. Codex goes on…" or
   "Not allowed. Codex goes on without it…" until the read that drops the
   ask; a refusal is said on the card and the conversation read again at
-  once. Another computer's turn draws no card: it waits for the answer on
-  that computer.
+  once. Another computer's turn draws the card of what its computer relays
+  here (its message's `asks`, each `once`), the same way; one that waits
+  on that computer alone (`waiting`, `waitsThere`) draws none and says
+  where it waits.
 - **What it changed** is Gamma AI's changes card (`AgentChanges.jsx`
   `FileChanges`, "Changed in the synced folder · 2", "Changed in its
   directory" outside one): a row a file, its path a `PathLink` resolved
@@ -1793,7 +1912,11 @@ are drawn in the bar over the whole window and answered with `POST
   turn") starts a chat turn or a comment's turn too, on the files of a
   synced folder alone. A comment of anyone else's, a token's or the agent's
   own reply starts nothing, so a mirror or a script holding the owner's
-  write token cannot start one (a token's `to` is refused). Turning an agent on, and letting it
+  write token cannot start one (a token's `to` is refused). On a server
+  this computer is shown on, the account of the channel (and the
+  co-authors named for it) starts turns on any page there, in a directory
+  this computer offers or one of its own, or in the vault of a work folder
+  it keeps ("Another server's chat"). Turning an agent on, and letting it
   ask, take the desktop app's own word on the app's server, and its
   question names what a server this computer is shown on can then do; a
   page of Gamma cannot ("Who turns it on").
@@ -1817,7 +1940,13 @@ are drawn in the bar over the whole window and answered with `POST
   holds the turn). It reaches
   the agent's process in `GAMMA_AGENT_MCP_TOKEN` alone. Codex's own
   commands do not inherit it (`shell_environment_policy.exclude`, the
-  user's own excludes kept beside it).
+  user's own excludes kept beside it). A far turn's token is the other
+  server's, minted there at the claim for that turn alone and deleted
+  there at its end: it reads and writes that server's workspace as the
+  account the turn is for, as a local turn's reads this one's, and this
+  computer gives it to the agent only where the address that server named
+  is that server's own origin, so a server cannot hand the agent a token
+  for somewhere else, nor have one sent there.
   **In an ask turn Claude Code's Bash can read it**: an allowed command
   inherits Claude Code's environment, and no setting of Claude Code's was
   found that keeps one variable from Bash (C2 of the plan). The plan accepts
@@ -1846,17 +1975,41 @@ are drawn in the bar over the whole window and answered with `POST
   co-author's token (what they can read, in that workspace), their words
   the instruction, the owner's sign-in of the CLI. What it asks is allowed
   once at most, by that person or the owner, and no grant outlives the ask;
-  on another server it asks nothing. Its conversation is the person's and
+  on another server it asks only where the link relays asks there, once at
+  most too. Its conversation is the person's and
   the owner reads it. Taking the person off stops their running turn and
   fails the next when it is taken, here and on the other server.
+- **Which servers reach this computer.** A server reaches the agents only
+  through a link this computer made to it ([computers.md](computers.md)
+  "The servers this computer answers"): with a vault of it, or from
+  Settings → AI → Agents' *Add a server…*, the shell minting the token with
+  the window's session and handing it over with its word. Such a server
+  gives the agents turns on any of its pages, naming where each works by
+  an id alone (a work folder of it a vault here keeps, a directory this
+  computer offers, or none: an empty one of its own), which this computer
+  resolves itself and refuses otherwise; it learns of the offered
+  directories their ids and names, never a path. Removing the link stops
+  the turns of that server running here and revokes its token there.
+  Whether that server may answer what the agents ask (the link's
+  `asks`, decision 7 of the plan) is off for every link until the shell's
+  word turns it on after a question naming the server; a page cannot turn
+  it on. While it is off every far turn's ask is answered on this computer
+  alone (below).
 - **Asking on this computer** ("Asking on this computer"). The person at
-  the computer alone answers, in the desktop app's bar, with the shell's
-  word on routes that never take a session alone; the other server starts
-  the turn, so it writes what the agent is asked to do, but never the card
-  or the answer, and learns `waiting` and the step statuses, never the
-  ask. Over plain http it is refused (a man in the middle would write the
-  prompt), without the desktop app's secret nobody is asked, and what this
-  computer cannot show whole is declined unseen. The shell's secret is
+  the computer answers in the desktop app's bar, with the shell's word on
+  routes that never take a session alone; the other server starts the
+  turn, so it writes what the agent is asked to do, but, with the link's
+  `asks` off, never the card or the answer, and learns `waiting` and the
+  step statuses, never the ask. With it on (the shell's word after its
+  question) the ask is written there too and whoever signs in there as the
+  turn's person or the agent's owner can allow it, once at most, never as a
+  grant: that server then learns the command and the places it names, and
+  its answer reaches the agent only while the link still allows it
+  (`runner.answer_relayed`). Over plain http asking is refused either way
+  (a man in the middle would write the prompt, or the answer), without the
+  desktop app's secret nobody here is asked (and none at all unless the
+  link relays), and what this computer cannot show whole is declined
+  unseen. The shell's secret is
   read once and taken off the server's environment (`config.shell_secret`,
   on Linux and macOS its bytes in the block the process began with too,
   which /proc and `ps eww` read), and no agent inherits a `GAMMA_*`
@@ -1940,9 +2093,9 @@ are drawn in the bar over the whole window and answered with `POST
 - A thread the agent resolved needs Reopen before it is sent to the agent
   again (`closed`).
 - Comments on a clone never reach this computer's agent, as they never
-  reach its files (annotations.md "Known gaps"). A work folder of another
-  server does ("A work folder of another server"), its chat too ("The
-  chat on another server's page"); its asks are answered on this computer
+  reach its files (annotations.md "Known gaps"). Another server's do
+  ("Another server's chat"), its chat too ("The chat on another server's
+  page"); their asks are answered on this computer
   ("Asking on this computer"), and the terminal and Show in folder stay on
   this computer's own pages.
 - The chat's computer side: Claude Code builds only where the folder lets
@@ -2022,9 +2175,20 @@ are drawn in the bar over the whole window and answered with `POST
   read by the owner, failed once they are taken off), an `@codex` made
   there, the thread's pictures fetched while the computer's run holds the
   turn, the source line through the vault's rows, the reply's one id, a
-  push skipped while paused and *Stop showing*;
-  `tests/test_computer_agents.py` the binding per account and a mention
-  there a turn of its thread the computer takes.
+  push skipped while paused and *Stop showing*; a page there in no synced
+  folder run here in a directory of its own and in one offered (announced
+  by id and name), the directory a turn names checked here
+  (`home.far_place`: a vault of this channel alone, never a path), a token
+  of that server per far turn kept by its writes and gone at its end (a
+  retried claim's replacing the first, a Stop, the computer's token taken
+  back), and the agent here commenting with it as *Codex on* the computer
+  only where its address is that server's own origin;
+  `tests/test_computer_agents.py` the agents a computer takes per account
+  and a mention there a turn of its thread the computer takes;
+  `tests/test_computer_chats.py` the server's side: any page's seat, a
+  turn for a computer away refused, a turn listed to the computer it is
+  for alone, the claim's `about` and `dir`, the queued turns failed by an
+  announce that no longer takes them.
 - `tests/test_local_agents_extras.py`: the probe listing the models, a
   choice one the agent listed, a turn running the model and effort asked
   for (Codex's thread and turn, Claude Code's flags), both drivers
@@ -2079,7 +2243,15 @@ are drawn in the bar over the whole window and answered with `POST
   maker alone, Background tasks there, `waiting` false at every end, the
   card's file from this computer's rows, the secret off the environment
   (in a child started with it on Linux and macOS), a refused write not
-  tried again.
+  tried again; and relayed, the link letting that server answer: the ask
+  in that server's message, allowed once there by the person or the
+  owner (another account and *Allow in this chat* refused), kept with the
+  run, listed and taken here, the bar's card closing, the first answer the
+  one either way, an answer waiting out the channel down with no window
+  here, a Stop there or the agent turned off ending the ask and an answer
+  after it refused, the link off relaying nothing and a co-author then
+  asking nothing, a co-author's ask relayed once at most, answered by them
+  or the owner, no grant kept.
 - `tests/test_local_agents_chat.py`: the chat's computer side: who may (a
   co-author with no agent on, on a file, a library page and the library,
   no such bucket, another server: 404; a token and the guest: 403; one who
@@ -2129,7 +2301,7 @@ are drawn in the bar over the whole window and answered with `POST
   chip, the refusal's words), `tests/commentSendTo.test.mjs` (the tick's
   default, its agent, `@name` ticking it, the field's lines),
   `tests/chatAgents.test.mjs` (the agents' list, the picker's rules, the
-  agents a comment can be sent to), `tests/vaultState.test.mjs` (`vaultAgent`),
+  agents a comment can be sent to, `farAgents`), `tests/vaultState.test.mjs` (`computerChip`),
   `tests/mentions.test.mjs` (the agent's row, a member of its name, its
   text and chip), `tests/computerChat.test.mjs` (the side's requests, the
   words of its steps, pill, changes, endings and strip, when a message may

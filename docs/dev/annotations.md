@@ -989,7 +989,7 @@ ended by its reply in the thread, signed by its label
 folder of another server (a NAS) whose keeping computer announces an agent
 for it works the same way from that server: the turns sent there are taken
 by that computer over its channel and answered there
-([local_agents.md](local_agents.md) "A work folder of another server",
+([local_agents.md](local_agents.md) "Another server's chat",
 [computers.md](computers.md)).
 
 Anywhere else, Gamma starts no process. The owner builds the part that
