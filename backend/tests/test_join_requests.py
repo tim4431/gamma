@@ -168,7 +168,7 @@ def test_an_admin_decides_any_request(owner, boss, invited):
     # the admins' notice counts what waits
     count, newest = join_requests.waiting()
     mine = [n for n in notices.for_user(account_of("jr_boss"), True) if n["id"] == "join-requests"]
-    assert [(n["fingerprint"], n["pane"], n["params"]) for n in mine] == [(newest, "server", {"n": count})]
+    assert [(n["fingerprint"], n["pane"], n["params"]) for n in mine] == [(newest, "users", {"n": count})]
     assert not [n for n in notices.for_user(account_of("jr_owner"), False) if n["id"] == "join-requests"]
     # approved, the next sign-in gets them an account, and the request goes
     r = boss.put("/api/admin/join-requests/sub-jr-fox", json={"status": "approved"})

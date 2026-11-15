@@ -147,7 +147,7 @@ def test_admins_review_the_reports(own, boss, shared):
     ids = [n["id"] for n in boss.get("/api/notices").json()["notices"]]
     assert "reports" in ids
     found = notices.reports_waiting(account_of("rp_boss"))
-    assert found.pane == "server" and found.params["n"] == listed["open"]
+    assert found.pane == "users" and found.params["n"] == listed["open"]
     r = boss.patch(f"/api/admin/reports/{rid}", json={"state": "resolved"})
     assert r.status_code == 200 and r.json()["report"]["state"] == "resolved"
     assert r.json()["report"]["resolved_by"] == account_of("rp_boss")
