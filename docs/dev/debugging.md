@@ -1038,7 +1038,7 @@ npm run e2e -- --jobs 1         # one worker, groups in order, live output (~8 m
 npm run e2e -- --changed        # only the groups the working tree's changes select
 npm run e2e -- --changed main --list  # a branch's selection and why, without running
 npm run e2e -- --group ink,collab     # these groups (ids: `--list`)
-npm run e2e -- --shard 1/2      # half the groups by time (CI runs each half on its own runner)
+npm run e2e -- --shard 1/3      # a third of the groups by time (CI runs each third on its own runner)
 npm run e2e -- --only collab    # steps whose name contains "collab" (one worker)
 npm run e2e -- --continue       # keep going after a failure
 npm run e2e -- --headed         # watch the browser
@@ -1225,15 +1225,18 @@ before testing citations).
 
 Without `--continue` a failure stops handing out groups
 and the ones running finish. The wall time is bounded by the longest group
-(settings, about two and a half minutes in CI), so split it before adding
-workers or shards.
+(notes-pdf-share, about seven minutes in CI), so split it before adding
+workers or shards past the point where a worker's share is shorter.
 
 `--shard k/n` runs the k-th of n shares of the selection. Each group,
 longest first by its `s`, goes to the share with the least time so far
 (`shardOf` in `select.mjs`), so the shares take about as long. CI runs the
-two halves (`--shard 1/2`, `--shard 2/2`) on two runners, about three
-minutes each. When a group's time drifts far from its `s` (a CI log prints
-each group's seconds as `── <group>  (N s`), update it.
+three thirds (`--shard 1/3` to `--shard 3/3`) on three runners, about eight
+minutes of steps each under the job's 15-minute cap, which the install and
+build take about two of. When a group's time drifts far from its `s` (a CI
+log prints each group's seconds as `── <group>  (N s`), update it; when a
+share comes near the cap, look first for a step gone slow (the step lines
+print their milliseconds), then add a shard.
 
 A group that throws outside its steps (its own setup: accounts, seeded
 pages) runs none of them. The summary counts it as a failure,
@@ -1284,7 +1287,7 @@ catch-all (a new folder or module needs its rule), when a group's scenario
 files drift from `scenarios/`, or when a rule names an unknown group. When a
 change reaches less than its rule says (a new prop threaded through
 App.jsx into one pane), the selection errs wide: narrow it with `--group`.
-CI runs everything, in its two shards.
+CI runs everything, in its three shards.
 
 **Flaky steps.** A step that passes here and fails on CI is almost always a
 timing assumption that a slow machine breaks, and the CI runner has 4 cores.

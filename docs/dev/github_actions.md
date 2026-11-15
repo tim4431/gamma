@@ -22,8 +22,8 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, the backend suite on the apps' Python 3.13 and pins (`backend-mobile`), backend pytest, the frontend lint, unit tests + build + the startup budget and the desktop shell's unit tests, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min); reported only: the timing budgets, a table in the run's summary |
-| `flakes` | `flakes.yml` | Monday and Thursday at 03:17 UTC on `dev`; manual dispatch on any ref | pass/fail, holding nothing: the backend suite twice on each Python (3.12, and 3.13 with the apps' pins) with its files in a shuffled order, and the browser suite's two shards once more; what fails is a flake to fix ([below](#flakesyml)) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, the backend suite on the apps' Python 3.13 and pins (`backend-mobile`), backend pytest, the frontend lint, unit tests + build + the startup budget and the desktop shell's unit tests, the browser suite (three shards on three runners, 3 workers each), extension unit tests + zip (~5 min); reported only: the timing budgets, a table in the run's summary |
+| `flakes` | `flakes.yml` | Monday and Thursday at 03:17 UTC on `dev`; manual dispatch on any ref | pass/fail, holding nothing: the backend suite twice on each Python (3.12, and 3.13 with the apps' pins) with its files in a shuffled order, and the browser suite's three shards once more; what fails is a flake to fix ([below](#flakesyml)) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the Android APK (when signed), the browser extension's `gamma-connector-<version>.zip` and the AI plugins → GitHub Release `v<version>`; after it, the MSIX to the Microsoft Store and the Android bundle to Google Play's internal track when their secrets exist; a Docker tag `<version>`; from `main`, an empty commit on `main` with the next `ipad-test-release-NNN` marker (TestFlight) |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (from `main`, not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
@@ -445,8 +445,8 @@ holding the job), the frontend lint, unit tests + build (Node 22,
 tests (`node --test desktop/test/*.test.js`: the pure modules,
 `main.js` under a stand-in for Electron and the one switch for test
 windows, Node's built-ins only, so no install), the browser suite
-(`npm run e2e -- --continue --jobs 3 --shard <k>/2`, the two shards as a
-matrix of two jobs of about equal time, against a backend started from the checkout with
+(`npm run e2e -- --continue --jobs 3 --shard <k>/3`, the three shards as a
+matrix of three jobs of about equal time, against a backend started from the checkout with
 `GAMMA_E2E_PYTHON=python` — both requirements files, since a scenario
 builds its Zotero fixture from a backend test module — Playwright's
 Chromium installed with its system deps; on a failure the harness's
@@ -497,7 +497,7 @@ four times, twice on Python 3.12 with `requirements.txt` and twice on
 3.13 with the apps' pins, each with `GAMMA_TEST_SHUFFLE` set to a seed of
 its own (the run id, the Python, the run), so its files go to the
 workers in another order ([debugging.md](debugging.md#order-and-timing));
-the seed is in the job's summary. The browser suite runs its two shards
+the seed is in the job's summary. The browser suite runs its three shards
 as `check.yml` does, with the same `e2e-failures-<shard>` artifact. A
 failure holds nothing: it is a flake to fix, or to list under
 [known flakes](debugging.md#known-flakes) until it is.

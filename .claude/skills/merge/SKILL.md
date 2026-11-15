@@ -134,7 +134,7 @@ instead, and the merge waits.
 5. **Wait for the checks**: `gh pr checks <n> --watch` (`check`: the
    mobile pins, the backend suite on the apps' Python 3.13 and pins
    (`backend-mobile`), backend pytest, frontend lint, unit tests + build + startup budget, the desktop
-   shell's unit tests, the browser suite in two shards, extension zip, and
+   shell's unit tests, the browser suite in three shards, extension zip, and
    `perf`, the timing budgets, a table in the run's summary and never red;
    ~5 min, skipped for a PR that only touches the account server or the
    website; `ipad`: the iPad app on a simulator, ~40 min, and `android`:
