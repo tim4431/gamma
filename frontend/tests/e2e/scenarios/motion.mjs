@@ -944,22 +944,27 @@ export async function motionScenarios(env) {
     const ctx = await user.context(browser);
     await watch(ctx);
     await ctx.addInitScript(() => { try { localStorage.setItem("gamma-home-sort-map", JSON.stringify({ "": "viewed" })); } catch {} });
-    // the view history a beat behind the listing, as on a slow link (a
-    // first load reads it with the other preferences, in one request)
+    // the view history behind the listing, as on a slow link (a first load
+    // reads it with the other preferences, in one request): held until the
+    // listing has drawn, since a busy machine can ask for the listing more
+    // than any fixed delay after the preferences
+    let release;
+    const held = new Promise((done) => { release = done; });
     await ctx.route(/\/api\/prefs\?keys=[^&]*recent-views/, async (route) => {
-      await new Promise((done) => setTimeout(done, 400));
+      await held;
       await route.continue();
     });
     const page = await openPage(ctx, home);
     try {
       await listRow(page, "Viewed long ago").waitFor();
       assert((await firstItem(page)).includes("Viewed just now"), "before the history lands the sort falls back to the modified time");
+      release();
       await until(async () => (await firstItem(page)).includes("Viewed long ago"), { what: "the view history's order" });
       await page.waitForTimeout(200);
       const seen = await glides(page);
       assertEq(seen.length, 0, `the history's order lands at once: ${seen}`);
       await assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally { release(); await ctx.close(); }
   });
 
   await step("motion: a metadata lookup ending in the background brings the titles it found without a glide", async () => {
