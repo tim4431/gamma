@@ -8,15 +8,6 @@
   "app/prefDefs.js": {
     "pointer-kind": 1
   },
-  "chat/GrantChip.jsx": {
-    "icon-size": 1
-  },
-  "chat/ReplyPapers.jsx": {
-    "icon-size": 1
-  },
-  "chat/RevertChanges.jsx": {
-    "icon-size": 1
-  },
   "collaboration/ZoteroPage.jsx": {
     "icon-size": 1
   },
@@ -65,6 +56,9 @@
   },
   "recording/PlayerBar.jsx": {
     "icon-size": 2
+  },
+  "settings/AssistantTools.jsx": {
+    "icon-size": 1
   },
   "settings/SettingsKit.jsx": {
     "double-click": 1

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addsToLibrary, agentLine, agentWorking, bannerKey, baseName, carriesToServer, computerChip, directionText, editsFile, folderKeeper, isOpenedFile,
-  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, showsOnDisk, sinceText, vaultBanner,
-  vaultChip, vaultConflictsPath,
+  libraryWorkspaces, notesLocked, openedHere, openedNote, opensAsPdf, readComputers, readVault, revealLabel, showsOnDisk, sinceText,
+  vaultBanner, vaultChip, vaultConflictsPath,
 } from "../src/vault/vaultState.js";
 import { libraryTree, pageBlocksOf } from "../src/library/libraryUtils.js";
 
@@ -309,18 +309,39 @@ test("the assistants there: by their code, never the computer's own words; none 
 test("a synced folder's root names the computer that keeps it and how its sync stands", () => {
   const now = new Date(2026, 10, 13, 18, 0);
   const link = (status = {}, more = {}) => ({ id: "v1", status, choosing: false, ...more });
-  assert.deepEqual(folderKeeper(link({ last_sync: "x" }), null, now), { text: "This computer · Synced", title: "Kept on This computer\nSynced" });
-  assert.equal(folderKeeper(link({ paused_at: "x" }), null, now).text, "This computer · Paused");
-  assert.equal(folderKeeper(link({ stopped: "gone" }), null, now).text, "This computer · Not syncing");
-  assert.equal(folderKeeper(link({ running: true }), null, now).text, "This computer · Syncing…");
-  assert.equal(folderKeeper(link({}, { choosing: true }), null, now).text, "This computer · Choosing files…");
+  // a StateTag's state, with the tone of the folder icon's arrows
+  const tag = (k) => [k.label, k.tone, k.live, k.badge];
+  assert.deepEqual(folderKeeper(link({ last_sync: "x" }), null, now), { label: "This computer · Synced",
+    title: "Kept on this computer\nSynced", tone: "", live: false, badge: "ok", computer: "" });
+  assert.deepEqual(tag(folderKeeper(link({ paused_at: "x" }), null, now)), ["This computer · Paused", "", false, ""]);
+  const stopped = folderKeeper(link({ stopped: "gone", last_error: "D:\\Papers is not there" }), null, now);
+  assert.deepEqual(tag(stopped), ["This computer · Not syncing", "warn", false, "warn"]);
+  assert.equal(stopped.title, "Kept on this computer\nNot syncing: D:\\Papers is not there", "its reason in the title");
+  assert.equal(folderKeeper(link({ stopped: "gone" }), null, now).title, "Kept on this computer\nNot syncing: gone");
+  assert.deepEqual(tag(folderKeeper(link({ running: true }), null, now)), ["This computer · Syncing…", "pending", true, "pending"]);
+  assert.deepEqual(tag(folderKeeper(link({}, { choosing: true }), null, now)), ["This computer · Choosing files…", "pending", false, "pending"]);
   const pc = { name: "TIM-PC", online: true, since: null, paused: false };
-  assert.equal(folderKeeper(link(), pc, now).text, "This computer · Synced", "this desktop app's own vault first");
-  assert.equal(folderKeeper(null, pc, now).text, "TIM-PC · Connected");
-  assert.equal(folderKeeper(null, { ...pc, paused: true }, now).text, "TIM-PC · Paused");
-  assert.match(folderKeeper(null, { ...pc, online: false, since: new Date(2026, 10, 13, 14, 2).toISOString() }, now).text, /^TIM-PC · Offline since 2:02/);
-  assert.equal(folderKeeper(null, { ...pc, online: false }, now).text, "TIM-PC · Offline");
+  assert.equal(folderKeeper(link(), pc, now).label, "This computer · Synced", "this desktop app's own vault first");
+  assert.deepEqual(folderKeeper(null, pc, now), { label: "TIM-PC · Connected", title: "Kept on TIM-PC\nConnected", tone: "", live: false,
+    badge: "ok", computer: "TIM-PC" });
+  assert.deepEqual(tag(folderKeeper(null, { ...pc, paused: true }, now)), ["TIM-PC · Paused", "", false, ""]);
+  const away = folderKeeper(null, { ...pc, online: false, since: new Date(2026, 10, 13, 14, 2).toISOString() }, now);
+  assert.match(away.label, /^TIM-PC · Offline since 2:02/);
+  assert.deepEqual([away.tone, away.badge], ["warn", "warn"]);
+  assert.equal(folderKeeper(null, { ...pc, online: false }, now).label, "TIM-PC · Offline");
   assert.equal(folderKeeper(null, null, now), null, "nobody this account knows keeps it");
+});
+
+test("the row that shows a file in the system's file manager is named after it", () => {
+  assert.equal(revealLabel("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Gamma/1.0.0 Electron/38.0.0"), "Show in Explorer");
+  assert.equal(revealLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 Electron/38.0.0"), "Show in Finder");
+  assert.equal(revealLabel("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Electron/38.0.0"), "Show in file manager");
+  assert.equal(revealLabel(""), "Show in file manager");
+});
+
+test("a paused synced folder says syncing is paused, a vault of one file that the vault is", () => {
+  assert.match(vaultChip(folder({ paused: true })).title, /\nSyncing is paused\.$/);
+  assert.match(vaultChip(folder({ scope: "file", paused: true })).title, /\nThe vault is paused\.$/);
 });
 
 test("the computer's chip names the first computer that keeps the page, not one whose agents alone it offers", () => {

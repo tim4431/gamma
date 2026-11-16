@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep,
+import { CATEGORIES, bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep,
   importSource, notionFiles, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
@@ -170,7 +170,7 @@ test("the bibliography URL is the same path for a fetch and for a pasted link", 
 
 test("a Notability note has no switches: it exports straight from the first step, a folder's as one .zip", () => {
   const note = resolveExport({ format: "notability", highlights: true, notes: false, bundle: false }, paper);
-  assert.equal(note.definition.category, "Notes");
+  assert.equal(note.definition.category, "Handwriting apps");
   assert.equal(note.needsReview, false);
   assert.deepEqual(note.payload, { format: "notability", highlights: false, notes: true, bundle: true, ...noCards });
   assert.match(exportSummary(note), /brings the page back as it was/);
@@ -180,6 +180,22 @@ test("a Notability note has no switches: it exports straight from the first step
   assert.deepEqual(exportJobBody(folder.payload, { folder: "Reading" }),
     { folder: "Reading", mode: "notability", pdf: true, highlights: false, notes: true });
   assert.equal(exportFormatOf("notability").label, "Notability");
+});
+
+test("the handwriting apps have a row of their own, each card saying what its app keeps; Notes keeps PDF, Markdown and Notion", () => {
+  const { formats } = resolveExport({ format: "notespdf" }, paper);
+  const row = (category) => formats.filter((f) => f.category === category).map((f) => f.id);
+  assert.deepEqual(row("Notes"), ["notespdf", "markdown", "notion"]);
+  assert.deepEqual(row("Handwriting apps"), ["notability", "goodnotes"]);
+  assert.ok(CATEGORIES.indexOf("Handwriting apps") === CATEGORIES.indexOf("Notes") + 1, "right under Notes");
+  // GoodNotes keeps the highlights and no notes, Notability the reverse, as their fixed contents say
+  const hint = (id, opts) => resolveExport({ format: id }, opts).definition.hint;
+  assert.equal(hint("goodnotes", paper), "Highlights and handwriting, for GoodNotes");
+  assert.equal(hint("notability", paper), "Handwriting, notes and recordings, for Notability");
+  assert.match(hint("goodnotes", { folder: "Reading" }), /^Each page's highlights and handwriting, .* one \.zip$/);
+  assert.match(hint("notability", { folder: "Reading" }), /^Each page's handwriting, notes and recordings, .* one \.zip$/);
+  assert.deepEqual([exportFormatOf("goodnotes").fixed.highlights, exportFormatOf("goodnotes").fixed.notes], [true, false]);
+  assert.deepEqual([exportFormatOf("notability").fixed.highlights, exportFormatOf("notability").fixed.notes], [false, true]);
 });
 
 test("Notion's zip reviews its two switches and always bundles, and its text claims nothing of what Notion keeps", () => {

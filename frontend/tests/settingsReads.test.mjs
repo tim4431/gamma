@@ -88,7 +88,7 @@ test("a pane's reads go out together with what they lead to; a prefetch reads on
   assert.ok(!PANE_READS.backups(who).includes("/admin/offsite"), "an account that is not an admin reads no bucket");
   assert.ok(PANE_READS.backups({ admin: true }).includes("/admin/offsite"));
   assert.equal(PANE_READS.server().filter((path) => path === "/admin/settings").length, 1, "the Server pane reads its settings once");
-  const people = (w) => PANE_READS.ai(w).find((read) => read?.path === "/local-agents/people");
+  const people = (w) => PANE_READS.agents(w).find((read) => read?.path === "/local-agents/people");
   assert.equal(people({ signedIn: true }), undefined, "a browser asks no other server whom an agent may serve");
   assert.equal(people({ signedIn: true, desktop: true }).later, true, "the desktop app asks, without waiting for it");
 });
@@ -113,11 +113,11 @@ test("every path a section reads through the store is one of a pane's reads", as
   }
   assert.deepEqual(PANE_READS.workspaces(who).filter((read) => Object.values(LINK_BASES).includes(read)), ["/mirrors", "/zotero/links"]);
   // a server that runs no agents answers 404 for the people an owner may name
-  assert.ok(!PANE_READS.ai({ signedIn: true, desktop: false }).some((read) => read?.path === "/local-agents/people"),
+  assert.ok(!PANE_READS.agents({ signedIn: true, desktop: false }).some((read) => read?.path === "/local-agents/people"),
     "a window other than the desktop app's reads no people");
   // the links to other servers are kept by the desktop app's own server alone
-  assert.ok(PANE_READS.ai({ signedIn: true, desktop: true }).includes("/computer-links"));
-  assert.ok(!PANE_READS.ai({ signedIn: true, desktop: false }).includes("/computer-links"),
+  assert.ok(PANE_READS.agents({ signedIn: true, desktop: true }).includes("/computer-links"));
+  assert.ok(!PANE_READS.agents({ signedIn: true, desktop: false }).includes("/computer-links"),
     "a window other than the desktop app's reads no links");
 });
 

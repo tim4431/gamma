@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { changeCount, changePlace, chipNote, helperStatus, isChange, noteChangeText, runningLabel, splitActions, stepsSummary, withHelper } from "../src/chat/agentSteps.js";
+import { changeCount, changePlace, chipNote, helperStatus, isChange, noteChangeText, runningLabel, splitActions, stepsSummary, toolWords, withHelper } from "../src/chat/agentSteps.js";
 
 const actions = [
   { kind: "list", tool: "list_pages", summary: "Listed 12 pages" },
@@ -19,6 +19,31 @@ test("the pill sums every step and names the reading ones", () => {
   // A helper's run is one step of the chat, named as what it is.
   assert.equal(stepsSummary([actions[1], { kind: "helper", tool: "read_paper", summary: "Helper read “A”", steps: 5 }]),
     "2 steps · read 1 page, used 1 helper");
+  // a call not allowed is counted as a step, never as a read
+  assert.equal(stepsSummary([actions[1], { ...actions[1], declined: true }]), "2 steps · read 1 page");
+});
+
+test("a computer agent's steps: the files it read and edited, each once, and the commands it ran", () => {
+  const steps = [{ kind: "file", path: "a.tex" }, { kind: "file", path: "a.tex" }, { kind: "file", path: "b.tex" },
+    { kind: "fileEdit", path: "a.tex" }, { kind: "run", program: "latexmk" }];
+  assert.equal(stepsSummary(steps), "5 steps · read 2 files, edited 1 file, ran latexmk");
+  assert.equal(stepsSummary([{ kind: "run", program: "latexmk" }, { kind: "run", program: "latexmk" }]), "2 steps · ran latexmk 2 times");
+  assert.equal(stepsSummary([{ kind: "run", program: "latexmk" }, { kind: "run" }]), "2 steps · ran 2 commands", "one unnamed: counted");
+  assert.equal(stepsSummary([{ kind: "work", summary: "Worked" }]), "1 step");
+});
+
+test("a call of Gamma's tools known by its name alone, in Gamma AI's words", () => {
+  assert.equal(toolWords("list_annotations"), "Listed the highlights and comments");
+  assert.equal(toolWords("list_annotations", true), "Listing the highlights and comments…", "while it runs, runningLabel's");
+  assert.equal(toolWords("read_page"), "Read a page");
+  assert.equal(toolWords("read_page", true), "Reading a page…");
+  assert.equal(toolWords("search_library", true), "Searching your library…", "no query: none quoted");
+  assert.equal(toolWords("view_pdf_page", true), "Looking at a PDF page…", "no page: none named");
+  assert.equal(toolWords("comment"), "Wrote a comment");
+  assert.equal(toolWords("list_workspaces", true), "Listing the workspaces…");
+  assert.equal(toolWords("export_page"), "Exported a page");
+  assert.equal(toolWords("something_new"), "", "a tool it does not know");
+  assert.equal(toolWords("something_new", true), "");
 });
 
 test("changes are split by where they landed; failures and no-ops are not changes", () => {

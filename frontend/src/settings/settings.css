@@ -296,6 +296,12 @@
 .setRow { --set-field-w: calc(260px * var(--ui-scale, 1)); }
 :is(.setRow, .setRowControls) > :is(.aiKeyInput, .pwField) { flex: 0 1 var(--set-field-w); width: var(--set-field-w); min-width: 0; max-width: 100%; margin-bottom: 0; }
 .setRowControls:has(> :is(.aiKeyInput, .pwField)) { flex-wrap: nowrap; }
+/* A Test's answer beside its button (TestResult): a field's width at most,
+   its words wrapping, so a long failure leaves the row its text. */
+.setRowControls > .aiKeyCheck { flex: 0 1 auto; min-width: 0; max-width: var(--set-field-w); overflow-wrap: anywhere; }
+/* Rows that belong to the row above (an agent's, under its switch), indented
+   by the icon's column: layout only, as Users nests a row's workspaces. */
+.setSubRows { display: flex; flex-direction: column; gap: 3px; padding-left: calc(28px + 11px); flex-shrink: 0; }
 /* Row `wide`: a list (a textarea) or a pair of fields, its control on a
    second line under the text and spanning to the row's end; the field takes
    the line, its buttons beside it. .setFieldPair: two equal columns (a user
@@ -670,13 +676,18 @@ button.aiModelTag:disabled { cursor: default; }
 .settingsSearch .aiKeyInput { min-width: 0; width: 100%; margin: 0; }
 .settingsBody { display: flex; flex: 1; min-height: 0; }
 .settingsMobileBack { display: none; }
-.settingsSidebar { padding: 16px 10px; }
+.settingsSidebar { padding: 16px 10px; overflow: hidden; }
 .settingsNavBtn { flex-shrink: 0; line-height: var(--lh-tight); } /* one row height for Latin and CJK faces alike */
-/* An admin's rail (eighteen panes) fits the dialog's full height without scrolling. */
-.settingsNavGroup { display: flex; align-items: center; margin-top: 8px; padding: 4px 12px; line-height: var(--lh-tight); }
+/* The groups between the account card and Help: an admin's nineteen panes
+   fit the dialog's full height, the rows touching and the captions 6 px
+   apart; a shorter window scrolls this list alone, the card and Help
+   staying where they are. A thin scrollbar keeps the rail's width for
+   "Language & translation" on one line. */
+.settingsNavList { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; display: flex; flex-direction: column; }
+.settingsNavGroup { display: flex; align-items: center; margin-top: 6px; padding: 4px 12px; line-height: var(--lh-tight); }
 .settingsNavGroup .uiTag { margin-left: 7px; }
 /* Help & diagnostics, pinned under the groups at the rail's bottom. */
-.settingsNavBottom { margin-top: auto; padding-top: 8px; display: flex; flex-direction: column; }
+.settingsNavBottom { padding-top: 6px; display: flex; flex-direction: column; }
 /* NavAccountCard: the account at the top of the rail. */
 .setNavAccount {
   display: flex; align-items: center; gap: 10px; flex-shrink: 0;

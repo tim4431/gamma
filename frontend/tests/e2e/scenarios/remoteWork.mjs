@@ -218,7 +218,7 @@ export async function remoteWorkScenarios(env) {
     await step("remote-work: the computer gone, the workspace's owner detaches the folder from its menu, removing its files: those outside the library go to Recently deleted, and what stays is the members' again", async () => {
       await computer.stop();
       computerUp = false;
-      // an editor is offered no Detach, and may not detach it
+      // an editor is offered Stop syncing disabled, with who may, and may not detach it
       const bctx = await bob.context(browser);
       try {
         const page = await openPage(bctx, `${nas.base}/?ws=${wsId}`);
@@ -228,9 +228,12 @@ export async function remoteWorkScenarios(env) {
         await row.click({ button: "right" });
         const menu = page.locator(".ctxMenu");
         await menu.locator(".ctxMenuItem").first().waitFor();
-        assertEq(JSON.stringify(await (await plan).json()), JSON.stringify({ may: false }), "the menu asked, and was told nothing");
-        const items = (await menu.locator(".ctxMenuItem").allInnerTexts()).map((s) => s.trim());
-        assert(!items.some((s) => s.startsWith("Detach")), `no Detach for an editor: ${items.join(", ")}`);
+        assertEq(JSON.stringify(await (await plan).json()), JSON.stringify({ may: false, why: "keeper" }),
+          "the menu asked, and was told only who may");
+        const stop = menu.locator(".ctxMenuItem", { hasText: "Stop syncing…" });
+        assertEq(await stop.isDisabled(), true, "Stop syncing is there, disabled, for an editor");
+        assertEq(await stop.getAttribute("title"), "Only the person whose computer keeps it, or the workspace's owner, can stop syncing it.",
+          "its title says who may");
         await page.keyboard.press("Escape");
         assertNoProblems(page);
       } finally { await bctx.close(); }
@@ -244,21 +247,21 @@ export async function remoteWorkScenarios(env) {
         await row.waitFor({ timeout: 15000 });
         await row.click({ button: "right" });
         // no computer of hers keeps it here: the row names none
-        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Detach…" }).click();
+        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Stop syncing…" }).click();
         const dialog = page.locator(".detachDialog");
         await dialog.waitFor();
-        await dialog.getByText("5 files sync with it. 2 of them are in your library and stay there either way.").waitFor();
+        await dialog.getByText("Gamma stops syncing it. It has 5 files. 2 of them are in your library and stay there either way.").waitFor();
         const said = await dialog.innerText();
-        assert(said.includes("Detach the synced folder “Paper”?") && said.includes("3 files go to Recently deleted.")
+        assert(said.includes("Stop syncing “Paper”?") && said.includes("3 files go to Recently deleted.")
           && said.includes("The directory on the computer stays as it is"), `the dialog says what each choice does: ${said}`);
         await dialog.getByLabel(/Remove them from Gamma/).check();
         const answered = page.waitForResponse((r) => r.url().endsWith(`/api/folders/${folderId}/detach`) && r.request().method() === "POST");
-        await dialog.getByRole("button", { name: "Detach", exact: true }).click();
+        await dialog.getByRole("button", { name: "Stop syncing", exact: true }).click();
         const answer = await (await answered).json();
         assertEq(JSON.stringify({ kept: answer.kept, trashed: answer.trashed }), JSON.stringify({ kept: 2, trashed: 3 }),
           "the PDF and the note kept, the other three files sent");
         await dialog.waitFor({ state: "detached" });
-        await page.getByText("Detached “Paper”: 3 files went to Recently deleted.").first().waitFor({ timeout: 10000 });
+        await page.getByText("Stopped syncing “Paper”: 3 files went to Recently deleted.").first().waitFor({ timeout: 10000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
 

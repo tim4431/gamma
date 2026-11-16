@@ -91,7 +91,7 @@ test('a work folder is what the link says: one of another server is made so ther
   assert.equal(folder({ push: 'everything', work: false, status: {} }).work, false);
   assert.equal(folder({ ...nas, folder_id: 'root', work: true }).work, false, 'never the whole library');
   assert.equal(folder({ push: 'everything', work: true, status: {} }).work, true);
-  assert.equal(keeping.REMOTE_WORK_RULE, 'A synced folder of another server pushes everything and pulls: detach it to stop.');
+  assert.equal(keeping.REMOTE_WORK_RULE, 'A synced folder of another server pushes everything and pulls: stop syncing it to end that.');
   // an empty folder there that cannot be one: why, while the vault dialog asks instead
   assert.equal(keeping.remoteWorkRefused('NAS', 'Lab', 'NAS is older than this app and keeps no synced folders'),
     '“Lab” cannot be a synced folder of NAS: NAS is older than this app and keeps no synced folders. It can be synced as a vault that pulls instead.');
@@ -102,10 +102,10 @@ test('a work folder is what the link says: one of another server is made so ther
   // vault is forgotten here only if asked
   assert.match(keeping.removalAsk(far, { pages: 4, files: 4, in_library: 1 }, 'TIM-PC').detail,
     /Remove them from Gamma: 3 files go to Recently deleted on NAS\. The directory on TIM-PC stays as it is/);
-  const q = keeping.farRemovalAsk(far, 'NAS cannot be reached: detach it once it answers, or detach the synced folder there');
-  assert.equal(q.message, 'NAS cannot be reached: detach “Paper” all the same?');
-  assert.match(q.detail, /^NAS cannot be reached: detach it once it answers, or detach the synced folder there\. Detach anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it is detached there\./);
-  assert.deepEqual(q.buttons, ['Detach anyway', 'Cancel']);
+  const q = keeping.farRemovalAsk(far, 'NAS cannot be reached: stop syncing it once it answers, or stop syncing the synced folder there');
+  assert.equal(q.message, 'NAS cannot be reached: stop syncing “Paper” all the same?');
+  assert.match(q.detail, /^NAS cannot be reached: stop syncing it once it answers, or stop syncing the synced folder there\. Stop syncing anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it stops syncing there\./);
+  assert.deepEqual(q.buttons, ['Stop syncing anyway', 'Cancel']);
 });
 
 test('the agent at work in a work folder reads busy, its detail on the row', () => {
@@ -601,19 +601,19 @@ test('removing a vault: the pages stay, the PDFs read in place are stored first,
   assert.match(f.detail, /^main\.pdf is no longer pushed to the page\. The file and the page stay as they are\.$/);
 });
 
-test('detaching a work folder asks the web app\'s Detach in its words: keep its files in Gamma, or remove them', () => {
+test('stopping the sync of a work folder asks the web app\'s Stop syncing in its words: keep its files in Gamma, or remove them', () => {
   const w = folder({ push: 'everything', status: { last_sync: now, folder_path: ['Paper'] } });
   const q = keeping.removalAsk(w, { pages: 5, files: 5, in_library: 2, too_large: 1, in_place: 3, bytes: 2_000 }, 'TIM-PC');
-  assert.equal(q.message, 'Detach “Paper” from TIM-PC?');
-  assert.equal(q.detail, '5 files sync with it. 2 of them are in your library and stay there either way. Keep the files in Gamma: '
-    + 'Each file becomes an ordinary page, filed where it is. Their bytes are stored in Gamma: 2 KB. 1 file too large to keep stays '
-    + 'listed by name, without its bytes. Remove them from Gamma: 3 files go to Recently deleted. '
+  assert.equal(q.message, 'Stop syncing “Paper” with TIM-PC?');
+  assert.equal(q.detail, 'Gamma stops syncing it with TIM-PC. It has 5 files. 2 of them are in your library and stay there either way. '
+    + 'Keep the files in Gamma: Each file becomes an ordinary page, filed where it is. A copy of each file is stored in Gamma (2 KB). '
+    + '1 file is too large to store: it stays listed by name only. Remove them from Gamma: 3 files go to Recently deleted. '
     + "The directory on TIM-PC stays as it is: only Gamma's own .gamma folder goes.");
   assert.deepEqual([q.buttons, q.choices], [['Keep the files in Gamma', 'Remove them from Gamma', 'Cancel'], ['keep', 'remove', null]]);
-  assert.match(keeping.removalAsk(w, { pages: 1, files: 1, in_library: 0 }).detail, /^1 file syncs with it\. Keep/);
+  assert.match(keeping.removalAsk(w, { pages: 1, files: 1, in_library: 0 }).detail, /^Gamma stops syncing it with this computer\. It has 1 file\. Keep/);
   assert.match(keeping.removalAsk(w, { pages: 2, files: 2, in_library: 2 }).detail,
     /Remove them from Gamma: No file goes to Recently deleted: every one is in your library\./);
-  assert.match(keeping.removalAsk(w, {}).detail, /^No file syncs with it yet\. /);
+  assert.match(keeping.removalAsk(w, {}).detail, /^Gamma stops syncing it with this computer\. It has no files yet\. /);
   const away = keeping.removalAsk(folder({ push: 'everything', status: { offline: true } }), { files: 2 });
   assert.deepEqual(away.choices, ['keep', 'remove', null], 'its pages are still asked of');
   assert.match(away.detail, /is not there now, so nothing on disk is touched\.$/);

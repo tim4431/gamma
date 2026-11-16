@@ -78,6 +78,18 @@ the rail fills the dialog exactly; a shorter window scrolls it, as it could
 before. A nineteenth pane needs a decision: a rail that scrolls at full
 height, or two panes made one.
 
+The nineteenth came with the November 2026 UI review
+([ui-review-2026-11.md](ui-review-2026-11.md)): **Agents**, first in the AI
+group, out of the pane titled "Connections" (whose own first section, named
+like the pane, became "AI services"). To keep an admin's rail at the
+dialog's full height, the 1 px gap between the rows went (about 21 px over
+the groups) and the captions' gap from 8 to 6 px (8 px over four), about
+the 28.5 px a row and its gap take; the figures are worked out from the
+sizes above, not measured again. On a shorter window, or if a face draws
+the rows taller, only the groups scroll, between the account card and Help
+(`.settingsNavList`, a thin scrollbar so "Language & translation" keeps its
+line).
+
 ## Weighed and left
 
 - **Network proxy into Server.** It would have saved a rail row, and a
@@ -98,7 +110,7 @@ height, or two panes made one.
   subjects, named alike.
 - **Pane subtitles.** The rule says a pane carries none, yet Integrations,
   Backups and Network proxy do; each explains a pane whose name says
-  little. Left as they are.
-- **Connections** holds a section titled like the pane, under Agents.
+  little. Left as they are, and the rule now names them as its exceptions
+  ([dev/settings.md](../dev/settings.md) "The Settings dialog").
 - **Appearance** draws its Interface rows boxed and its rows without the
   hover fill, unlike every other pane; it is consistent within the pane.

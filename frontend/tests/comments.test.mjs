@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import {
   abandonedCommentHighlight, addComment, agentFor, anchorSnippet, anchorWords, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, cardedAnchors,
   commentOnlyHighlight, deleteComment, EAGER_TEXT, editComment, estimatedLines, findComment, foldThreads, isEdited, keepThreads,
-  laterComments, popoverThreads, resolveThread, resolvedBy, shortCount, threadLink, threadPlace, threadsIn, turnChip, turnRefusal, upsertThread,
+  laterComments, popoverThreads, refusalChip, resolveThread, resolvedBy, shortCount, threadLink, threadPlace, threadsIn, turnChip, turnEnd,
+  turnRefusal, upsertThread,
 } from "../src/comments/comments.js";
 
 const c = (id, thread, author, at, extra = {}) => ({
@@ -85,6 +86,8 @@ test("editComment changes the text and moves the thread's activity", () => {
   assert.equal(thread.last_at, at);
   assert.ok(isEdited(comment));
   assert.ok(!isEdited(findComment(list, "t1").comment));
+  const same = findComment(list, "r1").comment.body;
+  assert.equal(editComment(list, "r1", same, "2026-10-10T00:00:00.000000Z")[1], list[1], "the same text changes nothing (Send again)");
 });
 
 test("deleteComment follows the server: a root with replies is a tombstone, the last reply takes it along", () => {
@@ -191,27 +194,52 @@ test("what a thread is on, in words: the quote, the text, else a caption-less in
 });
 
 test("a thread's chip follows the reader's turn of it: queued, working, waiting for an answer here or on the computer", () => {
-  const on = (turn) => ({ ...page()[0], agent_chat: { conversation_id: "c1", agent: "codex", label: "Codex", turn } });
+  const on = (turn, extra = {}) => ({ ...page()[0], agent_chat: { conversation_id: "c1", agent: "codex", label: "Codex", turn, ...extra } });
   const turn = (extra) => ({ turn_id: "u1", state: "running", asking: false, waiting: false, computer: "", ...extra });
+  const chip = (kind, label, extra = {}) => ({ kind, label, title: label, tone: "pending", live: false, stop: true, open: false, person: "", ...extra });
   assert.equal(turnChip(page()[0]), null, "no conversation");
   assert.equal(turnChip(on(null)), null, "its turn ended: the agent's reply says the rest");
-  assert.deepEqual(turnChip(on(turn())), { kind: "working", label: "Codex is working…", tone: "pending", live: true, stop: true, open: false });
-  assert.deepEqual(turnChip(on(turn({ state: "queued" }))),
-    { kind: "queued", label: "Waiting for Codex", tone: "pending", live: false, stop: true, open: false });
+  assert.deepEqual(turnChip(on(turn())), chip("working", "Codex is working…", { live: true }));
+  assert.deepEqual(turnChip(on(turn({ state: "queued" }))), chip("queued", "Waiting for Codex"), "in the queue: not live");
   assert.equal(turnChip(on(turn({ state: "queued", computer: "TIM-PC" }))).label, "Waiting for TIM-PC");
-  assert.deepEqual(turnChip(on(turn({ asking: true }))),
-    { kind: "asking", label: "Codex is waiting for you", tone: "pending", live: false, stop: true, open: true }, "its card is in the chat");
+  assert.deepEqual(turnChip(on(turn({ asking: true }))), chip("asking", "Codex is waiting for you", { open: true }), "its card is in the chat");
   assert.deepEqual(turnChip(on(turn({ waiting: true, computer: "TIM-PC" }))),
-    { kind: "waiting", label: "Codex is waiting for your answer on TIM-PC", tone: "pending", live: false, stop: true, open: false });
+    chip("waiting", "Waiting for you on TIM-PC", { title: "Codex is waiting for your answer on TIM-PC" }), "short words, the whole in its title");
+  assert.equal(turnChip(on(turn(), { for: "bob" })).person, "bob", "a co-author's turn of the reader's agent");
+});
+
+test("the note a turn's end wrote reads as that turn's state, in the reader's words", () => {
+  const note = (end) => c("e", "t1", "tim", "t", { agent: "Codex", agent_kind: "computer", body: "Codex could not finish.", turn_end: end });
+  assert.deepEqual(turnEnd(note({ state: "failed", error: "Codex could not finish: the model refused to start" })),
+    { kind: "failed", label: "Codex could not finish", title: "Codex could not finish", tone: "failed", live: false,
+      detail: "Codex could not finish: the model refused to start" });
+  assert.deepEqual(turnEnd(note({ state: "stopped", error: "" })),
+    { kind: "stopped", label: "Stopped before Codex answered", title: "Stopped before Codex answered", tone: "", live: false, detail: "" });
+  assert.equal(turnEnd(note({ state: "empty", error: "" })).label, "Codex finished without a reply");
+  assert.equal(turnEnd(note(undefined)), null, "an answer");
+  assert.equal(turnEnd(c("p", "t1", "tim", "t", { turn_end: { state: "failed" } })), null, "a person's comment");
+});
+
+test("a send that started no turn stays on its thread: not sent, why, and Send again where it can help", () => {
+  const refused = (code, extra = {}) => ({ agent: "Codex", agent_id: "computer:pc1:codex", refused: code, why: "", comment_id: "r1", ...extra });
+  assert.deepEqual(refusalChip(refused("busy")), {
+    kind: "refused", label: "Not sent to Codex", title: "Not sent to Codex", tone: "warn", live: false,
+    detail: "Codex is still working on this comment: wait for it, or stop it.", retry: true, comment: "r1", to: "computer:pc1:codex" });
+  assert.equal(refusalChip(refused("not_newest")).retry, false, "sent again it is still not the newest");
+  assert.equal(refusalChip(refused("viewer")).retry, false);
+  assert.equal(refusalChip(refused("offline", { computer: "TIM-PC" })).retry, true);
+  assert.equal(refusalChip(refused("busy", { agent_id: "" })).retry, false, "no agent to send it to");
+  assert.equal(refusalChip(null), null);
+  assert.equal(refusalChip({ agent: "Codex", turn_id: "u1", state: "queued" }), null, "begun");
 });
 
 test("a comment the server sent to no agent says why, worded here by its code, else in the server's words", () => {
   const refused = (code, why = "") => ({ agent: "Codex", refused: code, why });
-  assert.equal(turnRefusal(refused("closed")), "Reopen this thread to ask Codex again.");
+  assert.equal(turnRefusal(refused("closed")), "Reopen this comment to ask Codex again.");
   assert.equal(turnRefusal(refused("not_newest")), "Reply to ask Codex again: only the newest comment is sent.");
   assert.equal(turnRefusal(refused("viewer")), "Only the workspace's owners and editors can send comments to Codex.");
-  assert.equal(turnRefusal(refused("off")), "Turn on Codex in Settings → AI first.");
-  assert.equal(turnRefusal(refused("busy")), "Codex is still working in this thread: wait for it, or stop it.");
+  assert.equal(turnRefusal(refused("off")), "Turn on Codex in Settings → AI → Agents first.");
+  assert.equal(turnRefusal(refused("busy")), "Codex is still working on this comment: wait for it, or stop it.");
   assert.equal(turnRefusal(refused("folder")), "Codex works for you only on the files of a synced folder.");
   assert.equal(turnRefusal({ ...refused("offline"), computer: "TIM-PC" }), "TIM-PC is offline: send this again once it connects.");
   assert.equal(turnRefusal({ ...refused("paused"), computer: "TIM-PC" }),
@@ -220,7 +248,7 @@ test("a comment the server sent to no agent says why, worded here by its code, e
   assert.equal(turnRefusal(refused("writes", "This server takes no changes now.")),
     "Gamma takes no changes here now: nothing was sent to Codex.");
   assert.equal(turnRefusal(refused("elsewhere")), "Codex on that computer does not work on this page.");
-  assert.equal(turnRefusal(refused("not_ready", "Codex is not signed in.")), "Not sent to Codex: Codex is not signed in.");
+  assert.equal(turnRefusal(refused("not_ready", "Codex is not signed in.")), "Codex is not signed in.", "the agent's own problem");
   assert.equal(turnRefusal({ agent: "Codex", conversation_id: "c1", turn_id: "u1", state: "queued" }), "", "begun");
   assert.equal(turnRefusal(undefined), "", "sent to no agent");
 });

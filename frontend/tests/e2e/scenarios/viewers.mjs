@@ -425,10 +425,10 @@ export async function viewerScenarios(env) {
         const got = await page.evaluate(async (u) => { const r = await fetch(u); return [r.status, Array.from(new Uint8Array(await r.arrayBuffer()))]; }, href);
         assertEq(got[0], 200, "the link serves the file");
         assert(Buffer.from(got[1]).equals(files["blob.bin"]), "Download gives the file's bytes");
-        await pane.getByRole("button", { name: "Show in folder", exact: true }).click();
+        await pane.getByRole("button", { name: "Show in Explorer", exact: true }).click();
         await until(async () => (await posted(page)).some((m) => m.type === "reveal-on-disk"), { what: "the message went" });
         assertEq(JSON.stringify((await posted(page)).map(({ type, ws, page: p }) => ({ type, ws, page: p }))),
-          JSON.stringify([{ type: "reveal-on-disk", ws: user.ws, page: ids["blob.bin"] }]), "Show in folder asks the shell");
+          JSON.stringify([{ type: "reveal-on-disk", ws: user.ws, page: ids["blob.bin"] }]), "Show in Explorer asks the shell");
         await page.goto(at(ids["weights.ckpt"]));
         await pane.waitFor({ timeout: 20000 });
         await until(async () => (await pane.locator(".filePaneName").innerText()).trim() === "weights.ckpt", { what: "the listed file's pane" });

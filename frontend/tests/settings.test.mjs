@@ -92,7 +92,7 @@ test("a section entry point opens its pane at a row the pane has; any other name
     assert.ok(SETTINGS_SEARCH.some((entry) => entry.pane === pane && (entry.label === label || entry.section === label)), `${name}: ${label} on ${pane}`);
   }
   // the strip's Handwriting settings… names the Handwriting pane itself
-  for (const id of ["appearance", "toolbars", "reading", "handwriting", "assistant", "tools", "account", "users", "server"]) {
+  for (const id of ["appearance", "toolbars", "reading", "handwriting", "agents", "ai", "assistant", "tools", "account", "users", "server"]) {
     assert.equal(resolveSettingsPane(id), id);
     assert.equal(settingsSection(id), "");
   }

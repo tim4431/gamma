@@ -150,10 +150,10 @@ function Glossary({ value }) {
   const terms = info?.terms || [];
   return <>
     <Section title={t("Glossary")} action={canEdit ? (
-      <button type="button" className="uiBtn" disabled={busy || full} onClick={() => { setError(""); setEditor({ source: "", target: "" }); }}
+      <button type="button" className="uiBtn sm" disabled={busy || full} onClick={() => { setError(""); setEditor({ source: "", target: "" }); }}
         title={full ? t("The glossary holds {n} terms in a language at most. Delete one to add another.", { n: info.max })
           : t("A term and how to translate it into {lang}", { lang: langName })}>
-        <PlusIcon size={14} /> {t("Add term")}
+        <PlusIcon size={14} />{t("Add term")}
       </button>
     ) : null}>
       <div className="settingsPaneHint">

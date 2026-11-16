@@ -1548,6 +1548,38 @@ export async function settingsScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // Settings → AI → Agents leads the AI group (SettingsDialog.jsx AI_NAV):
+  // an admin's rail of nineteen panes fits a full-height dialog (a 900 px
+  // window: the dialog's 800 px cap), and a shorter window scrolls the
+  // groups alone (.settingsNavList), the account card and Help in view.
+  await step("settings: an admin's rail leads the AI group with Agents, fits a full-height dialog, and on a short window scrolls its groups alone", async () => {
+    await server.manage("set-admin", "settings-user", "on");
+    try {
+      for (const height of [900, 640]) {
+        const { ctx, page } = await setup({ width: 1280, height });
+        try {
+          await openSettings(page);
+          const rail = page.getByRole("navigation", { name: "Settings categories" });
+          const panes = await rail.locator(".settingsNavBtn").allInnerTexts();
+          assertEq(panes.slice(panes.indexOf("Agents"), panes.indexOf("Agents") + 2).join(" › "), "Agents › Connections", "Agents first in the AI group");
+          const fit = await rail.evaluate((nav) => {
+            const list = nav.querySelector(".settingsNavList");
+            const help = nav.querySelector(".settingsNavBottom").getBoundingClientRect();
+            return { over: list.scrollHeight - list.clientHeight, railOver: nav.scrollHeight - nav.clientHeight,
+              helpIn: help.bottom <= nav.getBoundingClientRect().bottom + 1 };
+          });
+          assert(fit.railOver <= 1 && fit.helpIn, `the rail itself never scrolls and Help stays in view (${JSON.stringify(fit)})`);
+          if (height === 900) assert(fit.over <= 1, `nineteen panes fit the full-height rail (${fit.over}px over)`);
+          else assert(fit.over > 1, "a short window scrolls the groups");
+          await nav(page, "Agents").click();
+          await row(page, "Gamma AI").waitFor();
+          assertEq(await page.locator(".settingsPane .settingsPaneTitle").innerText(), "Agents", "its own pane");
+          assertNoProblems(page);
+        } finally { await ctx.close(); }
+      }
+    } finally { await server.manage("set-admin", "settings-user", "off"); }
+  });
+
   // Settings → Backups › Bucket (BackupBucket.jsx, gamma/offsite.py,
   // gamma/bucket_snapshots.py, docs/dev/settings.md): an admin's section in
   // a pane every account has. One row, the bucket's summary with Set up… /
@@ -1590,10 +1622,11 @@ export async function settingsScenarios(env) {
       await box.fill("bucket");
       const results = page.locator(".settingsSearchResult");
       await results.first().waitFor();
-      assertEq(await results.count(), 1, "one match for an admin");
-      assertEq(await results.locator(".settingLabel").innerText(), "Bucket");
-      assertEq(await results.locator("small").innerText(), "Backups", "the match names its pane");
-      await results.click();
+      // the section first, then Server backups' Off-site copies, which points at it
+      assertEq(JSON.stringify(await results.locator(".settingLabel").allInnerTexts()), JSON.stringify(["Bucket", "Off-site copies"]),
+        "an admin's matches");
+      assertEq(await results.first().locator("small").innerText(), "Backups", "the match names its pane");
+      await results.first().click();
       await bucketSection(page).waitFor();
       assertEq(await nav(page, "Backups").getAttribute("aria-current"), "page", "the match opens Backups");
       // The section renders once the pane has its workspace list; the jump
@@ -1602,6 +1635,14 @@ export async function settingsScenarios(env) {
         { what: "the jump to focus the section" });
       assert(await bucketSection(page).evaluate((el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; }),
         "the section is in view");
+      // The section carries the admin tag the rail's Administration caption does.
+      assertEq(await bucketSection(page).locator(".uiTag.admin").innerText(), "admin", "the Bucket is tagged an admin's");
+      // Server › Server backups points at it: Off-site copies' Open Bucket lands there.
+      await nav(page, "Server").click();
+      await row(page, "Off-site copies").getByRole("button", { name: "Open Bucket", exact: true }).click();
+      await until(async () => (await nav(page, "Backups").getAttribute("aria-current")) === "page", { what: "Open Bucket opens Backups" });
+      await until(async () => bucketSection(page).evaluate((el) => el === document.activeElement || el.contains(document.activeElement)),
+        { what: "and focuses the Bucket" });
       assertNoProblems(page);
     } finally {
       await ctx.close();
@@ -1774,7 +1815,10 @@ export async function settingsScenarios(env) {
       await until(async () => (await only.count()) === 2, { what: "both copies, each under its workspace now" });
       const zips = () => [...stand.objects.keys()].filter((k) => k.endsWith(".zip")).length;
       const held = zips();
-      await only.first().getByRole("button", { name: "Delete", exact: true }).click();
+      // its button names what it deletes, red as every irreversible delete is
+      const deleteCopy = only.first().getByRole("button", { name: /^Delete the bucket's copy from / });
+      assert(await deleteCopy.evaluate((el) => el.classList.contains("danger")), "the delete is a danger button");
+      await deleteCopy.click();
       await page.locator(".confirmModal").getByRole("button", { name: "Delete", exact: true }).click();
       await until(async () => (await only.count()) === 1, { what: "the deleted copy to leave the list" });
       assertEq(zips(), held - 1, "and the bucket");
@@ -1817,19 +1861,20 @@ export async function settingsScenarios(env) {
       await page.waitForSelector(".folderNewBtn");
       await openSettings(page);
       await nav(page, "Backups").click();
-      // The summary names the environment's bucket and the variable; where
-      // the bucket is, is its hover title. Nothing opens an editor.
+      // The summary names the environment's bucket, where it is and the
+      // variable; the sentence is its hover title. Nothing opens an editor.
       const summary = row(page, "gamma-env");
       await summary.waitFor();
-      assertEq(await summary.locator(".settingDesc").innerText(), "Set by GAMMA_S3_BUCKET in the server's environment",
-        "the summary's hint names the variable");
-      assertEq(await summary.getAttribute("title"), "127.0.0.1:1/gamma-env", "where the environment's bucket is");
+      assertEq(await summary.locator(".settingDesc").innerText(), "127.0.0.1:1/gamma-env · set by GAMMA_S3_BUCKET",
+        "the summary's hint says where the bucket is and the variable that sets it");
+      assertEq(await summary.getAttribute("title"), "Set by GAMMA_S3_BUCKET in the server's environment", "the sentence on hover");
       assertEq((await bucketRows(page)).join(), "gamma-env", "no rounds' status while the environment's rounds are off");
       assertEq(await summary.getByRole("button", { name: /^(Edit|Set up)…$/ }).count(), 0, "no Edit… or Set up…");
       assertEq(await bucketSection(page).getByRole("button").count(), 0, "no Save on the rule");
-      // Test tries the environment's bucket and answers in the summary's hint.
+      // Test tries the environment's bucket and answers beside its button
+      // (TestResult, as the dialog's Test connection does).
       await summary.getByRole("button", { name: "Test", exact: true }).click();
-      const failure = summary.locator(".aiKeysError");
+      const failure = summary.locator(".aiKeyCheck.aiKeysError");
       await failure.waitFor({ timeout: 20000 });
       assert(/cannot reach s3:\/\/gamma-env\/ at http:\/\/127\.0\.0\.1:1\b/.test(await failure.innerText()),
         `the failure names the environment's endpoint: ${await failure.innerText()}`);
@@ -2247,7 +2292,7 @@ export async function settingsScenarios(env) {
       const popover = page.locator(".chatSettingsPop");
       await popover.locator('input[type="number"]').fill("42000");
       await popover.locator('input[type="number"]').press("Tab");
-      await popover.getByRole("checkbox", { name: "Allow tools in all chats" }).uncheck();
+      await popover.getByRole("checkbox", { name: "Tools", exact: true }).uncheck();
       await page.locator('[title^="Chat settings"]').click();
       await openSettings(page);
       await nav(page, "Connections").click();
@@ -2272,7 +2317,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.locator('[title^="Chat settings"]').click();
       const state = (name) => popover.getByRole("button", { name, exact: true }).innerText();
-      assertEq(await popover.getByRole("checkbox", { name: "Allow tools in all chats" }).isChecked(), true);
+      assertEq(await popover.getByRole("checkbox", { name: "Tools", exact: true }).isChecked(), true);
       assertEq(await state("Rename pages"), "Off");
       assertEq(await state("Read pages"), "Allow");
       assertEq(await state("Move pages"), "Ask", "changes ask unless set otherwise");

@@ -4,8 +4,9 @@
 // one element from the turn's start to its end, so its `label` morphs
 // through every step: while `live` a spinner leads it and its words
 // shimmer, while the turn is `waiting` for the person (an approval, a paper
-// from their browser, an ask) a shield stands there and nothing spins, and
-// once done a check, with `counts` ({failed, declined}) of how its
+// from their browser, an ask) a shield stands there and nothing spins,
+// while it is `queued` (a computer agent's turn not started yet) a clock,
+// its words still, and once done a check, with `counts` ({failed, declined}) of how its
 // steps went. `steps`: how many it unfolds to; until one lands it opens
 // nothing and takes no focus, and a turn that ends without one folds the
 // pill away (`chatStepsFold`). `title` what opening it shows; `meter`
@@ -14,11 +15,11 @@
 // a turn loaded or read again, not this tab's own: it folds and relabels
 // at once and is not read out.
 import { Chevron, Collapse, MorphText } from "../shared/ui/MotionWidgets";
-import { CheckIcon, ShieldIcon } from "../shared/ui/Icons";
+import { CheckIcon, ClockIcon, ShieldIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 export default function StepsPill({
-  label, live = false, waiting = false, still = false, steps = 0, counts = {}, title = "", meter = null, under = null, open, onToggle,
+  label, live = false, waiting = false, queued = false, still = false, steps = 0, counts = {}, title = "", meter = null, under = null, open, onToggle,
   children,
 }) {
   const { failed = 0, declined = 0 } = counts;
@@ -32,8 +33,9 @@ export default function StepsPill({
         <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} disabled={!steps}
           onClick={steps ? onToggle : undefined} aria-expanded={steps ? open : undefined}
           title={!steps ? undefined : open ? t("Hide the steps") : title || undefined}>
-          {waiting ? <ShieldIcon size={14} /> : done ? <CheckIcon size={14} /> : <span className="transferSpin inline" aria-hidden="true" />}
-          <span className={`chatPillText${live && !waiting ? " shimmerText" : ""}`} aria-live={still ? "off" : "polite"} aria-atomic="true">
+          {waiting ? <ShieldIcon size={14} /> : queued ? <ClockIcon size={14} /> : done ? <CheckIcon size={14} />
+            : <span className="transferSpin inline" aria-hidden="true" />}
+          <span className={`chatPillText${live && !waiting && !queued ? " shimmerText" : ""}`} aria-live={still ? "off" : "polite"} aria-atomic="true">
             <MorphText still={still}>{label}</MorphText>
           </span>
           {live && meter ? <span aria-hidden="true">{meter}</span> : null}

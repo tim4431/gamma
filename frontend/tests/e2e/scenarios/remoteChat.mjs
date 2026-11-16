@@ -131,10 +131,10 @@ export async function remoteChatScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The agents the composer's chip lists, by name, its menu closed again.
+    // The agents the composer's chip lists, by name (without a row's hint, "offline"), its menu closed again.
     const agentsListed = async (page, dock) => {
       await dock.locator(".chatModelChip .uiSelectBtn").click();
-      const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").allInnerTexts();
+      const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").locator(".ctxMenuText").allInnerTexts();
       await page.keyboard.press("Escape");
       return names.map((s) => s.trim());
     };
@@ -254,8 +254,8 @@ export async function remoteChatScenarios(env) {
         await dock.locator(".chatBubble.user", { hasText: "tighten this sentence" }).waitFor();
         assertEq(await dock.locator(".chatSelChips").count(), 0, "the passage went with the message");
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
-        await until(async () => (await stripText(dock)).includes("Codex is working"),
-          { timeout: 20000, every: 250, what: `the strip says Codex is working: ${await stripText(dock)}` });
+        await until(async () => (await dock.locator(".chatSteps").last().innerText().catch(() => "")).includes("Codex is working"),
+          { timeout: 20000, every: 250, what: `the turn's pill says Codex is working (the strip: ${await stripText(dock)})` });
         // the turn the NAS holds for the account is a row of Background tasks
         await page.click("button[aria-label='Background tasks']");
         const row = page.locator(".tasksPopover .taskRow", { hasText: `Codex on ${name}` });
@@ -263,7 +263,7 @@ export async function remoteChatScenarios(env) {
         await page.keyboard.press("Escape");
         await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor({ timeout: 60000 });
         await dock.getByRole("button", { name: "Send", exact: true }).waitFor();
-        await until(async () => (await dock.locator(".chatSteps").last().innerText()).trim() === "1 step",
+        await until(async () => (await dock.locator(".chatSteps").last().innerText()).trim() === "1 step · ran latexmk",
           { what: `the steps pill: ${await dock.locator(".chatSteps").last().innerText().catch(() => "")}` });
         const ready = `Codex on ${name}${folder ? ` · ${folder}` : ""}`;
         await until(async () => (await stripText(dock)) === ready, { what: `the strip ready again: ${await stripText(dock)}` });
@@ -383,7 +383,7 @@ export async function remoteChatScenarios(env) {
         await thread.locator(".cmMentionChip", { hasText: "@codex" }).waitFor();
         const tick = thread.locator(".commentSendTo input[type=checkbox]");
         await until(() => tick.isChecked(), { what: "@codex ticks the box" });
-        assertEq((await thread.locator(".commentSendTick").innerText()).trim(), "Send to Codex", "the tick names the agent");
+        assertEq((await thread.locator(".commentSendTick").innerText()).trim(), `Send to Codex on ${name}`, "the tick names the agent and its computer");
         await page.keyboard.type("fix this only");
         await page.keyboard.press("Shift+Enter");
         // the computer takes the turn over its channel; its end is the agent's reply in the thread there
@@ -557,7 +557,8 @@ export async function remoteChatScenarios(env) {
         const history = async () => {
           await dock.getByRole("button", { name: "Chat history", exact: true }).click();
           const pop = page.locator(".chatHistoryPop");
-          await pop.locator(".popoverSection", { hasText: `On ${name}` }).waitFor();
+          // the CLI and the directory, and the computer they are on
+          await pop.locator(".popoverSection", { hasText: "Codex sessions in " }).filter({ hasText: ` on ${name}` }).waitFor();
           return pop;
         };
         let pop = await history();
@@ -573,7 +574,7 @@ export async function remoteChatScenarios(env) {
         await dock.locator(".chatBubble.ai", { hasText: SESSION_REPLY }).waitFor({ timeout: 60000 });
         pop = await history();
         await pop.locator(".chatHistRow", { hasText: TERMINAL.name })
-          .filter({ has: page.locator(".chatHistBy", { hasText: "In Gamma" }) }).waitFor({ timeout: 30000 });
+          .filter({ has: page.locator(".chatHistBy", { hasText: "Continued here" }) }).waitFor({ timeout: 30000 });
         await page.keyboard.press("Escape");
         assertNoProblems(page);
       } finally { await ctx.close(); }

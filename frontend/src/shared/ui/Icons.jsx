@@ -350,6 +350,21 @@ export const SyncIcon = (p) => (
     <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" />
   </Icon>
 );
+// A synced folder's own folder (lucide's folder-sync): the folder, open at
+// its corner for SyncIcon's two arrows, which take `badge`, the tone of its
+// sync (library.css .syncBadge: "ok" synced, "pending" syncing, "warn" not
+// syncing or offline, "" the folder's colour). Its card, its row, the Files
+// window's root and the folder view's heading draw it (ui-design.md "File
+// icons"); a card's at the cover's size (`size={null}`, `className="tileGlyph"`).
+export const SyncedFolderIcon = ({ badge = "", ...p }) => (
+  <Icon {...p}>
+    <path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v.5" />
+    <g className={`syncBadge${badge ? ` ${badge}` : ""}`}>
+      <path d="M12 10v4h4" /><path d="m12 14 1.535-1.605a5 5 0 0 1 8 1.5" />
+      <path d="M22 22v-4h-4" /><path d="m22 18-1.535 1.605a5 5 0 0 1-8-1.5" />
+    </g>
+  </Icon>
+);
 // Clock with a counter-clockwise arrow — "history" / earlier conversations.
 export const HistoryIcon = (p) => (
   <Icon {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3 2" /></Icon>

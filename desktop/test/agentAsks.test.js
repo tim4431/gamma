@@ -55,7 +55,9 @@ test('a command\'s card: what it runs, where, from whom, the agent\'s reason mar
   assert.equal(card.says, 'Codex says: “Fetch the bibliography the paper cites.”');
   assert.deepEqual(card.notes, ['It runs as you, with your files and the network. A build also runs what this folder\'s files say, and NAS can change them.',
     `Declined by itself at ${time(at(12))} unless you answer.`]);
-  assert.equal(card.stop, 'Stop Codex asking');
+  // the footer in the chat card's words (chat/ApprovalShell.jsx), and the line while Allow once waits for the box's end
+  assert.deepEqual([card.allow, card.deny, card.stop], ['Allow once', "Don't allow", 'Stop Codex asking']);
+  assert.equal(card.wait, 'Scroll to the end first: Allow waits until you have seen all of it');
   assert.deepEqual(card.from, { name: 'NAS', origin: 'https://nas.lab:5001', account: 'alice' });
   assert.equal(card.folder, 'cavity');
 
@@ -112,9 +114,9 @@ test('a server the registry does not hold is named by its host; the account is c
 
 test('what the bar, the notification and the tray say', () => {
   const card = agentAsks.cardOf([askOf('a'), askOf('b', { at: at(4) })], servers);
-  assert.equal(agentAsks.notice(card, 'once'), 'Allowed once: Codex goes on.');
-  assert.equal(agentAsks.notice(card, 'deny'), 'Declined: Codex goes on without it.');
-  assert.equal(agentAsks.notice(card, 'stop'), 'Declined, and Codex no longer asks to run more, here or in the chat.');
+  assert.equal(agentAsks.notice(card, 'once'), 'Allowed. Codex goes on…', 'as the chat card says it');
+  assert.equal(agentAsks.notice(card, 'deny'), 'Not allowed. Codex goes on without it…');
+  assert.equal(agentAsks.notice(card, 'stop'), 'Not allowed, and Codex no longer asks to run more, here or in the chat.');
   assert.equal(agentAsks.stale(card), 'Codex no longer waits for that: nothing was allowed here.');
   assert.equal(agentAsks.unsure(card), 'Gamma did not hear whether Codex got your answer: see the chat on NAS.');
   assert.equal(agentAsks.couldNot(card, 'That server is not running'),

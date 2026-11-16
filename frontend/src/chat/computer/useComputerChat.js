@@ -13,6 +13,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "r
 import { API, apiJson, makeId } from "../../shared/lib/utils";
 import { GammaNavContext } from "../../shared/ui/Widgets";
 import { t } from "../../shared/i18n/i18n.js";
+import { FolderIcon } from "../../shared/ui/Icons";
 import { stripFacts } from "../agents.js";
 import {
   AWAY_POLL_MS, POLL_MS, SOURCES_MAX, TEXT_MAX, answerBody, askPath, awayFrom, canSend, chatPath, emptyLine, isRemote,
@@ -299,18 +300,19 @@ const places = new Map();
 //               was made
 //   retry(i)    Retry for the failed turn at the transcript's index `i`,
 //               null when it is not the newest or nothing could go now
-//   chip        the model chip's props (chat/AgentChip.jsx: label, models,
-//               model, onModel, sections) and `text`, what it reads: the
-//               agent's models and efforts, the choice the conversation's
+//   chip        the model chip's props (chat/AgentChip.jsx: label, text,
+//               models, model, onModel, sections): the agent's models and
+//               efforts and where it works, the choice the conversation's
 //   grants      the Allowed in this chat chip's props (GrantChip), null
 //               while nothing is allowed
 //   place, pickPlace   where a conversation that begins works (workPlace)
 //   sources     the passages' source lines (usePassageSources)
 //   links       what a changed file's link resolves through (PathLink's
 //               context), null outside a work folder
-//   empty       {text, again} the empty transcript's line, `again` when it
-//               says why the conversation could not be read (Try again);
-//               null until the read
+//   empty       {text, again, offer} the empty transcript's line, `again`
+//               when it says why the conversation could not be read (Try
+//               again), `offer` when this computer offers no directory to
+//               work in (Offer a directory…); null until the read
 //   shown       the conversation the side shows in place of the bucket's
 //               own (`shown`, chatSide.js useChatShown: {thread} a comment
 //               thread's, {conversation} a co-author's), null for its own:
@@ -393,15 +395,23 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   const empty = !conversation?.messages?.length && chat.error ? { text: chat.error, again: true }
     : chat.read ? { text: shown?.thread ? t("This comment thread has no conversation of yours with {agent}.", { agent: label })
       : shown ? t("This conversation is no longer one you can read.")
-        : emptyLine(info, label, where, place, page), again: false } : null;
+        : emptyLine(info, label, where, place, page), again: false,
+    // this computer offers no directory: Settings → AI → Agents is where one is offered
+    offer: !shown && !remote && !!place?.pick && place.options.length < 2 } : null;
 
-  // The composer's model chip (chat/AgentChip.jsx): the agent's models, its
-  // efforts as a section, the choice the conversation's.
+  // The composer's model chip (chat/AgentChip.jsx): where the agent works
+  // (`place`, while there is a choice: the conversation's once it has a
+  // turn, shown and not to change), its models and its efforts as
+  // sections, the choice the conversation's.
   const efforts = choice.shown?.efforts || [];
   const chip = {
-    label: t("{agent}'s model", { agent: label }), text: [label, modelDisplay(choice)].filter(Boolean).join(" · "),
+    label: t("{agent}'s model", { agent: label }), text: modelDisplay(choice),
     models: models.map((m) => [m.id, m.label || m.id]), model: choice.model || choice.shown?.id || "",
     onModel: (model) => pickModel({ model, effort: choice.effort }),
+    place: place?.options.length > 1 ? {
+      label: t("Works in"), value: place.value, onChange: pickPlace, options: place.options.map(([value, name]) => [value, name, FolderIcon]),
+      ...(place.pick ? {} : { disabled: true, title: t("Start a new chat to work elsewhere") }),
+    } : null,
     sections: efforts.length ? [{
       label: t("Reasoning effort"), value: choice.effort, onChange: (effort) => pickModel({ model: choice.model, effort }),
       options: [["", choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default")],

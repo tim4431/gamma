@@ -343,10 +343,10 @@ export async function remoteAskScenarios(env) {
       assertEq(follower.seen.refused, "", "the shell was never refused");
     });
 
-    // Step 4.1: Settings → AI → Connections → Agents in the desktop window
+    // Step 4.1: Settings → AI → Agents in the desktop window
     // (an Electron user agent) on the computer's own server. The shell is not
     // there to answer, so each control is seen to ask it and change nothing.
-    await step("remote-asks: Settings → AI in the desktop window lists the NAS among the servers this computer answers, its asks off, and each control asks the shell", async () => {
+    await step("remote-asks: Settings → AI → Agents in the desktop window lists the NAS among the servers this computer answers, its asks off, and each control asks the shell", async () => {
       const ctx = await owner.context(browser, { userAgent: DESKTOP_UA });
       try {
         await ctx.addInitScript(() => {
@@ -356,7 +356,7 @@ export async function remoteAskScenarios(env) {
             if (e.data?.source === "gamma-app" && e.data.type !== "connector-hello") window.shellAsks.push(e.data);
           });
         });
-        const page = await openPage(ctx, `${computer.base}/?settings=ai`);
+        const page = await openPage(ctx, `${computer.base}/?settings=agents`);
         const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
         await dialog.waitFor();
         const section = dialog.locator('.setSection[data-setting="Servers this computer answers"]');
@@ -370,7 +370,7 @@ export async function remoteAskScenarios(env) {
         const asks = dialog.getByRole("checkbox", { name: asksLabel, exact: true });
         assertEq(await asks.isChecked(), false, "off to begin with");
         assertEq((await dialog.locator(`.setRow[data-setting="${asksLabel}"] .settingDesc`).innerText()).trim(),
-          "What an agent here asks to run is answered on this computer only.", "and said so");
+          `On: the agents' asks may also be allowed from ${server}`, "and what on would do");
         const shellAsked = () => page.evaluate(() => window.shellAsks
           .filter((m) => ["link-asks", "add-server", "remove-server"].includes(m.type))
           .map(({ type, link, asks }) => ({ type, link, asks })));

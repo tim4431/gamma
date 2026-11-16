@@ -11,7 +11,7 @@ import {
   Stat, Empty, QuotaMeter, LogBox, NavAccountCard, SettingsDraftContext, SettingsSyncContext, useSettingsDraft,
 } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
-import { DEFAULT_TOOLS } from "../ink/ink.js";
+import { DEFAULT_TOOLS, normalizeTools } from "../ink/ink.js";
 import { SQUEEZE_HOLDS } from "../ink/pencilActions.js";
 import { nativeHost } from "../shared/lib/host.js";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
@@ -22,7 +22,8 @@ import { ToolbarSettings } from "./SettingsToolbars";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
 import { KeyboardSettings } from "./SettingsKeyboard";
-import { AiSettings } from "./SettingsAi";
+import { AiSettings, gammaAiConnection } from "./SettingsAi";
+import { SettingsAgents } from "./SettingsAgents";
 import { IntegrationSettings } from "./SettingsIntegrations";
 import { UsersSettings } from "./SettingsUsers";
 import { WorkspacesSettings } from "./SettingsWorkspace";
@@ -38,6 +39,7 @@ import { TranslationSettings } from "./SettingsTranslation";
 import {
   ActivityIcon,
   BookIcon,
+  BotIcon,
   BugIcon,
   CloudDownloadIcon,
   ContrastIcon,
@@ -46,7 +48,6 @@ import {
   EraseStrokeIcon,
   ExternalLinkIcon,
   EyeIcon,
-  LineWidthIcon,
   FileTextIcon,
   ImageIcon,
   FolderIcon,
@@ -66,6 +67,7 @@ import {
   MoveHorizontalIcon,
   MoveVerticalIcon,
   OutlineIcon,
+  PagesIcon,
   PanelTopIcon,
   PaperIcon,
   PencilIcon,
@@ -95,7 +97,8 @@ import { DialogOverlay } from "../shared/ui/Surfaces";
 // — with Help & diagnostics pinned to the bottom. Every pane is one click
 // from any other; nothing opens a second dialog. A pane holds one subject:
 // how things look (Appearance) apart from what the bars offer (Toolbars),
-// papers and notes (Reading & editing) apart from the pen (Handwriting).
+// papers and notes (Reading & editing) apart from the pen (Handwriting),
+// who the chat talks to (Agents) apart from the AI services (Connections).
 const ACCOUNT_NAV = ["account", T("Account & sync"), UserIcon];
 const PREFERENCE_NAV = [
   ["appearance", T("Appearance"), ContrastIcon],
@@ -106,6 +109,7 @@ const PREFERENCE_NAV = [
   ["keyboard", T("Keyboard"), KeyboardIcon],
 ];
 const AI_NAV = [
+  ["agents", T("Agents"), BotIcon],
   ["ai", T("Connections"), SparklesIcon],
   ["assistant", T("Chat"), MessageSquareIcon],
   ["tools", T("Tool usage"), SlidersIcon],
@@ -121,7 +125,7 @@ const ADMIN_NAV = [
   ["server", T("Server"), ServerIcon],
   ["proxy", T("Network proxy"), GlobeIcon],
 ];
-const HELP_NAV = ["diagnostics", T("Help & diagnostics"), BugIcon];
+const HELP_NAV = ["diagnostics", T("Help & diagnostics"), HelpCircleIcon];
 
 // --- Handwriting's tables: what draws, the pen's gestures and words --------
 
@@ -183,14 +187,15 @@ function ReadingSettings({ value }) {
           <Segmented value={value.embAnnots} onChange={value.setEmbAnnots}
             options={[["hide", t("Keep originals")], ["strip", t("Remove originals")]]} />
         </Row>
+        {/* The row's icon stays put; each choice draws its own direction. */}
         <Row
-          icon={value.pdfFlow === "across" ? MoveHorizontalIcon : MoveVerticalIcon}
+          icon={PagesIcon}
           label={t("Page direction")}
           hint={t("Pages one under another, or side by side")}
           title={t("Down lays a PDF's pages one under another and scrolls them up and down. Across lays them side by side and scrolls them sideways, each page fitting the viewer whole at Fit page; a mouse wheel turned down moves them across.")}
         >
           <Segmented value={value.pdfFlow} onChange={value.setPdfFlow}
-            options={[["down", t("Down")], ["across", t("Across")]]} />
+            options={[["down", T("Down"), MoveVerticalIcon], ["across", T("Across"), MoveHorizontalIcon]]} />
         </Row>
         <Toggle
           icon={MoveVerticalIcon}
@@ -299,25 +304,30 @@ function ReadingSettings({ value }) {
 
 // --- Handwriting: the pen's habits, this device's input, the pen's gestures -
 
+// The strip's presets as the defaults are, compared in their stored form.
+const DEFAULT_TOOLS_KEY = JSON.stringify(normalizeTools(DEFAULT_TOOLS));
+const isDefaultTools = (tools) => JSON.stringify(normalizeTools(tools)) === DEFAULT_TOOLS_KEY;
+
 function HandwritingSettings({ value }) {
+  // Reset presets is the section's action, as every reset in Settings is:
+  // off at the defaults, and the pill's Undo puts the list back as it was.
+  const resetPresets = () => {
+    const before = value.inkTools;
+    value.setInkTools(DEFAULT_TOOLS.map((tool) => ({ ...tool })));
+    value.setStatus?.(t("Pens and highlighters reset."), { label: t("Undo"), run: () => value.setInkTools(before) });
+  };
   return (
     <>
       {/* The handwriting habits that follow the account; the presets, smoothing
           and the straight highlighter are set on the strip (docs/dev/handwriting.md). */}
-      <Section title={t("Pens & eraser")} scope="account" prefs={SECTION_PREFS.handwriting["Pens & eraser"]}>
-        <Row
-          label={t("Reset presets")}
-          icon={LineWidthIcon}
-          hint={t("The strip's pens and highlighters back to the default seven")}
-          title={t("The tool strip's row of pens and highlighters, with their colours, widths, smoothing and straightening, goes back to the default four pens and three highlighters. Your handwriting is untouched.")}
-        >
-          <button type="button" className="uiBtn sm" onClick={() => value.confirm?.({
-            title: T("Reset presets"),
-            message: T("Put the default four pens and three highlighters back on the tool strip? The presets you made are forgotten; your handwriting stays."),
-            confirmLabel: t("Reset"),
-            onConfirm: () => value.setInkTools(DEFAULT_TOOLS.map((tool) => ({ ...tool }))),
-          })}>{t("Reset")}</button>
-        </Row>
+      <Section title={t("Pens & eraser")} scope="account" prefs={SECTION_PREFS.handwriting["Pens & eraser"]}
+        action={(
+          <button type="button" className="uiBtn sm" disabled={!value.inkTools || isDefaultTools(value.inkTools)}
+            title={t("The tool strip's row of pens and highlighters, with their colours, widths, smoothing and straightening, goes back to the default four pens and three highlighters. Your handwriting is untouched.")}
+            onClick={resetPresets}>
+            {t("Reset presets")}
+          </button>
+        )}>
         <Toggle
           label={t("Eraser returns to the last tool")}
           icon={EraserIcon}
@@ -1068,7 +1078,7 @@ function AdvancedSettings({ value, tours }) {
     .filter((entry) => level === "all" || (level === "warn" ? !!entry.tone : entry.tone === "error"));
   return (
     <>
-      <PaneHead icon={BugIcon} title={t("Help & diagnostics")} />
+      <PaneHead icon={HelpCircleIcon} title={t("Help & diagnostics")} />
       <Section title={t("Help")}>
         <Row icon={BugIcon} label={t("Report a problem")} hint={t("A GitHub issue prefilled with this log and the build")}
           title={t("Describe what went wrong; Gamma adds its build, your browser and the recent lines of this log and opens the bug form on GitHub for you to review before posting.")}>
@@ -1090,7 +1100,7 @@ function AdvancedSettings({ value, tours }) {
       </Section>
       <Section title={t("Tracing")}>
         <Toggle
-          icon={BugIcon}
+          icon={TerminalIcon}
           label={t("Debug logging")}
           hint={t("Trace reading-position, restore and sync events")}
           title={t("Trace reading-position tracking, restore and sync events into the system log below (and the browser console).")}
@@ -1381,10 +1391,14 @@ export default function SettingsDialog({
                   label={t(ACCOUNT_NAV[1])} active={marked === "account"} dot={dot("account")}
                   onClick={() => navigate("account")} onIntent={() => prefetch("account")} />
               ) : null}
-              {navGroup(t("Preferences"), PREFERENCE_NAV)}
-              {navGroup(t("AI"), AI_NAV)}
-              {navGroup(t("Library"), LIBRARY_NAV)}
-              {navGroup(t("Administration"), ADMIN_NAV, <span className="uiTag admin">{t("admin")}</span>)}
+              {/* The groups scroll between the account card and Help when
+                  the window is too short for them. */}
+              <div className="settingsNavList">
+                {navGroup(t("Preferences"), PREFERENCE_NAV)}
+                {navGroup(t("AI"), AI_NAV)}
+                {navGroup(t("Library"), LIBRARY_NAV)}
+                {navGroup(t("Administration"), ADMIN_NAV, <span className="uiTag admin">{t("admin")}</span>)}
+              </div>
               <div className="settingsNavBottom">{navButton(HELP_NAV)}</div>
             </nav>
             <main className="settingsPane" ref={paneRef} key={pane}>
@@ -1410,10 +1424,15 @@ export default function SettingsDialog({
                 </> : null}
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}
+                {pane === "agents" ? <>
+                  <PaneHead icon={BotIcon} title={t("Agents")} />
+                  <SettingsAgents connection={gammaAiConnection(aiValue)} signedIn={who.signedIn} setStatus={workspace?.setStatus}
+                    onConnections={() => navigate("ai")}
+                    onIntegrations={available("integrations") ? () => navigate("integrations") : null} />
+                </> : null}
                 {pane === "ai" ? <>
                   <PaneHead icon={SparklesIcon} title={t("Connections")} />
-                  <AiSettings value={aiValue} signedIn={who.signedIn}
-                    confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
+                  <AiSettings value={aiValue} confirm={workspace?.confirm} setStatus={workspace?.setStatus} />
                 </> : null}
                 {pane === "assistant" ? <>
                   <PaneHead icon={MessageSquareIcon} title={t("Chat")} />
@@ -1437,7 +1456,8 @@ export default function SettingsDialog({
                 {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null}
                   onAccount={() => navigate("account", t("Zotero"))} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
-                {pane === "server" ? <ServerSettings value={server} /> : null}
+                {pane === "server" ? <ServerSettings value={server}
+                  onBucket={available("backups") ? () => navigate("backups", t("Bucket")) : null} /> : null}
                 {pane === "proxy" ? <ProxySettings setStatus={server.setStatus} /> : null}
                 {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} tours={papers} /> : null}
               </>}

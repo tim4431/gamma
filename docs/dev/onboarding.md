@@ -153,8 +153,9 @@ no voice step.
   pointer), the model chip, Send.
 - **On the library** (`view: "home"`): *Which of these papers use attention?
   File them into ML/attention* ("It can search, read and file your pages" —
-  true under the default tool permissions), then the Tools button
-  (optional), the model chip, Send.
+  true under the default tool permissions), then the Tools switch in the
+  chat settings popover, which the step opens (`chat.tools`'s `open`;
+  optional: no popover before the models load), the model chip, Send.
 - **No AI connected** (`aiConfigured: false`, and `aiEditable`: the account
   can store keys — a guest cannot, and gets no tour): one step on the chat's
   setup card (`chat.setup`), "Connect an AI to use chat". Clicking a tile
@@ -163,7 +164,7 @@ no voice step.
   card also lists the agents found on a computer, which need no
   connection ([ai.md](ai.md#a-computers-agent-in-the-chat)): one the
   account turned on is a tile that picks it, one found but off a tile that
-  opens Settings → AI. With such an agent on and ready, a bucket never
+  opens Settings → AI → Agents. With such an agent on and ready, a bucket never
   picked is that agent's chat (`pickAgent`), so the card, and this step's
   anchor, show once Gamma AI is picked in the chip.
 

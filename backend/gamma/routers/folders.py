@@ -107,9 +107,10 @@ def _detaching(request: Request, folder_id: str) -> tuple[str, str]:
 def detach_plan(folder_id: str, request: Request):
     """What detaching the work folder would do, to say before it is asked
     (``detach.plan``): ``{may, files, in_library, too_large, bytes,
-    computer: {name, online} | null}``, ``{may: false}`` alone
-    for a member who may not detach it. The refusals of ``POST``'s but the
-    gate's."""
+    computer: {name, online} | null}``, ``{may: false, why}`` alone
+    for a member who may not detach it (``why``: ``elsewhere``, ``maker``
+    or ``keeper``, the rule that says no). The refusals of ``POST``'s but
+    the gate's."""
     user_id, ws = _detaching(request, folder_id)
     return detach.plan(ws, folder_id, user_id, ws_role(request) == "owner")
 

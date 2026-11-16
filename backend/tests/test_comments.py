@@ -513,7 +513,8 @@ def test_a_comment_sent_to_an_agent_is_stored_whatever_its_turn(own):
     ws = workspace_of("cm_own")
     page = make_page(own, "Sent page")
     out = _ok(_post(own, page["id"], page["id"], "summarise this", to="gamma"))
-    assert out["turn"] == {"agent": "the agent", "refused": "other", "why": "Gamma knows no agent of that id."}
+    assert out["turn"] == {"agent": "the agent", "refused": "other", "why": "Gamma knows no agent of that id.",
+                           "agent_id": "gamma"}
     assert out["thread"]["agent_chat"] is None and out["comment"]["body"] == "summarise this"
     bearer, _ = _bearer("cm_own", ws, "write")
     scripted = _ok(_post(bearer, page["id"], page["id"], "and this", thread_id=out["thread"]["id"],

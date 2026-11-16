@@ -3,19 +3,21 @@
 // (FolderTree.jsx) draw every row with it. A folder's or a file's row:
 // indent guides down to its level, a chevron for a folder, its icon, its
 // name, what follows the name, and the "⋯". A "more" row is a button
-// ("Show {n} more files"), a "note" row a muted line (Reading…, Could not
-// read this folder. with Try again, No tracked files here.).
+// ("Show {n} more files", "Loading…" in its MorphText while it reads), a
+// "note" row a muted line (Reading…, a .loadingHint that fades in late, so
+// a quick read never flashes it; Could not read this folder. with Try
+// again; No tracked files here.).
 import { t } from "../shared/i18n/i18n.js";
 import FileIcon from "../shared/ui/FileIcon.jsx";
 import { MenuButton } from "../shared/ui/Menus";
-import { Chevron } from "../shared/ui/MotionWidgets";
+import { Chevron, MorphText } from "../shared/ui/MotionWidgets";
 import "./tree.css";
 
 // `row` a fileTree.js row; rowRef, tabbable, active and onActive(key) the
 // tree's (useTree.js rowProps); `selected`; onPress(row) a "more" row's
 // press and a failed note's Try again. `icon` in place of the row's own (a
 // synced folder's file or directory by its theme icon, FileIcon, a root
-// folder's the theme's root; a library folder's FolderIcon, a library
+// folder's SyncedFolderIcon; a library folder's FolderIcon, a library
 // page's FileGlyph), `name` in place of its name (a rename's field),
 // `after` what follows the name (a count, the folder view's columns),
 // `menu` the "⋯"'s opener; `props` the row element's own (its press, its
@@ -33,7 +35,7 @@ export default function TreeRow({ row, rowRef, tabbable, active, onActive, selec
       <button type="button" {...item} {...props} className={`${classes} fileTreeMore`} aria-selected={false}
         aria-disabled={row.loading || undefined} onClick={() => onPress(row)}>
         <span className="fileTreeChevron" />
-        <span className="fileTreeName">{row.name}</span>
+        <span className="fileTreeName"><MorphText>{row.loading ? t("Loading…") : row.name}</MorphText></span>
       </button>
     );
   }
@@ -41,7 +43,7 @@ export default function TreeRow({ row, rowRef, tabbable, active, onActive, selec
     return (
       <div {...item} {...props} className={`${classes} fileTreeNote`} aria-selected={false}>
         <span className="fileTreeChevron" />
-        <span className="fileTreeName">{row.name}</span>
+        <span className={`fileTreeName${row.loading ? " loadingHint" : ""}`}>{row.name}</span>
         {row.failed ? <button type="button" className="uiBtn sm" tabIndex={-1} onClick={() => onPress(row)}>{t("Try again")}</button> : null}
       </div>
     );

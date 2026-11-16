@@ -4,7 +4,7 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
 import {
-  BellIcon, ContrastIcon, CopyIcon, HighlightIcon, LayoutIcon, MaximizeIcon, MoonIcon, PaletteIcon, PenIcon, PlusIcon,
+  BellIcon, ContrastIcon, DuplicateIcon, HighlightIcon, LayoutIcon, MaximizeIcon, MoonIcon, PaletteIcon, PenIcon, PlusIcon,
   TrashIcon, TypeIcon, XIcon,
 } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
@@ -52,7 +52,7 @@ function PaletteGroup({ group, canAdd, canDelete, onChange, onDelete, onDuplicat
           onCommit={(name) => onChange({ ...group, name })} />
         <span className="paletteGroupCount">{tn("{n} color", "{n} colors", group.colors.length)}</span>
         <button type="button" className="uiClose uiCloseSm" title={t("Duplicate group")} aria-label={t("Duplicate group {name}", { name: group.name })}
-          disabled={!canAdd} onClick={onDuplicate}><CopyIcon size={14} /></button>
+          disabled={!canAdd} onClick={onDuplicate}><DuplicateIcon size={14} /></button>
         <button type="button" className="uiClose uiCloseSm" title={t("Delete group")} aria-label={t("Delete group {name}", { name: group.name })}
           disabled={!canDelete} onClick={onDelete}><TrashIcon size={14} /></button>
       </div>

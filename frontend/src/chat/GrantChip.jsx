@@ -12,7 +12,7 @@ export default function GrantChip({ list, title, onRevoke, disabled = false }) {
   return (
     <button type="button" className="chatAttachToggle chatGrantChip" onClick={onRevoke} disabled={disabled}
       title={title} aria-label={t("Allowed in this chat: {list}. Ask again", { list })}>
-      <ShieldIcon size={14} /><span className="chatGrantLabel">{t("Allowed in this chat")}</span><XIcon size={12} />
+      <ShieldIcon size={14} /><span className="chatGrantLabel">{t("Allowed in this chat")}</span><XIcon size={14} />
     </button>
   );
 }

@@ -15,8 +15,8 @@ import { selectPdfText, waitForPdf } from "./pdf.mjs";
 // Remove and Save a copy, the one-place rule, a change of selection, notes
 // that follow Gamma, Cancel of a fresh work folder, a file opened from the
 // computer ticked in the dialog (?tick=) and landed on after Save, a file
-// in the tabs, recents and pins the listing does not carry, and Detach from
-// the root's menu in the Files window, keeping the files as pages.
+// in the tabs, recents and pins the listing does not carry, and Stop syncing
+// from the root's menu in the Files window, keeping the files as pages.
 const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Gamma/1.0.0 "
   + "Chrome/138.0.0.0 Electron/38.0.0 Safari/537.36";
 const HEADER = "# What Gamma tracks in this folder";
@@ -446,7 +446,7 @@ export async function workFolderScenarios(env) {
       } finally { await ctx.close(); }
     });
 
-    await step("work-folders: its tree open, the synced folder's root in the Files window offers Detach from this computer; kept, its files stay pages and the directory stays but for .gamma/", async () => {
+    await step("work-folders: its tree open, the synced folder's root in the Files window offers Stop syncing with this computer; kept, its files stay pages and the directory stays but for .gamma/", async () => {
       const ctx = await desktop();
       const page = await openPage(ctx, `${home}&folder=${link.folder_id}`);
       try {
@@ -461,26 +461,30 @@ export async function workFolderScenarios(env) {
         const root = page.locator('.filesPanel .fileTree [role="treeitem"]', { has: page.locator('.fileTreeName:text-is("Paper")') });
         await root.waitFor({ timeout: 15000 });
 
-        // its menu asks GET …/detach as it opens: the row names the computer, once the answer is in
+        // its plan is read ahead and again as its menu opens: the danger row names the computer, and a
+        // root's Delete is there, disabled, saying to stop syncing first
         const plan = page.waitForResponse((r) => r.url().endsWith(`/api/folders/${link.folder_id}/detach`));
         await root.click({ button: "right" });
         const said = await (await plan).json();
         assert(said.may && said.computer?.online, `the maker may, its computer online: ${JSON.stringify(said)}`);
-        const item = page.locator(".ctxMenu .ctxMenuItem", { hasText: `Detach from ${said.computer.name}…` });
+        const item = page.locator(".ctxMenu .ctxMenuItem.danger", { hasText: `Stop syncing with ${said.computer.name}…` });
         await item.waitFor({ timeout: 10000 });
+        const del = page.locator(".ctxMenu .ctxMenuItem", { hasText: /^Delete$/ });
+        assertEq(await del.isDisabled(), true, "a synced folder's root is never deleted");
+        assertEq(await del.getAttribute("title"), "Stop syncing the synced folder to delete its folder.", "its Delete says why");
         await item.click();
         const dialog = page.locator(".detachDialog");
         await dialog.waitFor();
         const text = await dialog.innerText();
-        assert(text.includes(`Detach “Paper” from ${said.computer.name}?`)
+        assert(text.includes(`Stop syncing “Paper” with ${said.computer.name}?`) && text.includes(`Gamma stops syncing it with ${said.computer.name}.`)
           && text.includes(`The directory on ${said.computer.name} stays as it is`), `the dialog says what it does: ${text}`);
         assert(await dialog.getByLabel(/Keep the files in Gamma/).isChecked(), "keeping is the default");
         const answered = page.waitForResponse((r) => r.url().endsWith(`/api/folders/${link.folder_id}/detach`) && r.request().method() === "POST");
-        await dialog.getByRole("button", { name: "Detach", exact: true }).click();
+        await dialog.getByRole("button", { name: "Stop syncing", exact: true }).click();
         const answer = await (await answered).json();
         assertEq(JSON.stringify({ ok: answer.ok, trashed: answer.trashed }), JSON.stringify({ ok: true, trashed: 0 }), "nothing sent to Recently deleted");
         await dialog.waitFor({ state: "detached", timeout: 15000 });
-        await page.locator(".statusPill", { hasText: "Detached “Paper”: its files stay in Gamma as pages." }).waitFor({ timeout: 10000 });
+        await page.locator(".statusPill", { hasText: "Stopped syncing “Paper”: its files stay in Gamma as pages." }).waitFor({ timeout: 10000 });
         assertNoProblems(page);
       } finally { await ctx.close(); }
 

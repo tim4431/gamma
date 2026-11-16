@@ -150,7 +150,7 @@ export const ANCHORS = {
   "chat.imageContext": { view: "chat", description: "Pictures attached to the message" },
   "chat.context": { view: "chat", description: "Add attachments or library pages" },
   "chat.settings": { view: "chat", description: "Chat model, reasoning, context and tool settings" },
-  "chat.tools": { view: "chat", description: "Enable or disable assistant tools" },
+  "chat.tools": { view: "chat", open: ["chat.settings"], description: "The chat settings' Tools switch: assistant tools on or off in every chat" },
   "chat.citation": { view: "citation", pick: "last", description: "A citation link in the newest chat reply" },
   "chat.approval": { view: "approval", pick: "last", description: "The card that asks before the assistant makes a change: what it would do, and the four answers" },
   "sync.pill": { view: "mirror", description: "The sync pill of a workspace that has an offline copy, a publication or a Zotero link" },

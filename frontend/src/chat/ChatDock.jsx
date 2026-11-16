@@ -43,7 +43,7 @@ import { BLOCK_TOOLS, changePlace, isChange, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { linesLabel } from "../shared/model/blockModel.js";
-import { CharSlider, approxPages } from "../settings/SettingsKit";
+import { CharSlider, Toggle, approxPages } from "../settings/SettingsKit";
 import { AgentToolPicker, changePermission, chatKindName, permissionLabel } from "../settings/AssistantTools";
 import { aiServiceTiles } from "../settings/providerEditor.js";
 import { renderKatex } from "../editor/LatexEditor";
@@ -54,7 +54,7 @@ import { chipSegments } from "./chipText";
 import { effortFor, modelLabel, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowLeftIcon, ArrowUpIcon, BanIcon, BookIcon, BotIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, EyeIcon, FileIcon,
   HighlightIcon, HistoryIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon,
-  SettingsIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
+  SettingsIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import { UsageRing } from "../shared/ui/UsageRing";
@@ -63,7 +63,7 @@ import {
   computerExportPath, computerHistory, computerSessions, deleteComputerChat, newComputerChat, openComputerChat,
   openComputerSession, useComputerSide,
 } from "./computer/useComputerChat.js";
-import { historyRows, sessionRows, sessionsAway, sessionsDir, sourceNote } from "./computer/computerChat.js";
+import { historyRows, sessionRows, sessionsAway, sessionsDir, sessionsWords, sourceNote } from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
 import AgentChip, { agentIcon } from "./AgentChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
@@ -182,10 +182,11 @@ export function SelChip({ kind, icon, label, note, file = "", cut, auto = false,
 // An account that can't store keys (a guest) can only ask for a shared one;
 // an admin may also share one with the whole server. `intent`: the handlers
 // that fetch Settings as the pointer or the focus reaches what opens it.
-// Beside them the agents found on a computer, which need no connection:
-// those the account turned on (`agents`, the chat's computer agents) are
-// picked with a click (`onPick`), and one found here but off (`found`, GET
-// /api/local-agents' agents) opens Settings → AI, where it is turned on.
+// Beside them the agents found on a computer, which need no connection,
+// each led by its icon as in the composer's chip: those the account turned
+// on (`agents`, the chat's computer agents) are picked with a click
+// (`onPick`), and one found here but off (`found`, GET /api/local-agents'
+// agents) opens Settings → AI → Agents, where it is turned on.
 function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent, agents = [], found = [], onPick }) {
   const tiles = info.failed ? [] : aiServiceTiles(info, { long: true });
   return (
@@ -216,19 +217,25 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent, agents 
         <>
           <div className="chatSetupText">{t("Or chat with an agent on your computer:")}</div>
           <div className="chatSetupTiles" role="group" aria-label={t("Agents on your computer")}>
-            {agents.map((a) => (
-              <button key={a.id} type="button" className="chatSetupTile" onClick={() => onPick(a.id)}>
-                <span className="chatSetupTileName">{agentChoice(a)}</span>
-                <span className="chatSetupTileHint">{a.ready === false ? <span className="agentProblem">{a.problem}</span>
-                  : a.where ? t("Works on {computer}, with no AI service", { computer: a.where }) : t("Works on this computer, with no AI service")}</span>
-              </button>
-            ))}
-            {openSettings ? found.map((a) => (
-              <button key={a.name} type="button" className="chatSetupTile" {...intent} onClick={() => openSettings("ai")}>
-                <span className="chatSetupTileName">{agentLabel(a.name, a.label)}</span>
-                <span className="chatSetupTileHint">{t("Found on this computer: turn it on in Settings → AI")}</span>
-              </button>
-            )) : null}
+            {agents.map((a) => {
+              const Icon = agentIcon(a.id);
+              return (
+                <button key={a.id} type="button" className="chatSetupTile" onClick={() => onPick(a.id)}>
+                  <span className="chatSetupTileName"><Icon size={16} />{agentChoice(a)}</span>
+                  <span className="chatSetupTileHint">{a.ready === false ? <span className="agentProblem">{a.problem}</span>
+                    : a.where ? t("Works on {computer}, with no AI service", { computer: a.where }) : t("Works on this computer, with no AI service")}</span>
+                </button>
+              );
+            })}
+            {openSettings ? found.map((a) => {
+              const Icon = agentIcon(a.name);
+              return (
+                <button key={a.name} type="button" className="chatSetupTile" {...intent} onClick={() => openSettings("agents")}>
+                  <span className="chatSetupTileName"><Icon size={16} />{agentLabel(a.name, a.label)}</span>
+                  <span className="chatSetupTileHint">{t("Found on this computer: turn it on in Settings → AI → Agents")}</span>
+                </button>
+              );
+            }) : null}
           </div>
         </>
       ) : null}
@@ -465,7 +472,6 @@ export default function ChatDock({
   // call again while it runs, instead of waiting, and a card answered from
   // the note its edit is drawn in says so as if answered on it.
   const [answeredApprovals, setAnsweredApprovals] = useState(() => new Map());
-  const toggleTools = () => setAgentEnabled(!agentEnabled);
   // What the agent may do here after applying the shared permissions.
   const agentReads = READ_TOOLS.some(perm);
   const agentWrites = WRITE_TOOLS.some(perm);
@@ -853,33 +859,37 @@ export default function ChatDock({
   useEffect(() => { setHistoryRead(""); }, [agent?.id, side.chat.conversation?.id]);
   // The selection belongs to the open popover: closing it drops the ticks.
   useEffect(() => { if (!historyOpen) setPicked(new Set()); }, [historyOpen]);
-  // History's "On {computer}": the sessions the picked agent's CLI keeps of
-  // the directory it works in on its computer, this one or another of the
-  // reader's (asked there over its channel), started in a terminal or an
-  // editor (computerChat.js sessionsDir; none for a co-author's agent or a
-  // conversation shown in place of the bucket's own), read again each time
-  // History opens, since they change outside Gamma, and never while it is
-  // closed (`sessionsList`: {key, sessions, error, away}, `sessions` null
-  // while read, `away` why another computer answered nothing:
-  // sessionsAway).
+  // History's "Codex sessions in paper": the sessions the picked agent's
+  // CLI keeps of the directory it works in on its computer, this one or
+  // another of the reader's (asked there over its channel), started in a
+  // terminal or an editor (computerChat.js sessionsDir; none for a
+  // co-author's agent or a conversation shown in place of the bucket's
+  // own), read again each time History opens and on the caption's refresh,
+  // since they change outside Gamma, and never while it is closed
+  // (`sessionsList`: {key, sessions, error, away, reading}, `sessions` null
+  // while first read, the ones read before kept while `reading` them again,
+  // `away` why another computer answered nothing: sessionsAway).
   const sessionsAt = onComputer && !side.shown ? sessionsDir(side.info, side.place) : "";
   const sessionsKey = sessionsAt ? `${agent.id}\n${sessionsAt}` : "";
-  const [sessionsList, setSessionsList] = useState({ key: "", sessions: null, error: "", away: "" });
-  const [sessionsAsked, setSessionsAsked] = useState(0); // a read asked again (an open that failed)
-  const [openingSession, setOpeningSession] = useState(false); // a session's open on its way: one at a time
+  const [sessionsList, setSessionsList] = useState({ key: "", sessions: null, error: "", away: "", reading: false });
+  const [sessionsAsked, setSessionsAsked] = useState(0); // a read asked again (a refresh, an open that failed)
+  const [openingSession, setOpeningSession] = useState(""); // the session whose open is on its way: one at a time
   const openingSessionRef = useRef(false);
   useEffect(() => {
     if (!historyOpen || !sessionsKey) return undefined;
     let cancelled = false;
-    setSessionsList({ key: sessionsKey, sessions: null, error: "", away: "" });
+    setSessionsList((was) => (was.key === sessionsKey && was.sessions && !was.error ? { ...was, reading: true }
+      : { key: sessionsKey, sessions: null, error: "", away: "", reading: false }));
     const [name, dir] = sessionsKey.split("\n");
     computerSessions(name, dir)
       .then((data) => {
-        if (!cancelled) setSessionsList({ key: sessionsKey, sessions: data.sessions || [], error: "", away: data.away || "" });
+        if (!cancelled) {
+          setSessionsList({ key: sessionsKey, sessions: data.sessions || [], error: "", away: data.away || "", reading: false });
+        }
       })
       .catch((err) => {
         if (!cancelled) {
-          setSessionsList({ key: sessionsKey, sessions: [], away: "",
+          setSessionsList({ key: sessionsKey, sessions: [], away: "", reading: false,
             error: t("Couldn't list the sessions: {message}", { message: err.message }) });
         }
       });
@@ -1037,15 +1047,19 @@ export default function ChatDock({
     else setWanted(row.agent);
   }
 
-  // A session of "On {computer}" opened: the bucket's active conversation
-  // now (the server's: its turns read, bound to the session), shown as an
-  // opened History row is; one Gamma continues already is that conversation.
-  // One at a time: a second open of the same session would bind it twice.
+  // A session of History's sessions opened: the bucket's active
+  // conversation now (the server's: its turns read, bound to the session),
+  // shown as an opened History row is; one Gamma continues already is that
+  // conversation. One at a time: a second open of the same session would
+  // bind it twice. Another computer's answers over its channel, up to 30 s:
+  // meanwhile the row spins in its age's place and the status pill says
+  // "Opening the session…" until the conversation is read.
   async function openSession(row) {
     if (openingSessionRef.current) return;
     const [name, dir] = sessionsKey.split("\n");
     openingSessionRef.current = true;
-    setOpeningSession(true);
+    setOpeningSession(row.id);
+    setStatus(t("Opening the session…"));
     try {
       await openComputerSession({ bucket: chatKey, agent: name, dir, session: row.id });
     } catch (err) {
@@ -1054,12 +1068,13 @@ export default function ChatDock({
       return;
     } finally {
       openingSessionRef.current = false;
-      setOpeningSession(false);
+      setOpeningSession("");
     }
     setOpenPopover(null);
     setHistoryRead("");
     chatStickRef.current = true;
-    side.chat.reload();
+    await side.chat.reload();
+    setStatus("");
   }
 
   // A History row's conversation as a file to keep: Gamma AI's (the one
@@ -1149,7 +1164,8 @@ export default function ChatDock({
   }
 
   // Rows of the history popover: the conversation shown first, then every
-  // agent's others newest-first, filtered by the search box.
+  // agent's others newest-first, each named by its agent while the chat has
+  // several, filtered by the search box.
   const shownComputer = onComputer ? side.chat.conversation : null;
   const gammaVersion = session.version(chatKey) || "";
   const historyList = useMemo(() => matchRows(historyRows({
@@ -1158,8 +1174,9 @@ export default function ChatDock({
       : shownComputer ? { title: shownComputer.title || t("Untitled"), preview: "" } : null,
     gamma: history || [], computer: agentHistories.get(chatKey) || null,
     gammaNow: chatMessages.length ? { title: activeTitle, preview: deriveTitle(chatMessages), updated_at: gammaVersion } : null,
+    agents: agentList,
   }), historyQuery), [history, agentHistories, chatKey, historyQuery, activeTitle, chatMessages, agent?.id, onComputer,
-    shownComputer, gammaVersion]);
+    shownComputer, gammaVersion, agentList]);
   // The rows a selection can hold: the listed archived ones ("Select all"
   // takes the search's results, not the whole history). A tick survives
   // only while its row is listed, so Delete never takes a hidden one.
@@ -1836,10 +1853,11 @@ export default function ChatDock({
   // window's actions (DockWindow), which fold into its "⋯" when it is too
   // narrow for them — Export (the conversation or its context), the context
   // ring (opens the settings popover, whose Tokens section spells it out),
-  // ⚙ chat settings (context size, tools and tokens — the same prefs
-  // Settings / AI edits, in a popover; the model and effort are the
-  // composer's model chip), Tools, Find, History, New chat. Find, History
-  // and New chat fold last, New chat the very last (`keep`).
+  // ⚙ chat settings (context size, the Tools switch and the tools'
+  // permissions, tokens — the same prefs Settings / AI edits, in a popover;
+  // the model and effort are the composer's model chip), Find, History, New
+  // chat. Find, History and New chat fold last, New chat the very last
+  // (`keep`).
   const settingsOpen = openPopover === "chatsettings";
   const findAction = {
     id: "find", icon: SearchIcon, label: t("Find in this conversation"), on: chatFindOpen, keep: 1,
@@ -1900,14 +1918,20 @@ export default function ChatDock({
   const waits = (row) => (!row.current && !row.lent && row.agent !== GAMMA && side.working
     ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: side.label }) : "");
   const listedSessions = sessionsKey && sessionsList.key === sessionsKey ? sessionsList
-    : { sessions: null, error: "", away: "" };
-  const computerName = side.where || String(localAgents?.computer || "");
+    : { sessions: null, error: "", away: "", reading: false };
+  // The sessions under "Codex sessions in paper" (" on TIM-PC" for another
+  // computer's agent): a press on one that cannot open says why in the
+  // status pill, a busy one says it under its title too, and the caption's
+  // refresh reads them again in place (a terminal closed meanwhile).
+  const readSessions = () => setSessionsAsked((n) => n + 1);
+  const sessionsSaid = sessionsKey ? sessionsWords(side.info, side.label, side.place, side.where) : null;
   const sessionsSection = sessionsKey ? {
-    label: computerName ? t("On {computer}", { computer: computerName }) : t("On this computer"),
+    label: sessionsSaid.caption, empty: sessionsSaid.empty,
     rows: matchRows(sessionRows(listedSessions.sessions, side.label), historyQuery),
-    loading: listedSessions.sessions == null, onOpen: openSession,
-    error: listedSessions.error || sessionsAway(listedSessions.away, computerName),
-    onRetry: () => setSessionsAsked((n) => n + 1), icon: agentList.length > 1 ? agentIcon(agent.id) : null,
+    loading: listedSessions.sessions == null, reading: listedSessions.reading, onRefresh: readSessions,
+    onOpen: openSession, opening: openingSession,
+    error: listedSessions.error || sessionsAway(listedSessions.away, side.where),
+    onRetry: readSessions, icon: agentList.length > 1 ? agentIcon(agent.id) : null,
     disabledReason: (row) => row.busy || (side.working
       ? t("Stop {agent} or wait for it to finish to open another conversation", { agent: side.label })
       : picked.size > 0 ? t("Clear the selection to open a session")
@@ -1920,7 +1944,7 @@ export default function ChatDock({
     popover: { name: "chathistory", content: historyOpen ? (
       <ChatHistoryPop query={historyQuery} onQuery={setHistoryQuery} onClose={() => setOpenPopover(null)}
         rows={historyList} loading={history == null} picking={picked.size > 0}
-        onOpen={pickOrOpen} disabledReason={waits} section={sessionsSection}
+        onOpen={pickOrOpen} disabledReason={waits} onRefused={setStatus} section={sessionsSection}
         icon={agentList.length > 1 ? (s) => agentIcon(s.agent) : undefined}
         tip={(s) => `${s.preview || s.title}${s.count ? ` · ${s.count} messages` : ""}`}
         lead={(s) => (s.active || s.current || s.lent ? null : (
@@ -1981,22 +2005,23 @@ export default function ChatDock({
   // With a computer's agent: its conversation exported, Find, History, and
   // New chat, which keeps the conversation in History; neither of the last
   // while a turn is still to end (the server refuses them then, and their
-  // titles say why).
+  // titles say why). While a comment thread's or a co-author's conversation
+  // is shown New chat is off too, its title saying why: the note in the
+  // composer's place goes back to the page's own chat.
+  const shownWhy = side.shown?.thread ? t("This chat answers a comment: go back to the chat to start a new one")
+    : side.shown ? t("This is {person}'s chat: go back to your own to start a new one", {
+      person: side.chat.conversation?.person || t("Someone") }) : "";
   const computerActions = () => [
     { id: "export", icon: DownloadIcon, label: t("Export conversation"), title: t("Download this conversation as Markdown"),
       disabled: exporting || !side.chat.conversation,
       onClick: () => exportRow({ agent: agent.id, active: true, title: side.chat.conversation?.title || "" }) },
     findAction,
     historyAction,
-    // a comment thread's or a co-author's conversation shown: back to the page's own chat in New chat's place
-    side.shown ? { id: "back", icon: ArrowLeftIcon, label: t("Back to the chat"), keep: 3, onClick: leaveShown,
-      title: side.shown.thread ? t("Show this page's chat again: this conversation stays with its comment thread")
-        : t("Show your own chat of this page again") }
-      : { id: "new", icon: PlusIcon, label: t("New chat"), guide: "chat.new", keep: 3,
-        disabled: side.working || side.chat.busy || !side.chat.conversation, onClick: () => side.chat.newChat(),
-        title: side.working ? t("Stop {agent} or wait for it to finish to start a new chat", { agent: side.label })
-          : t("New chat — keeps this conversation in history and starts a fresh one") },
-  ].filter(Boolean);
+    { id: "new", icon: PlusIcon, label: t("New chat"), guide: "chat.new", keep: 3,
+      disabled: !!side.shown || side.working || side.chat.busy || !side.chat.conversation, onClick: () => side.chat.newChat(),
+      title: shownWhy || (side.working ? t("Stop {agent} or wait for it to finish to start a new chat", { agent: side.label })
+        : t("New chat — keeps this conversation in history and starts a fresh one")) },
+  ];
   const actions = readOnly ? [findAction] : onComputer ? computerActions() : aiOff || !aiKnown ? [] : [
     { id: "export", icon: DownloadIcon, label: t("Export chat"), title: t("Export this conversation or the context the model is sent"),
       disabled: exporting, items: [
@@ -2020,12 +2045,11 @@ export default function ChatDock({
           <div className="popoverHint">
             {t("Extracted PDF text sent with each message. The multi-paper total is in Settings / AI / Chat, the agent's read window in Settings / AI / Tool usage.")}
           </div>
-          <div className="popoverSection">{t("Tools")}</div>
-          <label className="chatToolPermRow" title={t("Allow assistant tools in all chats")}>
-            <input type="checkbox" checked={toolsEnabled} onChange={toggleTools} />
-            <SlidersIcon size={14} />
-            <span>{t("Allow tools in all chats")}</span>
-          </label>
+          {/* The account's master switch for tools (Settings → AI → Tool usage's Assistant tools), then this kind's permissions. */}
+          <div data-guide="chat.tools">
+            <Toggle icon={SparklesIcon} label={t("Tools")} hint={t("Allow tools in all chats")} checked={toolsEnabled} onChange={setAgentEnabled}
+              title={t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") })} />
+          </div>
           <div className="chatToolPicker">
             <AgentToolPicker kind={chatKind} perms={agentPerms} setPerms={setAgentPerms} disabled={!toolsEnabled} />
           </div>
@@ -2045,11 +2069,6 @@ export default function ChatDock({
         </Popover>
       ) : null },
     },
-    {
-      id: "tools", icon: SlidersIcon, label: toolsEnabled ? t("Tools on") : t("Tools off"), on: toolsEnabled, guide: "chat.tools",
-      title: t("Tools {off} for all chats - click to change the global setting", { off: toolsEnabled ? t("on") : t("off") }),
-      onClick: () => { setOpenPopover(null); toggleTools(); },
-    },
     findAction,
     historyAction,
     {
@@ -2062,13 +2081,13 @@ export default function ChatDock({
   ].filter(Boolean);
   // The composer's model chip (AgentChip), "Allowed in this chat" and Stop,
   // for the agent shown: Gamma AI's models, efforts and speeds, or the
-  // computer agent's (useComputerSide).
-  const chip = onComputer ? { ...side.chip, display: <span className="chatModelName">{side.chip.text}</span> } : {
+  // computer agent's (useComputerSide). The chip words them (the agent
+  // first while there are several).
+  const knobs = !aiOff && headerModel;
+  const chip = onComputer ? side.chip : {
     label: knobsLabel(speed),
-    display: !aiOff && headerModel ? <>
-      <span className="chatModelName">{[headerModel.model, effort].filter(Boolean).join(" · ")}</span>
-      <SpeedGlyph speed={speed} />
-    </> : <span className="chatModelName">{agent.label}</span>,
+    text: knobs ? [headerModel.model, effort].filter(Boolean).join(" · ") : "",
+    glyph: knobs ? <SpeedGlyph speed={speed} /> : null, speed: knobs ? speed : "",
     models: aiOff ? [] : headerModels.map((m) => [m.id, modelLabel(m)]), model: headerModel?.id || "", onModel: setChatModel,
     sections: aiOff ? [] : [
       ...(effortLevels.length ? [{
@@ -2185,6 +2204,14 @@ export default function ChatDock({
               <div className="chatEmptyAgain">
                 <button type="button" className="uiBtn sm" disabled={side.chat.busy} onClick={side.chat.reload}>{t("Try again")}</button>
               </div>
+            ) : side.empty.offer && openSettings ? (
+              <div className="chatEmptyAgain">
+                {/* where else it may work: a directory offered in Settings → AI → Agents */}
+                <button type="button" className="uiBtn sm ghost" {...settingsIntent} onClick={() => openSettings("agents")}
+                  title={t("Offer a directory of this computer for {agent} to work in, in Settings → AI → Agents", { agent: side.label })}>
+                  {t("Offer a directory…")}
+                </button>
+              </div>
             ) : null}
           </div>
         )) : visibleMessages.length || !aiKnown || (loadedFor !== chatKey && !session.recall(chatKey)) ? null
@@ -2221,11 +2248,15 @@ export default function ChatDock({
           it asks. */}
       {!readOnly && onComputer && side.shown?.thread ? (
         <div className="chatThreadNote" data-testid="chat-thread-note">
-          <span className="chatThreadNoteText">{t("This conversation answers a comment thread: reply there to go on.")}</span>
+          <span className="chatThreadNoteText">{t("This chat answers a comment: reply there to go on.")}</span>
           <button type="button" className="uiBtn sm" onClick={() => gammaNav?.openThread?.(side.shown.thread, "", chatKey)}>
-            {t("Show the thread")}
+            <MessageSquareIcon size={14} />
+            {t("Show the comment")}
           </button>
-          <button type="button" className="uiBtn sm ghost" onClick={leaveShown}>{t("Back to the chat")}</button>
+          <button type="button" className="uiBtn sm ghost" onClick={leaveShown}
+            title={t("Show this page's chat again: this conversation stays with its comment thread")}>
+            <ArrowLeftIcon size={14} />{t("Back to the chat")}
+          </button>
         </div>
       ) : !readOnly && onComputer && side.shown ? (
         <div className="chatThreadNote" data-testid="chat-lent-note">
@@ -2235,7 +2266,9 @@ export default function ChatDock({
           </span>
           {/* the composer and its Stop give way to this line: its turn is stopped here */}
           {stop ? <button type="button" className="uiBtn sm" onClick={stop.onClick} title={stop.label}>{t("Stop")}</button> : null}
-          <button type="button" className="uiBtn sm ghost" onClick={leaveShown}>{t("Back to the chat")}</button>
+          <button type="button" className="uiBtn sm ghost" onClick={leaveShown} title={t("Show your own chat of this page again")}>
+            <ArrowLeftIcon size={14} />{t("Back to the chat")}
+          </button>
         </div>
       ) : !readOnly ? (
       // One box: the context chips on top, the message at full

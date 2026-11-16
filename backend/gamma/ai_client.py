@@ -58,7 +58,7 @@ class AllowanceExhausted(CallRefused):
     def __init__(self, used: int, limit: int):
         super().__init__(status_code=429, detail=(
             f"This server's shared AI allowance for your account is used up ({used} of {limit} "
-            "tokens in the last 24 hours). Add your own key in Settings → AI, or try again later."))
+            "tokens in the last 24 hours). Add your own key in Settings → AI → Connections, or try again later."))
         self.used, self.limit = used, limit
 
 

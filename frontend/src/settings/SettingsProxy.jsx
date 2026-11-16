@@ -15,7 +15,7 @@ import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { composing } from "../shared/lib/hotkeys.js";
-import { PaneHead, PasswordInput, Row, Section, Segmented, TestResult, Toggle, useDraftOf, useSettingsDraft } from "./SettingsKit";
+import { Empty, FormNotice, PaneHead, PasswordInput, Row, Section, Segmented, TestResult, Toggle, useDraftOf, useSettingsDraft } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
 import { ActivityIcon, GlobeIcon, KeyIcon, ListIcon, SearchIcon, ServerIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
@@ -144,7 +144,13 @@ export function ProxySettings({ setStatus }) {
   };
 
   const disabled = !saved || managed || busy;
-  const errorLine = error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null;
+  // A refused Save says why; a failed read offers to read again.
+  const errorLine = error ? (
+    <FormNotice>
+      {error}
+      {!saved ? <>{" "}<button type="button" className="uiBtn sm" onClick={() => proxy.reload().catch(() => {})}>{t("Try again")}</button></> : null}
+    </FormNotice>
+  ) : null;
   const intro = [t("How this server reaches the internet: AI providers, paper lookups and downloads, translation, Zotero, Gamma Cloud and other Gamma servers. Not a library proxy (EZproxy)."),
     IS_DESKTOP ? t("This app's windows and its updates follow your system's proxy settings.") : null];
   return <>
@@ -152,7 +158,7 @@ export function ProxySettings({ setStatus }) {
     <Section title={t("Connection")} action={dirty ? (
       <button className="uiBtn sm primary" disabled={busy} onClick={save}><MorphText>{busy ? t("Saving…") : t("Save")}</MorphText></button>
     ) : null}>
-      {!saved ? errorLine || <p className="setNotice loadingHint">{t("Loading…")}</p> : <>
+      {!saved ? errorLine || <Empty icon={GlobeIcon} loading>{t("Loading…")}</Empty> : <>
         <Row icon={GlobeIcon} label={t("Proxy")} hint={managed ? t("Gamma Cloud manages this server's network.") : modeHint(draft.mode, system)}
           title={managed ? modeHint(draft.mode, system)
             : t("Use system settings follows the server's environment or this computer's network settings; No proxy connects directly; Manual uses a proxy you set")}>
@@ -189,7 +195,8 @@ export function ProxySettings({ setStatus }) {
         </> : null}
         {lookups ? (
           <Toggle icon={SearchIcon} label={t("Let the proxy look up names")} checked={draft.proxy_dns} disabled={disabled} onChange={set("proxy_dns")}
-            hint={t("For links, PDFs and pages people or the assistant open: when only the proxy can resolve internet names, or with a VPN in fake-IP mode. The proxy then decides which addresses they can reach.")} />
+            hint={t("For fake-IP VPNs, or when only the proxy resolves names")}
+            title={t("For links, PDFs and pages people or the assistant open: when only the proxy can resolve internet names, or with a VPN in fake-IP mode. The proxy then decides which addresses they can reach.")} />
         ) : null}
         {errorLine}
       </>}

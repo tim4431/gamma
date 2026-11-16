@@ -132,8 +132,8 @@ function ReplyErrorCard({ message, compact, actions }) {
 // step folds its pill away; meanwhile it keeps its last words.
 // `still`: a reply loaded or read again, not this tab's own: its label
 // changes at once and is not read out. `pill`: what a computer agent's turn
-// says of itself ({label, waiting}: computerChat.js turnLabel), in place of
-// Gamma AI's words.
+// says of itself ({label, waiting, queued}: computerChat.js turnLabel), in
+// place of Gamma AI's words.
 function AgentSteps({ actions, live, still, running, waiting, helpers = [], usage, text, pill, open, onToggle, titleOf, children }) {
   const { failed, declined } = splitActions(actions);
   const done = !live && actions.length > 0;
@@ -144,7 +144,7 @@ function AgentSteps({ actions, live, still, running, waiting, helpers = [], usag
           : done ? stepsSummary(actions)
             : text ? t("Responding") : t("Thinking");
   return (
-    <StepsPill label={label} live={live} waiting={pill ? pill.waiting : !!waiting} still={still} steps={actions.length}
+    <StepsPill label={label} live={live} waiting={pill ? pill.waiting : !!waiting} queued={!!pill?.queued} still={still} steps={actions.length}
       counts={{ failed, declined }} title={t("Show every step with its arguments and output")} open={open} onToggle={onToggle}
       meter={<UsageLine usage={usage} className="chatMsgUsage live" />}
       under={live && helpers.length ? (
