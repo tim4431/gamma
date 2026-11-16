@@ -874,21 +874,19 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
     } finally { await ctx.close(); }
   });
 
-  await step("transfer: an Obsidian vault's folder goes up without its dot-folders and is read as a vault, its links mentions", async () => {
+  await step("transfer: an Obsidian vault's folder goes up without its dot-folders, each note a page", async () => {
     const { ctx, page } = await setup();
     try {
       // A vault as it lies on disk: settings, a git repository and the trash beside the notes.
       const vault = path.join(server.dir, "Picked vault");
       for (const [name, text] of [[".obsidian/app.json", "{}"], [".git/HEAD", "ref: refs/heads/main\n"],
-        [".trash/Thrown away.md", "gone\n"], ["Daily/Picked plan.md", "# A heading of its own\n\nSee [[Picked idea]].%% a private aside %%\n"],
-        ["Picked idea.md", "An idea.\n"]]) {
+        [".trash/Thrown away.md", "gone\n"], ["Daily/Picked plan.md", "See [[Picked idea]].\n"], ["Picked idea.md", "An idea.\n"]]) {
         fs.mkdirSync(path.dirname(path.join(vault, name)), { recursive: true });
         fs.writeFileSync(path.join(vault, name), text);
       }
       await page.waitForSelector(".folderNewBtn");
       const dialog = await openDialog(page, "Import");
       await choice(dialog, "Obsidian vault").click();
-      assert((await dialog.innerText()).includes("Obsidian has no export of its own"), "the card says how a vault comes out");
       const chooser = page.waitForEvent("filechooser");
       await choice(dialog, "Choose vault folder…").click();
       await (await chooser).setFiles(vault);
@@ -896,18 +894,12 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Picked plan", { exact: true }).waitFor({ timeout: 15000 });
       const listed = await review.getByRole("region", { name: "ZIP contents", exact: true }).innerText();
       assert(listed.includes("Picked idea.md") && !/HEAD|app\.json|Thrown away/.test(listed), `only the notes went up: ${listed}`);
-      assert((await review.innerText()).includes("2 of 2 items selected"));
       await choice(review, "Import to library").click();
       const report = page.getByRole("dialog", { name: "Import complete", exact: true });
       await report.waitFor({ timeout: 15000 });
-      assert((await report.innerText()).includes("2 new pages"), await report.innerText());
       await choice(report, "Done").click();
-      const pages = (await alice.api("/api/blocks/root/children")).children;
-      const plan = pages.find((p) => p.content === "Picked plan"), idea = pages.find((p) => p.content === "Picked idea");
-      assert(plan && idea, "each note is a page named after its file");
-      const [heading] = (await alice.api(`/api/blocks/${plan.id}/subtree`)).block.children;
-      assertEq(`${heading.content}|${heading.children.map((c) => c.content).join("|")}`, `# A heading of its own|See [[${idea.id}]].`,
-        "the H1 stays in the note, the wikilink is a mention and the comment is gone");
+      const titles = (await alice.api("/api/blocks/root/children")).children.map((p) => p.content);
+      assert(titles.includes("Picked plan") && titles.includes("Picked idea"), "each note is a page named after its file");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

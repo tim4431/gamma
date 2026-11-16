@@ -852,9 +852,8 @@ before a reload waits until a page can take it. The web half is
    A `.zip` opens the Import dialog with the file
    already chosen. It asks which export it is, offering the sources that
    read an archive (Zotero, Markdown, Notability & GoodNotes, Notion,
-   Obsidian, Gamma), starting on Obsidian for a vault that kept its
-   `.obsidian` folder (Files' *Compress* of the vault's folder, shared to
-   the app), and goes on to that source's review with no picker.
+   Obsidian, Gamma: a vault comes so, Files' *Compress* of its folder
+   shared to the app), and goes on to that source's review with no picker.
    An image becomes a picture where the Picture button puts one: the
    surface in view, else the sheet among the notes that shows the most of
    itself ([Pictures](#pictures)). Several land one after another. They

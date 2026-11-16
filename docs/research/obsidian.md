@@ -179,8 +179,9 @@ own, `obsidian`, that tells the Markdown zip reader the upload is a vault,
 whatever folders it kept; the vault dialect skipping every dot-path, as
 Obsidian does; the card taking the vault's folder where the browser can
 pick one, packed without its dot-paths so a `.git` is never uploaded; and
-the card offered to a `.zip` the iPad or Android app was given, chosen
-first when the zip's entry names show `.obsidian/`. `.canvas` and `.base`
+the card offered to a `.zip` the iPad or Android app was given. Not
+guessed from the zip: a vault that kept `.obsidian/` reads the same under
+Markdown notes, and one without it shows nothing to guess by. `.canvas` and `.base`
 files (Obsidian's views, JSON and YAML with no notes in them) stay out with
 a warning. Not taken: an iPad document type for a folder, and Excalidraw's
 `.excalidraw.md` drawings, which come in as notes of their JSON.

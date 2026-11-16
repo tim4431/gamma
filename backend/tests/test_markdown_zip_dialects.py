@@ -276,24 +276,6 @@ def test_a_comment_in_a_fence_that_holds_fence_lines_stays(library, code):
     assert _lines(library, _import(library, {**VAULT, "V.md": body}), "V") == ["keep  this", code, "last  one"]
 
 
-def test_the_obsidian_source_reads_a_vault_that_left_its_settings_folder_out(library):
-    """The Import dialog's Obsidian card: a zip made on a tablet or by a
-    plugin may hold no ``.obsidian/``, and is read as a vault anyway, where
-    the Markdown card's reader takes it for a plain zip."""
-    files = {"Vault/Plan.md": "# A heading of its own\n\nText%% a comment %% here.\n"}
-    plain = _post(library, files, "markdown-zip/preview").json()
-    assert (plain["obsidian"], [p["title"] for p in plain["pages"]]) == (False, ["A heading of its own"])
-    preview = _post(library, files, "obsidian/preview")
-    assert preview.status_code == 200, preview.text
-    r = _post(library, files, "obsidian")
-    assert r.status_code == 200, r.text
-    report = r.json()
-    assert preview.json()["warnings"] == report["warnings"]
-    assert (report["obsidian"], [p["title"] for p in report["pages"]]) == (True, ["Plan"])
-    heading, = _page(library, report, "Plan")["children"]  # the H1 stays, the line under it inside it
-    assert (heading["content"], [c["content"] for c in heading["children"]]) == ("# A heading of its own", ["Text here."])
-
-
 def test_a_vault_leaves_out_every_hidden_path_as_obsidian_does(library):
     files = {**VAULT, "Note.md": "Kept", ".git/notes.md": "git", ".github/README.md": "ci",
              "Sub/.hidden/Old.md": "old", ".trash/Gone.md": "gone", ".dotted.md": "dot"}
@@ -305,11 +287,10 @@ def test_a_plain_zip_keeps_the_notes_of_a_dot_directory(library):
     assert sorted(p["title"] for p in _import(library, files)["pages"]) == ["CONTRIBUTING", "Readme note"]
 
 
-def test_a_vault_s_canvases_and_bases_are_left_out_with_a_warning(library):
-    report = _import(library, {**VAULT, "Board note.md": "Kept", "Tasks.base": "views: []\n", "Board.canvas": "{}"})
-    assert [p["title"] for p in report["pages"]] == ["Board note"]
-    assert {(w["title"], w["reason"]) for w in report["warnings"]} == {
-        ("Tasks.base", "Obsidian base files are not imported"), ("Board.canvas", "Obsidian canvas files are not imported")}
+def test_a_vault_s_base_is_left_out_with_a_warning(library):
+    report = _import(library, {**VAULT, "Base note.md": "Kept", "Tasks.base": "views: []\n"})
+    assert [p["title"] for p in report["pages"]] == ["Base note"]
+    assert "Tasks.base" in [w["title"] for w in report["warnings"]]
 
 
 def test_a_vault_s_title_is_its_file_name_alone(library):

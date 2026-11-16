@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep,
-  archiveSource, importSource, notionFiles, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
+  importSource, notionFiles, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
 // The annotated PDF's own options, as every other format's payload has them,
@@ -116,23 +116,6 @@ test("imports of embedded annotations carry the strip preference, and only Zoter
   assert.equal(resolveImport("annots", { hasPdf: false }).definition.id, "zotero");
 });
 
-test("an Obsidian vault is a .zip or a folder, the folder without what Obsidian hides, and goes up as itself", () => {
-  const vault = importSource("obsidian");
-  assert.equal(vault.category, "Library");
-  assert.equal(vault.folderLabel, "Choose vault folder…");
-  assert.equal(vault.hidden, false, "a picked vault leaves out .obsidian, .trash and .git");
-  assert.equal(importSource("zotero").hidden, undefined, "a Zotero export keeps every file");
-  assert.deepEqual(resolveImport("obsidian", { hasPdf: true }).payload, { source: "obsidian" });
-  assert.equal(resolveImport("obsidian", { archive: true }).definition.id, "obsidian");
-});
-
-test("a .zip whose entries show a vault's .obsidian folder is guessed a vault; anything else is not guessed", () => {
-  assert.equal(archiveSource(["My vault/.obsidian/app.json", "My vault/Note.md"]), "obsidian");
-  assert.equal(archiveSource([".obsidian/", "Note.md"]), "obsidian");
-  assert.equal(archiveSource(["Note.md", "notes.obsidian/x.md", "x.obsidian"]), "");
-  assert.equal(archiveSource([]), "");
-});
-
 test("a .zip already chosen is offered only the sources that read an archive", () => {
   const archive = resolveImport("markdown", { hasPdf: true, archive: true });
   assert.deepEqual(archive.formats.map(({ id }) => id), ["zotero", "markdown", "noteapps", "notion", "obsidian", "gamma"]);
@@ -245,7 +228,7 @@ test("each import source says what its picker takes, the note apps several files
   assert.equal(importSource("goodnotes"), undefined);
   assert.equal(importSource("markdown").multiple, undefined);
   assert.equal(importSource("markdown").accept, ".md,.markdown,.zip,text/markdown,application/zip");
-  for (const id of ["zotero", "notion", "obsidian", "gamma"]) assert.equal(importSource(id).accept, ".zip,application/zip");
+  for (const id of ["zotero", "notion", "gamma"]) assert.equal(importSource(id).accept, ".zip,application/zip");
 });
 
 test("a page with pages inside it offers Include pages inside on every format's review, off by default", () => {

@@ -245,9 +245,11 @@ where the browser can (`folderZip.js` `canPickFolder`: not Safari on an
 iPhone or iPad, not the Android app), the `.zip` a link beside it, and a
 double-click on a card without a review step does what its button does
 (`ImportDialog`'s `request`). The folder goes up as a `.zip` the browser
-packs (`zipFolder`); Obsidian's (`hidden: false`) leaves out every path
-below the folder under a name starting with `.` (`withoutHidden`: its
-`.obsidian`, `.trash`, a `.git`), none of which Obsidian reads.
+packs (`zipFolder`); Obsidian's (`filterFolder`) leaves out first what a
+dropped directory does (`fileRouting.js` `dropFilter`): every dot-path, so
+its `.obsidian`, `.trash` and a `.git`, none of which Obsidian reads, never
+go up. Which sources go through the review is `importApi.js`
+`reviewsImport`.
 The note apps' picker takes several files, which go up as one
 `.zip` (`folderZip.js` `filesUpload`, a name picked twice numbered), and takes
 any file on an iPhone or iPad, whose Safari greys out a `.note` or a
@@ -275,12 +277,7 @@ one shared to the app from another app ([ipad.md "Opened files"](ipad.md#opened-
 dialog is then titled with the file's name and asks which export it is.
 It offers only the sources that read an archive (`archive` in
 `resolveImport`: Zotero, Markdown, Notability & GoodNotes, Notion, Obsidian
-and Gamma), and starts on the one the zip's entry names show where they
-show one (`transfers/zipNames.js` `zipEntryNames` reads the central
-directory from the end of the File, `transferFormats.js` `archiveSource`
-names the source): a vault that kept its `.obsidian` folder starts on
-Obsidian, unless a card was chosen first; anything else on Zotero. Its
-button is *Import*, and the file goes straight to that source's review
+and Gamma). Its button is *Import*, and the file goes straight to that source's review
 with no picker. A `.note`, `.ntb` or `.goodnotes` shared to the app skips
 the dialog and opens the note apps' review, those of one share together.
 
@@ -569,9 +566,9 @@ title (`FORMATS` in `transfers/importApi.js`), and only Markdown's picker takes
 a `.md` as well: the server reads the zip's dialect, so a Notion export under
 Markdown notes reads the same. A review opened again from its job, which keeps
 the endpoint, is titled Markdown's. The "Obsidian vault" card (a `.zip`, or a
-folder the browser packs) has a source of its own, `obsidian`
-(`POST /api/import/obsidian`): the same reader told the zip is a vault
-(`import_markdown_zip(vault=True)`), since a zip made on a phone or tablet, or
+folder the browser packs) has a review source of its own, `obsidian`
+(`_review_source`, the Markdown zip's pair with `vault=True`): the same
+reader told the zip is a vault (`import_markdown_zip(vault=True)`), since a zip made on a phone or tablet, or
 by a plugin, may leave `.obsidian/` out, and without it a vault would read as
 Plain (titles from the H1, comments kept). Its review reopens as
 Obsidian's. One logic covers a zipped Obsidian vault, Notion's Export →

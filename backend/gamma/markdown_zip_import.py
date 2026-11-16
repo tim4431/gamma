@@ -113,9 +113,9 @@ _BIBTEX_RE = re.compile(r"^```bibtex[ \t]*\n(.*?)\n```[ \t]*\n?", re.S)
 # Bundled files that become uploads: anything Gamma would accept from
 # POST /api/upload-file (not executable, well-formed extension) that is not
 # a note or one of Obsidian's views (a canvas, a base), which are warned of.
-_NOT_ASSET_EXTS = {".canvas", ".base", ""}
 _OBSIDIAN_VIEWS = {".canvas": "Obsidian canvas files are not imported",
                    ".base": "Obsidian base files are not imported"}
+_NOT_ASSET_EXTS = {*_OBSIDIAN_VIEWS, ""}
 
 
 def _is_asset_ext(ext: str) -> bool:
@@ -433,8 +433,8 @@ class ZipRun:
         self.entries = [e for e in self.entries if not self.dialect.skipped(e.path)]
         self.order = {e.path: i for i, e in enumerate(self.entries)}
         for e in self.entries:
-            if _split_ext(e.path)[1] in _OBSIDIAN_VIEWS:
-                self.warn(e.path, _OBSIDIAN_VIEWS[_split_ext(e.path)[1]])
+            if reason := _OBSIDIAN_VIEWS.get(_split_ext(e.path)[1]):
+                self.warn(e.path, reason)
 
         self.notes = sorted((e for e in self.entries if self.dialect.is_page(e.path)),
                             key=lambda e: (e.path.count("/"), e.path.lower()))

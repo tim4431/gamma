@@ -336,8 +336,9 @@ function formatSummary({ payload, noPdfCopy, translated }, folder) {
 // `instructions` is the preparation note shown under a selected card;
 // `folderLabel` the button that picks the export's folder instead, first
 // where the browser can pick folders (folderZip.js), the .zip then a link;
-// `hidden: false` leaves out of a picked folder what lies under a name
-// starting with "." (Obsidian reads none of it: .obsidian, .trash, .git);
+// `filterFolder` leaves out of a picked folder what a dropped directory
+// leaves out (fileRouting.js dropFilter: dot-paths such as a vault's
+// .obsidian, .trash and .git, none of which Obsidian reads);
 // `accept` what the source's file picker takes (`multiple`: several files,
 // packed into one .zip named after the source, folderZip.js `filesUpload`).
 const IMPORT_SOURCES = [
@@ -350,7 +351,7 @@ const IMPORT_SOURCES = [
     instructions: T("Pick one or more .note, .ntb or .goodnotes files, or a .zip of them; the two apps' files can be picked together. From Notability: export with File Format “Note” or “NTB” (in a note, the options icon → Export Options; in the library, press and hold a note → Export Options). From GoodNotes on an iPad, iPhone or Mac: a document's menu → Export → GoodNotes (a folder exports as one .zip). Each note or notebook becomes a page: one on a PDF keeps the PDF, one on paper becomes a notebook of sheets, and its handwriting, shapes, typed text, pictures and recordings come along (an NTB export carries no recordings). GoodNotes on Android, Windows and the web exports PDF only: import that as a paper, then Annotations in this PDF. Notes already imported are skipped.") },
   { id: "notion", label: T("Notion pages"), category: "Notes", hint: T("Pages, subpages, databases and files"), archive: true, actionLabel: T("Choose .zip…"), accept: ".zip,application/zip",
     instructions: T("Pick the .zip Notion exports: a page's ••• menu → Export, with Include subpages on, or Settings → General → Export all workspace content. Choose Markdown & CSV or HTML; only HTML keeps toggles and colours. Pages inside pages stay inside them, databases become tables, links between pages become mentions, and images and files come along. Pages already imported are skipped.") },
-  { id: "obsidian", label: T("Obsidian vault"), category: "Library", hint: T("Notes, links, tags and attachments"), archive: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose vault folder…"), hidden: false, accept: ".zip,application/zip",
+  { id: "obsidian", label: T("Obsidian vault"), category: "Library", hint: T("Notes, links, tags and attachments"), archive: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose vault folder…"), filterFolder: true, accept: ".zip,application/zip",
     instructions: T("Pick the vault's folder, or a .zip of it: Obsidian has no export of its own, so compress the vault's folder (Compress in Finder or in the Files app of an iPhone or iPad, Send to → Compressed (zipped) folder on Windows). Each note becomes a page named after its file, folders become folders, [[wikilinks]] become mentions, ![[Note#^block]] embeds synced blocks, tags labels, and images, PDFs and other attachments come along. The .obsidian settings, the trash and other hidden folders stay behind, and so do canvases and bases. Notes already imported are skipped.") },
   { id: "logseq", label: T("Logseq highlights"), category: "This paper", hint: T("A PDF and its .edn, with optional notes"), actionLabel: T("Choose files…"),
     instructions: T("Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.") },
@@ -359,12 +360,6 @@ const IMPORT_SOURCES = [
 ];
 
 export const importSource = (id) => IMPORT_SOURCES.find((format) => format.id === id);
-
-// The source a .zip's own entry names (zipNames.js) show it to be, for the
-// dialog to start on when a native app was given it: a vault that kept its
-// .obsidian folder. "" when the names tell nothing, and the dialog starts
-// where it would.
-export const archiveSource = (names) => (names.some((name) => name.split("/").includes(".obsidian")) ? "obsidian" : "");
 
 // `archive`: a .zip is already chosen (one a native app was given), so only
 // the sources that read one (`archive`) are offered. `strip` is the Settings

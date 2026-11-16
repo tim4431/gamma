@@ -18,6 +18,9 @@ const FORMATS = {
   // the upload (gamma/note_app_import.py import_note_apps).
   noteapps: { label: T("Notability & GoodNotes"), endpoint: "note-apps", instructions: T("Each note or notebook becomes a page with its handwriting, typed text, pictures and recordings. Notes already imported are skipped.") },
 };
+// Whether a source of the Import dialog goes through the review (the rest
+// import at once, or pick files of their own).
+export const reviewsImport = (source) => Object.hasOwn(FORMATS, source);
 // The endpoints of one app alone (scripts', and a review staged before the
 // card took both), reopened on the card.
 const NOTE_APPS = ["notability", "goodnotes"];

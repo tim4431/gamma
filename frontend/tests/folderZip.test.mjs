@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { crc32 } from "../src/shared/lib/crc32.js";
-import { filesUpload, folderDrop, folderPick, withoutHidden, zipFolder } from "../src/transfers/folderZip.js";
-import { zipEntryNames } from "../src/transfers/zipNames.js";
+import { filesUpload, folderDrop, folderPick, zipFolder } from "../src/transfers/folderZip.js";
 
 // A picked folder's file: the browser sets webkitRelativePath from the folder down.
 function picked(path, text) {
@@ -95,27 +94,9 @@ test("packing stops when its signal fires", async () => {
   await assert.rejects(zipFolder(folderPick([picked("Lib/a.pdf", "x")]), { signal: ctl.signal }), (err) => err.aborted === true);
 });
 
-test("a picked vault leaves out every path under a name starting with a dot, its own name aside", () => {
-  const pick = withoutHidden(folderPick([picked(".vault/.obsidian/app.json", "{}"), picked(".vault/Note.md", "# Note"),
-    picked(".vault/.git/HEAD", "ref"), picked(".vault/Sub/.trash/Old.md", "old"), picked(".vault/Sub/Kept.md", "kept"),
-    picked(".vault/.hidden.md", "x")]));
-  assert.equal(pick.name, ".vault");
-  assert.deepEqual(pick.entries.map(({ path }) => path), [".vault/Note.md", ".vault/Sub/Kept.md"]);
-  assert.equal(pick.size, 10);
-});
-
-test("a zip's entry names read back from its central directory, and a file that is no zip has none", async () => {
-  const pick = folderPick([picked("Vault/.obsidian/app.json", "{}"), picked("Vault/Notes/Ünïcode note.md", "# Note")]);
-  assert.deepEqual(await zipEntryNames(await zipFolder(pick)), ["Vault/.obsidian/app.json", "Vault/Notes/Ünïcode note.md"]);
-  // after a comment the end record is still found
-  const zip = new Uint8Array(await (await zipFolder(pick)).arrayBuffer());
-  const comment = new TextEncoder().encode("made by hand");
-  const commented = new Uint8Array(zip.length + comment.length);
-  commented.set(zip);
-  commented.set(comment, zip.length);
-  new DataView(commented.buffer).setUint16(zip.length - 2, comment.length, true);
-  assert.deepEqual(await zipEntryNames(new File([commented], "c.zip")), ["Vault/.obsidian/app.json", "Vault/Notes/Ünïcode note.md"]);
-  assert.deepEqual(await zipEntryNames(new File(["not a zip at all, only text"], "x.zip")), []);
-  assert.deepEqual(await zipEntryNames(new File([zip.slice(0, zip.length - 30)], "cut.zip")), [], "a cut zip holds nothing");
-  assert.deepEqual(await zipEntryNames(null), []);
+test("a picked folder filtered as a drop leaves out its dot-paths: a vault's settings, trash and repository", () => {
+  const files = [picked("Vault/.obsidian/app.json", "{}"), picked("Vault/Note.md", "# Note"), picked("Vault/.git/HEAD", "ref"),
+    picked("Vault/Sub/.trash/Old.md", "old"), picked("Vault/Sub/Kept.md", "kept")];
+  assert.deepEqual(folderPick(files, { filter: true }).entries.map(({ path }) => path), ["Vault/Note.md", "Vault/Sub/Kept.md"]);
+  assert.equal(folderPick(files).entries.length, 5, "unfiltered, a Zotero export keeps every file");
 });
