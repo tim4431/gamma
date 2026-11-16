@@ -85,6 +85,8 @@ export const MEDIA = {
     shows: { anchors: ["header.add", "add.urlInput"], events: ["paper.fetched"] } },
   "zotero-sync": { ratio: 1.6, description: "A highlight made in Gamma reaches Zotero through zotero.org as an annotation, and a collection set there comes back as a folder" },
   "notability-sync": { ratio: 1.6, description: "A handwritten Notability page comes in as live ink and a note, the pen adds to it, and it goes back out as a .note" },
+  "agent-comment": { ratio: 1.6, description: "A passage commented with Send to Codex ticked: the thread's tag says the agent works, the passage is rewritten and the page built again, and the answer comes into the thread under the agent's avatar",
+    shows: { anchors: ["comments.sendTo", "comments.thread"], events: ["comment.created"] } },
   "assistants-mcp": { ratio: 1.6, description: "A coding agent's terminal, laid out as Codex's: through Gamma's MCP server it searches the library and reads the page, then answers citing it" },
 };
 

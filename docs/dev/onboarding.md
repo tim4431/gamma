@@ -35,10 +35,11 @@ loops for as long as the slide is up. The right holds the Gamma mark and
 "Welcome to Gamma" with ×, then the slide's topic, title and line, then
 ‹ n / N ›. ‹ ›, the arrow keys and a sideways swipe across the stage turn
 the slides; each new slide's drawing starts from its empty frame, and
-reduced motion shows the stills. There are nine slides: adding a paper by
+reduced motion shows the stills. There are ten slides: adding a paper by
 + and a link (`paper-fetch`), a highlight becoming a note, a figure asked
-about, the pen, a note nested, a share link, then Zotero, Notability and
-Gamma as an MCP server. The first slide carries **Take the 2-minute tour**
+about, the pen, a note nested, a share link, an agent on this computer
+answering a comment sent to it (`agent-comment`: the desktop app's, which
+the slide says), then Zotero, Notability and Gamma as an MCP server. The first slide carries **Take the 2-minute tour**
 (`minutes`). The Zotero, Notability and MCP slides carry their setup guide's
 way in under their line (**Set it up**, **Show me how**, **Connect one**;
 "Setup guides" below). The slides say what Gamma does, and the seeded
@@ -687,7 +688,9 @@ same contract as an anchor — a tour names a picture and never a path, and
 and a file the registry does not know. The welcome deck shows the same
 files, one per slide; `paper-fetch` (+ pressed, a link typed into Add's
 address box, the paper landing in the library with its title, authors and
-PDF) is the deck's alone.
+PDF) and `agent-comment` (a passage's comment with Send to Codex ticked,
+the thread's tag while the agent works, the passage rewritten and the
+answer under the agent's avatar) are the deck's alone.
 
 **Two kinds, one grammar.** A *drawing* is for a concept with no place on
 screen: one paper filed in several folders and never copied
