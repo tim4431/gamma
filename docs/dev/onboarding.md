@@ -113,7 +113,8 @@ has you split first), **Pages inside pages** on any page you can edit (it
 has you type `/page` on a page inside none), **Text highlighters** on a PDF
 you can edit, and **Checking moved highlights** while the open PDF has
 highlights left to check after a replacement. **Asking an agent** is listed
-while a comment thread is on screen.
+while a comment thread is on screen where a comment can ask an agent
+(`commentAgents`).
 **Working together** and **Citations in answers** are listed only while
 their subject is on screen: someone else on the page, a cited reply; so are
 **Recording** (a recording's card in the notes), **Search** (the topbar's
@@ -260,7 +261,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Checking moved highlights | the open PDF has highlights left to check after it was replaced (`highlightsToReview`, state: the Document menu's review queue, on a page the reader may edit) | the Document button; (the menu's Review, a `creates` step the review card's `review.opened` ticks,) the review card (`pdf.reviewCard`): Accept, Move…, Discard, the arrows; the menu's Accept all (`optional`: only with rough matches) |
 | Your highlights | the third highlight of a load (`highlight.created`, `count: 3`) | the highlight made last (`pick: "recent"`, `guide/recent.js`): a clip of the round trip, the highlight clicked lighting its note and the note lighting the passage (`highlight-jump`; a click also quotes it in the next chat message), a scene right-clicking it (recolour, link, delete); then its card in the notes, which jumps back (`optional`: the Notes window may be closed) |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles (a clip of a row sliding in and its handle coming up: `table-grow`), the corner handle (copy, move or delete the whole table), the others with a scene clicking it — on the table just made when the page has several, each card clear of the table |
-| Pages inside pages | a page is made inside the open one and opened (`subpage.created`: `/page`, or New page inside in a tab's, a card's or the Pages inside panel's menu) | (type `/page`, a `creates` step,) the crumbs over the new page's title (`page.crumbs`, a scene clicking one), which also take a dropped page; a tab's menu, Move into page… and Move to library (`optional`, desktop) |
+| Pages inside pages | a page is made inside another (`subpage.created`: `/page`, or New page inside in a tab's, a library card's or the Pages inside panel's menu), judged where it was made — the library, for a card's — before the new page opens, so the link jump's Back hint does not take the load's offer; the offer waits for the crumbs | (type `/page`, a `creates` step,) the crumbs over the new page's title (`page.crumbs`, a scene clicking one), which also take a dropped page; a tab's menu, Move into page… and Move to library (`optional`, desktop) |
 | Moving notes around | the eighth note made in a load (`block.created`, `count: 8`: Enter, or the + beside a handle); not on a touch screen, nor in the notebook view | the last note's ⋮⋮ (a scene carrying it down and to the right, where a nested note lands: a drag by `offset`), its menu (a scene clicking it), the + beside it (a scene clicking it, then Alt-clicking it). The handles show on hover and while pointed at (`[data-guide-active]`) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for its style (Pen, Ballpoint, Brush, Pencil or Calligraphy), line, Smoothing, colour and width, the eraser and the lasso on one card (a clip of the eraser rubbing out a stray stroke and the lasso carrying a word: `ink-lasso`; Ctrl+Z brings back what was erased), More at the strip's end for shapes and the ruler (a clip of Shapes picked and a box and an arrow drawn: `ink-shape`), then the Text tool (a scene clicking T, then the page); finishing re-arms the pen |
 | The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the tool column as a whole, the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
@@ -867,6 +868,7 @@ text / rectangle toggle), `guideAvailable`, `sharedWorkspace`, `shareTarget`
 desktop library — or `""`), `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`, `highlightsToReview` (the open
 PDF's review queue after a replacement is not empty, the reader may edit),
+`commentAgents` (a comment here can ask an agent: its field has the Send to tick),
 `notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
 `cloudLinkable`, `prefsChanged`, `enterNewBlock` (Enter starts a note, the default: Settings →
 Keyboard), `unverifiedMeta` (the open paper's ⓘ shows its red !, the button on
@@ -982,12 +984,12 @@ where the thing happens:
 | `page.opened` `{id, title}`, `home.opened` | App's page open and `goHome` |
 | `tab.opened`, `tab.menu` | App's tab-strip sync, when the open page gets a tab of its own; a tab's right-click menu opening |
 | `tabs.split` | App's `splitTabGroup`, the one way a page is put beside another (Split right from a tab, the bar or the palette; a tab dropped on a side) |
-| `subpage.created` | App's `createSubPage` (New page inside) and `createLinkedPage` (`/page`), once the new page is open |
+| `subpage.created` | App's `createSubPage` (New page inside) and `createLinkedPage` (`/page`), once the page is made, before it opens |
 | `nav.pushed`, `nav.back` | App's `pushNav` (a link jump recorded where you were) and `goBackNav` (the Back button or Alt+←) |
 | `palette.opened` | App, when the Ctrl+P palette opens |
 | `commands.opened` | QuickOpen, when the palette is the command palette (Ctrl+Shift+P, or `>` typed) |
 | `highlight.created` `{id, kind}` | App's highlight creation path |
-| `highlighter.armed`, `highlighter.menu` | `pdf/useTextHighlighter.js`: a text highlighter turned on (a strip button, its key, a command), and a strip button's menu opening |
+| `highlighter.armed`, `highlighter.menu` | `pdf/useTextHighlighter.js`: a text highlighter turned on (a strip button, its key, a command), and its `openMenu` (a strip button's right-click or hold) |
 | `review.opened` | `pdf/HighlightReview.jsx`'s card, as it comes up for a highlight (hover, a tap, the Document menu's Review, a step) |
 | `picture.placed` | `markup/usePictures.js`'s `create`, for a picture placed and selected |
 | `note.aiChange` | NoteReviewBar, when an AI's change that ran without asking is drawn in its note |
@@ -1291,16 +1293,18 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
                                                   first New chat, the new-note key, the highlights
                                                   tour, the fourth tab's hint (naming Split right, a
                                                   tab's menu answering it), a sub-page (offered at its crumbs, which lead
-                                                  back up), Split right (offered on the live pane,
+                                                  back up; made from a library card too), Split right (offered on the live pane,
                                                   and from the menu after the user splits), the
                                                   highlighters (one turned on, its menu), moved
                                                   highlights (the Document menu's Review opening a
-                                                  card, then Accept all), the Files window and a
+                                                  card, then Accept all), the comments tour at Notify
+                                                  me, the Files window and a
                                                   placed picture's hints, a setup guide (Settings
                                                   opened at its pane, its list, resumed after a
                                                   reload, ticked by its event), Suggest tours off
 frontend/tests/e2e/scenarios/localAgents.mjs      the Send to hint while a comment that can ask Codex
                                                   is written, then the agent tour after one sent
+frontend/tests/e2e/scenarios/chatNavigation.mjs   the AI change hint on the first edit drawn in a note
 ```
 
 ## Validation

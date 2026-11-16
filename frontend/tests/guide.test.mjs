@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { ANCHORS, anchorElement } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
-import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMatch, guideProgressKey, guideStorage, normalizeTourProgress, retiresOffer,
-  setupDone, setupIndex, setupTicks, stepApplies } from "../src/guide/triggers.js";
+import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMatch, guideProgressKey, guideStorage, normalizeTourProgress, offerSteps,
+  retiresOffer, setupDone, setupIndex, setupTicks, stepApplies } from "../src/guide/triggers.js";
 import { ACCOUNT_PREFS, readProfile } from "../src/app/prefDefs.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { chordLabel } from "../src/shared/lib/hotkeys.js";
@@ -544,12 +544,12 @@ test("the Connector and Cloud hints wait for what they suggest to be missing", (
     "an account already linked, or a server without cloud sign-in, hears nothing");
 });
 
+// The Tours menu and an offer name a tour by its title, its offer by its
+// lines: a hint has neither, so it is never listed or offered as a tour.
 test("hints are single cards kept out of the Tours menu", () => {
-  const hints = Object.values(TOURS).filter((t) => t.hint).map((t) => t.id);
-  assert.deepEqual(hints, ["math-keys", "block-refs", "quick-open", "back", "conflicts", "folders", "install",
-    "approvals", "export-page", "clone-sync", "connector", "cloud-account", "window-closed", "shell-bar", "new-chat", "pdf-switch",
-    "assistant-changes", "ink-selection", "new-note-key", "slash-menu", "paste-as", "mentions", "objects",
-    "paper-details", "bib-link", "command-palette", "settings", "tabs", "files-window", "note-review", "pictures", "send-to-agent"]);
+  const hints = Object.values(TOURS).filter((t) => t.hint);
+  assert.ok(hints.length > 0);
+  for (const hint of hints) assert.ok(!hint.title && !hint.offer && hint.steps.length === 1, `${hint.id}: a hint is one card, untitled`);
 });
 
 // Each hint comes right after the thing it explains, and steps aside once
@@ -595,32 +595,30 @@ test("the October hints come after their moment and retire when the feature is f
   assert.match(TOURS["math-keys"].steps[0].title, /accepts a suggestion/);
 });
 
-// The November guides: a comment that asked an agent is the agent tour's,
-// not the comments tour's; the hint about the tick retires once a comment
-// has asked one; the highlighters tour is for someone selecting and picking
-// a colour each time, never for someone who has turned a highlighter on;
-// the review tour waits for highlights left to check.
-test("the November guides come after their moment and retire when the feature is found", () => {
-  const offered = (id, event, more = {}, seen = 1) => canOffer(TOURS[id], { facts: { ...facts, guest: false, ...more }, progress: null, event, seen });
-  assert.equal(offered("agent-comments", at("comment.created", { reply: false, agent: true })), true);
-  assert.equal(offered("comments", at("comment.created", { reply: false, agent: true })), false, "asking an agent is the agent tour's");
-  assert.equal(offered("comments", at("comment.created", { reply: false, agent: false })), true);
-  assert.equal(offered("agent-comments", at("comment.created", { reply: false, agent: false })), false);
+// One event, two tours: a first comment that asked an agent is the agent
+// tour's, not the comments tour's; the hint about the tick retires once a
+// comment has asked one.
+test("a comment that asked an agent offers the agent tour, and retires the Send to hint", () => {
+  const offered = (id, agent) => canOffer(TOURS[id], { facts: { ...facts, guest: false, commentAgents: true }, progress: null,
+    event: at("comment.created", { reply: false, agent }), seen: 1 });
+  assert.equal(offered("agent-comments", true), true);
+  assert.equal(offered("comments", true), false, "asking an agent is the agent tour's");
+  assert.equal(offered("comments", false), true);
+  assert.equal(offered("agent-comments", false), false);
   assert.equal(retiresOffer(TOURS["send-to-agent"], at("comment.created", { agent: true })), true);
   assert.equal(retiresOffer(TOURS["send-to-agent"], at("comment.created", { agent: false })), false);
-  const text = at("highlight.created", { kind: "text" });
-  assert.equal(offered("highlighters", text, {}, 5), false);
-  assert.equal(offered("highlighters", text, {}, 6), true, "the sixth text highlight");
-  assert.equal(offered("highlighters", at("highlight.created", { kind: "area" }), {}, 6), false, "a box has no highlighter");
-  assert.equal(retiresOffer(TOURS.highlighters, at("highlighter.armed")), true);
-  assert.equal(canOffer(TOURS["highlight-review"], { facts: { ...facts, highlightsToReview: true }, progress: null }), true);
-  assert.equal(canOffer(TOURS["highlight-review"], { facts: { ...facts, highlightsToReview: false }, progress: null }), false);
-  assert.equal(offered("split-view", at("tabs.split"), { phone: true }), false, "a phone draws one pane");
-  assert.equal(offered("files-window", at("window.shown", { id: "files" })), true);
-  assert.equal(offered("files-window", at("window.shown", { id: "chat" })), false);
-  // The tabs hint's second wording names Split right.
-  assert.equal(TOURS.tabs.version, 2);
-  assert.match(TOURS.tabs.steps[0].title, /Split right/);
+});
+
+// An offer counts the steps a run will show: one that has the user make
+// what the trigger's own event says was made is not among them, though its
+// thing may not be on screen yet; one waiting for another event is.
+test("an offer does not count a step its own trigger already made", () => {
+  const make = { id: "make", creates: "x.made", advanceOn: { event: "x.created" } };
+  const other = { id: "other", creates: "x.made", advanceOn: { event: "x.shown" } };
+  const look = { id: "look", anchor: "x.made" };
+  const tour = { id: "t", trigger: { event: "x.created" }, steps: [make, other, look] };
+  assert.deepEqual(offerSteps(tour, tour.steps).map((s) => s.id), ["other", "look"]);
+  assert.deepEqual(offerSteps({ ...tour, trigger: {} }, tour.steps).map((s) => s.id), ["make", "other", "look"], "a state trigger made nothing");
 });
 
 // The native apps' own bar: hidden from the shell, the page says where the

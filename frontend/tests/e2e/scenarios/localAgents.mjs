@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { marginLeft } from "../../../src/comments/marginLayout.js";
-import { Account, PYTHON, ROOT, Server, wanted } from "../harness.mjs";
+import { Account, PYTHON, ROOT, Server, guideProgress, wanted } from "../harness.mjs";
 import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
 import { dragSelectCodeText } from "./textAnchors.mjs";
 import { TOURS } from "../../../src/guide/tours/index.js";
@@ -123,7 +123,7 @@ export async function localAgentScenarios(env) {
           body: LIB_QUESTION } }], delay: 0, typing: 0, chat: LIB_REPLY },
         [SESSION_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SESSION_REPLY },
         [GUIDE_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY },
-        [GUIDE_ASK_2]: { edits: [], ask: [], delay: 1, typing: 0, chat: GUIDE_REPLY_2 } } }),
+        [GUIDE_ASK_2]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY_2 } } }),
   } });
   try {
     await server.start();
@@ -551,7 +551,7 @@ export async function localAgentScenarios(env) {
       await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: settled, suggestTours: true } } });
       const ctx = await desktop({ viewport: { width: 1600, height: 900 }, suggestTours: true });
       const page = await openPage(ctx, at(paper.id));
-      const progress = (id) => page.evaluate((id) => JSON.parse(localStorage.getItem(`gamma-guide:la-user:${id}`) || "null")?.state, id);
+      const progress = (id) => guideProgress(page, "la-user", id);
       try {
         await waitForPdf(page, 1);
         let margin = await openMargin(page);
@@ -582,16 +582,15 @@ export async function localAgentScenarios(env) {
         await page.waitForSelector('[data-guide-offer="agent-comments"] .guideCard');
         await page.getByRole("button", { name: "Show me" }).click();
         await page.waitForSelector('[data-guide-overlay="agent-thread"] .guideCard');
+        // Codex's answer in the thread on screen, with its Open in chat, before the tour goes on to it
         await answered(paper.id, GUIDE_ASK_2, GUIDE_REPLY_2);
-        // Open in chat, on the answer's comment (optional: passed over where it does not show), then the reply step
+        await margin.locator(".commentCard.active .commentItem", { hasText: GUIDE_REPLY_2 }).locator('[data-guide="comments.openChat"]').waitFor();
         const primary = page.locator(".guideCard .uiBtn.primary");
         await primary.click();
-        await page.waitForSelector('[data-guide-overlay="agent-chat"] .guideCard, [data-guide-overlay="agent-reply"] .guideCard');
-        if (await page.locator('[data-guide-overlay="agent-chat"]').count()) {
-          assertEq(await page.locator('[data-guide="comments.openChat"][data-guide-active]').count(), 1, "Open in chat on Codex's answer");
-          await primary.click();
-          await page.waitForSelector('[data-guide-overlay="agent-reply"] .guideCard');
-        }
+        await page.waitForSelector('[data-guide-overlay="agent-chat"] .guideCard');
+        assertEq(await page.locator('[data-guide="comments.openChat"][data-guide-active]').count(), 1, "Open in chat on Codex's answer");
+        await primary.click();
+        await page.waitForSelector('[data-guide-overlay="agent-reply"] .guideCard');
         await primary.click();
         await until(async () => await page.locator(".guideCard").count() === 0, { what: "the tour ends" });
         assertEq(await progress("agent-comments"), "done");

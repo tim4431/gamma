@@ -16,8 +16,8 @@ import { ApprovalAnswers, useApprovalAnswer } from "../chat/ApprovalShell";
 import { guideEvents } from "../guide/events.js";
 
 // The bar's own presses are not the row's, which would open the editor.
-const bar = (label, children, guide) => (
-  <div className="noteReviewBar" role="group" aria-label={label} data-guide={guide ? "notes.review" : undefined} onMouseDown={(e) => e.stopPropagation()}>
+const bar = (label, children, { guide } = {}) => (
+  <div className="noteReviewBar" role="group" aria-label={label} data-guide={guide} onMouseDown={(e) => e.stopPropagation()}>
     {children}
   </div>
 );
@@ -79,5 +79,5 @@ export function NoteReviewBar({ change, ask, onStatus }) {
         {t("Hide all")}
       </button>
     ) : null}
-  </>, true);
+  </>, { guide: "notes.review" });
 }

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import http from "node:http";
-import { Account, FAKE_AI_MODELS, fakeAiModels, live, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, fakeAiModels, guideProgress, live, wanted } from "../harness.mjs";
+import { TOURS } from "../../../src/guide/tours/index.js";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -1518,7 +1519,11 @@ export async function chatNavigationScenarios(env) {
     const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Tracked page" } });
     const one = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "The cavity has a Q of 1e6." } });
     const two = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Energy $E = mc$ here.", before: one.position } });
-    const ctx = await alice.context(browser);
+    // The guide's hint on the first AI change drawn in a note (docs/dev/onboarding.md): every other guide settled, so it is the load's one offer.
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    const settled = Object.fromEntries(Object.values(TOURS).filter((t) => t.id !== "note-review").map((t) => [t.id, { state: "dismissed", version: t.version }]));
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: settled, suggestTours: true } } });
+    const ctx = await alice.context(browser, { suggestTours: true });
     await fakeAiModels(ctx);
     await ctx.addInitScript(() => {
       localStorage.setItem("gamma-ai-login-check", "off");
@@ -1576,6 +1581,10 @@ export async function chatNavigationScenarios(env) {
       await row(one).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
       assertEq(await row(one).locator(".mdDiffView ins.mdDiff").innerText(), "had");
       await row(one).locator(".noteReviewBar", { hasText: "Edited by AI" }).waitFor();
+      await page.waitForSelector('[data-guide-offer="note-review"] .guideCard');
+      assertEq(await row(one).locator('[data-guide="notes.review"][data-guide-active]').count(), 1, "the hint points at the note's bar");
+      await page.getByRole("button", { name: "Got it", exact: true }).click();
+      assertEq(await guideProgress(page, "alice", "note-review"), "done");
       await push(await edited(two, "Energy $E = mc$ here.", "Energy $E = mc^2$ here."));
       await row(two).locator(".mdDiffView del.mdDiff .katex").waitFor();
       await row(two).locator(".mdDiffView ins.mdDiff .katex").waitFor();
@@ -1647,6 +1656,7 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally {
       await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
     }
   });

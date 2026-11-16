@@ -5,11 +5,13 @@ import { T } from "../../shared/i18n/i18n.js";
 // answers in the thread under its own name; Open in chat shows the turn
 // with every step it took; a reply sent to it goes on where it left off.
 // The Open in chat step waits on its answer's comment, so it is `optional`.
+// Only where a comment can ask an agent (`commentAgents`): the desktop app's
+// own server, or a synced folder another computer of the account keeps.
 export default {
   id: "agent-comments",
   version: 1,
   title: T("Asking an agent"),
-  requires: { guest: false, editable: true },
+  requires: { guest: false, editable: true, commentAgents: true },
   trigger: { event: "comment.created", match: { agent: true } },
   offerAnchor: "comments.thread",
   offerPlacement: "left",

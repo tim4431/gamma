@@ -2578,7 +2578,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), target);
   const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
   const splitTabGroup = (groupId, side, tabId) => {
-    applyLayout(splitGroup(tabLayoutRef.current, groupId, side, tabId));
+    const next = splitGroup(tabLayoutRef.current, groupId, side, tabId);
+    if (next === tabLayoutRef.current) return;
+    applyLayout(next);
     guideEvents.emit("tabs.split");
   };
   // A tab into a group of its own beside the one it is in: the tab menu's,
@@ -9561,6 +9563,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // highlights the open PDF's replacement left to check (the Document
       // menu's Review), which the reader may review
       highlightsToReview: !!reviewHighlights.length && isPdf(doc) && !readOnly,
+      // a comment here can ask an agent (its field's Send to tick)
+      commentAgents: commentAgentList.length > 0,
       // the notebook view: the sheets fill the viewer, so the notes view's
       // own sheet and its tool row (the notebook tour's anchors) are not up
       notebookView: !!notebook,

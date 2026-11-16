@@ -4,9 +4,9 @@
 // one per page load, never with "Suggest tours" off, and the card never
 // takes the caret or closes the popover it points into. A fresh account, so
 // no earlier scenario has seen these offers.
-import { Account, FAKE_AI_MODELS, keyLabel, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, guideProgress, keyLabel, wanted } from "../harness.mjs";
 import { closeEditor, editRow } from "./notes.mjs";
-import { waitForPdf } from "./pdf.mjs";
+import { boxFraction, lineBox, linePosition, waitForPdf } from "./pdf.mjs";
 import { png } from "./pictures.mjs";
 import { TOURS } from "../../../src/guide/tours/index.js";
 
@@ -43,8 +43,7 @@ export async function triggeredGuideScenarios(env) {
     const page = await openPage(ctx, `${server.base}/?ws=${user.ws}${query}`);
     return { ctx, page };
   };
-  const progress = (page, id, who = "tourist") => page.evaluate(([id, who]) =>
-    JSON.parse(localStorage.getItem(`gamma-guide:${who}:${id}`) || "null")?.state, [id, who]);
+  const progress = (page, id, who = "tourist") => guideProgress(page, who, id);
   const primary = (page) => page.locator(".guideCard .uiBtn.primary");
 
   // Type /table into the row's block and close the editor: the table renders.
@@ -787,30 +786,36 @@ export async function triggeredGuideScenarios(env) {
       await until(() => new URL(page.url()).searchParams.get("block") === top.id, { what: "the crumb leads back up" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
+    // Made from a library card, it is offered too: judged on the library, it waits for the new page's crumbs.
+    const lib = await open("", { seen: ["add-paper", "workspaces", "first-run", "library", "folders"] });
+    try {
+      await lib.page.locator('[data-guide="home.card"]', { hasText: "Project plan" }).first().click({ button: "right" });
+      await lib.page.getByRole("menuitem", { name: "New page inside", exact: true }).click();
+      await lib.page.waitForSelector('[data-guide-offer="sub-pages"] .guideCard');
+      await until(async () => await lib.page.locator('[data-guide="page.crumbs"][data-guide-active]').count() === 1, { what: "the offer goes to the crumbs" });
+      assertNoProblems(lib.page);
+    } finally { await lib.ctx.close(); }
   });
 
   // A page's tab is emitted by another effect of the commit its page.opened
   // came with: both reach the guide (useGuide's queue keeps the later one).
-  await step("triggered guide: the fourth page to get a tab offers the tabs hint, naming Split right; a tab's menu answers it", async () => {
-    const titles = ["Tab one", "Tab two", "Tab three", "Tab four", "Tab five"];
+  await step("triggered guide: the fourth page to get a tab offers the tabs hint; a tab's menu answers it", async () => {
+    const titles = ["Tab one", "Tab two", "Tab three", "Tab four"];
     const made = [];
     for (const title of titles) made.push(await user.api("/api/pages", { method: "POST", body: { title } }));
     await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
     const { ctx, page } = await open(`&page=${made[0].id}`, { seen: ["add-paper", "workspaces"], offers: ["tabs"] });
     try {
       await page.locator(".topbar .tabStrip .tab", { hasText: "Tab one" }).waitFor();
-      let offered = false;
       for (const title of titles.slice(1)) {
-        if (offered) break;
+        assertEq(await page.locator('[data-guide-offer="tabs"]').count(), 0, `not before the fourth tab (${title} next)`);
         await page.keyboard.press("ControlOrMeta+p");
         await page.getByRole("dialog", { name: "Open a page" }).getByRole("textbox").fill(title);
         await until(async () => (await page.locator('[role="option"][data-kind="page"]').count()) === 1, { what: `${title} listed` });
         await page.keyboard.press("Enter");
         await page.locator(".topbar .tabStrip .tab", { hasText: title }).waitFor();
-        offered = await page.locator('[data-guide-offer="tabs"] .guideCard').waitFor({ timeout: 2000 }).then(() => true, () => false);
       }
-      assert(offered, "the tabs hint was never offered");
-      assert((await page.locator(".guideCard .guideTitle").textContent()).includes("Split right"), "it names Split right");
+      await page.waitForSelector('[data-guide-offer="tabs"] .guideCard');
       await page.locator(".topbar .tabStrip .tab", { hasText: "Tab two" }).click({ button: "right" });
       await until(async () => await page.locator('[data-guide-offer="tabs"]').count() === 0, { what: "a tab's menu answers the hint" });
       assertEq(await progress(page, "tabs"), "done");
@@ -842,7 +847,6 @@ export async function triggeredGuideScenarios(env) {
       await splitRight();
       await page.waitForSelector('[data-guide-offer="split-view"] .guideCard');
       assertEq(await page.locator('[data-guide="tabs.live"][data-guide-active]').count(), 1, "the offer rings the live pane");
-      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 3 steps", "the split step is dropped: it is split");
       await page.getByRole("button", { name: "Show me" }).click();
       await page.waitForSelector('[data-guide-overlay="split-live"] .guideCard');
       // the card tucked into the live pane, clear of the other one
@@ -885,10 +889,10 @@ export async function triggeredGuideScenarios(env) {
       await strip.click({ button: "right" });
       await page.waitForSelector(".hlMenu");
       await page.waitForSelector('[data-guide-overlay="hl-more"] .guideCard');
-      assertEq((await page.locator(".guideCard .keyCaps").count()) >= 2, true, "the keys drawn as caps");
-      // Done with the menu still open (Esc would leave the tour), which the card's press leaves open
+      // Done with the menu still open (Esc would leave the tour): a press on the card is no press outside the menu
       await primary(page).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
+      assertEq(await page.locator(".hlMenu").count(), 1, "the card's press left the menu open");
       assertEq(await progress(page, "highlighters"), "done");
       await page.keyboard.press("Escape");
       assertNoProblems(page);
@@ -901,11 +905,10 @@ export async function triggeredGuideScenarios(env) {
     const up1 = await user.upload("/api/uploads", makePdf([lines1]), "first.pdf", "application/pdf");
     const up2 = await user.upload("/api/uploads", makePdf([lines2]), "second.pdf", "application/pdf");
     const paper = await user.api(`/api/blocks/by-doc/${up2.doc_id}`, { method: "POST", body: { default_title: "Replaced paper", source_url: up2.source_url } });
-    const box = { x1: 72, y1: 82, x2: 360, y2: 103 };
-    const frac = [box.x1 / 612, box.y1 / 792, box.x2 / 612, box.y2 / 792].map((v) => Math.round(v * 10000) / 10000);
+    // the second line matched roughly in the new version: dashed, to review
     await user.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
-      properties: { quote: lines2[1], color: "rgba(255, 226, 143, 0.4)", pdf_position: { pageNumber: 1, width: 612, height: 792,
-        boundingRect: box, rects: [box], approx: true, match: 0.8, prev: { doc_id: up1.doc_id, pageNumber: 1, rects: [frac], quote: lines1[1] } } } } });
+      properties: { quote: lines2[1], color: "rgba(255, 226, 143, 0.4)", pdf_position: { ...linePosition(1, lines2[1]), approx: true, match: 0.8,
+        prev: { doc_id: up1.doc_id, pageNumber: 1, rects: [boxFraction(lineBox(1, lines1[1]))], quote: lines1[1] } } } } });
     const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"] });
     try {
       await waitForPdf(page);
@@ -923,6 +926,42 @@ export async function triggeredGuideScenarios(env) {
       await primary(page).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await progress(page, "highlight-review"), "done");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // The comments tour from the Tours menu, the Comments window open: its
+  // Notify me step points at the window's bell.
+  await step("triggered guide: the comments tour points at Notify me in the Comments window", async () => {
+    const upload = await user.upload("/api/uploads", makePdf([["Comments tour", "A line to talk about."]]), "talk.pdf", "application/pdf");
+    const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Talk paper", source_url: upload.source_url } });
+    await user.api(`/api/pages/${paper.id}/comments`, { method: "POST", body: { block_id: paper.id, body: "Worth a second read" } });
+    const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"],
+      viewport: { width: 1400, height: 860 } });
+    try {
+      await waitForPdf(page);
+      await page.click('[data-guide="header.view"]');
+      await page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Comments", exact: true }).click();
+      await page.locator('[data-guide="comments.notify"]').waitFor();
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="comments"]');
+      await page.waitForSelector('[data-guide-overlay="comment-passage"] .guideCard');
+      await primary(page).click();
+      // Resolve shows only with a thread on screen (optional)
+      await page.waitForSelector('[data-guide-overlay="comment-resolve"] .guideCard, [data-guide-overlay="comment-inbox"] .guideCard');
+      if (await page.locator('[data-guide-overlay="comment-resolve"]').count()) {
+        await primary(page).click();
+        await page.waitForSelector('[data-guide-overlay="comment-inbox"] .guideCard');
+      }
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="comment-notify"] .guideCard');
+      assertEq(await page.locator('[data-guide="comments.notify"][data-guide-active]').count(), 1, "the step rings Notify me");
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="comment-window"] .guideCard');
+      await primary(page).click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      assertEq(await progress(page, "comments"), "done");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

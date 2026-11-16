@@ -383,6 +383,11 @@ const EXPECTED_FAILURES = [
 // response listener already records the same failure with its URL.)
 const openPages = new Set();
 
+// A guide's state in this browser for `who` (docs/dev/onboarding.md
+// "Storage"): "offered", "running", "done", "dismissed", or undefined.
+export const guideProgress = (page, who, id) => page.evaluate(([who, id]) =>
+  JSON.parse(localStorage.getItem(`gamma-guide:${who}:${id}`) || "null")?.state, [who, id]);
+
 export async function openPage(ctx, url) {
   const page = await ctx.newPage();
   page.problems = [];

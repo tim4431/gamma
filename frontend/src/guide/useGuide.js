@@ -12,8 +12,8 @@ import { TOURS } from "./tours/index.js";
 import { previewHighlight } from "./previewHighlight.js";
 import { previewArea } from "./previewArea.js";
 import { typeDemoNote } from "./typeDemoNote.js";
-import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMatch, guideStorage, retiresOffer, setupDone, setupIndex, setupTicks,
-  stepApplies, triggerMatches } from "./triggers.js";
+import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMatch, guideStorage, offerSteps, retiresOffer, setupDone, setupIndex,
+  setupTicks, stepApplies, triggerMatches } from "./triggers.js";
 import { createRunLog, madeItems, recordEvent } from "./finish.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { chordLabel } from "../shared/lib/hotkeys.js";
@@ -627,11 +627,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   const offerResume = offerAvailable && !!offer.resume;
   const offerCard = useMemo(() => {
     if (!offerTour) return null;
-    // A step that has the user make what the trigger's own event says was
-    // just made is not counted, though its thing may not be on screen yet
-    // (a sub-page offered as it opens).
-    const made = offerTour.trigger?.event;
-    const steps = stepsFor(offerTour).filter((s) => !(s.creates && made && s.advanceOn?.event === made));
+    const steps = offerSteps(offerTour, stepsFor(offerTour));
     const intro = offerTour.welcome && steps[0]?.intro ? steps[0] : null;
     // A slide with a setup guide gets its way in where the guide can start.
     if (intro) return { ...intro, id: offerTour.id, welcome: true, minutes: offerTour.minutes, anchor: null,

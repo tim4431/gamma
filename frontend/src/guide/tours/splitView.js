@@ -13,7 +13,7 @@ export default {
   trigger: { event: "tabs.split" },
   offerAnchor: "tabs.live",
   offerPlacement: "inside",
-  offer: { title: T("Two pages, side by side"), line: T("Each side keeps its own tabs.") },
+  offer: { title: T("You put two pages side by side"), line: T("Each side keeps its own tabs.") },
   steps: [
     { id: "split-make", anchor: "header.tabs", placement: "bottom", creates: "tabs.live",
       title: T("Right-click a tab, then **Split right**"), body: T("Or drag a tab to the right edge of the page."),

@@ -9,7 +9,7 @@ export default {
   id: "highlight-review",
   version: 1,
   title: T("Checking moved highlights"),
-  requires: { hasPdf: true, highlightsToReview: true },
+  requires: { highlightsToReview: true },
   trigger: {},
   offerAnchor: "page.document",
   offer: { title: T("Some highlights need a look"), line: T("Dashed ones matched roughly in the new PDF; hollow ones lost their text.") },

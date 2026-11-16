@@ -50,6 +50,15 @@ export function canOffer(tour, { facts, progress, event = null, seen = 0 }) {
   return triggerMatches(tour, event) && seen >= (trigger.count || 1);
 }
 
+// The steps an offer counts, of those a run would show: a step that has the
+// user make what the trigger's own event says was just made is passed over
+// once the tour runs, though its thing may not be on screen yet (a sub-page
+// offered as it opens).
+export function offerSteps(tour, steps) {
+  const made = tour.trigger?.event;
+  return steps.filter((s) => !(s.creates && made && s.advanceOn?.event === made));
+}
+
 // Does this event retire the tour's offer (the user found the feature)?
 export function retiresOffer(tour, event) {
   return !!tour.trigger?.doneOn && !!event && eventMatches(tour.trigger.doneOn, event.name, event.payload);

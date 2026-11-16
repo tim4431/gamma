@@ -1,7 +1,9 @@
 import { T } from "../../shared/i18n/i18n.js";
 // Offered after the first page made inside another (/page, or New page
-// inside in a tab's or a library card's menu), which is then open with its
-// crumbs over the title (docs/dev/home_library.md "Sub-pages"). The crumbs
+// inside in a tab's or a library card's menu), as it opens with its crumbs
+// over the title (docs/dev/home_library.md "Sub-pages"): the event comes
+// before the page opens, so the offer is judged where it was made (the
+// library, for a card's) and waits for the crumbs. The crumbs
 // lead back up and take a dropped page; a tab's menu moves any page inside
 // another, or back out to the library. From the Tours menu on a page inside
 // none, the first step has the user make one. The tab step is desktop only
@@ -10,7 +12,7 @@ export default {
   id: "sub-pages",
   version: 1,
   title: T("Pages inside pages"),
-  requires: { onPage: true, editable: true },
+  requires: { editable: true },
   trigger: { event: "subpage.created" },
   offerAnchor: "page.crumbs",
   offerPlacement: "bottom",
