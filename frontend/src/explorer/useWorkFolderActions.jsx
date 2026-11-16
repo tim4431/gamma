@@ -4,12 +4,13 @@
 // status; the open page as a file; Add to library, Remove from library and
 // Save a copy to library, one request a page; the library rows of a menu;
 // the vault chip's file rows and the add dialog; Choose files… of a work
-// folder this desktop app keeps; Detach of a synced folder's root, in every
-// window (DetachDialog.jsx); what a synced folder's root says of the
-// computer that keeps it. App hands in its page rows, the open page, the
-// vault (vault/useVault.js) and the few commands the answers reach. Pure
-// parts: workFolderActions.js, detach.js, vault/vaultState.js folderKeeper.
-import { useEffect, useState } from "react";
+// folder this desktop app keeps; Stop syncing (Detach) of a synced folder's
+// root, in every window (DetachDialog.jsx); what a synced folder's root says
+// of the computer that keeps it. App hands in its page rows, the open page,
+// the vault (vault/useVault.js) and the few commands the answers reach.
+// Pure parts: workFolderActions.js, detach.js, vault/vaultState.js
+// folderKeeper.
+import { useEffect, useRef, useState } from "react";
 import { pageDocument, isPdf } from "../documents/pageDocument.js";
 import { batchText, runBatch } from "../library/pageBatch.js";
 import { T, t } from "../shared/i18n/i18n.js";
@@ -19,7 +20,7 @@ import { useStableActions } from "../shared/lib/stableActions.js";
 import { CopyIcon, FolderMinusIcon, FolderPlusIcon } from "../shared/ui/Icons";
 import { MenuItem } from "../shared/ui/Menus";
 import { folderKeeper } from "../vault/vaultState.js";
-import { detachLabel, detachSaid } from "./detach.js";
+import { detachLabel, detachRefusal, detachSaid } from "./detach.js";
 import {
   fileRow, foldersMoveRefused, libraryRequest, libraryRows, librarySaid, libraryTask, openFile, refusesFiles,
 } from "./workFolderActions.js";
@@ -114,8 +115,9 @@ export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vau
 
   // The account's computers that keep the workspace's synced folders, by
   // folder (GET /api/folders/computers), and what a synced folder's root
-  // says of the one that keeps it ({text, title} | null, folderKeeper):
-  // this desktop app's own vault of it first.
+  // says of the one that keeps it (a StateTag's state with its icon's
+  // `badge` and the `computer`, or null: folderKeeper): this desktop app's
+  // own vault of it first.
   const [kept, setKept] = useState({});
   useEffect(() => {
     if (!signedIn) { setKept({}); return undefined; }
@@ -125,12 +127,14 @@ export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vau
   }, [listing, signedIn]);
   const keeperOf = (folderId) => (markOf(tree, folderId) ? folderKeeper(linkOf(folderId), kept[folderId]) : null);
 
-  // Detach of a synced folder's root: what GET /api/folders/{id}/detach
-  // answered of each one asked (`lookDetach`, as its menu or the vault chip
-  // opens: whether the account may, the computer that keeps it), and the
-  // folder whose dialog is open.
+  // Stop syncing (Detach) of a synced folder's root: what GET
+  // /api/folders/{id}/detach answered of each one asked (`lookDetach`: each
+  // root once as the listing first names it, so its menu opens whole, and
+  // again as its menu or the vault chip opens; false for a read that
+  // failed), and the folder whose dialog is open.
   const [plans, setPlans] = useState(() => new Map());
   const [detaching, setDetaching] = useState("");
+  const askedAhead = useRef(new Set());
   async function lookDetach(folderId) {
     if (!folderId || !markOf(tree, folderId)) return;
     try {
@@ -138,14 +142,22 @@ export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vau
       setPlans((prev) => new Map(prev).set(folderId, plan));
     } catch {
       // a server from before Detach, or the folder gone meanwhile: no row
+      setPlans((prev) => (prev.has(folderId) ? prev : new Map(prev).set(folderId, false)));
     }
   }
-  // A menu's row for the work folder `folderId`: {label, start}, Detach
-  // from {computer}… opening the dialog, once its plan says the account may;
-  // null otherwise.
+  // A menu's row for the synced folder's root `folderId` (null for any
+  // other folder, outside an account's session, and once its read failed):
+  // {label, start, disabled, why}, Stop syncing with {computer}… opening the
+  // dialog where its plan says the account may; disabled, "Stop syncing…",
+  // while the plan is read and where the account may not, `why` the rule
+  // that says no (the row's title).
   const detachOf = (folderId) => {
+    if (!signedIn || !folderId || !markOf(tree, folderId)) return null;
     const plan = plans.get(folderId);
-    return plan?.may ? { label: detachLabel(plan), start: () => setDetaching(folderId) } : null;
+    if (plan === false) return null;
+    if (!plan) return { label: detachLabel(null), start: () => {}, disabled: true, why: "" };
+    if (!plan.may) return { label: detachLabel(null), start: () => {}, disabled: true, why: detachRefusal(plan) };
+    return { label: detachLabel(plan), start: () => setDetaching(folderId), disabled: false, why: "" };
   };
   // The dialog's props while it is open: once detached the status says so,
   // the folder's plan goes, and the listing, the open page and the desktop
@@ -165,7 +177,8 @@ export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vau
 
   // The vault chip's rows for the open page: Add to library… (a file's, or
   // an opened PDF's), and for a file Remove from library, Save a copy to
-  // library…, Choose files… and Detach from {computer}… of its work folder.
+  // library…, Choose files… and Stop syncing with {computer}… of its work
+  // folder.
   const chip = {
     onAdd: () => (open.work ? vault.setAddingFile({ ids: [focusedId] }) : vault.setAdding([focusedId])),
     file: open.work ? { library: open.inLibrary, pdf: isPdf(pageDocument(focusedBlock)) } : null,
@@ -185,8 +198,18 @@ export function useWorkFolderActions({ tree, pages, focusedId, focusedBlock, vau
 
   const commands = useStableActions({ refused, foldersRefused, libraryRoute, libraryItems, chooser, linkOf, lookDetach,
     fileOf: (id) => fileRow(pages, id) });
-  // A folder's menu, in the library or the Files window, asks as it opens:
-  // its Detach row shows once the answer is in.
+  // Each synced folder's root is asked ahead, once, as the listing names it
+  // in an account's session; a folder's menu, in the library or the Files
+  // window, asks again as it opens: its Stop syncing row is disabled until
+  // an answer is in, so the menu never grows under the pointer.
+  useEffect(() => {
+    if (!signedIn) return;
+    for (const root of treeOf(tree).marks.keys()) {
+      if (askedAhead.current.has(root)) continue;
+      askedAhead.current.add(root);
+      commands.lookDetach(root);
+    }
+  }, [tree, signedIn, commands]);
   useEffect(() => { commands.lookDetach(menuFolder); }, [menuFolder, commands]);
   return { ...commands, open, chip, addDialog, detachOf, detachDialog, keeperOf };
 }

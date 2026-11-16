@@ -134,6 +134,7 @@ test("the agents a comment can be sent to: the page's computer's, else the accou
     { id: "computer:here1:claude", name: "claude", label: "Claude Code", ready: true, problem: "" }], "Gamma AI is none");
   assert.deepEqual(commentAgents(chatAgents({ computers: [pc()] })),
     [{ id: "computer:c1:codex", name: "codex", label: "Codex", ready: true, problem: "", computer: "TIM-PC", online: true }]);
+  assert.equal(commentAgents(chatAgents({ computers: [pc({ lent_by: "alice" })] }))[0].lentBy, "alice", "a co-author's: whose it is");
   assert.deepEqual(commentAgents(chatAgents({ local: listing(found()) })), [], "an agent whose id is not known yet");
   assert.deepEqual(commentAgents(chatAgents()), [], "no agent on");
 });

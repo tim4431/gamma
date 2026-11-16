@@ -91,20 +91,21 @@ export async function vaultScenarios(env) {
         await card.getByText("Pull: on · Push: everything", { exact: true }).waitFor();
         await card.locator(".ctxMenuItem", { hasText: "Edit the file" }).waitFor();
         assertEq(await card.locator(".ctxMenuItem", { hasText: "Add to library…" }).count(), 0, "a vault's page is in the library already");
-        await card.locator(".ctxMenuItem", { hasText: "Show in folder" }).click();
+        // the desktop app's user agent says Windows: the row is named after its file manager
+        await card.locator(".ctxMenuItem", { hasText: "Show in Explorer" }).click();
         await card.waitFor({ state: "detached" });
         const sent = await posted(page);
         assertEq(JSON.stringify(sent.map(({ type, ws, page: p }) => ({ type, ws, page: p }))),
-          JSON.stringify([{ type: "reveal-on-disk", ws: user.ws, page: paper.id }]), "Show in folder asks the shell");
+          JSON.stringify([{ type: "reveal-on-disk", ws: user.ws, page: paper.id }]), "Show in Explorer asks the shell");
         // the tab's right-click menu offers the same
         await page.locator(".tabStrip .tab", { hasText: "Attention" }).first().click({ button: "right" });
-        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Show in folder" }).click();
+        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Show in Explorer" }).click();
         await page.locator(".ctxMenu").waitFor({ state: "detached" });
         assertEq(JSON.stringify((await posted(page)).slice(1).map(({ type, page: p }) => ({ type, page: p }))),
-          JSON.stringify([{ type: "reveal-on-disk", page: paper.id }]), "the tab menu's Show in folder asks the shell too");
-        // and Go to folder opens its folder in Gamma, the file selected, with the keys on it
+          JSON.stringify([{ type: "reveal-on-disk", page: paper.id }]), "the tab menu's Show in Explorer asks the shell too");
+        // and Show in folder view opens its folder in Gamma, the file selected, with the keys on it
         await page.locator(".tabStrip .tab", { hasText: "Attention" }).first().click({ button: "right" });
-        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Go to folder" }).click();
+        await page.locator(".ctxMenu .ctxMenuItem", { hasText: "Show in folder view" }).click();
         const fileRow = page.locator(`.fileTreeRow[data-kind="file"][data-id="${paper.id}"]`);
         await fileRow.waitFor({ timeout: 10000 });
         await until(async () => (await fileRow.getAttribute("aria-selected")) === "true", { what: "the file's row selected" });
@@ -430,7 +431,7 @@ export async function vaultScenarios(env) {
         const dialog = page.locator(".folderPicker");
         await chip.click();
         assertEq(await page.locator(".vaultPopover .ctxMenuItem").allInnerTexts().then((l) => l.map((s) => s.trim()).join("|")),
-          "Show in folder|Add to library…", "the card's actions: another server's library is a choice of Add to library…");
+          "Show in Explorer|Add to library…", "the card's actions: another server's library is a choice of Add to library…");
         await page.locator(".vaultPopover .ctxMenuItem", { hasText: "Add to library…" }).click();
         await dialog.waitFor();
         await dialog.getByRole("button", { name: "Another server…" }).click();

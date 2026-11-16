@@ -278,7 +278,7 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 |---|---|---|
 | `keep-folder-on-disk {ws, folder}` (*Sync with this computer…*) | `shell:sync-folder-from-page` | `addFolderVault` |
 | `follow-file-on-disk {ws, page}` (*Push from a file on this computer…*) | `shell:push-file-from-page` | `addFileVault` |
-| `reveal-on-disk {ws, page}` (the vault chip's *Show in folder*) | `shell:reveal-from-page` | `revealOnDisk` |
+| `reveal-on-disk {ws, page}` (the vault chip's *Show in Explorer*, *Show in Finder* on a Mac) | `shell:reveal-from-page` | `revealOnDisk` |
 | `relocate-file {ws, page}` (the banner's *Locate…*) | `shell:relocate-from-page` | `relocateFile` |
 | `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening files and folders") |
 | `continue-in-terminal {ws, page}` (the chat's computer side, *Continue in a terminal*) | `shell:terminal-from-page` | `terminalFromPage` |
@@ -550,10 +550,10 @@ so. Removing one whose server the removal's question could not reach
 asks only whether to detach it anyway (`force=1`). *Choose files…* on such a folder opens the
 host's window the same way. Its push stays everything and its pull on
 (`REMOTE_WORK_RULE`), and removing it while that server cannot be reached
-asks first (*Detach anyway* forgets it with `force=1`, the folder staying a
-synced folder there until it is detached there). One that server detached
-(its Detach woke this computer's channel: the list's `let_go`) is forgotten
-at the shell's next reading as *Detach…* forgets it (`forgetDetached`:
+asks first (*Stop syncing anyway* forgets it with `force=1`, the folder staying a
+synced folder there until it stops syncing there). One that server detached
+(its Stop syncing woke this computer's channel: the list's `let_go`) is forgotten
+at the shell's next reading as *Stop syncing…* forgets it (`forgetDetached`:
 `DELETE …`, its token revoked there, this computer hidden there with the
 last vault), the directory as it is but for `.gamma/`, and the bar says so.
 Once this computer is shown there, the computer's agents work in it as in
@@ -743,7 +743,7 @@ keep their rows, where their words warn. Each goes through
 | *Locate…* (*Locate the file…*) | a stopped vault or one whose directory is not there; a file's vault always | the picker, then `POST …/relink {path}` with the shell's word; the directory's marker must be the vault's |
 | *Open the directory*, *Show in folder* | always | `openDirectory`, `revealFile` |
 | *Force pull…*, *Force push…* | a folder's vault | the page count from `GET …/removal`, a warning (`keeping.forceAsk`), then `…?force=pull` or `force=push` |
-| *Remove the synced folder…* (*Detach…* for a work folder, *Remove the vault…* for a file's) | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?pages=keep` or, a work folder's files removed from Gamma, `pages=remove` |
+| *Remove the synced folder…* (*Stop syncing…*, a danger row, for a work folder, *Remove the vault…* for a file's) | always | the counts from `GET …/removal`, the question `keeping.removalAsk`, then `DELETE …?pages=keep` or, a work folder's files removed from Gamma, `pages=remove` |
 | the switches | a folder's vault | `PATCH {pull}`, `PATCH {push}` (`setPush`, above), a work folder's `PATCH {library}` |
 
 The changes and the rounds (*pause*, *resume*, *sync*, *Pull now*, *Push
@@ -757,11 +757,12 @@ it empty), and a vault whose directory is not there or a stopped one (its
 marker gone or another's) not even that. A kept folder's vault offers
 *Remove the synced folder*, a vault of one file *Remove the vault*: their
 pages stay as they are. A work
-folder's, *Detach…* in the panel, asks the web app's Detach in its words
+folder's, *Stop syncing…* in the panel, asks the web app's Stop syncing in its words
 (`keeping.removalAsk` is `frontend/src/explorer/detach.js` in English, with
-this computer's name): how many files sync with it and how many are in the
-library, then *Keep the files in Gamma* (each an ordinary page, its bytes
-stored first: `removal`'s `bytes`; a file too large to keep stays listed)
+this computer's name): that Gamma stops syncing it with this computer, how
+many files it has and how many are in the
+library, then *Keep the files in Gamma* (each an ordinary page, a copy of each
+file stored first: `removal`'s `bytes`; a file too large to store stays listed)
 or *Remove them from Gamma* (those not in the library to Recently deleted,
 of the other server for a work folder there), and that the directory on
 this computer stays as it is. A remote's vault then has its token revoked
@@ -1012,7 +1013,7 @@ shell's words; nothing the other server sends draws or words it. With the
 link's *may answer what the agents ask* off (Settings → AI → Agents), the
 bar alone answers it and that server's page shows no answerable card
 ("Waiting for your answer on TIM-PC" is all it says); with it on, the page
-there draws the chat's card too, *Allow once* and *Decline*, and the first
+there draws the chat's card too, *Allow once* and *Don't allow*, and the first
 answer is the one: one given there takes the card out of the host's list,
 which the bar follows as any ask that went away unanswered here. A co-author's turn on the host's own server
 ([docs/dev/local_agents.md](../../docs/dev/local_agents.md) "A co-author's
@@ -1024,13 +1025,14 @@ person.
 ```
 ┌──────────────────────────── the whole window (content view hidden) ───────────────────────────┐
 │ Gamma · Approval needed on this computer                                         ─  □  ✕      │
-│   ┌ Approval needed on this computer ─────────────────────────────────── 1 of 2 waiting ┐     │
+│   ┌ ⛉ Approval needed on this computer ───────────────────────────────── 1 of 2 waiting ┐     │
 │   │ Codex wants to run a command                                                         │     │
 │   │ 3 lines   ┌ latexmk -pdf main.tex … ┐  Through PowerShell: "…powershell.exe" -Command │     │
 │   │ In D:\Papers\cavity · Network example.org · From the chat of main.tex on NAS (https://…) │     │
 │   │ As alice · Codex says: “Rebuild the PDF after the edit.” · the risk · Declined at 14:32  │     │
+│   │ Scroll to the end first: Allow waits until you have seen all of it  (until it is read) │     │
 │   ├──────────────────────────────────────────────────────────────────────────────────────┤     │
-│   │ Stop Codex asking                        [ Allow once ]               [ Decline ]   │     │
+│   │ Stop Codex asking                          [■ Allow once ■]          [ Don't allow ]   │     │
 │   └──────────────────────────────────────────────────────────────────────────────────────┘     │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1082,10 +1084,15 @@ vault's rows name it) on the server's name and origin, *As* the account
 there (64 characters at most), the agent's one-line reason marked as the
 agent's, the risk, and when it is declined by itself. The command box and
 the diff break anywhere, plaintext bidi, and scroll at 120 and 160 px;
-*Allow once* stays shut until each box that scrolls was read to its end.
-The card's body scrolls, its footer never does: *Stop Codex asking*
-(left), *Allow once*, *Decline* (the right end, where a stream of
-clicks lands), never focused by script. A card stays until it is
+*Allow once* stays shut until each box that scrolls was read to its end,
+and meanwhile a line over the footer, and the button's title, say so
+("Scroll to the end first: Allow waits until you have seen all of it").
+The card's words and order are the chat card's
+(`frontend/src/chat/ApprovalShell.jsx`), a shield before the caption: the
+body scrolls, the footer never does, *Stop Codex asking* (ghost, left),
+*Allow once* (the primary button), *Don't allow* (ghost, the right end,
+where a stream of clicks lands), never focused by script. The bar is in
+English alone: the desktop shell has no translation of its own. A card stays until it is
 answered, withdrawn or expired; one that takes the place of a card that
 went away unanswered here says so ("The question before this one went
 away: this is another one.").
@@ -1103,9 +1110,9 @@ armed, after a press made since it armed; main's check is the rule, the
 bar's disabled buttons the look. Every button goes inactive at once, then
 `POST /api/local-agents/asks/<id> {decision: "once" | "deny"}` (*Stop*
 posts `deny`) with the shell's word, 30 s at most. The bar says only what
-the route answered: "Allowed once: Codex goes on.", "Declined: Codex goes
-on without it.", "Declined, and Codex no longer asks to run more, here or
-in the chat." (*Stop*, which then sets what the agent may run back to
+the route answered, as the chat's card says it: "Allowed. Codex goes on…",
+"Not allowed. Codex goes on without it…", "Not allowed, and Codex no
+longer asks to run more, here or in the chat." (*Stop*, which then sets what the agent may run back to
 `never`, `PATCH /api/local-agents/<agent> {runs: "never"}` as its owner,
 whatever became of the ask); a 404
 or 409 "Codex no longer waits for that: nothing was allowed here.", except

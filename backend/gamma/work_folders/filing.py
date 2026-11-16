@@ -53,7 +53,7 @@ WORDS = {
     "trash": "A synced folder's file leaves when its file is deleted or untracked: use Choose files….",
     "restore": "It comes back when its file is tracked again.",
     "directories": "A synced folder's directories follow the disk.",
-    "remove": "Detach the synced folder to delete its folder.",
+    "remove": "Stop syncing the synced folder to delete its folder.",
     "document": "That file's PDF is read where it is: it cannot be changed in Gamma.",
 }
 

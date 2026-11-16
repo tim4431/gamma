@@ -8,21 +8,31 @@
 //
 // `agents` are the ones a comment on the page can be sent to
 // (chat/agents.js commentAgents: [{id, name, label, computer?, online?,
-// ready, problem}]); `thread` the thread a reply goes in (null for a new
-// one), its comments as comments.js holds them.
+// lentBy?, ready, problem}]); `thread` the thread a reply goes in (null for
+// a new one), its comments as comments.js holds them.
 import { t } from "../shared/i18n/i18n.js";
 import { agentOffline, peopleIn } from "../editor/mentions.js";
+import { madeBy } from "../chat/agents.js";
 
 // The newest of the thread's comments that a computer's agent wrote, null
 // for none.
 const agentsLast = (thread) => (thread?.comments || []).findLast((c) => !c.deleted && c.agent_kind === "computer") || null;
 
+// An agent as the tick, its menu and the send button name it, whose and
+// where (chat/agents.js madeBy): "Codex" (this computer's), "Codex on
+// TIM-PC", a co-author's "alice's Codex on TIM-PC"; "" for none.
+export const agentName = (agent) => (agent ? madeBy({ name: agent.label, on: agent.computer || "", owner: agent.lentBy || "" }) : "");
+
 // Whether the tick starts ticked: in a thread whose newest comment is a
-// computer's agent's (it asked something, or answered), else as the person
-// left it last (`remembered`, the account's preference).
-export function startsTicked(thread, remembered = false) {
+// computer's agent's (it asked something, or answered); not in one whose
+// newest is another person's (`me` the reader's username: a reply between
+// people); else as the person left it last (`remembered`, the account's
+// preference).
+export function startsTicked(thread, remembered = false, me = "") {
   const newest = (thread?.comments || []).findLast((c) => !c.deleted) || null;
-  return newest?.agent_kind === "computer" || !!remembered;
+  if (newest?.agent_kind === "computer") return true;
+  if (newest && newest.author !== me) return false;
+  return !!remembered;
 }
 
 // The agent the tick names: the one the person chose in its menu
@@ -57,8 +67,21 @@ export function sendNote(agent) {
   return away ? { text: away, warn: true } : null;
 }
 
-// The placeholder of a field ticked for `agent`, or the field's own.
-export const tickedPlaceholder = (agent, placeholder) => (agent ? t("Ask {agent} to edit", { agent: agent.label }) : placeholder);
+// The placeholder of a field ticked for `agent` ("Ask Codex…" for a new
+// comment, "Reply to Codex…" for a `reply`), or the field's own.
+export function tickedPlaceholder(agent, placeholder, reply = false) {
+  if (!agent) return placeholder;
+  return reply ? t("Reply to {agent}…", { agent: agent.label }) : t("Ask {agent}…", { agent: agent.label });
+}
+
+// What the field's send button is called, `{label, title}` (`hint` the
+// key that sends, "Shift+Enter"): the field's own action (`submitLabel`,
+// "Comment", "Send reply"), and ticked for `agent` "Send to Codex on
+// TIM-PC" (agentName), so the button says what it will start.
+export function sendLabel(agent, submitLabel, hint) {
+  const label = agent ? t("Send to {agent}", { agent: agentName(agent) }) : submitLabel;
+  return { label, title: t("{label} ({hint})", { label, hint }) };
+}
 
 // An edit's field, which has no tick: saving a text that newly names an
 // agent (`namedAgent`) sends it there, which it says, or why the server
@@ -68,7 +91,7 @@ export const tickedPlaceholder = (agent, placeholder) => (agent ? t("Ask {agent}
 export function editHint({ agents, text, initial = "", refused = "" }) {
   const agent = namedAgent(agents, text, initial);
   if (!agent) return null;
-  if (refused === "closed") return { text: t("Reopen this thread to ask {agent} again.", { agent: agent.label }), warn: true };
+  if (refused === "closed") return { text: t("Reopen this comment to ask {agent} again.", { agent: agent.label }), warn: true };
   if (refused === "not_newest") return { text: t("Reply to ask {agent} again: only the newest comment is sent.", { agent: agent.label }), warn: true };
   const note = sendNote(agent);
   if (note) return note;

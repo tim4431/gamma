@@ -118,7 +118,7 @@ export default function RevertChanges({ messages, fromId, busy = false, onRevert
           <Icon size={14} />
           <span className="chatChangeText">{changeText(item.action, PLAIN)}</span>
           {state.working ? <span className="transferSpin inline" aria-hidden="true" />
-            : state.done ? <span className="chatChangeTag"><CheckIcon size={12} />{t("Reverted")}</span> : null}
+            : state.done ? <span className="chatChangeTag"><CheckIcon size={14} />{t("Reverted")}</span> : null}
         </label>
         {state.done && state.kept ? (
           <div className="chatRevertAsk revertDialogAsk" role="status">

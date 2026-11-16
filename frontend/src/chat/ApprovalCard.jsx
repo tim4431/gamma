@@ -7,8 +7,8 @@
 // once runs it. Allow in this chat also stops asking for this permission in
 // this conversation. Always allow also sets the permission to Allow for
 // this kind of chat in Settings. Don't allow opens a line for what to do
-// instead (optional) and leaves the call unmade; the assistant gets that
-// line with the decline. A deletion's Allow once is the red one. What a
+// instead (optional) and leaves the call unmade; Gamma AI gets that line
+// with the decline, and the card names it ("Allowed. Gamma AI goes on…"). A deletion's Allow once is the red one. What a
 // computer's agent asks is a card on the same shell (AskCard, below).
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -78,7 +78,7 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide, a
   return (
     <ApprovalShell permission={permission} icon={permissionIcon(approval.perm)} guide="chat.approval"
       title={approvalTitle(approval, { titleOf, permission })}
-      answers={toolAnswers({ tool: approval.tool, permission, kind: kindLabel })}
+      answers={toolAnswers({ tool: approval.tool, permission, kind: kindLabel })} agent={t("Gamma AI")}
       onDecide={(decision, note) => onDecide(approval, decision, note)} answered={answered}>
       <ApprovalPreview tool={approval.tool} preview={approval.preview} args={approval.args} />
     </ApprovalShell>

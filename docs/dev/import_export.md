@@ -2489,8 +2489,15 @@ token can already download, and the import takes what it is given.
 ## The Export dialog
 
 The View menu's single "Export…" entry → `ExportDialog` in `transfers/ImportExport.jsx`.
-Step one is a format card. The PDF row holds Annotated PDF, the Notes row PDF,
-Markdown, Notability, GoodNotes and Notion, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
+Step one is a format card, in rows (`CATEGORIES`): This paper holds
+Annotated PDF and BibTeX (a folder's Papers row, its PDFs and its .bib),
+Notes PDF, Markdown and Notion, Handwriting apps Notability and GoodNotes,
+and Library Obsidian, Logseq, Zotero and Gamma. The two handwriting apps'
+cards say what each keeps, since that is what tells them apart: GoodNotes
+"Highlights and handwriting", Notability "Handwriting, notes and
+recordings" (their summaries below say the rest). The import dialog keeps
+one card for both apps, under Notes. A row's name sits in a column wide
+enough for "Handwriting" on a line. Double-click or
 Next confirms. Formats with editable options get a review step: the
 Highlights, Notes and Bundle-the-files switches beside an illustrative page
 (`shared/illustrations/TransferPreview.jsx`, an example of the options, not

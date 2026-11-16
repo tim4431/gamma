@@ -27,12 +27,17 @@ way. ``entry_of`` is the thread as the turn's prompt names it
 (gamma/annotations/entries.py's entry). ``settle`` is the end-of-turn rule:
 a turn that ended with no reply of its agent in the thread has its last
 message written there under the agent's name (gamma/annotations/hand.py),
-once, or for a failed or stopped turn a short note saying so, so a thread
-sent is a thread answered. ``opened`` lists the threads an agent opened in
-a turn (the chat's answer card); ``chats_of`` what the comment routes add to
-a thread for its reader (``agent_chat``: the conversation and its turn's
-state, the thread's chip); ``agent_named`` the agent a person's ``@name``
-named in a thread (gamma/inbox.py: a member of that name is told nothing).
+once, or for a turn that failed, was stopped or ended without a reply a
+short English note saying so, so a thread sent is a thread answered. That
+note keeps its words for the readers that know no more (an MCP client, the
+annotation files); ``ends_of`` is what the comment routes add to it
+(``turn_end``, the outcome as the turn's conversation keeps it), so the app
+draws it as the turn's state, in the reader's words. ``opened`` lists the
+threads an agent opened in a turn (the chat's answer card); ``chats_of``
+what the comment routes add to a thread for its reader (``agent_chat``: the
+conversation and its turn's state, the thread's chip); ``agent_named`` the
+agent a person's ``@name`` named in a thread (gamma/inbox.py: a member of
+that name is told nothing).
 
 This module is imported inside functions (gamma/local_agents/__init__.py).
 """
@@ -74,13 +79,20 @@ def refused(name: str, code: str, why: str, computer: str = "") -> dict:
 
 def start(ws: str, event: dict, to: str, *, by_name: str) -> dict:
     """The turn a person's comment write (``comments.written``'s event: a
-    new thread, a reply or an edit of the thread's newest comment) sent to
-    the agent ``to`` makes → ``{agent, conversation_id, turn_id, state}``,
-    or ``refused``'s answer (``REFUSALS``; ``why`` an English sentence the
-    client words itself by the code). The instruction is the comment's
+    new thread, a reply or an edit of the thread's newest comment; or kind
+    ``again``, a comment sent again as it stands, the app's Send again after
+    a refusal, from wherever it is in the thread) sent to the agent ``to``
+    makes → ``{agent, conversation_id, turn_id, state}``, or ``refused``'s
+    answer (``REFUSALS``; ``why`` an English sentence the client words
+    itself by the code), each with ``agent_id``, the ``to`` it answers (what
+    the app sends again after a refusal). The instruction is the comment's
     text, the agent's ``@name`` taken out of its prose; a new comment's turn
     takes the comment's id for its message, so a retry makes none twice.
     Never raises."""
+    return {**_answer(ws, event, to, by_name), "agent_id": to}
+
+
+def _answer(ws: str, event: dict, to: str, by_name: str) -> dict:
     name = name_of(to)
     if not name:
         return refused("", "other", "Gamma knows no agent of that id.")
@@ -104,7 +116,7 @@ def _start(ws: str, event: dict, to: str, name: str, by_name: str) -> dict:
         if thread is None:
             return refused(name, "other", "That thread is gone.")
         if thread["resolved_at"]:
-            return refused(name, "closed", f"Reopen this thread to ask {label} again.")
+            return refused(name, "closed", f"Reopen this comment to ask {label} again.")
         if event["kind"] == "edit":
             said = [c for c in thread["comments"] if not c["deleted"]]
             if not said or said[-1]["id"] != event["comment_id"]:
@@ -125,12 +137,12 @@ def _start(ws: str, event: dict, to: str, name: str, by_name: str) -> dict:
     text = mentions.without(event.get("body") or "", {name}).strip() or (event.get("body") or "").strip()
     begun = {"bucket": page_id, "user_id": actor, "agent": name, "label": label, "text": text[:chats.MAX_TEXT],
              "selections": [], "thread_id": thread["id"], "comment_id": event["comment_id"],
-             "message_id": event["comment_id"] if event["kind"] != "edit" else new_block_id()}
+             "message_id": event["comment_id"] if event["kind"] in ("create", "reply") else new_block_id()}
     computer = to[len(agents.COMPUTER):].rpartition(":")[0]
     if enabled() and computer == agents.here_id():
         row = store.usable(actor, ws, name)
         if row is None:
-            return refused(name, "off", f"Turn on {label} in Settings → AI first.")
+            return refused(name, "off", f"Turn on {label} in Settings → AI → Agents first.")
         lent = row["set_by"] != actor
         # where the thread's conversation works, else the one that opened the thread, else the page's chat
         dir = next((c["dir"] for c in (mine, opener, chat) if c is not None and c["agent"] == name), "")
@@ -225,7 +237,7 @@ def _writer(ws: str, conversation: dict, agent_id: str, label: str):
 
 def _said(reply: dict) -> str:
     """What the thread is told of the turn: its last message, or a short
-    note of a turn that ended without one, failed or was stopped."""
+    note of a turn that ended without one, failed or was stopped (``_end_of``)."""
     label = reply.get("label") or catalog.label(reply.get("agent") or "")
     if reply.get("state") == "stopped":
         return f"Stopped before {label} answered."
@@ -234,14 +246,25 @@ def _said(reply: dict) -> str:
     return (reply.get("text") or "").strip()[:comments.MAX_BODY] or f"{label} finished without a reply."
 
 
+def _end_of(reply: dict) -> str:
+    """What the note ``_said`` writes of an ended turn says: ``failed``,
+    ``stopped``, ``empty`` (done without a reply), "" for its reply."""
+    state = reply.get("state")
+    if state in ("failed", "stopped"):
+        return state
+    return "empty" if state == "done" and not (reply.get("text") or "").strip() else ""
+
+
 def settle(ws: str, conversation_id: str, turn_id: str) -> None:
     """The end-of-turn rule: the thread conversation's turn ``turn_id``
     ended, and its agent wrote no reply in the thread since the turn began
     (through the ``comment`` tool and its turn's token, signed as that
     agent for the account): Gamma writes the turn's last message there as
-    the agent's reply (``_said``; a note of a turn failed or stopped), under
-    an id of the turn's, so it is written once however often its end is.
-    Never raises."""
+    the agent's reply (``_said``; a note of a turn failed, stopped or
+    without a reply, its event carrying that outcome, ``turn_end``, so the
+    Inbox tells the account nothing of its own Stop), under an id of the
+    turn's (``home.reply_id``), so it is written once however often its end
+    is. Never raises."""
     try:
         _settle(ws, conversation_id, turn_id)
     except Exception as e:  # noqa: BLE001 — the turn's end stands; the thread stays unanswered
@@ -265,7 +288,8 @@ def _settle(ws: str, conversation_id: str, turn_id: str) -> None:
             return
         writer = _writer(ws, conversation, agent_id, reply.get("label") or "")
         try:
-            hand.reply(conn, writer, ws, thread_id, _said(reply), comment_id=home.reply_id(turn_id, thread_id))
+            hand.reply(conn, writer, ws, thread_id, _said(reply), comment_id=home.reply_id(turn_id, thread_id),
+                       turn_end=_end_of(reply))
         except ValueError as e:
             log.info(f"[agents] the thread of turn {turn_id} not answered: {e}")
 
@@ -323,6 +347,35 @@ def chats_of(ws: str, user_id: str, thread_ids) -> dict[str, dict]:
                                               "label": catalog.label(conversation["agent"]), "turn": turn,
                                               **({"for": names.get(conversation["user_id"], "")}
                                                  if conversation["user_id"] != user_id else {})}
+    return out
+
+
+def ends_of(ws: str, thread_ids) -> dict[str, dict]:
+    """``{comment id: {state, error}}``: the notes ``settle`` wrote in the
+    threads ``thread_ids`` of a turn that ``failed`` (``error`` its words,
+    "" for none), was ``stopped`` or ended ``empty`` (``_end_of``; the
+    error "" for those), read off the turns of every account's
+    conversations of the threads (a note's id is its turn's,
+    ``home.reply_id``). What the comment routes add to such a comment for
+    every reader (``turn_end``): the app draws it as the turn's state, its
+    words in the reader's language, and the note's English stays for the
+    readers that know no more. A conversation deleted since takes its
+    notes' outcome with it: they read as the agent's words again."""
+    ids = sorted(set(thread_ids))
+    if not ids:
+        return {}
+    with connect_pages_db(ws) as conn:
+        rows = conn.execute(
+            "SELECT c.thread_id, json_extract(m.value, '$.turn_id'), json_extract(m.value, '$.state'), "
+            "json_extract(m.value, '$.text'), json_extract(m.value, '$.error') FROM computer_chats c, "
+            "json_each(c.messages) m WHERE c.thread_id IN (SELECT value FROM json_each(?)) "
+            "AND json_extract(m.value, '$.role') = 'agent' "
+            "AND json_extract(m.value, '$.state') IN ('done', 'failed', 'stopped')", (json.dumps(ids),)).fetchall()
+    out = {}
+    for thread_id, turn_id, state, text, error in rows:
+        end = _end_of({"state": state, "text": text})
+        if end and turn_id:
+            out[home.reply_id(turn_id, thread_id)] = {"state": end, "error": (error or "") if end == "failed" else ""}
     return out
 
 

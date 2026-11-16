@@ -32,7 +32,8 @@ import { TaskBlock } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
-export function ServerSettings({ value }) {
+// `onBucket` opens Backups › Bucket, where off-site copies are set up.
+export function ServerSettings({ value, onBucket }) {
   return (
     <>
       <PaneHead icon={ServerIcon} title={t("Server")} />
@@ -48,7 +49,7 @@ export function ServerSettings({ value }) {
       <Section title={t("Databases")}>
         <DatabaseCheck tasks={value.tasks} />
       </Section>
-      <ServerBackups setStatus={value.setStatus} confirm={value.confirm} tasks={value.tasks} />
+      <ServerBackups setStatus={value.setStatus} confirm={value.confirm} tasks={value.tasks} onBucket={onBucket} />
       <Section title={t("Log")}>
         <ServerLogBox setStatus={value.setStatus} />
       </Section>

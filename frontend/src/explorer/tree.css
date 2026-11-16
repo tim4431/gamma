@@ -48,22 +48,20 @@
   color: var(--text-muted);
 }
 .fileTreeName {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 4em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fileTreeCount { color: var(--text-muted); font-size: var(--fs-xs); }
-/* a synced folder's root: the computer that keeps it and its sync */
+/* a synced folder's root: the computer that keeps it and its sync (a
+   StateTag, .keeperTag), giving way before the name does */
 .fileTreeKeeper {
-  flex: 0 1 auto;
+  display: flex;
+  flex: 0 10 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
+  max-width: 45%;
 }
 .fileTreeMore { color: var(--accent); }
 .fileTreeMore[aria-disabled="true"] { opacity: 0.6; cursor: default; }
@@ -84,5 +82,40 @@
 .folderTree .fileTreeChevron { margin-right: -4px; }
 .folderTreeHead { padding-left: 65px; padding-right: 11px; }
 .folderTree .fileRowRename { padding: 1px 6px; }
+/* a row's cells: in the row's own line, as if they had no box */
+.folderTreeCells { display: contents; }
 .phoneUI .folderTree .fileTreeRow { min-height: 44px; }
-.phoneUI .folderTreeHead { padding-left: 85px; }
+/* On a phone a row is the name, wrapping, over a muted line of its cells
+   (Format and File size; the date and comments where the width shows
+   them), the glyph, the pin and the "⋯" beside both; a folder's chevron
+   keeps its 44 px, a file's slot the 24 px that keeps its indent. The
+   header's columns no longer line up, so it goes. */
+.phoneUI .folderTreeHead { display: none; }
+.phoneUI .folderTree .fileTreeRow:is([data-kind="folder"], [data-kind="file"]) {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  row-gap: 1px;
+  padding-block: 4px;
+}
+.phoneUI .folderTree .fileTreeRow > * { grid-row: 1 / 3; }
+.phoneUI .folderTree .fileTreeRow > .fileTreeChevron { grid-column: 1; }
+.phoneUI .folderTree .fileTreeRow[data-kind="file"] > .fileTreeChevron { width: 24px; height: auto; }
+.phoneUI .folderTree .fileTreeRow > .fileTreeName {
+  grid-column: 3;
+  grid-row: 1;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 20px;
+}
+.phoneUI .folderTree .fileTreeRow > .folderTreeCells {
+  display: flex;
+  grid-column: 3;
+  grid-row: 2;
+  gap: 8px;
+  min-width: 0;
+}
+.phoneUI .folderTree .folderTreeCells > * { flex: 0 1 auto; text-align: left; }
+.phoneUI .folderTree .folderTreeCells > :empty { display: none; }
+.phoneUI .folderTree .fileTreeRow > :is(.fileRowPin, .fileRowPinSlot) { grid-column: 4; }
+.phoneUI .folderTree .fileTreeRow > .fileTreeMenu { grid-column: 5; }

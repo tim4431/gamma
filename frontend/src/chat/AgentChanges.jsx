@@ -153,13 +153,14 @@ export function ChangesCard({ head, tail = null, guide, className = "", children
 
 // What a computer agent's turn changed (chat/computer/computerChat.js
 // turnChanges: {shown, rest, more, n, built, vault}), under its reply: a
-// row a file, each its path as the link that opens it (PathLink, resolved
-// from the synced folder's top while it works in one, `vault`), the first
-// few and then "and N more" unfolding to the rest, and "The PDF was
-// rebuilt" last.
+// row a file, each its path as the link that opens it while the agent works
+// in a synced folder (`vault`: PathLink, resolved from the folder's top),
+// else as plain monospace text, since no page holds a file of a directory
+// Gamma does not sync; the first few and then "and N more" unfolding to the
+// rest, and "The PDF was rebuilt" last.
 export function FileChanges({ files }) {
   const { shown, rest, more, n, built, vault } = files;
-  const file = (path) => <PathLink href={path}>{path}</PathLink>;
+  const file = (path) => (vault ? <PathLink href={path}>{path}</PathLink> : <code>{path}</code>);
   const row = (key, icon, body) => (
     <div key={key} className="chatChange">{icon}<span className="chatChangeText">{body}</span></div>
   );
@@ -189,7 +190,7 @@ export function FileChanges({ files }) {
 export function ThreadsOpened({ threads }) {
   const nav = useContext(GammaNavContext);
   return (
-    <ChangesCard className="chatThreadsOpened" head={t("Comment threads it opened · {n}", { n: threads.length })}>
+    <ChangesCard className="chatThreadsOpened" head={t("Comments it opened · {n}", { n: threads.length })}>
       {threads.map((th) => (
         <div key={th.id} className="chatChange">
           <MessageSquareIcon size={14} />

@@ -14,14 +14,15 @@
 // file whose bytes are elsewhere or not here at all (a document at an
 // address no viewer reads: `fileUrl` ""), or a file that would not play or
 // load shows: its glyph, name, format, size and one sentence, with Download
-// and Show in folder.
+// and Show in Explorer (Finder, the file manager: vaultState revealLabel).
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../../comments/marginSlot";
 import NoteBadge from "../../comments/NoteBadge.jsx";
 import { fitBeside, marginLeft as besideMargin } from "../../comments/marginLayout.js";
 import { TipMarks } from "../../pdf/MarkTools.jsx";
 import { formatLabel } from "../../library/libraryUtils.js";
-import { DownloadIcon, FileGlyph, FolderOpenIcon, SparklesIcon } from "../../shared/ui/Icons";
+import { DownloadIcon, FileGlyph, HardDriveIcon, SparklesIcon } from "../../shared/ui/Icons";
+import { revealLabel } from "../../vault/vaultState.js";
 import { TipFrame } from "../../shared/ui/TipFrame.jsx";
 import { TipComment, TipDivider, TipTool } from "../../shared/ui/SelectionTip.jsx";
 import { menuPress, tipPress } from "../../shared/ui/press.js";
@@ -444,7 +445,7 @@ export function MediaViewer({ doc, fileUrl, hidden = false, onReveal = null }) {
 // play, a text that was binary after all). `onRetry`: the viewer's read
 // failed (not a 404), so the pane says it could not read the file and
 // offers Try again, which reads it again. Download for a file with bytes
-// here, Show in folder where the host gives `onReveal` (the desktop shell).
+// here, Show in Explorer where the host gives `onReveal` (the desktop shell).
 export function FilePane({ doc, fileUrl, onReveal = null, sentence = null, onRetry = null }) {
   const listed = isListed(doc);
   const [probe, setProbe] = useState(null); // {status, size} of a HEAD
@@ -481,7 +482,7 @@ export function FilePane({ doc, fileUrl, onReveal = null, sentence = null, onRet
             </a>
           ) : null}
           {onReveal ? (
-            <button type="button" className="uiBtn" onClick={onReveal}><FolderOpenIcon size={16} /> {t("Show in folder")}</button>
+            <button type="button" className="uiBtn" onClick={onReveal}><HardDriveIcon size={16} /> {revealLabel()}</button>
           ) : null}
         </div>
       </div>

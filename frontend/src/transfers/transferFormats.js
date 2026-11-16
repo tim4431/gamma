@@ -61,7 +61,10 @@ const NOTES_PLACE_TEXT = {
 };
 
 // The rows of both dialogs, in order; a format's `category` names its row.
-export const CATEGORIES = [T("This paper"), T("Papers"), T("Notes"), T("Library")];
+// The handwriting apps have a row of their own in the export dialog, their
+// hints saying what each app keeps; the import dialog has one card for both,
+// under Notes.
+export const CATEGORIES = [T("This paper"), T("Papers"), T("Notes"), T("Handwriting apps"), T("Library")];
 
 // `mode`: the server's name for the format (POST /api/jobs/export,
 // routers/export.py). A folder exports the annotated PDFs of all its papers,
@@ -79,17 +82,18 @@ const EXPORT_FORMATS = [
     hint: T("A typeset document of highlights and notes"), editable: ["highlights", "notes"], fixed: { bundle: false } },
   { id: "markdown", mode: "readable", label: T("Markdown"), category: "Notes",
     hint: T("Readable notes for any Markdown editor"), editable: ["highlights", "notes", "bundle"] },
-  // A note holds everything a page has but its highlights, so it has no switches.
-  { id: "notability", mode: "notability", label: "Notability", category: "Notes",
-    hint: T("A .note with the handwriting, to open in Notability"), editable: [],
+  // A note holds everything a page has but its highlights, so it has no
+  // switches. Its hint and GoodNotes' name what each app keeps.
+  { id: "notability", mode: "notability", label: "Notability", category: "Handwriting apps",
+    hint: T("Handwriting, notes and recordings, for Notability"), editable: [],
     fixed: { highlights: false, notes: true, bundle: true },
-    folder: { hint: T("Each page as a .note, in one .zip") } },
+    folder: { hint: T("Each page's handwriting, notes and recordings, as .note files in one .zip") } },
   // A notebook holds the page's highlights, handwriting, boxes and pictures,
-  // never its notes, so it has no switches either.
-  { id: "goodnotes", mode: "goodnotes", label: "GoodNotes", category: "Notes",
-    hint: T("A .goodnotes with the handwriting, to open in GoodNotes"), editable: [],
+  // never its notes or recordings, so it has no switches either.
+  { id: "goodnotes", mode: "goodnotes", label: "GoodNotes", category: "Handwriting apps",
+    hint: T("Highlights and handwriting, for GoodNotes"), editable: [],
     fixed: { highlights: true, notes: false, bundle: true },
-    folder: { hint: T("Each page as a .goodnotes, in one .zip") } },
+    folder: { hint: T("Each page's highlights and handwriting, as .goodnotes files in one .zip") } },
   // Its zip holds the images the switches leave (notionFiles) and never the
   // PDFs (routers/export.py _NotionBuilder), so it has no Bundle switch.
   { id: "notion", mode: "notion", label: "Notion", category: "Notes",

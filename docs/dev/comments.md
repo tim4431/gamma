@@ -71,7 +71,12 @@ comment"). `made_on` is
 the file the thread was opened on (its anchor's `doc_id`, `""` for none).
 The comment routes add
 `agent_chat` to each thread they answer: the session account's
-conversation of it with a computer's agent ("Sent to an agent" below). A
+conversation of it with a computer's agent ("Sent to an agent" below); and
+to the note a turn's end wrote for a turn that failed, was stopped or
+ended without a reply, for every reader, `turn_end` (`{state: "failed" |
+"stopped" | "empty", error}`, [local_agents.md](local_agents.md) "A
+comment sent to an agent"), whose English text stays for the readers that
+know no more. A
 tombstone reads `deleted: true` with an empty body. `last_at` is the newest of the thread's writes
 and its resolution. `state` is `open`, `resolved` or `all`. The caller
 decides which pages may be read; a page in Recently deleted is no page of
@@ -249,8 +254,10 @@ refused with a 400.
   that agent ([local_agents.md](local_agents.md) "A comment sent to an
   agent"): the answer carries `turn` (`{agent, conversation_id, turn_id,
   state}`, or `{agent, refused, why}` with the comment stored anyway; the
-  codes are `local_agents.threads.REFUSALS`) and the thread read again with
-  that turn. A new comment's thread always carries its reader's
+  codes are `local_agents.threads.REFUSALS`; either with `agent_id`, the
+  `to` it answers) and the thread read again with that turn. An edit that
+  leaves the text as it was, with `to`, sends the comment as it stands
+  again (the thread's *Send again*). A new comment's thread always carries its reader's
   `agent_chat`, so a reply sent to no agent keeps the chip of a turn still
   working; an edit's answer carries the thread only when it is sent. No
   `turn` for a comment sent to no agent. A token's `to` is refused, and a
@@ -401,7 +408,10 @@ they count as the owner's. An integration token's comment (any scope: a
 agent writes is no one's keystrokes, so the person hears of it by the rules
 above as anyone would (its reply in their thread, its new thread or reply on
 a page they follow, its mention of them, its resolve of their thread), and
-each item names the agent (its name, id and owner). A retried batch is answered from the op log and
+each item names the agent (its name, id and owner). The one exception is
+the note a stopped turn's end writes in its thread (its event's
+`turn_end`): it tells the turn's own account nothing, since it, or its
+agent's owner, pressed Stop. A retried batch is answered from the op log and
 never reaches `after_commit`, so a retry tells no one twice. A reopen tells
 no one.
 
@@ -711,9 +721,11 @@ active, and a thread holding an unsent reply keeps its field. Its first comment'
 who resolved it at its foot, where the reply field was. The replies step in
 under the first comment's text, each avatar under its name, as the
 annotated PDF prints them ([pdf_typesetting.md](pdf_typesetting.md)); the
-reply field keeps the thread's full width. A comment shows its author's avatar (`PersonAvatar`; an agent's
-`AgentAvatar`, its kind's icon: Gamma AI's sparkles, a computer agent's
-bot, a connection's link), name (an agent's followed by "on TIM-PC, for
+reply field keeps the thread's full width. A comment shows its author's avatar (`collaboration/Presence.jsx`
+`ActorAvatar`, which the Comments window's rows and the Inbox's draw too:
+a person's initial, an agent's `AgentAvatar`, its kind's icon on a neutral
+disc: Gamma AI's sparkles, a computer agent's bot, a connection's link),
+name (an agent's followed by "on TIM-PC, for
 tim", `agentFor`, and the whole of it in the title, `authorTitle`: "Written
 by Codex on TIM-PC, for tim", a connection's "Written by Claude Code with
 tim's connection"), time and text rendered as a note is (`BlockMarkdown`
@@ -815,44 +827,81 @@ sent to an agent ("The interaction" of
 agents are App's `links.agents` (`chat/agents.js` `commentAgents`: the
 chat's computer agents for the page, this computer's that the account
 turned on or the one of the computer that keeps its work folder, each by
-its id); the tick's rules are `comments/sendTo.js`:
+its id; none while the reader may not write the workspace, a viewer or a
+share's visitor, whom the server would refuse); the tick's rules are
+`comments/sendTo.js`:
 
+- **Its name** (`agentName`, `chat/agents.js` `madeBy`): whose agent and
+  where, *Send to Codex* for this computer's, *Send to Codex on TIM-PC*,
+  *Send to alice's Codex on TIM-PC* for a co-author's.
 - **Its default** (`startsTicked`): ticked in a thread whose newest comment
-  is a computer agent's (it asked, or answered), else as the person left
-  it last, the account preference `commentSendTo` (`links.sendTo`, set
-  whenever the person ticks or unticks it).
+  is a computer agent's (it asked, or answered); unticked in one whose
+  newest is another person's (a reply between people); else as the person
+  left it last, the account preference `commentSendTo` (`links.sendTo`,
+  set whenever the person ticks or unticks it).
 - **Which agent** (`tickAgent`): the one chosen in its menu, else the one
   that wrote in the thread last (by `agent_id`), else the one picked in
   the page's chat (`chat/computer/chatSide.js` `chatPick`), else the first;
-  with several the label is a `MenuSelect` of them ("Codex on TIM-PC" for
-  another computer's).
+  with several, *Send to* is followed by a frameless `MenuSelect` (`ghost`:
+  a choice inside the line's words) of them, each with the bot glyph and
+  named as the tick names it.
 - **`@codex` typed** ticks it for that agent (`namedAgent`: outside code,
   newly), so a mention and the tick are one request.
-- Ticked, the field's placeholder is *Ask Codex to edit*, and the bar says
-  why the agent cannot answer now (its problem, or its computer offline,
-  which the server refuses: `sendNote`). The comment posts `to`, the
-  agent's id, or `""` unticked (`useComments.add`; a field with no tick
-  sends none); a refusal is said in the status line
-  (`comments.turnRefusal`), the comment stored. An edit has no tick: an
-  `@name` it adds is read by the server, and the bar says what saving does
-  or why it will not be sent (`editHint`: a resolved thread, an older
-  comment than the thread's newest).
+- Ticked, the field says what it will start: its placeholder is *Ask
+  Codex…* (a new comment) or *Reply to Codex…* (`tickedPlaceholder`), the
+  round send button is named *Send to Codex* with *Send to Codex
+  (Shift+Enter)* as its title (`sendLabel`; unticked, the field's own
+  *Comment* or *Send reply*), and the bar says why the agent cannot
+  answer now (its problem, or its computer offline, which the server
+  refuses: `sendNote`). The comment posts `to`, the agent's id, or `""`
+  unticked (`useComments.add`; a field with no tick sends none). An edit
+  has no tick: an `@name` it adds is read by the server, and the bar says
+  what saving does or why it will not be sent (`editHint`: a resolved
+  thread, an older comment than the thread's newest).
 
 While the reader's turn of a thread is to end (its `agent_chat.turn`), the
-thread carries a row at its foot (`Thread.jsx`, `comments.turnChip`):
-*Waiting for Codex* (or for the other computer that runs it), *Codex is
-working…*, *Codex is waiting for you* with *Answer in the chat* (its ask's
-card is the chat's), or *Codex is waiting for your answer on TIM-PC*, each
-with Stop (`useComments.stopTurn`); the threads are read every two seconds
+thread carries a row at its foot (`Thread.jsx`, a live region:
+`comments.turnChip` drawn by `TurnTag`, a `StateTag` with its glyph by its
+kind): *Waiting for Codex* (or for the other computer that runs it) with
+the clock, not live, *Codex is working…* with the spinner, *Codex is
+waiting for you* with the shield and *Answer in the chat* (the chat's
+sparkles; its ask's card is the chat's), or *Waiting for you on TIM-PC*
+with the shield, each with Stop (`useComments.stopTurn`). The tag's words
+ellipsize in a narrow card, the whole sentence its title, and the buttons
+wrap under it. A co-author's turn of the reader's agent says *for bob*
+after the tag (`agent_chat.for`). The threads are read every two seconds
 meanwhile (`useComments`), and the Comments window's row carries the same
-chip. An agent's reply in a thread the reader sent it has *Open in chat*
-on its author line: the page's chat on the thread's conversation (App's
-`openThreadChat`, `chatSide.js` `showInChat`: its steps, its asks and
-what it changed, drawn as a chat's), whose composer gives way to a line
-saying the conversation goes on in its thread, *Show the thread* and *Back
-to the chat*. The chat's answer card lists the threads its agent opened in
-its turn (`chat/AgentChanges.jsx` `ThreadsOpened`, each opening the thread:
-the navigation's `openThread`).
+tag.
+
+A send that started no turn (`turn.refused`) stays on its thread, in the
+tab that sent it, until the reader's next send there: the same row carries
+*Not sent to Codex* (`warn`, the alert glyph) with why on a line under it
+(`comments.refusalChip`, `turnRefusal`: by its code, else the server's
+why), and *Send again* where the same comment sent again can get through
+(not for an older comment than the newest, a viewer, a co-author outside
+a synced folder, an agent that does not work here). Send again saves the
+comment unchanged with `to`, the answer's `agent_id` (`useComments.edit`;
+the server sends it as it stands: [local_agents.md](local_agents.md) "A
+comment sent to an agent").
+
+The note Gamma writes in the thread at the end of a turn that failed, was
+stopped or ended without a reply (its `turn_end`) reads as that turn's
+state in place of its English words (`comments.turnEnd`): *Codex could not
+finish* (`failed`, the alert glyph) with the error under it, *Stopped
+before Codex answered* or *Codex finished without a reply* (neutral, the
+stop square). A stop tells its own sender nothing in the Inbox.
+
+The newest reply of a computer's agent in a thread the reader sent it has
+*Open in chat* on its author line, a `ctlBtn` with the chat's sparkles
+beside Resolve, and every such comment's "⋯" has it as a row: one way in a
+thread, so the author line keeps its time whole. It opens the page's chat
+on the thread's conversation (App's `openThreadChat`, `chatSide.js`
+`showInChat`: its steps, its asks and what it changed, drawn as a chat's),
+whose composer gives way to a line saying the conversation goes on in its
+comment, *Show the comment* and *Back to the chat*. The chat's answer card
+lists the comments its agent opened in its turn ("Comments it opened",
+`chat/AgentChanges.jsx` `ThreadsOpened`, each opening the thread: the
+navigation's `openThread`).
 
 **Drafts.** Unsent text is kept per field for as long as the tab lives, in
 a module-level map of `CommentComposer.jsx` keyed `new:<block>`,
@@ -1179,7 +1228,9 @@ in its title.
 
 **The panel.** A header popover with Unread, All and Archived (a
 `Segmented`), Mark all read, and the items grouped by day (Today,
-Yesterday, then the date). A row has the actor's avatar, one sentence
+Yesterday, then the date). A row has the actor's avatar (`ActorAvatar`:
+an agent's item by its kind's avatar, a computer agent's bot, never as a
+person named after it), one sentence
 ("ann replied to a comment on Draft"; a request to join names the cloud
 username asking, `inboxActor`: "cat asks to open Draft"), the note's or the comment's words,
 the workspace's name when it is not this one, and the time. Its actions,
@@ -1324,8 +1375,9 @@ has notifications; the iPad's WKWebView has none, and the row says so.
 - Frontend node tests: `comments.test.mjs` (folding, ordering, the changes
   shown before the server answers, who may edit, the snippets and the
   link, the highlight rules, which comments draw later, a thread's turn's
-  chip and a refusal's words), `commentSendTo.test.mjs` (the Send to tick:
-  its default, its agent, `@name`, the field's lines),
+  chip, a turn's end's note, a refusal kept on its thread and its words),
+  `commentSendTo.test.mjs` (the Send to tick: its default, its agent and
+  its name, `@name`, the field's lines and its send button),
   `marginLayout.test.mjs` (a page's left edge and the stacking),
   `inboxText.test.mjs` (sentences, days, jumps, listings, marks, rings),
   `selectionTip.test.mjs`, `refLists.test.mjs`, `enterKey.test.mjs`

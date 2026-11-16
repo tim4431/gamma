@@ -11,7 +11,8 @@ comments with their authors) as data and the comment as the instruction; its
 answer is the agent's reply in the thread, written by Gamma from its last
 message when the agent wrote none there itself, once, and a failed,
 stopped or timed out turn's note (the agent's whole error kept on this
-computer alone); a detach of the synced folder stops the turn and takes its
+computer alone), which every reader reads with what became of the turn
+(``turn_end``) and whose Stop tells its sender nothing; a detach of the synced folder stops the turn and takes its
 conversations' grants; a turn a stopped server left is failed at the next
 start, once its workspace is upgraded, and says so in its thread; the next
 ticked reply resumes the conversation and its
@@ -21,7 +22,8 @@ field that shows the tick unticked sends none; a reply sent to no agent
 keeps its thread's turn on the answer; a co-author the owner named sends to
 the agent on a synced folder's files alone, its replies keeping whose agent
 wrote them, and an owner who no longer edits lends it nothing; a refused
-``to`` stores the comment and says why; the thread's reader sees their
+``to`` stores the comment and says why, and the comment saved unchanged
+with ``to`` is sent again; the thread's reader sees their
 conversation and its turn's state (``agent_chat``), nobody else; a member
 named codex is told nothing of a comment sent to the agent, and the agent's
 reply reaches its sender as a reply."""
@@ -121,6 +123,7 @@ def test_a_ticked_comment_is_a_turn_answered_in_its_thread(lab, disk, monkeypatc
     assert (reply["author"], reply["agent"], reply["agent_kind"], reply["agent_id"]) == (OWNER, "Codex", "computer",
                                                                                       _to())
     assert reply["body"] == "Done: Shorten the title, please." and reply["agent_on"]
+    assert "turn_end" not in reply, "an answer is no turn's end"
     assert thread["agent_chat"]["turn"] is None and not thread["resolved_at"]
     assert "Weight Decay" in (f.root / "main.tex").read_text(encoding="utf-8")
     # the conversation is the thread's, about its page, working in the synced folder; not the page's chat
@@ -213,6 +216,8 @@ def test_a_failed_or_stopped_turn_says_so_in_its_thread(lab, disk, monkeypatch):
     said = _thread(lab.owner, f.page, failed["thread"]["id"])["comments"][-1]
     assert said["agent_kind"] == "computer"
     assert said["body"] == "Codex could not finish: fake codex: the model refused to start"
+    # the note keeps its words for the readers that know no more; the app reads what became of the turn
+    assert said["turn_end"] == {"state": "failed", "error": "Codex could not finish: fake codex: the model refused to start"}
     assert "INFO starting" in store.get_turn(failed["turn"]["turn_id"])["error"]   # its stderr stays on this computer
 
     # a turn that takes too long is stopped, and says why
@@ -220,8 +225,9 @@ def test_a_failed_or_stopped_turn_says_so_in_its_thread(lab, disk, monkeypatch):
     script_agent(monkeypatch, disk.log, delay=30)
     slow = _post(lab.owner, f.page, note, "Think it over.", to=_to())
     assert runner.wait_idle(30)
-    assert _thread(lab.owner, f.page, slow["thread"]["id"])["comments"][-1]["body"] == (
-        "Codex took longer than 1 second and was stopped.")
+    timed_out = _thread(lab.owner, f.page, slow["thread"]["id"])["comments"][-1]
+    assert timed_out["body"] == "Codex took longer than 1 second and was stopped."
+    assert timed_out["turn_end"] == {"state": "failed", "error": "Codex took longer than 1 second and was stopped."}
     monkeypatch.delenv("GAMMA_AGENT_RUN_TIMEOUT")
 
     script_agent(monkeypatch, disk.log, delay=30)
@@ -239,7 +245,21 @@ def test_a_failed_or_stopped_turn_says_so_in_its_thread(lab, disk, monkeypatch):
     r = lab.owner.post(f"/api/local-agents/chat/turns/{stopped['turn']['turn_id']}/stop")
     assert r.json() == {"stopped": True}
     assert runner.wait_idle(30)
-    assert _thread(lab.owner, f.page, stopped["thread"]["id"])["comments"][-1]["body"] == "Stopped before Codex answered."
+    stop = _thread(lab.owner, f.page, stopped["thread"]["id"])["comments"][-1]
+    assert stop["body"] == "Stopped before Codex answered." and stop["turn_end"] == {"state": "stopped", "error": ""}
+    assert _thread(lab.editor, f.page, stopped["thread"]["id"])["comments"][-1]["turn_end"]["state"] == "stopped", (
+        "every reader reads what became of the turn")
+    # the failure's note reaches its sender as a reply; the Stop they pressed tells them nothing
+    with connect_users_db() as conn:
+        told = {r[0] for r in conn.execute("SELECT comment_id FROM inbox_items WHERE user_id = ? AND workspace_id = ?",
+                                           (lab.user, lab.ws))}
+    assert said["id"] in told and stop["id"] not in told
+
+
+def test_the_outcome_a_turn_s_end_note_carries():
+    ended = [{"state": "failed", "error": "x"}, {"state": "stopped", "text": "half"}, {"state": "done", "text": " "},
+             {"state": "done", "text": "Fixed."}]
+    assert [threads._end_of(r) for r in ended] == ["failed", "stopped", "empty", ""]
 
 
 def test_a_detach_stops_the_turn_and_forgets_the_grants_there(lab, disk, monkeypatch):
@@ -343,9 +363,19 @@ def test_what_is_refused_and_the_comment_stored_anyway(lab, disk, monkeypatch):
     thread_id = root["thread"]["id"]
     assert lab.owner.post(f"/api/comments/{thread_id}/resolve", json={"resolved": True}).status_code == 200
     closed = _post(lab.owner, f.page, note, "one more", thread_id=thread_id, to=_to())
-    assert closed["turn"] == {"agent": "Codex", "refused": "closed", "why": "Reopen this thread to ask Codex again."}
+    assert closed["turn"] == {"agent": "Codex", "refused": "closed", "why": "Reopen this comment to ask Codex again.",
+                              "agent_id": _to()}
     assert closed["comment"]["body"] == "one more"
     assert lab.owner.post(f"/api/comments/{thread_id}/resolve", json={"resolved": False}).status_code == 200
+    # Send again: the comment saved unchanged with `to` is sent as it stands; unchanged without, nothing
+    unchanged = lab.owner.patch(f"/api/comments/{closed['comment']['id']}", json={"body": "one more"}).json()
+    assert "turn" not in unchanged and not _conversation(lab, thread_id)
+    again = lab.owner.patch(f"/api/comments/{closed['comment']['id']}", json={"body": "one more", "to": _to()}).json()
+    assert (again["turn"]["state"], again["turn"]["agent_id"]) == ("queued", _to())
+    assert again["thread"]["agent_chat"]["turn"]["turn_id"] == again["turn"]["turn_id"]
+    assert runner.wait_idle(60)
+    assert [c["body"] for c in _thread(lab.owner, f.page, thread_id)["comments"]] == [
+        "the caption", "one more", "Done: one more"]
     older = lab.owner.patch(f"/api/comments/{thread_id}", json={"body": "@codex the caption"}).json()
     assert older["turn"]["refused"] == "not_newest"
     assert _post(lab.owner, f.page, note, "x", to="gamma")["turn"]["refused"] == "other"
@@ -354,7 +384,7 @@ def test_what_is_refused_and_the_comment_stored_anyway(lab, disk, monkeypatch):
     assert _post(lab.owner, f.page, note, "x", to=_to("claude"))["turn"]["refused"] == "off"
     monkeypatch.setattr(hosted, "read_only", lambda: "This server takes no changes now.")
     assert _post(lab.owner, f.page, note, "x", to=_to())["turn"] == {
-        "agent": "Codex", "refused": "writes", "why": "This server takes no changes now."}
+        "agent": "Codex", "refused": "writes", "why": "This server takes no changes now.", "agent_id": _to()}
     monkeypatch.setattr(hosted, "read_only", lambda: "")
     roles = workspaces.role_of
     monkeypatch.setattr(workspaces, "role_of", lambda ws, user_id: "viewer" if user_id == lab.user else roles(ws, user_id))

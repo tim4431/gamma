@@ -1257,7 +1257,7 @@ def test_a_work_folder_a_vault_here_keeps_is_detached_by_its_maker_alone(lab, di
     _ws, alice, bob, _vera = lab
     link = _vault(bob, disk / "Bobs detach", {"b.md": "bob's note\n"})
     url = f"/api/folders/{link['folder_id']}/detach"
-    assert alice.get(url).json() == {"may": False}
+    assert alice.get(url).json() == {"may": False, "why": "maker"}
     assert alice.post(url, json={"pages": "keep"}).status_code == 403 and folder_links.get_link(link["id"])
     assert bob.get(url).json()["may"] is True
     r = bob.post(url, json={"pages": "keep"})

@@ -250,7 +250,7 @@ export const RULES = [
   ["frontend/src/explorer/workPaths.js", ["work-folders", "vaults", "explorer", "notes-pdf-share", "sub-pages"]],
   // a work folder's folder view and the tracking dialog; the Files window, its owner and the rows both trees draw
   // remote-work: the tracking dialog of a work folder of another server (what goes there, its secrets, the
-  // window handed back), the folder view there and the folder menu's Detach… there; viewers: the folder
+  // window handed back), the folder view there and the folder menu's Stop syncing… there; viewers: the folder
   // view's Format column
   ["frontend/src/explorer/trackRemote.js", ["remote-work", "work-folders"]],
   ["frontend/src/explorer/DetachDialog.jsx", ["work-folders", "vaults", "explorer", "remote-work"]],

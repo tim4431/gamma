@@ -3,7 +3,7 @@
 On the desktop app's own server, the one that keeps synced vaults, Gamma
 itself can be the connector that [annotations.md](annotations.md) "The seam"
 leaves to the owner. An account turns on Codex CLI or Claude Code for this
-computer (Settings → AI, through the desktop shell: "Who turns it on"), and
+computer (Settings → AI → Agents, through the desktop shell: "Who turns it on"), and
 owns it from then on. The owner talks to the agent in two places: the chat
 window's second side ("The chat's computer side"), and a comment sent to the
 agent (its *Send to Codex* tick, or `@codex fix this only`: "A comment sent
@@ -334,7 +334,12 @@ holds the turn and its end, `mention.py` the `@name`.
   through a share is never read, and the agents' own comments name none.
   The route (`routers/comments.py` `_written`) puts the agent's name on
   the event when the comment's text names it (`agent_named`), so the Inbox
-  tells no member of that name, then `threads.start` makes the turn.
+  tells no member of that name, then `threads.start` makes the turn. A
+  `PATCH` that leaves the text as it is, with `to`, sends the stored
+  comment to that agent again (the event's kind `again`, wherever the
+  comment stands in the thread, under a new message id): the thread's
+  *Send again* after a refusal ([comments.md](comments.md) "Sent to an
+  agent").
 - **The refusals** (`threads.REFUSALS`, each with an English `why`, the
   comment stored all the same): `closed` (a resolved thread: reopen it
   first), `not_newest` (an edit of a comment that is not the thread's
@@ -348,7 +353,9 @@ holds the turn and its end, `mention.py` the `@name`.
   `folder` (a co-author's on a page of no synced folder) and `other`. A
   far computer's `offline` and `paused` name it (`computer`), so the client
   words every code but `not_ready` and `other` itself (`comments.js`
-  `turnRefusal`), the server's `why` only for those two.
+  `turnRefusal`), the server's `why` only for those two. Every answer of
+  `threads.start`, begun or refused, carries `agent_id`, the `to` it
+  answers, which the thread's *Send again* sends.
 - **The turn** (`threads.start`): the thread's conversation of the
   account (`chats.of_thread`, `computer_chats.thread_id`, step 62 of
   [migrations.md](migrations.md)), its bucket the thread's page, where it
@@ -400,9 +407,21 @@ holds the turn and its end, `mention.py` the `@name`.
   message there as the agent's reply (`annotations.hand.reply`, signed as
   the agent for the account), under an id of the turn's (`home.reply_id`),
   so it is written once however often the end is; a failed turn writes its
-  error, a stopped one "Stopped before Codex answered." A far turn has no
-  token yet (step 4.2 of the plan): its answer is always this one. A
-  thread sent is a thread answered.
+  error (else "Codex could not finish."), a stopped one "Stopped before
+  Codex answered.", one done without a word "Codex finished without a
+  reply." A far turn has no token yet (step 4.2 of the plan): its answer is
+  always this one. A thread sent is a thread answered. Those notes keep
+  their English for the readers that know no more (an MCP client's
+  `read_annotation`, the annotation files); the comment routes add to each
+  what became of its turn (`turn_end`, `{state: "failed" | "stopped" |
+  "empty", error}`, `threads.ends_of`: read off the turns of the threads'
+  conversations, a note's id being its turn's), so the app draws it as the
+  turn's state in the reader's words ([comments.md](comments.md) "Sent to
+  an agent"). No column holds it: a conversation deleted since takes it
+  along, and its note reads as the agent's words again. The note's event
+  carries the outcome too (`turn_end`, `hand.reply`'s), and a stop's tells
+  the account it was for nothing in the Inbox: it, or its agent's owner,
+  pressed Stop.
 - **The threads it opened**: a turn of this computer's records on its end
   the threads its agent opened for the account since it began running
   (`threads.opened`, the agent message's `threads: [{id, page_id,
@@ -623,7 +642,8 @@ while the computer is off.
   names the computer and its presence (`computer`, `online`, `since`),
   offers the models the computer announced with its assistants (`models`,
   at most 32) and the directories it offers (`dirs`, `[{id, name}]`, which
-  a conversation that begins picks among: the strip's menu, as locally),
+  a conversation that begins picks among: the composer chip's *Works in*,
+  as locally),
   says where the agent works (`dir`: the work folder by its name, an
   offered directory by its id and name, null for one of its own) and why
   an online computer's agent is not ready. While the computer is off the
@@ -884,8 +904,8 @@ steps").
   the deadline stop it too (it then fails with why: "The queue and the
   turn").
   `runner.chat_state(ws, turn_id)` → `{turn_id, state: queued | running,
-  ahead}` for the strip (`ahead`: another run in its directory, or the
-  slots, go first).
+  ahead}` for the chat (`computer.turn`; `ahead`: another run in its
+  directory, or the slots, go first, which the turn's pill says).
 - **The strip** (`GET /api/local-agents/chat`'s `computer`) names where
   the agent works: `dir` is `{kind: "vault", name, path}` (the path for the
   vault's maker alone), `{kind: "offered", id, name}`, or null for a
@@ -933,8 +953,8 @@ steps").
   for its `default` entry) and `--effort`, which `--restricted` would not
   read from the person's settings. The agent's message records them. The
   composer's chip (`chat/AgentChip.jsx`, Gamma AI's) lists the agent's
-  models, and its efforts as a section (`useComputerSide`'s `chip`); the
-  choice is the conversation's.
+  models, and its efforts and where it works as sections
+  (`useComputerSide`'s `chip`); the choice is the conversation's.
 - **The reply as it is typed.** A turn's driver streams
   (`stream=True`): Codex keeps
   `item/agentMessage/delta`, Claude Code runs with
@@ -942,8 +962,9 @@ steps").
   the main thread. Both yield `{type: "delta", text}`; the runner grows the
   message's live paragraph, written at most every `CHAT_EVERY_S`, and the
   whole `text` event that follows replaces it (no text twice).
-- **Continue in a terminal and Show in folder** are the strip's `⋯` menu.
-  Show in folder asks the shell `reveal-on-disk` as the vault chip does.
+- **Continue in a terminal and Show in Explorer** are the strip's `⋯` menu.
+  Show in Explorer (*Show in Finder*, *Show in file manager*: `vaultState.js`
+  `revealLabel`) asks the shell `reveal-on-disk` as the vault chip does.
   Continue in a terminal (offered when the strip's `session` is true: the
   conversation has a session of the account's agent, in its directory as it
   is now, and no turn is to end) asks the shell `continue-in-terminal`
@@ -1113,21 +1134,30 @@ no turn and uses no model.
   and a failed read followed by *Try again*, which asks again; the server
   keeps the answer that came later for 30 s, and nothing is asked while
   History is closed. The section's rows lead with the agent's icon as the
-  conversations above do while the chat has several agents, and keep the
-  room of the ⋯ they lack, so every row's age stands in one column.
+  conversations above do while the chat has several agents (the caption
+  names the agent), and keep the room of the ⋯ they lack, so every row's
+  age stands in one column.
 - **History** (`ChatDock`, `ChatHistoryPop`'s `section`): while a
   computer's agent is picked (this computer's or another's of the
   reader's; never a co-author's) and its directory has an id, the popover
   reads `GET /api/local-agents/sessions` each time it opens and lists them
-  under *On {computer}* (this computer's name from `GET /api/local-agents`,
-  another's as the strip names it) below the conversations, in the same `.chatHistRow`s
+  below the conversations under a caption naming the CLI and the directory
+  (`computerChat.sessionsWords`: *Codex sessions in paper*, with *on
+  TIM-PC* only for another computer's agent), in the same `.chatHistRow`s
   (`computerChat.sessionRows`: the title, the time, *Terminal*, *VS Code*,
-  *Script*, *Desktop app*, *Gamma*, or *In Gamma* for one Gamma continues;
-  a busy one `aria-disabled`, titled with why, as every row is while
-  conversations are ticked or a session's open is on its way); the search
-  filters them too. A row opens the session (`POST /api/local-agents/sessions/open`)
-  and the chat reads its conversation again, as an opened History row
-  does.
+  *Script*, *Desktop app*, *Gamma*, or *Continued here* for one Gamma
+  continues). A busy one is `aria-disabled` and says why on a muted line
+  under its title; every row is off while conversations are ticked, a
+  turn runs or a session's open is on its way, and a press on a row that
+  is off puts its reason in the status pill. With no session the section
+  says *Sessions you start with Codex in paper show here.* The caption ends
+  in a refresh button (*Read the sessions again*) that reads them again in
+  place, the rows read before kept until the answer, for a terminal closed
+  since History opened. The search filters them too. A row (a press, Enter
+  or Space) opens the session (`POST /api/local-agents/sessions/open`):
+  its age is a spinner and the status pill says *Opening the session…*
+  until the chat has read its conversation again, as an opened History row
+  does, and then clears.
 
 Checked against the real CLIs (Codex 0.167.0, Claude Code 2.1.318) by
 check C4: both stores read as above, a held Codex thread refused with
@@ -1273,7 +1303,7 @@ asks: nothing it sends draws, words or answers the card.
   to answer: unless it read the asks within `SHELL_SEEN_S` (60 s), the ask
   waits up to `SHELL_GRACE_S` (15 s) for its first read, else
   `NOBODY_HERE`. No grant is looked up for a remote turn: only *Allow
-  once*, *Decline* and the shell's *Stop asking*, which declines and sets
+  once*, *Don't allow* and the shell's *Stop asking*, which declines and sets
   what the agent may run back to `never` (`PATCH /api/local-agents/{agent}`
   `{runs: "never"}`, as its owner).
 - **What is held** is the ask with its card (`_ChatTurn._card`): `{id,
@@ -1777,7 +1807,7 @@ and nothing of the turn's row.
 | GET | `/api/folder-links/page/{page_id}` | the page's `vault` gains the same `agent` (`folder_links.page_vault`), on a server that runs agents only, and `mine` (whether this account made the vault) on every server. Turning an agent on or off tells each open page of every work folder here `{t: "vault"}` (`folder_links.agents_changed`, `_tell_open_pages`, from `collab.open_pages()`), so its chip and the comments' @ menu read it again |
 | POST, PATCH | `/api/pages/{id}/comments`, `/api/comments/{id}` | a comment sent to an agent (`to`, or its `@name`) is a turn of its thread too, answered as `turn` ("A comment sent to an agent") |
 | GET | `/api/local-agents/chat?bucket=&version=&agent=&thread=&conversation=` | the chat's computer side ("The chat's computer side") of a bucket (a page's id, a folder's or `home`), an account with an agent on here, a co-author an agent here serves (a synced folder's file or folder alone), or the vault's maker on its work folder: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session, folder_id, dir, grants, lent}`, `agent` the one picked (`agent`, while the account turned it on or its owner lends it) or else the account's first (`store.agent_for`, else the first lent), null for none, `session` whether a terminal can continue the conversation (never a co-author's), `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null, `folder`, `folder_id` and `paused` the work folder's ("", null and false outside one), `dir` where the agent works (`{kind: "vault", name, path}`, the path for the vault's maker alone; `{kind: "offered", id, name}`; null for a directory of its own), `grants` the commands allowed in the conversation in that directory, `[{command, cwd, host}]` (none for a co-author's), `lent` `{by}` for an agent another account lends, else null) and `conversation` the bucket's active one (`{id, title, agent, thread_id, messages, version}`, null for none, and for one of another agent than `agent`), or with `thread` the account's conversation of that comment thread on the bucket, else a co-author's there with the account's agent ("A comment sent to an agent", "A co-author's turn"), or with `conversation` a co-author's chat conversation of the bucket with the account's agent (`chats.lent_one`; null for any other), a co-author's carrying `person`, their username; with `version` the stored one, `{computer, same: true}` |
-| POST | `/api/local-agents/chat/turns` | `{bucket, text, selections?, id?, agent?, model?, effort?, dir?}` → 202 `{conversation, turn: {id, state}}`, `agent` the one picked (left out, the account's first, `store.agent_for`; another computer's turn runs that computer's), `dir` where the conversation works outside a work folder kept here (an offered directory's id, or `""` for one of its own; left out, the active conversation's): another `agent` or a `dir` other than the active conversation's starts a new one (`chats.begin`); 400 for no text, past 20,000 characters, a malformed `id`, a `dir` no offered directory has, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running ("Codex is still working on the last message…", named by that turn's agent), while the account has no agent on here ("Turn on Codex or Claude Code in Settings → AI first.") or not the one picked ("Turn on Claude Code in Settings → AI first."), for a folder paused or choosing its files, and for an agent known not to be ready (its problem); 403 when the account is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
+| POST | `/api/local-agents/chat/turns` | `{bucket, text, selections?, id?, agent?, model?, effort?, dir?}` → 202 `{conversation, turn: {id, state}}`, `agent` the one picked (left out, the account's first, `store.agent_for`; another computer's turn runs that computer's), `dir` where the conversation works outside a work folder kept here (an offered directory's id, or `""` for one of its own; left out, the active conversation's): another `agent` or a `dir` other than the active conversation's starts a new one (`chats.begin`); 400 for no text, past 20,000 characters, a malformed `id`, a `dir` no offered directory has, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running ("Codex is still working on the last message…", named by that turn's agent), while the account has no agent on here ("Turn on Codex or Claude Code in Settings → AI → Agents first.") or not the one picked ("Turn on Claude Code in Settings → AI first."), for a folder paused or choosing its files, and for an agent known not to be ready (its problem); 403 when the account is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
 | POST | `/api/local-agents/chat/turns/{id}/stop` | `{stopped}` (`runner.stop_chat`); the conversation's account's, or its agent's owner's (`chats.readable`) |
 | POST | `/api/local-agents/chat/new` | `{bucket}` → `{conversation: null}`, the active conversation archived whichever its agent; 409 while a turn runs |
 | GET | `/api/local-agents/chat/history?bucket=` | `{conversations: [{id, title, agent, updated_at, turns}], active, lent}`: the archived ones newest first (never a thread's), and the active one as they are listed (`chats.listed`, null for none), whichever its agent, which the chat's History lists while another agent is picked; the account's own on every server, whatever became of its agents (no seat asked); `lent` the chat conversations there, active or archived, of the co-authors the account's agents serve, each with its `person` (`chats.lent_history`), read, stopped, answered and exported, never opened or deleted (404) |
@@ -1837,26 +1867,38 @@ nobody else learns it exists), 403 for a token or the guest
   lists for the page (`id` its `agentId`, `computer:<computer>:<name>`:
   this computer's from the listing's `id`, another computer's from the
   page's computers' `id`), with `computer` and `online` for another
-  computer's. They reach every comment field as
+  computer's and `lentBy` for a co-author's (its owner). None while the
+  reader may not write the workspace (a viewer, a share's visitor: App's
+  `canWriteWorkspace`, as the server refuses `viewer`), so no tick is
+  offered that always refuses. They reach every comment field as
   `links.agents` (the popover's and the margin's) with `links.sendTo` (the
   tick as the person left it last, the account preference
   `commentSendTo`), never `MentionContext`, which reaches the notes. There
-  the @ menu lists them under People (`mentions.mentionRows`' `agents`: a
-  bot icon, the label, "on this computer" or its problem; a member of the
+  the @ menu lists them under People (`mentions.mentionRows`' `agents`: the
+  agent's avatar, the label, "on this computer" or its problem; a member of the
   same name is not listed there), the field and the person's own posted
   comments draw `@codex` as the agent's chip (`mentionChip`'s `agents`),
   and a new comment's and a reply's field has the *Send to {agent}* tick
-  (comments.md "Sent to an agent", `comments/sendTo.js`). `useComments`
+  (comments.md "Sent to an agent", `comments/sendTo.js`: "Send to Codex on
+  TIM-PC", "Send to alice's Codex on TIM-PC"). `useComments`
   posts the tick's agent as `to`, takes the answer's `thread` (with its
-  `agent_chat`) and says a refusal in the status line
-  (`comments.turnRefusal`, by its code, else "Not sent to Codex: <why>").
+  `agent_chat`) and keeps a refusal on its thread until the next send
+  there (the thread's `refused`: "Not sent to Codex", `comments.turnRefusal`
+  by its code, else the server's why, and *Send again*).
 - **The picker.** App passes the list to ChatDock (`agents`, with this
   computer's listing as `localAgents`: the offered directories, and the
-  agents found that the setup card offers). The composer's chip (`chat/AgentChip.jsx`,
+  agents found that the setup card offers, each tile led by its agent's
+  icon). The composer's chip (`chat/AgentChip.jsx`,
   a `MenuSelect`) lists the agents first, by their icon and where they
-  run ("Codex", "Codex on TIM-PC"), then the picked one's models and
-  efforts (Gamma AI's speed too), in every bucket: a page, a folder, the
-  library. A viewer has Gamma AI alone. The agent shown is the bucket's
+  run ("Codex", "Codex on TIM-PC"), a muted "offline" after another
+  computer that is away and an amber "not ready" after one with a problem
+  (`computerChat.agentHint`, the sentence the row's title; still
+  pickable), then the picked one's models and
+  efforts (Gamma AI's speed too) and, for a computer's agent outside a
+  synced folder, *Works in* (below, "The strip"), in every bucket: a page, a folder, the
+  library. The chip reads the agent, then its model and effort ("Codex on
+  TIM-PC · GPT-5.5 · high", the model ellipsized first), named "Agent,
+  model and reasoning effort". A viewer has Gamma AI alone. The agent shown is the bucket's
   pick for the tab's life (`chatSide.js` `useChatAgent`, beside
   `showInChat`, which the Background tasks rows and a thread's *Open in
   chat* call, so the first screen does not load the side's state), else
@@ -1886,13 +1928,23 @@ nobody else learns it exists), 403 for a token or the guest
   asks, files, notice, model, effort}`: `partial` while its turn is queued
   or running (the reply as it is typed, Stop in Send's place), `pill` the
   steps pill's words (`turnLabel`: "Codex is working: Editing
-  sections/intro.tex", "Codex is waiting for you", "3 steps"), `actions`
+  sections/intro.tex", while queued "Starting Codex…" or "Waiting for
+  Codex to finish its other work…" (the server's `turn.ahead`; `queued`:
+  a clock, no shimmer), "Codex is waiting for you", and once it ended
+  Gamma AI's summary of its chips, `agentSteps.stepsSummary`: "3 steps ·
+  read 2 files, edited 1 file, ran latexmk", each file counted once, the
+  steps that failed or were not allowed left out), `actions`
   its steps as plain chips of kinds of their own (`stepChip`: a file
-  read, a file edited, a command, a search, other work; a call of Gamma's
+  read, a file edited, a command, a search, other work, with the file's
+  `path` and the command's `program`; a call of Gamma's
   tools the kind Gamma AI's own call of that tool is, `GAMMA_KINDS`: list,
   view, cite, read…; none a change of
   the library or the notes, so Gamma AI's changes list and revert pass
-  them by), `asks` while it waits on the person and the page draws them,
+  them by). A call of Gamma's tools reads as Gamma AI's own call of that
+  tool (`agentSteps.toolWords`): runningLabel's words while it runs
+  ("Codex is working: Listing the highlights and comments…"), their done
+  twin after ("Listed the highlights and comments"), and a tool neither
+  names by its name ("Read Gamma: new_tool"). `asks` while it waits on the person and the page draws them,
   `files` what it changed, `notice` the line of a session not resumed,
   `model` the model's name. A stopped turn ends "(stopped)" as Gamma AI's
   stopped reply does; a failed one carries the error card's fields, kind
@@ -1908,19 +1960,25 @@ nobody else learns it exists), 403 for a token or the guest
   `tests/computerChat.test.mjs` maps each kind of message.
 - **The strip** (`chat/computer/ComputerStrip.jsx`) is such a
   conversation's health strip, in the provider strip's slot: a plain line
-  (not a live region: the turn's pill is the one read out), neutral, amber
-  when the agent cannot run or waits for an answer (`computerChat.stripLine`:
-  "Codex on this computer · paper", "Codex is working: Editing
-  sections/intro.tex", "Waiting for Codex to finish its other work in this
-  folder", "Starting Codex…", the agent's problem, the paused folder),
-  drawn from the list's facts (`agents.stripFacts`) until the read lands;
-  after it, where the agent works outside a synced folder
-  (`computerChat.workPlace`): while the conversation has no turn a menu of
-  the offered directories and *Its own directory* (a ghost `MenuSelect`, each
-  row the folder glyph), sent with its first turn as
-  `dir`, then the one it works in. Its ⋯ offers Continue in a terminal
-  and, on a page of a work folder kept here alone (`revealsFile`), Show in
-  folder.
+  (not a live region: the turn's pill is the one read out)
+  (`computerChat.stripLine`), at rest "Codex on this computer · paper",
+  which it keeps while a turn is queued or runs (the pill says how it
+  goes); "Checking Codex…" with a spinner until the agent's state is
+  known; amber with a shield while it waits for an answer ("Waiting for
+  you: Codex wants to run a command"), amber when the agent cannot run
+  (its problem), its computer is away or the synced folder is paused;
+  drawn from the list's facts (`agents.stripFacts`) until the read lands.
+  After it, where the agent works outside a synced folder
+  (`computerChat.workPlace`): the folder glyph and the directory's name.
+  It is chosen in the composer's chip, a *Works in* section of the offered
+  directories and *Its own directory* (each row the folder glyph), while
+  the conversation has no turn, and sent with its first turn as `dir`;
+  then it is the conversation's: the section shows it disabled and the
+  strip's name is titled "Start a new chat to work elsewhere". With no
+  directory offered on this computer the empty transcript's line ends in
+  a ghost *Offer a directory…*, which opens Settings → AI → Agents. Its ⋯
+  offers Continue in a terminal and, on a page of a work folder kept here
+  alone (`revealsFile`), Show in folder.
 - **What it asks.** While a live turn has `asks`, each is a card under the
   steps (`ApprovalCard.jsx` `AskCard`, on the approval card's shell
   `chat/ApprovalShell.jsx` but with no *Always allow* and no Gamma
@@ -1939,7 +1997,7 @@ nobody else learns it exists), 403 for a token or the guest
   in a title alone) until the command's box and the diff were scrolled to
   their end (`scrolledToEnd`, the answers' `disabled`). Under them "It runs as you, with your files and the network." or "It changes
   files outside the work folder."; the strip reads "Waiting for you: Codex
-  wants to run a command" (amber, `asking`), the turn's pill "Codex is
+  wants to run a command" (amber, `asking`, a shield before it), the turn's pill "Codex is
   waiting for you", and the steps "Asked to run latexmk", "Allowed to…",
   "Not allowed to…". `useComputerChat.answer` posts the answer and leaves
   the rest to the next poll, so the card says "Allowed. Codex goes on…" or
@@ -1951,10 +2009,12 @@ nobody else learns it exists), 403 for a token or the guest
   where it waits.
 - **What it changed** is Gamma AI's changes card (`AgentChanges.jsx`
   `FileChanges`, "Changed in the synced folder · 2", "Changed in its
-  directory" outside one): a row a file, its path a `PathLink` resolved
-  from the work folder's top (the strip's `folder_id`, the transcript's
-  `PathLinkContext` while such a conversation shows), the first three then
-  "and N more" unfolding to the rest, and "The PDF was rebuilt" last.
+  directory" outside one): a row a file, its path in a synced folder a
+  `PathLink` resolved from the work folder's top (the strip's `folder_id`,
+  the transcript's `PathLinkContext` while such a conversation shows), and
+  outside one plain monospace text, since no page holds it; the first
+  three then "and N more" unfolding to the rest, and "The PDF was rebuilt"
+  last.
 - **The composer** takes the message and the PDF passages selected (App's
   `pdfSelections`, Gamma AI's too, cleared once the server accepts the
   turn), each chip noting its source line; what only Gamma AI takes (the
@@ -1969,7 +2029,10 @@ nobody else learns it exists), 403 for a token or the guest
 - **The header** has what applies to such a conversation: Export (the
   conversation, `GET /chat/history/{id}/export`), Find, History and New
   chat, which keeps the conversation in History; New chat is off while a
-  turn is to end ("Stop Codex or wait for it to finish…"). No AI service
+  turn is to end ("Stop Codex or wait for it to finish…"), and while a
+  comment thread's or a co-author's conversation is shown, its title
+  saying so: the line in the composer's place has *Back to the chat*
+  (a ghost button led by the back arrow). No AI service
   connected closes none of it.
 - **History** (`ChatHistoryPop`) lists every agent's conversations of the
   bucket together (`computerChat.historyRows`): the one shown first, then
@@ -1991,7 +2054,8 @@ nobody else learns it exists), 403 for a token or the guest
   (`showInChat`, `{conversation}`), its composer giving way to a line, "This
   is bob's chat with Codex: you can read it, stop it and answer what it
   asks.", with *Stop* while a turn of it is to end and *Back to the chat*,
-  as a thread's does; its menu exports it, and it is never selected or
+  as a thread's does (whose line has its comment's button too, led by the
+  speech bubble); its menu exports it, and it is never selected or
   deleted.
 - **The vault chip's card** (`vault/VaultChip.jsx`, `vaultState.agentLine`):
   "Agent: Codex on this computer", the problem when it is not ready (amber,
@@ -2005,7 +2069,7 @@ nobody else learns it exists), 403 for a token or the guest
 
 ## The desktop app
 
-The agents of this computer are set in Settings → AI, a page of Gamma,
+The agents of this computer are set in Settings → AI → Agents, a page of Gamma,
 which asks the desktop shell for every change that widens what an agent
 reaches (the page asks of `desktop/preload.js`, [desktop architecture](../../desktop/docs/architecture.md)
 "Pages asking the shell"): `set-agent` (`agent`, `enabled`), `set-agent-runs`
@@ -2038,8 +2102,8 @@ The shell's own session acts (main.js `setAgent`, `setAgentRuns`,
   itself.
 
 The sync panel sets no agent: a work folder's view says that Codex and
-Claude Code work there once they are turned on in Gamma's Settings → AI
-(`bar.html` `AGENTS_SET`). `lib/keeping.js` `vault()` still gives the item
+Claude Code work there once they are turned on in Gamma's Settings → AI →
+Agents (`bar.html` `AGENTS_SET`). `lib/keeping.js` `vault()` still gives the item
 `agentLabel` and `agentRunning` from the link's `agent`: while a turn works
 the row reads busy, *Codex is working · Editing main.tex*, its title
 saying it works on a file of the folder, and the title bar's summary
@@ -2508,7 +2572,8 @@ are drawn in the bar over the whole window and answered with `POST
   the tick, the turn's chip *Codex is working* with Stop, the reply under
   Codex's name, the agent's chip, *Open in chat* showing the thread's
   conversation), the next reply ticked by default in the
-  thread Codex answered last (*Ask Codex to edit*) resuming its session,
+  thread Codex answered last (*Reply to Codex…*, its button *Send to
+  Codex*) resuming its session,
   an edit of an older comment refused with its reason in the status line,
   a resolved thread refused; a ticked comment on a line of a synced
   folder's `.tex` worked as a turn (its edit shown in the code view, Codex's
@@ -2527,14 +2592,19 @@ are drawn in the bar over the whole window and answered with `POST
   running turn's Background tasks row and its Stop; with no AI service, a
   library PDF's chat that is Codex's, the setup card picking Codex again
   after Gamma AI, a directory offered picked in the strip and edited, the
-  reply and what it changed in the transcript; with no AI service, Codex
+  reply, its pill *1 step · edited 1 file* and what it changed in the
+  transcript, the file named as text, not linked, outside a synced folder;
+  with no AI service, Codex
   reading a library PDF's highlight through Gamma's tools with its turn's
   token (the prompt pointing to `read_page` by the page's id and pasting
   none of its notes, the call answered, the reply quoting the highlight
-  and its note, the step *Read Gamma: read_page* in the pill, the server
-  log saying the token was deleted); History's *On this computer* listing
+  and its note, the pill *1 step · read 1 page* and the step *Read a
+  page*, the server log saying the token was deleted); History's *Codex
+  sessions in …* (this computer unnamed) listing
   the stand-in's Codex threads of the paper's directory, one held by a
-  lock another process holds (`hold_lock.py`) disabled and titled with
-  why, a terminal's opened with its turns, the next message resuming its
+  lock another process holds (`hold_lock.py`) disabled and saying why in
+  its title, under its title and, pressed, in the status pill, the
+  caption's refresh reading them again, a terminal's opened with its
+  turns, the next message resuming its
   thread (no thread started, nothing of it in the prompt) and the row then
-  *In Gamma*; turning it off.
+  *Continued here*; turning it off.

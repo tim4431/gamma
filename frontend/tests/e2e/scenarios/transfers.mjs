@@ -1095,7 +1095,12 @@ open(sys.argv[1], 'wb').write(n.bytes())
       await page.locator(".pdfPageWrap").first().waitFor();
       const dialog = await openDialog(page, "Export");
       const card = choice(dialog, "Notability");
-      assert(await card.isVisible(), "Notability is offered beside the notes' formats");
+      assert(await card.isVisible(), "Notability is offered");
+      // its own row with GoodNotes, each card saying what its app keeps
+      const apps = dialog.getByRole("region", { name: "Handwriting apps", exact: true });
+      assertEq(JSON.stringify(await apps.locator(".setPictureName").allInnerTexts()), JSON.stringify(["Notability", "GoodNotes"]),
+        "the Handwriting apps row");
+      assertEq(await apps.locator(".setPictureHint").first().innerText(), "Handwriting, notes and recordings, for Notability");
       const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
       const download = page.waitForEvent("download");
       await card.dblclick(); // no switches: it exports straight from the first step
@@ -1266,8 +1271,9 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       await page.getByText("A note for Notion", { exact: true }).waitFor();
       const dialog = await openDialog(page, "Export");
       const card = choice(dialog, "Notion");
-      // PDF, Markdown, Notability, GoodNotes and Notion
-      assertEq(await dialog.getByRole("group", { name: "Notes choices", exact: true }).getByRole("button").count(), 5);
+      // PDF, Markdown and Notion; Notability and GoodNotes are a row of their own
+      assertEq(await dialog.getByRole("group", { name: "Notes choices", exact: true }).getByRole("button").count(), 3);
+      assertEq(await dialog.getByRole("group", { name: "Handwriting apps choices", exact: true }).getByRole("button").count(), 2);
       assertEq(await card.locator(".formatAppIcon").count(), 1, "the card carries Notion's mark");
       await card.click();
       await choice(dialog, "Next").click();

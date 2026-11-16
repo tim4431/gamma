@@ -825,7 +825,7 @@ def require_ai_runtime(user_id: str) -> dict:
     rt = ai_runtime(user_id)
     if not rt["enabled"]:
         raise HTTPException(status_code=503,
-                            detail="AI not configured (add a connection and pick its models in Settings → AI)")
+                            detail="AI not configured (add a connection and pick its models in Settings → AI → Connections)")
     return rt
 
 

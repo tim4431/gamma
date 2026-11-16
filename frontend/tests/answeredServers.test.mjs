@@ -33,10 +33,12 @@ test("each control's shell ask: Reconnect… on a refused link alone, Remove, th
   assert.deepEqual(ADD_SERVER, ["add-server", { link: "new" }]);
   const off = linkRow(link()).asks;
   assert.deepEqual([off.label, off.on, off.hint], ["nas.example may answer what the agents ask", false,
-    "What an agent here asks to run is answered on this computer only."]);
+    "On: the agents' asks may also be allowed from nas.example"]);
   assert.deepEqual(off.set(true), ["link-asks", { link: "L1", asks: true }]);
   const on = linkRow(link({ asks: true })).asks;
   assert.equal(on.on, true);
-  assert.match(on.hint, /in any window signed in to nas\.example as you, and once by a person you let use the agent, for their own turn\.$/);
+  assert.equal(on.hint, off.hint, "a short hint, the same either way");
+  // the rest is the row's hover title, both states said
+  assert.match(on.title, /^Off, what an agent here asks to run is answered on this computer only\. On, it can also be allowed in any window signed in to nas\.example as you, and once by a person you let use the agent, for their own turn\.$/);
   assert.deepEqual(on.set(false), ["link-asks", { link: "L1", asks: false }]);
 });

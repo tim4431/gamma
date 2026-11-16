@@ -137,28 +137,37 @@
 }
 .commentMeta .rowMenuBtn { width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); }
 /* Resolve / Reopen on the thread's first author line, beside the "⋯": always
-   shown (it is the thread's main action), quiet until pointed at. */
-.commentMeta .commentResolve {
+   shown (it is the thread's main action), quiet until pointed at; so is
+   the newest agent reply's Open in chat. */
+.commentMeta .commentResolve, .commentMeta .commentOpenChat {
   width: var(--ctl-icon-btn-xs);
   height: var(--ctl-icon-btn-xs);
   flex-shrink: 0;
   color: var(--text-muted);
 }
-.commentMeta .commentResolve:hover { color: var(--accent); }
+.commentMeta .commentResolve:hover, .commentMeta .commentOpenChat:hover { color: var(--accent); }
 .commentMetaSpacer { flex: 1; }
-/* An agent's reply's Open in chat, on its author line, quiet beside the "⋯". */
-.commentMeta .commentOpenChat { height: var(--ctl-icon-btn-xs); flex-shrink: 0; font-size: var(--fs-xs); }
 /* The reader's turn of the thread with an agent, at its foot (Thread.jsx):
-   its chip, then Answer in the chat while it asks, and Stop. */
+   its tag, then Answer in the chat while it asks, and Stop; a send that
+   started none, with Send again; why, on a line of its own. In a narrow
+   card the buttons wrap under the tag, whose words ellipsize. */
 .commentTurn {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
   padding-left: var(--comment-text-x);
 }
 .commentTurn .commentTurnStop { width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); flex-shrink: 0; }
+.commentTurn > .stateDetail { flex-basis: 100%; }
+/* "for bob" after a co-author's turn's tag */
+.commentTurnFor { font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+/* The note a turn's end wrote: the turn's state in place of its text, why under it. */
+.commentEnd { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); min-width: 0; }
 .commentAuthor { font-weight: 600; color: var(--text-primary); }
-/* an agent's computer and the person it wrote for, after its name */
+/* the time never breaks; the agent's computer and person, after its name, give way first */
+.commentTime { white-space: nowrap; flex-shrink: 0; }
 .commentFor { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commentEdited { font-style: italic; }
 .commentBody.blockRendered {
@@ -343,9 +352,13 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* the turn's tag, the replies and the time: they wrap in a narrow window, the tag's words ellipsizing */
 .commentsPanelMeta {
   display: flex;
-  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2) var(--space-4);
   font-size: var(--fs-xs);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;

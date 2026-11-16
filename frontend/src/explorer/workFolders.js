@@ -26,7 +26,7 @@ export const WORDS = {
   trash: T("A synced folder's file leaves when its file is deleted or untracked: use Choose files…."),
   restore: T("It comes back when its file is tracked again."),
   directories: T("A synced folder's directories follow the disk."),
-  remove: T("Detach the synced folder to delete its folder."),
+  remove: T("Stop syncing the synced folder to delete its folder."),
   document: T("That file's PDF is read where it is: it cannot be changed in Gamma."),
 };
 export const refusalText = (kind) => (Object.hasOwn(WORDS, kind) ? t(WORDS[kind]) : "");
@@ -143,26 +143,32 @@ export function fileRules(page, tree) {
 // What a person may do with a folder (`folderId`, "" for the library's
 // top): {rename, move, moveTargets (the folders it may go into, the top
 // aside: the library's, none of them below it; the folder menu's Move to),
-// delete, newSubfolder, newPage, chooseFiles (the folder menu's Choose
-// files…)}. Inside a work folder the folder tree is the disk's: W may be
-// renamed and moved out of every work folder, never deleted; its
-// directories are neither renamed, moved nor deleted, and no folder is made
-// in any of them. A page is made in a work folder that pulls (a note, which
-// pull writes), and Choose files… is W's.
+// delete, deleteRefused (the WORDS kind of why W, or a library folder
+// holding one, may not be deleted, its menu's Delete shown disabled with
+// those words; "" otherwise), newSubfolder, newPage, chooseFiles (the
+// folder menu's Choose files…)}. Inside a work folder the folder tree is
+// the disk's: W may be renamed and moved out of every work folder, never
+// deleted (it stops syncing instead); its directories are neither renamed,
+// moved nor deleted, and no folder is made in any of them. A page is made
+// in a work folder that pulls (a note, which pull writes), and Choose
+// files… is W's.
 export function folderRules(tree, folderId) {
   const tr = treeOf(tree);
   const w = workOf(tr, folderId);
   const pulls = !!markOf(tr, w)?.pull;
   if (w && w !== folderId) {
-    return { rename: false, move: false, moveTargets: [], delete: false, newSubfolder: false, newPage: pulls, chooseFiles: false };
+    return { rename: false, move: false, moveTargets: [], delete: false, deleteRefused: "", newSubfolder: false, newPage: pulls,
+      chooseFiles: false };
   }
   const known = tr.parent.has(folderId);
   const inside = known ? folderSubtree(tr.lib, folderId) : new Set();
+  const holdsWork = known && (!!w || [...tr.marks.keys()].some((root) => inside.has(root)));
   return {
     rename: known,
     move: known,
     moveTargets: known ? folderTargets(tr.lib, [folderId], filingTargets(tr)) : [],
-    delete: known && !w && ![...tr.marks.keys()].some((root) => inside.has(root)),
+    delete: known && !holdsWork,
+    deleteRefused: holdsWork ? "remove" : "",
     newSubfolder: !w,
     newPage: w ? pulls : true,
     chooseFiles: !!w,

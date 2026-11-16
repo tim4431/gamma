@@ -1003,9 +1003,19 @@ computer runs that the account turned on in Settings → AI → Agents, and
 each agent on of each of the account's other computers shown to the
 server, "Codex on TIM-PC", one entry per computer, those that keep the
 page's work folder first, an offline one's listed offline). With more than one, the chip's menu lists them first,
-each by its icon, then the picked one's models and reasoning effort (Gamma
-AI's speed too); with Gamma AI alone it is the model menu it always was.
-It is shown in every bucket (a page, a folder, the library) and even when
+each by its icon, then a computer agent's *Works in* (local_agents.md "The
+chat's computer side"), then the picked one's models and reasoning effort
+(Gamma AI's speed too): who, where, then how, so in a short chat window
+the sections in sight are the first ones. A row of an agent that cannot answer now ends in a
+hint (`computerChat.agentHint`, a `MenuSelect` option's `trailing`): a
+muted "offline" for another computer that is away, an amber "not ready"
+(`.agentProblem`) for one with a problem, the whole sentence its title; it
+stays pickable, and the chat then says why. The chip then reads the agent
+first, "Codex on TIM-PC · GPT-5.5 · high" or "Gamma AI · GPT-5 · high"
+(`agentChoice`, then the model and effort, the model ellipsized first),
+named "Agent, model and reasoning effort"; with Gamma AI alone it is the
+model chip it always was ("GPT-5 · high", "Model, reasoning effort and
+speed"). It is shown in every bucket (a page, a folder, the library) and even when
 Gamma AI is off or unset, as long as there is an agent to pick. A viewer
 of the workspace has Gamma AI alone.
 
@@ -1040,16 +1050,18 @@ failed), and what a row offers comes from the handlers it passes (editing
 a sent message, reporting a reply and reverting a change are Gamma AI's).
 The composer is the same box with what such an agent takes (the message
 and the PDF passages, each noting its source line), its model chip the
-agent's models and efforts, the strip in the provider strip's slot
-(`ComputerStrip`), and the header Export, Find, History and New chat.
+agent's models, efforts and where it works, the strip in the provider
+strip's slot (`ComputerStrip`), and the header Export, Find, History and
+New chat.
 History lists every agent's conversations of the bucket together
 ([chat_history.md](chat_history.md) "Every agent's conversations").
 
 No AI service connected closes Gamma AI's side only: the setup card
 (`ChatSetupCard`, below Gamma AI's empty transcript) lists the agents
-found on a computer beside *Connect an AI service*, those the account
-turned on as tiles that pick the agent, one found here but off as a tile
-that opens Settings → AI, and a conversation with a computer's agent keeps
+found on a computer beside *Connect an AI service*, each tile led by its
+agent's icon (`agentIcon`), those the account turned on as tiles that pick
+the agent, one found here but off as a tile that opens Settings → AI →
+Agents, and a conversation with a computer's agent keeps
 its composer and its header's buttons. A bucket never picked shows such
 an agent when no AI service is connected (`pickAgent`). What needs a
 connection still asks for one: metadata, translation, handwriting and
@@ -1415,8 +1427,10 @@ available here), and `run_agent_tool` refuses a changing tool called anyway.
 ### Permissions and knobs (Settings → AI → Tool usage)
 
 The **Assistant tools** switch (`gamma-ai-agent-enabled`, default on)
-governs tool use in every chat. The chat header's Tools button and settings
-popover edit the same account preference; New chat does not reset it.
+governs tool use in every chat. The **Tools** switch in the chat header's
+settings popover (the settings kit's `Toggle`, over the kind's
+permissions, guide anchor `chat.tools`) edits the same account
+preference; New chat does not reset it.
 Under the permission table, **Fetch blocked papers in the background**
 (`gamma-ai-fetch-background`, default on) lets a blocked fetch's card hand
 the page to Gamma Connector without a click, and **Read long papers with a
@@ -1701,9 +1715,12 @@ is up, so a hint beside the first one ever shown explains the four answers
 names the change ("Add to a note in “Paper”") and the permission, and shows
 the diff. Its four buttons are **Allow once** (primary), **Allow in this
 chat**, **Always allow** and **Don't allow** (ghost). Don't allow opens one
-line, "What should the assistant do instead? (optional)", with its own Don't
-allow (Enter) and Back (Escape). The buttons never take the focus
-themselves, so typing in the composer cannot answer a card. A deletion's
+line, "Tell Gamma AI why, or what to do instead (optional)", with its own
+Don't allow (Enter) and Back (Escape); it takes the focus unless that
+would raise an on-screen keyboard (`touchTyping()`). Once answered the card
+says "Allowed. Gamma AI goes on…" or "Not allowed. Gamma AI goes on without
+it…", as a computer agent's card names its agent. The buttons never take
+the focus themselves, so typing in the composer cannot answer a card. A deletion's
 card (`isDeletion`: a `delete_*` tool) has the same four, its Allow once
 `primary danger`.
 

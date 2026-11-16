@@ -2,17 +2,22 @@
 // that changes while it is shown, as a thread's turn with an agent
 // (comments/comments.js turnChip: the thread's chip, the Comments window's
 // row) and a synced folder's agent at work (vault/vaultState.js agentLine:
-// the vault chip's card). `state` is {label, title, tone, live}:
+// the vault chip's card). `state` is {label, title, tone, live, icon}:
 // while `live` (work under way) a spinner leads it and its words shimmer,
-// and a new label morphs in over the last (MorphText). The rest goes on
-// the tag (`data-turn`, `className`).
+// and a new label morphs in over the last (MorphText); at rest `icon` (an
+// Icons.jsx component, drawn at 14) leads it instead: ShieldIcon while an
+// agent waits for the person, AlertCircleIcon for a failure, StopIcon for
+// a stop, ClockIcon for a turn in the queue. `tone` is the uiTag's colour:
+// "" (neutral), "pending" (accent), "warn", "failed", "ok". The rest goes
+// on the tag (`data-turn`, `className`).
 import { MorphText } from "./MotionWidgets";
 
 export function StateTag({ state, className = "", ...rest }) {
-  const { label, title = "", tone = "", live = false } = state;
+  const { label, title = "", tone = "", live = false, icon: Icon = null } = state;
   return (
     <span className={["uiTag stateTag", tone, className].filter(Boolean).join(" ")} title={title || undefined} {...rest}>
-      {live ? <span className="transferSpin inline" aria-hidden="true" /> : null}
+      {live ? <span className="transferSpin inline" aria-hidden="true" />
+        : Icon ? <Icon size={14} aria-hidden="true" /> : null}
       <span className={live ? "shimmerText" : undefined}><MorphText>{label}</MorphText></span>
     </span>
   );

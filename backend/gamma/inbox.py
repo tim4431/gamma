@@ -377,7 +377,10 @@ def from_comment(ws: str, event: dict) -> None:
     reply. The name of an agent in a person's comment sent to that agent is
     the agent (the event's ``agent_named``, and ``_agents_of`` for the
     thread's earlier comments), so a member of that name hears nothing of
-    it. A deleted comment's items go with it. Never raises."""
+    it. The note a stopped turn's end writes in its thread (the event's
+    ``turn_end``, gamma/local_agents/threads.py ``settle``) tells its own
+    account nothing: it, or its agent's owner, pressed Stop. A deleted
+    comment's items go with it. Never raises."""
     try:
         _from_comment(ws, event)
     except Exception as e:  # noqa: BLE001
@@ -410,7 +413,8 @@ def _from_comment(ws: str, event: dict) -> None:
         emit("comment_mention", sorted(mentioned), actor, ws, snippet=body, **where)
     if kind == "edit":
         return
-    told = set(mentioned)
+    # a stop's note: its account pressed Stop (or the agent's owner did), and hears nothing of it
+    told = set(mentioned) | ({actor} if agent and event.get("turn_end") == "stopped" else set())
     if kind == "reply":
         with connect_pages_db(ws) as conn:
             others = conn.execute("SELECT author, body, agent_id FROM comments WHERE thread_id = ? AND id != ? "
@@ -422,7 +426,7 @@ def _from_comment(ws: str, event: dict) -> None:
         for author, names, own in said:
             in_thread |= (names - {sent[author]}) if own and author in sent else names
         people = [p for p in dict.fromkeys([a for a, _, _ in others] + sorted(_ids_of(in_thread).values()))
-                  if p not in mentioned]
+                  if p not in told]
         emit("reply", people, actor, ws, snippet=body, **where)
         told |= set(people)
     emit("comment", [u for u in followers(ws, event["page_id"]) if u not in told], actor, ws, snippet=body, **where)

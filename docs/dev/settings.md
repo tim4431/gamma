@@ -278,14 +278,20 @@ Manage page, whose breadcrumb leads back.
 A pane holds one subject, so a person looking for a setting guesses its
 pane from its name: how things look (Appearance) apart from what the bars
 offer (Toolbars); papers and notes (Reading & editing) apart from the pen
-(Handwriting); the server's people and who may come in (Users) apart from
-the machine itself (Server); help apart from what it is about (tours sit in
-Help & diagnostics). A new setting goes into the pane whose subject it is,
-not the one with room. The rail is 224 px at 100 % (one line for
-"Language & translation") and its rows 27.5 px, so an admin's eighteen
-panes fit the dialog's full height (`min(800px, 100dvh - 48px)`) without
-the rail scrolling; a shorter window scrolls it. Panes carry no explanatory
-subtitle: a section rule's right-hand tag (an icon plus "account" or "browser", `Section`'s `scope` prop, matching
+(Handwriting); who the chat talks to (Agents) apart from the AI services it
+reaches (Connections); the server's people and who may come in (Users)
+apart from the machine itself (Server); help apart from what it is about
+(tours sit in Help & diagnostics). A new setting goes into the pane whose
+subject it is, not the one with room. The rail is 224 px at 100 % (one line
+for "Language & translation") and its rows 27.5 px. The groups' rows touch
+and their captions sit 6 px apart, so an admin's nineteen panes fit the
+dialog's full height (`min(800px, 100dvh - 48px)`). On a shorter window the
+groups scroll between the account card and Help, which stay where they are
+(`.settingsNavList`, with a thin scrollbar so the rail keeps its width).
+Panes carry no explanatory subtitle, but for three whose name says little
+of what they hold: Integrations, Backups and Network proxy
+([research/settings-layout.md](../research/settings-layout.md) "Weighed and
+left"). Elsewhere a section rule's right-hand tag (an icon plus "account" or "browser", `Section`'s `scope` prop, matching
 the settings' scope in `PREFS`; an account tag's icon is the sync state of
 that section's own settings, above) says where a setting lives, a row's
 short hint what it does, and the hover `title` the rest.
@@ -373,6 +379,10 @@ Preferences:
   `highlighters` entry points open this pane at their sections.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
+  **Page direction** (`pdfFlow`, a `Segmented` Down / Across, each choice
+  drawn with its arrows, `MoveVerticalIcon` and `MoveHorizontalIcon`, beside
+  the row's fixed `PagesIcon`; [pdf_loading.md](pdf_loading.md) "Pages that
+  run across"), smooth wheel scrolling,
   open-access fallback, metadata auto-fetch and saving external PDFs, and
   in the desktop app alone *Add opened PDFs to the library*
   (`openAddsToLibrary`, account scope, off by default): off, a PDF the app
@@ -409,9 +419,12 @@ Preferences:
   **Pens & eraser** (account scope,
   `SECTION_PREFS.handwriting["Pens & eraser"]`; the strip's own options, such as
   presets, smoothing and the straight highlighter, are set on the strip,
-  [handwriting.md](handwriting.md) "What the user sees"): a *Reset
-  presets* button (`uiBtn sm`, a confirm dialog, then the strip's
-  `setInkTools`, `ink/useInkStrip.js`, back to `DEFAULT_TOOLS`);
+  [handwriting.md](handwriting.md) "What the user sees"): *Reset presets*
+  on the section's rule, as every reset in Settings is (`uiBtn sm`, off
+  while `inkTools` is `DEFAULT_TOOLS`; it puts the strip's `setInkTools`,
+  `ink/useInkStrip.js`, back to `DEFAULT_TOOLS` and says so in the pill
+  with Undo, which sets the list back as it was, as the text highlighters'
+  Reset does);
   **Eraser returns to the last tool** (`Toggle`,
   `inkEraserReturn`, flag, default off; hint "After erasing, return to the
   tool you had"); **Erases** (`Segmented` All / Pens / Highlighters,
@@ -586,29 +599,42 @@ Preferences:
 
 AI:
 
-- **Agents** ([SettingsAgents.jsx](../../frontend/src/settings/SettingsAgents.jsx),
-  above Connections, a signed-in account's): who the chat talks to, the
-  same list the chat's picker and the comment fields read
-  ([local_agents.md](local_agents.md) "The client"). **Gamma AI**, with the
-  connection it uses ("Uses ChatGPT", or *Not connected*). On the desktop
+- **Agents** (pane id `agents`, the AI group's first,
+  [SettingsAgents.jsx](../../frontend/src/settings/SettingsAgents.jsx)):
+  who the chat talks to, the same list the chat's picker and the comment
+  fields read ([local_agents.md](local_agents.md) "The client"); what
+  sends people to it (the chat's tiles for an agent found here, a
+  refusal's sentence) opens `openSettings("agents")` and says "Settings →
+  AI → Agents". It leads with **Gamma AI**, with the connection it uses
+  ("Uses ChatGPT", read from the masked key list App loads as an AI pane
+  opens, `gammaAiConnection` in SettingsAi.jsx), or *Not connected* and a
+  *Set up* that opens Connections. Under it, for an account with
+  Integrations, a `FormNotice` (`info`) says that Codex or Claude Code
+  reads the library from its terminal through Integrations, with *Open
+  Integrations*. On the desktop
   app's own server (`GET /api/local-agents` says `here`, read afresh as
   the pane opens), a section **This computer: TIM-PC**: each agent found,
   its version and whether it is signed in (its problem, by its code, else
   this computer's own sentence), its switch (SettingsKit's `Toggle`), and once it is on and the
-  account's, **What Codex may run** (*Only in its sandbox* or *Asks before
-  more*, a `Segmented`) and the people it lets use it (co-authors,
+  account's, its own rows nested under the switch (`.setSubRows`, a
+  layout-only indent by the icon's column): **What Codex may run**
+  (*Sandbox only* or *Ask first*, a `Segmented`) and the people it lets use it (co-authors,
   [local_agents.md](local_agents.md) "A co-author's turn"): one row each,
   *May use Codex in Lab* (a workspace of another server named "Group on
   https://nas.example"), its trash button taking them off with the
   session (`DELETE /api/local-agents/codex/people`, in any window), and in
   the desktop app **Who else may use Codex** with *Add a person…*, an
-  `ActionMenu` of the editors of the workspaces it shares
+  `ActionMenu` with `UserPlusIcon` of the editors of the workspaces it shares
   (`GET /api/local-agents/people`, read in the desktop app while it owns an
-  agent; `chat/agents.js` `agentPeople`; while it offers no one, the row's
-  hint says why: the workspaces still read, or no one left to add), which asks the shell
+  agent; `chat/agents.js` `agentPeople`; the row's hint says in a line that
+  co-authors ask it from synced files in a chat the owner can read, the
+  rest on hover, and while it offers no one, why: the workspaces still
+  read, or no one left to add), which asks the shell
   (`agent-person`) for its question, the consent of the account's terms in
-  its last sentence; then the directories it offers (name, path) and
-  *Offer a directory…*. An agent another account lends the account reads
+  its last sentence. Then a section **Directories**: the directories this
+  computer offers (name, path), with *Offer a directory…* (`FolderPlusIcon`)
+  on its rule in the desktop app and an `Empty` while there are none;
+  elsewhere it shows only with some, read-only. An agent another account lends the account reads
   *alice lets you use it in this workspace*, no switch of its. In the desktop app the controls ask the shell
   (`askShell`: `set-agent`, `set-agent-runs`, `agent-dirs` "new" or an
   id, `agent-person`), which asks its own question and acts with its word; the pane then
@@ -624,25 +650,29 @@ AI:
   `{enabled: false}`). In the desktop app alone, below it, **Servers this
   computer answers** (`AnsweredServers`, `GET /api/computer-links`, a read
   of the pane only where `who.desktop`: no other server keeps links,
-  [computers.md](computers.md) "The servers this computer answers"): one
+  [computers.md](computers.md) "The servers this computer answers"), with
+  *Add a server…* on its rule and an `Empty` before any link: one
   row per link, its host and the workspace there, its address, the account
   there and how its channel stands (*Connected*, *Not reachable since
   2:02 PM*), *Reconnect…* for one that server refused, and its trash button
   (*Stop answering nas.lan*); under it the toggle *nas.lan may answer what
-  the agents ask*, off to begin with; then *Add a server…*. Each asks the
+  the agents ask*, off to begin with, its hint "On: the agents' asks may
+  also be allowed from nas.lan" and both states on hover. Each asks the
   shell (`add-server` with `link` "new" or the refused link's id,
   `remove-server`, `link-asks`; the rows' words and asks are
   `settings/answeredServers.js` `linkRow`, pure, `tests/answeredServers.test.mjs`), which asks its own question (which server
   and workspace, or before letting one answer) and acts with its word, and
   the section reads the links again each second for a minute until they
   changed. Last, one section per computer of the account's
-  shown to this server (`GET /api/computers`, one of the pane's reads):
-  connected or offline since when, and its agents as it last announced
-  them, read-only ("Change these in Gamma on TIM-PC.", the sentence this
-  computer's rows say elsewhere); and one per
+  shown to this server (`GET /api/computers`, one of the pane's reads),
+  *Connected* or *Offline since …* as a `uiTag` in its title (`Section`'s
+  `tag`), then "Change these in Gamma on TIM-PC." as a `FormNotice`
+  (`info`), the sentence this computer's rows say elsewhere, and its
+  agents as it last announced them, read-only, each tagged *On*, *On, asks
+  first* or *Turned off*; and one per
   computer of another account's whose agent serves this one, titled
-  *TIM-PC, alice's*, its agent tagged *Lent to you*.
-- **Connections**: the provider list (empty state: one sentence and the Add
+  *TIM-PC, alice's*, its notice saying what alice lends, its agent tagged *Lent to you*.
+- **Connections** (pane id `ai`): **AI services**, the provider list (empty state: one sentence and the Add
   button, which opens the connect dialog, "Connect an AI service": service
   tiles (`IconChoices`: ChatGPT, Anthropic, OpenAI API, Other — Other opens
   the named services by vendor, a Plan menu for a vendor with several, or a
@@ -812,13 +842,23 @@ Library:
   `zotero-conflicts` notice on this pane.
 - **Backups** ([SettingsBackups.jsx](../../frontend/src/settings/SettingsBackups.jsx)):
   the task table first ([BackupTasks.jsx](../../frontend/src/settings/BackupTasks.jsx):
-  Add task opens the editor `SubDialog`; each row has an Enabled switch and
-  a Run now / Edit / Duplicate / Delete `ActionMenu`), then for admins the
-  **Bucket** ([BackupBucket.jsx](../../frontend/src/settings/BackupBucket.jsx)),
-  then the server-kept snapshots per workspace (Back up all, and per
-  workspace: back up now, download, restore, delete). A row tags a task's snapshot "Automatic" and
+  Add task, a `uiBtn sm` on the section's rule, opens the editor
+  `SubDialog`; each row has an Enabled switch and a Run now / Edit task /
+  Duplicate task / Delete task `ActionMenu` (`PlayIcon`, `PencilIcon`,
+  `DuplicateIcon`, and Delete task a `danger` row), a failed read or a
+  task's failed run a `FormNotice` under the table, the read's with Try
+  again), then for admins the
+  **Bucket** ([BackupBucket.jsx](../../frontend/src/settings/BackupBucket.jsx),
+  tagged `admin` in its title as the rail's Administration caption is),
+  then **Saved snapshots**, with Back up all on its rule, and the server-kept
+  snapshots per workspace (per workspace: back up now on its rule,
+  download, restore, delete; an `Empty` with `DatabaseIcon` before the
+  first, a `FormNotice` with Try again when its list can't be read). A row tags a task's snapshot "Automatic" and
   the one a replace restore keeps "Before restore", and says when files were
-  missing or a database copy failed its check.
+  missing or a database copy failed its check. Its delete, which cannot be
+  undone, is a `uiBtn sm iconSq danger` named for what it deletes ("Delete
+  the snapshot from Sep 23, 3:00 AM PDT", the date as the row shows it;
+  "Delete the bucket's copy from …" for a copy only the bucket holds).
   The Bucket is an S3-compatible bucket that backup tasks copy their
   snapshots to, a backup target only: Gamma keeps running on its local
   files. It has no schedule of its own, no switch and no count of copies:
@@ -850,9 +890,11 @@ Library:
   tagged "not on this server" (or "another account's"), whose copies offer
   Restore as new… in place of Restore: the way back after a lost disk.
   With `GAMMA_S3_BUCKET` set, the environment supplies every field: the
-  summary says "Set by GAMMA_S3_BUCKET in the server's environment" (where
-  the bucket is, is its hover title), and its one button is Test, which
-  tries the environment's bucket. The environment's off-site rounds then
+  summary's hint says where the bucket is and what sets it
+  ("127.0.0.1:1/gamma-env · set by GAMMA_S3_BUCKET", the sentence "Set by
+  GAMMA_S3_BUCKET in the server's environment" its hover title), and its one
+  button is Test, which tries the environment's bucket and answers beside
+  it as the dialog's Test connection does (`TestResult`). The environment's off-site rounds then
   show under it while on or once one ran: Off-site rounds reads "every 1 h
   · 7 kept · last round … · 12 databases · 340 uploads · 0 failed · next
   round …" (or "no round yet", with the round's error under it) beside
@@ -873,8 +915,11 @@ Administration (admins only):
 - **Users**: the server's people and who may come in. **Accounts**, each
   with its personal workspaces and labelled Storage / Edit buttons, with
   *Add user* and *Invite by e-mail…* on the section's rule, the invite
-  disabled with the reason as its hover while
-  `GET /api/admin/invitations` says none can go out. Its `SubDialog` takes
+  disabled while `GET /api/admin/invitations` says none can go out, its
+  reason then a `FormNotice` (`info`) under the rule. What fails with no
+  dialog open is a `FormNotice` in the section it came from: the accounts'
+  read under Accounts, with Try again; an invitation's resend or withdraw
+  under Invitations. Its `SubDialog` takes
   an e-mail address ("They get a link to make a Gamma Cloud account, or to
   sign in with theirs, and then join this server.") and sends it. Under
   the accounts, an **Invitations** section, shown while any wait, lists
@@ -892,7 +937,10 @@ Administration (admins only):
   containers"), the shared AI provider, shared workspaces,
   **Databases** (Check databases: a quick check of every database file as
   a `db-check` job, [tasks.md](tasks.md), the damaged ones listed under
-  the row), server backups and the log with its
+  the row), server backups (their delete a `danger` button named for the
+  snapshot's date, and last an **Off-site copies** row: these snapshots
+  stay on this disk, and *Open Bucket* jumps to Backups › Bucket, where a
+  bucket keeps copies elsewhere) and the log with its
   level filter ([user_db.md](user_db.md)).
 - **Network proxy** (pane id `proxy`,
   [SettingsProxy.jsx](../../frontend/src/settings/SettingsProxy.jsx)): how
@@ -912,7 +960,8 @@ Administration (admins only):
   reads it, are the saved ones; else "Password", the server then asking
   for it again) and "Don't use the proxy for", a textarea with Reset to
   defaults while it differs from `default_bypass`. "Let the proxy look up
-  names" shows wherever a proxy is in use (Manual, or the system's
+  names" (hint "For fake-IP VPNs, or when only the proxy resolves names",
+  the rest on hover) shows wherever a proxy is in use (Manual, or the system's
   settings with a proxy found, an http-only one too). Save sits on the section's rule while the
   draft differs. What Save and Test send is worked out once
   (`payload`): the mode, the name lookups while their switch shows, and
@@ -1014,7 +1063,9 @@ what it is (Comment, Page, AI reply), the text reported, quoted, the
 reporter's own words, and a line with who wrote it and on which page, who
 reported it (a visitor without an account named so) and when, and, on a
 server that forwards them, whether Gamma Cloud has it yet. Resolve (or
-Reopen) and Delete, which asks first, are icon buttons
+Reopen) and Delete, which asks first, are icon buttons, Delete a `danger`
+one named for the report ("Delete the report from 2 hours ago"); a refused
+one, or a failed read with Try again, is a `FormNotice` under the count
 ([api.md](api.md) "Reports").
 
 **Sign-in** (Users, `SettingsCloudSignIn.jsx` `CloudSignInSettings`) has
@@ -1076,8 +1127,9 @@ Apple Pencil or Stylus, marked `hostOnly(flags, entry)`, a flag or a
 list), unless the host has every one of its flags as `hostCaps` reads
 them (the dialog passes `hostCaps(nativeHost())` as
 `searchSettings(query, panes, {host, desktop})`). A setting only the
-desktop app reads (Reading & editing › PDFs › *Add opened PDFs to the
-library*, marked `desktopOnly(entry)`) is listed only with `desktop`
+desktop app reads or offers (Reading & editing › PDFs › *Add opened PDFs to the
+library*, Agents › Directories and Servers this computer answers, marked
+`desktopOnly(entry)`) is listed only with `desktop`
 (`IS_DESKTOP`). A result is a
 row-like button: the pane's icon, the label with the query marked, the
 hint, and "Pane › Section" on the right. Past six results they group under
@@ -1520,9 +1572,10 @@ The chat's shortcuts edit the **same shared preferences** as Settings: the
 composer's model chip (model, reasoning effort and speed, a `MenuSelect`
 whose further sections list only the picked model's own levels and tiers)
 and the header's ⚙ popover (single-paper context budget,
-tool permissions, the token counts).
-The Tools button and checkbox also edit the global `agentEnabled` preference;
-there is no conversation-local tools override or reset on New chat.
+the Tools switch and the tool permissions, the token counts).
+The popover's Tools switch edits the global `agentEnabled` preference
+(Tool usage's Assistant tools); there is no conversation-local tools
+override or reset on New chat.
 Permissions remain scoped by chat kind (folder, PDF, notes), applying to all
 chats of that kind. Each is a state menu: Allow, Ask (an approval card before
 each call) or Off. Settings compares all three kinds in a table; the chat
@@ -1558,7 +1611,23 @@ under the text, spanning to the row's end, a pair as two equal columns
 its settings stay in it even when a few are stored differently (a row's own
 `scope` tag says so) rather than splitting into a second section of the
 same subject. Put consequences in the visible hint; supplementary `title`
-text appears on hover, without a Details toggle.
+text appears on hover, without a Details toggle. A hint is a line, not a
+paragraph: past a dozen words the rest goes to the `title`.
+`Section`'s `tag` puts a `uiTag` after its title, which stays the section's
+name for search and jumps (Backups › Bucket's `admin` tag, a far
+computer's *Connected* or *Offline since …*). Rows that belong to the row
+above them (an agent's own rows, under its switch) sit in `.setSubRows`,
+indented by the icon's column, layout only. A list's Add is its section's
+action, a `uiBtn sm` with its 14 px glyph on the rule (Add a server…, Offer
+a directory…, Add task, Add term), never a row of its own; a reset is a
+`uiBtn sm` on the rule too, off at the defaults, with Undo in the pill
+where the old value can come back (the text highlighters, the pens). A
+list before its first item is an `Empty` with the list's icon, one still
+being read `Empty loading`; what failed is a `FormNotice` in the section it
+happened in, with a Try again `uiBtn sm` after a failed read. A delete
+nothing brings back is `uiBtn sm iconSq danger`, its `aria-label` naming
+what goes ("Delete the snapshot from Sep 23, 3:00 AM PDT"); a removal that
+can be undone or done again (a person, a directory, a server) is red too.
 Use the existing shared controls: `PictureChoices` for illustrated choices,
 `IconChoices` for a small exclusive set pictured as icon tiles (the share
 popover's audience, handwriting's "Draws with"), `Segmented` for two or three
@@ -1591,14 +1660,17 @@ Reset; a viewer tool hidden into the strip's ⋯ menu and its Customize…,
 the strip's order in the PDF and the notebook viewer; Customize top bar…
 from a right-click on the bar's empty space),
 shared chat settings, mobile layout (Appearance and Toolbars fitting a
-phone without horizontal scrolling), administrator account separation, and
-Backups › Bucket: an admin's alone, set up in its dialog (an endpoint
+phone without horizontal scrolling), administrator account separation, an
+admin's rail (Agents first in the AI group, nineteen panes fitting a
+900 px window, a 640 px one scrolling the groups alone), and
+Backups › Bucket: an admin's alone, tagged so, reached from Server backups'
+Off-site copies, set up in its dialog (an endpoint
 pasted with the bucket's name on it taken off) and read back there with
 its write-only secret, the unsaved-edit question on Cancel, Test against a
 stand-in bucket on loopback, a backup task that copies its snapshots
 there, the snapshots tagged "in the bucket", a copy only the bucket holds
 restored in place, another workspace's restored as a new one, a copy
-deleted from the bucket, and the read-only summary of a second server
+deleted from the bucket by its red, named delete, and the read-only summary of a second server
 started with `GAMMA_S3_BUCKET`; and Administration › Network proxy: no pane or search
 match for a member, an admin's search landing on it, an `https://` proxy
 refused with nothing saved and the refusal gone once the address is

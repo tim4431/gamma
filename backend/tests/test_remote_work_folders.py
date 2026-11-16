@@ -728,7 +728,7 @@ def test_a_work_folder_kept_on_no_computer_here_is_detached_by_its_owner_or_its_
     url = f"/api/folders/{w}/detach"
 
     # another member may not, and learns nothing of it; nor does a token; a folder of no mark is none
-    assert editor.get(url).json() == {"may": False}
+    assert editor.get(url).json() == {"may": False, "why": "keeper"}
     assert editor.post(url, json={"pages": "keep"}).status_code == 403
     assert owner_there.get(f"/api/folders/{make_folder(owner_there, 'RWF plain')}/detach").status_code == 404
     token = create_token(account_of(OWNER), shared, "rwf-token", 1, scope="write")
@@ -755,7 +755,7 @@ def test_a_work_folder_kept_on_no_computer_here_is_detached_by_its_owner_or_its_
         "vaults": [{"kind": "folder", "folder_id": w, "paused": False}]})
     assert r.status_code == 200, r.text
     assert forged["id"] in [c["token_id"] for c in registry.keepers(shared, w)]
-    assert viewer.get(url).json() == {"may": False}
+    assert viewer.get(url).json() == {"may": False, "why": "keeper"}
     assert viewer.post(url, json={"pages": "remove"}).status_code == 403
     assert _mark(shared, w) is not None and _props(shared, file)["parent"] == "root"
     registry.forget(forged["id"])
@@ -775,7 +775,7 @@ def test_a_work_folder_kept_on_no_computer_here_is_detached_by_its_owner_or_its_
     # a clone or a Zotero-linked workspace carries copies of marks: detached where they come from
     kept_elsewhere = elsewhere.kept_elsewhere
     monkeypatch.setattr(elsewhere, "kept_elsewhere", lambda ws: "a clone" if ws == shared else "")
-    assert editor.get(url).json() == {"may": False}
+    assert editor.get(url).json() == {"may": False, "why": "elsewhere"}
     r = owner_there.post(url, json={"pages": "remove"})
     assert r.status_code == 409 and "kept in step" in r.json()["detail"] and _mark(shared, w) is not None
     monkeypatch.setattr(elsewhere, "kept_elsewhere", kept_elsewhere)

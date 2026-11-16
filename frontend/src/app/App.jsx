@@ -85,7 +85,7 @@ import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitPageIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
@@ -246,7 +246,8 @@ import { isVaultConflict } from "../collaboration/conflictKinds.js";
 import { VaultBanner, VaultChip } from "../vault/VaultChip.jsx";
 import { askShell, useVault } from "../vault/useVault.js";
 import { usePageComputer } from "../vault/usePageComputer.js";
-import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, showsOnDisk, vaultConflictsPath } from "../vault/vaultState.js";
+import { addsToLibrary, baseName, carriesToServer, isOpenedFile, libraryWorkspaces, notesLocked as vaultNotesLocked, openedHere, openedNote, opensAsPdf, revealLabel, showsOnDisk, vaultConflictsPath } from "../vault/vaultState.js";
+import { StateTag } from "../shared/ui/StateTag";
 import { chatAgents, commentAgents } from "../chat/agents.js";
 import { useLocalAgents } from "../chat/useLocalAgents.js";
 import { showInChat } from "../chat/computer/chatSide.js";
@@ -539,8 +540,9 @@ const RECENTS_CAP = 24;
 // splitter grabbable and leaves the header its own.
 const SASH_MARGINS = { coarse: 6, fine: 6 };
 // The Settings panes of the AI group (old pane names resolve first): entering
-// one loads the masked key list and the prompt drafts.
-const AI_SETTINGS_PANES = ["ai", "assistant", "tools"];
+// one loads the masked key list (Agents names the connection Gamma AI uses)
+// and the prompt drafts.
+const AI_SETTINGS_PANES = ["agents", "ai", "assistant", "tools"];
 const isAiPane = (pane) => AI_SETTINGS_PANES.includes(resolveSettingsPane(pane));
 // A block's text for a chat chip (cursor block, attached block): its note,
 // else its highlight quote.
@@ -1410,7 +1412,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     openBlock(id, { restoreScroll: true, block });
   }
 
-  // A tab's Go to folder: home, on the directory `dir` of the synced
+  // A tab's Show in folder view (and the file's own directory's crumb): home, on the directory `dir` of the synced
   // folder's file `id`, which the folder view pages to, scrolls to and
   // selects (useFolderTree showFile; the selection effect below keeps it
   // through the folder's change).
@@ -4932,15 +4934,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // chat/useLocalAgents.js). The comment fields'
   // `links.agents` are those a comment on the page can be sent to (its
   // Send to tick and `@codex`, commentAgents: the chat's computer agents,
-  // "Codex on TIM-PC" or this computer's), never MentionContext, which
-  // reaches the notes; `links.sendTo` the tick as the person left it last.
+  // "Codex on TIM-PC" or this computer's; none for a viewer or a share's
+  // visitor, whose comment the server sends to no agent), never
+  // MentionContext, which reaches the notes; `links.sendTo` the tick as the
+  // person left it last.
   const pageComputers = pageComputer.computers;
   // read once the workspace is chosen: an agent another account lends is of a workspace (`lent`)
   const localAgents = useLocalAgents(!shareMode && !!authUser?.user && !authUser?.is_guest && wsReady);
   const chatAgentList = useMemo(() => chatAgents({
     aiInfo, models: providerModels(aiInfo?.models, aiProvider), local: localAgents, computers: pageComputers,
   }), [aiInfo, aiProvider, localAgents, pageComputers]);
-  const commentAgentList = useMemo(() => commentAgents(chatAgentList), [chatAgentList]);
+  const commentAgentList = useMemo(() => commentAgents(canWriteWorkspace ? chatAgentList : []), [chatAgentList, canWriteWorkspace]);
   const commentSend = useMemo(() => ({ ticked: commentSendTo, remember: setCommentSendTo }), [commentSendTo, setCommentSendTo]);
 
   // Merges an offline copy's sync decided on this page's blocks
@@ -9572,14 +9576,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The props a folder card shares between the pinned strip and the library
   // grid: glyph, title, count, selection/drag/drop behaviour and the context
   // menu. Each site adds its own className, tip, time and extras. A synced
-  // folder's own card wears the theme's root folder and names the computer
-  // that keeps it (work.keeperOf), or says it is a synced folder.
+  // folder's own card wears the synced folder's glyph, its arrows in its
+  // sync's tone, and names the computer that keeps it as a StateTag
+  // (work.keeperOf), or says it is a synced folder.
   function folderCardProps(f) {
     const synced = !!libTree.folders.get(f)?.mark;
+    const keeper = synced ? work.keeperOf(f) : null;
     return {
-      glyph: synced ? <FileThemeIcon root /> : <FolderGlyph />,
+      glyph: synced ? <FileThemeIcon root badge={keeper?.badge} /> : <FolderGlyph />,
       title: libTree.folders.get(f)?.name,
-      kind: synced ? work.keeperOf(f)?.text || t("Synced folder") : "Folder",
+      kind: !synced ? t("Folder") : keeper ? <StateTag state={keeper} className="keeperTag" /> : t("Synced folder"),
       count: folderMeta[f]?.count || 0,
       labelMode: fileLabels,
       checked: selecting && selectedFolders.has(f),
@@ -9737,6 +9743,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     },
   });
   const { work: focusedFile, rules: openRules, titleLocked, inLibrary: openInLibrary } = work.open;
+  // The folder view's synced folder: who keeps it and how it syncs, for its heading.
+  const workKeeper = workFolder ? work.keeperOf(workFolder) : null;
   // The Files window's reads, its first slot and the open page's reveal
   // (explorer/useFilesTree.js), only while it is shown: on a phone as the
   // overlay over the page.
@@ -10842,11 +10850,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
             {/* a file's folders from its work folder down, each opening that
-                folder; the pages a sub-page is inside, each opening that page */}
+                folder, its own directory with the file selected as the tab's
+                Show in folder view does; the pages a sub-page is inside, each
+                opening that page */}
             <PageCrumbs ancestors={openFamily.ancestors} onOpen={openFamilyPage}
               targetProps={lib.organize ? (page) => ({ ...pageDropProps(page.id, page.title), className: pageDropClass(page.id) }) : undefined}
               folders={focusedFile ? fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile }) : []}
-              onOpenFolder={(id) => { pushNav(); goHome(); openFolder(id); }} />
+              onOpenFolder={(id) => {
+                const own = fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile }).at(-1)?.id;
+                if (id === own) { goToFile(focusedBlockId, id); return; }
+                pushNav(); goHome(); openFolder(id);
+              }} />
             {titleEditing && !readOnly && !titleLocked && focusedBlockId ? (
               // A textarea so a long title wraps as it does when shown; a title
               // stays one line, so pasted line breaks become spaces.
@@ -11603,10 +11617,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     ) : null}
                     <div className="folderCurrent">
-                      {labelFilter ? <LabelIcon size={16} strokeDasharray={labelFilter === NO_LABEL ? "2 1.5" : undefined} /> : <FolderOpenIcon size={16} />}
+                      {labelFilter ? <LabelIcon size={16} strokeDasharray={labelFilter === NO_LABEL ? "2 1.5" : undefined} />
+                        : workFolder ? <FileThemeIcon root size={16} badge={workKeeper?.badge} /> : <FolderOpenIcon size={16} />}
                       {/* Breadcrumb: every folder of the path navigates to its level —
                           from the library's root on (a folder share starts at its
-                          folder) — and files a page or moves a folder dropped on it */}
+                          folder) — and files a page or moves a folder dropped on it;
+                          a synced folder's own crumb opens its menu too */}
                       {folderCrumbs(folderFilter).map(({ id, name, sep }) => (
                         <span key={id}>
                           {sep ? <span className="crumbSep">/</span> : null}
@@ -11615,9 +11631,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               onDragOver: (e) => { e.preventDefault(); setFolderDragOver(`crumb:${id}`); },
                               onDragLeave: () => setFolderDragOver(null),
                               onDrop: (e) => dropOnFolder(e, id),
-                            } : {})}>{name}</button>
+                            } : {})}
+                            {...(id === workFolder ? menuPress(openTagMenu("folder", id)) : {})}>{name}</button>
                         </span>
                       ))}
+                      {/* inside a synced folder: who keeps it and how it syncs, and the menu of the directory shown */}
+                      {workKeeper ? <StateTag state={workKeeper} className="keeperTag" /> : null}
+                      {workFolder ? <MenuButton className="folderCurrentMenu" open={openTagMenu("folder", folderFilter)} /> : null}
                       {labelFilter ? (
                         <span>
                           {folderFilter ? <span className="crumbSep">/</span> : null}
@@ -11650,7 +11670,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     options={[
                       ["name", t("Name"), TypeIcon],
                       ["format", t("Format"), FileIcon],
-                      ["size", t("File size"), HardDriveIcon],
+                      ["size", t("File size"), DatabaseIcon],
                       ["modified", t("Modified"), PenIcon],
                     ]}
                   />
@@ -11706,6 +11726,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {homeMode && !homeLoaded && !homeFailed ? null : homeMode && workFolder ? (
                 <FolderTree rows={workTreeRows} tree={folderTree} folderId={folderFilter} pageOf={(id) => workRows.get(id)} query={homeQuery}
                   atTop={folderFilter === workFolder} choosing={!!work.linkOf(workFolder)?.choosing} onChoose={lib.organize ? work.chooser(workFolder) : null}
+                  keeper={workKeeper?.computer || ""}
                   onNewPage={newPageAllowed ? () => createPage() : null} listRef={homeListingRef} onBlank={clearSelection}
                   row={{
                     selecting, selectedPages, folderMenu: (id) => openTagMenu("folder", id), pageMenu: openPageMenu, menuPress,
@@ -11731,7 +11752,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <PageCard
                         className="pageCardAdd"
                         glyph={<FolderGlyph />}
-                        kind="Folder"
+                        kind={t("Folder")}
                         labelMode={fileLabels}
                         renameNode={
                           <input
@@ -11772,7 +11793,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         tip={l === NO_LABEL
                           ? t("Pages without any label · double-click to open · drop a page to clear its labels")
                           : t("Click to select · double-click to open · drop a page to label it")}
-                        kind="Label"
+                        kind={t("Label")}
                         count={labelMeta[l]?.count || 0}
                         time={cardTime(item)}
                         labelMode={fileLabels}
@@ -11792,7 +11813,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         data-motion-key={item.key}
                         {...folderCardProps(f)}
                         className={`${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
-                        tip={lib.organize ? t("Click to select · double-click to open · drop a page or folder to move it in") : t("Click to select · double-click to open")}
+                        tip={lib.organize && !libTree.folders.get(f)?.mark ? t("Click to select · double-click to open · drop a page or folder to move it in")
+                          : t("Click to select · double-click to open")}
                         time={cardTime(item)}
                         renameNode={folderRenaming?.id === f ? (
                           <input
@@ -11940,14 +11962,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       if (item.kind === "folder") {
                         const f = item.folder;
                         const menu = openTagMenu("folder", f);
-                        // a synced folder's own row: the theme's root folder and who keeps it
+                        // a synced folder's own row: the synced folder's glyph and who keeps it
                         const synced = !!libTree.folders.get(f)?.mark;
                         const keeper = synced ? work.keeperOf(f) : null;
                         return (
                       <div
                         key={item.key}
                         data-motion-key={item.key}
-                        className={`folderRow rowMenuHost ${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
+                        className={`folderRow rowMenuHost${keeper ? " keptRow" : ""} ${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
                         draggable={lib.organize && folderRenaming?.id !== f}
                         onDragStart={(e) => startFolderDrag(e, f)}
                         onClick={(e) => handleFolderClick(f, e)}
@@ -11957,10 +11979,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onDragOver={(e) => dragOverFolder(e, f)}
                         onDragLeave={() => setFolderDragOver(null)}
                         onDrop={(e) => dropOnFolder(e, f)}
-                        title={lib.organize ? t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in") : t("Click to select · double-click to open")}
+                        title={!lib.organize ? t("Click to select · double-click to open")
+                          : synced ? t("Click to select · double-click to open · right-click to rename or stop syncing")
+                          : t("Click to select · double-click to open · right-click to rename or delete · drop a page or folder to move it in")}
                       >
                         {selecting && selectedFolders.has(f) ? <SelectCheck />
-                          : synced ? <FileThemeIcon root size={20} /> : <FolderIcon size={16} />}
+                          : synced ? <FileThemeIcon root size={16} badge={keeper?.badge} /> : <FolderIcon size={16} />}
                         {folderRenaming?.id === f ? (
                           <input
                             autoFocus
@@ -11978,7 +12002,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         ) : (
                           <span className="folderName">{libTree.folders.get(f).name}</span>
                         )}
-                        {keeper ? <span className="folderKeeper" title={keeper.title}>{keeper.text}</span> : null}
+                        {keeper ? <span className="folderKeeper"><StateTag state={keeper} className="keeperTag" /></span> : null}
                         {rowColumns(item, synced ? tn("{n} file", "{n} files", folderMeta[f]?.count || 0)
                           : tn("{n} page", "{n} pages", folderMeta[f]?.count || 0), menu)}
                       </div>
@@ -14712,6 +14736,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setInkEraserReturn,
           inkEraserFilter,
           setInkEraserFilter,
+          inkTools,
           setInkTools,
           confirm: setConfirmBox,
           replayLeadIn,
@@ -14968,11 +14993,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {tabDir ? (
             <MenuItem icon={FolderIcon} title={t("Open the folder “{name}” in Gamma, with this file selected",
               { name: libTree.folders.get(tabDir)?.name || t("Untitled") })}
-              onClick={() => { setTabMenu(null); goToFile(tabMenu.id, tabDir); }}>{t("Go to folder")}</MenuItem>
+              onClick={() => { setTabMenu(null); goToFile(tabMenu.id, tabDir); }}>{t("Show in folder view")}</MenuItem>
           ) : null}
           {onDisk ? (
-            <MenuItem icon={FolderOpenIcon} title={t("Show the file in this computer's file manager")}
-              onClick={() => { setTabMenu(null); askShell("reveal-on-disk", { page: tabMenu.id }); }}>{t("Show in folder")}</MenuItem>
+            <MenuItem icon={HardDriveIcon} title={t("Show the file in this computer's file manager")}
+              onClick={() => { setTabMenu(null); askShell("reveal-on-disk", { page: tabMenu.id }); }}>{revealLabel()}</MenuItem>
           ) : null}
           {!isPhone ? (
             // Tab groups (docs/dev/tab_groups.md): one group splits once, this
@@ -15234,10 +15259,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               const [up, down] = [folderNeighbour(libTree, id, -1), folderNeighbour(libTree, id, 1)];
               const stepping = lib.organize && homeMode && homeSort === "manual" && folders.length === 1 && !inWork;
               const choose = folders.length === 1 && lib.organizeIn(id).chooseFiles ? work.chooser(id) : null;
-              // A synced folder's root: Detach from {computer}…, for its
-              // vault's maker and the workspace's owner (its plan read as the
-              // menu opened), in every window.
+              // A synced folder's root: Stop syncing with {computer}…, a
+              // danger row, for its vault's maker and the workspace's owner
+              // (its plan read ahead), disabled while that is read and, with
+              // why, for anyone else; in every window. Its Delete (and a
+              // library folder's holding one) shows disabled, saying to stop
+              // syncing first.
               const detach = folders.length === 1 ? work.detachOf(id) : null;
+              const ownRules = lib.organizeIn(id);
               // Move to: the library's folders every one of them may go
               // into, in the flyout's order (folderRules moveTargets).
               const into = folders.map((f) => new Set(lib.organizeIn(f).moveTargets));
@@ -15320,13 +15349,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 ],
                 [
                   detach && (
-                    <MenuItem key="detach" icon={UnlinkIcon}
-                      title={t("Stop syncing this folder: its files stay in Gamma or go to Recently deleted, and its directory stays as it is")}
+                    <MenuItem key="detach" icon={UnlinkIcon} danger disabled={detach.disabled}
+                      title={detach.why || t("Stop syncing this folder: its files stay in Gamma or go to Recently deleted, and its directory stays as it is")}
                       onClick={() => { setHomeMenu(null); detach.start(); }}>{detach.label}</MenuItem>
                   ),
-                  lib.organizeIn(id).delete && (
+                  ownRules.delete ? (
                     <MenuItem key="delete" icon={TrashIcon} danger onClick={() => { setHomeMenu(null); deleteFolder(id); }}>{t("Delete")}</MenuItem>
-                  ),
+                  ) : ownRules.deleteRefused ? (
+                    <MenuItem key="delete" icon={TrashIcon} danger disabled title={refusalText(ownRules.deleteRefused)}>{t("Delete")}</MenuItem>
+                  ) : null,
                 ],
               );
             })()}

@@ -66,15 +66,20 @@ def plan(ws: str, w: str, user_id: str, owner: bool) -> dict:
     stores (the files read in place on this computer; a computer's vault
     pushed its files' bytes here already) and ``computer: {name, online}``,
     the computer that keeps it, for the account it is of (null for anyone
-    else, and when none keeps it). ``{may: false}`` alone for a caller who
-    may not (``allowed``), and in a workspace something else keeps in step,
-    whose marks are copies."""
+    else, and when none keeps it). ``{may: false, why}`` alone for a caller
+    who may not, ``why`` the rule's word for the menu to say: ``elsewhere``
+    in a workspace something else keeps in step, whose marks are copies;
+    ``maker`` where a vault of this server keeps it (its maker alone may);
+    ``keeper`` otherwise (the workspace's owner, or the account whose
+    computer keeps it: ``allowed``)."""
     from ..computers import channel, registry
     from .. import folder_links
 
-    if elsewhere.kept_elsewhere(ws) or not allowed(ws, w, user_id, owner):
-        return {"may": False}
+    if elsewhere.kept_elsewhere(ws):
+        return {"may": False, "why": "elsewhere"}
     link = _link_of(ws, w)
+    if not allowed(ws, w, user_id, owner):
+        return {"may": False, "why": "maker" if link is not None else "keeper"}
     if link is not None:
         said = folder_links.removal(link)
         return {"may": True, **{key: said[key] for key in ("files", "in_library", "too_large", "bytes")},

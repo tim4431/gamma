@@ -53,8 +53,8 @@ test("inside a work folder the directories follow the disk; a viewer organizes n
   ] } });
   const lib = libraryAccess({ role: "editor", tree });
   assert.deepEqual(["paper", "figures", "notes", "", "gone"].map(lib.workFolder), ["paper", "paper", "", "", ""]);
-  assert.deepEqual(lib.organizeIn("figures"), { rename: false, move: false, moveTargets: [], delete: false, newSubfolder: false,
-    newPage: true, chooseFiles: false });
+  assert.deepEqual(lib.organizeIn("figures"), { rename: false, move: false, moveTargets: [], delete: false, deleteRefused: "",
+    newSubfolder: false, newPage: true, chooseFiles: false });
   const paper = lib.organizeIn("paper");
   assert.deepEqual([paper.rename, paper.move, paper.delete, paper.newSubfolder, paper.chooseFiles], [true, true, false, false, true]);
   assert.deepEqual(paper.moveTargets, ["notes"], "out of every work folder");

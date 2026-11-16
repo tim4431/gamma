@@ -43,9 +43,10 @@
 // the message carries it in `asks` as this computer's are, each `once`, and
 // the page draws its card; otherwise the message says only `waiting: true`
 // while one waits on that computer alone.
-import { T, t, tn } from "../../shared/i18n/i18n.js";
+import { T, t } from "../../shared/i18n/i18n.js";
 import { agentWorking, sinceText } from "../../vault/vaultState.js";
-import { GAMMA, agentLabel } from "../agents.js";
+import { GAMMA, agentChoice, agentLabel } from "../agents.js";
+import { stepsSummary, toolWords } from "../agentSteps.js";
 
 // How long a message may be (the server's cap).
 export const TEXT_MAX = 20000;
@@ -224,8 +225,10 @@ const ASKED = new Set(["asked", "allowed", "declined"]);
 const GAMMA_WRITES = new Set(["comment", "resolve", "highlight"]);
 
 // A step in words, done: "Read sections/intro.tex", "Edited …", "Ran
-// latexmk", "Searched the sources", "Read Gamma: read_page" (a call of
-// Gamma's tools, by the tool's name), "Worked"; one asked about says so.
+// latexmk", "Searched the sources", a call of Gamma's tools in the words
+// Gamma AI's own call of it reads ("Listed the highlights and comments":
+// agentSteps.js toolWords; a tool those do not name by its name, "Read
+// Gamma: read_page"), "Worked"; one asked about says so.
 export function stepText(step) {
   const path = placeOf(step);
   if (ASKED.has(step?.status)) return askedStep(step, path);
@@ -236,14 +239,16 @@ export function stepText(step) {
     case "search": return t("Searched the sources");
     case "gamma":
       if (!step.tool) return t("Read Gamma");
-      return GAMMA_WRITES.has(step.tool) ? t("Wrote in Gamma: {tool}", { tool: step.tool }) : t("Read Gamma: {tool}", { tool: step.tool });
+      return toolWords(step.tool) || (GAMMA_WRITES.has(step.tool) ? t("Wrote in Gamma: {tool}", { tool: step.tool })
+        : t("Read Gamma: {tool}", { tool: step.tool }));
     default: return t("Worked");
   }
 }
 
-// A step in words while it runs ("Editing sections/intro.tex"), what the
-// strip and the turn's pill say the agent is at; "" for a step of no kind
-// worth naming.
+// A step in words while it runs ("Editing sections/intro.tex", "Listing
+// the highlights and comments…": Gamma AI's runningLabel for a call of
+// Gamma's tools), what the strip and the turn's pill say the agent is at;
+// "" for a step of no kind worth naming.
 export function stepNow(step) {
   const path = placeOf(step);
   switch (step?.kind) {
@@ -253,8 +258,8 @@ export function stepNow(step) {
     case "search": return t("Searching the sources");
     case "gamma":
       if (!step.tool) return t("Reading Gamma");
-      return GAMMA_WRITES.has(step.tool) ? t("Writing in Gamma: {tool}", { tool: step.tool })
-        : t("Reading Gamma: {tool}", { tool: step.tool });
+      return toolWords(step.tool, true) || (GAMMA_WRITES.has(step.tool) ? t("Writing in Gamma: {tool}", { tool: step.tool })
+        : t("Reading Gamma: {tool}", { tool: step.tool }));
     default: return "";
   }
 }
@@ -265,16 +270,20 @@ export function currentStep(message) {
   return steps.findLast((s) => s.status === "started") || steps.at(-1) || null;
 }
 
-// What a turn's pill says: while it is queued or running the agent at work
-// ("Codex is working: Editing sections/intro.tex", or "Codex is working…"
-// before its first step), or while it is queued for another computer that
-// is away (`away`, its name: awayFrom) "Waiting for TIM-PC"; while another
+// What a turn's pill says: while it runs the agent at work ("Codex is
+// working: Editing sections/intro.tex", or "Codex is working…" before its
+// first step); while it is queued that it starts ("Starting Codex…"), that
+// it waits behind other work in its directory (`ahead`, the server's
+// `computer.turn.ahead`: "Waiting for Codex to finish its other work…"),
+// or for another computer that is away (`away`, its name: awayFrom)
+// "Waiting for TIM-PC"; while another
 // computer's turn (`computer`, its name) waits there alone for the
 // person's answer "Codex is waiting for your answer on TIM-PC", or that it
 // is away (one whose asks it relays here is waiting for you, as this
 // computer's);
-// once it ended how many steps it took.
-export function turnLabel(message, label, away = "", computer = "") {
+// once it ended, Gamma AI's summary of its steps (agentSteps.js
+// stepsSummary of its chips: "3 steps · read 2 files, edited 1 file").
+export function turnLabel(message, label, away = "", computer = "", ahead = false) {
   const agent = message?.label || label;
   if (isLive(message) && message.asks?.length) return t("{agent} is waiting for you", { agent });
   if (isLive(message) && message.waiting === true && (away || computer)) {
@@ -282,9 +291,11 @@ export function turnLabel(message, label, away = "", computer = "") {
       : t("{agent} is waiting for your answer on {computer}", { agent, computer });
   }
   if (away && message?.role === "agent" && message.state === "queued") return t("Waiting for {computer}", { computer: away });
+  if (isLive(message) && message.state === "queued") {
+    return ahead ? t("Waiting for {agent} to finish its other work…", { agent }) : t("Starting {agent}…", { agent });
+  }
   if (isLive(message)) return agentWorking(agent, stepNow(currentStep(message)));
-  const n = message?.steps?.length || 0;
-  return tn("{n} step", "{n} steps", n);
+  return stepsSummary((message?.steps || []).map(stepChip));
 }
 
 // How many changed files a turn's card lists before "and N more".
@@ -392,40 +403,75 @@ export function diffRows(diff) {
   });
 }
 
-// Where the conversation's agent works, as the strip says it after its
-// first line (the server's `computer.dir`: a vault's, already named there
-// as the folder; {kind: "offered", id, name}; null for a directory of its
-// own): null for a vault's and a co-author's (a synced folder's alone);
-// else, while the conversation has no turn, the menu of the directories
-// offered (this computer's `dirs`, GET /api/local-agents' [{id, path,
-// name}], or another computer's, the server's `computer.dirs`) and "Its
-// own directory" ({pick: true, value, options}, `value` the one `picked` while it
-// is offered, else ""); once it has one, {pick: false, text} naming the
-// one it works in.
+// Where the conversation's agent works (the server's `computer.dir`: a
+// vault's, already named in the strip's line as the folder; {kind:
+// "offered", id, name}; null for a directory of its own): null for a
+// vault's and a co-author's (a synced folder's alone); else {pick, value,
+// options, text}, `options` the directories offered (this computer's
+// `dirs`, GET /api/local-agents' [{id, path, name}], or another computer's,
+// the server's `computer.dirs`) after "Its own directory" as [value, name],
+// `value` the one it works in ("" its own), `text` its name, which the
+// strip says after its line. While the conversation has no turn it is
+// still to choose (`pick`, in the composer's chip: `value` the one
+// `picked` while it is offered, else ""); once it has one it is the
+// conversation's, kept among the options when no longer offered.
 export function workPlace(info, conversation, dirs = [], picked = "") {
   if (!info || info.dir?.kind === "vault" || info.lent) return null;
-  if (conversation?.messages?.length) {
-    return { pick: false, text: info.dir?.kind === "offered" ? String(info.dir.name || "") : t("Its own directory") };
-  }
   const offered = ((isRemote(info) ? info.dirs : dirs) || []).filter((d) => d && d.id);
   const options = [["", t("Its own directory")], ...offered.map((d) => [d.id, String(d.name || d.path || d.id)])];
-  return { pick: true, value: offered.some((d) => d.id === picked) ? picked : "", options };
+  const pick = !conversation?.messages?.length;
+  const kept = info.dir?.kind === "offered" ? String(info.dir.id || "") : "";
+  const value = pick ? (offered.some((d) => d.id === picked) ? picked : "") : kept;
+  const known = options.find(([v]) => v === value);
+  const text = known ? known[1] : String(info.dir.name || "");
+  return { pick, value, options: known ? options : [...options, [value, text]], text };
 }
 
-// The directory whose sessions History lists under "On {computer}" (the
-// CLI's own, started in a terminal or an editor: GET
-// /api/local-agents/sessions' `dir`), as the chat's picker names it: the
-// work folder's id (`folder_id`) where the reader made its vault (the
-// server's `dir` then names its `path` on this computer; another computer
-// keeps the reader's own alone), an offered directory's id, the one picked
-// for a conversation that begins; "" for none: a co-author's agent, a
-// directory of its own (it holds Gamma's sessions alone), a vault another
-// account made on this computer (its directory is its maker's).
+// The composer chip's hint on an agent of its menu that cannot answer now
+// (chat/AgentChip.jsx): {text, problem, title}, "offline" for another
+// computer that is away, "not ready" (amber: `problem`) for an agent with a
+// problem, the whole of it as the row's title; null for one that can. The
+// row stays pickable: the chat then says why.
+export function agentHint(agent) {
+  if (agent?.remote && agent.online === false) {
+    return { text: t("offline"), problem: false, title: t("{computer} is offline: send this once it connects.", { computer: agent.where }) };
+  }
+  if (agent?.ready === false) return { text: t("not ready"), problem: true, title: String(agent.problem || "") };
+  return null;
+}
+
+// The directory whose sessions History lists under "Codex sessions in
+// paper" (sessionsWords; the CLI's own, started in a terminal or an
+// editor: GET /api/local-agents/sessions' `dir`), as the chat's picker
+// names it: the work folder's id (`folder_id`) where the reader made its
+// vault (the server's `dir` then names its `path` on this computer;
+// another computer keeps the reader's own alone), an offered directory's
+// id, the one picked for a conversation that begins; "" for none: a
+// co-author's agent, a directory of its own (it holds Gamma's sessions
+// alone), a vault another account made on this computer (its directory is
+// its maker's).
 export function sessionsDir(info, place = null) {
   if (!info || info.lent) return "";
   if (info.dir?.kind === "vault") return info.dir.path || isRemote(info) ? String(info.folder_id || "") : "";
   if (info.dir?.kind === "offered") return String(info.dir.id || "");
   return place?.pick ? String(place.value || "") : "";
+}
+
+// What History says of those sessions (`label` the agent's name, `place`
+// workPlace's, `where` another computer's name, "" for this one's agent):
+// {caption, empty}, the section's caption naming the CLI and the directory
+// ("Codex sessions in paper", "… on TIM-PC" for another computer) and the
+// line in place of its rows while it has none ("Sessions you start with
+// Codex in paper show here."). The directory is the synced folder's, the
+// offered one's or the one picked for a conversation that begins, by name.
+export function sessionsWords(info, label, place = null, where = "") {
+  const named = info?.dir?.kind === "vault" || info?.dir?.kind === "offered" ? info.dir.name || info.folder
+    : place?.pick ? (place.options || []).find(([id]) => id === place.value)?.[1] : "";
+  const words = { agent: label, dir: String(named || ""), computer: where };
+  return {
+    caption: where ? t("{agent} sessions in {dir} on {computer}", words) : t("{agent} sessions in {dir}", words),
+    empty: t("Sessions you start with {agent} in {dir} show here.", words),
+  };
 }
 
 // Why another computer lists no session (GET /api/local-agents/sessions'
@@ -444,14 +490,14 @@ const SOURCE_WORDS = { cli: T("Terminal"), vscode: T("VS Code"), exec: T("Script
 
 // The sessions GET /api/local-agents/sessions lists ([{id, title, at,
 // created, source, ours, busy}]) as History's rows (chat/ChatHistoryPop.jsx):
-// {id, title, preview, updated_at, by, busy}, `by` "In Gamma" for one a
-// conversation of Gamma's continues, else what it was started from, `busy`
-// why it cannot be opened now (another window of `label`'s has it open), ""
-// while it can.
+// {id, title, preview, updated_at, by, busy}, `by` "Continued here" for one
+// a conversation of Gamma's continues, else what it was started from,
+// `busy` why it cannot be opened now (another window of `label`'s has it
+// open: the row says it under its title), "" while it can.
 export function sessionRows(sessions, label) {
   return (sessions || []).map((s) => ({
     id: s.id, title: s.title || "", preview: "", updated_at: s.at || "",
-    by: s.ours ? t("In Gamma") : SOURCE_WORDS[s.source] ? t(SOURCE_WORDS[s.source]) : "",
+    by: s.ours ? t("Continued here") : SOURCE_WORDS[s.source] ? t(SOURCE_WORDS[s.source]) : "",
     busy: s.busy ? t("{agent} has this session open in another window: close it there first.", { agent: label }) : "",
   }));
 }
@@ -480,13 +526,15 @@ export function emptyLine(info, label, where = "", place = null, page = true) {
 }
 
 // The strip under the header: {text, kind}, `kind` its look ("ready",
-// "working", "waiting", "asking", "problem", "paused", "away"). `info` is
+// "checking" with a spinner, "asking" with a shield; amber "problem",
+// "paused" and "away"). `info` is
 // the server's `computer` ({label, ready, problem, folder, paused, turn:
 // {turn_id, state, ahead} | null}, and for another computer's agent
 // {computer, online, since, remote: true}) or, until it is read, the
 // picked agent's (chat/agents.js stripFacts); `live` the
-// conversation's turn still to end, whose step, or what it asks, the strip
-// names. Another computer is named ("Codex on TIM-PC · paper"), and while
+// conversation's turn still to end, what it asks the strip names. While a
+// turn is queued or runs the strip keeps its resting line: the turn's pill
+// says how it goes (turnLabel). Another computer is named ("Codex on TIM-PC · paper"), and while
 // it is away the strip says so and that a message goes once it is back
 // ("TIM-PC is offline since 2:02 PM: send this once it connects."); a
 // turn queued before it went away says it waits for it; one of it that
@@ -525,13 +573,6 @@ export function stripLine(info, live = null, now = new Date()) {
       kind: "away",
     };
   }
-  if (turn?.state === "queued") {
-    return turn.ahead ? { text: t("Waiting for {agent} to finish its other work in this folder", { agent }), kind: "waiting" }
-      : { text: t("Starting {agent}…", { agent }), kind: "working" };
-  }
-  if (turn?.state === "running") {
-    return { text: agentWorking(agent, stepNow(currentStep(live))), kind: "working" };
-  }
   if (away) {
     return {
       text: when ? t("{computer} is offline since {when}: send this once it connects.", { computer: away, when })
@@ -540,7 +581,7 @@ export function stripLine(info, live = null, now = new Date()) {
     };
   }
   if (info?.ready === false) return { text: String(info.problem || ""), kind: "problem" };
-  if (info?.ready == null) return { text: t("Checking {agent}…", { agent }), kind: "ready" };
+  if (info?.ready == null) return { text: t("Checking {agent}…", { agent }), kind: "checking" };
   const named = info.lent?.by ? t("{owner}'s {agent}", { owner: info.lent.by, agent }) : agent;
   const here = remote ? t("{agent} on {computer}", { agent: named, computer }) : t("{agent} on this computer", { agent: named });
   return { text: info.folder ? `${here} · ${info.folder}` : here, kind: "ready" };
@@ -559,10 +600,12 @@ export function canSend(info, conversation, text) {
 // chips of Gamma AI's tool calls, with no call to unfold): its words, its
 // icon by a kind of the chat's own (chat/AgentChanges.jsx ACTION_ICONS: a
 // file read, a file edited, a command, a search, other work; a call of
-// Gamma's tools the kind Gamma AI's own call of that tool has, so the
-// steps pill counts it as it counts Gamma AI's reads, chat/agentSteps.js
-// stepsSummary), none of which is a change of the library or the notes
-// (chat/agentSteps.js isChange), and whether it failed or was not allowed.
+// Gamma's tools the kind Gamma AI's own call of that tool has), none of
+// which is a change of the library or the notes (chat/agentSteps.js
+// isChange), and whether it failed or was not allowed; a file's `path` and
+// a command's `program`, which the ended turn's pill counts and names
+// (chat/agentSteps.js stepsSummary: "read 2 files, edited 1 file, ran
+// latexmk", a call of Gamma's tools counted as Gamma AI's reads are).
 const STEP_KINDS = { read: "file", edit: "fileEdit", run: "run", search: "search" };
 // A writing tool's call is a step of its own kind, "write": what it wrote is
 // the agent's own, listed in the thread or on the page, never under the
@@ -576,6 +619,7 @@ const chipKind = (step) => (step?.kind === "gamma" ? GAMMA_KINDS[step.tool] || "
 export function stepChip(step) {
   return {
     kind: chipKind(step), summary: stepText(step),
+    ...(step?.path ? { path: step.path } : {}), ...(step?.program ? { program: step.program } : {}),
     ...(step?.status === "failed" ? { error: true } : {}), ...(step?.status === "declined" ? { declined: true } : {}),
   };
 }
@@ -587,7 +631,8 @@ export function stepChip(step) {
 // the agent's {id, role: "ai", turnId, label, text, partial, pill, actions,
 // asks, files, notice, threads, model, effort}: `partial` while its turn
 // is queued or running (the reply as it is typed), `pill` the steps pill's {label,
-// waiting} (turnLabel), `actions` its steps as chips (stepChip), `asks`
+// waiting, queued} (turnLabel; `queued` while the turn waits its turn, drawn
+// with a clock and no shimmer), `actions` its steps as chips (stepChip), `asks`
 // what it waits on the person for, while it does (another computer's
 // too, where that computer relays them), `files` what it changed (turnChanges, with `vault` while it
 // works in a work folder's directory, whose paths a link opens), `notice`
@@ -613,11 +658,13 @@ export function shownMessages(conversation, info) {
     const by = m.label || label;
     const text = m.text || "";
     const files = turnChanges(m);
+    const waiting = live && (!!m.asks?.length || m.waiting === true);
+    const ahead = !!m.turn_id && info?.turn?.turn_id === m.turn_id && info.turn.ahead === true;
     return {
       id: m.id, role: "ai", turnId: m.turn_id, label: by,
       text: m.state === "stopped" ? [text, `*(${t("stopped")})*`].filter(Boolean).join("\n\n") : text,
       partial: live,
-      pill: { label: turnLabel(m, label, away, computer), waiting: live && (!!m.asks?.length || m.waiting === true) },
+      pill: { label: turnLabel(m, label, away, computer, ahead), waiting, queued: live && !waiting && m.state === "queued" },
       actions: (m.steps || []).map(stepChip),
       asks: live ? m.asks || [] : [],
       files: files ? { ...files, vault } : null,
@@ -646,18 +693,29 @@ export function shownMessages(conversation, info) {
 // ("gamma" the id of Gamma AI's), `lent` a co-author's, which the chat
 // shows in place of its own (chatSide.js showInChat) and only reads,
 // stops, answers and exports, `by` what names it ("bob's chat with
-// Codex").
-export function historyRows({ shown = null, agent = GAMMA, shownId = "", gamma = [], gammaNow = null, computer = null } = {}) {
+// Codex"). While the chat lists several agents (`agents`, chat/agents.js
+// chatAgents) a row also has `agentName`, its agent as the picker names it
+// ("Gamma AI", "Codex on TIM-PC": agentChoice; an agent no longer listed
+// by its name), which a computer agent's row says in its `by`.
+export function historyRows({ shown = null, agent = GAMMA, shownId = "", gamma = [], gammaNow = null, computer = null,
+  agents = [] } = {}) {
   const at = (row) => Date.parse(row.updated_at || "") || 0;
-  const theirs = (c, current = false) => ({ id: c.id, agent: c.agent_id || c.agent, title: c.title || "", preview: "",
-    updated_at: c.updated_at || "", ...(current ? { current: true } : {}) });
+  const several = (agents || []).length > 1;
+  const named = (row, name = "") => {
+    if (!several) return row;
+    const found = agents.find((a) => a.id === row.agent || (a.agentId && a.agentId === row.agent));
+    const agentName = found ? agentChoice(found) : row.agent === GAMMA ? t("Gamma AI") : agentLabel(name || row.agent);
+    return { ...row, agentName, ...(row.agent !== GAMMA ? { by: agentName } : {}) };
+  };
+  const theirs = (c, current = false) => named({ id: c.id, agent: c.agent_id || c.agent, title: c.title || "", preview: "",
+    updated_at: c.updated_at || "", ...(current ? { current: true } : {}) }, c.agent);
   const others = [
-    ...(gamma || []).map((s) => ({ ...s, agent: GAMMA })),
-    ...(agent !== GAMMA && gammaNow ? [{ id: GAMMA, agent: GAMMA, ...gammaNow, current: true }] : []),
+    ...(gamma || []).map((s) => named({ ...s, agent: GAMMA })),
+    ...(agent !== GAMMA && gammaNow ? [named({ id: GAMMA, agent: GAMMA, ...gammaNow, current: true })] : []),
     ...(computer?.conversations || []).map((c) => theirs(c)),
     ...(computer?.active && computer.active.id !== shownId ? [theirs(computer.active, true)] : []),
     ...(computer?.lent || []).filter((c) => c.id !== shownId).map((c) => ({ ...theirs(c), lent: true,
       by: t("{person}'s chat with {agent}", { person: c.person || t("Someone"), agent: agentLabel(c.agent) }) })),
   ].sort((a, b) => at(b) - at(a));
-  return [...(shown ? [{ id: "", agent, ...shown, updated_at: "", active: true }] : []), ...others];
+  return [...(shown ? [named({ id: "", agent, ...shown, updated_at: "", active: true })] : []), ...others];
 }

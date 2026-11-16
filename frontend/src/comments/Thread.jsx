@@ -10,26 +10,36 @@
 // thread's Resolve and its reply field once the thread is the active one.
 // Under the first comment a line says when its place moved in a new
 // version. While the reader's turn of the thread with an agent is to end
-// (docs/dev/comments.md "Sent to an agent"), the thread carries its chip
+// (docs/dev/comments.md "Sent to an agent"), the thread carries its row
 // (comments.js turnChip: Codex is working, with Stop; Codex is waiting for
-// you, which opens the conversation in the chat, where its card is), and an
-// agent's reply in a thread the reader sent it offers Open in chat, the
-// thread's conversation with its steps and what it changed.
+// you, whose Answer in the chat opens the conversation in the chat, where
+// its card is); a send of the reader's that started no turn keeps a row
+// there too until the next send (refusalChip: Not sent to Codex, why, Send
+// again). The note a turn's end wrote reads as that turn's state, not as an
+// answer (turnEnd: Codex could not finish, and why). The newest agent reply
+// of a thread the reader sent it has Open in chat, the thread's
+// conversation with its steps and what it changed, and each agent comment's
+// "⋯" has it too.
 // A comment that comes (a reply, yours or someone's) rises into place
 // (ListMotion).
 import React, { startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
-import { CheckIcon, FlagIcon, LinkIcon, MessageSquareIcon, PencilIcon, RefreshIcon, StopIcon, Trash2Icon } from "../shared/ui/Icons";
+import {
+  AlertCircleIcon, CheckIcon, ClockIcon, FlagIcon, LinkIcon, PencilIcon, RefreshIcon, ShieldIcon, SparklesIcon, StopIcon, Trash2Icon,
+} from "../shared/ui/Icons";
 import ListMotion from "../shared/ui/ListMotion";
 import { IconSwap } from "../shared/ui/MotionWidgets";
-import { StateTag } from "../shared/ui/StateTag";
-import { AgentAvatar, PersonAvatar } from "../collaboration/Presence";
+import { StateDetail, StateTag } from "../shared/ui/StateTag";
+import { ActorAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { MentionContext } from "../editor/MentionMenu";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { CommentComposer, hasDraft } from "./CommentComposer";
-import { agentFor, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen, resolvedBy, turnChip } from "./comments.js";
+import {
+  agentFor, authorLabel, authorTitle, canDeleteComment, canEditComment, canReportComment, estimatedLines, isEdited, isOpen, refusalChip,
+  resolvedBy, turnChip, turnEnd,
+} from "./comments.js";
 import { openReport } from "../support/reportContent.js";
 import { ThreadPlaceContext } from "./threadPlaceContext.js";
 
@@ -41,12 +51,34 @@ const PLACE_TEXT = {
   earlier: () => t("Drawn on an earlier version"),
 };
 
-// The avatar of a comment's writer: an agent's by its kind, else its
-// author's (the Comments window's rows draw it too).
-export function CommentAvatar({ comment }) {
-  return comment.agent ? <AgentAvatar kind={comment.agent_kind} title={authorTitle(comment)} />
-    : <PersonAvatar name={comment.author || "?"} title={comment.author} />;
+// The glyph a turn's state leads with at rest (StateTag's `icon`; while
+// the agent works a spinner instead), by its kind (comments.js turnChip,
+// refusalChip, turnEnd): the shield while it waits for the person's
+// answer, as the chat's steps pill has it, the clock in the queue, the
+// alert for a failure or a send refused, the stop square for a stop.
+const TURN_ICONS = {
+  asking: ShieldIcon, waiting: ShieldIcon, queued: ClockIcon, failed: AlertCircleIcon, refused: AlertCircleIcon,
+  stopped: StopIcon, empty: StopIcon,
+};
+const withIcon = (state) => ({ ...state, icon: TURN_ICONS[state.kind] || null });
+
+// A thread's turn as its tag, its glyph by its kind, "for bob" after it
+// for a co-author's turn of the reader's agent: the thread's turn row
+// and the Comments window's row.
+export function TurnTag({ state }) {
+  return (
+    <>
+      <StateTag state={withIcon(state)} data-turn={state.kind} />
+      {state.person ? <span className="commentTurnFor">{t("for {person}", { person: state.person })}</span> : null}
+    </>
+  );
 }
+
+// The avatar of a comment's writer (Presence.jsx ActorAvatar): an agent's
+// by its kind, else its author's; the Comments window's rows draw it too.
+export const CommentAvatar = ({ comment }) => (
+  <ActorAvatar name={comment.author} kind={comment.agent ? comment.agent_kind || "" : ""} title={authorTitle(comment)} />
+);
 
 // A comment's text, rendered as a note is. One put off (`later`) is drawn
 // once it comes within a screen of the view (the popover's list, else the
@@ -84,10 +116,14 @@ function CommentText({ comment, later, labelsFor, onBlockRefClick }) {
 // `reply`: a comment after the first, stepped in under the first one's
 // text. `later`: the ids of the comments drawn as they near the view.
 // Without `actions` (a margin card at rest) the line has neither.
-// `onOpenChat`: on an agent's reply in a thread the reader sent it, its
-// Open in chat. `editRefused`: why an edit of it that names an agent is not
-// sent ("closed", "not_newest"; "" when it would be), for its field to say.
-function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null, place = "", reply = false, actions = true, onOpenChat = null, editRefused = "" }) {
+// `onOpenChat`: on an agent's comment in a thread the reader sent it, its
+// "⋯" menu's Open in chat, and with `chatButton` (the thread's newest such
+// reply: one way in a thread) the same as a button on its author line.
+// `editRefused`: why an edit of it that names an agent is not sent
+// ("closed", "not_newest"; "" when it would be), for its field to say. The
+// note a turn's end wrote (`turn_end`) shows that turn's state in place of
+// its English text (comments.js turnEnd).
+function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null, place = "", reply = false, actions = true, onOpenChat = null, chatButton = false, editRefused = "" }) {
   const [menu, setMenu] = useState(null);
   const [editing, setEditing] = useState(() => hasDraft(`edit:${comment.id}`)); // an edit left unsaved
   const mayEdit = canComment && canEditComment(comment, me);
@@ -96,6 +132,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
   const who = authorLabel(comment);
   const byline = authorTitle(comment);
   const placeText = PLACE_TEXT[place]?.();
+  const end = turnEnd(comment);
   // In the reader's own comments an agent's "@name" is that agent's chip:
   // there the server sent the comment to it (the field's `links.agents`).
   const agents = !comment.agent && !!me && comment.author === me ? field?.links?.agents || null : null;
@@ -114,16 +151,16 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
           </span>
           {isEdited(comment) ? <span className="commentEdited">{t("edited")}</span> : null}
           <span className="commentMetaSpacer" />
-          {onOpenChat && actions ? (
-            <button type="button" className="uiBtn sm ghost commentOpenChat" onClick={onOpenChat}
-              title={t("Open this thread's conversation in the chat: its steps and what it changed")}>
-              {t("Open in chat")}
+          {onOpenChat && chatButton && actions ? (
+            <button type="button" className="ctlBtn commentOpenChat" onClick={onOpenChat}
+              aria-label={t("Open in chat")} title={t("Open in chat")}>
+              <SparklesIcon size={14} />
             </button>
           ) : null}
           {resolve && actions ? (
             <button type="button" className="ctlBtn commentResolve" onClick={resolve.onClick}
               aria-label={resolve.open ? t("Resolve") : t("Reopen")}
-              title={resolve.open ? t("Resolve this thread: it leaves the note and stays in the Comments window") : t("Reopen this thread")}>
+              title={resolve.open ? t("Resolve this comment: it leaves the note and stays in the Comments window") : t("Reopen this comment")}>
               <IconSwap swap={!resolve.open} from={<CheckIcon size={14} />} to={<RefreshIcon size={14} />} />
             </button>
           ) : null}
@@ -137,12 +174,18 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
             onSubmit={async (body) => { const ok = await onEdit(comment.id, body); if (ok) setEditing(false); return ok; }} />
         ) : comment.deleted ? (
           <div className="commentDeleted">{t("Comment deleted")}</div>
+        ) : end ? (
+          <div className="commentEnd" data-turn-end={end.kind}>
+            <StateTag state={withIcon(end)} />
+            <StateDetail state={end} />
+          </div>
         ) : mentions ? <MentionContext.Provider value={mentions}>{text}</MentionContext.Provider> : text}
         {placeText ? <div className="commentThreadState" data-place={place}>{placeText}</div> : null}
       </div>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} aria-label={t("Comment actions")}>
           {mayEdit ? <MenuItem icon={PencilIcon} onClick={() => { setMenu(null); setEditing(true); }}>{t("Edit")}</MenuItem> : null}
+          {onOpenChat ? <MenuItem icon={SparklesIcon} onClick={() => { setMenu(null); onOpenChat(); }}>{t("Open in chat")}</MenuItem> : null}
           <MenuItem icon={LinkIcon} onClick={() => { setMenu(null); onCopyLink(comment); }}>{t("Copy link")}</MenuItem>
           {canReportComment(comment, me) ? (
             <MenuItem icon={FlagIcon} title={t("Tell the people who run this server about this comment")}
@@ -170,11 +213,21 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
 export function Thread({ thread, focused = false, active, onActivate, canComment, me, people, onResolve, onReply, summary = false, ...rest }) {
   const open = isOpen(thread);
   const ref = useRef(null);
+  // The turn row: the reader's turn still to end, else their last send to
+  // an agent here that started none, with Send again (the comment saved
+  // unchanged with the agent's id, `onEdit`) where it can help.
   const chip = turnChip(thread);
+  const refusal = chip ? null : refusalChip(thread.refused);
+  const turn = chip || refusal;
+  const unsent = refusal?.retry ? thread.comments.find((c) => c.id === refusal.comment && !c.deleted) : null;
+  const sendAgain = unsent && canComment && rest.onEdit ? () => rest.onEdit(unsent.id, unsent.body, refusal.to) : null;
   // The reader's conversation of the thread with an agent: its turn's Stop
-  // and Open in chat (App's, through the field's `links`).
+  // and Open in chat (App's, through the field's `links`), on the newest
+  // agent reply's author line and in each agent comment's "⋯".
   const { onOpenChat, onStopTurn } = rest.field?.links || {};
   const openChat = thread.agent_chat && onOpenChat ? () => onOpenChat(thread) : null;
+  const byAgent = (c) => c.agent_kind === "computer" && !!c.agent_id;
+  const newestAgent = thread.comments.findLast((c) => !c.deleted && byAgent(c))?.id;
   const place = useContext(ThreadPlaceContext)?.(thread) || "";
   useEffect(() => {
     if (focused) ref.current?.scrollIntoView({ block: "nearest" });
@@ -197,7 +250,7 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
       data-thread-id={thread.id} data-guide="comments.thread"
       onClick={activate}
       tabIndex={canActivate ? 0 : undefined}
-      aria-label={canActivate ? (canComment ? t("Reply to this thread") : t("Show this thread")) : undefined}
+      aria-label={canActivate ? (canComment ? t("Reply to this comment") : t("Show this comment")) : undefined}
       onKeyDown={(e) => { if (canActivate && e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onActivate(thread.id); } }}>
       {/* a card opening to its whole thread is another list: nothing comes in */}
       <ListMotion keys={comments.map((c) => c.id)} scope={collapsed} enter="rise" moves={false}>
@@ -205,27 +258,30 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
           <Comment key={c.id} comment={c} me={me} canComment={canComment} people={people} {...rest} actions={!collapsed}
             reply={i > 0} resolve={i === 0 && canComment ? { open, onClick: () => onResolve(thread.id, open) } : null}
             place={i === 0 ? place : ""} editRefused={editRefused(c)}
-            onOpenChat={c.agent_kind === "computer" && c.agent_id ? openChat : null} />
+            onOpenChat={byAgent(c) ? openChat : null} chatButton={c.id === newestAgent} />
         ))}
       </ListMotion>
       {collapsed && replies > 0 ? (
         <div className="commentReplies">{tn("{n} reply", "{n} replies", replies)}</div>
       ) : null}
-      {chip ? (
-        <div className="commentTurn" data-turn={chip.kind}>
-          <StateTag state={chip} />
+      {turn ? (
+        // a live region: the turn's state is read as it changes; its row wraps in a narrow card
+        <div className="commentTurn" data-turn={turn.kind} role="status">
+          <TurnTag state={turn} />
           <span className="commentMetaSpacer" />
-          {chip.open && openChat ? (
+          {chip?.open && openChat ? (
             <button type="button" className="uiBtn sm" onClick={openChat}>
-              <MessageSquareIcon size={14} />{t("Answer in the chat")}
+              <SparklesIcon size={14} />{t("Answer in the chat")}
             </button>
           ) : null}
-          {chip.stop && onStopTurn ? (
+          {chip?.stop && onStopTurn ? (
             <button type="button" className="ctlBtn commentTurnStop" onClick={() => onStopTurn(thread)}
               aria-label={t("Stop {agent}", { agent: thread.agent_chat.label })} title={t("Stop {agent}", { agent: thread.agent_chat.label })}>
               <StopIcon size={14} />
             </button>
           ) : null}
+          {sendAgain ? <button type="button" className="uiBtn sm commentTurnRetry" onClick={sendAgain}>{t("Send again")}</button> : null}
+          <StateDetail state={turn} />
         </div>
       ) : null}
       {replying ? (

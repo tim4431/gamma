@@ -171,7 +171,7 @@ work in such a folder for that server's chats and comments
   member of that workspace can read what is uploaded. The leaving files'
   counts come from that server's `POST /api/pages/summaries` (`notes`,
   `open_comments`), null when it cannot answer.
-- **Removing** (the sync panel's *Detach…*, with its choice, below), and
+- **Removing** (the sync panel's *Stop syncing…*, with its choice, below), and
   cancelling one still choosing, reads the files from that server (asked
   with the dialog's 15 s, not a round's 120 s); while it cannot be reached
   either is refused (409 "The other server cannot be reached: remove the
@@ -615,7 +615,7 @@ AI tools and the client:
 | `trash` | A synced folder's file leaves when its file is deleted or untracked: use Choose files…. |
 | `restore` | It comes back when its file is tracked again. |
 | `directories` | A synced folder's directories follow the disk. |
-| `remove` | Detach the synced folder to delete its folder. |
+| `remove` | Stop syncing the synced folder to delete its folder. |
 | `document` | That file's PDF is read where it is: it cannot be changed in Gamma. |
 
 S2, the folder tree's refusals and a person's new page filed in a work
@@ -895,9 +895,17 @@ columns the header names: Format (`libraryUtils.pageFormat`: its
 document's, else its name's, a text file by its language; `formatLabel`
 names a format or such a `{format, language}`; a directory's the files
 below it, the listing's `work_counts` summed down its subtree), File size
-(`doc.size`; a note has none), Modified and Comments (its open threads).
-The sort is the view's own (name, format, size or modified), kept in this
-browser, and the filter box keeps the files whose names hold its text.
+(`doc.size`; a note has none), Modified and Comments (its open threads);
+on a phone the name wraps on a line of its own and the cells go on a
+muted line under it, the header gone. The sort is the view's own (name,
+format, size or modified), kept in this browser, and the filter box keeps
+the files whose names hold its text.
+
+- **The heading** says it is a synced folder: the synced folder's glyph
+  leads the crumbs ("File icons" below), the keeper's `StateTag` follows
+  them (who keeps it and how it syncs), and a `MenuButton` opens the menu
+  of the directory shown; W's own crumb opens W's menu on a right-click or
+  a held finger.
 
 - **The state** is one explorer hook, `useFolderTree.js` (the sort, the
   directories open in the view, this tab's, the row the keys are on), over
@@ -913,8 +921,12 @@ browser, and the filter box keeps the files whose names hold its text.
   is the folder menu. The keys are the Files window's ([ui-design.md](ui-design.md)
   "Keyboard focus", `explorer/useTree.js`): Enter opens a file, Space
   selects it.
-- **Go to folder**, a file's tab's right-click menu in any window
-  (App's `goToFile`): home on the file's directory, the file selected.
+- **Show in folder view**, a file's tab's right-click menu in any window,
+  and the crumb of the file's own directory over its page (App's
+  `goToFile`): home on the file's directory, the file selected. (The
+  desktop app's *Show in Explorer*, *Show in Finder* or *Show in file
+  manager* beside it is the system's file manager: `vaultState.js`
+  `revealLabel`.)
   `useFolderTree`'s `showFile` pages that directory until it holds the file
   (`useDirectoryRows` `find`), and `FolderTree` scrolls its row into sight
   and puts the keys on it once it is drawn, letting go when the directory
@@ -922,9 +934,14 @@ browser, and the filter box keeps the files whose names hold its text.
   `fileTree.js` `pagedFor`). The selection effect that clears a selection
   on a change of folder keeps this one.
 - **Empty**: "Nothing tracked yet." with Choose files… on the work folder
-  itself, "No tracked files here." in a directory, that no file matches the
-  filter, "Choosing files…" while the vault still waits for its first
-  choice; a read not in yet or failed is the tree's own note row.
+  itself where this desktop app keeps it, and elsewhere where its files are
+  chosen ("Choose its files in Gamma on TIM-PC.", the keeper's name where
+  the account is told it); "No tracked files here." in a directory, that no
+  file matches the filter, "Waiting for the first choice of files." (with
+  Choose files…) while the vault still waits for its first choice; a read
+  not in yet or failed is the tree's own note row, its "Reading…" fading in
+  late (`.loadingHint`), and a "Show {n} more files" row says "Loading…"
+  while it reads.
 
 ## File icons
 
@@ -948,8 +965,9 @@ folder its `FolderIcon`.
   parent (`.config/graphqlrc`); then the language VS Code's built-in
   associations give the path (`LANGUAGES`: twelve, `.gitignore`,
   `tsconfig.*.json`, `Dockerfile.*`, `Jenkinsfile*`…), else the default; a
-  directory by its name, `open` its open icon; W itself always the theme's
-  root folder; the light theme's variants on a light scheme.
+  directory by its name, `open` its open icon; W itself the theme's root
+  folder (which `FileIcon` never draws: below); the light theme's variants
+  on a light scheme.
 - **Drawn** by `shared/ui/FileIcon.jsx`: an `<img>` of the icon's URL; a
   name the theme has no icon for, a page with no file name and an icon that
   fails to load draw `FileGlyph` (a directory `FolderIcon`). Where: the
@@ -959,16 +977,24 @@ folder its `FolderIcon`.
   passage's source line in the chat's composer (`SelChip`'s `file`), the
   `@` and `[[` pickers' page rows and Linked from, each by the file's name
   (`file_name`) or path.
-- **The root**: W's card and row in the library, and its row in the Files
-  window, wear the root folder's icon and say the computer that keeps it
-  and how its sync stands (`vault/vaultState.js` `folderKeeper`, read by
-  `useWorkFolderActions.jsx` `keeperOf`): in the desktop app that keeps it,
-  "This computer" and its link's state (Synced, Syncing…, Paused, Not
-  syncing, Choosing files…); in any other window, to the account whose
+- **The root**: W's card and row in the library, its row in the Files
+  window and the folder view's heading wear Gamma's synced folder glyph
+  (`Icons.jsx` `SyncedFolderIcon`, lucide's folder-sync: the folder open
+  at its corner for two sync arrows, in place of the theme's root ring,
+  which read as an empty status dot), its arrows in the tone of its sync
+  (`ok` synced or connected, accent while syncing or choosing, `warn` not
+  syncing or offline). They say the computer that keeps it and how its
+  sync stands as a `StateTag` (`vault/vaultState.js` `folderKeeper`, read
+  by `useWorkFolderActions.jsx` `keeperOf`): in the desktop app that keeps
+  it, "This computer" and its link's state (Synced, Syncing… with a
+  spinner, Paused, Not syncing in `warn` with its round's error in the
+  title, Choosing files…); in any other window, to the account whose
   computer keeps it, that computer's name and whether it is connected,
-  paused there or offline since when, from `GET /api/folders/computers`
-  (`registry.of_folders`, read again with the listing). A card nobody this
-  account knows keeps says "Synced folder".
+  paused there or offline since when (`warn`), from `GET
+  /api/folders/computers` (`registry.of_folders`, read again with the
+  listing). The tag gives way before the name (`flex-shrink` 10, at most
+  45 %), and on a phone a row's takes a line under the name. A card nobody
+  this account knows keeps says "Synced folder".
 
 Tests: `frontend/tests/fileIcons.test.mjs` (the rule against the theme's
 own manifest: the cases VS Code was seen to draw, the languages, folders,
@@ -1217,7 +1243,9 @@ Lowering the push is refused while a file is not in the library.
 ## Detaching a work folder
 
 Detach is the one way a work folder leaves Gamma; the interface calls it a
-synced folder (*Detach from TIM-PC…*). It stops the sync and leaves the
+synced folder and the action *Stop syncing* (*Stop syncing with
+TIM-PC…*, 停止同步), never "Detach": a clone's or a Zotero link's
+Detach is a pause that keeps the link, this is not. It stops the sync and leaves the
 directory as it is: only Gamma's own marker, its annotation files
 (`.gamma/annotations/`, regenerable: [annotations.md](annotations.md) "The files")
 and then `.gamma/`, when that leaves it empty, are taken away. It asks
@@ -1246,7 +1274,7 @@ W:
 
 - **A synced vault of this server** (the desktop app's own server): the
   vault is removed with the choice (`folder_links.delete_link`, the same
-  operation as the sync panel's *Detach…*, `DELETE
+  operation as the sync panel's *Stop syncing…*, `DELETE
   /api/folder-links/{id}?pages=`). A link that was a work folder and has
   not been let go yet is let go the same way.
 - **A computer's vault over its channel** (a work folder of this server
@@ -1259,7 +1287,7 @@ W:
   (`let_go`, [computers.md](computers.md) "The server"): its round finds
   the mark gone (`LET_GO_THERE`), its agent's run there stops ("Stopped:
   the synced folder was detached."), and the desktop app forgets the vault
-  as *Detach…* forgets one, its directory as it is but for `.gamma/`. A
+  as *Stop syncing…* forgets one, its directory as it is but for `.gamma/`. A
   computer offline finds it at its next round. The chat turns queued for a
   computer in its pages fail at once (`chats.fail_detached`, its pages
   read before the let go unstamps them; a let go refused fails none).
@@ -1282,20 +1310,36 @@ work folder not answering). `GET` answers `{may, files, in_library,
 too_large, bytes, computer: {name, online} | null}`: the files, those in
 the library already, those too large to keep, the bytes keep stores and
 the computer that keeps W, named to its own account alone ([computers.md](computers.md)
-"Trust"); `{may: false}` alone to a member who may not. `POST {pages}`
+"Trust"); `{may: false, why}` alone to a member who may not, `why` the
+rule that says no: `elsewhere` (a clone or a Zotero-linked workspace),
+`maker` (a vault of this server keeps it) or `keeper` (else). `POST {pages}`
 answers `{ok, kept, trashed, mark_stays?}`. `removal(link)` says the same
 counts of a vault of this server for the sync panel's question.
 
 **The client** (`explorer/DetachDialog.jsx`, its words `explorer/detach.js`,
-its state `useWorkFolderActions.jsx`): the folder's menu, in the library
-and the Files window, reads `GET …/detach` as it opens on a work folder's
-root and shows *Detach from {computer}…* (*Detach…* with no computer
-named) once the answer says the account may; the vault chip's card offers
-the same for the open file's work folder. The dialog says the files and
-the bytes, offers *Keep the files in Gamma* and *Remove them from Gamma*,
-says that the directory on the computer stays as it is (and, for a
-computer offline, that it forgets the folder when it is next online), and
-posts the choice; the status says what happened.
+its state `useWorkFolderActions.jsx`): `GET …/detach` is read ahead for
+each work folder's root, once as the listing names it in an account's
+session, and again as its menu or the vault chip opens. The folder's
+menu, in the library and the Files window, shows *Stop syncing with
+{computer}…* (*Stop syncing…* with no computer named) as a `danger` row
+in the last group: disabled while the plan is read, so the menu never
+grows under the pointer, and disabled with the rule's words as its title
+where the account may not ("Only the person whose computer keeps it, or
+the workspace's owner, can stop syncing it.", `detach.js`
+`detachRefusal`). W's Delete, and that of a library folder holding a work
+folder, shows disabled beside it, titled "Stop syncing the synced folder
+to delete its folder." (`folderRules` `deleteRefused`). The vault chip's
+card offers the same row for the open file's work folder, after a rule.
+The dialog leads with what it does ("Gamma stops syncing it with
+TIM-PC."), the files and those in the library, offers *Keep the files in
+Gamma* (a copy of each file stored, with the size) and *Remove them from
+Gamma*, says that the directory on the computer stays as it is (and, for
+a computer offline, that it forgets the folder when it is next online),
+and posts the choice from *Stop syncing* ("Stopping…" through
+`MorphText`); a read that fails is a `FormNotice` "Could not read the
+folder." with Try again, the button disabled until a read succeeds. The
+status says what happened ("Stopped syncing “Paper”: its files stay in
+Gamma as pages.").
 
 ## Add to library, Save a copy, Remove
 

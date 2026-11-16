@@ -1425,7 +1425,7 @@ export async function chatNavigationScenarios(env) {
         await page.locator(".chatPanel").screenshot({ path: `${server.dir}/approval-panel.png`, animations: "disabled" });
       }
       await card.getByRole("button", { name: "Allow in this chat", exact: true }).click();
-      await card.getByText("Allowed. The assistant goes on…").waitFor();
+      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText("Appending to a note…").waitFor();
       assertEq(JSON.stringify(await answers()), JSON.stringify([{ id: "a1", decision: "chat" }]));
       await push(edited("chat"));
@@ -1464,7 +1464,7 @@ export async function chatNavigationScenarios(env) {
       await card.getByText("Fetch doi:10.1234/e2e.cited").waitFor();
       // Don't allow asks, optionally, what to do instead; Back returns to the choices.
       await card.getByRole("button", { name: "Don't allow", exact: true }).click();
-      const instead = card.getByRole("textbox", { name: "What should the assistant do instead? (optional)" });
+      const instead = card.getByRole("textbox", { name: "Tell Gamma AI why, or what to do instead (optional)" });
       await instead.fill("Use the arXiv copy");
       await card.getByRole("button", { name: "Back", exact: true }).click();
       await card.getByRole("button", { name: "Allow once", exact: true }).waitFor();
@@ -1472,7 +1472,7 @@ export async function chatNavigationScenarios(env) {
       await instead.fill("Use the arXiv copy");
       if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-decline.png`, animations: "disabled" });
       await instead.press("Enter");
-      await card.getByText("Not allowed. The assistant goes on without it…").waitFor();
+      await card.getByText("Not allowed. Gamma AI goes on without it…").waitFor();
       assertEq(JSON.stringify((await answers())[1]), JSON.stringify({ id: "a2", decision: "deny", note: "Use the arXiv copy" }));
       await push({ action: { kind: "error", tool: "fetch_paper", summary: "Not allowed: fetch_paper", error: true,
         declined: true, approval: "deny", args: { source: "doi:10.1234/e2e.cited" }, result: "declined: the user did not allow this call" } });
@@ -1631,7 +1631,7 @@ export async function chatNavigationScenarios(env) {
       assertEq(JSON.stringify(await asking.getByRole("button").allInnerTexts()),
         JSON.stringify(["Allow once", "Allow in this chat", "Always allow", "Don't allow"]), "the card's answers");
       await asking.getByRole("button", { name: "Allow in this chat", exact: true }).click();
-      await card.getByText("Allowed. The assistant goes on…").waitFor();
+      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
       assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "t1", decision: "chat" }]));
       await until(async () => !(await row(one).locator(".noteReviewBar").count()), { what: "the answered card leaves its note" });
       // Allowed after the user saw it: when it lands it is not marked again.
@@ -1834,7 +1834,7 @@ export async function chatNavigationScenarios(env) {
       assert((await once.getAttribute("class")).split(" ").includes("danger"), "Allow once is the red button of a deletion");
       if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-delete-folder.png`, animations: "disabled" });
       await once.click();
-      await card.getByText("Allowed. The assistant goes on…").waitFor();
+      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText(`Deleting the folder ${name}…`).waitFor();
       assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "d1", decision: "once" }]));
 
@@ -2029,7 +2029,7 @@ export async function chatNavigationScenarios(env) {
       }
       if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-batch.png`, animations: "disabled" });
       await card.getByRole("button", { name: "Allow once", exact: true }).click();
-      await card.getByText("Allowed. The assistant goes on…").waitFor();
+      await card.getByText("Allowed. Gamma AI goes on…").waitFor();
       await page.locator(".chatSteps").getByText("Renaming 3 pages…").waitFor();
       assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "b1", decision: "once" }]));
 

@@ -124,12 +124,14 @@ function ScopeTag({ scope, prefs }) {
 // `tone="danger"`: the "Danger zone" of a pane or dialog — a red label and
 // rule over its rows in a red-edged box. Its buttons are `uiBtn sm
 // danger` (red at rest) and each row's hint says what is lost.
-export function Section({ title, scope, prefs, action, guide, tone, children }) {
+// `tag`: a uiTag after the title (Backups › Bucket's admin tag, a far
+// computer's Connected or Offline), so the title stays the section's name.
+export function Section({ title, tag, scope, prefs, action, guide, tone, children }) {
   const danger = tone === "danger";
   const body = (
     <>
       <div className={`setSection${danger ? " danger" : ""}`} data-setting={title}>
-        <span className="setSectionLabel">{title}</span>
+        <span className="setSectionLabel">{title}{tag}</span>
         <span className="setSectionRule" />
         {scope ? <ScopeTag scope={scope} prefs={prefs} /> : null}
         {action}

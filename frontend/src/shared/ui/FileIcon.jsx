@@ -5,19 +5,24 @@
 // library page), a file the theme has no icon for and an icon that fails to
 // load draw FileGlyph of `format` instead (a directory FolderIcon), and
 // while the map is first read the icon's room stays empty. `dir` a
-// directory, `open` an open one, `root` the synced folder itself; `size` in
-// px, none for a card's cover (.tileGlyph).
+// directory, `open` an open one, `root` the synced folder itself, which is
+// Gamma's SyncedFolderIcon, never the theme's (`badge` its sync's tone);
+// `size` in px, none for a card's cover (.tileGlyph).
 import { useState, useSyncExternalStore } from "react";
 import { iconFor, iconUrl, iconsNow, subscribeIcons } from "./fileIcons.js";
-import { FileGlyph, FolderGlyph, FolderIcon } from "./Icons";
+import { FileGlyph, FolderGlyph, FolderIcon, SyncedFolderIcon } from "./Icons";
 
 const unwatched = () => () => {};
 
-export default function FileIcon({ path = "", format = "", dir = false, open = false, root = false, size, className = "" }) {
-  const named = !!path || root;
+export default function FileIcon({ path = "", format = "", dir = false, open = false, root = false, badge = "", size, className = "" }) {
+  const named = !!path && !root;
   const icons = useSyncExternalStore(named ? subscribeIcons : unwatched, iconsNow);
   const [broken, setBroken] = useState("");
-  const folder = dir || root;
+  if (root) {
+    return size ? <SyncedFolderIcon size={size} badge={badge} className={className || undefined} />
+      : <SyncedFolderIcon size={null} strokeWidth={1.5} badge={badge} className={`tileGlyph${className ? ` ${className}` : ""}`} />;
+  }
+  const folder = dir;
   const fallback = folder ? (size ? <FolderIcon size={size} /> : <FolderGlyph />) : <FileGlyph format={format} size={size} />;
   if (!named || icons?.failed) return fallback;
   // the glyph's own classes, so every place that sets a kind glyph sets it

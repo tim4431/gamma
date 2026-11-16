@@ -23,8 +23,8 @@ import { BackupTasks } from "./BackupTasks";
 import { BackupBucket, BUCKET_COPIES_READ, BUCKET_READ, bucketWhere } from "./BackupBucket";
 import { backupsOf, useSettingsRead, useSettingsReads } from "./settingsReads.js";
 import { ActionMenu } from "../shared/ui/Menus";
-import { PaneHead, Section, Empty } from "./SettingsKit";
-import { CloudIcon, DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { PaneHead, Section, Empty, FormNotice, Row } from "./SettingsKit";
+import { CloudIcon, CloudUploadIcon, DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { TaskBlock } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
 import { useJobEnd } from "../tasks/useTasks";
@@ -207,7 +207,8 @@ export function WorkspaceBackups({ value }) {
             <button className="uiBtn sm" disabled={busy} title={t("Make a workspace of this copy, with you as its owner")}
               onClick={() => restoreCopy(ws, label, c, "new")}><ImportIcon size={14} /> {t("Restore as new…")}</button>
           )}
-          <button className="uiBtn sm iconSq" title={t("Delete this copy from the bucket")} aria-label={t("Delete")} onClick={() => removeCopy(ws, label, c)}>
+          <button className="uiBtn sm iconSq danger" title={t("Delete this copy from the bucket")}
+            aria-label={t("Delete the bucket's copy from {date}", { date: when(c) })} onClick={() => removeCopy(ws, label, c)}>
             <Trash2Icon size={16} />
           </button>
         </span>
@@ -261,9 +262,14 @@ export function WorkspaceBackups({ value }) {
       >
         {job ? <TaskBlock task={job} tasks={tasks} /> : null}
         {!list ? <Empty icon={DatabaseIcon} loading>{t("Loading…")}</Empty> : null}
-        {list?.error ? <div className="settingsPaneHint aiKeysError">{list.error}</div> : null}
+        {list?.error ? (
+          <FormNotice>
+            {t("Could not read the snapshots: {message}", { message: list.error })}{" "}
+            <button type="button" className="uiBtn sm" onClick={() => loadList(w.id)}>{t("Try again")}</button>
+          </FormNotice>
+        ) : null}
         {list && !list.error && !list.backups.length && !bucketOnly.length ? (
-          <div className="settingsPaneHint">{owner ? t("No snapshots yet.") : t("No snapshots yet — only an owner takes them.")}</div>
+          <Empty icon={DatabaseIcon}>{owner ? t("No snapshots yet.") : t("No snapshots yet — only an owner takes them.")}</Empty>
         ) : null}
         {(list?.backups || []).map((b) => (
           <div key={b.name} className="aiProvRow">
@@ -297,7 +303,8 @@ export function WorkspaceBackups({ value }) {
                 />
               ) : null}
               {owner ? (
-                <button className="uiBtn sm iconSq" title={t("Delete this snapshot")} aria-label={t("Delete")} onClick={() => remove(w, b)}>
+                <button className="uiBtn sm iconSq danger" title={t("Delete this snapshot")}
+                  aria-label={t("Delete the snapshot from {date}", { date: when(b) })} onClick={() => remove(w, b)}>
                   <Trash2Icon size={16} />
                 </button>
               ) : null}
@@ -319,8 +326,8 @@ export function WorkspaceBackups({ value }) {
         <>
           <BackupTasks workspaces={mine} bucket={bucketAt} confirm={confirm} onRefresh={loadList} onRan={bucketAt ? loadCopies : undefined} />
           {isAdmin ? <BackupBucket setStatus={setStatus} /> : null}
-          <Section title={t("Saved snapshots")} />
-          <div className="reportModalBtns settingsAlignStart">
+          {/* Back up all on the rule, as each workspace's Back up now is on its own. */}
+          <Section title={t("Saved snapshots")} action={(
             <ActionMenu
               label={tn("Back up {n} workspace", "Back up all {n} workspaces", owned.length)} icon={PlusIcon}
               disabled={!owned.length || owned.some((w) => busyIds.has(w.id))}
@@ -329,8 +336,14 @@ export function WorkspaceBackups({ value }) {
                 { icon: DatabaseIcon, label: T("Databases only"), title: T("One small snapshot per workspace you own — no uploaded PDFs"), onClick: () => backUpAll(false) },
               ]}
             />
-          </div>
-          {copies.error ? <div className="settingsPaneHint aiKeysError">{t("The bucket could not be read: {error}", { error: copies.error })}</div> : null}
+          )}>
+            {copies.error ? (
+              <FormNotice>
+                {t("The bucket could not be read: {error}", { error: copies.error })}{" "}
+                <button type="button" className="uiBtn sm" onClick={loadCopies}>{t("Try again")}</button>
+              </FormNotice>
+            ) : null}
+          </Section>
           {mine.map(group)}
           {copyGroups.filter((g) => !mine.some((w) => w.id === g.workspace)).map(elsewhere)}
         </>
@@ -339,7 +352,8 @@ export function WorkspaceBackups({ value }) {
   );
 }
 
-export function ServerBackups({ setStatus, confirm, tasks }) {
+// `onBucket` opens Backups › Bucket (the Off-site copies row's jump).
+export function ServerBackups({ setStatus, confirm, tasks, onBucket }) {
   // the Server pane's read (settingsReads.js), newest first
   const { data, error: readError, reload } = useSettingsRead("/admin/backups");
   const rows = data ? [...(data.backups || [])].reverse() : null;
@@ -405,6 +419,12 @@ export function ServerBackups({ setStatus, confirm, tasks }) {
       )}
     >
       {job ? <TaskBlock task={job} tasks={tasks} /> : null}
+      {error ? (
+        <FormNotice>
+          {error}
+          {!data ? <>{" "}<button type="button" className="uiBtn sm" onClick={() => { setError(""); refresh(); }}>{t("Try again")}</button></> : null}
+        </FormNotice>
+      ) : null}
       {rows === null && !error ? <Empty icon={DatabaseIcon} loading>{t("Loading…")}</Empty> : null}
       {rows && !rows.length ? <Empty icon={DatabaseIcon}>{t("No snapshots yet. The server also takes one before every data upgrade.")}</Empty> : null}
       {(rows || []).map((b) => (
@@ -428,7 +448,8 @@ export function ServerBackups({ setStatus, confirm, tasks }) {
             <button className="uiBtn sm iconSq" title={t("Download as a zip")} aria-label={t("Download")} onClick={() => download(b)}>
               <DownloadIcon size={16} />
             </button>
-            <button className="uiBtn sm iconSq" title={t("Delete this snapshot")} aria-label={t("Delete")} disabled={busy} onClick={() => remove(b)}>
+            <button className="uiBtn sm iconSq danger" title={t("Delete this snapshot")}
+              aria-label={t("Delete the snapshot from {date}", { date: when(b) })} disabled={busy} onClick={() => remove(b)}>
               <Trash2Icon size={16} />
             </button>
           </span>
@@ -438,7 +459,13 @@ export function ServerBackups({ setStatus, confirm, tasks }) {
         {t("Snapshots live in {dir} inside the data directory. To roll back, stop the server and run {command}.", {
           dir: <code>backups/</code>, command: <code>{"manage.py backups --restore <name>"}</code> })}
       </div>
-      {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+      {/* What keeps a copy off this disk is the bucket, in Backups. */}
+      {onBucket ? (
+        <Row icon={CloudUploadIcon} label={t("Off-site copies")} hint={t("These stay on this disk; a bucket keeps copies elsewhere")}
+          title={t("A server snapshot stays in the data directory, so a lost disk takes it along. An S3-compatible bucket, set up under Backups › Bucket, holds the snapshots backup tasks send it and, with GAMMA_S3_BUCKET in the server's environment, a copy of every database and uploaded file.")}>
+          <button type="button" className="uiBtn sm" title={t("Open Settings → Backups → Bucket")} onClick={onBucket}>{t("Open Bucket")}</button>
+        </Row>
+      ) : null}
     </Section>
   );
 }

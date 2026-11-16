@@ -131,7 +131,9 @@
 }
 .pageCardTime { margin-left: auto; color: var(--text-dim); white-space: nowrap; }
 /* The card's kind label in sentence case like the section labels ("Page"; "PDF" is an acronym). */
-.pageCardKind { font-size: var(--fs-2xs); font-weight: 500; color: var(--text-muted); }
+/* (a synced folder's card says its keeper there, a StateTag, which
+   ellipsizes as the line narrows) */
+.pageCardKind { font-size: var(--fs-2xs); font-weight: 500; color: var(--text-muted); min-width: 0; }
 .pageCardCount {
   font-size: var(--fs-2xs);
   color: var(--text-muted);
@@ -230,16 +232,24 @@
 .folderRow svg { color: var(--accent); flex-shrink: 0; }
 .folderRow.labelRow svg { color: var(--text-secondary); }
 .folderRow:hover { background: var(--bg-block); }
-/* a synced folder's own row: after its name, the computer that keeps it */
+/* a synced folder's own row: after its name, the computer that keeps it
+   and how it syncs (a StateTag, .keeperTag), which gives way before the
+   name does (ui-design.md "Interface size": meta ellipsizes first); on a
+   phone it takes a line of its own under the name (below) */
 .folderKeeper {
-  flex: 0 1 auto;
+  display: flex;
+  flex: 0 10 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
+  max-width: 45%;
 }
+/* the keeper's StateTag where it sits: a row's, a card's kind line, the
+   Files window's root and the folder view's heading */
+.keeperTag { margin-left: 0; }
+/* A synced folder's glyph (Icons.jsx SyncedFolderIcon): its arrows in the
+   tone of its sync; with no tone they take the folder's colour. */
+.syncBadge.ok { color: var(--ok); }
+.syncBadge.pending { color: var(--accent); }
+.syncBadge.warn { color: var(--warn); }
 /* --- home file-manager: context menu --- */
 :is(.pageCard, .folderRow).dragOver {
   background: var(--accent-bg);
@@ -253,8 +263,8 @@
 .pageCard.dropBefore { box-shadow: -3px 0 0 var(--accent), var(--shadow-2); }
 .pageCard.dropAfter { box-shadow: 3px 0 0 var(--accent), var(--shadow-2); }
 .folderName {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 4em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -270,7 +280,10 @@
   color: var(--text-primary);
   padding: 4px 10px 8px;
 }
-.folderCurrent svg { color: var(--accent); }
+/* its glyph; inside a synced folder the keeper's tag and the "⋯" of the
+   directory shown follow the crumbs */
+.folderCurrent > svg { color: var(--accent); flex-shrink: 0; }
+.folderCurrent > .keeperTag { flex: 0 10 auto; }
 .folderNewBtn { color: var(--text-muted); }
 .folderNewBtn svg { color: var(--text-muted); }
 .folderNewBtn:hover { color: var(--text-primary); }
@@ -544,11 +557,13 @@
 }
 .fileRowPin, .fileRowPinSlot { flex: 0 0 22px; width: 22px; }
 .fileRowPin { transition: opacity var(--dur-fast); }
-/* The pin shows with its row where a pointer hovers; where none does only a
-   pinned one is there (Pin is in the row's menu), its slot kept. */
+/* The pin shows with its row where a pointer hovers, or while the row holds
+   the focus: a library list row's and a folder view row's
+   (.fileTreeRow); where none hovers only a pinned one is there (Pin is in
+   the row's menu), its slot kept. */
 @media (hover: hover) {
   .fileRowPin { opacity: 0; }
-  .fileRow:hover .fileRowPin { opacity: 0.6; }
+  :is(.fileRow, .fileTreeRow):is(:hover, :focus-within) .fileRowPin { opacity: 0.6; }
   .fileRowPin:hover, .fileRowPin.pinned, .fileRowPin:focus-visible { opacity: 1; }
 }
 @media (hover: none) {
@@ -780,6 +795,12 @@
   .phoneUI .fileRow :is(.fileRowPin, .fileRowPinSlot) { grid-column: 4; }
   .phoneUI .fileRow .fileRowMenu { grid-column: 5; }
 }
+/* A synced folder's row (.keptRow) puts its keeper on a second line under
+   the name, as a file row its chips; the name takes no room of its own on
+   the first line, so its columns never wrap with it. */
+.phoneUI .folderRow.keptRow { flex-wrap: wrap; row-gap: 4px; }
+.phoneUI .folderRow.keptRow .folderName { flex-basis: 0; }
+.phoneUI .folderRow.keptRow .folderKeeper { order: 1; flex: 1 0 100%; max-width: none; padding-left: 30px; }
 
 /* "Start your library" (library/LibraryEmpty.jsx): a fresh library's panel
    above its listing — a dashed drop-zone card, the mark and a headline, four

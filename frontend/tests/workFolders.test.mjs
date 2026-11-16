@@ -171,17 +171,18 @@ test("a block says the same as its row: the open page's", () => {
 
 test("a folder: W renamed and moved out of every work folder, its directories left to the disk", () => {
   const folder = (id) => folderRules(TREES.main, id);
-  assert.deepEqual(folder("L1"), { rename: true, move: true, moveTargets: ["L2", "H"], delete: true, newSubfolder: true,
-    newPage: true, chooseFiles: false });
+  assert.deepEqual(folder("L1"), { rename: true, move: true, moveTargets: ["L2", "H"], delete: true, deleteRefused: "",
+    newSubfolder: true, newPage: true, chooseFiles: false });
   assert.equal(folder("H").delete, false, "it holds a work folder");
+  assert.equal(folder("H").deleteRefused, "remove", "its Delete says to stop syncing the work folder first");
   assert.deepEqual(folder("H").moveTargets, ["L1", "L1a", "L2"]);
   assert.deepEqual(folder("W1"), { rename: true, move: true, moveTargets: ["L1", "L1a", "L2", "H"], delete: false,
-    newSubfolder: false, newPage: true, chooseFiles: true });
+    deleteRefused: "remove", newSubfolder: false, newPage: true, chooseFiles: true });
   assert.equal(folder("W2").newPage, false, "a work folder that does not pull makes no note");
-  assert.deepEqual(folder("D1a"), { rename: false, move: false, moveTargets: [], delete: false, newSubfolder: false,
-    newPage: true, chooseFiles: false });
+  assert.deepEqual(folder("D1a"), { rename: false, move: false, moveTargets: [], delete: false, deleteRefused: "",
+    newSubfolder: false, newPage: true, chooseFiles: false });
   assert.equal(folder("D3").newPage, false);
-  assert.deepEqual(folder(""), { rename: false, move: false, moveTargets: [], delete: false, newSubfolder: true,
-    newPage: true, chooseFiles: false }, "the library's top");
+  assert.deepEqual(folder(""), { rename: false, move: false, moveTargets: [], delete: false, deleteRefused: "",
+    newSubfolder: true, newPage: true, chooseFiles: false }, "the library's top");
   assert.deepEqual(folderRules(LIB.released, "D1").newSubfolder, true, "its mark gone: a library folder");
 });

@@ -4,7 +4,7 @@
 // (shared/ui/lazy.jsx), with the tree (FileTree.jsx) and its stylesheet; its state is App's owner hooks'
 // (useFilesWindow.js, useFilesTree.js), handed in as `files` and `tree`.
 import { t } from "../shared/i18n/i18n.js";
-import { ChevronUpIcon } from "../shared/ui/Icons";
+import { CollapseIcon } from "../shared/ui/Icons";
 import { DockWindow } from "../shared/ui/Widgets";
 import FileTree from "./FileTree.jsx";
 import "./filesWindow.css";
@@ -15,7 +15,7 @@ export default function FilesWindow({ onClose, files, tree, libTree, workTree, f
   folderMenu, menuPress, onDragStart, onDrop, dragOver, setDragOver, keeperOf, ...common }) {
   return (
     <DockWindow title={t("Files")} guide="files.grip" {...common} onClose={onClose}
-      actions={[{ id: "collapse", icon: ChevronUpIcon, label: t("Collapse all"), onClick: files.collapseAll }]}>
+      actions={[{ id: "collapse", icon: CollapseIcon, label: t("Collapse all"), onClick: files.collapseAll }]}>
       <div className="filesPanel">
         <FileTree files={files} tree={tree} libTree={libTree} workTree={workTree} folderMeta={folderMeta} libraryPages={libraryPages}
           lib={lib} onOpen={onOpen} pageMenu={pageMenu} folderMenu={folderMenu} menuPress={menuPress} onDragStart={onDragStart}

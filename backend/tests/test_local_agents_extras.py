@@ -262,7 +262,7 @@ def test_the_terminal_resumes_the_conversations_session(lab, disk, monkeypatch, 
 
     # the agent turned off: no terminal
     store.set_agent("codex", False, by=lab.user)
-    assert _terminal(lab.owner, f.page, 409)["detail"] == "Turn on Codex in Settings → AI first."
+    assert _terminal(lab.owner, f.page, 409)["detail"] == "Turn on Codex in Settings → AI → Agents first."
 
 
 def test_the_terminal_of_claude_code(lab, disk):
