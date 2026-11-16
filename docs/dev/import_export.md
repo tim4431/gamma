@@ -232,13 +232,24 @@ in this PDF, a Logseq .pdf + .edn, a Zotero library (its export folder or a
 .zip of it), Markdown notes (one
 `.md` or a `.zip`), Notability & GoodNotes (one or more
 `.note`, `.ntb` or `.goodnotes` files, either app's or both, or a `.zip` of
-them), Notion pages (the `.zip` of a Notion export), or a Gamma export .zip. Double-click
+them), Notion pages (the `.zip` of a Notion export), an Obsidian vault (its
+folder or a `.zip` of it), or a Gamma export .zip. Double-click
 or Next confirms. Only Zotero gets a review step, its export guide.
 Annotations in this PDF imports at once, and it and Zotero (for the
 annotations inside its exported PDFs) send the strip preference above.
-Markdown, Notability & GoodNotes, Notion, Logseq and Gamma open the
+Markdown, Notability & GoodNotes, Notion, Obsidian, Logseq and Gamma open the
 file picker directly, with their preparation notes under the selected card.
 `resolveImport` in `transfers/transferFormats.js` decides both.
+A source with a `folderLabel` (Zotero, Obsidian) picks its folder first
+where the browser can (`folderZip.js` `canPickFolder`: not Safari on an
+iPhone or iPad, not the Android app), the `.zip` a link beside it, and a
+double-click on a card without a review step does what its button does
+(`ImportDialog`'s `request`). The folder goes up as a `.zip` the browser
+packs (`zipFolder`); Obsidian's (`filterFolder`) leaves out first what a
+dropped directory does (`fileRouting.js` `dropFilter`): every dot-path, so
+its `.obsidian`, `.trash` and a `.git`, none of which Obsidian reads, never
+go up. Which sources go through the review is `importApi.js`
+`reviewsImport`.
 The note apps' picker takes several files, which go up as one
 `.zip` (`folderZip.js` `filesUpload`, a name picked twice numbered), and takes
 any file on an iPhone or iPad, whose Safari greys out a `.note` or a
@@ -265,18 +276,18 @@ one shared to the app from another app ([ipad.md "Opened files"](ipad.md#opened-
 [android.md](android.md) "Opened files"). The
 dialog is then titled with the file's name and asks which export it is.
 It offers only the sources that read an archive (`archive` in
-`resolveImport`: Zotero, Markdown, Notability & GoodNotes, Notion and Gamma). Its
-button is *Import*, and the file goes straight to that source's review
+`resolveImport`: Zotero, Markdown, Notability & GoodNotes, Notion, Obsidian
+and Gamma). Its button is *Import*, and the file goes straight to that source's review
 with no picker. A `.note`, `.ntb` or `.goodnotes` shared to the app skips
 the dialog and opens the note apps' review, those of one share together.
 
-Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes
+Zotero, Markdown (ZIP or one file), Obsidian vaults, Notion ZIPs, Notability notes
 and GoodNotes notebooks, and Gamma exports share one review flow: Upload → Review →
 Import → Summary.
 
 - The review is a background job ([tasks.md](tasks.md)):
   `POST /api/jobs/import-preview` takes the file, its `source` (`zotero`,
-  `markdown-zip`, `markdown-file`, `gamma`, `note-apps`, `notability`, `goodnotes`), an optional `folder` (the
+  `markdown-zip`, `markdown-file`, `obsidian`, `gamma`, `note-apps`, `notability`, `goodnotes`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
   folder, or is a work folder or one of its directories, which follow the
   disk ([work_folders.md](work_folders.md); `import_review.destination`))
@@ -554,13 +565,19 @@ text (`IMPORT_SOURCES` in `transfers/transferFormats.js`) and the review's
 title (`FORMATS` in `transfers/importApi.js`), and only Markdown's picker takes
 a `.md` as well: the server reads the zip's dialect, so a Notion export under
 Markdown notes reads the same. A review opened again from its job, which keeps
-the endpoint, is titled Markdown's. One logic covers a zipped Obsidian vault, Notion's Export →
+the endpoint, is titled Markdown's. The "Obsidian vault" card (a `.zip`, or a
+folder the browser packs) has a review source of its own, `obsidian`
+(`_review_source`, the Markdown zip's pair with `vault=True`): the same
+reader told the zip is a vault (`import_markdown_zip(vault=True)`), since a zip made on a phone or tablet, or
+by a plugin, may leave `.obsidian/` out, and without it a vault would read as
+Plain (titles from the H1, comments kept). Its review reopens as
+Obsidian's. One logic covers a zipped Obsidian vault, Notion's Export →
 "Markdown & CSV" or HTML (with subpages), Gamma's own Markdown export and any
 zipped folder of notes, as stages of `ZipRun`
 (the survey behind the Obsidian mapping: [docs/research/obsidian.md](../research/obsidian.md)).
 What differs is the zip's dialect, picked once after the walk
 (`gamma/markdown_zip_dialects.py`, Notion's in `gamma/notion_import.py`):
-**Vault** with `.obsidian` in any path, else **Notion** with a 32-hex id in a
+**Vault** from the Obsidian card or with `.obsidian` in any path, else **Notion** with a 32-hex id in a
 note's or CSV's name or a page of Notion's HTML export among its `.html` files
 ([below](#notions-html-export)), else **Plain**, which Gamma's exports are too.
 
@@ -575,6 +592,7 @@ note's or CSV's name or a page of Notion's HTML export among its `.html` files
 | `^id` anchors | None in a file with an id, else as Plain | All | Those a `#^id` link in the zip names |
 | Wikilinks | Text in a file with an id, else links | Yes | Yes |
 | `%%comments%%` | No | Yes | No |
+| Paths under a name starting with `.` | `.obsidian/`, `.trash/` skipped | All skipped, as Obsidian reads none | `.obsidian/`, `.trash/` skipped |
 
 The rest of this section holds for every dialect unless it says otherwise:
 
@@ -585,7 +603,7 @@ The rest of this section holds for every dialect unless it says otherwise:
   the title "Issue #" as `# Issue #`, and an H1 taken for the title loses
   its Markdown escapes, so `# Foo \[bar]` is "Foo [bar]"), else the filename with
   Notion's `Title <32-hex id>` suffix removed. In an Obsidian vault
-  (recognised by its `.obsidian/` folder) the filename is the title, as in
+  (recognised by its `.obsidian/` folder, or imported as one) the filename is the title, as in
   Obsidian itself, and the H1 stays in the body unless it repeats the title.
 - **Folders**: directories become folders, each directory name a folder
   name as written (Notion's id suffix stripped), made below the import's
@@ -603,8 +621,10 @@ The rest of this section holds for every dialect unless it says otherwise:
   spooled to a temporary file, to two levels deep and up to 500 of them
   (the walk the library imports share, `gamma/import_zip.py`:
   `MAX_ZIP_DEPTH`, `MAX_NESTED_ZIPS`; each holds its file open until the
-  import ends), and a warning names every one left closed; `.obsidian/`,
-  `.trash/` and `.canvas` files are skipped (a canvas is a warning).
+  import ends), and a warning names every one left closed; `.obsidian/`
+  and `.trash/` are skipped (in a vault every dot-path, the table above),
+  and Obsidian's views, `.canvas` and `.base` files, are left out with a
+  warning each (`_OBSIDIAN_VIEWS`).
 - **Pages inside pages**: a note's page goes inside another note's page
   ([home_library.md](home_library.md) "Sub-pages") when its front matter
   names that note as `parent:` or, without one, when the note sits in

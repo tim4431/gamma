@@ -54,7 +54,8 @@ function FormatChoices({ label, value, onChange, onConfirm, options }) {
 }
 
 // `finalTitle`: the step after this dialog (the export job's), shown as the
-// last crumb.
+// last crumb. `secondaryAction` stands beside the button that acts: the
+// review step's, or the first step's when there is no review.
 function TransferDialog({ title, step, setStep, firstTitle, secondTitle, onCancel, children, action, actionLabel, busy, needsReview, onContinue, finalTitle, secondaryAction, wide }) {
   const head = React.useRef(null);
   React.useEffect(() => { head.current?.focus(); }, [step]);
@@ -72,7 +73,7 @@ function TransferDialog({ title, step, setStep, firstTitle, secondTitle, onCance
       {children}
     </div>
     <div className="reportModalBtns transferFooter">
-      {step > 0 ? secondaryAction : null}
+      {step > 0 || !needsReview ? secondaryAction : null}
       <button type="button" className="uiBtn primary" disabled={busy}
         onClick={step === 0 ? onContinue : action}>{step === 0 && needsReview ? t("Next") : actionLabel}</button>
     </div>
@@ -459,14 +460,19 @@ export function ImportDialog({ hasPdf, strip, busy, onCancel, onImport, file = n
   const scope = { hasPdf: hasPdf && !file, archive: Boolean(file) };
   const { definition, formats, needsReview, payload } = resolveImport(source, { ...scope, strip });
   const src = definition.id;
-  const folderFirst = !file && Boolean(definition.folderLabel) && canPickFolder();
-  const withFile = (chosen) => (file ? { ...chosen, file } : chosen);
+  // Where the browser picks folders, a source that reads one picks its
+  // folder first, the .zip a link beside it.
+  const picksFolder = (format) => !file && Boolean(format.folderLabel) && canPickFolder();
+  const folderFirst = picksFolder(definition);
+  // What the source's button asks for, and a double-click on a card that
+  // has no review step: the file already chosen, else its folder or file.
+  const request = (format, chosen) => (file ? { ...chosen, file } : picksFolder(format) ? { ...chosen, pick: "folder" } : chosen);
   const advance = (id = src) => {
     if (busy) return;
     const next = resolveImport(id, { ...scope, strip });
     setSource(next.definition.id);
     if (next.needsReview) setStep(1);
-    else onImport(withFile(next.payload));
+    else onImport(request(next.definition, next.payload));
   };
   // Same numbered-step guide as the add-API-key wizard.
   const zoteroGuide = <div className="importSteps">
@@ -481,7 +487,7 @@ export function ImportDialog({ hasPdf, strip, busy, onCancel, onImport, file = n
     onCancel={onCancel} busy={busy}
     firstTitle={t("Choose a source")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
     actionLabel={file ? t("Import") : t(folderFirst ? definition.folderLabel : definition.actionLabel)}
-    action={() => onImport(file ? withFile(payload) : folderFirst ? { ...payload, pick: "folder" } : payload)}
+    action={() => onImport(request(definition, payload))}
     secondaryAction={folderFirst
       ? <button type="button" className="uiBtn ghost" disabled={busy} onClick={() => onImport(payload)}>{t("or choose a .zip")}</button> : null}>
     {step === 0 ? <>

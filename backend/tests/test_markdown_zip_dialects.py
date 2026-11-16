@@ -276,6 +276,23 @@ def test_a_comment_in_a_fence_that_holds_fence_lines_stays(library, code):
     assert _lines(library, _import(library, {**VAULT, "V.md": body}), "V") == ["keep  this", code, "last  one"]
 
 
+def test_a_vault_leaves_out_every_hidden_path_as_obsidian_does(library):
+    files = {**VAULT, "Note.md": "Kept", ".git/notes.md": "git", ".github/README.md": "ci",
+             "Sub/.hidden/Old.md": "old", ".trash/Gone.md": "gone", ".dotted.md": "dot"}
+    assert [p["title"] for p in _import(library, files)["pages"]] == ["Note"]
+
+
+def test_a_plain_zip_keeps_the_notes_of_a_dot_directory(library):
+    files = {"Readme note.md": "Kept", ".github/CONTRIBUTING.md": "How to help"}
+    assert sorted(p["title"] for p in _import(library, files)["pages"]) == ["CONTRIBUTING", "Readme note"]
+
+
+def test_a_vault_s_base_is_left_out_with_a_warning(library):
+    report = _import(library, {**VAULT, "Base note.md": "Kept", "Tasks.base": "views: []\n"})
+    assert [p["title"] for p in report["pages"]] == ["Base note"]
+    assert "Tasks.base" in [w["title"] for w in report["warnings"]]
+
+
 def test_a_vault_s_title_is_its_file_name_alone(library):
     in_vault = _import(library, {**VAULT, "Name.md": "# A heading\n\nIn a vault.\n"})
     assert _lines(library, in_vault, "Name") == ["# A heading"]

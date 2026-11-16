@@ -118,7 +118,7 @@ test("imports of embedded annotations carry the strip preference, and only Zoter
 
 test("a .zip already chosen is offered only the sources that read an archive", () => {
   const archive = resolveImport("markdown", { hasPdf: true, archive: true });
-  assert.deepEqual(archive.formats.map(({ id }) => id), ["zotero", "markdown", "noteapps", "notion", "gamma"]);
+  assert.deepEqual(archive.formats.map(({ id }) => id), ["zotero", "markdown", "noteapps", "notion", "obsidian", "gamma"]);
   assert.equal(archive.definition.id, "markdown");
   assert.equal(resolveImport("logseq", { archive: true }).definition.id, "zotero", "a source that reads no archive falls back");
 });

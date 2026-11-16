@@ -43,8 +43,10 @@ blocks read by gamma/notion_html.py and not parsed from Markdown):
 - Obsidian properties: ``tags`` become labels (made by name where missing),
   ``aliases`` are kept in ``properties.aliases``; foldable callout markers
   stay; ``%%comments%%`` are removed (vaults only — the ``.obsidian/``
-  folder marks one); ``.obsidian/``, ``.trash/`` and ``.canvas`` files are
-  skipped;
+  folder marks one, or the import is told it reads one: ``vault``);
+  ``.obsidian/`` and ``.trash/`` are skipped, in a vault every path with a
+  name starting with ``.``, and ``.canvas`` and ``.base`` files are left out
+  with a warning;
 - a Notion database (``Name <id>.csv`` — the ``_all`` variant when both exist,
   it carries every row, in the columns' order the view's CSV gives) becomes
   a page holding the table, its row pages (``Name <id>/Row <id>.md``)
@@ -95,7 +97,7 @@ from .import_zip import READ_ERRORS, check_ratio, new_walk, walk_zip
 from .logbuf import log
 from .markdown_import import (_WRAPPED_RE, MAX_BLOCKS, MAX_MARKDOWN_BYTES, TooManyBlocks, fm_list, fm_text,
                               md_to_blocks, parse_frontmatter, readable_outline)
-from .markdown_zip_dialects import _ANCHOR_END_RE, _ANCHOR_LINE_RE, PageSource, _skipped, dialect_of, html_pages
+from .markdown_zip_dialects import _ANCHOR_END_RE, _ANCHOR_LINE_RE, PageSource, Vault, dialect_of, html_pages
 from .markdown_zip_links import _MD_EXTS, _SCHEME_RE, Links, _clean_stem, _norm_heading, _split_ext, _walk
 from .note_app_import import MAX_WARNINGS, page_kind
 from .ops import after_commit, apply_batches, ensure_filing
@@ -110,8 +112,10 @@ _HEADING_TEXT_RE = re.compile(r"^#{1,6}\s++(.+?)(?<!\s)(?:\s+#+)?\s*$")  # (as `
 _BIBTEX_RE = re.compile(r"^```bibtex[ \t]*\n(.*?)\n```[ \t]*\n?", re.S)
 # Bundled files that become uploads: anything Gamma would accept from
 # POST /api/upload-file (not executable, well-formed extension) that is not
-# a note or a canvas.
-_NOT_ASSET_EXTS = {".canvas", ""}
+# a note or one of Obsidian's views (a canvas, a base), which are warned of.
+_OBSIDIAN_VIEWS = {".canvas": "Obsidian canvas files are not imported",
+                   ".base": "Obsidian base files are not imported"}
+_NOT_ASSET_EXTS = {*_OBSIDIAN_VIEWS, ""}
 
 
 def _is_asset_ext(ext: str) -> bool:
@@ -380,9 +384,9 @@ class ZipRun:
     ``excluded_ids``; ``build_links`` ``links``; ``find_parents`` ``parent_of``;
     ``file`` the folders and labels made."""
 
-    def __init__(self, ws, zf, conn, folder, unpacked, *, actor, preview, selected, progress):
+    def __init__(self, ws, zf, conn, folder, unpacked, *, actor, preview, selected, progress, vault=False):
         self.ws, self.zf, self.conn, self.folder, self.unpacked = ws, zf, conn, folder, unpacked
-        self.actor, self.preview, self.selected = actor, preview, selected
+        self.actor, self.preview, self.selected, self.vault = actor, preview, selected, vault
         self.progress = progress or jobs.no_progress
         self.under, self.under_path = destination(conn, folder)
         self.report = {"pages_created": 0, "pages_skipped": 0, "blocks_imported": 0,
@@ -423,13 +427,14 @@ class ZipRun:
             self.warn(path, reason)
 
     def classify(self):
-        self.dialect = dialect_of([e.path for e in self.entries], html_pages(self.entries, self.warn))
+        self.dialect = Vault() if self.vault else dialect_of([e.path for e in self.entries],
+                                                             html_pages(self.entries, self.warn))
         self.report["obsidian"] = self.dialect.name == "vault"
-        self.entries = [e for e in self.entries if not _skipped(e.path)]
+        self.entries = [e for e in self.entries if not self.dialect.skipped(e.path)]
         self.order = {e.path: i for i, e in enumerate(self.entries)}
         for e in self.entries:
-            if _split_ext(e.path)[1] == ".canvas":
-                self.warn(e.path, "Obsidian canvas files are not imported")
+            if reason := _OBSIDIAN_VIEWS.get(_split_ext(e.path)[1]):
+                self.warn(e.path, reason)
 
         self.notes = sorted((e for e in self.entries if self.dialect.is_page(e.path)),
                             key=lambda e: (e.path.count("/"), e.path.lower()))
@@ -812,7 +817,8 @@ class ZipRun:
 
 
 def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *, actor: str = "",
-                        preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
+                        preview: bool = False, selected: set[str] | None = None, progress=None,
+                        vault: bool = False) -> dict:
     """Import every note in ``zf`` into workspace ``ws`` through the open ``pages.db``
     connection, its pages made by ``actor`` and filed below the folder
     ``folder`` (an id; "" the library's top; 400 when it is no folder). The
@@ -822,10 +828,12 @@ def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *,
     transaction committed here once their bundled files are stored (a long
     import never holds the write lock). A ``preview`` writes nothing.
     ``progress`` (a background job's report, gamma/jobs.py) hears each
-    note; a stopped job keeps the notes it got to. Returns the report
+    note; a stopped job keeps the notes it got to. ``vault``: the zip is an
+    Obsidian vault whether or not it holds ``.obsidian/`` (the Import
+    dialog's Obsidian card), read in that dialect. Returns the report
     dict: each page entry's ``folders`` are the paths (lists of names from
     the top) the page is, or would be, filed in, and its ``parent`` the id
     of the page it is, or would be, inside ("" for a library page)."""
     with contextlib.ExitStack() as unpacked:  # the zips opened inside it
         return ZipRun(ws, zf, conn, folder, unpacked, actor=actor, preview=preview, selected=selected,
-                      progress=progress).run()
+                      progress=progress, vault=vault).run()

@@ -93,3 +93,10 @@ test("packing stops when its signal fires", async () => {
   ctl.abort();
   await assert.rejects(zipFolder(folderPick([picked("Lib/a.pdf", "x")]), { signal: ctl.signal }), (err) => err.aborted === true);
 });
+
+test("a picked folder filtered as a drop leaves out its dot-paths: a vault's settings, trash and repository", () => {
+  const files = [picked("Vault/.obsidian/app.json", "{}"), picked("Vault/Note.md", "# Note"), picked("Vault/.git/HEAD", "ref"),
+    picked("Vault/Sub/.trash/Old.md", "old"), picked("Vault/Sub/Kept.md", "kept")];
+  assert.deepEqual(folderPick(files, { filter: true }).entries.map(({ path }) => path), ["Vault/Note.md", "Vault/Sub/Kept.md"]);
+  assert.equal(folderPick(files).entries.length, 5, "unfiltered, a Zotero export keeps every file");
+});

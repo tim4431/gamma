@@ -9,6 +9,7 @@ imported. Both are background jobs (gamma/jobs.py): ``POST
 answers the preview in the request, for scripts."""
 
 import copy
+import functools
 import hashlib
 import html
 import io
@@ -93,6 +94,10 @@ def _review_source(source):
     sources = {
         "zotero": (_preview_zotero, _commit_zotero),
         "markdown-zip": (_preview_markdown_zip, _commit_markdown_zip),
+        # a vault, zipped or a folder the browser packed: the same reader, the
+        # zip read as a vault whether or not it kept `.obsidian/`
+        "obsidian": (functools.partial(_preview_markdown_zip, vault=True),
+                     functools.partial(_commit_markdown_zip, vault=True)),
         "markdown-file": (_preview_markdown_file, _commit_markdown_file),
         "notability": (_preview_notability, _commit_notability),
         "goodnotes": (_preview_goodnotes, _commit_goodnotes),
@@ -500,23 +505,26 @@ def import_markdown(request: Request, file: UploadFile = File(...),
     return {"ok": True, **result}
 
 
-def _markdown_zip(data, ws, folder, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
-    """A zip of Markdown notes → one page per .md (see markdown_zip_import)."""
+def _markdown_zip(data, ws, folder, *, actor="", preview=False, selection=None, progress=jobs.no_progress,
+                  vault=False):
+    """A zip of Markdown notes → one page per .md (see markdown_zip_import);
+    ``vault``: read as an Obsidian vault, ``.obsidian/`` in it or not."""
     try:
         zf = zipfile.ZipFile(data)
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="not a zip file")
     with zf, connect_pages_db(ws) as conn:  # the import commits page by page
         return {"ok": True, **import_markdown_zip(ws, zf, conn, folder, actor=actor, preview=preview,
-                                                  selected=selection, progress=progress)}
+                                                  selected=selection, progress=progress, vault=vault)}
 
 
-def _preview_markdown_zip(ws, data, meta, progress=jobs.no_progress):
-    return _markdown_zip(data, ws, meta.get("folder", ""), preview=True, progress=progress)
+def _preview_markdown_zip(ws, data, meta, progress=jobs.no_progress, *, vault=False):
+    return _markdown_zip(data, ws, meta.get("folder", ""), preview=True, progress=progress, vault=vault)
 
 
-def _commit_markdown_zip(ws, actor, data, meta, selection, progress=jobs.no_progress):
-    return _markdown_zip(data, ws, meta.get("folder", ""), actor=actor, selection=selection, progress=progress)
+def _commit_markdown_zip(ws, actor, data, meta, selection, progress=jobs.no_progress, *, vault=False):
+    return _markdown_zip(data, ws, meta.get("folder", ""), actor=actor, selection=selection, progress=progress,
+                         vault=vault)
 
 
 def _markdown_file(ws, data, meta, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
