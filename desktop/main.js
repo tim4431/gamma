@@ -1850,7 +1850,7 @@ async function trackedFromPage(_wsId, linkId, cancelled) {
     showNotice(`“${t.name}” is not synced with this computer; its folder on ${t.remoteName} stays as it was.${stranded ? ` ${stranded}` : ''}`);
   } else if (kept && kept.choosing && !cancelled) {
     // a fresh dialog's every way out cancels: one that leaves the vault choosing was refused
-    showNotice(`“${t.name}” could not be cancelled, ${t.remoteName} not reached: it waits for its files to be chosen. Choose files… in the sync panel, or detach it once ${t.remoteName} answers.`);
+    showNotice(`“${t.name}” could not be cancelled, ${t.remoteName} not reached: it waits for its files to be chosen. Choose files… in the sync panel, or stop syncing it once ${t.remoteName} answers.`);
   } else if (kept && kept.choosing) {
     showNotice(`“${t.name}” waits for its files to be chosen: Choose files… in the sync panel.`);
   } else if (kept && !cancelled) {
@@ -2898,7 +2898,7 @@ async function removeVault(serverId, linkId, pages) {
       if (!pages) return false;
     }
   }
-  busy = item.work ? `Detaching ${item.name}…` : `Removing the synced folder ${item.name}…`;
+  busy = item.work ? `Stopping the sync of ${item.name}…` : `Removing the synced folder ${item.name}…`;
   pushState();
   try {
     const remove = () => api(origin, `/api/folder-links/${link.id}?pages=${pages === 'remove' ? 'remove' : 'keep'}${force ? '&force=1' : ''}`,
@@ -2913,10 +2913,10 @@ async function removeVault(serverId, linkId, pages) {
     }
     const stranded = link.remote_url ? await releaseRemote(origin, api, serverId, link, item.remote) : '';
     showNotice((item.scope === 'file' ? `${item.name} is no longer pushed from ${path.basename(item.dest)}; the file stays as it is.`
-      : force ? `${item.name} is no longer synced with this computer; on ${item.remote} its folder stays a synced folder until it is detached there.`
+      : force ? `${item.name} is no longer synced with this computer; on ${item.remote} its folder stays a synced folder until it stops syncing there.`
       : item.offline || item.stopped ? `${item.name} is no longer synced; nothing in ${item.dest} was touched.`
-      : item.work && pages === 'remove' ? `Detached ${item.name}: its files not in the library went to Recently deleted; ${item.dest} stays as it is.`
-      : item.work ? `Detached ${item.name}: its files stay in Gamma as pages; ${item.dest} stays as it is.`
+      : item.work && pages === 'remove' ? `Stopped syncing ${item.name}: its files not in the library went to Recently deleted; ${item.dest} stays as it is.`
+      : item.work ? `Stopped syncing ${item.name}: its files stay in Gamma as pages; ${item.dest} stays as it is.`
       : `${item.dest} is no longer synced; its files stay.`) + (stranded ? ` ${stranded}` : ''));
     return true;
   } finally {
@@ -3436,7 +3436,7 @@ function barInput(type) {
   else startArming();
 }
 
-// The bar's Allow once, Decline or Stop asking (`decision` once, deny or
+// The bar's Allow once, Don't allow or Stop asking (`decision` once, deny or
 // stop) on the card `key`: only the card shown, armed, after a press made
 // since. Every button goes inactive at once; then the host's answer route
 // with the shell's word (stop declines), and for stop, once the decline is

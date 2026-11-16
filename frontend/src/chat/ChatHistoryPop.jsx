@@ -2,13 +2,15 @@
 // every agent, Gamma AI's and a computer agent's together
 // (chat/computer/computerChat.js historyRows). A search field, then the
 // conversation shown now and the others, each `.chatHistRow` opening its
-// conversation, led by its agent's icon while the chat has several, with a
-// row menu (⋯, a right-click or a held finger: menuPress) of the caller's
-// items; the loading, empty and no-match hints; a section of the caller's
-// under its caption, drawn in the same rows (the sessions the picked
-// agent's CLI keeps on its computer, "On TIM-PC": computerChat.js
-// sessionRows); and under the list what the caller adds (the bulk bar).
+// conversation, led by its agent's icon and named by it while the chat has
+// several, with a row menu (⋯, a right-click or a held finger: menuPress)
+// of the caller's items; the loading, empty and no-match hints; a section
+// of the caller's under its caption, drawn in the same rows (the sessions
+// the picked agent's CLI keeps of its directory, "Codex sessions in
+// paper": computerChat.js sessionRows); and under the list what the caller
+// adds (the bulk bar). A row that cannot open says why when pressed.
 import { useState } from "react";
+import { RefreshIcon } from "../shared/ui/Icons";
 import { ContextMenu, MenuButton } from "../shared/ui/Menus";
 import { Popover } from "../shared/ui/Surfaces";
 import { menuPress } from "../shared/ui/press.js";
@@ -44,48 +46,68 @@ export const deleteQuestion = (row, onConfirm) => ({
 });
 
 // One row: `off` why it cannot be opened now ("" while it can), `onMenu`
-// its menu's opener (none: no menu).
-function HistoryRow({ row, off, title, onOpen, onMenu, lead, Icon }) {
+// its menu's opener (none: no menu), `detail` a muted line under its title
+// (why a session is busy), `opening` while its open is on its way (a
+// spinner in its age's place). Its agent (`row.agentName`, while the chat
+// has several) leads its title, and names its icon where nothing after the
+// title (`by`) does. Enter or Space opens it, as a press does.
+function HistoryRow({ row, off, title, onOpen, onMenu, lead, Icon, detail = "", opening = false }) {
+  const name = <span className="chatHistTitle">{row.title || t("Untitled")}</span>;
+  const iconNames = row.agentName && !row.by ? { role: "img", "aria-label": row.agentName } : { "aria-hidden": "true" };
   return (
     <div className={`chatHistRow rowMenuHost${row.active ? " active" : ""}`}
-      role="button" tabIndex={0} aria-disabled={off ? true : undefined} title={off || title}
+      role="button" tabIndex={0} aria-disabled={off ? true : undefined} aria-busy={opening || undefined}
+      title={off || [row.agentName, title].filter(Boolean).join(" · ")}
       onClick={() => onOpen(row)}
-      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) onOpen(row); }}
+      onKeyDown={(e) => {
+        if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); onOpen(row); }
+      }}
       {...(onMenu ? menuPress(onMenu) : {})}>
       {lead}
-      {Icon ? <Icon size={14} className="chatHistIcon" aria-hidden="true" /> : null}
-      <span className="chatHistTitle">{row.title || t("Untitled")}</span>
+      {Icon ? <Icon size={14} className="chatHistIcon" {...iconNames} /> : null}
+      {detail ? <span className="chatHistMain">{name}<span className="chatHistDetail">{detail}</span></span> : name}
       {row.by ? <span className="chatHistBy">{row.by}</span> : null}
-      <span className="chatHistAge">{row.active ? t("now") : relAge(row.updated_at)}</span>
+      <span className="chatHistAge">
+        {opening ? <span className="transferSpin inline" aria-hidden="true" /> : row.active ? t("now") : relAge(row.updated_at)}
+      </span>
       {onMenu ? <MenuButton open={onMenu} /> : <span className="chatHistMenuSlot" aria-hidden="true" />}
     </div>
   );
 }
 
-// `rows` the listed ones ([{id, title, updated_at, active, by?}], the
-// search's matches: matchRows; `by` whose conversation it is, said after
-// its title: "bob's chat with Codex"), the active one first; `loading` while the earlier
-// ones are read. `onOpen(row)` opens another one; `disabledReason(row)`,
-// set while the row cannot be opened, greys it and is its title.
-// `menuItems(row, close)` the row menu's MenuItems (none: the row has no
-// menu); `tip(row)` another row's title; `lead(row)` what comes before a
-// row's title (a tick box), `icon(row)` its agent's icon (none: no icon),
-// `editing(row)` what stands in for a row (a rename field), and `picking`
-// while rows are ticked. `section` ({label, rows, loading, error, onRetry,
-// onOpen, disabledReason, icon}, null for none) is drawn after them under
-// its caption, rows without menus (a menu-less row keeps the ⋯'s room, so
-// every row's age stands in one column), each led by `icon` as the
-// conversations are, `error` why its rows could not be read, with Try
+// `rows` the listed ones ([{id, title, updated_at, active, by?,
+// agentName?}], the search's matches: matchRows; `by` what is said after
+// its title: whose conversation it is, "bob's chat with Codex", or its
+// agent, "Codex on TIM-PC"), the active one first; `loading` while the
+// earlier ones are read. `onOpen(row)` opens another one;
+// `disabledReason(row)`, set while the row cannot be opened, greys it and
+// is its title, and a press on it hands it to `onRefused(reason)` (the
+// status pill). `menuItems(row, close)` the row menu's MenuItems (none:
+// the row has no menu); `tip(row)` another row's title; `lead(row)` what
+// comes before a row's title (a tick box), `icon(row)` its agent's icon
+// (none: no icon), `editing(row)` what stands in for a row (a rename
+// field), and `picking` while rows are ticked. `section` ({label, empty,
+// rows, loading, reading, error, onRetry, onRefresh, opening, onOpen,
+// disabledReason, icon}, null for none) is drawn after them under its
+// caption, which ends in a button that reads its rows again (`onRefresh`;
+// a spinner while `reading` them again in place), rows without menus (a
+// menu-less row keeps the ⋯'s room, so every row's age stands in one
+// column), each led by `icon` as the conversations are, a busy one
+// (`row.busy`) saying why under its title, the one whose open is on its
+// way (`opening`, its id) a spinner in its age's place; `empty` the line
+// while it has no row, `error` why its rows could not be read, with Try
 // again (`onRetry`). Escape in the search closes (`onClose`).
 export default function ChatHistoryPop({
-  query, onQuery, onClose, rows, loading, onOpen, disabledReason = () => "", menuItems, tip = (row) => row.title,
-  lead, icon, editing, picking = false, section = null, children,
+  query, onQuery, onClose, rows, loading, onOpen, disabledReason = () => "", onRefused, menuItems,
+  tip = (row) => row.title, lead, icon, editing, picking = false, section = null, children,
 }) {
   const [menu, setMenu] = useState(null); // {x, y, row}: a row's menu
   const openMenu = (row) => (e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, row }); };
   const close = () => setMenu(null);
-  const open = (row) => { if (!row.active && !disabledReason(row)) onOpen(row); };
-  const openListed = (row) => { if (!section.disabledReason(row)) section.onOpen(row); };
+  const tryOpen = (reason, row, go) => { if (reason) onRefused?.(reason); else go(row); };
+  const open = (row) => { if (!row.active) tryOpen(disabledReason(row), row, onOpen); };
+  const openListed = (row) => tryOpen(section.disabledReason(row), row, section.onOpen);
+  const refresh = t("Read the sessions again");
   return (
     <Popover className="chatHistoryPop">
       <input
@@ -109,10 +131,19 @@ export default function ChatHistoryPop({
           : !rows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
           : null}
         {section ? <>
-          <div className="popoverSection">{section.label}</div>
+          <div className="popoverSection chatHistSection">
+            <span>{section.label}</span>
+            {section.onRefresh ? (
+              <button type="button" className="ctlBtn chatHistRefresh" title={refresh} aria-label={refresh}
+                disabled={section.loading} aria-busy={section.reading || undefined}
+                onClick={section.reading ? undefined : section.onRefresh}>
+                {section.reading ? <span className="transferSpin inline" aria-hidden="true" /> : <RefreshIcon size={14} />}
+              </button>
+            ) : null}
+          </div>
           {section.rows.map((s) => (
             <HistoryRow key={`session:${s.id}`} row={s} off={section.disabledReason(s)} title={s.title}
-              onOpen={openListed} Icon={section.icon} />
+              onOpen={openListed} Icon={section.icon} detail={s.busy} opening={section.opening === s.id} />
           ))}
           {section.loading ? <div className="popoverHint loadingHint">{t("Loading…")}</div>
             : section.error ? (
@@ -122,7 +153,7 @@ export default function ChatHistoryPop({
               </div>
             )
             : !section.rows.length ? <div className="popoverHint">{String(query || "").trim()
-              ? t("No session matches.") : t("No sessions of this directory.")}</div>
+              ? t("No session matches.") : section.empty}</div>
             : null}
         </> : null}
       </div>

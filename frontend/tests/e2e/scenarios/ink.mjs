@@ -477,7 +477,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await menu.getByRole("menuitem", { name: "Handwriting settings…", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
     await dialog.waitFor();
-    await until(() => page.locator(".settingsPane [data-setting='Reset presets']").first().isVisible(), { what: "the Handwriting section in view" });
+    await until(() => page.locator(".settingsPane [data-setting='Pens & eraser']").first().isVisible(), { what: "the Handwriting section in view" });
     await page.getByRole("button", { name: "Close settings", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
     assertNoProblems(page);
@@ -1250,10 +1250,13 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
   await step("ink: Settings → Handwriting has the account's pen and eraser rows and this device's, and Undo with fingers is set to Double tap", async () => {
     const dialog = await openHandwritingSettings();
     const row = settingRow;
-    for (const name of ["Pens & eraser", "Reset presets", "Eraser returns to the last tool", "Erases", "Draw and hold", "Scribble to erase",
+    for (const name of ["Pens & eraser", "Eraser returns to the last tool", "Erases", "Draw and hold", "Scribble to erase",
       "This device", "Draws with", "Stylus draws on PDFs right away", "Pressure-sensitive strokes", "Undo with fingers", "Hover preview"]) {
       assert(await row(name).count(), `the row "${name}" is in Handwriting`);
     }
+    // Reset presets is the section's action, on its rule, as every reset in Settings is
+    assertEq(await page.locator('.settingsPane .setSection[data-setting="Pens & eraser"]').getByRole("button", { name: "Reset presets", exact: true }).count(),
+      1, "Reset presets on the Pens & eraser rule");
     // the Apple Pencil's gestures and haptics are the iPad app's alone (ipad.mjs shows them under its host)
     assertEq(await row("Apple Pencil").count(), 0, "no Apple Pencil section in a browser");
     assertEq(await row("Hover preview").locator("input[type=checkbox]").isChecked(), true, "the hover preview is on by default");

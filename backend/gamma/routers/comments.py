@@ -15,8 +15,11 @@ event goes to ``comments.after_write``. A person's new comment or edit sent
 to an agent (``to``, an agent's id, gamma/agents.py; or its ``@name``,
 read by gamma/local_agents/mention.py for a client that sent none) is a
 turn of that agent too (gamma/local_agents/threads.py), answered as
-``turn``. Each thread read carries its reader's conversation of it with an
-agent (``agent_chat``, ``threads.chats_of``). A page's Notify me
+``turn``; an edit that changes nothing, with ``to``, sends the comment
+again. Each thread read carries its reader's conversation of it with an
+agent (``agent_chat``, ``threads.chats_of``), and the note a turn's end
+wrote in it what became of that turn (``turn_end``, ``threads.ends_of``).
+A page's Notify me
 (``/pages/{id}/notify``) is what its comments tell the session's account
 (gamma/inbox.py "following a page").
 """
@@ -88,12 +91,18 @@ def _chats(request: Request, ws: str, threads: list[dict]) -> list[dict]:
     """``threads``, each with ``agent_chat``: the session account's
     conversation of it with a computer's agent (``{conversation_id, agent,
     label, turn}``, ``threads.chats_of``), null for none, and for a token,
-    a guest or a share's visitor, who have none."""
+    a guest or a share's visitor, who have none; and for every reader the
+    note of a turn's end that failed, was stopped or said nothing with what
+    became of the turn (``turn_end``, ``{state, error}``: ``threads.ends_of``)."""
     from ..local_agents import threads as agent_threads  # local: the agents' modules import the comments
 
     mine = request.state.user_id if not is_token(request) and not request.state.is_guest else ""
-    chats = agent_threads.chats_of(ws, mine, [t["id"] for t in threads]) if mine else {}
-    return [{**t, "agent_chat": chats.get(t["id"])} for t in threads]
+    ids = [t["id"] for t in threads]
+    chats = agent_threads.chats_of(ws, mine, ids) if mine else {}
+    ends = agent_threads.ends_of(ws, ids)
+    return [{**t, "agent_chat": chats.get(t["id"]),
+             "comments": [{**c, "turn_end": ends[c["id"]]} if c["id"] in ends and c.get("agent_kind") == "computer"
+                          else c for c in t["comments"]]} for t in threads]
 
 
 def _written(request: Request, ws: str, thread: dict, event: dict, client: str, to: str | None) -> dict | None:
@@ -103,23 +112,30 @@ def _written(request: Request, ws: str, thread: dict, event: dict, client: str, 
     field with no box), the agent its ``@name`` names
     (gamma/local_agents/mention.py ``to_of``; decided once, before the Inbox
     reads the event, which then takes that name for the agent's) → that
-    turn's answer (``threads.start``), None when it is sent to none. Only a
-    person's own comment, not one made through a share, is sent."""
+    turn's answer (``_sent``), None when it is sent to none."""
     from ..local_agents import mention, threads  # local: the agents' modules import the comments
 
     via = share_via(request)
-    person = not event.get("agent_id") and not via
-    if person and to is None:
+    if not event.get("agent_id") and not via and to is None:
         to = mention.to_of(ws, event)
     to = to or ""
     name = threads.name_of(to)
     if name and name in mentions.people_in(event.get("body") or ""):
         event = {**event, "agent_named": name}
     comments.written(ws, thread["page_id"], thread["block_id"], thread["id"], event, client=client, via=via)
+    return _sent(request, ws, event, to)
+
+
+def _sent(request: Request, ws: str, event: dict, to: str) -> dict | None:
+    """The turn a comment write's ``event`` sent to the agent ``to`` makes
+    (``threads.start``'s answer), None for ``to`` "". Only a person's own
+    comment, not one made through a share, is sent."""
+    from ..local_agents import threads  # local: the agents' modules import the comments
+
     if not to:
         return None
-    if not person:
-        return threads.refused(name, "other", "Only a person's own comment in Gamma is sent to an agent.")
+    if event.get("agent_id") or share_via(request):
+        return threads.refused(threads.name_of(to), "other", "Only a person's own comment in Gamma is sent to an agent.")
     return threads.start(ws, event, to, by_name=request.state.user or "")
 
 
@@ -159,17 +175,27 @@ def edit_comment(comment_id: str, payload: CommentEdit, request: Request):
     wrote it: a session or that token) → ``{comment, thread?, turn?}``,
     the thread and the turn when the edit, of its thread's newest comment,
     is sent to an agent (``to``, or an ``@name`` it newly names: as for a
-    new comment)."""
+    new comment). An edit that changes nothing, with ``to``, sends the
+    comment as it stands to that agent again (``threads.start``'s
+    ``again``, wherever it is in the thread): the app's Send again, after a
+    send that started no turn."""
     page_id = _page_of(request, comment_id)
     ws = require_commenter(request, page_id)
+    agent = of_request(request)
     with connect_pages_db(ws) as conn:
         out = comments.edit(conn, comment_id, page_id=page_id, body=payload.body, author=request.state.user_id,
-                            agent=of_request(request))
+                            agent=agent)
     answer = {"comment": out["comment"]}
+    thread = out["thread"]
     if out["event"]:
-        turn = _written(request, ws, out["thread"], out["event"], payload.client, payload.to)
-        if turn is not None:
-            answer.update(thread=_again(request, ws, out["thread"]), turn=turn)
+        turn = _written(request, ws, thread, out["event"], payload.client, payload.to)
+    else:
+        turn = _sent(request, ws, {
+            "kind": "again", "actor": request.state.user_id, "page_id": thread["page_id"], "block_id": thread["block_id"],
+            "thread_id": thread["id"], "comment_id": comment_id, "body": out["comment"]["body"],
+            "agent_id": agent.id if agent else ""}, payload.to or "")
+    if turn is not None:
+        answer.update(thread=_again(request, ws, thread), turn=turn)
     return answer
 
 

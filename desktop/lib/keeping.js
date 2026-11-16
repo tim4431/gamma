@@ -364,7 +364,7 @@ const bytesText = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10} MB` : `${Math.
 // action on it. `mine`: the account made it (the list's own word).
 //
 // A work folder's agent at work (docs/dev/local_agents.md; the agents are
-// the computer's, set in Gamma's Settings → AI): what the agent of this
+// the computer's, set in Gamma's Settings → AI → Agents): what the agent of this
 // computer that works there does now (`agentRunning`: the detail of its
 // turn, a chat's or a comment's, while one works, else ""; `agentLabel` its
 // name), as the link's `agent` says.
@@ -507,7 +507,7 @@ function computerOtherAccount(remote, name, who) {
 }
 
 // The question before this computer (`name`) answers one of `servers` (the
-// launcher's remote servers, `{ name }`), Settings → AI's Add a server…
+// launcher's remote servers, `{ name }`), Settings → AI → Agents' Add a server…
 // (main.js addLinkedServer): what that server then sees and can do, one button a
 // server (its index), then Cancel.
 function serverAsk(servers, name) {
@@ -521,7 +521,7 @@ function serverAsk(servers, name) {
 // shows its sign-in.
 function serverSignIn(remote) {
   return { message: `Sign in to ${remote} first`,
-    detail: `You are not signed in to ${remote} in this window. Open it, sign in, then add it again from Settings → AI on this computer.`,
+    detail: `You are not signed in to ${remote} in this window. Open it, sign in, then add it again from Settings → AI → Agents on this computer.`,
     buttons: [`Open ${remote}`, 'Cancel'] };
 }
 
@@ -559,7 +559,7 @@ const AGENT_LABELS = { codex: 'Codex', claude: 'Claude Code' };
 // A vault of a workspace its maker is no longer in, as its row says it.
 function awayState(item) {
   const free = item.scope === 'file' ? 'Remove the vault to free the file; it stays as it is'
-    : `${item.work ? 'Detach it' : 'Remove the synced folder'} to free its directory; its files stay as they are`;
+    : `${item.work ? 'Stop syncing it' : 'Remove the synced folder'} to free its directory; its files stay as they are`;
   return { ...item, state: 'error', text: 'No access to its workspace',
     title: `Your account is no longer a member of the workspace this vault syncs with, so nothing is pulled or pushed. ${free}.` };
 }
@@ -708,7 +708,7 @@ const REMOTE_RULE = 'A vault of another server pulls, and pushes PDFs at most: a
 // What a work folder of another server is, whatever its switches are asked:
 // it pushes everything and pulls, until it is removed (the server refuses
 // the rest too: its release would read this computer's library).
-const REMOTE_WORK_RULE = 'A synced folder of another server pushes everything and pulls: detach it to stop.';
+const REMOTE_WORK_RULE = 'A synced folder of another server pushes everything and pulls: stop syncing it to end that.';
 
 // Why the empty folder `folder` of server `remote` did not become a work
 // folder there (`reason`: that server older than this app, the account only
@@ -783,7 +783,8 @@ function firstRound({ path: dir, preview = {}, pull, push, folder, newFolder = f
 // of this computer (`computer`): `{ message, detail, buttons, choices }`,
 // `choices[i]` the `pages=` of button i (null: cancel). A work folder, here
 // or of another server, is a synced folder, and the question is its
-// Detach, in the web app's words (frontend/src/explorer/detach.js): its
+// Stop syncing (the API's detach), in the web app's words
+// (frontend/src/explorer/detach.js): its
 // files kept in Gamma as pages, or those not in the library removed to
 // Recently deleted (of the other server, for a work folder there). Any
 // other vault's pages stay as they are, and nothing is asked. The directory
@@ -804,14 +805,14 @@ function removalAsk(item, removal = {}, computer = 'this computer') {
     const inLibrary = removal.in_library || 0;
     const tooLarge = removal.too_large || 0;
     const leaving = Math.max(files - inLibrary, 0);
-    const counts = [files ? `${plural(files, 'file')} ${files === 1 ? 'syncs' : 'sync'} with it.` : 'No file syncs with it yet.',
+    const counts = [`Gamma stops syncing it with ${computer}.`, files ? `It has ${plural(files, 'file')}.` : 'It has no files yet.',
       inLibrary ? `${inLibrary} of them ${isAre(inLibrary)} in your library and ${inLibrary === 1 ? 'stays' : 'stay'} there either way.` : ''];
     const keep = ['Each file becomes an ordinary page, filed where it is.',
-      removal.bytes ? `Their bytes are stored in Gamma: ${bytesText(removal.bytes)}.` : '',
-      tooLarge ? `${plural(tooLarge, 'file')} too large to keep ${tooLarge === 1 ? 'stays' : 'stay'} listed by name, without ${tooLarge === 1 ? 'its' : 'their'} bytes.` : ''];
+      removal.bytes ? `A copy of each file is stored in Gamma (${bytesText(removal.bytes)}).` : '',
+      tooLarge ? `${plural(tooLarge, 'file')} ${isAre(tooLarge)} too large to store: ${tooLarge === 1 ? 'it stays' : 'they stay'} listed by name only.` : ''];
     const remove = leaving ? `${plural(leaving, 'file')} ${leaving === 1 ? 'goes' : 'go'} to Recently deleted${item.remoteUrl ? ` on ${item.remote}` : ''}.`
       : 'No file goes to Recently deleted: every one is in your library.';
-    return { message: `Detach “${item.name}” from ${computer}?`,
+    return { message: `Stop syncing “${item.name}” with ${computer}?`,
       detail: [...counts, 'Keep the files in Gamma:', ...keep, 'Remove them from Gamma:', remove, disk].filter(Boolean).join(' '),
       buttons: ['Keep the files in Gamma', 'Remove them from Gamma', 'Cancel'], choices: ['keep', 'remove', null] };
   }
@@ -825,13 +826,13 @@ function removalAsk(item, removal = {}, computer = 'this computer') {
 
 // The question when a work folder of another server cannot be removed as it
 // should, its server not reached (`reason`, the host's words): `{ message,
-// detail, buttons }`, button 0 detaching it all the same, which forgets it on
-// this computer and leaves the folder a synced folder there until it is
-// detached there.
+// detail, buttons }`, button 0 detaching it all the same (Stop syncing
+// anyway), which forgets it on this computer and leaves the folder a synced
+// folder there until it stops syncing there.
 function farRemovalAsk(item, reason) {
-  return { message: `${item.remote} cannot be reached: detach “${item.name}” all the same?`,
-    detail: `${said(String(reason || `${item.remote} does not answer`))} Detach anyway, and this computer forgets it; the folder stays a synced folder on ${item.remote}, its files locked, until it is detached there. Or cancel, and detach it once ${item.remote} answers.`,
-    buttons: ['Detach anyway', 'Cancel'] };
+  return { message: `${item.remote} cannot be reached: stop syncing “${item.name}” all the same?`,
+    detail: `${said(String(reason || `${item.remote} does not answer`))} Stop syncing anyway, and this computer forgets it; the folder stays a synced folder on ${item.remote}, its files locked, until it stops syncing there. Or cancel, and stop syncing it once ${item.remote} answers.`,
+    buttons: ['Stop syncing anyway', 'Cancel'] };
 }
 
 // The question before a force pull (the files become what Gamma holds) or

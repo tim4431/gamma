@@ -115,7 +115,7 @@ export default function ReplyPapers({ actions, text, folder = "", folderName = "
                   {saved(p) ? (
                     <button type="button" className="chatChangeLink" onClick={() => onOpenPage?.(st.page)}
                       title={t("Open its page")}>
-                      <CheckIcon size={12} />
+                      <CheckIcon size={14} />
                       {st.state === "in" || st.existed ? t("In library") : st.pdf ? t("Saved") : t("Saved without PDF")}
                     </button>
                   ) : null}

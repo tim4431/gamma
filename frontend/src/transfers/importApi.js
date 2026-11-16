@@ -10,11 +10,17 @@ const FORMATS = {
   zotero: { label: T("Zotero"), endpoint: "zotero", instructions: T("Collections become folders. An item's other files and links go under Attachments on its page, and a standalone note becomes a page of its own. Existing PDFs are kept.") },
   markdown: { label: T("Markdown"), ...MARKDOWN_ZIP },
   notion: { label: T("Notion"), ...MARKDOWN_ZIP },
+  // The same reader, told the zip is a vault, which it then reads as one
+  // whether or not it kept its .obsidian folder.
+  obsidian: { label: T("Obsidian"), ...MARKDOWN_ZIP, endpoint: "obsidian" },
   gamma: { label: T("Gamma"), endpoint: "gamma", instructions: T("Selected pages include their notes, attachments and chats. Pages already in your library are kept unchanged.") },
   // One card for both note apps: the server finds either app's notes in
   // the upload (gamma/note_app_import.py import_note_apps).
   noteapps: { label: T("Notability & GoodNotes"), endpoint: "note-apps", instructions: T("Each note or notebook becomes a page with its handwriting, typed text, pictures and recordings. Notes already imported are skipped.") },
 };
+// Whether a source of the Import dialog goes through the review (the rest
+// import at once, or pick files of their own).
+export const reviewsImport = (source) => Object.hasOwn(FORMATS, source);
 // The endpoints of one app alone (scripts', and a review staged before the
 // card took both), reopened on the card.
 const NOTE_APPS = ["notability", "goodnotes"];

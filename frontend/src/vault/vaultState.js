@@ -42,11 +42,24 @@ export function directionText(vault) {
 }
 
 // Whether the page's file can be shown in this computer's file manager
-// (Show in folder, the chip's and the tab menu's): a vault's or an opened
+// (Show in Explorer, the chip's and the tab menu's): a vault's or an opened
 // file's path, while the file is there.
 export function showsOnDisk(state) {
   const path = state?.vault ? state.vault.path : state?.reader?.path;
   return !!path && !state?.reader?.missing;
+}
+
+// The row that asks the desktop app to show a file in the system's file
+// manager (`reveal-on-disk`), named after it as the system names it: "Show
+// in Explorer" on Windows, "Show in Finder" on a Mac, "Show in file
+// manager" elsewhere, from the desktop app's user agent (`ua`), which says
+// its system. The page chip's card, the tab menu, the file pane and the
+// computer strip's menu say it (HardDriveIcon); Gamma's own folder view is
+// "Show in folder view".
+export function revealLabel(ua = globalThis.navigator?.userAgent || "") {
+  if (/Windows/.test(ua)) return t("Show in Explorer");
+  if (/Macintosh|Mac OS X/.test(ua)) return t("Show in Finder");
+  return t("Show in file manager");
 }
 
 // The chip in the page header: `{kind, label, title}`, or null for a page
@@ -68,7 +81,7 @@ export function vaultChip(state) {
     const label = file ? t("Pushed from: {name}", { name }) : t("Synced: {name}", { name });
     const where = vault.path || vault.name || "";
     const lines = [file ? t("This page's PDF is pushed from {path}", { path: where }) : t("This page is synced with {path}", { path: where })];
-    if (vault.paused) lines.push(t("The vault is paused."));
+    if (vault.paused) lines.push(file ? t("The vault is paused.") : t("Syncing is paused."));
     if (vault.conflicts) lines.push(tn("{n} conflict", "{n} conflicts", vault.conflicts));
     if (vault.problem) lines.push(t("Not written to disk: {reason}", { reason: vault.problem }));
     const kind = vault.problem ? "alert" : vault.paused ? "paused" : file ? "push" : "sync";
@@ -195,29 +208,48 @@ export function computerChip(computers, now = new Date()) {
   };
 }
 
-// What a synced folder's card, row and Files window row say of the computer
-// that keeps it: {text, title}, "TIM-PC · Connected". `link` this desktop
-// app's own vault of the folder (useVault's links, GET /api/folder-links:
-// its `status` and `choosing`), which names this computer and how its last
-// round stands; else `computer`, the account's computer that keeps it as
-// the folder's server knows it (GET /api/folders/computers: {name, online,
-// since, paused}), named with whether it is connected, paused there, or
-// since when it is offline. Null for neither (a member who is not the
-// keeper's account).
+// What a synced folder's card, row, Files window row and folder view
+// heading say of the computer that keeps it: a StateTag's state ({label,
+// title, tone, live}: "TIM-PC · Connected", `live` while it syncs, tone
+// "warn" while it does not sync or is offline, "pending" while its files
+// are chosen; `title` where it is kept and how it stands, a round's error
+// with it), with `badge`, the tone of SyncedFolderIcon's arrows ("ok"
+// synced or connected, "pending" syncing or choosing, "warn" not syncing
+// or offline, "" paused), and `computer`, the keeping computer's name (""
+// for this one). `link` this desktop app's own vault of the folder
+// (useVault's links, GET /api/folder-links: its `status` and `choosing`),
+// which names this computer and how its last round stands; else
+// `computer`, the account's computer that keeps it as the folder's server
+// knows it (GET /api/folders/computers: {name, online, since, paused}),
+// named with whether it is connected, paused there, or since when it is
+// offline. Null for neither (a member who is not the keeper's account).
 export function folderKeeper(link, computer, now = new Date()) {
   if (!link && !computer?.name) return null;
-  let name, state;
+  let name, state, kept, tone = "", badge = "", live = false, reason = "";
   if (link) {
     const status = link.status || {};
     name = t("This computer");
-    state = link.choosing ? t("Choosing files…") : status.paused_at ? t("Paused")
-      : status.stopped || status.offline || status.last_error ? t("Not syncing") : status.running ? t("Syncing…") : t("Synced");
+    kept = t("Kept on this computer");
+    if (link.choosing) [state, tone, badge] = [t("Choosing files…"), "pending", "pending"];
+    else if (status.paused_at) state = t("Paused");
+    else if (status.stopped || status.offline || status.last_error) {
+      [state, tone, badge] = [t("Not syncing"), "warn", "warn"];
+      reason = String(status.last_error || (typeof status.stopped === "string" ? status.stopped : "") || "");
+    } else if (status.running) [state, tone, badge, live] = [t("Syncing…"), "pending", "pending", true];
+    else [state, badge] = [t("Synced"), "ok"];
   } else {
     const when = computer.online ? "" : sinceText(computer.since, now);
     name = computer.name;
-    state = computer.online ? (computer.paused ? t("Paused") : t("Connected")) : when ? t("Offline since {when}", { when }) : t("Offline");
+    kept = t("Kept on {computer}", { computer: name });
+    if (!computer.online) [state, tone, badge] = [when ? t("Offline since {when}", { when }) : t("Offline"), "warn", "warn"];
+    else if (computer.paused) state = t("Paused");
+    else [state, badge] = [t("Connected"), "ok"];
   }
-  return { text: t("{computer} · {state}", { computer: name, state }), title: [t("Kept on {computer}", { computer: name }), state].join("\n") };
+  return {
+    label: t("{computer} · {state}", { computer: name, state }),
+    title: [kept, reason ? t("{state}: {reason}", { state, reason }) : state].join("\n"),
+    tone, live, badge, computer: link ? "" : name,
+  };
 }
 
 

@@ -179,7 +179,7 @@ CHOOSES_ONLY = "Only a vault that pushes everything chooses its files."
 REMOTE_WORK = "A synced folder of another server is made of one of its folders, pushing everything and pulling."
 REMOTE_RAISED = ("A vault of another server comes to push everything only as a synced folder made of an empty folder "
                  "there: remove this one, then make that.")
-REMOTE_LOWERED = "A synced folder of another server pushes everything and pulls: detach it to stop it."
+REMOTE_LOWERED = "A synced folder of another server pushes everything and pulls: stop syncing it to end that."
 MARK_GONE = "the other server let go of this synced folder (its mark is gone there): remove this vault"
 # The state key of a work folder of another server whose round found its mark gone there (``MARK_GONE``), and
 # when: the mark names no vault, so the link never acts on that folder again (``work_vault``, ``_works``)
@@ -657,7 +657,7 @@ def _apart_from_agents(link: dict, earlier: bool) -> None:
             continue
         if within(link["path"], entry["path"]) or (link["kind"] == "folder" and within(entry["path"], link["path"])):
             raise LinkError(f"{link['path']} is inside or around a directory offered to agents ({entry['path']}); "
-                            "withdraw it in Settings → AI first.")
+                            "withdraw it in Settings → AI → Agents first.")
 
 
 def check_vault(link: dict, *, earlier: bool = False) -> None:
@@ -1955,10 +1955,10 @@ def _letting_go(link: dict, force: bool):
         if force:
             return None
         if isinstance(e, Unreachable):
-            raise LinkError("The other server cannot be reached: detach it once it answers, or detach the "
-                            "synced folder there.", 409) from e
+            raise LinkError("The other server cannot be reached: stop syncing it once it answers, or stop syncing "
+                            "the synced folder there.", 409) from e
         raise LinkError(f"The other server cannot let go of this synced folder now ({getattr(e, 'detail', '') or e}): "
-                        "detach it later, or detach the synced folder there.", 409) from e
+                        "stop syncing it later, or stop syncing the synced folder there.", 409) from e
     return remote
 
 

@@ -486,7 +486,7 @@ test('a vault\'s panel actions: push is a word, Pull now and Push now narrow the
   }
 });
 
-test('a work folder\'s Detach… in the panel asks the web app\'s choice in its words, and sends it', async () => {
+test('a work folder\'s Stop syncing… in the panel asks the web app\'s choice in its words, and sends it', async () => {
   fresh();
   const s = server('Detach');
   s.fake.vaults = [vaultLink({ push: 'everything', work: true, status: { last_sync: '2026-11-01T10:00:00Z', folder_path: ['Paper'] } })];
@@ -500,16 +500,17 @@ test('a work folder\'s Detach… in the panel asks the web app\'s choice in its 
   shell.asked.length = 0;
   shell.answers.push(1);
   assert.equal(await shell.removeVault(s.srv.id, 'v1'), true);
-  assert.deepEqual(shell.asked, [`Detach “Paper” from ${os.hostname()}? 5 files sync with it. 2 of them are in your library and stay there `
-    + 'either way. Keep the files in Gamma: Each file becomes an ordinary page, filed where it is. Their bytes are stored in Gamma: '
-    + '2 MB. 1 file too large to keep stays listed by name, without its bytes. Remove them from Gamma: 3 files go to Recently deleted. '
+  assert.deepEqual(shell.asked, [`Stop syncing “Paper” with ${os.hostname()}? Gamma stops syncing it with ${os.hostname()}. It has 5 files. `
+    + '2 of them are in your library and stay there either way. Keep the files in Gamma: Each file becomes an ordinary page, filed '
+    + 'where it is. A copy of each file is stored in Gamma (2 MB). 1 file is too large to store: it stays listed by name only. '
+    + 'Remove them from Gamma: 3 files go to Recently deleted. '
     + `The directory on ${os.hostname()} stays as it is: only Gamma's own .gamma folder goes.`]);
   assert.deepEqual(deletes(), ['?pages=remove']);
-  assert.equal(shell.notice(), 'Detached Paper: its files not in the library went to Recently deleted; C:\\Papers stays as it is.');
+  assert.equal(shell.notice(), 'Stopped syncing Paper: its files not in the library went to Recently deleted; C:\\Papers stays as it is.');
   shell.answers.push(0);
   assert.equal(await shell.removeVault(s.srv.id, 'v1'), true);
   assert.deepEqual(deletes(), ['?pages=remove', '?pages=keep']);
-  assert.equal(shell.notice(), 'Detached Paper: its files stay in Gamma as pages; C:\\Papers stays as it is.');
+  assert.equal(shell.notice(), 'Stopped syncing Paper: its files stay in Gamma as pages; C:\\Papers stays as it is.');
 });
 
 test('a work folder its other server detached is forgotten here as Detach… forgets it, its token revoked there', async () => {
@@ -638,7 +639,7 @@ test('a work folder of another server pushes everything and pulls: its switches 
   await shell.refreshKeeping();
   const [item] = shell.keeping().items;
   assert.deepEqual([item.work, item.push, item.pull], [true, 'everything', true]);
-  const rule = /^Error: A synced folder of another server pushes everything and pulls: detach it to stop\.$/;
+  const rule = /^Error: A synced folder of another server pushes everything and pulls: stop syncing it to end that\.$/;
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'pull', false), rule);
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'pdfs'), rule);
   await assert.rejects(shell.keepingAction('vault', s.srv.id, 'v1', 'push', 'off'), rule);
@@ -1352,7 +1353,7 @@ test('an empty folder of another server synced with a directory of notes becomes
     const kept = revoked(nas).length;
     assert.equal(await shell.trackedFromPage('mine', 'w1', false), true);
     assert.equal(revoked(nas).length, kept, 'nothing revoked');
-    assert.equal(shell.notice(), '“Empty lab” could not be cancelled, NAS not reached: it waits for its files to be chosen. Choose files… in the sync panel, or detach it once NAS answers.');
+    assert.equal(shell.notice(), '“Empty lab” could not be cancelled, NAS not reached: it waits for its files to be chosen. Choose files… in the sync panel, or stop syncing it once NAS answers.');
     assert.equal(shell.current().id, nas.srv.id);
     host.fake.vaults = [];
 
@@ -1405,7 +1406,7 @@ test('removing a work folder of another server that cannot be reached: refused, 
   host.fake.answer = async (p, init, url) => {
     if (p !== '/api/folder-links/v1' || init.method !== 'DELETE' || url.search.includes('force=1')) return answer(p, init, url);
     host.fake.calls.push({ path: p, query: url.search, method: 'DELETE', headers: init.headers || {}, body: null });
-    return { ok: false, status: 409, json: async () => ({ detail: 'NAS cannot be reached: detach it once it answers, or detach the synced folder there' }) };
+    return { ok: false, status: 409, json: async () => ({ detail: 'NAS cannot be reached: stop syncing it once it answers, or stop syncing the synced folder there' }) };
   };
   const deletes = () => host.fake.calls.filter((c) => c.path === '/api/folder-links/v1' && c.method === 'DELETE').map((c) => c.query);
   electron.session.defaultSession.fetch = async (url, init = {}) => nas.fake.answer(new URL(url).pathname, init, new URL(url));
@@ -1414,12 +1415,12 @@ test('removing a work folder of another server that cannot be reached: refused, 
     // the question takes Cancel under the harness: nothing forgotten
     assert.equal(await shell.removeVault(host.srv.id, 'v1', 'keep'), false);
     assert.deepEqual(deletes(), ['?pages=keep']);
-    assert.match(shell.asked.at(-1), /^NAS cannot be reached: detach “Papers” all the same\? NAS cannot be reached: detach it once it answers/);
+    assert.match(shell.asked.at(-1), /^NAS cannot be reached: stop syncing “Papers” all the same\? NAS cannot be reached: stop syncing it once it answers/);
     shell.answers.push(0);
     assert.equal(await shell.removeVault(host.srv.id, 'v1', 'keep'), true);
     assert.deepEqual(deletes(), ['?pages=keep', '?pages=keep', '?pages=keep&force=1']);
     assert.deepEqual(revoked(nas), ['vt@team'], 'its token revoked there, as far as that server answers');
-    assert.match(shell.notice(), /^Papers is no longer synced with this computer; on NAS its folder stays a synced folder until it is detached there\./);
+    assert.match(shell.notice(), /^Papers is no longer synced with this computer; on NAS its folder stays a synced folder until it stops syncing there\./);
 
     // asked from the panel: the host could not count its files there, so that question comes first, never the usual one
     host.fake.vaults = [vaultLink({ workspace_id: 'team', remote_url: 'http://nas.lan:9001', token_id: 'vt', push: 'everything', work: true })];
@@ -1428,7 +1429,7 @@ test('removing a work folder of another server that cannot be reached: refused, 
     await shell.refreshKeeping();
     shell.asked.length = 0;
     assert.equal(await shell.removeVault(host.srv.id, 'v1'), false);
-    assert.deepEqual(shell.asked, ['NAS cannot be reached: detach “Papers” all the same? NAS does not answer. Detach anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it is detached there. Or cancel, and detach it once NAS answers.']);
+    assert.deepEqual(shell.asked, ['NAS cannot be reached: stop syncing “Papers” all the same? NAS does not answer. Stop syncing anyway, and this computer forgets it; the folder stays a synced folder on NAS, its files locked, until it stops syncing there. Or cancel, and stop syncing it once NAS answers.']);
     assert.equal(deletes().length, 3, 'nothing removed');
     shell.answers.push(0);
     assert.equal(await shell.removeVault(host.srv.id, 'v1'), true);
@@ -3035,7 +3036,7 @@ test('the buttons arm a quiet, focused second after the bar drew the card; a pre
     assert.equal(await shell.answerAgentAsk('a1', 'once'), true);
     const [post] = posts();
     assert.deepEqual([post.path, post.body, post.headers['X-Gamma-Shell']], ['/api/local-agents/asks/a1', { decision: 'once' }, shell.shellSecret]);
-    assert.equal(shell.notice(), 'Allowed once: Codex goes on.');
+    assert.equal(shell.notice(), 'Allowed. Codex goes on…');
     assert.equal(shell.agentAsk(), null, 'answered, the card goes');
     // a resize or a move counts the second again too
     shell.pretendAsks([askOf('a2')]);
@@ -3061,7 +3062,7 @@ test('the buttons arm a quiet, focused second after the bar drew the card; a pre
     fire(armTimer());
     shell.pressed('touchStart');
     assert.equal(await shell.answerAgentAsk('a2', 'deny'), true, 'a tap is the press an answer needs');
-    assert.equal(shell.notice(), 'Declined: Codex goes on without it.');
+    assert.equal(shell.notice(), 'Not allowed. Codex goes on without it…');
   } finally {
     closeAsking();
   }
@@ -3148,7 +3149,7 @@ test('what an answer says: gone meanwhile nothing was allowed and a list read be
     assert.deepEqual(posts().at(-1).body, { decision: 'deny' });
     const patch = host.fake.calls.filter((c) => c.path === '/api/local-agents/codex' && c.method === 'PATCH').at(-1);
     assert.deepEqual([patch.body, patch.headers['X-Gamma-Shell']], [{ runs: 'never' }, undefined]);
-    assert.equal(shell.notice(), 'Declined, and Codex no longer asks to run more, here or in the chat.');
+    assert.equal(shell.notice(), 'Not allowed, and Codex no longer asks to run more, here or in the chat.');
     assert.equal(shell.agentAsk(), null);
 
     // an answer left unsure, then a 409 for the next one: the first may be the one taken, so never "nothing was allowed"

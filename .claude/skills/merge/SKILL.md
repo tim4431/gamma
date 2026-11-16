@@ -39,7 +39,7 @@ file with uncommitted changes is a question for the user. If there is
 nothing committed beyond `origin/main`, stop and say so.
 
 **Fixing a failure.** Find the cause before touching anything; a red test
-is either:
+is one of:
 
 - **flaky** — it passes on a rerun, or fails only under load, in another
   order or on one OS: a race, an unawaited state, a fixed sleep, a shared
@@ -53,6 +53,15 @@ is either:
   Fix it with a test that fails without the fix, and verify it as any
   change (the [test policy](../../../docs/dev/debugging.md#local-changes-test-the-affected-modules),
   the `verify` skill for UI behavior), docs updated with the behavior.
+- **a test that does not earn its place** — it went red because an
+  intended change moved what it copies: a change detector (exact wording,
+  a CSS value, a source grep, a snapshot), a mirror of the implementation,
+  a re-check of a behavior a cheaper test covers
+  ([What a test is for](../../../docs/dev/debugging.md#what-a-test-is-for)).
+  Updating its expectation only sets up the next red round. Rewrite it to
+  assert what the change is for, or delete it when another test already
+  does, in a commit of its own that names the kind. A regression test,
+  or the last test of a user-visible behavior, is fixed instead.
 
 Each fix is its own commit on the snapshot's branch, its message saying
 what failed and why. A failure that needs a product decision, or one whose cause is

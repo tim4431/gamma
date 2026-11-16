@@ -26,6 +26,7 @@ launcher, and desktop release workflows use these locations.
 | `design/brand/` | Authoritative Gamma artwork, variant guidance and output provenance |
 | `tools/branding/` | Unified asset generation and consistency checks; README and Store layout recipes |
 | `tools/user_guide/` | The user guide's animations: one scene per section, generated into `docs/user_guide/assets/` |
+| `tools/check_doc_links.mjs` | Every relative link and `#anchor` of the tracked Markdown, checked against the files and headings by GitHub's ids, Node's built-ins only (`node tools/check_doc_links.mjs [files]`); the website's `--strict` build checks only the pages it renders ([debugging.md](debugging.md#local-changes-test-the-affected-modules)) |
 | `tools/check_mobile_pins.sh` | Resolves every pin of `backend/requirements-mobile.txt` for the iPad's and Android's platforms, installing nothing; `check.yml`'s `mobile-pins` job runs it ([ipad.md](ipad.md#the-wheels)) |
 | `tools/*codex*`, `tools/*dsh*`, `tools/*plugins*` | Assistant plugin (Codex, Claude Code, DeepSeek Harness) packaging, release and installer scripts with their unit tests; `codex-plugin.yml` runs them and `desktop.yml` builds the release assets |
 | `plugins/gamma/` | The assistant plugin source: the `gamma` skill, its `.codex-plugin/` and `.claude-plugin/` manifests, and the DeepSeek Harness layer (`dsh-gamma.js`, `cordis.patch.yml`) |
@@ -43,7 +44,9 @@ Keep implementation details in the relevant `docs/dev/` file, and surveys and
 design rationale in [research notes](../research/README.md). Label plans and
 dated inventories so they are not mistaken for the current implementation.
 The root `CLAUDE.md` is an ignored local guide for machine setup and general
-working rules; shared project documentation belongs here.
+working rules; shared project documentation belongs here. Code, comments,
+docs and commit messages are in English, whatever language a request was
+written in.
 
 One file per topic. `docs/dev/` files are named in snake_case
 (`frontend-refactor.md` and `ui-design.md` keep their older names because
@@ -56,6 +59,15 @@ add its row to the developer guide ([translation.md](translation.md),
 are such files). When a plan or a research gap is built, describe the
 mechanics in the topic doc and mark the plan or note with one clause; the
 [research index](../research/README.md) keeps what each note still leaves open.
+
+A doc describes the code as it is. A section about a feature that was
+removed, an implementation that was replaced, or a plan that was dropped
+is deleted, not marked as old: git keeps the history. A built plan keeps
+only its open steps. A research note keeps its survey and the reasoning
+behind the shape chosen, and loses any sentence about Gamma that is no
+longer true. The `cleanup` skill does this for the docs its range touches;
+the `audit-docs` skill patrols the rest, a few files a run
+([workflow.md](workflow.md#patrols)).
 
 The user guide is also a page of gammapdf.com (`/docs/`), rendered from its
 file by the website build on every push to `main`

@@ -4,8 +4,9 @@
 // (TreeRow.jsx, fileTree.js folderRows), its directories first by name,
 // each opening in place, then its files a page of rows at a time
 // (useFolderTree.js), in the order the server sorts them. After each name
-// the columns the header names: Format, File size, Modified and Comments.
-// The keys are the Files window's (useTree.js); what a file's row does
+// the columns the header names: Format, File size, Modified and Comments
+// (on a phone a muted line under the name). The keys are the Files
+// window's (useTree.js); what a file's row does
 // (select, open, its menu, its pin, a rename, a drag) is the library's,
 // handed in as `row`: the rows are App's pages like the listing's, found in
 // its lookups.
@@ -30,12 +31,16 @@ const COLUMNS = [
   ["comments", "fileRowComments", () => t("Comments"), (b) => (b.open_comments ? String(b.open_comments) : ""), () => ""],
 ];
 
+// The cells sit in .folderTreeCells, no box of their own beside the header
+// (display: contents), the line under the name on a phone (tree.css).
 function Columns({ cells, title, pin }) {
   return (
     <>
-      {COLUMNS.map(([key, className], i) => (
-        <span key={key} className={className} title={key === "modified" ? title || undefined : undefined}>{cells[i]}</span>
-      ))}
+      <span className="folderTreeCells">
+        {COLUMNS.map(([key, className], i) => (
+          <span key={key} className={className} title={key === "modified" ? title || undefined : undefined}>{cells[i]}</span>
+        ))}
+      </span>
       {pin || <span className="fileRowPinSlot" aria-hidden="true" />}
     </>
   );
@@ -47,14 +52,17 @@ function Columns({ cells, title, pin }) {
 // page row App has of a file (with the read's `open_comments`,
 // workFolderActions.listRows). `atTop`: the work folder's top is shown;
 // `choosing`: Choose files… is open, which `onChoose` opens (null where it
-// is not this app's). `onNewPage`: New page, a note written into the
+// is not this app's); `keeper`: the name of the computer that keeps it (""
+// where the account is not told, or this one keeps it), where its files
+// are chosen. `onNewPage`: New page, a note written into the
 // directory (null where none is). `row`: what a file's row does —
 // {selecting, selectedPages, folderMenu(id), pageMenu(id, title),
 // menuPress(menu), onPageClick(b, e), onPageOpen(id), editingId,
 // onRename(id, text), onRenameCancel(), onPin(ids, pinned) or null,
 // draggable, onDragStart(e, id)}; a directory's row opens and closes in
 // place.
-export default function FolderTree({ rows, tree, folderId, pageOf, query, atTop, choosing, onChoose, onNewPage, listRef, onBlank, row }) {
+export default function FolderTree({ rows, tree, folderId, pageOf, query, atTop, choosing, onChoose, keeper = "", onNewPage, listRef, onBlank,
+  row }) {
   const read = tree.dirs.of(folderId);
   const fileOf = (r) => (r.kind === "file" ? pageOf(r.id) : null);
   function press(r) {
@@ -92,10 +100,13 @@ export default function FolderTree({ rows, tree, folderId, pageOf, query, atTop,
   const chooseButton = onChoose ? <button type="button" className="uiBtn sm" onClick={onChoose}>{t("Choose files…")}</button> : null;
   // the directory holds nothing to draw once read: the line says why
   const none = read.loaded && !read.loading && !read.failed && !rows.some((r) => r.kind !== "note");
+  // nothing tracked, and no Choose files… here: where its files are chosen
+  const chooseThere = keeper ? t("Nothing tracked yet. Choose its files in Gamma on {computer}.", { computer: keeper })
+    : t("Nothing tracked yet. Its files are chosen in Gamma on the computer that keeps it.");
   const empty = {
-    choosing: <>{t("Choosing files…")} {chooseButton}</>,
+    choosing: <>{t("Waiting for the first choice of files.")} {chooseButton}</>,
     nomatch: t("No file here matches “{q}”.", { q: query.trim() }),
-    untracked: <>{t("Nothing tracked yet.")} {chooseButton}</>,
+    untracked: chooseButton ? <>{t("Nothing tracked yet.")} {chooseButton}</> : chooseThere,
     none: t("No tracked files here."),
   }[emptyKind({ choosing, query, loaded: read.rows.length, atTop })];
   return (

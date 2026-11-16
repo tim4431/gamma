@@ -311,7 +311,8 @@ function scanScript(code, file, hit) {
         if (only && ((only.type === "JSXText" && CLOSE_GLYPH.test(only.value))
           || (only.type === "JSXExpressionContainer" && only.expression.type === "StringLiteral" && CLOSE_GLYPH.test(only.expression.value)))) at("text-close", open);
       }
-      if (/^[A-Z]\w*Icon$/.test(name)) {
+      // An icon by its component's name, `CheckIcon`, or a glyph picked into a plain `Icon` (`const Icon = agentKindIcon(kind)`).
+      if (/^(?:[A-Z]\w*)?Icon$/.test(name)) {
         const size = valueOf(attrOf(open, "size"));
         const sizes = !size ? [] : size.type === "NumericLiteral" ? [size] : size.type === "ConditionalExpression" ? [size.consequent, size.alternate].filter((x) => x.type === "NumericLiteral") : [];
         for (const s of sizes) if (!ICON_SIZES.has(s.value)) at("icon-size", open, `<${name} size={${s.value}}>`);

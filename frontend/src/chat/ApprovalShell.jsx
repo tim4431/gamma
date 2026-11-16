@@ -5,8 +5,9 @@
 // answers: the card's own that allow (`answers`, [{decision, label,
 // primary, danger, title, disabled}]) and, after a spacer, Don't allow, which opens
 // a line for what to do instead (optional; Enter declines with it, Escape
-// or Back closes it). Once answered the card says so ("Allowed. … goes
-// on…" or "Not allowed. … goes on without it…"); a refusal is said on it,
+// or Back closes it). Once answered the card says so, by the agent that
+// asked (`agent`: "Allowed. Codex goes on…", "Not allowed. Gamma AI goes
+// on without it…"); a refusal is said on it,
 // and the answers come back. The bar of a note an edit is drawn in
 // (editor/NoteReviewBar.jsx) has the same answers beside its own label
 // (`useApprovalAnswer` and `ApprovalAnswers`). The buttons never take the
@@ -15,6 +16,7 @@
 import { useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { ShieldIcon } from "../shared/ui/Icons";
+import { touchTyping } from "../shared/lib/pointer.js";
 
 // How long the line of what to do instead may be (both servers' cap).
 const NOTE_MAX = 2000;
@@ -44,21 +46,21 @@ export function useApprovalAnswer(onDecide, answered = "") {
 
 // The answers of `answer` (useApprovalAnswer): the refusal, then what was
 // taken, the line of what to do instead, or the buttons. `agent` names who
-// goes on ("Codex"); the assistant when none.
+// goes on ("Codex"); Gamma AI when none (its edit's bar in a note). The
+// line takes the focus as it opens unless that would raise an on-screen
+// keyboard (touchTyping).
 export function ApprovalAnswers({ answer, answers, agent = "" }) {
   const { taken, error, declining, setDeclining, note, setNote, decide } = answer;
-  const instead = agent ? t("Tell {agent} why, or what to do instead (optional)", { agent })
-    : t("What should the assistant do instead? (optional)");
-  const status = taken === "deny"
-    ? (agent ? t("Not allowed. {agent} goes on without it…", { agent }) : t("Not allowed. The assistant goes on without it…"))
-    : (agent ? t("Allowed. {agent} goes on…", { agent }) : t("Allowed. The assistant goes on…"));
+  const who = agent || t("Gamma AI");
+  const instead = t("Tell {agent} why, or what to do instead (optional)", { agent: who });
+  const status = taken === "deny" ? t("Not allowed. {agent} goes on without it…", { agent: who }) : t("Allowed. {agent} goes on…", { agent: who });
   return <>
     {error ? <div className="chatApprovalError" role="alert">{error}</div> : null}
     {taken ? (
       <div className="chatApprovalStatus" role="status">{status}</div>
     ) : declining ? (
       <form className="chatApprovalDecline" onSubmit={(e) => { e.preventDefault(); decide("deny", note); }}>
-        <input className="aiKeyInput" value={note} maxLength={NOTE_MAX} autoFocus
+        <input className="aiKeyInput" value={note} maxLength={NOTE_MAX} autoFocus={!touchTyping()}
           placeholder={instead} aria-label={instead} onChange={(e) => setNote(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setDeclining(false); } }} />
         <div className="chatApprovalActions">

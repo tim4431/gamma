@@ -7,9 +7,9 @@
 import React, { createContext, useContext, useEffect } from "react";
 import { useCaretAnchored } from "./LatexEditor";
 import { MarkedText } from "../search/SearchPanel";
-import { PersonAvatar } from "../collaboration/Presence";
+import { ActorAvatar } from "../collaboration/Presence";
 import FileIcon from "../shared/ui/FileIcon.jsx";
-import { AlarmClockIcon, BotIcon, ClockIcon, UserPlusIcon } from "../shared/ui/Icons";
+import { AlarmClockIcon, ClockIcon, UserPlusIcon } from "../shared/ui/Icons";
 import { fmtDate, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import {
@@ -35,8 +35,9 @@ export function MentionChip({ raw }) {
 function RowIcon({ row }) {
   if (row.kind === "date") return <ClockIcon size={16} />;
   if (row.kind === "remind") return <AlarmClockIcon size={16} />;
-  if (row.kind === "person") return <PersonAvatar name={row.user} title={row.user} />;
-  if (row.kind === "agent") return <BotIcon size={16} />;
+  // a person and an agent among the People, each by their avatar (Presence.jsx ActorAvatar)
+  if (row.kind === "person") return <ActorAvatar name={row.user} title={row.user} />;
+  if (row.kind === "agent") return <ActorAvatar kind="computer" title={row.label} />;
   if (row.kind === "invite") return <UserPlusIcon size={16} />;
   return <FileIcon path={row.file} format={row.format} size={16} />;
 }

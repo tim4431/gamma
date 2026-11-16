@@ -1,7 +1,8 @@
 // The Comments window: the open page's threads, Open or Resolved, the
 // latest activity first, each with what it is on (the note's words, the
-// highlight's quote, the handwriting's page, or the page) and the chip of a
-// turn of an agent still to end. A click scrolls to the anchor, flashes it and opens
+// highlight's quote, the handwriting's page, or the page) and the tag of a
+// turn of an agent still to end, or of a send to one that started none (the
+// thread's own, Thread.jsx TurnTag). A click scrolls to the anchor, flashes it and opens
 // its thread popover (App's onOpen). A dock window like Notes
 // and Chat, loaded on first use (shared/ui/lazy.jsx;
 // docs/dev/comments.md "In the app"). The list moves as it changes
@@ -10,16 +11,15 @@
 // is the page's Notify me.
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ListMotion from "../shared/ui/ListMotion";
-import { StateTag } from "../shared/ui/StateTag";
 import { DockWindow } from "../shared/ui/Widgets";
 import { Empty, Segmented } from "../settings/SettingsKit";
 import { BellIcon, CheckIcon, MessageSquareIcon } from "../shared/ui/Icons";
-import { PersonAvatar } from "../collaboration/Presence";
+import { ActorAvatar } from "../collaboration/Presence";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { formatRelativeTime } from "../library/libraryUtils";
-import { anchorSnippet, authorLabel, threadsIn, turnChip } from "./comments.js";
-import { CommentAvatar } from "./Thread";
+import { anchorSnippet, authorLabel, refusalChip, threadsIn, turnChip } from "./comments.js";
+import { CommentAvatar, TurnTag } from "./Thread";
 
 const notifyUrl = (page) => `${API}/pages/${encodeURIComponent(page)}/notify`;
 
@@ -58,8 +58,9 @@ function useNotifyLevel(pageId, enabled, onStatus) {
 // labelOf(id): a [[link]]'s label, so a line names the page it links to.
 // `notify`: the reader has an Inbox (a signed-in account, no guest), so the
 // header has the page's Notify me; onStatus(text) says a choice the server
-// refused. A row's chip is its thread card's: the reader's turn of it with
-// an agent while it is to end (comments.js turnChip).
+// refused. A row's tag is its thread's turn row's (Thread.jsx TurnTag): the
+// reader's turn of it with an agent while it is to end (comments.js
+// turnChip), else their send to one that started none (refusalChip).
 export default function CommentsPanel({ threads, pageId, anchorText, labelOf, onOpen, onClose, notify = false, onStatus, ...common }) {
   const [filter, setFilter] = useState("open");
   const [level, setLevel] = useNotifyLevel(pageId, notify, onStatus);
@@ -89,20 +90,20 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
             const who = first ? authorLabel(first) : "";
             const replies = th.comments.length - 1;
             const anchor = th.block_id === pageId ? t("This page") : anchorSnippet(anchorText(th.block_id), 80, labelOf) || t("A note");
-            const chip = turnChip(th);
+            const turn = turnChip(th) || refusalChip(th.refused);
             return (
               <button key={th.id} type="button" className={`commentsPanelRow${filter === "resolved" ? " resolved" : ""}`}
                 data-motion-key={th.id} data-thread-id={th.id} onClick={() => onOpen(th)}>
                 <span className="commentsPanelAnchor">{anchor}</span>
                 <span className="commentsPanelFirst">
-                  {first ? <CommentAvatar comment={first} /> : <PersonAvatar name="?" />}
+                  {first ? <CommentAvatar comment={first} /> : <ActorAvatar name="?" />}
                   <span className="commentsPanelText">
                     <span className="commentAuthor">{who}</span>{" "}
                     {first?.deleted ? <em>{t("Comment deleted")}</em> : anchorSnippet(first?.body, 140, labelOf)}
                   </span>
                 </span>
                 <span className="commentsPanelMeta">
-                  {chip ? <StateTag state={chip} data-turn={chip.kind} /> : null}
+                  {turn ? <TurnTag state={turn} /> : null}
                   {replies ? <span>{tn("{n} reply", "{n} replies", replies)}</span> : null}
                   <span>{formatRelativeTime(th.last_at)}</span>
                 </span>

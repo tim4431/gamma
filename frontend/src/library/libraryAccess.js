@@ -22,15 +22,16 @@ import { EMPTY_TREE, inFolder } from "./libraryUtils.js";
 //               id, "" for none (docs/dev/work_folders.md)
 //   organizeIn  what may be done with a folder ("" the top), as
 //               explorer/workFolders.js folderRules says and `organize`
-//               allows: {rename, move, moveTargets, delete, newSubfolder,
-//               newPage, chooseFiles}; inside a work folder its directories
-//               follow the disk
+//               allows: {rename, move, moveTargets, delete, deleteRefused,
+//               newSubfolder, newPage, chooseFiles}; inside a work folder
+//               its directories follow the disk
 //
 // A workspace viewer browses everything but organizes nothing; a share
 // visitor browses the shared folder only. `tree` is the listing's folder
 // tree (libraryUtils.libraryTree), which says what is below `root` and
 // which folders are work folders.
-const NOTHING = { rename: false, move: false, moveTargets: [], delete: false, newSubfolder: false, newPage: false, chooseFiles: false };
+const NOTHING = { rename: false, move: false, moveTargets: [], delete: false, deleteRefused: "", newSubfolder: false, newPage: false,
+  chooseFiles: false };
 
 export function libraryAccess({ shareMode = false, shareFolder = "", role = "", tree = EMPTY_TREE } = {}) {
   const root = shareMode ? shareFolder : "";

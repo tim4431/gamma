@@ -13,7 +13,7 @@
 // /api/admin/offsite/run). docs/dev/settings.md.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { DialogButtons, Field, PasswordInput, Row, Section, SubDialog, TestResult } from "./SettingsKit";
+import { DialogButtons, Empty, Field, FormNotice, PasswordInput, Row, Section, SubDialog, TestResult } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
 import { useSettingsRead } from "./settingsReads.js";
 import { offsiteProgressText } from "./offsiteRound.js";
@@ -134,7 +134,7 @@ function BucketDialog({ settings, onClose, onSaved }) {
             title={t("Reach the bucket with the settings above, saved or not")} onClick={runTest}>{t("Test connection")}</button>
           <TestResult test={test} />
         </div>
-        {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
+        {error ? <FormNotice>{error}</FormNotice> : null}
         <DialogButtons>
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button type="submit" className="uiBtn primary" disabled={busy}><MorphText>{busy ? t("Saving…") : t("Save")}</MorphText></button>
@@ -176,22 +176,33 @@ export function BackupBucket({ setStatus }) {
     setTest(await tryBucket(null));
   }
 
-  const errorLine = error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null;
+  // A failed read offers to read again; a refused Copy now says why.
+  const errorLine = error ? (
+    <FormNotice>
+      {error}
+      {!saved ? <>{" "}<button type="button" className="uiBtn sm" onClick={() => offsite.reload().catch(() => {})}>{t("Try again")}</button></> : null}
+    </FormNotice>
+  ) : null;
   // The summary's hint: where the bucket is and what it is for; for the
-  // environment's, the variable that sets it, or what its Test found.
+  // environment's, where and the variable that sets it. Its Test answers
+  // beside the button, as the dialog's does.
   const summaryHint = !saved ? null : managed
-    ? (test?.busy ? t("Testing…") : test?.ok ? `✓ ${test.message}` : test ? <span className="aiKeysError">{test.message}</span>
-      : t("Set by {name} in the server's environment", { name: "GAMMA_S3_BUCKET" }))
+    ? t("{where} · set by {name}", { where: bucketWhere(settings), name: "GAMMA_S3_BUCKET" })
     : settings.bucket ? t("{where} · backup tasks can copy their snapshots here", { where: bucketWhere(settings) })
       : t("AWS S3, Cloudflare R2, MinIO or another S3-compatible store, for backup tasks to copy their snapshots to");
   return <>
-    <Section title={t("Bucket")}>
-      {!saved ? errorLine || <p className="setNotice loadingHint">{t("Loading…")}</p> : <>
-        {/* The environment's values are the hover title of its read-only summary. */}
+    {/* An admin's section in a pane every account has: tagged so, as the
+        rail's Administration caption is. */}
+    <Section title={t("Bucket")} tag={<span className="uiTag admin">{t("admin")}</span>}>
+      {!saved ? errorLine || <Empty icon={CloudIcon} loading>{t("Loading…")}</Empty> : <>
         <Row icon={CloudIcon} label={settings.bucket || t("No bucket yet")} hint={summaryHint}
-          title={managed ? bucketWhere(settings) : undefined}>
-          {managed ? <button className="uiBtn sm" disabled={!!test?.busy} onClick={testEnvironment}>{t("Test")}</button>
-            : <button className="uiBtn sm" onClick={() => { setError(""); setEditing(true); }}><MorphText>{settings.bucket ? t("Edit…") : t("Set up…")}</MorphText></button>}
+          title={managed ? t("Set by {name} in the server's environment", { name: "GAMMA_S3_BUCKET" }) : undefined}>
+          {managed ? (
+            <span className="setRowControls">
+              <TestResult test={test} />
+              <button className="uiBtn sm" disabled={!!test?.busy} onClick={testEnvironment}>{t("Test")}</button>
+            </span>
+          ) : <button className="uiBtn sm" onClick={() => { setError(""); setEditing(true); }}><MorphText>{settings.bucket ? t("Edit…") : t("Set up…")}</MorphText></button>}
         </Row>
         {managed && (round?.enabled || round?.last_round_at) ? <>
           <Row icon={RefreshIcon} label={t("Off-site rounds")} hint={roundHint(round)}
@@ -200,7 +211,7 @@ export function BackupBucket({ setStatus }) {
               <MorphText>{running ? t("Copying…") : t("Copy now")}</MorphText>
             </button>
           </Row>
-          {round.error ? <p className="settingsPaneHint aiKeysError" role="alert">{round.error}</p> : null}
+          {round.error ? <FormNotice>{round.error}</FormNotice> : null}
         </> : null}
         {errorLine}
       </>}

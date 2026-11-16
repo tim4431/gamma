@@ -172,25 +172,35 @@ active conversation) and `/api/chat-history` (the archive).
   `historyRows`): the conversation shown first, then by time Gamma AI's
   archived ones, the computer agents' archived ones, and each agent's
   current conversation while another agent is shown (Gamma AI's active
-  one, or the computer's `active`), every row led by its agent's icon. A
+  one, or the computer's `active`). Every row is led by its agent's icon
+  and named by it (its title, and the icon's label where nothing else
+  names it); a computer agent's row says its agent after its title as the
+  picker names it ("Claude Code", "Codex on TIM-PC": `agents.agentChoice`),
+  which the search matches too. A
   row opens with its agent picked: one of Gamma AI's as above, one of a
   computer agent's through `POST /api/local-agents/chat/history/{id}/open`
   (the active one there archived), and an agent's current one by picking
   that agent alone; while a computer agent's turn is to end its other rows
-  are greyed, with why in their title. Rename is Gamma AI's; Export, Select
+  are greyed, with why in their title, and a press on one says it in the
+  status pill. A row opens on a press, Enter or Space. Rename is Gamma AI's; Export, Select
   and Delete (`DELETE /api/local-agents/chat/history/{id}`) work on either,
   and a bulk Delete sends each to its own table.
 - **Sessions started elsewhere.** With a computer's agent picked (this
   computer's, or another computer's of the reader's, asked over its
-  channel), History lists under *On {computer}* the sessions its CLI keeps
-  of the directory it works in, started in a terminal or an editor (`GET
-  /api/local-agents/sessions`, read each time the popover opens), in the
-  same rows: title, time, what it was started from or *In Gamma*, a busy
-  one greyed with why (and every row while conversations are ticked or an
-  open is on its way); another computer offline, too old to be asked or
-  not answering yet says so in place of the rows. A row opens it as the bucket's conversation, whose
-  next turn resumes the session ([local_agents.md](local_agents.md)
-  "Sessions started elsewhere").
+  channel), History lists under *Codex sessions in paper* (*… on TIM-PC*
+  for another computer's agent) the sessions its CLI keeps of the
+  directory it works in, started in a terminal or an editor (`GET
+  /api/local-agents/sessions`, read each time the popover opens and again
+  by the caption's refresh, the rows read before kept meanwhile), in the
+  same rows: title, time, what it was started from or *Continued here*, a
+  busy one greyed with why on a line under its title (and every row while
+  conversations are ticked or an open is on its way, a press on one saying
+  why in the status pill); none says *Sessions you start with Codex in
+  paper show here.*, and another computer offline, too old to be asked or
+  not answering yet says so in place of the rows. A row opens it as the
+  bucket's conversation, its age a spinner and the status pill *Opening
+  the session…* meanwhile; the next turn resumes the session
+  ([local_agents.md](local_agents.md) "Sessions started elsewhere").
 - History follows its bucket: a folder delete moves its entries into
   `home`'s with the active rows, and `ops.delete_page` drops the active row
   and the entries of a page deleted for good, in the deleting transaction

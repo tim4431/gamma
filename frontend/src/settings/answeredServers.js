@@ -33,7 +33,7 @@ export function linkState(status) {
 }
 
 // A link's row: `{server, label, hint, reconnect, remove, asks: {label,
-// hint, on, set}}`, `label` its host and the workspace there, `hint` its
+// hint, title, on, set}}`, `label` its host and the workspace there, `hint` its
 // address, the account there and how its channel stands; `reconnect` the
 // shell ask that hands a server that refused this computer's token a new one
 // (null otherwise), `remove` the one that stops answering it, `asks.set(on)`
@@ -49,8 +49,8 @@ export function linkRow(link) {
     remove: ["remove-server", { link: link.id }],
     asks: {
       label: t("{server} may answer what the agents ask", { server }),
-      hint: link.asks ? t("What an agent here asks to run can be allowed in any window signed in to {server} as you, and once by a person you let use the agent, for their own turn.", { server })
-        : t("What an agent here asks to run is answered on this computer only."),
+      hint: t("On: the agents' asks may also be allowed from {server}", { server }),
+      title: t("Off, what an agent here asks to run is answered on this computer only. On, it can also be allowed in any window signed in to {server} as you, and once by a person you let use the agent, for their own turn.", { server }),
       on: Boolean(link.asks),
       set: (on) => ["link-asks", { link: link.id, asks: on }],
     },

@@ -258,14 +258,15 @@ export async function explorerScenarios(env) {
         await until(async () => (await treeRow(page, "fig1.pdf").getAttribute("aria-selected")) === "true", { timeout: 15000, what: "fig1.pdf revealed" });
         assertEq(await treeRow(page, "figures").getAttribute("aria-expanded"), "true", "figures opened");
         assertEq(await treeRow(page, "raw").getAttribute("aria-expanded"), "false", "raw stays closed");
-        // a synced folder's rows by Material Icon Theme: a file by its name, a directory by its own, the root its
-        // root folder, with the computer that keeps it
+        // a synced folder's rows by Material Icon Theme: a file by its name, a directory by its own; the root wears
+        // Gamma's synced folder glyph, with the computer that keeps it
         const icon = (name) => treeRow(page, name).locator("img.fileIcon").first().getAttribute("src", { timeout: 2000 }).catch(() => "");
-        for (const [name, id] of [["main.tex", "tex"], ["plot.py", "python"], ["figures", "folder-images-open"], ["raw", "folder"],
-          ["Paper", "folder-root-open"]]) {
+        for (const [name, id] of [["main.tex", "tex"], ["plot.py", "python"], ["figures", "folder-images-open"], ["raw", "folder"]]) {
           await until(async () => new RegExp(`/assets/file-icons/[^/]+/${id}(_light)?\\.svg$`).test((await icon(name)) || ""),
             { timeout: 10000, what: `${name}'s icon is ${id}` });
         }
+        assertEq(await treeRow(page, "Paper").locator("svg .syncBadge").count(), 1, "the root's glyph is the synced folder's");
+        assertEq(await treeRow(page, "Paper").locator("img.fileIcon").count(), 0, "not the theme's root folder");
         assert(/^This computer · /.test(await treeRow(page, "Paper").locator(".fileTreeKeeper").innerText()),
           "the root names the computer that keeps it");
         const served = await page.evaluate(async (src) => (await fetch(src)).headers.get("content-type"), await icon("main.tex"));
@@ -325,6 +326,12 @@ export async function explorerScenarios(env) {
           await page.locator('.folderTree .fileTreeRow[data-kind="file"]', { has: page.locator(`.fileTreeName:text-is("${name}")`) })
             .waitFor({ timeout: 15000 });
         }
+        // the file's own directory opens on the file, selected, as the tab's Show in folder view does
+        const own = page.locator(`.folderTree .fileTreeRow[data-kind="file"][data-id="${ids.method}"]`);
+        await until(async () => (await own.getAttribute("aria-selected")) === "true", { what: "method.tex selected in its directory" });
+        // inside a synced folder the heading says who keeps it, and its "⋯" opens the directory's menu
+        await page.locator(".folderCurrent .keeperTag").waitFor({ timeout: 10000 });
+        assertEq(await page.locator(".folderCurrent > svg .syncBadge").count(), 1, "the heading wears the synced folder's glyph");
         const q = new URL(page.url()).searchParams;
         assertEq(q.get("folder"), ids.sections, "the address names the directory");
         assert(!q.get("page") && !q.get("block"), "and no page");

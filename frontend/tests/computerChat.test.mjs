@@ -3,10 +3,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  CHANGES_SHOWN, NOTE_MAX, SOURCES_MAX, answerBody, askCommand, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, chatPath,
+  CHANGES_SHOWN, NOTE_MAX, SOURCES_MAX, agentHint, answerBody, askCommand, askPath, askPlace, askRisk, askTitle, awayFrom, canContinue, canSend, chatPath,
   currentStep, diffRows, emptyLine, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, markParts, modelChoice, modelDisplay,
   offersMenu, retryOf, revealsFile, scrolledToEnd, sourceNote, sourcesBody, stepNow, stepText, stripLine, turnBody, turnChanges, workPlace,
-  turnLabel, waitsThere, historyRows, sessionRows, sessionsAway, sessionsDir, shownMessages, stepChip,
+  turnLabel, waitsThere, historyRows, sessionRows, sessionsAway, sessionsDir, sessionsWords, shownMessages, stepChip,
 } from "../src/chat/computer/computerChat.js";
 import { isChange, splitActions } from "../src/chat/agentSteps.js";
 import { failureCopy } from "../src/chat/chatErrors.js";
@@ -59,14 +59,21 @@ test("a step in words, done and while it runs", () => {
   assert.equal(stepText({ kind: "run" }), "Ran a command");
   assert.equal(stepText({ kind: "search" }), "Searched the sources");
   assert.equal(stepText({ kind: "other" }), "Worked");
-  assert.equal(stepText({ kind: "gamma", tool: "read_page" }), "Read Gamma: read_page", "a call of Gamma's tools, by its name");
+  // a call of Gamma's tools reads as Gamma AI's own call of that tool: done, and while it runs
+  assert.equal(stepText({ kind: "gamma", tool: "read_page" }), "Read a page");
+  assert.equal(stepText({ kind: "gamma", tool: "list_annotations" }), "Listed the highlights and comments");
+  assert.equal(stepText({ kind: "gamma", tool: "comment" }), "Wrote a comment", "a writing tool's call, as a write");
+  assert.equal(stepNow({ kind: "gamma", tool: "list_annotations" }), "Listing the highlights and comments…");
+  assert.equal(stepNow({ kind: "gamma", tool: "highlight" }), "Highlighting a passage…");
+  assert.equal(stepNow({ kind: "gamma", tool: "view_pdf_page" }), "Looking at a PDF page…", "no arguments: no page named");
+  // a tool those words do not know, by its name; none at all, Gamma
+  assert.equal(stepText({ kind: "gamma", tool: "new_tool" }), "Read Gamma: new_tool");
+  assert.equal(stepNow({ kind: "gamma", tool: "new_tool" }), "Reading Gamma: new_tool");
   assert.equal(stepText({ kind: "gamma", tool: "" }), "Read Gamma");
-  assert.equal(stepText({ kind: "gamma", tool: "comment" }), "Wrote in Gamma: comment", "a writing tool's call, as a write");
-  assert.equal(stepNow({ kind: "gamma", tool: "highlight" }), "Writing in Gamma: highlight");
   assert.equal(stepNow({ kind: "edit", path: "main.tex" }), "Editing main.tex");
   assert.equal(stepNow({ kind: "run", program: "latexmk" }), "Running latexmk");
   assert.equal(stepNow({ kind: "search" }), "Searching the sources");
-  assert.equal(stepNow({ kind: "gamma", tool: "search_library" }), "Reading Gamma: search_library");
+  assert.equal(stepNow({ kind: "gamma", tool: "search_library" }), "Searching your library…");
   assert.equal(stepNow({ kind: "other" }), "", "nothing worth naming");
   assert.equal(stepNow(null), "");
 });
@@ -77,10 +84,24 @@ test("a turn's pill: the agent at work, then how many steps it took", () => {
   assert.equal(currentStep({ steps }).id, "s2", "the newest still started");
   assert.equal(currentStep({ steps: steps.slice(0, 1) }).id, "s1");
   assert.equal(turnLabel(agent({ state: "running", steps }), "Codex"), "Codex is working: Editing b.tex");
-  assert.equal(turnLabel(agent({ state: "queued" }), "Codex"), "Codex is working…");
+  assert.equal(turnLabel(agent({ state: "queued" }), "Codex"), "Starting Codex…", "queued: not at work yet");
+  assert.equal(turnLabel(agent({ state: "queued" }), "Codex", "", "", true), "Waiting for Codex to finish its other work…",
+    "queued behind other work in its directory");
+  assert.equal(turnLabel(agent({ state: "running" }), "Codex", "", "", true), "Codex is working…", "running: `ahead` says nothing");
   assert.equal(turnLabel(agent({ state: "running", label: "" }), "Claude Code"), "Claude Code is working…");
-  assert.equal(turnLabel(agent({ steps }), "Codex"), "3 steps");
-  assert.equal(turnLabel(agent({ steps: steps.slice(0, 1) }), "Codex"), "1 step");
+  // once it ended, Gamma AI's summary of its steps: the files read and edited, each counted once, the commands it ran
+  assert.equal(turnLabel(agent({ steps }), "Codex"), "3 steps · read 1 file, edited 1 file, searched");
+  assert.equal(turnLabel(agent({ steps: steps.slice(0, 1) }), "Codex"), "1 step · read 1 file");
+  const build = [{ kind: "read", path: "a.tex" }, { kind: "read", path: "b.tex" }, { kind: "read", path: "a.tex" },
+    { kind: "edit", path: "a.tex" }, { kind: "run", program: "latexmk" }, { kind: "run", program: "latexmk" },
+    { kind: "gamma", tool: "read_page" }, { kind: "run", program: "rm", status: "declined" }, { kind: "edit", path: "c.tex", status: "failed" }]
+    .map((s) => ({ status: "completed", ...s }));
+  assert.equal(turnLabel(agent({ steps: build }), "Codex"), "9 steps · read 2 files, edited 1 file, ran latexmk 2 times, read 1 page",
+    "neither the step not allowed nor the one that failed is counted");
+  assert.equal(turnLabel(agent({ steps: [{ kind: "run", program: "latexmk" }, { kind: "run", program: "bibtex" }, { kind: "run" }] }), "Codex"),
+    "3 steps · ran 3 commands", "several programs are counted, not named");
+  assert.equal(turnLabel(agent({ steps: [{ kind: "run", program: "latexmk" }] }), "Codex"), "1 step · ran latexmk");
+  assert.equal(turnLabel(agent({ steps: [{ kind: "other" }] }), "Codex"), "1 step", "other work has no word");
 });
 
 test("what a turn changed, as its card lists it", () => {
@@ -113,20 +134,18 @@ test("how a turn ended when it did not answer, and a session not resumed", () =>
   assert.match(freshLine("Codex"), /^Codex started a new session/);
 });
 
-test("the strip: the agent and the folder, what it is at, what it waits for, why it cannot run", () => {
+test("the strip: the agent and the folder, what it waits for, why it cannot run; a turn's progress is the pill's", () => {
   assert.deepEqual(stripLine(ready), { text: "Codex on this computer · Thesis", kind: "ready" });
   assert.deepEqual(stripLine({ ...ready, folder: "" }), { text: "Codex on this computer", kind: "ready" });
   assert.deepEqual(stripLine({ ...ready, lent: { by: "alice" } }), { text: "alice's Codex on this computer · Thesis", kind: "ready" },
     "a co-author's agent names its owner");
-  assert.equal(stripLine({ ...ready, ready: null }).text, "Checking Codex…");
+  assert.deepEqual(stripLine({ ...ready, ready: null }), { text: "Checking Codex…", kind: "checking" });
   const running = agent({ state: "running", steps: [{ kind: "edit", path: "sections/intro.tex", status: "started" }] });
-  assert.deepEqual(stripLine({ ...ready, turn: { turn_id: "t1", state: "running", ahead: false } }, running),
-    { text: "Codex is working: Editing sections/intro.tex", kind: "working" });
-  assert.equal(stripLine({ ...ready, turn: { turn_id: "t1", state: "running", ahead: false } }).text, "Codex is working…");
-  assert.deepEqual(stripLine({ ...ready, turn: { turn_id: "t1", state: "queued", ahead: true } }),
-    { text: "Waiting for Codex to finish its other work in this folder", kind: "waiting" });
-  assert.equal(stripLine({ ...ready, turn: { turn_id: "t1", state: "queued", ahead: false } }).text, "Starting Codex…");
-  assert.equal(stripLine({ ...ready, turn: null }, running).kind, "working", "the conversation's own turn, before the server's read says it");
+  const resting = { text: "Codex on this computer · Thesis", kind: "ready" };
+  assert.deepEqual(stripLine({ ...ready, turn: { turn_id: "t1", state: "running", ahead: false } }, running), resting, "running");
+  assert.deepEqual(stripLine({ ...ready, turn: { turn_id: "t1", state: "queued", ahead: true } }), resting, "queued behind other work");
+  assert.deepEqual(stripLine({ ...ready, turn: { turn_id: "t1", state: "queued", ahead: false } }), resting, "starting");
+  assert.deepEqual(stripLine({ ...ready, turn: null }, running), resting, "the conversation's own turn, before the server's read says it");
   assert.deepEqual(stripLine({ ...ready, ready: false, problem: "Codex is not signed in on this computer." }),
     { text: "Codex is not signed in on this computer.", kind: "problem" });
   assert.deepEqual(stripLine({ ...ready, paused: true, turn: { state: "queued", ahead: true } }),
@@ -198,7 +217,7 @@ test("a turn that asks: its pill and the strip wait for the person, its steps sa
   assert.deepEqual(stripLine({ ...ready, turn: { turn_id: "t1", state: "running", ahead: false } }, asking),
     { text: "Waiting for you: Codex wants to run a command", kind: "asking" });
   assert.equal(stripLine({ ...ready, paused: true }, asking).kind, "paused");
-  assert.equal(stripLine(ready, agent({ state: "running", asks: [] })).kind, "working", "no ask waiting");
+  assert.equal(stripLine(ready, agent({ state: "running", asks: [] })).kind, "ready", "no ask waiting: the pill says it works");
   assert.equal(turnLabel(agent({ asks }), "Codex"), "0 steps", "an ended turn's asks wait for nothing");
   assert.equal(stepText({ kind: "run", program: "latexmk", status: "asked" }), "Asked to run latexmk");
   assert.equal(stepText({ kind: "run", program: "latexmk", status: "allowed" }), "Allowed to run latexmk");
@@ -233,16 +252,21 @@ test("a message carries the model and effort chosen, neither when it is the agen
   assert.equal("dir" in turnBody("t1", "home", "x", [], { agent: "codex", dir: null }), false);
 });
 
-test("where the agent works: a menu of the offered directories until the first turn, then the one it works in", () => {
+test("where the agent works: a choice of the offered directories until the first turn, then the one it works in", () => {
   const dirs = [{ id: "d1", path: "D:\\scratch", name: "Scratch" }, { id: "d2", path: "/tmp/b", name: "" }];
   const own = { ...ready, folder: "", dir: null };
-  assert.deepEqual(workPlace(own, null, dirs), { pick: true, value: "", options: [["", "Its own directory"], ["d1", "Scratch"], ["d2", "/tmp/b"]] });
-  assert.equal(workPlace(own, null, dirs, "d2").value, "d2");
+  const options = [["", "Its own directory"], ["d1", "Scratch"], ["d2", "/tmp/b"]];
+  assert.deepEqual(workPlace(own, null, dirs), { pick: true, value: "", options, text: "Its own directory" });
+  assert.deepEqual(workPlace(own, null, dirs, "d2"), { pick: true, value: "d2", options, text: "/tmp/b" });
   assert.equal(workPlace(own, null, dirs, "gone").value, "", "a directory no longer offered: none");
   assert.deepEqual(workPlace(own, null, []).options, [["", "Its own directory"]]);
+  // once the conversation has a turn, its own: shown among the others, not to change
   const said = { messages: [person, agent()] };
-  assert.deepEqual(workPlace(own, said, dirs), { pick: false, text: "Its own directory" });
-  assert.deepEqual(workPlace({ ...own, dir: { kind: "offered", id: "d1", name: "Scratch" } }, said, dirs), { pick: false, text: "Scratch" });
+  assert.deepEqual(workPlace(own, said, dirs), { pick: false, value: "", options, text: "Its own directory" });
+  assert.deepEqual(workPlace({ ...own, dir: { kind: "offered", id: "d1", name: "Scratch" } }, said, dirs),
+    { pick: false, value: "d1", options, text: "Scratch" });
+  assert.deepEqual(workPlace({ ...own, dir: { kind: "offered", id: "d9", name: "Old" } }, said, dirs),
+    { pick: false, value: "d9", options: [...options, ["d9", "Old"]], text: "Old" }, "one no longer offered stays the conversation's");
   assert.equal(workPlace({ ...ready, dir: { kind: "vault", name: "Thesis" } }, null, dirs), null, "a vault's: named in the strip's line");
   assert.equal(workPlace({ ...remote, dir: { kind: "vault", name: "paper" } }, null, dirs), null, "another computer's vault");
   const far = { ...remote, folder: "", dir: null, dirs: [{ id: "f1", name: "Drafts" }] };
@@ -337,13 +361,14 @@ test("another computer's agent: the strip names that computer, and says when it 
     /^Waiting for TIM-PC, offline since 2:02.*: the message runs when it connects$/);
   assert.equal(stripLine(offline(null), queued, now).text, "Waiting for TIM-PC, which is offline: the message runs when it connects",
     "the conversation's own turn, before the server's read says it");
-  assert.equal(stripLine({ ...remote, turn: { turn_id: "t1", state: "queued", ahead: false } }).text, "Starting Codex…", "connected: it starts");
+  assert.equal(stripLine({ ...remote, turn: { turn_id: "t1", state: "queued", ahead: false } }).text, "Codex on TIM-PC · paper",
+    "connected: it starts, as the pill says");
   const running = agent({ state: "running", steps: [{ kind: "edit", path: "main.tex", status: "started" }] });
-  assert.equal(stripLine({ ...remote, turn: { turn_id: "t1", state: "running", ahead: false } }, running).text, "Codex is working: Editing main.tex");
+  assert.equal(stripLine({ ...remote, turn: { turn_id: "t1", state: "running", ahead: false } }, running).text, "Codex on TIM-PC · paper");
   assert.deepEqual(stripLine({ ...remote, paused: true }),
     { text: "The synced folder is paused on TIM-PC: Codex starts once it syncs again.", kind: "paused" });
   assert.equal(stripLine({ ...remote, ready: false, problem: "Codex is not signed in on TIM-PC." }).text, "Codex is not signed in on TIM-PC.");
-  assert.equal(stripLine({ ...remote, ready: null }).text, "Checking Codex…");
+  assert.deepEqual(stripLine({ ...remote, ready: null }), { text: "Checking Codex…", kind: "checking" });
 });
 
 test("another computer's agent: no message goes while it is away, and a turn queued before waits for it", () => {
@@ -358,7 +383,7 @@ test("another computer's agent: no message goes while it is away, and a turn que
   assert.equal(awayFrom({ ...ready, online: false }), "", "this computer's agent is never away");
   assert.equal(turnLabel(agent({ state: "queued" }), "Codex", "TIM-PC"), "Waiting for TIM-PC");
   assert.equal(turnLabel(agent({ state: "running" }), "Codex", "TIM-PC"), "Codex is working…", "running: it came back");
-  assert.equal(turnLabel(agent({ state: "queued" }), "Codex", ""), "Codex is working…");
+  assert.equal(turnLabel(agent({ state: "queued" }), "Codex", ""), "Starting Codex…");
 });
 
 test("another computer's turn that asks: the page says it waits for the answer on that computer, or draws the card it relays", () => {
@@ -401,6 +426,21 @@ test("another computer's agent: no menu on the strip, no terminal", () => {
   assert.equal(canContinue(remote, { messages: [person, agent()] }), false, "the server says no session");
 });
 
+test("the composer chip's hint on an agent that cannot answer now: offline, or not ready with its problem", () => {
+  const pc = (over = {}) => ({ id: "c1", name: "TIM-PC", online: true, since: null,
+    assistants: [{ name: "codex", label: "Codex", found: true, ready: true, version: "0.167.0", code: "", enabled: true }], ...over });
+  const [far] = farAgents([pc()]);
+  assert.equal(agentHint(far), null, "connected and ready");
+  assert.deepEqual(agentHint(farAgents([pc({ online: false })])[0]),
+    { text: "offline", problem: false, title: "TIM-PC is offline: send this once it connects." });
+  assert.deepEqual(agentHint({ ...far, ready: false, problem: "Codex is not signed in on TIM-PC." }),
+    { text: "not ready", problem: true, title: "Codex is not signed in on TIM-PC." });
+  assert.deepEqual(agentHint({ id: "gamma", kind: "gamma", ready: false, problem: "No AI service is connected." }),
+    { text: "not ready", problem: true, title: "No AI service is connected." }, "Gamma AI too");
+  assert.equal(agentHint({ id: "codex", kind: "computer", ready: null, problem: "" }), null, "still checking");
+  assert.equal(agentHint(null), null);
+});
+
 test("the strip drawn from the page's computers until the side's read lands", () => {
   const vault = { kind: "folder", name: "paper", paused: false, work: true };
   const pc = (over = {}) => ({ id: "c1", name: "TIM-PC", online: true, since: null, vault,
@@ -430,13 +470,14 @@ test("the transcript's shape: a turn done, with its steps as plain chips, its mo
     { id: "s3", kind: "run", program: "latexmk", status: "declined" }, { id: "s4", kind: "other", status: "completed" }];
   const [, reply] = shownMessages({ messages: [person, agent({ steps, model: "gpt-fake", effort: "high", changes: ["main.tex"], changed: 1, built: true })] }, info);
   assert.deepEqual(reply.actions, [
-    { kind: "file", summary: "Read main.tex" }, { kind: "fileEdit", summary: "Edited main.tex", error: true },
-    { kind: "run", summary: "Not allowed to run latexmk", declined: true }, { kind: "work", summary: "Worked" }]);
+    { kind: "file", summary: "Read main.tex", path: "main.tex" }, { kind: "fileEdit", summary: "Edited main.tex", path: "main.tex", error: true },
+    { kind: "run", summary: "Not allowed to run latexmk", program: "latexmk", declined: true }, { kind: "work", summary: "Worked" }]);
   assert.ok(reply.actions.every((a) => !isChange(a)), "no step reads as a change of the library or the notes");
   assert.deepEqual(splitActions(reply.actions), { library: [], notes: [], failed: 1, declined: 1 });
   assert.deepEqual([reply.role, reply.turnId, reply.label, reply.text, reply.partial, reply.model, reply.effort, reply.notice],
     ["ai", "t1", "Codex", "Fixed.", false, "GPT Fake", "high", ""]);
-  assert.deepEqual(reply.pill, { label: "4 steps", waiting: false });
+  assert.deepEqual(reply.pill, { label: "4 steps · read 1 file", waiting: false, queued: false },
+    "neither the edit that failed nor the command not allowed is counted");
   assert.deepEqual(reply.files, { shown: ["main.tex"], rest: [], more: 0, n: 1, built: true, vault: true });
   assert.deepEqual(reply.asks, []);
   assert.equal("errorKind" in reply, false);
@@ -447,11 +488,15 @@ test("the transcript's shape: a turn done, with its steps as plain chips, its mo
   assert.deepEqual(shownMessages({ messages: [agent({ threads: opened })] }, ready)[0].threads, opened);
   assert.deepEqual(reply.threads, [], "none opened");
   assert.deepEqual(stepChip({ kind: "search" }), { kind: "search", summary: "Searched the sources" });
+  // a file's path and a command's program, which the ended turn's pill counts and names
+  assert.deepEqual(stepChip({ kind: "edit", path: "a.tex", status: "completed" }), { kind: "fileEdit", summary: "Edited a.tex", path: "a.tex" });
+  assert.deepEqual(stepChip({ kind: "run", program: "latexmk", status: "declined" }),
+    { kind: "run", summary: "Not allowed to run latexmk", program: "latexmk", declined: true });
   // A call of Gamma's tools is the kind Gamma AI's call of that tool is: the pill counts it as a read.
   const reads = [{ kind: "gamma", tool: "read_page", status: "completed" }, { kind: "gamma", tool: "list_pages", status: "completed" },
     { kind: "gamma", tool: "view_pdf_page", status: "failed" }, { kind: "gamma", tool: "read_annotation" }].map(stepChip);
   assert.deepEqual(reads.map((c) => c.kind), ["read", "list", "view", "read"]);
-  assert.deepEqual(reads[2], { kind: "view", summary: "Read Gamma: view_pdf_page", error: true });
+  assert.deepEqual(reads[2], { kind: "view", summary: "Looked at a PDF page", error: true });
   assert.equal(splitActions(reads).failed, 1);
   assert.equal(reads.filter(isChange).length, 0, "a read changes nothing");
   // a writing tool's call is a step of its own, never listed among the reply's changes
@@ -464,16 +509,26 @@ test("the transcript's shape: a turn under way is partial, its pill the agent at
   const ask = { id: "a1", kind: "command", command: "latexmk -pdf main.tex", cwd: "." };
   const running = agent({ state: "running", text: "Look", steps: [{ id: "s1", kind: "edit", path: "a.tex", status: "started" }] });
   const [live] = shownMessages({ messages: [running] }, ready);
-  assert.deepEqual([live.partial, live.pill], [true, { label: "Codex is working: Editing a.tex", waiting: false }]);
+  assert.deepEqual([live.partial, live.pill], [true, { label: "Codex is working: Editing a.tex", waiting: false, queued: false }]);
   const [asking] = shownMessages({ messages: [{ ...running, asks: [ask] }] }, ready);
-  assert.deepEqual([asking.asks, asking.pill], [[ask], { label: "Codex is waiting for you", waiting: true }]);
+  assert.deepEqual([asking.asks, asking.pill], [[ask], { label: "Codex is waiting for you", waiting: true, queued: false }]);
   const far = { ...ready, remote: true, computer: "TIM-PC", online: true };
   const [there] = shownMessages({ messages: [{ ...running, waiting: true }] }, far);
-  assert.deepEqual([there.asks, there.pill], [[], { label: "Codex is waiting for your answer on TIM-PC", waiting: true }],
+  assert.deepEqual([there.asks, there.pill], [[], { label: "Codex is waiting for your answer on TIM-PC", waiting: true, queued: false }],
     "another computer's are answered there");
   const [relayed] = shownMessages({ messages: [{ ...running, asks: [{ ...ask, once: true }] }] }, far);
-  assert.deepEqual([relayed.asks, relayed.pill], [[{ ...ask, once: true }], { label: "Codex is waiting for you", waiting: true }],
+  assert.deepEqual([relayed.asks, relayed.pill], [[{ ...ask, once: true }], { label: "Codex is waiting for you", waiting: true, queued: false }],
     "one that computer relays is answered here");
+  // queued: the pill waits with a clock, behind other work in its directory as the server says it
+  const queued = agent({ state: "queued", text: "" });
+  assert.deepEqual(shownMessages({ messages: [queued] }, { ...ready, turn: { turn_id: "t1", state: "queued", ahead: true } })[0].pill,
+    { label: "Waiting for Codex to finish its other work…", waiting: false, queued: true });
+  assert.deepEqual(shownMessages({ messages: [queued] }, { ...ready, turn: { turn_id: "t1", state: "queued", ahead: false } })[0].pill,
+    { label: "Starting Codex…", waiting: false, queued: true });
+  assert.equal(shownMessages({ messages: [queued] }, { ...ready, turn: { turn_id: "t9", state: "queued", ahead: true } })[0].pill.label,
+    "Starting Codex…", "another turn's place in the queue says nothing of this one");
+  assert.deepEqual(shownMessages({ messages: [queued] }, { ...far, online: false })[0].pill,
+    { label: "Waiting for TIM-PC", waiting: false, queued: true }, "queued for a computer away");
   const [ended] = shownMessages({ messages: [{ ...running, state: "done", asks: [ask] }] }, ready);
   assert.deepEqual([ended.partial, ended.asks], [false, []], "an ended turn draws no card");
 });
@@ -551,8 +606,35 @@ test("History lists the CLI's sessions of the directory where the reader's agent
   assert.deepEqual(rows.map((r) => [r.id, r.title, r.updated_at, r.by, r.busy]), [
     ["s1", "Fix the abstract", "2026-11-14T10:00:00Z", "Terminal", ""],
     ["s2", "", "", "VS Code", "Codex has this session open in another window: close it there first."],
-    ["s3", "Shorten the title", "", "In Gamma", ""],
+    ["s3", "Shorten the title", "", "Continued here", ""],
     ["s4", "x", "", "", ""],
   ]);
   assert.deepEqual(sessionRows(null, "Codex"), []);
+  // the section names the CLI and the directory, and the computer only when it is another
+  assert.deepEqual(sessionsWords(vault, "Codex"), { caption: "Codex sessions in Thesis",
+    empty: "Sessions you start with Codex in Thesis show here." });
+  assert.equal(sessionsWords(far, "Codex", null, "TIM-PC").caption, "Codex sessions in Thesis on TIM-PC");
+  assert.equal(sessionsWords({ ...ready, dir: { kind: "offered", id: "d1", name: "Scratch" } }, "Claude Code").caption,
+    "Claude Code sessions in Scratch");
+  const place = { pick: true, value: "d2", options: [["", "Its own directory"], ["d2", "Notes"]] };
+  assert.equal(sessionsWords(own, "Codex", place).caption, "Codex sessions in Notes", "the one picked, by its name");
+});
+
+test("History names each row's agent while the chat has several, a computer agent's after its title", () => {
+  const agents = [{ id: "gamma", kind: "gamma", label: "Gamma AI", where: "" },
+    { id: "codex", agentId: "computer:pc1:codex", kind: "computer", label: "Codex", where: "" },
+    { id: "computer:pc9:claude", agentId: "computer:pc9:claude", kind: "computer", label: "Claude Code", where: "TIM-PC" }];
+  const gamma = [{ id: "g1", title: "Older AI", updated_at: "2026-11-01T10:00:00Z" }];
+  const computer = { conversations: [
+    { id: "c1", title: "Here", agent: "codex", agent_id: "computer:pc1:codex", updated_at: "2026-11-05T10:00:00Z" },
+    { id: "c2", title: "There", agent: "claude", agent_id: "computer:pc9:claude", updated_at: "2026-11-04T10:00:00Z" },
+    { id: "c3", title: "Gone", agent: "codex", agent_id: "computer:pc5:codex", updated_at: "2026-11-03T10:00:00Z" }],
+  active: null, lent: [{ id: "b1", title: "Theirs", agent: "codex", agent_id: "computer:pc1:codex", updated_at: "", person: "bob" }] };
+  const rows = historyRows({ agent: "codex", shown: { title: "Now", preview: "" }, gamma, computer, agents });
+  assert.deepEqual(rows.map((r) => [r.id, r.agentName, r.by || ""]), [
+    ["", "Codex", "Codex"], ["c1", "Codex", "Codex"], ["c2", "Claude Code on TIM-PC", "Claude Code on TIM-PC"],
+    ["c3", "Codex", "Codex"], ["g1", "Gamma AI", ""], ["b1", "Codex", "bob's chat with Codex"]]);
+  // one agent alone: nothing to tell apart
+  const alone = historyRows({ shown: { title: "Now", preview: "" }, gamma, agents: agents.slice(0, 1) });
+  assert.deepEqual(alone.map((r) => [r.agentName, r.by]), [[undefined, undefined], [undefined, undefined]]);
 });

@@ -43,9 +43,10 @@ export const PANE_READS = {
     "/admin/workspaces", "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
   proxy: () => ["/admin/proxy"],
   integrations: () => ["/integrations/tokens"],
-  // the servers this computer answers, and whom an agent's owner may let use
-  // it, which the desktop app's rows offer (its own server's links alone)
-  ai: ({ signedIn, desktop }) => [signedIn && "/computers", signedIn && desktop && "/computer-links",
+  // Agents: the account's other computers, the servers this computer
+  // answers, and whom an agent's owner may let use it, which the desktop
+  // app's rows offer (its own server's links alone)
+  agents: ({ signedIn, desktop }) => [signedIn && "/computers", signedIn && desktop && "/computer-links",
     signedIn && desktop && { path: "/local-agents/people", later: true }],
   translation: ({ lang }) => ["/translate/engines", "/translations/stats", termsOf(lang)],
   tools: () => ["/ai/search-services"],

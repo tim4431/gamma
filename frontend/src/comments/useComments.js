@@ -9,9 +9,12 @@
 // they read the same (keepIfSame), so a refetch that changed nothing
 // re-renders no row. While a thread's turn with an agent is to end (its
 // `agent_chat.turn`, comments.js turnChip) the threads are read every
-// TURN_POLL_MS, so its chip follows the turn and its answer comes. `readable`
-// turns false when the page's comments answer 404 or 403 (App then offers
-// no comment controls).
+// TURN_POLL_MS, so its chip follows the turn and its answer comes. A send to
+// an agent that started no turn stays on its thread as the thread's
+// `refused` (comments.js refusalChip: "Not sent to Codex", why, Send again)
+// until the reader's next send there, in this tab only. `readable` turns
+// false when the page's comments answer 404 or 403 (App then offers no
+// comment controls).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { guideEvents } from "../guide/events.js";
 import { API, apiJson, makeId } from "../shared/lib/utils";
@@ -20,13 +23,14 @@ import { keepIfSame, sameMap } from "../shared/lib/keepIfSame.js";
 import { t } from "../shared/i18n/i18n.js";
 import { CLIENT_ID } from "../collaboration/usePageCollab";
 import {
-  addComment, deleteComment, editComment, findComment, foldThreads, keepThreads, resolveThread, turnRefusal, upsertThread,
+  addComment, deleteComment, editComment, findComment, foldThreads, keepThreads, resolveThread, upsertThread,
 } from "./comments.js";
 // The row control's, the PDF badge's and the lazy surfaces' rules: in the
 // startup bundle with the rows that need them.
 import "./comments.css";
 
 const NO_THREADS = [];
+const NO_REFUSED = { page: "", byThread: new Map() };
 // How often the threads are read again while a turn of one is to end, ms.
 const TURN_POLL_MS = 2000;
 const sameList = (a, b) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
@@ -56,9 +60,23 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
   const fetchRef = useRef({ busy: false, again: false, waiting: [], ahead: null });
   // The one prefetch() started last, until the page it names opens.
   const aheadRef = useRef(null);
+  // The reader's sends to an agent that started no turn on the page
+  // `page`, by thread: the answer's `turn` and the comment sent.
+  const [refused, setRefused] = useState(NO_REFUSED);
 
   const set = useCallback((page, fn) => {
     setState((s) => (s.pageId === page ? { ...s, threads: fn(s.threads) } : s));
+  }, []);
+  // What a send in the thread `threadId` of `page` answered (`turn`, none
+  // for a comment sent to no agent): a refusal is kept on the thread, any
+  // other answer clears the last one.
+  const noteTurn = useCallback((page, threadId, commentId, turn) => {
+    setRefused((r) => {
+      const byThread = new Map(r.page === page ? r.byThread : []);
+      if (turn?.refused) byThread.set(threadId, { ...turn, comment_id: commentId });
+      else if (!byThread.delete(threadId)) return r;
+      return { page, byThread };
+    });
   }, []);
 
   // Resolves with what the request it waited for answered, `{pageId,
@@ -126,7 +144,10 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     if (live) refresh();
   }, [live, refresh]);
 
-  const threads = state.pageId === live ? state.threads : NO_THREADS;
+  const held = state.pageId === live ? state.threads : NO_THREADS;
+  const marks = refused.page === live && refused.byThread.size ? refused.byThread : null;
+  const threads = useMemo(() => (marks
+    ? held.map((th) => (marks.has(th.id) ? { ...th, refused: marks.get(th.id) } : th)) : held), [held, marks]);
   const byBlockRef = useRef(null);
   const countsRef = useRef(null);
   const { threadsByBlock, countByBlock } = useMemo(() => {
@@ -139,20 +160,15 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
   }, [threads]);
 
   const failed = (what, err) => statusRef.current?.(t("Couldn't save the comment: {message}", { message: err?.message || what }));
-  // A write sent to an agent answers its `turn`: one refused is said (the
-  // comment is stored either way); one begun shows as the thread's chip,
-  // the answer's thread carrying it.
-  const turnSaid = (out) => {
-    const why = turnRefusal(out?.turn);
-    if (why) statusRef.current?.(why);
-    return out;
-  };
 
   // A new thread on `blockId`, or a reply in `threadId`, sent to the agent
   // `to` (its id; "" for none, CommentComposer's tick unticked; null for a
   // field with no tick, whose `@name` the server reads). Resolves the
   // comment's id once stored (a new thread's id is its first comment's),
-  // false when refused (the composer then keeps the text).
+  // false when refused (the composer then keeps the text). A send to an
+  // agent answers its `turn`: one begun shows as the thread's chip, the
+  // answer's thread carrying it; one refused stays on the thread
+  // (`noteTurn`), the comment stored either way.
   const add = useCallback(async (blockId, body, threadId = "", to = null) => {
     const page = pageRef.current;
     if (!page) return false;
@@ -168,7 +184,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
         json("POST", { id, block_id: blockId, body, thread_id: threadId, client: CLIENT_ID, ...(to == null ? {} : { to }) }));
       pendingRef.current.delete(id);
       set(page, (list) => upsertThread(list, out.thread));
-      turnSaid(out);
+      noteTurn(page, threadId || id, id, out.turn);
       guideEvents.emit("comment.created", { reply: !!threadId });
       return id;
     } catch (err) {
@@ -177,7 +193,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
       failed("", err);
       return false;
     }
-  }, [me, set]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [me, set, noteTurn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Where a comment's write goes, and how to put the page back when it is
   // refused: the threads as they were, while the list is still the one the
@@ -206,15 +222,26 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     }
   }, [set, refresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const edit = useCallback((id, body) => write(
-    (list) => editComment(list, id, body, nowStamp()),
-    () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, json("PATCH", { body, client: CLIENT_ID })).then(turnSaid),
-    (list, out) => {
-      if (out?.thread) return upsertThread(list, out.thread); // a turn begun: the thread with its chip
-      const found = out?.comment && findComment(list, id);
-      return found ? upsertThread(list, { ...found.thread, comments: found.thread.comments.map((c) => (c.id === id ? out.comment : c)) }) : list;
-    },
-  ), [write]);
+  // A comment's new text; `to` (an agent's id) sends it to that agent, and
+  // saved unchanged sends it again as it stands (Thread.jsx's Send again);
+  // null for the field's own, whose `@name` the server reads. An edit sent
+  // to an agent answers its turn as `add` does.
+  const edit = useCallback((id, body, to = null) => {
+    const page = pageRef.current;
+    return write(
+      (list) => editComment(list, id, body, nowStamp()),
+      () => apiJson(`${API}/comments/${encodeURIComponent(id)}`, json("PATCH", { body, client: CLIENT_ID, ...(to == null ? {} : { to }) }))
+        .then((out) => {
+          if (out?.turn && out.comment) noteTurn(page, out.comment.thread_id, id, out.turn);
+          return out;
+        }),
+      (list, out) => {
+        if (out?.thread) return upsertThread(list, out.thread); // sent to an agent: the thread with its chip
+        const found = out?.comment && findComment(list, id);
+        return found ? upsertThread(list, { ...found.thread, comments: found.thread.comments.map((c) => (c.id === id ? out.comment : c)) }) : list;
+      },
+    );
+  }, [write, noteTurn]);
 
   const remove = useCallback((id) => write(
     (list) => deleteComment(list, id),

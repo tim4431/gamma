@@ -798,7 +798,8 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
 - **Settings** for handwriting sit in the Handwriting pane
   ([settings.md](settings.md) "Handwriting"). More → *Handwriting
   settings…* opens the pane.
-  - **Pens & eraser**, the account's: *Reset presets* (with a confirm),
+  - **Pens & eraser**, the account's: *Reset presets* on the section's
+    rule (off at the defaults, with Undo in the pill),
     *Eraser returns to the last tool*, *Erases*, *Draw and hold*,
     *Scribble to erase*. The presets themselves (`inkTools`) are the
     account's too, though they are edited on the strip.

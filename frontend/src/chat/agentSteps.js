@@ -49,8 +49,22 @@ export function splitActions(actions = []) {
     declined: actions.filter((a) => a.declined).length };
 }
 
-// The pill's words for the reading steps, in the order they first ran.
+// The pill's words for the reading steps, in the order they first ran, each
+// given how many steps of its kind went well and those steps. A computer
+// agent's steps (chat/computer/computerChat.js stepChip) add the files it
+// read and edited, each file counted once, and the commands it ran, named
+// while they were all one program's ("ran latexmk").
+const filesOf = (acts) => new Set(acts.map((a) => a.path || a.summary)).size;
+function ranText(n, acts) {
+  const programs = new Set(acts.map((a) => a.program || ""));
+  const [program] = programs;
+  return programs.size === 1 && program ? tn("ran {program}", "ran {program} {n} times", n, { program })
+    : tn("ran {n} command", "ran {n} commands", n);
+}
 const READ_VERBS = {
+  file: (n, acts) => tn("read {n} file", "read {n} files", filesOf(acts)),
+  fileEdit: (n, acts) => tn("edited {n} file", "edited {n} files", filesOf(acts)),
+  run: ranText,
   list: () => t("listed"),
   read: (n) => tn("read {n} page", "read {n} pages", n),
   view: (n) => tn("looked at {n} PDF page", "looked at {n} PDF pages", n),
@@ -65,11 +79,11 @@ const READ_VERBS = {
 };
 
 export function stepsSummary(actions = []) {
-  const counts = new Map();
+  const went = new Map(); // kind → its steps that went well: neither failed nor not allowed
   for (const a of actions) {
-    if (!a.error && READ_VERBS[a.kind]) counts.set(a.kind, (counts.get(a.kind) || 0) + 1);
+    if (!a.error && !a.declined && READ_VERBS[a.kind]) went.set(a.kind, [...(went.get(a.kind) || []), a]);
   }
-  const verbs = [...counts].map(([kind, n]) => READ_VERBS[kind](n));
+  const verbs = [...went].map(([kind, acts]) => READ_VERBS[kind](acts.length, acts));
   return [tn("{n} step", "{n} steps", actions.length), verbs.join(", ")].filter(Boolean).join(" · ");
 }
 
@@ -149,14 +163,19 @@ export function runningLabel(step, titleOf = () => "") {
     case "read_chats": return title ? t("Reading the chat about “{title}”…", { title }) : t("Reading chats…");
     case "list_annotations": return t("Listing the highlights and comments…");
     case "read_annotation": return t("Reading a highlight or comment…");
-    case "view_pdf_page": return t("Looking at PDF page {page}…", { page: args.pdf_page || "?" });
+    case "view_pdf_page": return args.pdf_page ? t("Looking at PDF page {page}…", { page: args.pdf_page }) : t("Looking at a PDF page…");
     case "view_ink": return t("Looking at handwriting…");
     case "view_image": return t("Looking at a note's pictures…");
     case "clip_region":
       return args.pdf_page ? t("Clipping a picture of PDF page {page}…", { page: args.pdf_page })
         : t("Clipping a picture…");
     case "cite": return t("Looking up citation records…");
-    case "search_library": return t("Searching library for “{query}”…", { query: args.query || "" });
+    case "search_library":
+      return args.query ? t("Searching library for “{query}”…", { query: args.query }) : t("Searching your library…");
+    // the tools only an agent connected over MCP has (gamma/mcp_server.py)
+    case "list_workspaces": return t("Listing the workspaces…");
+    case "read_gamma_link": return t("Reading a Gamma link…");
+    case "export_page": return t("Exporting a page…");
     case "search_papers": return t("Searching papers for “{query}”…", { query: args.query || "" });
     case "related_papers": return t("Following citations of {source}…", { source: args.source || t("a paper") });
     case "search_web": return t("Searching the web for “{query}”…", { query: args.query || "" });
@@ -199,6 +218,41 @@ export function runningLabel(step, titleOf = () => "") {
     case "highlight": return t("Highlighting a passage…");
     default: return t("Working…");
   }
+}
+
+// runningLabel's done twin for a call known by its tool's name alone, as a
+// computer agent's step names a call of Gamma's tools (what a turn's agent
+// is offered: gamma/mcp_server.py's reading and writing tools).
+const DONE_WORDS = {
+  list_pages: () => t("Listed pages"),
+  list_folders: () => t("Listed folders"),
+  list_workspaces: () => t("Listed the workspaces"),
+  list_annotations: () => t("Listed the highlights and comments"),
+  read_page: () => t("Read a page"),
+  read_block: () => t("Read notes"),
+  read_chats: () => t("Read chats"),
+  read_annotation: () => t("Read a highlight or a comment"),
+  read_gamma_link: () => t("Read a Gamma link"),
+  export_page: () => t("Exported a page"),
+  view_pdf_page: () => t("Looked at a PDF page"),
+  view_ink: () => t("Looked at handwriting"),
+  view_image: () => t("Looked at a note's pictures"),
+  cite: () => t("Looked up citation records"),
+  search_library: () => t("Searched your library"),
+  comment: () => t("Wrote a comment"),
+  resolve: () => t("Resolved a comment thread"),
+  highlight: () => t("Highlighted a passage"),
+};
+
+// A call of Gamma's tool `tool` known by its name alone (a computer
+// agent's step: chat/computer/computerChat.js stepText, stepNow), in the
+// words Gamma AI's own call of it reads: while it runs (`live`)
+// runningLabel's ("Listing the highlights and comments…"), once done
+// DONE_WORDS' ("Listed the highlights and comments"); "" for a tool
+// neither names.
+export function toolWords(tool, live = false) {
+  if (!DONE_WORDS[tool]) return "";
+  return live ? runningLabel({ tool }) : DONE_WORDS[tool]();
 }
 
 // The helpers a running call started (read_paper), from the stream's

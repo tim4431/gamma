@@ -128,6 +128,19 @@ function DockHeader({ title, guide, onGrip, onFold, onClose, headerContent, acti
   // The fold takes from the end, a higher `keep` later.
   const order = [...shown].reverse().sort((a, b) => (a.keep || 0) - (b.keep || 0));
   const away = new Set(order.slice(0, folded));
+  // A popover hangs under the header (.dockHeaderPop): a window low in its
+  // column leaves it only the room from there to the window's foot, which
+  // --dock-pop-room hands its max-height (app.css), measured before it
+  // paints and again as the window resizes, so its last rows stay in reach.
+  const popOpen = shown.some((a) => a.popover && a.open);
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (!popOpen || !el) return undefined;
+    const room = () => el.style.setProperty("--dock-pop-room", `${Math.max(160, window.innerHeight - el.getBoundingClientRect().bottom - 16)}px`);
+    room();
+    window.addEventListener("resize", room);
+    return () => window.removeEventListener("resize", room);
+  }, [popOpen, headerRef]);
   const unfold = collapsed && onFold ? (e) => {
     if (e.target.closest("button") || e.timeStamp - foldedAt < FOLD_ECHO_MS) return;
     unfoldedAt = e.timeStamp;

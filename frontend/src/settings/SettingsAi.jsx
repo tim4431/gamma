@@ -1,6 +1,6 @@
-// Settings → AI › Connections: who the chat talks to (SettingsAgents.jsx:
-// Gamma AI and the agents of the account's computers), then the user's AI
-// credential list (OpenAI-platform style) and the add/edit-key wizard. The account's own list, its Test and Usage
+// Settings → AI › Connections: the user's AI credential list (OpenAI-platform
+// style) and the add/edit-key wizard; who the chat talks to is the pane
+// before it, Agents (SettingsAgents.jsx). The account's own list, its Test and Usage
 // results live in App.jsx (the aiKeys* group), its connect dialog in
 // useProviderEditor (providerEditor.js) — these components only render them;
 // the server's shared entries appear there as read-only rows.
@@ -14,7 +14,6 @@ import { cachedPercent, fmtTokens, usageDetail } from "../chat/tokenUsage";
 import { failureCopy, fixLabel } from "../chat/chatErrors";
 import { modelLabel } from "../chat/modelPrefs";
 import { ModelPicker } from "./ModelPicker";
-import { SettingsAgents } from "./SettingsAgents.jsx";
 import { UsageChart } from "./UsageChart.jsx";
 import { AccountPicker, Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
@@ -767,25 +766,34 @@ function AiUsageSection({ confirm, setStatus, canReset = true }) {
   );
 }
 
-export function AiSettings({ value, confirm, setStatus, signedIn = false }) {
-  // The picked connection, else the one the chat falls back to
-  // (providerModels in chat/modelPrefs.js): the first that offers models.
+// The picked connection, else the one the chat falls back to
+// (providerModels in chat/modelPrefs.js): the first that offers models.
+function activeKeyOf(value) {
   const listed = (id) => value.aiKeysInfo?.providers.some((item) => item.id === id);
   const fallbackKeyId = value.aiModels?.[0]?.provider;
-  const activeKeyId = listed(value.aiProvider) ? value.aiProvider
+  return listed(value.aiProvider) ? value.aiProvider
     : listed(fallbackKeyId) ? fallbackKeyId
     : value.aiKeysInfo?.providers[0]?.id;
+}
+
+// The connection Gamma AI uses, as Settings → AI → Agents names it ("" for
+// none, or for one that offers no model yet).
+export function gammaAiConnection(value) {
+  const id = activeKeyOf(value);
+  const active = (value.aiKeysInfo?.providers || []).find((item) => item.id === id);
+  return active && value.aiModels?.length ? active.label || active.protocol : "";
+}
+
+export function AiSettings({ value, confirm, setStatus }) {
+  const activeKeyId = activeKeyOf(value);
   const canEdit = value.aiKeysInfo?.can_edit;
   const providers = value.aiKeysInfo?.providers || [];
-  const active = providers.find((item) => item.id === activeKeyId);
   return (
     <>
-      <SettingsAgents connection={active && value.aiModels?.length ? active.label || active.protocol : ""}
-        signedIn={signedIn} setStatus={setStatus} />
       {/* Add provider sits on the section's rule once there is a list, as a
           section's action does everywhere in Settings; before, the empty
           state offers it. */}
-      <Section title={t("Connections")} action={canEdit && providers.length ? (
+      <Section title={t("AI services")} action={canEdit && providers.length ? (
         <button className="uiBtn sm" onClick={() => value.startAdd()}><PlusIcon size={14} />{t("Add provider")}</button>
       ) : null} />
 

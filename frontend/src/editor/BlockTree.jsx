@@ -1999,7 +1999,7 @@ const BlockRow = React.memo(function BlockRow({
           ) : null}
           {madeBy ? (
             <div className="blockMadeBy">
-              <AgentAvatar kind={agentKind(madeBy.id)} />
+              <AgentAvatar kind={agentKind(madeBy.id)} size={10} />
               <span>{t("Highlighted by {agent}", { agent: stampLabel(madeBy) })}</span>
             </div>
           ) : null}

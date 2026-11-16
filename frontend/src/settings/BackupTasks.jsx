@@ -1,9 +1,9 @@
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
-import { ClockIcon, CloudUploadIcon, DatabaseIcon, HardDriveIcon, MoreIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
+import { ClockIcon, CloudUploadIcon, DuplicateIcon, HardDriveIcon, MoreIcon, PencilIcon, PlayIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { DialogButtons, Empty, Field, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
+import { DialogButtons, Empty, Field, FormNotice, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
 import { useSettingsRead } from "./settingsReads.js";
 import { fromUtcCron, localOffset, observesDst, parseCron, shiftTime, toUtcCron } from "./backupSchedule.js";
@@ -205,7 +205,7 @@ function TaskEditor({ initial, workspaces, bucket, onClose, onSaved }) {
         </div>
         <p className="settingsPaneHint">{t("Only this task’s snapshots expire, after a successful run. The newest snapshot is always kept. Deleting a task keeps its snapshots.")}</p>
         <Toggle icon={ClockIcon} label={t("Enable task")} checked={draft.enabled} onChange={(enabled) => patch({ enabled })} hint={t("Paused tasks can still be run manually.")} />
-        {error ? <p className="aiKeysError" role="alert">{error}</p> : null}
+        {error ? <FormNotice>{error}</FormNotice> : null}
         <DialogButtons footnote={!draft.name.trim() ? t("Name the task to continue.")
           : draft.scope === "selected" && !draft.workspaces.length ? t("Pick at least one workspace to continue.") : null}>
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
@@ -256,9 +256,14 @@ export function BackupTasks({ workspaces, bucket = "", confirm, onRefresh, onRan
   const full = (tasks?.length || 0) >= MAX_TASKS;
   const limitHint = t("You can keep up to {n} backup tasks. Delete one to add another.", { n: MAX_TASKS });
   return <>
-    <Section title={t("Periodic backup tasks")} action={<button className="uiBtn" disabled={!owned.length || full} onClick={() => setEditor({})}
-      title={full ? limitHint : t("Runs while the server is on. Missed runs catch up once; failed tasks retry after an hour.")}><PlusIcon size={14} /> {t("Add task")}</button>} />
-    {error ? <div className="backupTaskError aiKeysError" role="alert">{error}<button className="uiBtn sm" onClick={() => { setError(""); load(); }}>{t("Retry")}</button></div> : null}
+    <Section title={t("Periodic backup tasks")} action={<button className="uiBtn sm" disabled={!owned.length || full} onClick={() => setEditor({})}
+      title={full ? limitHint : t("Runs while the server is on. Missed runs catch up once; failed tasks retry after an hour.")}><PlusIcon size={14} />{t("Add task")}</button>} />
+    {error ? (
+      <FormNotice>
+        {error}{" "}
+        <button type="button" className="uiBtn sm" onClick={() => { setError(""); load(); }}>{t("Try again")}</button>
+      </FormNotice>
+    ) : null}
     {tasks === null && !error ? <Empty icon={ClockIcon} loading>{t("Loading tasks…")}</Empty> : null}
     {tasks?.length === 0 ? <Empty icon={ClockIcon}>{t("No tasks yet. Add one for a nightly backup, or a schedule of your own.")}</Empty> : null}
     {!!tasks?.length && <div className="backupTaskTableWrap" role="region" aria-label={t("Periodic backup tasks")} tabIndex={0}>
@@ -280,16 +285,18 @@ export function BackupTasks({ workspaces, bucket = "", confirm, onRefresh, onRan
             <td><label className="switch"><input type="checkbox" aria-label={t("Enable {name}", { name: task.name })} checked={task.enabled}
               disabled={running || busy === task.id} onChange={() => action(task, "toggle")} /><span className="switchTrack" /></label></td>
             <td><ActionMenu label={t("Actions for {name}", { name: task.name })} icon={MoreIcon} iconOnly disabled={running || busy === task.id} items={[
-              { label: T("Run now"), icon: ClockIcon, onClick: () => action(task, "run") },
-              { label: T("Edit task"), icon: DatabaseIcon, onClick: () => setEditor(task) },
-              { label: T("Duplicate task"), icon: PlusIcon, disabled: full, title: full ? limitHint : undefined, onClick: () => setEditor({ ...task, id: undefined, name: t("{name} copy", { name: task.name }) }) },
-              { label: T("Delete task"), icon: Trash2Icon, onClick: () => confirm({ title: T("Delete backup task"), message: t("Delete “{name}”? Existing snapshots are kept.", { name: task.name }), confirmLabel: t("Delete task"), danger: true, onConfirm: () => action(task, "delete") }) },
+              { label: T("Run now"), icon: PlayIcon, onClick: () => action(task, "run") },
+              { label: T("Edit task"), icon: PencilIcon, onClick: () => setEditor(task) },
+              { label: T("Duplicate task"), icon: DuplicateIcon, disabled: full, title: full ? limitHint : undefined, onClick: () => setEditor({ ...task, id: undefined, name: t("{name} copy", { name: task.name }) }) },
+              { label: T("Delete task"), icon: Trash2Icon, danger: true, onClick: () => confirm({ title: T("Delete backup task"), message: t("Delete “{name}”? Existing snapshots are kept.", { name: task.name }), confirmLabel: t("Delete task"), danger: true, onConfirm: () => action(task, "delete") }) },
             ]} /></td>
           </tr>;
         })}</tbody></table>
     </div>}
     {full ? <p className="settingsPaneHint">{limitHint}</p> : null}
-    {tasks?.filter((t) => t.last_error).map((it) => <p key={it.id} className="settingsPaneHint aiKeysError" role="status"><strong>{it.name}:</strong> {it.last_error}{it.enabled ? t(" Next attempt: {next_run}.", { next_run: date(it.next_run) }) : ""}</p>)}
+    {tasks?.filter((t) => t.last_error).map((it) => (
+      <FormNotice key={it.id}><strong>{it.name}:</strong> {it.last_error}{it.enabled ? t(" Next attempt: {next_run}.", { next_run: date(it.next_run) }) : ""}</FormNotice>
+    ))}
     {editor !== null ? <TaskEditor initial={editor.name !== undefined ? editor : null} workspaces={workspaces} bucket={bucket} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); load(); }} /> : null}
   </>;
 }

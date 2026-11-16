@@ -6,11 +6,13 @@
 // file selects and opens it: one press, for a mouse and a finger alike (a
 // navigator, where the folder view, FolderTree.jsx, selects on a click and
 // opens on a second). A right-click, a held finger or the row's "⋯" opens the
-// library's menu for the row. A synced folder's own row says the computer
-// that keeps it and how its sync stands.
+// library's menu for the row. A synced folder's own row wears the synced
+// folder's glyph, its arrows in its sync's tone, and says the computer that
+// keeps it and how its sync stands (a StateTag).
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
-import { FolderIcon } from "../shared/ui/Icons";
+import { FolderIcon, SyncedFolderIcon } from "../shared/ui/Icons";
+import { StateTag } from "../shared/ui/StateTag";
 import { menuPress as holdPress } from "../shared/ui/press.js";
 import { EMPTY_TREE } from "../library/libraryUtils.js";
 import { Empty } from "../settings/SettingsKit";
@@ -26,8 +28,9 @@ import { useTree } from "./useTree.js";
 // menu openers, `menuPress` its gesture helper (shared/ui/press.js);
 // onDragStart(e, id) starts a page's drag, onDrop(e, folderId) takes one on
 // a library folder (a directory takes none), `dragOver` / setDragOver(key)
-// the drop target shown; keeperOf(id) a synced folder's keeper line
-// ({text, title} | null, useWorkFolderActions.jsx).
+// the drop target shown; keeperOf(id) a synced folder's keeper (a
+// StateTag's state with its glyph's `badge`, or null:
+// useWorkFolderActions.jsx).
 export default function FileTree({ files, tree, libTree, workTree, folderMeta, libraryPages, lib, onOpen, pageMenu, folderMenu,
   menuPress = holdPress, onDragStart, onDrop, dragOver, setDragOver, keeperOf }) {
   const { pageId, nonce } = tree.reveal;
@@ -113,7 +116,8 @@ export default function FileTree({ files, tree, libTree, workTree, folderMeta, l
         return (
           <TreeRow key={row.key} row={row} {...own} selected={files.selected === row.id} menu={menu}
             className={dragOver === `tree:${row.id}` ? "dragOver" : ""} title={row.name} onClick={() => press(row)}
-            after={keeper ? <span className="fileTreeKeeper" title={keeper.title}>{keeper.text}</span>
+            icon={row.root ? <SyncedFolderIcon size={16} badge={keeper?.badge || ""} /> : null}
+            after={keeper ? <span className="fileTreeKeeper"><StateTag state={keeper} className="keeperTag" /></span>
               : folder && row.count ? <span className="fileTreeCount">{row.count}</span> : null}
             {...menuPress(menu)} {...drop} {...drag} />
         );

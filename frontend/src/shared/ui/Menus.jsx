@@ -328,17 +328,22 @@ function useDropdown(up = false) {
 // the current one with a check. `block` stretches the trigger into a field.
 // Options are [value, label] or [value, label, Icon] tuples — with an Icon the
 // pill and the menu items lead with the glyph (same look as ActionMenu items).
+// A fourth element is the row's `trailing` node, after its label as a
+// MenuItem's (a hint such as the chat picker's "offline"), and a fifth the
+// row's title; such a row stays pickable.
 // `icon` collapses the trigger to that fixed glyph + chevron (no value label) —
 // the current choice rides in the tooltip instead. `iconOnly` also removes the
 // chevron for especially tight toolbars. `display` replaces the trigger's
 // text (the current label by default) and may be a node, for a label that
 // carries a glyph of its own. A menu holding more than one choice
 // gives the main options a `heading` and lists the others as `sections`,
-// [{label, value, onChange, options}], each under its own heading — the chat
-// composer's model chip with its reasoning effort. `up` opens above the
+// [{label, value, onChange, options, disabled, title}], each under its own
+// heading — the chat composer's chip with the reasoning effort and where a
+// computer's agent works; a `disabled` section shows its choice and takes
+// none, its `title` saying why on each row. `up` opens above the
 // trigger. `disabled` greys the trigger out and keeps the menu shut.
 // `ghost` draws the trigger as a `uiBtn ghost` (no frame until hover), for a
-// choice inside a line of text such as the chat strip's.
+// choice inside a line of text.
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
   display, heading, sections = [], up = false, disabled = false, ghost = false }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown(up);
@@ -346,11 +351,13 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
   const current = options.find(([v]) => v === value) || options[0];
   const CurrentIcon = current?.[2];
   const title = TriggerIcon ? `${t(current?.[1])} — ${label}` : label;
-  const choice = (val, lab, OptIcon, selected, pick) => (
+  // `off` a disabled section's {title}.
+  const choice = ([val, lab, OptIcon, trailing, tip], selected, pick, off = null) => (
     <button key={val} role="menuitemradio" aria-checked={selected} className="ctxMenuItem ctxMenuItemIconed"
-      onClick={() => { close(); pick(val); }}>
+      title={off?.title || tip || undefined} disabled={!!off} onClick={() => { close(); pick(val); }}>
       {OptIcon ? <span className="ctxMenuIcon"><OptIcon size={14} /></span> : null}
-      {t(lab)}
+      <span className="ctxMenuText">{t(lab)}</span>
+      {trailing ?? null}
       {selected ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
     </button>
   );
@@ -376,11 +383,12 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
         <ContextMenu x={menu.x} y={menu.y} anchorRight anchorBottom={up} onClose={close} ignoreRef={triggerRef} className="uiSelectMenu"
           aria-labelledby={id}>
           {heading ? <MenuLabel id={`${id}-0`}>{heading}</MenuLabel> : null}
-          {choices(heading ? `${id}-0` : null, options.map(([val, lab, OptIcon]) => choice(val, lab, OptIcon, val === value, onChange)))}
+          {choices(heading ? `${id}-0` : null, options.map((option) => choice(option, option[0] === value, onChange)))}
           {sections.map((section, i) => (
             <React.Fragment key={section.label}>
               <MenuLabel id={`${id}-${i + 1}`}>{section.label}</MenuLabel>
-              {choices(`${id}-${i + 1}`, section.options.map(([val, lab, OptIcon]) => choice(val, lab, OptIcon, val === section.value, section.onChange)))}
+              {choices(`${id}-${i + 1}`, section.options.map((option) => choice(option, option[0] === section.value, section.onChange,
+                section.disabled ? { title: section.title } : null)))}
             </React.Fragment>
           ))}
         </ContextMenu>

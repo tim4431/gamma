@@ -3,8 +3,12 @@ gamma/markdown_zip_import.py). A zip is read in one dialect, picked once
 after the walk (``dialect_of``), and ``ZipRun`` asks it wherever the kinds
 part:
 
-- ``Vault``, a zip with ``.obsidian`` in it: the filename is the title,
-  ``%%comments%%`` go, ``^id`` anchors are block targets;
+- ``Vault``, a zip with ``.obsidian`` in it, or one the import is told is a
+  vault (the Import dialog's Obsidian card: a zip made on a phone or tablet,
+  or by a plugin, may leave that folder out): the filename is the title,
+  ``%%comments%%`` go, ``^id`` anchors are block targets, and whatever lies
+  under a name starting with ``.`` (``.obsidian``, ``.trash``, ``.git``) is no
+  part of the vault, as in Obsidian;
 - ``NotionDialect`` (gamma/notion_import.py), a zip with a Notion id in a
   file name or a page of Notion's HTML export in it (``html_pages``): page
   ids, databases, page directories, a flat export's tree, relations.
@@ -134,6 +138,10 @@ class Dialect:
 
     # --- reading the files ----------------------------------------------------
 
+    def skipped(self, path: str) -> bool:
+        """Whether the file at ``path`` is no part of the export at all."""
+        return _skipped(path)
+
     def is_page(self, path: str) -> bool:
         """Whether the file at ``path`` is a page of text (not a table)."""
         return _split_ext(path)[1] in _MD_EXTS
@@ -214,6 +222,10 @@ class Plain(Dialect):
 
 class Vault(Dialect):
     name = "vault"
+
+    def skipped(self, path):
+        # Obsidian reads no file or folder whose name starts with a dot
+        return any(part.startswith(".") for part in path.split("/"))
 
     def take_title(self, plan, body, fm_title):
         return _take_title(body, fm_title, vault_stem=plan.file_title)

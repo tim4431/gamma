@@ -150,25 +150,29 @@ Gamma's server is the **remote**, the directory or the file here is
   now*, *Pause* and the directory as a bar of buttons named by their
   tooltips, and *Choose files…* for a work folder, *Go on…* for a held
   vault, *Locate…* for a stopped one, *Force pull…*, *Force push…* and
-  *Detach…* (a work folder), *Remove the synced folder…* (another folder)
+  *Stop syncing…* (a work folder), *Remove the synced folder…* (another folder)
   or *Remove the vault…* (a file's) as rows.
 - A page of a vault: a chip among the page header's buttons, one icon for
   how the page stands: kept in step, pushed from a file of its own,
   paused, or something to see to. Its tooltip says it in words, *Synced:
   Attention.md* (*Pushed from: main.pdf* for a vault of one file). Its
   card holds the path, the direction (*Pull: on · Push: everything*),
-  *Show in folder* and *Edit the file*; a work folder's file's adds *Add
+  *Show in Explorer* (*Show in Finder* on a Mac, *Show in file manager*
+  on Linux: `vaultState.js` `revealLabel`, by the desktop app's user agent)
+  and *Edit the file*; a work folder's file's adds *Add
   to library…* or *Remove from library*, *Save a copy to library…* for a
-  PDF, and *Choose files…*. A banner, *Not written to disk:
+  PDF, and *Choose files…*, then after a rule the danger row *Stop syncing
+  with {computer}…*. A paused synced folder's card says "Syncing is
+  paused"; "vault" is a vault of one file's word alone. A banner, *Not written to disk:
   …*, shows when the last write was refused or the vault reaches no file
   now (stopped, offline, held, failed). An opened PDF: a disk, *On this
   computer*, or the alert icon and *File missing*. A tab's right-click
-  menu offers the same *Show in folder* for its page, in the desktop app,
+  menu offers the same *Show in Explorer* for its page, in the desktop app,
   when the page lies on this computer: the open page by its chip's state
   (`vaultState.js` `showsOnDisk`), any other in a synced folder whose vault
   this account made here (`workPaths.js` `inKeptFolder` over
   `work.linkOf`) or a file opened from this computer. Above it, in any
-  window, a work folder's file has *Go to folder*, which opens its
+  window, a work folder's file has *Show in folder view*, which opens its
   directory in Gamma's folder view with the file selected
   ([work_folders.md](work_folders.md) "The folder view").
 - The client: `pull`, `sync`, `push`.

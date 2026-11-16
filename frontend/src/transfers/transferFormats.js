@@ -61,7 +61,10 @@ const NOTES_PLACE_TEXT = {
 };
 
 // The rows of both dialogs, in order; a format's `category` names its row.
-export const CATEGORIES = [T("This paper"), T("Papers"), T("Notes"), T("Library")];
+// The handwriting apps have a row of their own in the export dialog, their
+// hints saying what each app keeps; the import dialog has one card for both,
+// under Notes.
+export const CATEGORIES = [T("This paper"), T("Papers"), T("Notes"), T("Handwriting apps"), T("Library")];
 
 // `mode`: the server's name for the format (POST /api/jobs/export,
 // routers/export.py). A folder exports the annotated PDFs of all its papers,
@@ -79,17 +82,18 @@ const EXPORT_FORMATS = [
     hint: T("A typeset document of highlights and notes"), editable: ["highlights", "notes"], fixed: { bundle: false } },
   { id: "markdown", mode: "readable", label: T("Markdown"), category: "Notes",
     hint: T("Readable notes for any Markdown editor"), editable: ["highlights", "notes", "bundle"] },
-  // A note holds everything a page has but its highlights, so it has no switches.
-  { id: "notability", mode: "notability", label: "Notability", category: "Notes",
-    hint: T("A .note with the handwriting, to open in Notability"), editable: [],
+  // A note holds everything a page has but its highlights, so it has no
+  // switches. Its hint and GoodNotes' name what each app keeps.
+  { id: "notability", mode: "notability", label: "Notability", category: "Handwriting apps",
+    hint: T("Handwriting, notes and recordings, for Notability"), editable: [],
     fixed: { highlights: false, notes: true, bundle: true },
-    folder: { hint: T("Each page as a .note, in one .zip") } },
+    folder: { hint: T("Each page's handwriting, notes and recordings, as .note files in one .zip") } },
   // A notebook holds the page's highlights, handwriting, boxes and pictures,
-  // never its notes, so it has no switches either.
-  { id: "goodnotes", mode: "goodnotes", label: "GoodNotes", category: "Notes",
-    hint: T("A .goodnotes with the handwriting, to open in GoodNotes"), editable: [],
+  // never its notes or recordings, so it has no switches either.
+  { id: "goodnotes", mode: "goodnotes", label: "GoodNotes", category: "Handwriting apps",
+    hint: T("Highlights and handwriting, for GoodNotes"), editable: [],
     fixed: { highlights: true, notes: false, bundle: true },
-    folder: { hint: T("Each page as a .goodnotes, in one .zip") } },
+    folder: { hint: T("Each page's highlights and handwriting, as .goodnotes files in one .zip") } },
   // Its zip holds the images the switches leave (notionFiles) and never the
   // PDFs (routers/export.py _NotionBuilder), so it has no Bundle switch.
   { id: "notion", mode: "notion", label: "Notion", category: "Notes",
@@ -336,18 +340,23 @@ function formatSummary({ payload, noPdfCopy, translated }, folder) {
 // `instructions` is the preparation note shown under a selected card;
 // `folderLabel` the button that picks the export's folder instead, first
 // where the browser can pick folders (folderZip.js), the .zip then a link;
+// `filterFolder` leaves out of a picked folder what a dropped directory
+// leaves out (fileRouting.js dropFilter: dot-paths such as a vault's
+// .obsidian, .trash and .git, none of which Obsidian reads);
 // `accept` what the source's file picker takes (`multiple`: several files,
 // packed into one .zip named after the source, folderZip.js `filesUpload`).
 const IMPORT_SOURCES = [
   { id: "annots", label: T("Annotations in this PDF"), category: "This paper", hint: T("Bring embedded highlights and notes into Gamma"), strip: true, actionLabel: T("Import"),
     instructions: T("Highlights, notes, boxes and pictures (image stamps) saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.") },
   { id: "zotero", label: T("Zotero library"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, archive: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose folder…"), accept: ".zip,application/zip" },
-  { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files or Obsidian vaults"), archive: true, actionLabel: T("Choose file…"), accept: ".md,.markdown,.zip,text/markdown,application/zip",
-    instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
+  { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("A Markdown file or a zipped folder of notes"), archive: true, actionLabel: T("Choose file…"), accept: ".md,.markdown,.zip,text/markdown,application/zip",
+    instructions: T("A single .md becomes a note page. A .zip of Markdown — a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
   { id: "noteapps", label: T("Notability & GoodNotes"), category: "Notes", hint: T("Handwriting, papers, PDFs, typed text and recordings"), archive: true, actionLabel: T("Choose files…"), accept: ".note,.ntb,.goodnotes,.zip,application/zip", multiple: true,
     instructions: T("Pick one or more .note, .ntb or .goodnotes files, or a .zip of them; the two apps' files can be picked together. From Notability: export with File Format “Note” or “NTB” (in a note, the options icon → Export Options; in the library, press and hold a note → Export Options). From GoodNotes on an iPad, iPhone or Mac: a document's menu → Export → GoodNotes (a folder exports as one .zip). Each note or notebook becomes a page: one on a PDF keeps the PDF, one on paper becomes a notebook of sheets, and its handwriting, shapes, typed text, pictures and recordings come along (an NTB export carries no recordings). GoodNotes on Android, Windows and the web exports PDF only: import that as a paper, then Annotations in this PDF. Notes already imported are skipped.") },
   { id: "notion", label: T("Notion pages"), category: "Notes", hint: T("Pages, subpages, databases and files"), archive: true, actionLabel: T("Choose .zip…"), accept: ".zip,application/zip",
     instructions: T("Pick the .zip Notion exports: a page's ••• menu → Export, with Include subpages on, or Settings → General → Export all workspace content. Choose Markdown & CSV or HTML; only HTML keeps toggles and colours. Pages inside pages stay inside them, databases become tables, links between pages become mentions, and images and files come along. Pages already imported are skipped.") },
+  { id: "obsidian", label: T("Obsidian vault"), category: "Library", hint: T("Notes, links, tags and attachments"), archive: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose vault folder…"), filterFolder: true, accept: ".zip,application/zip",
+    instructions: T("Pick the vault's folder, or a .zip of it: Obsidian has no export of its own, so compress the vault's folder (Compress in Finder or in the Files app of an iPhone or iPad, Send to → Compressed (zipped) folder on Windows). Each note becomes a page named after its file, folders become folders, [[wikilinks]] become mentions, ![[Note#^block]] embeds synced blocks, tags labels, and images, PDFs and other attachments come along. The .obsidian settings, the trash and other hidden folders stay behind, and so do canvases and bases. Notes already imported are skipped.") },
   { id: "logseq", label: T("Logseq highlights"), category: "This paper", hint: T("A PDF and its .edn, with optional notes"), actionLabel: T("Choose files…"),
     instructions: T("Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.") },
   { id: "gamma", label: T("Gamma export (.zip)"), category: "Library", hint: T("Merge pages, files and chats from Gamma"), archive: true, actionLabel: T("Choose .zip…"), accept: ".zip,application/zip",

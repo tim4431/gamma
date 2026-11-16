@@ -7,7 +7,7 @@
 // (gamma/notices.py "reports").
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { Row, Segmented } from "./SettingsKit";
+import { FormNotice, Row, Segmented } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { CheckIcon, FlagIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
@@ -55,8 +55,13 @@ export function ContentReports({ setStatus, confirm }) {
     title: T("Delete report"), message: t("Delete this report? It cannot be brought back."),
     confirmLabel: t("Delete"), danger: true, onConfirm: () => act(r, ""),
   });
-  const errorLine = (error || (!data && reports.error))
-    ? <p className="settingsPaneHint aiKeysError" role="alert">{error || reports.error}</p> : null;
+  // A refused Resolve or Delete says why; a failed read offers to read again.
+  const errorLine = (error || (!data && reports.error)) ? (
+    <FormNotice>
+      {error || reports.error}
+      {!error ? <>{" "}<button type="button" className="uiBtn sm" onClick={() => reports.reload().catch(() => {})}>{t("Try again")}</button></> : null}
+    </FormNotice>
+  ) : null;
   if (!data) return errorLine;
   const now = Date.now();
   return <>
@@ -67,6 +72,7 @@ export function ContentReports({ setStatus, confirm }) {
         : t("Comments, shared pages and AI replies people reported from their menus.")}>
       {all.length ? <Segmented value={shown} onChange={setShown} options={SHOWN} /> : null}
     </Row>
+    {errorLine}
     {list.map((r) => (
       <div key={r.id} className="aiProvRow" data-report={r.id}>
         <span className="aiProvAvatar"><FlagIcon size={16} /></span>
@@ -91,13 +97,12 @@ export function ContentReports({ setStatus, confirm }) {
               <RefreshIcon size={16} />
             </button>
           )}
-          <button className="uiBtn sm iconSq" disabled={busy} onClick={() => remove(r)}
-            title={t("Delete the report")} aria-label={t("Delete the report")}>
+          <button className="uiBtn sm iconSq danger" disabled={busy} onClick={() => remove(r)}
+            title={t("Delete the report")} aria-label={t("Delete the report from {time}", { time: formatRelativeTime(r.created_at, now) })}>
             <Trash2Icon size={16} />
           </button>
         </span>
       </div>
     ))}
-    {errorLine}
   </>;
 }

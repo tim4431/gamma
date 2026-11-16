@@ -3325,7 +3325,7 @@ mark.searchMark {
    button shows or is folded into the "⋯". */
 .dockHeaderActions { flex-shrink: 0; }
 .dockHeaderPop { display: contents; }
-.dockHeaderPop > .popover { right: 8px; max-width: calc(100% - 16px); }
+.dockHeaderPop > .popover { right: 8px; max-width: calc(100% - 16px); max-height: var(--dock-pop-room, calc(100dvh - 100px)); overflow-y: auto; overscroll-behavior: contain; }
 /* Folded, the whole header opens it. */
 .dockWindow.collapsed .dockWindowHeader { cursor: pointer; }
 .dockHeaderSpacer { flex: 1; min-width: 0; }
@@ -3816,7 +3816,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 /* Chat settings popover (header ⚙): model, effort, context slider, tools.
    Like every dock header action's popover it hangs from the whole header
    (.dockHeaderPop), so a narrow chat dock cannot clip it. */
-.chatSettingsPop { width: min(340px, calc(100% - 16px)); min-width: 0; max-height: min(640px, calc(100dvh - 100px)); overflow-y: auto; overscroll-behavior: contain; }
+.chatSettingsPop { width: min(340px, calc(100% - 16px)); min-width: 0; max-height: min(640px, var(--dock-pop-room, calc(100dvh - 100px))); overflow-y: auto; overscroll-behavior: contain; }
 .chatSettingsPop .setSlider { padding: 0 4px; width: 100%; }
 .chatSettingsPop .setRange { flex: 1; min-width: 0; }
 .chatToolPicker { padding: 2px 4px; }
@@ -3841,23 +3841,45 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatHistRow:hover, .chatHistRow:focus-visible { background: var(--bg-hover); outline: none; }
 .chatHistRow.active { background: var(--accent-bg); font-weight: 600; cursor: default; }
 /* A row that cannot open now (a computer agent's while its turn runs):
-   faint, no hover, its title saying why. Its agent's icon leads it while
-   the chat has several agents. */
+   faint, no hover, its title saying why, and a press says it in the status
+   pill. Its agent's icon leads it while the chat has several agents. */
 .chatHistRow[aria-disabled="true"] { color: var(--text-dim); cursor: default; }
 .chatHistRow[aria-disabled="true"]:hover { background: none; }
 .chatHistIcon { flex: none; color: var(--text-muted); }
 .chatHistTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Whose a co-author's conversation is ("bob's chat with Codex"): after the
-   title, dim, giving way to it on a narrow popover. */
+/* A busy session says why on a muted line under its title, where no hover
+   title is needed to read it. */
+.chatHistMain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chatHistMain > .chatHistTitle { flex: none; }
+.chatHistDetail { font-size: var(--fs-2xs); line-height: var(--lh-ui); color: var(--text-muted); }
+/* What is said after the title: whose a co-author's conversation is
+   ("bob's chat with Codex"), a computer agent's name ("Codex on TIM-PC")
+   while the chat has several agents, what a session was started from.
+   Dim, giving way to the title on a narrow popover. */
 .chatHistBy { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-size: var(--fs-2xs); color: var(--text-dim); }
 .chatHistAge { flex: none; font-size: var(--fs-2xs); color: var(--text-dim); padding-right: 4px; }
 /* A row with no menu keeps the room of the ⋯ the others have. */
 .chatHistMenuSlot { flex: none; width: var(--ctl-icon-btn); }
 /* A section under the conversations (the sessions the agent's CLI keeps
-   on its computer, "On TIM-PC"): its caption the shared .popoverSection,
-   in line with the rows' titles. */
+   of its directory, "Codex sessions in paper"): its caption the shared
+   .popoverSection, in line with the rows' titles, ending in the compact
+   refresh that reads them again, centred on the rows' ⋯ column and giving
+   back what it stands above the caption's line. */
 .chatHistList .popoverSection { padding: var(--space-4) 8px var(--space-1); }
+.chatHistList .popoverSection.chatHistSection {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: calc(4px + (var(--ctl-icon-btn) - var(--ctl-icon-btn-xs)) / 2);
+}
+.chatHistSection > span { flex: 1; min-width: 0; }
+.ctlBtn.chatHistRefresh {
+  flex: none;
+  width: var(--ctl-icon-btn-xs);
+  height: var(--ctl-icon-btn-xs);
+  margin-block: calc((16px - var(--ctl-icon-btn-xs)) / 2);
+}
 .chatHistRow.renaming { padding: 2px; cursor: default; }
 .chatHistRow.renaming .aiKeyInput { width: 100%; font-size: var(--fs-xs); }
 /* Deleting several at once: a row menu's Select ticks the first, and every
@@ -3949,7 +3971,9 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   cursor: pointer;
 }
 .chatSetupTile:hover { border-color: var(--border-hover); background: var(--bg-hover); }
-.chatSetupTileName { font-weight: 600; font-size: var(--fs-sm); }
+/* An agent's tile leads its name with the agent's icon, as the composer's chip lists it. */
+.chatSetupTileName { display: flex; align-items: center; gap: var(--space-2); font-weight: 600; font-size: var(--fs-sm); }
+.chatSetupTileName > svg { flex: none; color: var(--text-muted); }
 .chatSetupTileHint { font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.35; }
 .chatSetupRetry { align-self: flex-start; }
 /* --- chat bubbles --- */
@@ -4505,7 +4529,10 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .uiTag.admin { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 /* A tag whose state changes in place (StateTag): its spinner beside the words while work is under way. */
 .uiTag.stateTag { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-.uiTag.stateTag .transferSpin.inline { flex: none; }
+.uiTag.stateTag .transferSpin.inline, .uiTag.stateTag > svg { flex: none; }
+/* In a narrow row (a margin card's turn) the tag gives way: its words ellipsize, the whole label in its title. */
+.uiTag.stateTag { min-width: 0; max-width: 100%; }
+.uiTag.stateTag > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The words behind a state, on their own line (StateDetail): muted, red for a failure. */
 .stateDetail { font-size: var(--fs-xs); line-height: var(--lh-ui); color: var(--text-muted); overflow-wrap: anywhere; }
 .stateDetail.failed { color: var(--danger); }
@@ -4822,10 +4849,15 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-width: 0;
 }
 .chatModelChip .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
-/* The chip's label is a row: the model (with its effort), ellipsized, then
-   the speed tier's glyph. In a reply's foot the same glyph sits inline. */
+/* The chip's label is a row: the agent while there are several, then the
+   model (with its effort), each ellipsized, the model giving way first,
+   then the speed tier's glyph. In a reply's foot the same glyph sits
+   inline. */
 .chatModelChip .uiSelectLabel { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; }
-.chatModelChip .chatModelName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatModelChip .chatModelName { display: flex; min-width: 0; overflow: hidden; }
+.chatModelChip :is(.chatModelAgent, .chatModelText) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chatModelChip .chatModelAgent { flex: 0 1 auto; }
+.chatModelChip .chatModelText { flex: 0 100 auto; }
 .chatSpeedGlyph { flex-shrink: 0; vertical-align: -2px; }
 .chatMsgModel .chatSpeedGlyph { margin-left: 4px; }
 .chatMentionInput { flex: 1; min-width: 0; display: flex; }
@@ -5208,20 +5240,19 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .chatHealthStrip .chatHealthText { flex: 1; min-width: 0; }
 /* A conversation with a computer's agent has its strip in the same slot
-   (chat/computer/ComputerStrip.jsx): it names the agent and what it is at,
-   in neutral colours, amber only while the agent cannot run or waits for
-   the person's answer. After its line where the agent works (the
-   directory's name, or while the conversation has no turn the menu of
-   those offered: a ghost MenuSelect in the strip's colour, its glyph and
-   name as far apart as the name's), kept to the strip's line height and
-   to half its width, a long name ellipsized, then its ⋯ menu. */
+   (chat/computer/ComputerStrip.jsx): it names the agent and where it
+   works, in neutral colours (a spinner while the agent is checked), amber
+   while the agent cannot run, is away or paused, or waits for the
+   person's answer (a shield then). After its line where the agent works
+   (the directory's folder glyph and name), kept to half its width, a long
+   name ellipsized, then its ⋯ menu. */
 .chatHealthStrip.computerStrip {
   color: var(--text-secondary);
   background: var(--bg-subtle);
   border-bottom-color: var(--border-subtle);
 }
-.chatHealthStrip.computerStrip:is(.problem, .asking) { color: var(--warn); background: var(--warn-bg); }
-.chatHealthStrip.computerStrip .transferSpin.inline { flex: none; }
+.chatHealthStrip.computerStrip:is(.problem, .asking, .away, .paused) { color: var(--warn); background: var(--warn-bg); }
+.chatHealthStrip.computerStrip > :is(.transferSpin.inline, svg) { flex: none; }
 .chatHealthStrip.computerStrip .computerPlace {
   display: inline-flex;
   align-items: center;
@@ -5232,9 +5263,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   margin-left: auto;
 }
 .chatHealthStrip.computerStrip .computerPlace .computerPlaceName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chatHealthStrip.computerStrip .computerPlace .uiSelectBtn {
-  gap: var(--space-2); min-width: 0; max-width: 100%; margin: -4px 0; padding-inline: var(--space-3); color: inherit;
-}
+.chatHealthStrip.computerStrip .computerPlace svg { flex: none; }
 .chatHealthStrip.computerStrip .computerStripMenu {
   flex: none;
   width: var(--ctl-icon-btn-xs);
@@ -6701,12 +6730,14 @@ a.shareBrand:hover { background: var(--bg-hover); }
    border-box, padding on an <svg> eats its own content box and the glyph
    renders at zero width (i.e. invisibly). */
 :is(.ctxMenuCheck, .ctxSubChev) { margin-left: auto; flex-shrink: 0; }
-/* A checked row that names its key too: the check after the key, not pushed apart from it. */
-.ctxMenuKey + .ctxMenuCheck { margin-left: 6px; }
+/* A checked row that names its key or a hint too: the check after it, not pushed apart from it. */
+:is(.ctxMenuKey, .ctxMenuHint) + .ctxMenuCheck { margin-left: 6px; }
 .ctxMenuCheck { color: var(--text-primary); }
-/* A row's shortcut (MenuItem `keys`), and the rule between groups
+/* A row's shortcut (MenuItem `keys`) or its muted hint (a MenuSelect
+   option's `trailing`: the chat picker's "offline", amber with
+   .agentProblem for "not ready"), and the rule between groups
    (MenuDivider). */
-.ctxMenuKey {
+:is(.ctxMenuKey, .ctxMenuHint) {
   margin-left: auto;
   padding-left: 16px;
   flex-shrink: 0;
@@ -6714,6 +6745,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-dim);
   white-space: nowrap;
 }
+.ctxMenuHint.agentProblem { color: var(--warn); }
 .ctxMenuDivider { height: 1px; margin: 4px 0; background: var(--border-subtle); }
 /* A name typed inside a menu (the page menu's "New label…"). */
 .ctxMenuInput {
@@ -7028,7 +7060,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferStep h2 { font-size: var(--fs-lg); font-weight: 600; margin: 0 0 8px; color: var(--text-primary); }
 .transferStep h2:focus { outline: none; }
 .transferStep > .reportModalHint { margin: 0 0 14px; }
-.transferFormatRow { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; align-items: start; margin-bottom: 12px; }
+/* The row's name in a column that holds "Handwriting" on a line, the longest word of the five. */
+.transferFormatRow { display: grid; grid-template-columns: calc(76px * var(--ui-font-scale, 1)) minmax(0, 1fr); gap: 12px; align-items: start; margin-bottom: 12px; }
 .transferFormatRow h3 { margin: 16px 0 0; font-size: var(--fs-xs); color: var(--text-secondary); }
 .transferFormats .setPictureChoices { grid-template-columns: repeat(var(--picture-columns), minmax(0, 1fr)); gap: 8px; padding: 2px; }
 .transferFormats .setPictureChoice.uiBtn { flex-direction: column; align-items: stretch; min-height: 172px; padding: 10px; gap: 8px; }

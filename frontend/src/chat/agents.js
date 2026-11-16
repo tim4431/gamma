@@ -212,12 +212,13 @@ export const agentWords = (agent, person = "") => (typeof agent?.name === "strin
 // The agents a comment on the page can be sent to (its *Send to* tick and
 // its `@codex`, comments/sendTo.js): the chat's computer agents
 // (chatAgents), each {id (its agentId), name, label, computer?, online?,
-// ready, problem}, as editor/mentions.js and comments/comments.js read
-// them, `computer` the other computer's name.
+// lentBy?, ready, problem}, as editor/mentions.js and comments/comments.js
+// read them, `computer` the other computer's name, `lentBy` the owner of a
+// co-author's ("alice's Codex on TIM-PC", comments/sendTo.js agentName).
 export function commentAgents(agents) {
   return (agents || []).filter((a) => a.kind === "computer" && a.agentId && a.owner).map((a) => ({
     id: a.agentId, name: a.name, label: a.label, ready: a.ready, problem: a.problem,
-    ...(a.remote ? { computer: a.where, online: a.online } : {}),
+    ...(a.remote ? { computer: a.where, online: a.online } : {}), ...(a.lentBy ? { lentBy: a.lentBy } : {}),
   }));
 }
 

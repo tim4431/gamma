@@ -206,7 +206,8 @@
     background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-2);
   }
   .askCard .askHead { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px 4px; font-size: var(--fs-xs); color: var(--text-muted); }
-  .askCard .askHead .cap { flex: 1; font-weight: 600; color: var(--warn); }
+  .askCard .askHead .cap { flex: 1; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--warn); }
+  .askCard .askHead .cap svg { width: 14px; height: 14px; stroke-width: 2.74; flex: none; }
   .askCard .askBody { overflow-y: auto; padding: 4px 14px 10px; display: flex; flex-direction: column; gap: 7px; font-size: var(--fs-xs); }
   .askCard .askTitleLine { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); }
   .askCard .lines { color: var(--text-muted); font-size: var(--fs-2xs); }
@@ -226,8 +227,11 @@
   .askCard .says { font-style: italic; color: var(--text-secondary); overflow-wrap: anywhere; unicode-bidi: plaintext; }
   .askCard .note { color: var(--text-secondary); line-height: 1.45; }
   .askCard .note.warn { color: var(--warn); }
-  .askCard .askFoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border); }
-  .askCard .askFoot .stop { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* While Allow once waits for a box read to its end, the line saying so,
+     above the footer (the chat card's first line under its answers). */
+  .askCard .askWait { padding: 0 14px 8px; font-size: var(--fs-xs); }
+  .askCard .askFoot { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border); }
+  .askCard .askFoot .stop { margin-right: auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* The iPad and Android apps (body[data-touch], SHELLS below): a 44 px row,
      no window controls to keep clear, touch-sized targets; the menu hangs
@@ -322,6 +326,7 @@
     more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',
     locate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>',
     force: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+    shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
   };
   const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   const ROLE = { owner: 'owner', editor: 'can edit', viewer: 'view only' };
@@ -418,11 +423,14 @@
   // on a card that says Gamma marked some, `marked`: the agent may write the
   // same letters itself); the
   // state pushed after only updates how many wait and whether the buttons
-  // are armed, so a box scrolled stays where it is. Allow once waits, on top
-  // of main's arming, until each box that scrolls was scrolled to its end.
-  // Decline sits at the right end, where a stream of clicks lands. No button
-  // is ever focused by script. Once drawn the bar tells main
-  // (agentAskDrawn), from which its quiet second counts.
+  // are armed, so a box scrolled stays where it is. The chat card's words
+  // and order (chat/ApprovalShell.jsx): a shield before the caption, Allow
+  // once the primary button, Don't allow at the right end, where a stream
+  // of clicks lands, and Stop Codex asking at the left. Allow once waits, on
+  // top of main's arming, until each box that scrolls was scrolled to its
+  // end, and a line over the footer says so meanwhile (`wait`, its title
+  // too). No button is ever focused by script. Once drawn the bar tells
+  // main (agentAskDrawn), from which its quiet second counts.
   let askDrawn = '';
   let askAnswered = '';
   function markedText(el, text, marked) {
@@ -449,6 +457,10 @@
     const read = [...layer.querySelectorAll('.box')].every(atEnd);
     const off = !a.armed || askAnswered === a.key;
     for (const b of layer.querySelectorAll('[data-answer]')) b.disabled = off || (b.dataset.answer === 'once' && !read);
+    const once = $('agentAsk-once');
+    if (once) once.title = read ? a.allow : a.wait;
+    const wait = layer.querySelector('.askWait');
+    if (wait) wait.hidden = read;
     const count = layer.querySelector('.count');
     if (count) count.textContent = a.count || '';
   }
@@ -480,7 +492,10 @@
     card.setAttribute('role', 'alertdialog');
     card.setAttribute('aria-label', a.caption);
     const head = el('div', 'askHead');
-    head.append(el('span', 'cap', a.caption), el('span', 'count', a.count || ''));
+    const cap = el('span', 'cap');
+    cap.innerHTML = ICONS.shield;
+    cap.appendChild(document.createTextNode(a.caption));
+    head.append(cap, el('span', 'count', a.count || ''));
     const body = el('div', 'askBody');
     body.appendChild(el('div', 'askTitleLine', a.title));
     if (a.kind === 'command') {
@@ -502,8 +517,9 @@
     }
     if (a.says) body.appendChild(el('div', 'says', a.says));
     for (const n of a.notes || []) body.appendChild(el('div', `note${/^This holds|went away/.test(n) ? ' warn' : ''}`, n));
+    const wait = el('div', 'note askWait', a.wait);
     const foot = el('div', 'askFoot');
-    const buttons = [['stop', 'uiBtn sm ghost stop', a.stop], ['once', 'uiBtn sm', 'Allow once'], ['deny', 'uiBtn sm', 'Decline']];
+    const buttons = [['stop', 'uiBtn sm ghost stop', a.stop], ['once', 'uiBtn sm primary', a.allow], ['deny', 'uiBtn sm ghost', a.deny]];
     for (const [decision, cls, text] of buttons) {
       const b = el('button', cls, text);
       b.dataset.answer = decision;
@@ -520,7 +536,7 @@
       };
       foot.appendChild(b);
     }
-    card.append(head, body, foot);
+    card.append(head, body, wait, foot);
     layer.appendChild(card);
     for (const box of layer.querySelectorAll('.box')) box.addEventListener('scroll', () => askButtons(state.agentAsk || a));
     askButtons(a);
@@ -603,7 +619,7 @@
       ],
       vault: i.scope === 'file'
         ? [vault, sync('Push now'), ['more', ICONS.more, 'More: locate the file, remove the vault…']]
-        : [vault, sync('Sync now: push, then pull'), ['more', ICONS.more, `More: its switches, pull now, push now, force, locate, ${i.work ? 'detach…' : 'remove the synced folder…'}`]],
+        : [vault, sync('Sync now: push, then pull'), ['more', ICONS.more, `More: its switches, pull now, push now, force, locate, ${i.work ? 'stop syncing…' : 'remove the synced folder…'}`]],
     }[i.kind] || [];
     b.innerHTML = `<span class="ico">${ICONS[KEPT_ICON[i.kind]] || ICONS[i.scope === 'file' ? 'file' : 'folder']}</span>` +
       `<span class="lines"><span class="head"><span class="label"></span>${i.kind === 'vault' ? dirMarks(i) : ''}</span>` +
@@ -734,7 +750,7 @@
   // Push: off / PDFs / everything, as three buttons; `everything` shut where it cannot be, `noEverything` saying why;
   // with `locked`, every one but the setting shut, `locked` saying why (a work folder of another server).
   const FAR_PUSH = 'A vault of another server pushes PDFs at most: a synced folder there is made from an empty folder';
-  const FAR_WORK = 'A synced folder of another server pushes everything and pulls: detach it to stop';
+  const FAR_WORK = 'A synced folder of another server pushes everything and pulls: use Stop syncing… to end it';
   const WHOLE_PUSH = 'A vault of the whole library cannot push everything: make one of a folder';
   function pushSeg(value, onPick, noEverything, locked) {
     const seg = document.createElement('span');
@@ -779,7 +795,7 @@
 
   // Where a work folder's agents are set: in Gamma, for this computer, not
   // for one folder (docs/dev/local_agents.md "Who turns it on").
-  const AGENTS_SET = 'Codex and Claude Code work in this folder once they are turned on in Gamma\'s Settings → AI.';
+  const AGENTS_SET = 'Codex and Claude Code work in this folder once they are turned on in Gamma\'s Settings → AI → Agents.';
 
   // A vault's switches, a row each, its name at the left and its control at
   // the right edge: `[name, control]` pairs, Pull then Push, and a work
@@ -863,7 +879,7 @@
   // is not where it was, Force pull… and Force push…, Show this computer
   // there or Stop showing for a vault of another server (under its State,
   // whether this computer is shown there), Remove the synced folder… (Remove
-  // the vault… for a file's, Detach… for a work folder, which asks what
+  // the vault… for a file's, Stop syncing… for a work folder, which asks what
   // becomes of its files: main.js removeVault).
   function renderVault(panel, i) {
     backRow(panel, () => { vaultView = null; renderSync(); });
@@ -955,7 +971,7 @@
       ['force-push', ICONS.force, 'Force push…', rounds && folder],
       // this computer shown on a vault of another server's server, or no longer
       i.computer ? [i.computer.action, i.computer.action === 'show-computer' ? ICONS.remote : ICONS.pause, i.computer.button, true] : null,
-      ['remove', ICONS.stop, i.work ? 'Detach…' : folder ? 'Remove the synced folder…' : 'Remove the vault…', !i.seen, false, true],
+      ['remove', ICONS.stop, i.work ? 'Stop syncing…' : folder ? 'Remove the synced folder…' : 'Remove the vault…', !i.seen, false, true],
     ].filter(Boolean);
     for (const [act, icon, text, shown, off, danger] of acts) {
       if (!shown) continue;

@@ -16,7 +16,7 @@
 // for admins, Settings → Server), not here.
 import React from "react";
 import { API, apiJson, fmtBytes, getExpectedUser, setExpectedUser } from "../shared/lib/utils";
-import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, UnitInput, Empty, QuotaMeter, PasswordInput, PersonRow } from "./SettingsKit";
+import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, UnitInput, Empty, FormNotice, QuotaMeter, PasswordInput, PersonRow } from "./SettingsKit";
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
 import { ZoteroAccountRow } from "./SettingsZotero";
 import { EmailInviteButtons, ManageWorkspaceDialog, inviteExpiry, looksLikeEmail, useAccounts } from "./SettingsWorkspace";
@@ -40,6 +40,9 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
   const setInfo = listing.set;
   const [ownError, setError] = React.useState("");
   const error = ownError || (!info ? listing.error : "");
+  // "invitations" while the error came from an invitation's call: shown
+  // under Invitations, the rest under Accounts
+  const [errorAt, setErrorAt] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [edit, setEdit] = React.useState(null); // {original, username, password, is_admin, quota_mb}
   const [addForm, setAddForm] = React.useState(null); // {username, password, is_admin}
@@ -115,7 +118,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
       refreshWorkspaces(); // created / renamed accounts change the nested rows
       return d;
     } catch (err) {
-      setError(err.message);
+      setError(err.message); setErrorAt("");
       return null;
     } finally {
       setBusy(false);
@@ -137,7 +140,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
       invitations.set(d);
       return d;
     } catch (err) {
-      setError(err.message);
+      setError(err.message); setErrorAt("invitations");
       if (err.status === 404) await invitations.reload().catch(() => {});
       return null;
     } finally {
@@ -308,7 +311,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
               </Row>
             </Section>
           ) : null}
-          {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+          {error ? <FormNotice>{error}</FormNotice> : null}
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={closeEdit}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={saveAccount}>{t("Save")}</button>
@@ -336,7 +339,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
               onChange={(quota_mb) => setEdit((f) => ({ ...f, quota_mb }))}
             />
           </Field>
-          {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+          {error ? <FormNotice>{error}</FormNotice> : null}
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={closeEdit}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={saveStorage}>{t("Save")}</button>
@@ -432,17 +435,33 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
       ) : null}
     </span>
   ) : null;
+  // What failed with no dialog open, in the section it happened in: an
+  // invitation's resend or withdraw under Invitations, while that shows;
+  // else the accounts' read, with Try again.
+  const shownError = error && !edit && !addForm && !inviteForm ? error : "";
+  const inInvitations = !!shownError && errorAt === "invitations" && !!invites?.invitations?.length;
+  const paneError = shownError && !inInvitations ? (
+    <FormNotice>
+      {shownError}
+      {!info && listing.error ? <>{" "}<button type="button" className="uiBtn sm" onClick={() => { setError(""); listing.reload().catch(() => {}); }}>
+        {t("Try again")}</button></> : null}
+    </FormNotice>
+  ) : null;
   return (
     <>
       {listAll ? <PaneHead icon={UsersIcon} title={t("Users")} /> : <PaneHead icon={UserIcon} title={t("Account & sync")} />}
       {listAll ? (
         <Section title={t("Accounts")} action={accountActions}>
+          {/* Why Invite by e-mail… is off, said where it shows. */}
+          {invites && !invites.available && invites.reason ? <FormNotice tone="info">{invites.reason}</FormNotice> : null}
+          {paneError}
           {loading}
           {rows.map(userRow)}
         </Section>
       ) : <>
         {loading}
         {rows.filter((row) => row.username === me).map(userRow)}
+        {paneError}
       </>}
       {!isGuest && (selfOnly || !isAdmin) ? <CloudIdentityRow setStatus={setStatus} confirm={confirm} onSetUp={onServer} /> : null}
       {!isGuest && (selfOnly || !isAdmin) ? <ZoteroAccountRow setStatus={setStatus} confirm={confirm} /> : null}
@@ -481,7 +500,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
             />
             <ShieldIcon size={14} /> {t("Grant the admin privilege")}
           </label>
-          {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+          {error ? <FormNotice>{error}</FormNotice> : null}
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={() => { setAddForm(null); setError(""); }}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={submitAdd}>
@@ -503,7 +522,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
                 onKeyDown={(e) => { if (e.key === "Enter" && !composing(e) && looksLikeEmail(inviteForm.email) && !busy) sendInvite(); }}
               />
             </Field>
-            {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+            {error ? <FormNotice>{error}</FormNotice> : null}
             <DialogButtons footnote={looksLikeEmail(inviteForm.email) ? null : t("Type their e-mail address to continue.")}>
               <button className="uiBtn" onClick={closeInvite}>{t("Cancel")}</button>
               <button className="uiBtn primary" disabled={busy || !looksLikeEmail(inviteForm.email)} onClick={sendInvite}>
@@ -515,6 +534,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
       ) : null}
       {isAdmin && !selfOnly && invites?.invitations?.length ? (
         <Section title={t("Invitations")}>
+          {inInvitations ? <FormNotice>{shownError}</FormNotice> : null}
           {invites.invitations.map((e) => (
             <PersonRow key={e.id} name={e.email} icon={MailIcon}
               sub={[e.invited_by ? t("invited by {name}", { name: e.invited_by }) : "",
@@ -524,7 +544,6 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
           ))}
         </Section>
       ) : null}
-      {error && !edit && !addForm && !inviteForm ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
     </>
   );
 }

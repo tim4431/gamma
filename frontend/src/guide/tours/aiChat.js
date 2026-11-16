@@ -60,7 +60,8 @@ export default {
       title: T("Ask across your library"),
       body: T("It can search, read and file your pages."),
       do: [{ type: "chat.input", text: T("Which of these papers use attention? File them into ML/attention"), preserveDraft: true }, { wait: 1000 }] },
-    { id: "chat-tools", anchor: "chat.tools", placement: "bottom", requires: { ...ON, view: "home" }, optional: true,
+    // The Tools switch, in the chat settings the step opens (and the next one closes).
+    { id: "chat-tools", anchor: "chat.tools", placement: "left", requires: { ...ON, view: "home" }, optional: true,
       title: T("Choose the tools it may use"),
       body: T("Each action shows as a chip you can open.") },
     model("home"),

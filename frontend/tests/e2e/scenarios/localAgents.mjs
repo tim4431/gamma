@@ -224,10 +224,10 @@ export async function localAgentScenarios(env) {
       await dock.waitFor();
       return dock;
     };
-    // The agents the composer's chip lists, by name, its menu closed again.
+    // The agents the composer's chip lists, by name (without a row's hint, "not ready"), its menu closed again.
     const agentsListed = async (page, dock) => {
       await dock.locator(".chatModelChip .uiSelectBtn").click();
-      const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").allInnerTexts();
+      const names = await page.locator(".uiSelectMenu [role=group]").first().getByRole("menuitemradio").locator(".ctxMenuText").allInnerTexts();
       await page.keyboard.press("Escape");
       return names.map((s) => s.trim());
     };
@@ -366,7 +366,7 @@ export async function localAgentScenarios(env) {
         && told.includes("the caption says 2025"), `the comment and its thread reach Codex: ${told.slice(0, 600)}`);
     });
 
-    await step("local-agents: in the thread Codex answered last the tick starts ticked, the field asks Codex to edit, and the reply resumes the session", async () => {
+    await step("local-agents: in the thread Codex answered last the tick starts ticked, the field replies to Codex and its button sends to Codex, and the reply resumes the session", async () => {
       const before = heard().length;
       const ctx = await desktop();
       const page = await openPage(ctx, at(main.id));
@@ -375,7 +375,8 @@ export async function localAgentScenarios(env) {
         const thread = await openThread(page, caption.id);
         await replyField(thread);
         assertEq(await thread.locator(".commentSendTo input[type=checkbox]").isChecked(), true, "the agent spoke last: ticked");
-        assertEq((await thread.locator(".commentField .cm-placeholder").last().innerText()).trim(), "Ask Codex to edit");
+        assertEq((await thread.locator(".commentField .cm-placeholder").last().innerText()).trim(), "Reply to Codex…");
+        assertEq(await thread.locator(".commentSend").last().getAttribute("aria-label"), "Send to Codex", "the button says what it starts");
         await page.keyboard.type("keep the British spelling");
         await page.keyboard.press("Shift+Enter");
         await thread.locator(".commentItem.reply", { hasText: CHAT_REPLY }).nth(1).waitFor({ timeout: 40000 });
@@ -411,8 +412,12 @@ export async function localAgentScenarios(env) {
         assertEq((await first.locator("[data-agent-hint]").innerText()).trim(), "Reply to ask Codex again: only the newest comment is sent.",
           "the field says before saving that an older comment's edit is not sent");
         await first.getByRole("button", { name: "Save", exact: true }).click();
-        await until(async () => (await page.textContent(".statusPill").catch(() => "") || "")
-          .includes("Reply to ask Codex again: only the newest comment is sent."), { what: "the status says why it was not sent" });
+        // the refusal stays on the thread, under its tag, with no Send again for an older comment
+        const unsent = thread.locator(".commentTurn", { hasText: "Not sent to Codex" });
+        await unsent.waitFor({ timeout: 10000 });
+        assertEq((await unsent.locator(".stateDetail").innerText()).trim(), "Reply to ask Codex again: only the newest comment is sent.",
+          "the thread says why it was not sent");
+        assertEq(await unsent.getByRole("button", { name: "Send again", exact: true }).count(), 0, "an older comment's edit is not offered again");
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const codex = (await user.api("/api/local-agents")).agents.find((a) => a.name === "codex");
@@ -545,8 +550,10 @@ export async function localAgentScenarios(env) {
         assertEq(await dock.locator(".chatSelChips").count(), 0, "the passage went with the message");
         // working, Stop in place of Send, then the reply
         await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
-        await until(async () => (await dock.locator(".computerStrip").innerText()).includes("Codex is working"),
-          { timeout: 15000, what: "the strip says Codex is working" });
+        await until(async () => (await dock.locator(".chatSteps").last().innerText().catch(() => "")).includes("Codex is working"),
+          { timeout: 15000, what: "the turn's pill says Codex is working" });
+        assertEq((await dock.locator(".computerStrip").innerText()).trim(), "Codex on this computer · paper",
+          "the strip keeps its line: the pill says how the turn goes");
         await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor({ timeout: 40000 });
         await dock.getByRole("button", { name: "Send", exact: true }).waitFor();
         assertNoProblems(page);
@@ -698,7 +705,7 @@ export async function localAgentScenarios(env) {
         await dock.locator(".computerStripMenu").click();
         await page.locator(".ctxMenuItem", { hasText: "Continue in a terminal" }).click();
         await dock.locator(".computerStripMenu").click();
-        await page.locator(".ctxMenuItem", { hasText: "Show in folder" }).click();
+        await page.locator(".ctxMenuItem", { hasText: "Show in Explorer" }).click();
         // a message event comes after its post: wait for both
         const asks = await until(async () => {
           const got = await page.evaluate(() => window.shellAsks.map((a) => [a.type, a.page]));
@@ -768,17 +775,26 @@ export async function localAgentScenarios(env) {
         await dock.locator(".computerStrip").waitFor();
         // the header keeps what applies to Codex's conversation
         await dock.getByRole("button", { name: "Chat history", exact: true }).waitFor();
-        // where it works: the directory offered, picked in the strip before the first turn
-        await dock.locator(".computerPlace .uiSelectBtn").click();
-        await page.getByRole("menuitemradio", { name: "Notes", exact: true }).click();
+        // where it works: the directory offered, picked in the composer's chip ("Works in") before the first turn
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        await page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio", { name: "Notes", exact: true }).click();
         await dock.locator(".chatEmpty", { hasText: "it works in the directory you chose" }).waitFor();
+        await until(async () => (await dock.locator(".computerPlace").innerText()).trim() === "Notes", { what: "the strip names the pick" });
         await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("what is this paper about?");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // the reply in the chat's own transcript: its steps pill, its text, what it changed
         await dock.locator(".chatBubble.ai", { hasText: CHAT_REPLY }).waitFor({ timeout: 40000 });
-        await until(async () => (await dock.locator(".chatSteps").last().innerText()).trim() === "1 step", { what: "the steps pill, done" });
-        await dock.locator(".chatFileChanges", { hasText: "sections/method.tex" }).waitFor();
+        await until(async () => (await dock.locator(".chatSteps").last().innerText()).trim() === "1 step · edited 1 file", { what: "the steps pill, done" });
+        // outside a synced folder the changed file is named, not linked: no page holds it
+        await dock.locator(".chatFileChanges code", { hasText: "sections/method.tex" }).waitFor();
+        assertEq(await dock.locator(".chatFileChanges a").count(), 0, "no link to a file Gamma does not sync");
         await until(async () => (await dock.locator(".computerPlace").innerText()).trim() === "Notes", { what: "the strip names the directory" });
+        assertEq(await dock.locator(".computerPlace").getAttribute("title"), "Start a new chat to work elsewhere", "the conversation's now");
+        // the chip shows where it works, no longer to change
+        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        const kept = page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio", { name: "Notes", exact: true });
+        assertEq([await kept.getAttribute("aria-checked"), await kept.isDisabled()].join(), "true,true", "checked and disabled");
+        await page.keyboard.press("Escape");
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const stored = (await user.api(`/api/local-agents/chat?bucket=${paper.id}`)).conversation;
@@ -811,11 +827,11 @@ export async function localAgentScenarios(env) {
         await reply.waitFor({ timeout: 40000 });
         await until(async () => { const said = await reply.innerText(); return said.includes(quote) && said.includes(note); },
           { what: "the reply quotes the highlight and its note" });
-        // the transcript shows the call as a step
+        // the transcript shows the call as a step, in the words Gamma AI's own call of the tool reads
         const pill = dock.locator(".chatSteps").last();
-        await until(async () => (await pill.innerText()).trim() === "1 step", { what: "the steps pill, done" });
+        await until(async () => (await pill.innerText()).trim() === "1 step · read 1 page", { what: "the steps pill, done" });
         await pill.click();
-        await dock.locator(".chatToolAction", { hasText: "Read Gamma: read_page" }).waitFor();
+        await dock.locator(".chatToolAction", { hasText: "Read a page" }).waitFor();
         assertNoProblems(page);
       } finally { await ctx.close(); }
       const since = heard().slice(before);
@@ -905,7 +921,10 @@ export async function localAgentScenarios(env) {
         const history = async () => {
           await dock.getByRole("button", { name: "Chat history", exact: true }).click();
           const pop = page.locator(".chatHistoryPop");
-          await pop.locator(".popoverSection", { hasText: computer ? `On ${computer}` : "On this computer" }).waitFor();
+          // the caption names the CLI and the directory; this computer's are not said to be on it
+          const caption = pop.locator(".popoverSection", { hasText: "Codex sessions in " });
+          await caption.waitFor();
+          assert(!computer || !(await caption.innerText()).includes(computer), `this computer goes unnamed: ${await caption.innerText()}`);
           return pop;
         };
         let pop = await history();
@@ -913,9 +932,16 @@ export async function localAgentScenarios(env) {
         await terminal.waitFor({ timeout: 20000 });
         assertEq((await terminal.locator(".chatHistBy").innerText()).trim(), "Terminal", "started in a terminal");
         const held = pop.locator(".chatHistRow", { hasText: HELD.name });
+        const why = "Codex has this session open in another window: close it there first.";
         assertEq(await held.getAttribute("aria-disabled"), "true", "the held one cannot be opened");
-        assertEq(await held.getAttribute("title"), "Codex has this session open in another window: close it there first.",
-          "and says why");
+        assertEq(await held.getAttribute("title"), why, "and says why");
+        assertEq((await held.locator(".chatHistDetail").innerText()).trim(), why, "under its title too");
+        // a press still lands on a row that is aria-disabled (Playwright waits for enabled, a person's click does not)
+        await held.click({ force: true });
+        await page.locator(".statusPill", { hasText: why }).waitFor({ timeout: 3000 });
+        // the caption's refresh reads them again in place
+        await pop.getByRole("button", { name: "Read the sessions again", exact: true }).click();
+        await terminal.waitFor();
         await terminal.click();
         await pop.waitFor({ state: "detached" });
         await dock.locator(".chatBubble.user", { hasText: TERMINAL.ask }).waitFor({ timeout: 15000 });
@@ -924,7 +950,7 @@ export async function localAgentScenarios(env) {
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         await dock.locator(".chatBubble.ai", { hasText: SESSION_REPLY }).waitFor({ timeout: 40000 });
         pop = await history();
-        const ours = pop.locator(".chatHistRow", { hasText: TERMINAL.name }).filter({ has: page.locator(".chatHistBy", { hasText: "In Gamma" }) });
+        const ours = pop.locator(".chatHistRow", { hasText: TERMINAL.name }).filter({ has: page.locator(".chatHistBy", { hasText: "Continued here" }) });
         await ours.waitFor({ timeout: 20000 });
         await page.keyboard.press("Escape");
         assertNoProblems(page);

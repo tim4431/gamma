@@ -126,12 +126,14 @@ def _check_body(body) -> str:
         raise _refused(e) from None
 
 
-def reply(conn, writer: Writer, ws: str, thread_id: str, body, *, comment_id: str = "") -> dict:
+def reply(conn, writer: Writer, ws: str, thread_id: str, body, *, comment_id: str = "", turn_end: str = "") -> dict:
     """Write ``body`` as the writer's reply in the thread ``thread_id`` →
     ``{thread, comment, created}``. ``created`` false: the same words were
     its last moments ago (``REPEAT_S``), or ``comment_id`` (a turn's end's
     id for it, the same however often that end is written) is written
-    already: ``comment`` is that one. ValueError for a refusal."""
+    already: ``comment`` is that one. ``turn_end``: for a turn's end's note,
+    what became of the turn (gamma/local_agents/threads.py ``_end_of``),
+    carried by the write's event to the Inbox. ValueError for a refusal."""
     may_write(writer, ws)
     found = thread(conn, thread_id)
     body = _check_body(body)
@@ -150,7 +152,8 @@ def reply(conn, writer: Writer, ws: str, thread_id: str, body, *, comment_id: st
     except HTTPException as e:
         raise _refused(e) from None
     if out["created"]:
-        comments.written(ws, found["page_id"], found["block_id"], found["id"], out["event"])
+        event = {**out["event"], "turn_end": turn_end} if turn_end else out["event"]
+        comments.written(ws, found["page_id"], found["block_id"], found["id"], event)
     return {"thread": out["thread"], "comment": out["comment"], "created": out["created"]}
 
 

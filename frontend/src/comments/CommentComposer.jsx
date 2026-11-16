@@ -16,9 +16,11 @@
 // another block's comments) loses none of it. A new comment's and a
 // reply's field has the *Send to {agent}* tick under it while an agent can
 // be sent the comment (comments/sendTo.js): ticked, the comment is also
-// the instruction of a turn of that agent; `@codex` typed ticks it.
+// the instruction of a turn of that agent, which the send button's name
+// and the placeholder say ("Send to Codex", "Ask Codex…"); `@codex` typed
+// ticks it.
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpIcon } from "../shared/ui/Icons";
+import { ArrowUpIcon, BotIcon } from "../shared/ui/Icons";
 import { MenuSelect } from "../shared/ui/Menus";
 import { t } from "../shared/i18n/i18n.js";
 import { chordLabel, composing } from "../shared/lib/hotkeys.js";
@@ -38,7 +40,7 @@ import { useRefPicker } from "../editor/useRefPicker.js";
 import { useSlashMenu } from "../editor/useSlashMenu.js";
 import { chatPick } from "../chat/computer/chatSide.js";
 import { MAX_COMMENT } from "./comments.js";
-import { editHint, namedAgent, sendNote, startsTicked, tickAgent, tickedPlaceholder } from "./sendTo.js";
+import { agentName, editHint, namedAgent, sendLabel, sendNote, startsTicked, tickAgent, tickedPlaceholder } from "./sendTo.js";
 
 // The unsent texts by field: `new:<block id>`, `reply:<thread id>`,
 // `edit:<comment id>`. Module state: the popover remounts, the tab keeps them.
@@ -95,7 +97,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
   const ticks = !onCancel && agents.length > 0;
   const [tick, setTick] = useState(null);
   const [chosen, setChosen] = useState("");
-  const ticked = ticks && (tick ?? startsTicked(thread, sendTo?.ticked));
+  const ticked = ticks && (tick ?? startsTicked(thread, sendTo?.ticked, me));
   const target = ticks ? tickAgent(agents, { thread, picked: chatPick(rootId), chosen }) : null;
   const toggle = (on) => {
     setTick(on);
@@ -156,10 +158,12 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
   // Ticked, what may keep the agent from answering; an edit's, what saving
   // an `@name` it adds does.
   const hint = onCancel ? editHint({ agents, text, initial, refused }) : ticked ? sendNote(target) : null;
-  // The button's hover names its key ("Shift+Enter", "⇧↩" on a Mac); on
-  // an on-screen keyboard, where Shift+Return breaks the line, Ctrl/⌘+Enter
-  // (sendsOnShiftEnter).
-  const sendTitle = t("{label} ({hint})", { label: submitLabel, hint: chordLabel(touchTyping() ? "Mod-Enter" : "Shift-Enter") });
+  // The button's name is its action, ticked "Send to Codex" (sendTo.js
+  // sendLabel); its hover names its key too ("Shift+Enter", "⇧↩" on a
+  // Mac), on an on-screen keyboard, where Shift+Return breaks the line,
+  // Ctrl/⌘+Enter (sendsOnShiftEnter).
+  const send = sendLabel(ticked ? target : null, submitLabel, chordLabel(touchTyping() ? "Mod-Enter" : "Shift-Enter"));
+  const fieldLabel = ticked ? tickedPlaceholder(target, placeholder, !!thread) : placeholder;
   const submit = async () => {
     if (!trimmed || tooLong) return;
     const sent = text;
@@ -216,8 +220,8 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
           ownHistory
           className="blockEditorCm commentField"
           value={text}
-          placeholder={ticked ? tickedPlaceholder(target, placeholder) : placeholder}
-          ariaLabel={ticked ? tickedPlaceholder(target, placeholder) : placeholder}
+          placeholder={fieldLabel}
+          ariaLabel={fieldLabel}
           refLabels={labelsFor ? labelsFor(text) : NO_LABELS}
           mentions={mentions}
           onChange={(e) => {
@@ -238,11 +242,11 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
         />
         {/* A new comment or a reply sends from the round button inside the
             box, beside the text (its last line once it wraps), as the chat's
-            composer does; an edit saves from the bar under it. The title
-            names the key, the name stays the plain action. */}
+            composer does; an edit saves from the bar under it. The name is
+            the action (ticked, the agent it starts), the title adds the key. */}
         {cancel ? null : (
           <button type="button" className="uiBtn primary chatCircleBtn commentSend" disabled={!trimmed || tooLong}
-            onMouseDown={(e) => e.preventDefault()} onClick={submit} title={sendTitle} aria-label={submitLabel}>
+            onMouseDown={(e) => e.preventDefault()} onClick={submit} title={send.title} aria-label={send.label}>
             {/* ui-allow icon-size: the 24 px send circle's arrow (ui-design.md, the comments row of the file map) */}
             <ArrowUpIcon size={12} />
           </button>
@@ -254,12 +258,13 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
             <span className="commentSendTo" data-send-to={ticked ? target?.name : ""}>
               <label className="commentSendTick">
                 <input type="checkbox" checked={ticked} onChange={(e) => toggle(e.target.checked)}
-                  aria-label={t("Send to {agent}", { agent: target?.label || "" })} />
-                {agents.length > 1 ? t("Send to") : t("Send to {agent}", { agent: target?.label || "" })}
+                  aria-label={t("Send to {agent}", { agent: agentName(target) })} />
+                {agents.length > 1 ? t("Send to") : t("Send to {agent}", { agent: agentName(target) })}
               </label>
+              {/* the agent a choice inside the line's words: frameless, each with its glyph */}
               {agents.length > 1 ? (
-                <MenuSelect up label={t("Agent")} value={target?.id || ""} onChange={(id) => { setChosen(id); toggle(true); }}
-                  options={agents.map((a) => [a.id, a.computer ? t("{agent} on {computer}", { agent: a.label, computer: a.computer }) : a.label])} />
+                <MenuSelect up ghost label={t("Agent")} value={target?.id || ""} onChange={(id) => { setChosen(id); toggle(true); }}
+                  options={agents.map((a) => [a.id, agentName(a), BotIcon])} />
               ) : null}
             </span>
           ) : null}
@@ -269,7 +274,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
           {cancel ? <button type="button" className="uiBtn sm ghost" onClick={cancel}>{t("Cancel")}</button> : null}
           {cancel ? (
             <button type="button" className="uiBtn sm primary commentSend" disabled={!trimmed || tooLong}
-              onMouseDown={(e) => e.preventDefault()} onClick={submit} title={sendTitle} aria-label={submitLabel}>
+              onMouseDown={(e) => e.preventDefault()} onClick={submit} title={send.title} aria-label={submitLabel}>
               {submitLabel}
             </button>
           ) : null}

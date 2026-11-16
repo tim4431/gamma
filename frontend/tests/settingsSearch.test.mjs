@@ -20,7 +20,8 @@ const PANE_FILES = {
   handwriting: ["SettingsDialog.jsx"],
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
-  ai: ["SettingsDialog.jsx", "SettingsAi.jsx", "SettingsAgents.jsx"],
+  agents: ["SettingsDialog.jsx", "SettingsAgents.jsx"],
+  ai: ["SettingsDialog.jsx", "SettingsAi.jsx"],
   assistant: ["SettingsDialog.jsx"],
   tools: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx"],
   integrations: ["SettingsIntegrations.jsx"],
@@ -29,7 +30,7 @@ const PANE_FILES = {
   backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "BackupBucket.jsx"],
   maintenance: ["SettingsDialog.jsx"],
   users: ["SettingsUsers.jsx", "SettingsServer.jsx", "SettingsCloudSignIn.jsx", "SettingsGuests.jsx", "SettingsReports.jsx"],
-  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx"],
+  server: ["SettingsServer.jsx", "SettingsPublicUrl.jsx", "SettingsAi.jsx", "SettingsWorkspacesAdmin.jsx", "SettingsBackups.jsx"],
   proxy: ["SettingsProxy.jsx"],
   diagnostics: ["SettingsDialog.jsx"],
 };
@@ -170,4 +171,17 @@ test("hostCaps: the platform's words and the gestures a host forwards", () => {
   assert.equal(ipad.pencilPhases, true, "the host's own flags come along");
   const android = hostCaps({ ...ANDROID, pencilGestures: ["squeeze"] });
   assert.deepEqual([android.apple, android.stylus, android.pencilTap, android.pencilSqueeze], [false, true, false, true]);
+});
+
+test("Agents is a pane of its own: its entries open it, and Connections keeps the AI services alone", () => {
+  const all = Object.keys(PANE_FILES);
+  assert.deepEqual(searchSettings("codex", all).slice(0, 1).map((r) => `${r.pane}/${r.label}`), ["agents/Agents"]);
+  assert.ok(!SETTINGS_SEARCH.some((entry) => entry.pane === "ai" && /\bagents?\b|codex|claude/i.test(`${entry.label} ${entry.keywords}`)),
+    "no agent's entry is left under Connections");
+  const desktop = (query) => searchSettings(query, all, { desktop: true }).map((r) => `${r.pane}/${r.label}`);
+  assert.ok(desktop("directory").includes("agents/Directories"));
+  assert.ok(desktop("NAS").includes("agents/Servers this computer answers"));
+  assert.ok(!searchSettings("directory", all).some((r) => r.label === "Directories"), "the desktop app offers them");
+  // a reset on a section's rule lands on the section
+  assert.equal(SETTINGS_SEARCH.find((entry) => entry.label === "Reset presets").target, "Pens & eraser");
 });

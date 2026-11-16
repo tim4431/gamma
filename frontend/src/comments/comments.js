@@ -7,15 +7,19 @@
 // resolved_by, resolved_agent, made_on, agent_chat, created_at,
 // last_at, comments}`, its comments oldest first, each `{id, thread_id,
 // author, agent, body, created_at, updated_at, deleted, agent_kind?,
-// agent_id?, agent_on?, agent_owner?}`. A thread's root has `thread_id ===
-// id`; `author` is a username, and `agent` the name of the agent that wrote
-// it for the author ("" for the person's own), with its `agent_kind`
-// (chat/agents.js agentKind's kinds) and, for a computer's agent, its
-// `agent_id`, the computer it runs on, `agent_on`, and its owner where it
-// wrote for a co-author, `agent_owner`; `made_on` the file the thread was
-// opened on, `agent_chat` the reader's conversation of it with a computer's
-// agent (`turnChip`), null for none; `resolved_agent` the agent that
-// resolved it ({id, kind, name, on?, owner?}), null for a person.
+// agent_id?, agent_on?, agent_owner?, turn_end?}`. A thread's root has
+// `thread_id === id`; `author` is a username, and `agent` the name of the
+// agent that wrote it for the author ("" for the person's own), with its
+// `agent_kind` (chat/agents.js agentKind's kinds) and, for a computer's
+// agent, its `agent_id`, the computer it runs on, `agent_on`, its owner
+// where it wrote for a co-author, `agent_owner`, and on the note a turn's
+// end wrote what became of the turn, `turn_end` ({state, error}: `turnEnd`);
+// `made_on` the file the thread was opened on, `agent_chat` the reader's
+// conversation of it with a computer's agent (`turnChip`), null for none;
+// `resolved_agent` the agent that resolved it ({id, kind, name, on?,
+// owner?}), null for a person. App's threads (comments/useComments.js) add
+// `refused`, the reader's last send to an agent in it that started no turn
+// (`refusalChip`), until the next one.
 import { t } from "../shared/i18n/i18n.js";
 import { blockQuote, isHighlightBlock, isInkGroup, isRegionBlock, isTextRangeBlock, pdfAnchorOf, textSpan } from "../shared/model/blockModel.js";
 import { plainSnippet } from "../search/snippets.js";
@@ -182,9 +186,11 @@ export function addComment(threads, comment, { blockId = "", pageId = "" } = {})
     : th));
 }
 
-// A comment's new text (`at`: when, so the thread's activity moves).
+// A comment's new text (`at`: when, so the thread's activity moves). The
+// same text changes nothing, as on the server (a comment saved unchanged
+// to send it again: Thread.jsx's Send again).
 export function editComment(threads, id, body, at) {
-  return threads.map((th) => (th.comments.some((c) => c.id === id)
+  return threads.map((th) => (th.comments.some((c) => c.id === id && c.body !== body)
     ? {
       ...th, last_at: later(th.last_at, at),
       comments: th.comments.map((c) => (c.id === id ? { ...c, body, updated_at: at } : c)),
@@ -261,54 +267,97 @@ export function authorTitle(comment) {
   });
 }
 
-// What a thread's chip says of the reader's turn of it with an agent
-// (`thread.agent_chat`, {conversation_id, agent, label, turn: {turn_id,
-// state, asking, waiting, computer} | null}, routers/comments.py): {kind,
-// label, tone, live, stop, open} while a turn is to end, null otherwise.
-// `kind` "queued", "working", "asking" (it waits for the person's answer,
-// on its card in the chat: `open`) or "waiting" (for an answer on the other
-// computer that runs it); `stop` whether the chip offers Stop.
+// The thread's turn with an agent, as the `.commentTurn` row under its
+// comments and the Comments window's row show it (Thread.jsx TurnTag): a
+// StateTag's state, `{kind, label, title, tone, live, ...}`, its glyph by
+// `kind` (Thread.jsx TURN_ICONS). Every one carries its whole label as its
+// `title`, since the tag's words ellipsize in a narrow card.
+//
+// `turnChip`: the reader's turn of the thread while it is to end
+// (`thread.agent_chat`, {conversation_id, agent, label, for?, turn:
+// {turn_id, state, asking, waiting, computer} | null},
+// routers/comments.py), with `stop` (it offers Stop), `open` (Answer in
+// the chat) and `person`, the co-author it runs for when the reader is the
+// agent's owner (`for`: "for bob" after the tag), null otherwise. `kind`
+// "queued" (in the queue, not live), "working", "asking" (it waits for the
+// person's answer, on its card in the chat) or "waiting" (for an answer on
+// the other computer that runs it).
 export function turnChip(thread) {
   const chat = thread?.agent_chat;
   const turn = chat?.turn;
   if (!turn) return null;
   const agent = chat.label || chat.agent || "";
-  if (turn.asking) return { kind: "asking", label: t("{agent} is waiting for you", { agent }), tone: "pending", live: false, stop: true, open: true };
+  const shown = (kind, label, more = {}) => ({
+    kind, label, title: label, tone: "pending", live: false, stop: true, open: false, person: chat.for || "", ...more,
+  });
+  if (turn.asking) return shown("asking", t("{agent} is waiting for you", { agent }), { open: true });
   if (turn.waiting) {
-    return { kind: "waiting", label: t("{agent} is waiting for your answer on {computer}", { agent, computer: turn.computer }),
-      tone: "pending", live: false, stop: true, open: false };
+    return shown("waiting", t("Waiting for you on {computer}", { computer: turn.computer }),
+      { title: t("{agent} is waiting for your answer on {computer}", { agent, computer: turn.computer }) });
   }
   if (turn.state === "queued") {
-    return { kind: "queued", label: turn.computer ? t("Waiting for {computer}", { computer: turn.computer }) : t("Waiting for {agent}", { agent }),
-      tone: "pending", live: false, stop: true, open: false };
+    return shown("queued", turn.computer ? t("Waiting for {computer}", { computer: turn.computer }) : t("Waiting for {agent}", { agent }));
   }
-  return { kind: "working", label: agentWorking(agent), tone: "pending", live: true, stop: true, open: false };
+  return shown("working", agentWorking(agent), { live: true });
 }
 
-// Why a comment sent to an agent started no turn, for the status line (the
-// comment itself is posted): the answer's `turn` ({agent, refused, why,
-// computer?}, local_agents/threads.py), worded here by its code, else (the
-// agent's own problem, or another) the server's sentence. "" for a turn
-// that began, or none.
+// What the note a turn's end wrote in the thread says of it (its
+// `turn_end`, local_agents/threads.py ends_of: the turn "failed", was
+// "stopped", or ended "empty", without a reply): the state the note is
+// drawn as in place of its text, in the reader's words, `detail` the
+// failure's own words; null for any other comment (the agent's answer).
+export function turnEnd(comment) {
+  const end = comment?.turn_end;
+  if (!end || !comment.agent) return null;
+  const agent = comment.agent;
+  const shown = (kind, label, tone, detail = "") => ({ kind, label, title: label, tone, live: false, detail });
+  if (end.state === "failed") return shown("failed", t("{agent} could not finish", { agent }), "failed", end.error || "");
+  if (end.state === "stopped") return shown("stopped", t("Stopped before {agent} answered", { agent }), "");
+  if (end.state === "empty") return shown("empty", t("{agent} finished without a reply", { agent }), "");
+  return null;
+}
+
+// Why a comment sent to an agent started no turn (the comment itself is
+// posted): the answer's `turn` ({agent, agent_id, refused, why, computer?},
+// local_agents/threads.py), worded here by its code, else (the agent's own
+// problem, or another) the server's sentence. "" for a turn that began, or
+// none.
 const REFUSALS = {
-  closed: (agent) => t("Reopen this thread to ask {agent} again.", { agent }),
+  closed: (agent) => t("Reopen this comment to ask {agent} again.", { agent }),
   not_newest: (agent) => t("Reply to ask {agent} again: only the newest comment is sent.", { agent }),
   viewer: (agent) => t("Only the workspace's owners and editors can send comments to {agent}.", { agent }),
   writes: (agent) => t("Gamma takes no changes here now: nothing was sent to {agent}.", { agent }),
-  off: (agent) => t("Turn on {agent} in Settings → AI first.", { agent }),
+  off: (agent) => t("Turn on {agent} in Settings → AI → Agents first.", { agent }),
   offline: (agent, computer) => computer ? t("{computer} is offline: send this again once it connects.", { computer }) : "",
   paused: (agent, computer) => computer
     ? t("The synced folder is paused on {computer}: {agent} starts once it syncs again.", { agent, computer })
     : t("The synced folder is paused on this computer: {agent} starts once it syncs again.", { agent }),
   elsewhere: (agent) => t("{agent} on that computer does not work on this page.", { agent }),
   folder: (agent) => t("{agent} works for you only on the files of a synced folder.", { agent }),
-  busy: (agent) => t("{agent} is still working in this thread: wait for it, or stop it.", { agent }),
+  busy: (agent) => t("{agent} is still working on this comment: wait for it, or stop it.", { agent }),
 };
 export function turnRefusal(turn) {
   if (!turn?.refused) return "";
-  const agent = turn.agent || "";
-  return REFUSALS[turn.refused]?.(agent, turn.computer || "")
-    || t("Not sent to {agent}: {reason}", { agent, reason: turn.why || turn.refused });
+  return REFUSALS[turn.refused]?.(turn.agent || "", turn.computer || "") || turn.why || turn.refused;
+}
+// The refusals the same comment, sent again unchanged, never gets past:
+// it is not the thread's newest, its author only reads the workspace, or
+// the agent does not work there.
+const HOPELESS = new Set(["not_newest", "viewer", "folder", "elsewhere"]);
+
+// A thread's `refused` (useComments: the reader's last send to an agent
+// in it that started no turn, `{...turn, comment_id}`) as its turn's row
+// keeps it until the next send: "Not sent to Codex", why under it, and
+// `retry` whether it offers Send again (the comment `comment_id` saved
+// unchanged with `to`, the agent's id); null for none.
+export function refusalChip(refused) {
+  if (!refused?.refused) return null;
+  const label = t("Not sent to {agent}", { agent: refused.agent || "" });
+  return {
+    kind: "refused", label, title: label, tone: "warn", live: false, detail: turnRefusal(refused),
+    retry: !HOPELESS.has(refused.refused) && !!refused.agent_id && !!refused.comment_id,
+    comment: refused.comment_id || "", to: refused.agent_id || "",
+  };
 }
 
 // What a thread is on, in the Comments window's words: the highlight's
