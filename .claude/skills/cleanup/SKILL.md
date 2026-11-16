@@ -1,21 +1,37 @@
 ---
 name: cleanup
-description: Clean up the code and docs committed since the last "Cleanup of …" commit — unify scattered logic, conform UI to the shared design, cut over-engineering and dead code, plain-prose the docs, list what was left unfinished, and remove the worktrees of merged branches. Behavior-preserving; commits each topic as "Cleanup of …", never pushes.
+description: Clean up the code and docs committed since the last "Cleanup of …" commit — unify scattered logic, delete what new work superseded (old implementations, their CSS, keys, endpoints, tests and doc sections), replace hard-coded colours and sizes with tokens, cut over-engineering, prune tests that cannot fail or only detect change, plain-prose the docs, list what was left unfinished, and remove the worktrees of merged branches. `cleanup sweep <area>` runs the code checks over an area's existing code instead. Behavior-preserving; commits each topic, never pushes.
 ---
 
 # Cleanup of recent commits
 
 A cleaning pass over work that already landed on the branch. The output is
-a tidier tree, one `Cleanup of …` commit per topic, and a short report. It
-is NOT a bug hunt (`/code-review`) and NOT a restyle: the goal is that the
-new code looks like it was written by the same careful person who wrote the
-rest of the repo.
+a smaller, tidier tree, one `Cleanup of …` commit per topic, and a short
+report. It is NOT a bug hunt (`/code-review`) and NOT a restyle: the goal
+is that the new code looks like it was written by the same careful person
+who wrote the rest of the repo, and that nothing it replaced is left
+behind.
+
+Expect to delete. A feature that lands usually supersedes something (an
+old component, a helper, a fallback, a setting, the tests and the doc
+section of the old way), and the pass that leaves those in place has not
+done its job. A pass whose diff is mostly additions or rewording should
+look again.
 
 Rules that hold throughout:
 
-- **Behavior-preserving.** Refactor, dedupe, delete dead things, reword
-  docs. Anything that changes what the user sees or what an endpoint
-  returns is a *proposal* in the report, not an edit.
+- **Behavior-preserving.** What the user sees and what an endpoint returns
+  stay the same. Within that, be bold: deleting unreachable code, a
+  superseded implementation, a setting nothing reads, a test that cannot
+  fail, or a shim for a shape no client still sends is behavior-preserving.
+  Do it; do not propose it. Only a change the user would notice goes in
+  the report as a proposal.
+- **Settle doubt, don't defer it.** "Maybe still used" is a question with
+  an answer: grep every name across `backend/`, `frontend/src`,
+  `extension/`, `desktop/`, `ipad/`, `android/`, `cloud/`, `tests/` and
+  `docs/`, and `git log -S'<name>'` for when its last caller went. Dead on
+  that evidence → delete. Still in doubt after it → a proposal, with what
+  the search found.
 - **Commit as you clean.** Each topic is committed when it is clean and
   its checks pass (Step 4), under a subject that starts with `Cleanup of …`.
   Running this skill is the request to commit. The newest such commit is
@@ -23,13 +39,13 @@ Rules that hold throughout:
   uncommitted. Never push, never amend, never commit anything but the
   pass's own edits.
 - **Don't touch unrelated dirty files.** Other sessions may be editing the
-  same tree. Only edit files that the scoped commits touched, plus files a
-  fix genuinely has to reach (a shared helper, a doc). A file that was
-  dirty before the pass began is someone else's: leave it, and name it in
-  the report if a fix needed it.
-- **Conform, don't invent.** When code needs a control, class, helper, or
-  doc section, use the one the repo already has. Never introduce a new
-  style or abstraction to fix an old one.
+  same tree. Edit the files that the scoped commits touched, the files
+  holding what they superseded, and files a fix genuinely has to reach (a
+  shared helper, a doc). A file that was dirty before the pass began is
+  someone else's: leave it, and name it in the report if a fix needed it.
+- **Conform, don't invent.** When code needs a control, class, token,
+  helper, or doc section, use the one the repo already has. Never
+  introduce a new style or abstraction to fix an old one.
 
 ## Step 1 — scope
 
@@ -50,6 +66,7 @@ Argument forms (`/cleanup <arg>`):
 | `N`          | the last N commits (`HEAD~N..HEAD`)                |
 | `<a>..<b>`   | that range                                         |
 | `tree`       | uncommitted changes only (`git diff HEAD`); cleaned in place and not committed, since the work under them is not |
+| `sweep [area]` | no range: the existing code and tests of one area ([Sweep](#sweep)) |
 | other words  | a description, not a range: the default range, with the words as emphasis (`/cleanup the import dialogs`) |
 
 ```bash
@@ -109,12 +126,12 @@ Give each agent:
 - `base`, its topics in order with their commits or merge ranges, and the
   files they touch (`git diff --stat`), which are the files it owns;
 - the `docs/dev/*.md` of its areas;
-- the five checks, Step 3 and Step 4 as its brief, with the rule that it
+- the seven checks, Step 3 and Step 4 as its brief, with the rule that it
   edits and commits only its own files. Shared files — `App.jsx`,
   `app.css`, the i18n catalogs, `docs/dev/README.md`,
-  `frontend/src/README.md`, `docs/dev/api.md`, `settings.md` — belong to no
-  one: a cleaner edits only the hunks of its own topics in them, with the
-  Edit tool, never a rewrite;
+  `frontend/src/README.md`, `docs/dev/api.md`, `settings.md`, the ratchet
+  baselines — belong to no one: a cleaner edits only the hunks of its own
+  topics in them, with the Edit tool, never a rewrite;
 - the report shape of Step 6, per topic, with each commit's hash, so the
   reports merge.
 
@@ -125,9 +142,30 @@ under "Left out" with a range that `/cleanup <a>..<b>` takes, never
 dropped quietly: the next default pass starts after this one's commits and
 will not come back for it.
 
-## Step 2 — the five checks
+### Sweep
 
-Work through all five and collect findings first. Then fix in Step 3.
+`/cleanup sweep <area>` cleans code that no recent range covers: an area's
+existing source and its tests, about 5,000 lines of source a run. An area
+is a folder of `frontend/src/` or a backend area as the topic table of
+`docs/dev/README.md` names it (`gamma/routers/` with the modules a topic
+doc lists). With no area given, take the one swept longest ago, which the
+commit subjects record:
+
+```bash
+git log -1 --format=%cs -F --grep='Sweep of <area>:' HEAD   # empty: never swept
+```
+
+A sweep runs checks 1 to 5 and 7 over the area and updates the docs that
+name what it removed. The docs' own prose and truth are `audit-docs`'
+patrol. Its commits are `Sweep of <area>: <what changed>`, never
+`Cleanup of …`: a sweep commit must not move the base of the next default
+pass, which would then skip the range commits it never read. A sweep with
+nothing to remove gets `git commit --allow-empty -m "Sweep of <area>: found clean"`,
+so the next one moves on. Subagents follow Step 1b: one area per lane.
+
+## Step 2 — the seven checks
+
+Work through all seven and collect findings first. Then fix in Step 3.
 Each finding is a line: `file:line — what — fix / proposal`.
 
 ### 1. Scattered or duplicated logic
@@ -152,7 +190,36 @@ Each finding is a line: `file:line — what — fix / proposal`.
   a new one).
 - Copy-pasted branches that differ by one value — parameterize.
 
-### 2. UI cleanliness
+### 2. Superseded code
+
+What the new work replaced, still in the tree. Look past the diff: the
+leftovers are in files the range did not touch.
+
+- **Names the range deleted.** The diff's removed lines name functions,
+  components, CSS classes, routes, preference keys, i18n keys and test
+  helpers. Grep each one that no added line brings back. A definition
+  whose last user went (a class whose component is gone, a catalog key
+  nothing calls, a helper only the deleted code used, a test of the
+  removed path) is deleted.
+- **The old way beside the new.** A commit that "replaces", "moves",
+  "switches to", "instead of" or "now" leaves an old path: the previous
+  component, its stylesheet, its endpoint and tests, the preference that
+  chose between the two, the docs section. Find it by the old names (the
+  commit message, the removed lines, `git log -S`) and delete all of it,
+  not only the call.
+- **Compatibility code.** Grep the area for `legacy`, `old`, `compat`,
+  `fallback`, `deprecated`, `v1`, `migrate`, `still`, `pre-`: shims that
+  read an older shape, try a second way when the first fails, or keep an
+  old name working. Each one needs a living reason: a released client that
+  still sends the old shape (the desktop, iPad and Android apps, the
+  extension, a mirror's data format: [mirror.md](../../../docs/dev/mirror.md)
+  "The data format"), or stored data no migration converts. Without one,
+  delete it. With one, a comment names the reason.
+- **Settled choices.** A preference, a flag or an env var whose every
+  path but one is gone, or whose default no one changes: keep the chosen
+  path, delete the switch and its UI.
+
+### 3. UI cleanliness and hard-coded values
 
 Reference: [docs/dev/ui-design.md](../../../docs/dev/ui-design.md) and
 [docs/dev/settings.md](../../../docs/dev/settings.md).
@@ -161,9 +228,27 @@ Reference: [docs/dev/ui-design.md](../../../docs/dev/ui-design.md) and
   `aiKeyInput`, …) and settings panes use only `settingsKit` primitives
   with `MenuSelect`/`ActionMenu` for choices. A bespoke `<button style=…>`
   or a one-off `.myThingBtn` styled like a button is a finding.
-- Bespoke CSS classes do layout only. Colors, radii, fonts, shadows come
-  from the theme variables; a hard-coded `#hex` or `rgba(` in new CSS is a
-  finding unless it is a documented exception.
+- **Raw values in stylesheets.** Colours, font sizes, radii, shadows,
+  z-indexes, durations, easings and font families come from the tokens
+  ([Tokens](../../../docs/dev/ui-design.md#tokens)).
+  `node tools/designTokens.mjs --list <kind>` (from `frontend/`) lists
+  every offender of a kind; take the ones in the scope's files, replace
+  each with its token, and record the lower floor with
+  `node tools/designTokens.mjs --baseline`. A value that is raw on purpose
+  carries a `ds-allow` reason.
+- **Raw values in scripts.** The scanner reads only stylesheets, so grep
+  the scope's `.js`/`.jsx` files:
+  `grep -nE "#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(" <files>` and every
+  `style={{…}}` with a number. An inline colour, size, gap, radius or
+  shadow becomes a class or `var(--…)`. The exceptions are data rather
+  than design: the ink and highlight palettes, the PDF page's own colours,
+  the collaborator colours, a size computed from the page. The same
+  number written in two places (a width in CSS and in a measuring
+  script, a timeout in two modules) becomes one named constant or token
+  beside its owner.
+- `node tools/uiConventions.mjs --list` (from `frontend/`): the breaks of
+  the shared conventions in the scope's files are fixed and the baseline
+  lowered.
 - Dead CSS: for every selector added in the diff, grep `frontend/src` for
   the class name. No user → delete.
 - Dead logic: state that is set but never read, props passed but unused,
@@ -177,7 +262,7 @@ Reference: [docs/dev/ui-design.md](../../../docs/dev/ui-design.md) and
 - Do NOT restyle existing panels to a new taste. Cleaning means making the
   new part match the old parts, never the reverse.
 
-### 3. Over-engineering
+### 4. Over-engineering
 
 - Abstractions with one caller (a factory, registry, or base class used
   once). Inline it.
@@ -193,10 +278,39 @@ Reference: [docs/dev/ui-design.md](../../../docs/dev/ui-design.md) and
 - Backend: new tables or columns nothing reads; endpoints with no frontend
   caller (check `grep -rn "/api/<path>" frontend/src extension`).
 
-### 4. Documentation prose
+### 5. Tests that do not earn their place
+
+Reference: [What a test is for](../../../docs/dev/debugging.md#what-a-test-is-for).
+For each test the scope added or changed (in a sweep, each test of the
+area), ask which plausible bug in Gamma would make it fail.
+
+- **Delete**: tests that cannot fail (a constant against its literal, a
+  mock against what it was told, an import, a default nothing reads),
+  mirrors of the implementation (the same expression, internal call
+  sequences through mocks), change detectors (exact wording, a CSS value,
+  a grep of a source file, a whole snapshot), a behavior already covered
+  at a cheaper layer, the framework's own behavior.
+- **Merge**: near-identical tests that differ by one input become one
+  parametrized test (`pytest.mark.parametrize`, a cases array).
+- **Move**: pure logic checked through a browser step goes to a unit
+  test; the step keeps what only the browser shows.
+- **Keep**: what the user meets, the hard cases, regression tests. A test
+  that came with a fix (`git log -S'<test name>' --format='%h %s'`) stays
+  unless it is a change detector of that fix's wording, and a behavior
+  never loses its last test. The ratchets and the `tests/shared/` readers
+  stay.
+- **Fragile** tests that stay (a shared account between files, a fixed
+  sleep, a wait on an earlier state than the next line needs) are fixed
+  as [Order and timing](../../../docs/dev/debugging.md#order-and-timing)
+  says.
+
+The report counts the tests deleted, merged and moved, per kind.
+
+### 6. Documentation
 
 Applies to the changed lines of `docs/dev/*.md`, `README` and
-`desktop/docs/*`. The docs are reference material for someone who reads them
+`desktop/docs/*`, and to every doc section about what the range
+superseded. The docs are reference material for someone who reads them
 once and then works; they are not a changelog and not marketing.
 
 Remove or rewrite:
@@ -223,9 +337,11 @@ Also check the docs are TRUE after the commits: every file, function,
 endpoint, and setting a doc names must exist (`grep`), and every new
 endpoint, setting, tool, or file the diff adds must appear in the doc that
 covers its area (api.md, settings.md, ai_tools.md, ui-design.md's file
-map, …).
+map, …). A section describing an implementation the range replaced, a
+feature it removed, or plan steps it built is deleted
+([documentation conventions](../../../docs/dev/repository.md#documentation-conventions)).
 
-### 5. Unfinished work
+### 7. Unfinished work
 
 Signals, in rough order of reliability:
 
@@ -241,30 +357,33 @@ Signals, in rough order of reliability:
   `app/prefs.js` with no UI, a migration without a reader.
 - Docs describing behavior the code doesn't have yet, or code the docs
   don't mention.
-- Tests: a backend change under `gamma/routers` or `gamma/*.py` with no
-  test touched — note it (adding a test is in scope when cheap).
+- Tests: a user-visible behavior or a hard case of the range with no
+  test — note it (adding the test is in scope when cheap).
 - Keyboard shortcuts, menu entries, or settings mentioned in the UI text
   that do nothing.
 
 ## Step 3 — apply
 
-Fix everything from checks 1–5 that is behavior-preserving and local, one
-topic at a time. Order: delete dead things → dedupe → simplify → conform
-UI → rewrite docs.
+Fix everything from checks 1–7 that is behavior-preserving, one topic at a
+time. Order: delete superseded and dead things → prune tests → dedupe →
+simplify → replace raw values → conform UI → rewrite docs.
 
-- Keep each edit minimal. A cleanup that rewrites a file wholesale is
-  itself a finding.
+- An edit may be large when it leaves the code smaller and clearer:
+  collapsing two implementations into one, rewriting a module the range
+  left tangled, deleting a file. Churn is the finding: renames,
+  reorderings and reformatting that change nothing.
 - When you move logic, update every caller and the doc that names its
   location.
-- When you delete a helper, class, endpoint, or setting, grep once more
-  for its name across `backend/`, `frontend/src`, `extension/`,
-  `desktop/`, and `docs/`.
+- When you delete a helper, class, endpoint, setting, test or key, grep
+  once more for its name across `backend/`, `frontend/src`, `extension/`,
+  `desktop/`, `ipad/`, `android/` and `docs/`.
 - Update `docs/dev/*.md` for every structural change you make (the docs
   must describe the tree as it is after the cleanup).
 
-Do NOT apply: anything that changes visible behavior, removes a feature,
-changes an API shape, or that you are unsure is dead. Those go in the
-report as proposals with a one-line reason.
+Do NOT apply: anything that changes what the user sees, removes a feature
+the user can still reach, or changes an API shape a client reads. Those go
+in the report as proposals with a one-line reason. Code that is only
+possibly dead is settled by the search above first.
 
 ## Step 4 — verify, then commit the topic
 
@@ -275,8 +394,12 @@ cd backend && venv/Scripts/python.exe -m pytest tests/<the affected modules> -q
 # when frontend/src changed (node is fnm-managed, not on the tool-shell PATH):
 eval "$(fnm env --shell bash)"
 cd frontend && npm run lint && node --test tests/<the affected>.test.mjs
+# when a stylesheet or a script's conventions changed: the ratchets
+cd frontend && node --test tests/designTokens.test.mjs tests/uiConventions.test.mjs
 # when app/App.jsx changed (a lower count: node tools/appState.mjs --baseline):
 cd frontend && node --test tests/appState.test.mjs
+# when a doc changed, from the repository root:
+node tools/check_doc_links.mjs
 ```
 
 Two vector-math tests fail under the conda `python`; use the venv one.
@@ -293,11 +416,13 @@ git status --short                      # yours, and nothing you did not edit
 git commit -m "Cleanup of <the topic>: <what changed>" -- <the files you edited>
 ```
 
-- The subject starts with `Cleanup of`, names the topic, then says what
-  changed, in the prose of the log's other subjects. Read the last two
-  with `git log -2 -i --grep='^Cleanup' --format=%s`.
+- The subject starts with `Cleanup of` (a sweep: `Sweep of <area>:`),
+  names the topic, then says what changed, in the prose of the log's
+  other subjects. Read the last two with
+  `git log -2 -i --grep='^Cleanup' --format=%s`.
 - Never `git add -A`, `git commit -a` or `git stash`. A new file is added
-  by name (`git add <file>`) before the commit.
+  by name (`git add <file>`) and a deleted one by `git rm <file>` before
+  the commit.
 - `index.lock` exists: another cleaner is committing. Wait and try again.
 - A shared file that holds another cleaner's uncommitted hunks
   (`git diff <file>`) stays out of the commit. Name it in the report, and
@@ -352,14 +477,17 @@ worktree without the user's yes.
 
 One message, structured as:
 
-1. **Scope**: the range, then each topic with its commits and the hash of
-   its `Cleanup of …` commit (or "found clean"), and what was left out and
-   why (also when nothing was), as ranges `/cleanup` takes.
-2. **Applied**: bullets grouped by check (1–5), each `file — what changed`.
-3. **Proposals**: behavior-affecting or uncertain items, each with the
-   one-line reason it was not applied.
-4. **Unfinished**: the check-5 list, as concrete next tasks.
-5. **Verification**: test and build results, verbatim on failure.
-6. **Worktrees**: the ones removed, and the ones left, each with why.
+1. **Scope**: the range (or the swept area), then each topic with its
+   commits and the hash of its commit (or "found clean"), and what was
+   left out and why (also when nothing was), as ranges `/cleanup` takes.
+2. **Applied**: bullets grouped by check (1–7), each `file — what changed`.
+   Lines removed and added by the pass's own commits
+   (`git diff --shortstat <HEAD when the pass began>..HEAD`).
+3. **Tests**: deleted, merged and moved, per kind, with the files.
+4. **Proposals**: behavior-affecting or still-uncertain items, each with
+   the one-line reason it was not applied and what the search found.
+5. **Unfinished**: the check-7 list, as concrete next tasks.
+6. **Verification**: test and build results, verbatim on failure.
+7. **Worktrees**: the ones removed, and the ones left, each with why.
 
 Do not push. Do not pad the report with things that were already fine.

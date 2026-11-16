@@ -406,12 +406,73 @@ can run together, under `offsite/` and `litestream/`.
 
 ## Tests
 
+### What a test is for
+
+A test earns its place when it fails for a reason a user would notice.
+Two kinds do:
+
+- **What the user meets.** A behavior someone sees or relies on: a note
+  found again after a reload, a share link that opens read-only, a search
+  that finds a word typed without its accents, an import that keeps a
+  highlight's colour. Test it at the cheapest layer that sees it: a pure
+  module's rule with `node --test` or a backend unit test, what an endpoint
+  gives or refuses with an API test, and a browser step only for what needs
+  the browser (a gesture, focus, layout, two people on one page).
+- **What is hard to get right.** Logic with many states or many actors,
+  where bugs have come before: merges and conflicts (collaboration,
+  mirrors, vaults, Zotero), migrations, authorization edges, concurrent
+  writes, parsers and format round trips, undo across other people's
+  edits. A bug fix brings a test that fails without the fix.
+
+Any other test costs time on every run, can turn the merge to `main` red,
+and catches nothing. Do not write these, and delete them when met:
+
+- **Tests that cannot fail.** A constant compared with its own literal, a
+  mock asserted to return what it was told, a dataclass holding its
+  fields, an import or a function's existence, a default nothing reads.
+- **Mirrors of the code.** The expected value computed by the same
+  expression as the implementation, or the internal call sequence asserted
+  through mocks (`assert_called_with` on a private helper). A refactor
+  breaks them and a bug passes them.
+- **Change detectors.** The exact wording of a prompt, a message or a doc,
+  a CSS value, a grep of a source file for a string, a whole snapshot.
+  They fail on every intended change and pass real bugs. They are what
+  often turns the merge to `main` red: a change of wording in one module
+  fails a test of another that nobody ran. Assert what the words or
+  the markup are for (the tool is offered, the error names the field), or
+  nothing. Two kinds stay. A contract another program reads: an API shape,
+  a file format, the `tests/shared/` cases, a tool name the model calls.
+  And the ratchets (`designTokens`, `uiConventions`, `appState`, the
+  startup budget), which hold a rule over the whole tree in one test.
+- **One behavior three times.** A rule checked as a unit, again through
+  the API and again in the browser. Keep the cheapest layer that sees it.
+  A browser step keeps only what the browser adds.
+- **The framework's behavior.** FastAPI refusing a missing field with 422,
+  React rendering a prop, SQLite keeping a row.
+
+A test worth keeping is also isolated: its own accounts and data, no fixed
+sleep, nothing it needs from a file that ran before it
+([Order and timing](#order-and-timing)).
+
+The question for any test, new or old: which plausible bug in Gamma makes
+it fail? If the answer is none, or only "changing the value it copies",
+delete it. Before deleting one, check that it is not the last test of a
+user-visible behavior, and not a regression test.
+`git log -S'<test name>' --format='%h %s' -- <test file>` names the commit
+that added it. A test that came with a fix stays, unless it is a change
+detector of the fix's wording. The `cleanup` skill prunes the tests of the
+code it cleans, `branch-review` those a branch adds, and the `merge` skill
+rewrites or deletes a change detector that fails rather than updating its
+expectation ([workflow.md](workflow.md)).
+
 ### Local changes: test the affected modules
 
 Default to the smallest set of tests that covers the changed behavior and its
-direct consumers. Do not run the full backend suite, all frontend tests, or
-the full browser suite after every edit. Once relevant checks pass, repeat
-them only after further relevant changes or when a failure needs investigation.
+direct consumers. While a change is being written, run nothing: write the
+batch of edits, then run its checks once. Do not run the full backend suite,
+all frontend tests, or the full browser suite after every edit. Once relevant
+checks pass, repeat them only after further relevant changes or when a
+failure needs investigation.
 
 - Backend changes: select the relevant `tests/test_*.py` files. Prefer whole
   files because tests within a file can depend on earlier tests. For a few
@@ -466,8 +527,11 @@ them only after further relevant changes or when a failure needs investigation.
   example, changes to shared normalization cases need both Python and Node
   coverage; auth, workspace access, migrations, and block storage may require
   several related suites. Broaden further when the impact cannot be bounded.
-- Documentation-only changes: check the diff and referenced commands/paths;
-  application tests and builds are unnecessary.
+- Documentation-only changes: check the diff and referenced commands/paths,
+  and run `node tools/check_doc_links.mjs <the files>` from the repository
+  root. It checks every relative link and `#anchor` against the files and
+  headings by GitHub's ids, which the website's check does only for the
+  pages it renders. Application tests and builds are unnecessary.
 - Before a feature branch merges into `dev`, once, on its last commit: the
   [full backend suite](#full-backend-suite) (`-n auto --dist loadfile`,
   about 4 minutes) and, from `frontend/`, `npm run lint && npm test` (about

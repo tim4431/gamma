@@ -78,6 +78,7 @@ import { appShell, nativeHost, postToHost } from "../shared/lib/host.js";
 import { dispositionName, saveBlob } from "../shared/lib/saveFile.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { canPickFolder, filesUpload, folderPick } from "../transfers/folderZip.js";
+import { reviewsImport } from "../transfers/importApi.js";
 import { doneWithOpenedFile, hostOpensFiles, listOpenedFiles, onFilesOpened, openedKind, placeOpenedFiles,
   readOpenedFile } from "../transfers/openedFiles.js";
 import { importSource } from "../transfers/transferFormats.js";
@@ -7950,13 +7951,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
-    if (["zotero", "markdown", "notion", "gamma", "noteapps"].includes(o.source)) {
+    if (reviewsImport(o.source)) {
       // into the folder open, but a work folder's, whose directories are the disk's: the library's top
       const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
         folder: homeMode && folderFilter && !workFolder ? folderFilter : "" });
-      const { label, accept, multiple } = importSource(o.source);
+      const { label, accept, multiple, filterFolder } = importSource(o.source);
       if (o.file) review(o.file); // dropped on the dialog: a .zip or a folder (folderZip.js)
-      else if (o.pick === "folder") pickFiles({ directory: true }, (files) => review(folderPick(files)));
+      else if (o.pick === "folder") pickFiles({ directory: true }, (files) => review(folderPick(files, { filter: filterFolder })));
       else if (multiple) {
         // Notes picked together go up as one .zip named after the source.
         // Safari on an iPhone or iPad and the Android app (no folder
@@ -12835,7 +12836,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             icon={ImportIcon}
             data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-            title={t("Bring in notes and highlights: a Zotero library, Notability notes and GoodNotes notebooks, Notion pages, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
+            title={t("Bring in notes and highlights: a Zotero library, Notability notes and GoodNotes notebooks, Notion pages, an Obsidian vault, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
           >{t("Import…")}</MenuItem>
         ),
       ],

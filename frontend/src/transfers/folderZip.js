@@ -9,6 +9,7 @@
 // ZIP64 records.
 import { crc32 } from "../shared/lib/crc32.js";
 import { nativeHost } from "../shared/lib/host.js";
+import { dropFilter } from "./fileRouting.js";
 
 const MAX32 = 0xFFFFFFFF;
 
@@ -31,8 +32,10 @@ export function folderUpload(entries) {
 }
 
 // A folder picked with pickFiles({ directory: true }): each file carries its
-// path as webkitRelativePath.
-export const folderPick = (fileList) => folderUpload([...fileList].map((file) => ({ path: file.webkitRelativePath || file.name, file })));
+// path as webkitRelativePath. `filter`: less what a dropped directory leaves
+// out (fileRouting.js dropFilter), for a source whose `filterFolder` says so.
+export const folderPick = (fileList, { filter = false } = {}) => folderUpload([...(filter ? dropFilter(fileList).kept : fileList)]
+  .map((file) => ({ path: file.webkitRelativePath || file.name, file })));
 
 // A folder dropped as one entry (dropEntries.js collectEntryFiles' pairs).
 export const folderDrop = (found) => folderUpload(found.map(({ file, folder }) => ({ path: [...folder, file.name].join("/"), file })));

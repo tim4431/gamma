@@ -2,9 +2,10 @@
 
 Gamma is a self-hosted PDF annotation and notes app with nested blocks,
 personal and shared workspaces, real-time collaboration, and AI tools.
-Start with [running and testing](debugging.md) and the
-[repository map](repository.md); read the relevant topic below before changing
-an area, and update its documentation with the code.
+Start with [running and testing](debugging.md), the
+[repository map](repository.md) and [how a change is made](workflow.md);
+read the relevant topic below before changing an area, and update its
+documentation with the code.
 
 ## Architecture and shared rules
 
@@ -56,11 +57,19 @@ an area, and update its documentation with the code.
 - **Validation:** test the affected modules and their direct consumers;
   browser behavior needs the relevant end-to-end scenarios. A frontend change
   passes `npm run lint` ([Frontend lint](debugging.md#frontend-lint)). Documentation
-  changes need diff and link checks, not application builds. Broaden coverage
+  changes need diff and link checks (`node tools/check_doc_links.mjs`), not
+  application builds. Broaden coverage
   when shared contracts or uncertain impact warrant it. See the
   [test selection policy](debugging.md#local-changes-test-the-affected-modules).
   A change to a hot path runs the [timing budgets](debugging.md#performance-budgets)
   before and after.
+- **Tests:** a test covers what the user meets or logic that is hard to
+  get right. Tests that cannot fail, mirrors of the code and change
+  detectors are not written, and are deleted when met
+  ([What a test is for](debugging.md#what-a-test-is-for)).
+- **Process:** a plan for a change beyond a local fix, reviewed by GPT-6
+  Astra; a review of the branch before `dev`; cleanup passes and doc
+  patrols. See [how a change is made](workflow.md).
 
 ## Topic reference
 
@@ -69,7 +78,8 @@ These describe the implementation unless explicitly marked as plans.
 | Topic | Reference |
 |---|---|
 | Source layout, assets, and documentation conventions | [Repository](repository.md) |
-| Run commands, test selection, browser tests, timing budgets, and diagnostics | [Running, testing, and debugging](debugging.md) |
+| A change from plan to `main`: the plan and its review, the branch review, cleanup, the merge, and the patrols of docs and code | [How a change is made](workflow.md) |
+| Run commands, what a test is for, test selection, browser tests, timing budgets, and diagnostics | [Running, testing, and debugging](debugging.md) |
 | CI, packaging, and release workflows | [GitHub Actions](github_actions.md) |
 | HTTP endpoints and authorization | [API](api.md) |
 | Search normalization, indexing, and result highlighting | [Search](api.md#search-searchpy-gammablock_indexpy-gammasearch) |

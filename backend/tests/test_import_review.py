@@ -115,6 +115,17 @@ def test_markdown_selection_preserves_links_and_only_stores_selected_assets(gues
     assert any("[[Two]]" in child["content"] for child in children)
 
 
+def test_an_obsidian_review_reads_the_zip_as_a_vault_and_its_job_names_the_source(guest):
+    plan = review(guest, archive({"My vault/Reviewed vault note.md": "# Heading kept\nbody %%gone%%"}), "obsidian")
+    assert plan["obsidian"] and [p["title"] for p in plan["pages"]] == ["Reviewed vault note"]
+    job = commit(guest, plan, plan["pages"][0]["selection_ids"])
+    assert job["params"]["source"] == "obsidian"
+    data = report(job)
+    assert data["pages_created"] == 1 and data["obsidian"]
+    heading, = guest.get(f"/api/blocks/{data['pages'][0]['id']}/subtree").json()["block"]["children"]
+    assert (heading["content"], [c["content"] for c in heading["children"]]) == ("# Heading kept", ["body"])
+
+
 def test_markdown_pages_name_the_listed_member_they_come_from(guest):
     """A page's ``source_paths`` are paths the source column lists: a note
     inside a zip inside the upload names that zip, however deep, and a
