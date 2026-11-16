@@ -313,7 +313,10 @@ Rules the engine keeps (`useGuide.js`, `triggers.js`):
   View menu, or More's on a phone).
 - **After the render.** An event is judged after the render it came with,
   so the facts include what the same action changed (`share.created` sees
-  the new link). Only events some trigger listens for are queued.
+  the new link). Only events some trigger listens for are queued, and the
+  queue loses none: events emitted by different effects of one commit
+  (a page's `page.opened`, then its tab's `tab.opened`) are all judged, in
+  order.
 - **One per page load.** At most one automatic offer per load, never while a
   tour runs, never while Settings is open (`guideAvailable`), never in the
   share view. An event that comes while the guide is busy is not queued.
@@ -345,7 +348,11 @@ Engine abilities available to every step:
   account menu.
 - **The card is inert to the page.** It never takes focus (mousedown is
   prevented, so an editor keeps its caret) and never counts as a click
-  outside the popover it points into (pointer and mouse down stop at it).
+  outside what it points into: a popover, a menu, a comment being written,
+  the review card. The app's outside-press checks listen on the document
+  in the capture phase, so the card's pointer and mouse down stop at the
+  window's capture phase, ahead of them all (`stopCardPress` in
+  GuideOverlay). The welcome deck keeps its own press for its swipe.
 - **Steps that have the user make something** (`creates: anchor`). When a
   later step needs something to point at that may not exist — a drawing, a
   table, a share link — the step before it asks the user to make one, with

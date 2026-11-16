@@ -442,9 +442,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   useEffect(() => guideEvents.subscribe((name, payload) => {
     if (TRIGGER_EVENTS.has(name)) setPending((q) => [...q, { name, payload }]);
   }), []);
+  // Only those this render holds are taken off: one emitted by another
+  // effect of the same commit (a page's tab, after the page opened) is
+  // already queued behind them, and stays for the next run.
   useEffect(() => {
     if (!pending.length) return;
-    setPending([]);
+    setPending((q) => q.slice(pending.length));
     pending.forEach(consider);
   }, [pending, consider]);
   const factsKey = JSON.stringify(facts);
