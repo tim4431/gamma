@@ -131,3 +131,56 @@ headings, paragraphs and genuine lists, no `.obsidian/` folder.
   quoted `source: "[[paper.pdf]]"` property, labels become `tags`. The Gamma
   format stays the lossless route; the vault is for reading and writing in
   Obsidian and imports back through the vault importer.
+
+## Getting a vault to Gamma, on each device (November 2026)
+
+Surveyed again before the Import dialog got an Obsidian card of its own:
+help pages and forum threads (`help.obsidian.md` "Back up your Obsidian
+files", the forum's dotfile feature requests), Apple's Files help, the pages
+of zip-making community plugins, and Gamma's own opened-file code.
+
+- **Obsidian exports no vault.** There is no "export as zip" command; the
+  vault already is a folder, and every guide says to compress it with the
+  OS: *Compress* in Finder, *Send to → Compressed (zipped) folder* in
+  Explorer, *Compress* in the Files app of an iPhone or iPad (one folder
+  gives `<folder>.zip` beside it). Android's stock file managers vary; a
+  phone may have no way to make one at all. Files linked from outside the
+  vault stay behind in every route. Community plugins zip a vault
+  (Vault Backup, Export Folder to ZIP, Differential ZIP Backup, Share as
+  ZIP), all desktop-only, and at least one never puts `.obsidian/` or
+  `.git/` in the archive.
+- **Obsidian reads no dot-path.** Its own filter keeps any file or folder
+  whose name starts with `.` out of the file explorer, search, the link
+  graph and Bases, and Obsidian Sync does not sync them; plugins (Hidden
+  Folders Access, Reveal Hidden Files) exist only to undo that. So
+  `.obsidian/`, `.trash/`, a `.git/` (the obsidian-git plugin's, often far
+  larger than the notes) or a `.github/` are no part of a vault's content.
+- **`.obsidian/` cannot mark a vault.** The importer had told a vault by
+  that folder alone. Whether a zip keeps it depends on the tool: Finder's
+  *Compress* keeps invisible files (the `.DS_Store` every Mac zip carries),
+  and on Windows a leading dot hides nothing, so Explorer zips `.obsidian`
+  like any folder (not checked by hand); no source says what the Files
+  app's *Compress* does with it; and the plugin above leaves it out on
+  purpose. A vault zipped without it read as Plain: titles from the
+  H1 instead of the filename, `%%comments%%` kept, an `^id` kept only where
+  a link names it.
+- **What the native apps already did.** The iPad declares `.zip` among its
+  document types and Android among its intent filters, so a vault's zip
+  shared from Files or a file manager already reached the Import dialog,
+  which offers the sources that read an archive. Neither app takes a
+  folder (the iPad refuses one; Android's pickers hand a web view none), so
+  on them a vault comes as a zip. The desktop app registers no `.zip`, and
+  needs none: its window is the web app, whose folder picker takes the
+  vault's folder directly, and a vault kept in step both ways is a synced
+  vault ([vaults.md](vaults.md)), not an import.
+
+What this meant for Gamma: an **Obsidian vault** card with a source of its
+own, `obsidian`, that tells the Markdown zip reader the upload is a vault,
+whatever folders it kept; the vault dialect skipping every dot-path, as
+Obsidian does; the card taking the vault's folder where the browser can
+pick one, packed without its dot-paths so a `.git` is never uploaded; and
+the card offered to a `.zip` the iPad or Android app was given, chosen
+first when the zip's entry names show `.obsidian/`. `.canvas` and `.base`
+files (Obsidian's views, JSON and YAML with no notes in them) stay out with
+a warning. Not taken: an iPad document type for a folder, and Excalidraw's
+`.excalidraw.md` drawings, which come in as notes of their JSON.

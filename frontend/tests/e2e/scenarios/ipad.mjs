@@ -387,6 +387,7 @@ open(sys.argv[3], 'wb').write(n.bytes())
 open(sys.argv[1], 'wb').write(tx.ntb_zip(tx.bundle((1, tx.DOCUMENT, tx.document("Handed NTB note")),
     (8, (0, 11), tx.text("Typed on the iPad")))))
 with zipfile.ZipFile(sys.argv[2], 'w') as z:
+    z.writestr('Vault/.obsidian/app.json', '{}')
     z.writestr('Vault/Vault note.md', '# Vault note\\n\\nFrom a zipped vault.\\n')
 `, ntbPath, zipPath, goodnotesPath], { cwd: ROOT });
     const personal = (await ann.api("/api/session")).workspaces.find((w) => w.personal);
@@ -435,15 +436,17 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       assert((await pages()).some((p) => p.content === "Handed GoodNotes notebook"), "the notebook is a page");
 
       // A .zip: the Import dialog asks which export it is, offering only the
-      // sources that read an archive, and imports it with no picker.
+      // sources that read an archive, starting on Obsidian for a vault that
+      // kept its .obsidian folder, and imports it with no picker.
       await hand(page, { id: "F4", name: "Handed vault.zip", type: "application/zip", b64: b64(fs.readFileSync(zipPath)) });
       await fileDone(page, "F4");
       const chooser = page.getByRole("dialog", { name: "Import Handed vault.zip", exact: true });
       await chooser.waitFor();
       assertEq(await chooser.getByText("Logseq highlights", { exact: true }).count(), 0, "Logseq reads no archive");
-      await chooser.getByText("Markdown notes", { exact: true }).click();
+      await until(async () => (await chooser.getByRole("button", { name: "Obsidian vault", exact: true }).getAttribute("aria-pressed")) === "true",
+        { what: "the vault's zip starts on Obsidian" });
       await chooser.getByRole("button", { name: "Import", exact: true }).click();
-      review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      review = page.getByRole("dialog", { name: "Review Obsidian import", exact: true });
       await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Vault note", { exact: true }).first().waitFor();
       await review.getByRole("button", { name: "Import to library", exact: true }).click();
       report = page.getByRole("dialog", { name: "Import complete", exact: true });

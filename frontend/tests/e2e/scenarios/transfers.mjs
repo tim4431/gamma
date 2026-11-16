@@ -874,6 +874,44 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
     } finally { await ctx.close(); }
   });
 
+  await step("transfer: an Obsidian vault's folder goes up without its dot-folders and is read as a vault, its links mentions", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // A vault as it lies on disk: settings, a git repository and the trash beside the notes.
+      const vault = path.join(server.dir, "Picked vault");
+      for (const [name, text] of [[".obsidian/app.json", "{}"], [".git/HEAD", "ref: refs/heads/main\n"],
+        [".trash/Thrown away.md", "gone\n"], ["Daily/Picked plan.md", "# A heading of its own\n\nSee [[Picked idea]].%% a private aside %%\n"],
+        ["Picked idea.md", "An idea.\n"]]) {
+        fs.mkdirSync(path.dirname(path.join(vault, name)), { recursive: true });
+        fs.writeFileSync(path.join(vault, name), text);
+      }
+      await page.waitForSelector(".folderNewBtn");
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "Obsidian vault").click();
+      assert((await dialog.innerText()).includes("Obsidian has no export of its own"), "the card says how a vault comes out");
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose vault folder…").click();
+      await (await chooser).setFiles(vault);
+      const review = page.getByRole("dialog", { name: "Review Obsidian import", exact: true });
+      await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Picked plan", { exact: true }).waitFor({ timeout: 15000 });
+      const listed = await review.getByRole("region", { name: "ZIP contents", exact: true }).innerText();
+      assert(listed.includes("Picked idea.md") && !/HEAD|app\.json|Thrown away/.test(listed), `only the notes went up: ${listed}`);
+      assert((await review.innerText()).includes("2 of 2 items selected"));
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor({ timeout: 15000 });
+      assert((await report.innerText()).includes("2 new pages"), await report.innerText());
+      await choice(report, "Done").click();
+      const pages = (await alice.api("/api/blocks/root/children")).children;
+      const plan = pages.find((p) => p.content === "Picked plan"), idea = pages.find((p) => p.content === "Picked idea");
+      assert(plan && idea, "each note is a page named after its file");
+      const [heading] = (await alice.api(`/api/blocks/${plan.id}/subtree`)).block.children;
+      assertEq(`${heading.content}|${heading.children.map((c) => c.content).join("|")}`, `# A heading of its own|See [[${idea.id}]].`,
+        "the H1 stays in the note, the wikilink is a mention and the comment is gone");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: Gamma export review imports only the selected page without reloading", async () => {
     const donorA = await bob.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Selected Gamma review" } });
     const donorB = await bob.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Excluded Gamma review" } });
@@ -1433,9 +1471,9 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       assert(await choice(dialog, "On the page").isDisabled(), "the notes' place waits on the Notes switch");
       await choice(dialog, "Close Export").click();
       dialog = await openDialog(page, "Import");
-      assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 7);
+      assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 8);
       assertEq(await choice(dialog, "Annotations in this PDF").getAttribute("aria-pressed"), "true");
-      for (const [type, count] of [["This paper", 2], ["Notes", 3], ["Library", 2]]) {
+      for (const [type, count] of [["This paper", 2], ["Notes", 3], ["Library", 3]]) {
         assertEq(await dialog.getByRole("group", { name: `${type} choices`, exact: true }).getByRole("button").count(), count);
       }
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/import-sources.png` });
@@ -1456,6 +1494,18 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       const notionChooser = page.waitForEvent("filechooser");
       await choice(dialog, "Notion pages").dblclick();
       assertEq(await (await notionChooser).element().getAttribute("accept"), ".zip,application/zip");
+      await dialog.waitFor({ state: "detached" });
+      // A card that picks a folder first does on a double-click what its button does.
+      dialog = await openDialog(page, "Import");
+      const vaultChooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Obsidian vault").dblclick();
+      assert(await (await vaultChooser).element().evaluate((input) => input.webkitdirectory), "the vault's card picks its folder");
+      await dialog.waitFor({ state: "detached" });
+      dialog = await openDialog(page, "Import");
+      await choice(dialog, "Obsidian vault").click();
+      const vaultZipChooser = page.waitForEvent("filechooser");
+      await choice(dialog, "or choose a .zip").click();
+      assertEq(await (await vaultZipChooser).element().getAttribute("accept"), ".zip,application/zip");
       await dialog.waitFor({ state: "detached" });
       dialog = await openDialog(page, "Import");
       await choice(dialog, "Zotero library").click();

@@ -34,6 +34,12 @@ export function folderUpload(entries) {
 // path as webkitRelativePath.
 export const folderPick = (fileList) => folderUpload([...fileList].map((file) => ({ path: file.webkitRelativePath || file.name, file })));
 
+// A picked folder less what lies under a name starting with "." below the
+// folder's own (a vault's .obsidian, .trash or .git, none of which Obsidian
+// reads), for a source whose `hidden` is false (transferFormats.js).
+export const withoutHidden = (upload) => folderUpload(upload.entries.filter(({ path }) =>
+  !path.split("/").slice(1).some((name) => name.startsWith("."))));
+
 // A folder dropped as one entry (dropEntries.js collectEntryFiles' pairs).
 export const folderDrop = (found) => folderUpload(found.map(({ file, folder }) => ({ path: [...folder, file.name].join("/"), file })));
 

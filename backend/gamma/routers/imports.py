@@ -93,6 +93,7 @@ def _review_source(source):
     sources = {
         "zotero": (_preview_zotero, _commit_zotero),
         "markdown-zip": (_preview_markdown_zip, _commit_markdown_zip),
+        "obsidian": (_preview_obsidian, _commit_obsidian),
         "markdown-file": (_preview_markdown_file, _commit_markdown_file),
         "notability": (_preview_notability, _commit_notability),
         "goodnotes": (_preview_goodnotes, _commit_goodnotes),
@@ -500,15 +501,17 @@ def import_markdown(request: Request, file: UploadFile = File(...),
     return {"ok": True, **result}
 
 
-def _markdown_zip(data, ws, folder, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
-    """A zip of Markdown notes → one page per .md (see markdown_zip_import)."""
+def _markdown_zip(data, ws, folder, *, actor="", preview=False, selection=None, progress=jobs.no_progress,
+                  vault=False):
+    """A zip of Markdown notes → one page per .md (see markdown_zip_import);
+    ``vault``: read as an Obsidian vault, ``.obsidian/`` in it or not."""
     try:
         zf = zipfile.ZipFile(data)
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="not a zip file")
     with zf, connect_pages_db(ws) as conn:  # the import commits page by page
         return {"ok": True, **import_markdown_zip(ws, zf, conn, folder, actor=actor, preview=preview,
-                                                  selected=selection, progress=progress)}
+                                                  selected=selection, progress=progress, vault=vault)}
 
 
 def _preview_markdown_zip(ws, data, meta, progress=jobs.no_progress):
@@ -517,6 +520,17 @@ def _preview_markdown_zip(ws, data, meta, progress=jobs.no_progress):
 
 def _commit_markdown_zip(ws, actor, data, meta, selection, progress=jobs.no_progress):
     return _markdown_zip(data, ws, meta.get("folder", ""), actor=actor, selection=selection, progress=progress)
+
+
+# An Obsidian vault, zipped or a folder the browser zipped: the Markdown zip's
+# reader in the vault's dialect, whether or not the zip kept `.obsidian/`.
+def _preview_obsidian(ws, data, meta, progress=jobs.no_progress):
+    return _markdown_zip(data, ws, meta.get("folder", ""), preview=True, progress=progress, vault=True)
+
+
+def _commit_obsidian(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    return _markdown_zip(data, ws, meta.get("folder", ""), actor=actor, selection=selection, progress=progress,
+                         vault=True)
 
 
 def _markdown_file(ws, data, meta, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
@@ -639,6 +653,21 @@ def import_markdown_zip_endpoint(request: Request, file: UploadFile = File(...),
 @router.post("/import/markdown-zip/preview")
 def preview_markdown_zip(request: Request, file: UploadFile = File(...), folder: str = Form("")):
     return _preview_markdown_zip(require_ws(request, write=True), file.file, _meta(file, folder))
+
+
+@router.post("/import/obsidian")
+def import_obsidian_endpoint(request: Request, file: UploadFile = File(...),
+                             folder: str = Form(""), selected: str | None = Form(None)):
+    """A zipped Obsidian vault → one page per note, read as a vault whether
+    or not the zip holds ``.obsidian/`` (``/import/markdown-zip`` tells one
+    by that folder alone); ``folder`` as there."""
+    ws = require_ws(request, write=True)
+    return _commit_obsidian(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
+
+
+@router.post("/import/obsidian/preview")
+def preview_obsidian(request: Request, file: UploadFile = File(...), folder: str = Form("")):
+    return _preview_obsidian(require_ws(request, write=True), file.file, _meta(file, folder))
 
 
 @router.post("/import/markdown-file/preview")
