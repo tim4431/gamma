@@ -21,6 +21,7 @@ import { pickFiles } from "../shared/lib/pickFiles.js";
 import { assetUrl } from "../shared/lib/utils.js";
 import { findBlock, makeId, removeBlockTree } from "../shared/model/blockModel.js";
 import { wallNow } from "../shared/model/wallClock.js";
+import { guideEvents } from "../guide/events.js";
 import { DUPLICATE_PX, surfaceUnits } from "../ink/surfaceScale.js";
 import { postFile } from "../transfers/FileChip.jsx";
 import {
@@ -89,7 +90,10 @@ export function usePictures({ blocks, blocksRef, setBlocks, readOnly, pageId, to
     const id = makeId();
     const t0 = wallNow();
     setBlocks((prev) => addPlaced(prev, surface, id, { t0, picture: onTop(prev, surface, picture) }));
-    if (select) setSel({ id, cropping: false });
+    if (select) {
+      setSel({ id, cropping: false });
+      guideEvents.emit("picture.placed");
+    }
   }
 
   // `files` uploaded one after another and placed on `surface` ({width,

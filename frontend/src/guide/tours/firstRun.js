@@ -26,8 +26,9 @@ import { T } from "../../shared/i18n/i18n.js";
 const WELCOME = {
   anchor: null,
   intro: true,
-  // Adding a paper first, then what Gamma does on one, then where it reaches
-  // beyond it.
+  // Adding a paper first, then what Gamma does on one, who works on it with
+  // you (people, then an agent on your computer), and where it reaches beyond
+  // it.
   slides: [
     { media: "paper-fetch", topic: T("Start"), title: T("Add a paper"),
       line: T("Click + and paste a link, DOI or arXiv id. Gamma fetches the PDF, with its title and authors.") },
@@ -41,6 +42,8 @@ const WELCOME = {
       line: T("Drag a note by its handle to move it. Drop it a step to the right to nest it under the note above.") },
     { media: "share-link", topic: T("Together"), title: T("Share and edit together"),
       line: T("Copy a link from Share. Whoever opens it sees the same page and edits it with you, live.") },
+    { media: "agent-comment", topic: T("Agents"), title: T("Ask an agent in a comment"),
+      line: T("In the desktop app, sync a folder and tick Send to Codex on a comment. Codex or Claude Code edits the files on your computer, rebuilds and answers in the thread.") },
     { media: "zotero-sync", topic: T("Connect"), title: T("In sync with Zotero"),
       line: T("Highlights, notes and folders travel both ways through zotero.org."),
       setup: "zotero-link", go: T("Set it up") },

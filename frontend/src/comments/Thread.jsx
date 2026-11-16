@@ -152,7 +152,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
           {isEdited(comment) ? <span className="commentEdited">{t("edited")}</span> : null}
           <span className="commentMetaSpacer" />
           {onOpenChat && chatButton && actions ? (
-            <button type="button" className="ctlBtn commentOpenChat" onClick={onOpenChat}
+            <button type="button" className="ctlBtn commentOpenChat" onClick={onOpenChat} data-guide="comments.openChat"
               aria-label={t("Open in chat")} title={t("Open in chat")}>
               <SparklesIcon size={14} />
             </button>

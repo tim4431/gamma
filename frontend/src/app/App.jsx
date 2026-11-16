@@ -2577,7 +2577,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const groupTabs = (group) => orderTabs(group.tabs.map((id) => openTabs.find((tab) => tab.id === id)).filter(Boolean));
   const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), target);
   const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
-  const splitTabGroup = (groupId, side, tabId) => applyLayout(splitGroup(tabLayoutRef.current, groupId, side, tabId));
+  const splitTabGroup = (groupId, side, tabId) => {
+    const next = splitGroup(tabLayoutRef.current, groupId, side, tabId);
+    if (next === tabLayoutRef.current) return;
+    applyLayout(next);
+    guideEvents.emit("tabs.split");
+  };
   // A tab into a group of its own beside the one it is in: the tab menu's,
   // the bar menu's and the palette's Split right. The only tab of a group
   // opens an empty group beside it instead, where the library shows to
@@ -6440,6 +6445,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: "", parent_page: parentId }),
       });
+      // before the page opens: its link jump would offer the Back hint first
+      guideEvents.emit("subpage.created");
       await openNewPage(created.id);
     } catch (err) {
       setStatus(t("Create failed: {err}", { err: err.message || err }));
@@ -6467,6 +6474,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Create failed: {err}", { err: err.message || err }));
       return;
     }
+    guideEvents.emit("subpage.created");
     await openNewPage(id);
   }
 
@@ -9418,6 +9426,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // page in this session goes back to it while its text is still the start
   // of the demo's (guide/typeDemoNote.js).
   const guideNoteRef = useRef(null);
+  // The page's highlights and their review queue come before the guide,
+  // whose facts say whether some are left to review.
+  // Identity-stable: every keystroke in a note replaces `blocks`, but the
+  // derived highlights rarely change — returning the previous array when the
+  // content is identical keeps the viewer's per-page memo effective (otherwise
+  // each keystroke re-rendered every PdfPage's overlays).
+  // The list is the page's document's: a PDF's highlights under
+  // pdf_position, a picture's regions under image_position (positionKeyOf),
+  // so every reader of it (the jumps, the margin, the chat) takes a region
+  // with no branch.
+  const prevHighlightsRef = useRef({ json: "", value: [] });
+  const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock, positionKeyOf(doc), fileHash(doc))),
+    [blocks, treeBlocks, comments.countByBlock, doc]);
+  // The page's highlights to review after its PDF was replaced, in document
+  // order: the pending ones (drawn dashed until accepted or moved), the
+  // Document menu's Accept all, and with the lost ones (hollow) the review
+  // queue its Review counts and opens the first of, which also holds those
+  // a card moved or placed on its closest match while they wait for its
+  // Accept (`reviewWaiting`, PdfViewer's onReviewWaiting), as the card
+  // counts them (docs/dev/highlight_relocation.md).
+  const pendingHighlights = useMemo(() => pendingInOrder(highlights), [highlights]);
+  const [reviewWaiting, setReviewWaiting] = useState([]);
+  const reviewHighlights = useMemo(() => reviewQueue(highlights, reviewWaiting), [highlights, reviewWaiting]);
   const guide = useGuide({
     services: {
       // A finished tour's `restore`: "pen" re-arms the pen last drawn with
@@ -9529,6 +9560,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       welcomePage: !!welcomePageOf(homeBlocks),
       growingLibrary,
       annotatedPage,
+      // highlights the open PDF's replacement left to check (the Document
+      // menu's Review), which the reader may review
+      highlightsToReview: !!reviewHighlights.length && isPdf(doc) && !readOnly,
+      // a comment here can ask an agent (its field's Send to tick)
+      commentAgents: commentAgentList.length > 0,
       // the notebook view: the sheets fill the viewer, so the notes view's
       // own sheet and its tool row (the notebook tour's anchors) are not up
       notebookView: !!notebook,
@@ -10211,17 +10247,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     obs.observe(el);
     return () => obs.disconnect();
   }, [homeVisibleItems.length, homeItems.length, homeMode]);
-  // Identity-stable: every keystroke in a note replaces `blocks`, but the
-  // derived highlights rarely change — returning the previous array when the
-  // content is identical keeps the viewer's per-page memo effective (otherwise
-  // each keystroke re-rendered every PdfPage's overlays).
-  // The list is the page's document's: a PDF's highlights under
-  // pdf_position, a picture's regions under image_position (positionKeyOf),
-  // so every reader of it (the jumps, the margin, the chat) takes a region
-  // with no branch.
-  const prevHighlightsRef = useRef({ json: "", value: [] });
-  const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock, positionKeyOf(doc), fileHash(doc))),
-    [blocks, treeBlocks, comments.countByBlock, doc]);
   // What the comment cards stand beside on the document, the highlights or
   // regions and the ink groups (treeDerived.js commentAnchors); the viewer
   // keeps each page's slice while it reads the same.
@@ -10233,16 +10258,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const hash = fileHash(doc);
     return (thread) => threadPlace(thread, treeById.get(thread.block_id), hash);
   }, [treeById, doc]);
-  // The page's highlights to review after its PDF was replaced, in document
-  // order: the pending ones (drawn dashed until accepted or moved), the
-  // Document menu's Accept all, and with the lost ones (hollow) the review
-  // queue its Review counts and opens the first of, which also holds those
-  // a card moved or placed on its closest match while they wait for its
-  // Accept (`reviewWaiting`, PdfViewer's onReviewWaiting), as the card
-  // counts them (docs/dev/highlight_relocation.md).
-  const pendingHighlights = useMemo(() => pendingInOrder(highlights), [highlights]);
-  const [reviewWaiting, setReviewWaiting] = useState([]);
-  const reviewHighlights = useMemo(() => reviewQueue(highlights, reviewWaiting), [highlights, reviewWaiting]);
   // set by PdfViewer: scrolls to a highlight to review and opens its card
   // (with a step, `done`, the card says what it did: after a move from it)
   const pdfReviewRef = useRef(null);
@@ -11096,7 +11111,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     >{zoteroPdfShown ? <CloudDownloadIcon size={16} /> : <PaperclipIcon size={16} />}</button>
                     {openPopover === "attach" && doc ? (
-                      <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")}>
+                      <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")} data-guide="page.documentMenu">
                         <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={doc.url}>
                           <PaperclipIcon size={14} /> {doc.name || defaultPageTitle(doc)}
@@ -11113,13 +11128,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             review: the first one's card (a PDF's: a text file's ranges are
                             reviewed from their menus); the dashed ones accepted as one edit */}
                         {reviewHighlights.length && isPdf(doc) ? (
-                          <MenuItem icon={TextSearchIcon} onClick={reviewPending}
+                          <MenuItem icon={TextSearchIcon} onClick={reviewPending} data-guide="page.review"
                             title={t("Show the first dashed or hollow highlight with what it matched and where it was before")}>
                             {tn("Review {n} highlight", "Review {n} highlights", reviewHighlights.length)}
                           </MenuItem>
                         ) : null}
                         {pendingHighlights.length && !readOnly ? (
-                          <MenuItem icon={CheckIcon}
+                          <MenuItem icon={CheckIcon} data-guide="page.acceptAll"
                             onClick={() => { setOpenPopover(null); acceptHighlightPlaces(pendingHighlights.map((h) => h.id)); }}
                             title={t("Draw every dashed highlight solid where it is now")}>
                             {tn("Accept {n} rough match", "Accept all {n} rough matches", pendingHighlights.length)}

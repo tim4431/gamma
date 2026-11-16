@@ -28,9 +28,15 @@ import zoteroLink from "./zoteroLink.js";
 import assistants from "./assistants.js";
 import notability from "./notability.js";
 import texFollow from "./texFollow.js";
+import subPages from "./subPages.js";
+import splitView from "./splitView.js";
+import highlighters from "./highlighters.js";
+import highlightReview from "./highlightReview.js";
+import agentComments from "./agentComments.js";
 import hints from "./hints.js";
 
 export const TOURS = Object.fromEntries(
-  [firstRun, addPaper, aiChat, notebook, windows, pdfViewer, notebookView, highlights, citations, search, sharing, comments, tables,
-    notes, handwriting, recording, library, tasks, presence, workspaces, zoteroLink, notability, assistants, texFollow, ...hints]
+  [firstRun, addPaper, aiChat, notebook, windows, splitView, pdfViewer, notebookView, highlights, highlighters, highlightReview,
+    citations, search, sharing, comments, agentComments, tables, notes, subPages, handwriting, recording, library, tasks, presence,
+    workspaces, zoteroLink, notability, assistants, texFollow, ...hints]
     .map((t) => [t.id, t]));

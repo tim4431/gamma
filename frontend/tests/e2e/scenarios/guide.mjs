@@ -5,10 +5,14 @@
 // finishing records "done", the account menu restarts it, and Esc leaves a
 // replay with its temporary selection cleared.
 import { ANCHORS, anchorsForView } from "../../../src/guide/anchors.js";
+import { TOURS } from "../../../src/guide/tours/index.js";
 import { selectPdfText, waitForPdf } from "./pdf.mjs";
 import { ABSTRACT_PASSAGE } from "../../../src/guide/previewHighlight.js";
 import { readFileSync } from "node:fs";
 import { Account, keyLabel, live } from "../harness.mjs";
+
+// The welcome deck's slides (tours/firstRun.js).
+const SLIDES = TOURS["first-run"].steps[0].slides.length;
 
 export async function guideScenarios(env) {
   const { server, browser, alice, step, until, assert, assertEq, assertNoProblems, openPage, makePdf, flags } = env;
@@ -200,17 +204,17 @@ export async function guideScenarios(env) {
       // slide carries the tour.
       assertEq(await page.locator(".welcomeStage .guideMedia svg").count(), 1, "one drawing at a time");
       assertEq(await page.locator(".welcomeSlide").getAttribute("data-slide"), "paper-fetch");
-      assertEq(await page.locator(".welcomeCount").textContent(), "1 / 9");
+      assertEq(await page.locator(".welcomeCount").textContent(), `1 / ${SLIDES}`);
       assertEq(await page.locator(".welcomeTour").textContent(), "Take the 2-minute tour");
       // The arrow keys and ‹ › turn the slides; what is set up elsewhere
       // carries its setup guide's way in, and the last holds the Welcome page.
       await page.keyboard.press("ArrowRight");
-      assertEq(await page.locator(".welcomeCount").textContent(), "2 / 9", "→ turns a slide");
+      assertEq(await page.locator(".welcomeCount").textContent(), `2 / ${SLIDES}`, "→ turns a slide");
       assertEq(await page.locator(".welcomeStage .guideMedia svg").count(), 1, "the next slide's drawing in its place");
       await page.getByRole("button", { name: "Previous slide", exact: true }).click();
-      assertEq(await page.locator(".welcomeCount").textContent(), "1 / 9", "‹ turns back");
+      assertEq(await page.locator(".welcomeCount").textContent(), `1 / ${SLIDES}`, "‹ turns back");
       const setups = [];
-      for (let i = 1; i < 9; i++) {
+      for (let i = 1; i < SLIDES; i++) {
         await page.getByRole("button", { name: "Next slide", exact: true }).click();
         const setup = page.locator(".welcomeSetup");
         if (await setup.count()) setups.push(await setup.getAttribute("data-setup"));
@@ -236,7 +240,7 @@ export async function guideScenarios(env) {
     const page = await openPage(ctx, `${server.base}/?ws=${arrival.ws}`);
     try {
       await page.waitForSelector('[data-guide-offer="first-run"] .guideCard.welcomeDeck', { timeout: 15000 });
-      for (let i = 1; i < 9; i++) await page.keyboard.press("ArrowRight");
+      for (let i = 1; i < SLIDES; i++) await page.keyboard.press("ArrowRight");
       await page.getByRole("button", { name: "Open the Welcome page", exact: true }).click();
       // the deck goes; the PDF it opens may offer a tour of its own (suggestTours), so not every card
       await until(async () => await page.locator('[data-guide-offer="first-run"]').count() === 0, { what: "the welcome deck closed" });

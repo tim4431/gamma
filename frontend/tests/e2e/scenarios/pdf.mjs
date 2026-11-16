@@ -83,6 +83,14 @@ export async function movePast(page, release) {
   await page.mouse.move(release.x + 6, release.y + 8, { steps: 2 });
 }
 
+// Line `i` of a plain makePdf page as a highlight places it (20 pt
+// Helvetica from 72 pt down, 26 pt apart; `text` sets its width), the
+// position of a highlight on it, and a box as the fractions of the page a
+// highlight's `prev` keeps.
+export const lineBox = (i, text) => ({ x1: 72, y1: 72 + 26 * i - 16, x2: 72 + text.length * 10, y2: 72 + 26 * i + 5 });
+export const linePosition = (i, text) => ({ pageNumber: 1, width: 612, height: 792, boundingRect: lineBox(i, text), rects: [lineBox(i, text)] });
+export const boxFraction = (r) => [r.x1 / 612, r.y1 / 792, r.x2 / 612, r.y2 / 792].map((v) => Math.round(v * 10000) / 10000);
+
 export async function waitForPdf(page, pageNo = 1, timeout = 30000) {
   await page.waitForSelector(`[data-page="${pageNo}"] .textLayer span`, { timeout });
 }
@@ -2663,12 +2671,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     const up1 = await account.upload("/api/uploads", makePdf([lines1]), "v1.pdf", "application/pdf");
     const up2 = await account.upload("/api/uploads", makePdf([lines2]), "v2.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up2.doc_id}`, { method: "POST", body: { default_title: "Review walk" } });
-    // the lines' boxes as makePdf sets them (20 pt Helvetica from 72 pt down, 26 pt apart)
-    const box = (i, text) => ({ x1: 72, y1: 72 + 26 * i - 16, x2: 72 + text.length * 10, y2: 72 + 26 * i + 5 });
-    const at = (i, text) => ({ pageNumber: 1, width: 612, height: 792, boundingRect: box(i, text), rects: [box(i, text)] });
-    const frac = (r) => [r.x1 / 612, r.y1 / 792, r.x2 / 612, r.y2 / 792].map((v) => Math.round(v * 10000) / 10000);
-    const dashed = (i) => ({ ...at(i, lines2[i]), approx: true, match: 0.9,
-      prev: { doc_id: up1.doc_id, pageNumber: 1, rects: [frac(box(i, lines1[i]))], quote: lines1[i] } });
+    const dashed = (i) => ({ ...linePosition(i, lines2[i]), approx: true, match: 0.9,
+      prev: { doc_id: up1.doc_id, pageNumber: 1, rects: [boxFraction(lineBox(i, lines1[i]))], quote: lines1[i] } });
     const make = (quote, pdf_position, content = "") => account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content,
       properties: { quote, color: "rgba(255, 226, 143, 0.4)", pdf_position } } });
     const note = "Is [25] the same paper as [27]?";
@@ -2679,7 +2683,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     // notes enough that the next highlights' rows start out of the notes panel's sight
     for (let i = 0; i < 30; i++) await account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content: `Remark ${i + 1}` } });
     const bare = await make(lines2[2], dashed(2));
-    const lost = await make(lines1[3], { ...at(3, lines1[3]), lost: true, doc_id: up1.doc_id });
+    const lost = await make(lines1[3], { ...linePosition(3, lines1[3]), lost: true, doc_id: up1.doc_id });
     const c = await account.context(browser);
     try {
       const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);

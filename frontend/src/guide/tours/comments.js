@@ -1,16 +1,18 @@
 import { T } from "../../shared/i18n/i18n.js";
-// Offered after the account's first comment. A comment is a conversation
+// Offered after the account's first comment among people. A comment is a conversation
 // beside a note, a passage or the page, never a change to them
 // (docs/dev/comments.md): on a paper the passage's own comment comes first,
 // then Resolve on the thread, the Inbox where replies arrive, and the
-// Comments window. The thread and the window may be off screen, so their
-// steps are `optional`; a guest has no Inbox and no tour.
+// Comments window, whose Notify me sends the page's new comments to the
+// Inbox too. The thread and the window may be off screen, so their steps
+// are `optional`; a guest has no Inbox and no tour.
 export default {
   id: "comments",
   version: 1,
   title: T("Comments"),
   requires: { guest: false },
-  trigger: { event: "comment.created" },
+  // a first comment that asked an agent is the agent tour's (agentComments.js)
+  trigger: { event: "comment.created", match: { agent: false } },
   offerAnchor: "comments.thread",
   offerPlacement: "left",
   offer: { title: T("You started a conversation"), line: T("Comment on a passage, resolve threads, follow replies.") },
@@ -24,6 +26,8 @@ export default {
     { id: "comment-inbox", anchor: "header.inbox", placement: "bottom",
       title: T("Replies and mentions reach your Inbox"),
       body: T("Click one to go to its thread.") },
+    { id: "comment-notify", anchor: "comments.notify", placement: "left", optional: true,
+      title: T("**Notify me** sends every new comment to your Inbox") },
     { id: "comment-window", anchor: "comments.grip", placement: "left", optional: true,
       title: T("**View → Comments** lists every thread"), next: T("Done") },
   ],

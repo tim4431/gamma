@@ -20,6 +20,7 @@ import {
 import { pickerColors } from "../shared/model/palette.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 import { t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import { HL_IDLE, armedTo, disarmed, highlighterKey, menuClosed, menuOpened, nextArmed, toggled } from "./highlighterState.js";
 
 export function useTextHighlighter({ stored, setStored, seedColor, palette, setPalette, canHighlight, inkOpen, onArm, openSettings, setStatus }) {
@@ -81,7 +82,10 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
         setState(next);
         return next.armed;
       },
-      openMenu: (id, at) => setState((s) => menuOpened(s, id, at)),
+      openMenu: (id, at) => {
+        setState((s) => menuOpened(s, id, at));
+        guideEvents.emit("highlighter.menu");
+      },
       closeMenu: () => setState(menuClosed),
       edit: (id, patch) => write(L().list.map((p) => (p.id === id ? { ...p, ...patch } : p))),
       // armed as it comes (the strip's menu), unless `{arm: false}` (Settings)
@@ -175,6 +179,10 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [armedId, inkOpen, cmds]);
+
+  // what the guide's highlighters tour waits for: one turned on, whichever
+  // way (a strip button, a key, a command)
+  useEffect(() => { if (armedId) guideEvents.emit("highlighter.armed"); }, [armedId]);
 
   const shown = useMemo(() => shownPresets(list), [list]);
   const hidden = useMemo(() => hiddenPresets(list), [list]);

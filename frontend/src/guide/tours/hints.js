@@ -331,16 +331,71 @@ export const settings = {
 
 // The fourth tab of a load: a tab pins from its right-click menu, in the
 // strip or to the library. Opening that menu answers the card.
+// Version 2: a tab's menu also puts its page beside this one (Split right,
+// November 2026), so people who saw the first wording hear it again.
 export const tabs = {
   id: "tabs",
-  version: 1,
+  version: 2,
   hint: true,
   requires: { phone: false },
   trigger: { event: "tab.opened", count: 4, answeredBy: { event: "tab.menu" } },
   steps: [{ id: "tabs", anchor: "header.tabs", placement: "bottom",
-    title: T("Right-click a tab to pin it here, or to pin its page to the library.") }],
+    title: T("Right-click a tab to pin it, or **Split right** to see its page beside this one.") }],
+};
+
+// The Files window came up (the View menu, the palette): the library's
+// folders and the synced folders' files in one tree, and Ctrl+P finds a
+// file by its name too (docs/dev/work_folders.md "The Files window").
+// The phone shows it over the page, with no grip to point at.
+export const filesWindow = {
+  id: "files-window",
+  version: 1,
+  hint: true,
+  requires: { phone: false },
+  trigger: { event: "window.shown", match: { id: "files" } },
+  steps: [{ id: "files-window", anchor: "files.grip", placement: "left",
+    title: T("Your folders and synced folders in one tree; {key:app.quickOpen} finds a file by name too.") }],
+};
+
+// An AI's edit that ran without asking, drawn in its note as tracked
+// changes (docs/dev/ai.md "Watching the agent work"): the bar under it
+// takes it back or keeps it. The approvals hint has the asking kind.
+export const noteReview = {
+  id: "note-review",
+  version: 1,
+  hint: true,
+  requires: { editable: true },
+  trigger: { event: "note.aiChange" },
+  steps: [{ id: "note-review", anchor: "notes.review", placement: "bottom",
+    title: T("The AI's edit is marked in the note: **Revert** takes it back, **Hide** keeps it.") }],
+};
+
+// A picture put on a PDF page or a sheet (docs/dev/pictures.md "Adding a
+// picture"): it comes selected, with its bar.
+export const pictures = {
+  id: "pictures",
+  version: 1,
+  hint: true,
+  requires: { editable: true },
+  trigger: { event: "picture.placed" },
+  steps: [{ id: "pictures", anchor: "picture.toolbar", placement: "top",
+    title: T("Drag the picture to move it; its bar crops, flips, layers or locks it.") }],
+};
+
+// Writing a comment where an agent can be asked (docs/dev/local_agents.md
+// "A comment sent to an agent"): the tick under the field is how. Retired
+// once a comment has asked one.
+export const sendToAgent = {
+  id: "send-to-agent",
+  version: 1,
+  hint: true,
+  requires: { guest: false },
+  trigger: { event: "comment.agentOffered", doneOn: { event: "comment.created", match: { agent: true } } },
+  steps: [{ id: "send-to-agent", anchor: "comments.sendTo", placement: "bottom",
+    title: T("Tick **Send to**, and the agent works on your comment and answers in the thread.") }],
 };
 
 export default [mathKeys, blockRefs, quickOpen, back, conflicts, folders, install, approvals, exportPage,
   cloneSync, connector, cloudAccount, windowClosed, shellBar, newChat, pdfSwitch, assistantChanges, inkSelection,
-  newNoteKey, slashMenu, pasteAs, mentions, objects, paperDetails, bibLink, commandPalette, settings, tabs];
+  newNoteKey, slashMenu, pasteAs, mentions, objects, paperDetails, bibLink, commandPalette, settings, tabs, filesWindow,
+  noteReview, pictures, sendToAgent];

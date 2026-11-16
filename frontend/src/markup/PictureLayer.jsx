@@ -437,7 +437,7 @@ function PictureMenu({ frameRef, pic, onAction, onClose }) {
   return (
     <ContextMenu {...anchor} ignoreRef={everywhere} onClose={onClose} role="none"
       className={"inkEditMenu textBoxMenu pictureMenu" + (pic.locked ? " pictureLockedMenu" : "")}>
-      <InkTooltips role="toolbar" aria-label={t("Edit picture")} onPointerDown={(e) => e.stopPropagation()}>
+      <InkTooltips role="toolbar" aria-label={t("Edit picture")} data-guide="picture.toolbar" onPointerDown={(e) => e.stopPropagation()}>
         {pic.locked ? <div className="inkEditRow">
           {button("unlock", t("Unlock"), UnlockIcon, t("Unlock: move and edit the picture again"))}
           {copy}

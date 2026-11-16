@@ -185,7 +185,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
       pendingRef.current.delete(id);
       set(page, (list) => upsertThread(list, out.thread));
       noteTurn(page, threadId || id, id, out.turn);
-      guideEvents.emit("comment.created", { reply: !!threadId });
+      guideEvents.emit("comment.created", { reply: !!threadId, agent: !!out.turn && !out.turn.refused });
       return id;
     } catch (err) {
       pendingRef.current.delete(id);
