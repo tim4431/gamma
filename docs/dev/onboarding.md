@@ -1,7 +1,7 @@
 # Onboarding: tours and contextual guides
 
-**Status: the engine, the two manual tours (first paper, AI chat), eighteen
-triggered tours, four setup guides, twenty-eight hints, the welcome deck,
+**Status: the engine, the two manual tours (first paper, AI chat), twenty-three
+triggered tours, four setup guides, thirty-two hints, the welcome deck,
 the clips on twenty-two tour steps, the welcome page with its sample PDF and
 the Sketchbook notebook are built. The first paper tour is also offered to
 every new library, as the welcome deck.** A Getting-started checklist is
@@ -107,6 +107,12 @@ has a highlight, **Moving notes around** on any page you can edit (with a
 mouse: on a touch screen the handle neither drags nor has a + beside every
 note). **Background tasks** is listed on the desktop layout.
 **Shared workspaces** is listed once you belong to one.
+**Two pages side by side** is listed on a desktop page with a tab strip (it
+has you split first), **Pages inside pages** on any page you can edit (it
+has you type `/page` on a page inside none), **Text highlighters** on a PDF
+you can edit, and **Checking moved highlights** while the open PDF has
+highlights left to check after a replacement. **Asking an agent** is listed
+while a comment thread is on screen.
 **Working together** and **Citations in answers** are listed only while
 their subject is on screen: someone else on the page, a cited reply; so are
 **Recording** (a recording's card in the notes), **Search** (the topbar's
@@ -242,13 +248,18 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 |---|---|---|
 | Adding to your library | Add is opened (`popover.opened {name: "add"}`). The only tour that comes *with* its control rather than after it: opening Add is already the intent, and the rows it explains are on screen only while the popover is | inside the popover: the address box (a scene typing into it), Upload files (dropping files and folders on the library does the same), New notebook (a drawing of the one page behind both views); then, desktop only, Import… in the View menu, which the step opens (Zotero, Notability, Obsidian, Notion, Logseq) |
 | Arrange windows | a PDF is opened (`page.opened`) on desktop | Chat's title: a scene double-clicking it to fold, then one dragging it to the left dock |
+| Two pages side by side | a page is put beside another (`tabs.split`: a tab's or the bar's Split right, the palette's, or a tab dropped on a side of the page); desktop | (right-click a tab for Split right, a `creates` step,) the live pane (`tabs.live`, the card tucked into its corner; a scene clicking the other pane, `tabs.other`): pages open on the ringed side; a tab's menu with a scene right-clicking it — Move to the other pane, or a drag; Join tab groups, and a side closes with its last tab |
 | Citations in answers | an AI reply finishes with a citation link (`chat.cited`) | the link, with the jump to the cited page as a clip (`citation-jump`), held still while a demo clicks it and waits for `citation.shown`; then the marked passage in the PDF |
 | Search | a search's answers come with text found inside PDFs (`search.results {pdf: true}`) | inside the search popover: the box (a clip of one search answering in groups, a folder chip narrowing it, a PDF hit opened: `search-filter`), a folder or label made a chip with Tab (`search.filtered` ticks it), the results |
-| Comments | the account's first comment is stored (`comment.created`); not for a guest, who has no Inbox | on a paper, the PDF (a clip of a passage selected, the bubble after the colours pressed, its thread in the margin: `comment-passage`); the thread and its Resolve (`optional`), the Inbox bell, the Comments window's title (`optional`) |
+| Comments | the account's first comment among people is stored (`comment.created {agent: false}`: one that asked an agent is the agent tour's); not for a guest, who has no Inbox | on a paper, the PDF (a clip of a passage selected, the bubble after the colours pressed, its thread in the margin: `comment-passage`); the thread and its Resolve (`optional`), the Inbox bell, the Comments window's Notify me (`optional`: folded into ⋯ in a narrow window), the Comments window's title (`optional`) |
+| Asking an agent | the account's first comment that started an agent's turn (`comment.created {agent: true}`: Send to ticked, or `@codex` typed); not for a guest | the thread: the agent answers there under its own name, the tag over the reply field saying what it is doing; Open in chat on its answer (`optional`: once it has answered), the turn with every step it took; a reply with Send to ticked goes on where it left off |
 | Recording | a recording is saved (`recording.stopped`, from App's `onDone` of the recorder) | the recording's card (a clip of the mic pressed, the pill running, a word written and the card landing in the notes: `record-replay`; its Play, `recording.played`, ticks it), the player (`optional`: only while it plays), Transcribe in the card's menu |
 | Sharing a page or folder | a page or a folder gets its first share link (`share.created`: the Share popover's Share button) | (press Share,) the link, with a clip of Copy link and the page opening in someone else's window (`share-link`; a folder's link opens every page filed there, now and later: `shareTarget`), who has access, general access naming Stop sharing beside the link (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom |
+| Text highlighters | the sixth text highlight of a load (`highlight.created {kind: "text"}`, `count: 6`) to someone who has never turned a highlighter on (`doneOn: highlighter.armed`) | the strip's highlighters (`viewer.highlighter`): turn one on, then select (a scene clicking it; `highlighter.armed` ticks it), right-click or hold it for its style and colour (a scene right-clicking it; `highlighter.menu` ticks it), Duplicate for more and the keys 1–9 |
+| Checking moved highlights | the open PDF has highlights left to check after it was replaced (`highlightsToReview`, state: the Document menu's review queue, on a page the reader may edit) | the Document button; (the menu's Review, a `creates` step the review card's `review.opened` ticks,) the review card (`pdf.reviewCard`): Accept, Move…, Discard, the arrows; the menu's Accept all (`optional`: only with rough matches) |
 | Your highlights | the third highlight of a load (`highlight.created`, `count: 3`) | the highlight made last (`pick: "recent"`, `guide/recent.js`): a clip of the round trip, the highlight clicked lighting its note and the note lighting the passage (`highlight-jump`; a click also quotes it in the next chat message), a scene right-clicking it (recolour, link, delete); then its card in the notes, which jumps back (`optional`: the Notes window may be closed) |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles (a clip of a row sliding in and its handle coming up: `table-grow`), the corner handle (copy, move or delete the whole table), the others with a scene clicking it — on the table just made when the page has several, each card clear of the table |
+| Pages inside pages | a page is made inside the open one and opened (`subpage.created`: `/page`, or New page inside in a tab's, a card's or the Pages inside panel's menu) | (type `/page`, a `creates` step,) the crumbs over the new page's title (`page.crumbs`, a scene clicking one), which also take a dropped page; a tab's menu, Move into page… and Move to library (`optional`, desktop) |
 | Moving notes around | the eighth note made in a load (`block.created`, `count: 8`: Enter, or the + beside a handle); not on a touch screen, nor in the notebook view | the last note's ⋮⋮ (a scene carrying it down and to the right, where a nested note lands: a drag by `offset`), its menu (a scene clicking it), the + beside it (a scene clicking it, then Alt-clicking it). The handles show on hover and while pointed at (`[data-guide-active]`) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for its style (Pen, Ballpoint, Brush, Pencil or Calligraphy), line, Smoothing, colour and width, the eraser and the lasso on one card (a clip of the eraser rubbing out a stray stroke and the lasso carrying a word: `ink-lasso`; Ctrl+Z brings back what was erased), More at the strip's end for shapes and the ruler (a clip of Shapes picked and a box and an arrow drawn: `ink-shape`), then the Text tool (a scene clicking T, then the page); finishing re-arms the pen |
 | The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the tool column as a whole, the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
@@ -267,7 +278,11 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: block references | the `[[` search shows results (`ref.search`) | the search: mention vs `![[…]]` |
 | hint: Ctrl+P | the 4th return to the library in one load (`home.opened`, `count: 4`), unless the palette was used (`doneOn: palette.opened`); never on the phone layout (`requires: {phone: false}` — App's `phone` fact), where Home is the bottom bar's Library tab | Home |
 | hint: command palette | the 3rd Ctrl+P of a load (`palette.opened`, `count: 3`), unless the command palette was found (`doneOn: commands.opened`, Ctrl+Shift+P or `>` typed); desktop | the palette's box: `>` or Ctrl+Shift+P runs any command, the unbound ones included |
-| hint: tabs | the 4th page of a load to get a tab (`tab.opened`, `count: 4`); desktop; a tab's menu answers it (`answeredBy: tab.menu`) | the tab strip: right-click pins a tab, or its page to the library |
+| hint: tabs | the 4th page of a load to get a tab (`tab.opened`, `count: 4`); desktop; a tab's menu answers it (`answeredBy: tab.menu`); version 2 since it names Split right | the tab strip: right-click pins a tab, or Split right shows its page beside this one |
+| hint: Files window | the Files window comes up (`window.shown {id: "files"}`: the View menu, the palette); desktop — the phone's is an overlay with no grip | the Files title: the library's folders and the synced folders in one tree, and Ctrl+P finds a file by name |
+| hint: AI change | an AI's change that ran without asking is drawn in its note (`note.aiChange`, from NoteReviewBar) | the bar under the note: Revert takes it back, Hide keeps it (the asking kind is the approvals hint's) |
+| hint: picture | a picture is put on a PDF page or a sheet and selected (`picture.placed`, from `markup/usePictures.js`'s `create`) | the picture's bar: drag to move, crop, flip, layer, lock |
+| hint: Send to | writing begins in a comment field that can ask an agent (`comment.agentOffered`, once per field); retired once a comment has asked one (`doneOn: comment.created {agent: true}`) | that field's Send to tick (`comments.sendTo`, carried by the field written in) |
 | hint: window closed | a window closed with its × (`window.closed {id: chat \| notes \| comments \| files \| pdf}`); desktop — the phone's tabs bring its panels back — and retired if the user brings one back first (`doneOn: window.shown`, from the View rows and the palette's toggles); opening View answers it (`answeredBy`), so it never covers the menu's Windows rows | the View button: closed windows wait there |
 | hint: server bar | a native app's own bar was hidden by the shell itself (`shellBar.hidden`, from `app/useShellBar.js`: its chevron, ⌘⇧B on the iPad, Ctrl+Shift+B on Android — never the row, which the person found by using it, and never the shell's first answer, which only says how the bar already stands); retired if the bar comes back (`doneOn: shellBar.shown`, from the row or the shell); opening the menu answers it (`answeredBy: popover.opened {name: ["menu", "user"]}`) | the View button: the bar waits behind its **Server bar** row — More upright, where there is no View button (`phoneAnchor: "header.account"`) |
 | hint: New chat | the first New chat that kept a conversation (`chat.archived {discard: false}`); opening History answers it | History: where it went, and that Alt+click on + discards one instead |
@@ -360,7 +375,10 @@ Engine abilities available to every step:
   starts if that anchor is already on screen, and passed over when the
   anchor turns up within 1.5 s of the step opening (too soon for the user to
   have made it: the Share popover loads its link after it opens). A tour
-  triggered by the thing itself therefore starts right after it.
+  triggered by the thing itself therefore starts right after it, and its
+  offer does not count that step when the step waits for the trigger's
+  own event, even before the thing is on screen (a sub-page offered while
+  it opens).
 - **`reveal: anchor`** on a step: a surface to bring up (through that
   anchor's `open` path) while the spotlight points elsewhere — the practice
   steps of handwriting spotlight the whole PDF pane (`pdf.pane`) with the
@@ -844,7 +862,8 @@ call: the facts steps and triggers are matched against (`view`, `hasPdf`,
 text / rectangle toggle), `guideAvailable`, `sharedWorkspace`, `shareTarget`
 (what the topbar's Share shares: `"page"`, `"folder"` — an open folder on the
 desktop library — or `""`), `shareAudience`,
-`unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
+`unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`, `highlightsToReview` (the open
+PDF's review queue after a replacement is not empty, the reader may edit),
 `notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
 `cloudLinkable`, `prefsChanged`, `enterNewBlock` (Enter starts a note, the default: Settings →
 Keyboard), `unverifiedMeta` (the open paper's ⓘ shows its red !, the button on
@@ -959,10 +978,16 @@ where the thing happens:
 | `shellBar.hidden`, `shellBar.shown` | `app/useShellBar.js`: a native app's own server bar hidden by the shell itself (its chevron or its key — not the View menu's row, which the page posts), and the bar back, from either |
 | `page.opened` `{id, title}`, `home.opened` | App's page open and `goHome` |
 | `tab.opened`, `tab.menu` | App's tab-strip sync, when the open page gets a tab of its own; a tab's right-click menu opening |
+| `tabs.split` | App's `splitTabGroup`, the one way a page is put beside another (Split right from a tab, the bar or the palette; a tab dropped on a side) |
+| `subpage.created` | App's `createSubPage` (New page inside) and `createLinkedPage` (`/page`), once the new page is open |
 | `nav.pushed`, `nav.back` | App's `pushNav` (a link jump recorded where you were) and `goBackNav` (the Back button or Alt+←) |
 | `palette.opened` | App, when the Ctrl+P palette opens |
 | `commands.opened` | QuickOpen, when the palette is the command palette (Ctrl+Shift+P, or `>` typed) |
 | `highlight.created` `{id, kind}` | App's highlight creation path |
+| `highlighter.armed`, `highlighter.menu` | `pdf/useTextHighlighter.js`: a text highlighter turned on (a strip button, its key, a command), and a strip button's menu opening |
+| `review.opened` | `pdf/HighlightReview.jsx`'s card, as it comes up for a highlight (hover, a tap, the Document menu's Review, a step) |
+| `picture.placed` | `markup/usePictures.js`'s `create`, for a picture placed and selected |
+| `note.aiChange` | NoteReviewBar, when an AI's change that ran without asking is drawn in its note |
 | `chat.sent` `{pdf}`, `chat.cited`, `chat.changed` | ChatDock's send (`pdf`: the whole file goes with it), and the end of a reply holding a citation (`gammaLinksIn`) or changes (`isChange`) |
 | `chat.archived` `{discard}` | ChatDock's New chat, once a conversation with messages was kept in History (or, Alt+click, thrown away) |
 | `citation.shown` | PdfCitationOverlay, once a quote is found and marked |
@@ -990,7 +1015,8 @@ where the thing happens:
 | `dialog.opened` `{name}` | a dialog as it mounts: `zotero-link`, ZoteroLinkDialog |
 | `recording.stopped` `{id}`, `recording.played` `{id}` | App: the recorder's `onDone` once a recording is saved, and `playRecording` once its playback starts |
 | `search.results` `{pdf, text}`, `search.filtered` `{kind}` | SearchPanel: a query's answers all came (`pdf`: some are text inside a PDF, this one's or the library's; `text`: some are lines of a text file — the search tour triggers on `pdf` alone), and a folder or label made a chip (`confirmLabel`) |
-| `comment.created` `{reply}` | `comments/useComments.js`'s `add`, once the server stored it (`reply`: in a thread that was there) |
+| `comment.created` `{reply, agent}` | `comments/useComments.js`'s `add`, once the server stored it (`reply`: in a thread that was there; `agent`: it started an agent's turn, not refused) |
+| `comment.agentOffered` | CommentComposer, the first change of a field that shows the Send to tick |
 | `import.finished` `{source}` | `tasks/useAppJobs.js`'s `onJobFinished`: an import this tab started finished (`source`: the server's name for it, `FORMATS`' `endpoint` in `transfers/importApi.js`, which is the card's id but for Markdown's and Notion's `markdown-zip` and `markdown-file`; the Notability & GoodNotes card's import, `note-apps`, sends one per app it brought notes of instead, its job's `apps`: `notability`, `goodnotes`) |
 | `page.fileReplaced` `{id}` | App's remote op apply, when the open page's PDF changed from one file to another elsewhere (a file pushed from disk, another tab) |
 | `zotero.connected` | ZoteroAccountRow's `connected`, and ZoteroLinkDialog whenever it shows the account connected |
@@ -1260,9 +1286,18 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
                                                   handwriting from the menu (draw, note, style, erase,
                                                   lasso, Text, the pen re-armed), a closed window, the
                                                   first New chat, the new-note key, the highlights
-                                                  tour, a setup guide (Settings opened at its pane,
-                                                  its list, resumed after a reload, ticked by its
-                                                  event), Suggest tours off
+                                                  tour, the fourth tab's hint (naming Split right, a
+                                                  tab's menu answering it), a sub-page (offered at its crumbs, which lead
+                                                  back up), Split right (offered on the live pane,
+                                                  and from the menu after the user splits), the
+                                                  highlighters (one turned on, its menu), moved
+                                                  highlights (the Document menu's Review opening a
+                                                  card, then Accept all), the Files window and a
+                                                  placed picture's hints, a setup guide (Settings
+                                                  opened at its pane, its list, resumed after a
+                                                  reload, ticked by its event), Suggest tours off
+frontend/tests/e2e/scenarios/localAgents.mjs      the Send to hint while a comment that can ask Codex
+                                                  is written, then the agent tour after one sent
 ```
 
 ## Validation
@@ -1294,7 +1329,11 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   feature is found; the server bar hint comes on the shell's own hide,
   retires when the bar comes back and is answered by either menu; the
   highlights and notes tours wait for several; the
-  Add, library and handwriting tours end where their new controls are.
+  Add, library and handwriting tours end where their new controls are; a
+  comment that asked an agent offers the agent tour and not the comments
+  tour, the Send to hint retires once one has, the highlighters tour waits
+  for the sixth text highlight of someone who never turned one on, and the
+  tabs hint's second version names Split right.
 - `guide.mjs`: every `home` anchor without an `open` path is present once;
   the first tour runs end to end from the Tours menu (opening on the add
   demo, both highlights with their demos and the light hand-over, the note

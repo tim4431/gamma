@@ -15,7 +15,7 @@ import { t } from "../shared/i18n/i18n.js";
 export function PageCrumbs({ ancestors, onOpen, targetProps, folders = [], onOpenFolder }) {
   if (!ancestors?.length && !folders.length) return null;
   return (
-    <nav className="pageCrumbs" aria-label={t("Where this page is")}>
+    <nav className="pageCrumbs" aria-label={t("Where this page is")} data-guide={ancestors?.length ? "page.crumbs" : undefined}>
       {folders.map((folder) => (
         <React.Fragment key={folder.id}>
           <button type="button" className="crumbBtn crumbFolder" title={t("Open the folder “{name}”", { name: folder.name })}

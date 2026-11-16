@@ -6,6 +6,7 @@ import { marginLeft } from "../../../src/comments/marginLayout.js";
 import { Account, PYTHON, ROOT, Server, wanted } from "../harness.mjs";
 import { dragSelectPdfText, waitForPdf } from "./pdf.mjs";
 import { dragSelectCodeText } from "./textAnchors.mjs";
+import { TOURS } from "../../../src/guide/tours/index.js";
 
 // The agents on this computer (docs/dev/local_agents.md): the desktop app's
 // own server, where Gamma itself starts Codex in the directory a
@@ -54,6 +55,12 @@ const LIB_ASK = "Is this the right time of day?";
 const LIB_REPLY = "Dawn is right; I asked about the second line.";
 const LIB_QUESTION = "Is dusk right here?";
 const SUNFLOWERS = ["Sunflowers turn east at dawn", "and west at dusk"];
+// The guide's Send to hint and agent tour: two comments sent to Codex, each answered in its thread.
+const TULIPS = ["Tulips close at night", "and open again by day"];
+const GUIDE_ASK = "Is night the right time?";
+const GUIDE_REPLY = "Night is right.";
+const GUIDE_ASK_2 = "Is day the right time to open?";
+const GUIDE_REPLY_2 = "Day is right.";
 // Step 5: the threads a person's Codex keeps of the paper's directory (the
 // stand-in's `sessions`), one of them held by another Codex, and the
 // message the opened one's next turn takes.
@@ -114,7 +121,9 @@ export async function localAgentScenarios(env) {
           delay: 0, typing: 0, chat: TEX_REPLY },
         [LIB_ASK]: { edits: [], gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: SUNFLOWERS[1], pdf_page: 1,
           body: LIB_QUESTION } }], delay: 0, typing: 0, chat: LIB_REPLY },
-        [SESSION_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SESSION_REPLY } } }),
+        [SESSION_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SESSION_REPLY },
+        [GUIDE_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY },
+        [GUIDE_ASK_2]: { edits: [], ask: [], delay: 1, typing: 0, chat: GUIDE_REPLY_2 } } }),
   } });
   try {
     await server.start();
@@ -525,6 +534,72 @@ export async function localAgentScenarios(env) {
         assertEq((await item.locator(".commentAuthor").textContent()).trim(), "Codex", "under Codex's name");
         assertNoProblems(page);
       } finally { await ctx.close(); }
+    });
+
+    // The guide (docs/dev/onboarding.md): writing where Codex can be asked
+    // offers the Send to hint at the field's tick; a comment sent to Codex
+    // offers the agent tour (a later load: one offer a load), which walks
+    // its thread to the end. Every other guide is settled, so none takes
+    // the load's one offer.
+    await step("local-agents: writing a comment that can ask Codex offers the Send to hint, and a comment sent to it the agent tour", async () => {
+      const up = await user.upload("/api/uploads", makePdf([TULIPS]), "guided.pdf", "application/pdf");
+      const paper = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST",
+        body: { default_title: "Guided paper", source_url: up.source_url, original_filename: "guided.pdf" } });
+      const settled = Object.fromEntries(Object.values(TOURS).filter((t) => !["send-to-agent", "agent-comments"].includes(t.id))
+        .map((t) => [t.id, { state: "dismissed", version: t.version }]));
+      // the account's copy holds Suggest tours off from its first load, and wins over the browser's
+      await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: settled, suggestTours: true } } });
+      const ctx = await desktop({ viewport: { width: 1600, height: 900 }, suggestTours: true });
+      const page = await openPage(ctx, at(paper.id));
+      const progress = (id) => page.evaluate((id) => JSON.parse(localStorage.getItem(`gamma-guide:la-user:${id}`) || "null")?.state, id);
+      try {
+        await waitForPdf(page, 1);
+        let margin = await openMargin(page);
+        await dragSelectPdfText(page, 1, "close at night");
+        await page.locator(".plainTip").getByRole("button", { name: "Comment on this passage" }).click();
+        const fresh = margin.locator(".commentCard.active .commentNew");
+        await fresh.waitFor({ timeout: 10000 });
+        await fresh.locator(".commentField .cm-content").click();
+        await page.keyboard.type(GUIDE_ASK.slice(0, 2));
+        await page.waitForSelector('[data-guide-offer="send-to-agent"] .guideCard .guideChip.tip');
+        assertEq(await page.locator('[data-guide="comments.sendTo"][data-guide-active]').count(), 1, "the hint points at the field's tick");
+        await page.getByRole("button", { name: "Got it" }).click();
+        assertEq(await progress("send-to-agent"), "done");
+        const tick = fresh.locator(".commentSendTo input[type=checkbox]");
+        if (!(await tick.isChecked())) await fresh.locator(".commentSendTick").click();
+        await fresh.locator(".commentField .cm-content").click();
+        await page.keyboard.press("End");
+        await page.keyboard.type(GUIDE_ASK.slice(2));
+        await page.keyboard.press("Shift+Enter");
+        await answered(paper.id, GUIDE_ASK, GUIDE_REPLY);
+        assertEq(await page.locator("[data-guide-offer]").count(), 0, "the hint had this load's one offer");
+        await page.reload();
+        await waitForPdf(page, 1);
+        margin = await openMargin(page);
+        await dragSelectPdfText(page, 1, "open again by day");
+        await page.locator(".plainTip").getByRole("button", { name: "Comment on this passage" }).click();
+        await sendNewComment(page, margin, GUIDE_ASK_2);
+        await page.waitForSelector('[data-guide-offer="agent-comments"] .guideCard');
+        await page.getByRole("button", { name: "Show me" }).click();
+        await page.waitForSelector('[data-guide-overlay="agent-thread"] .guideCard');
+        await answered(paper.id, GUIDE_ASK_2, GUIDE_REPLY_2);
+        // Open in chat, on the answer's comment (optional: passed over where it does not show), then the reply step
+        const primary = page.locator(".guideCard .uiBtn.primary");
+        await primary.click();
+        await page.waitForSelector('[data-guide-overlay="agent-chat"] .guideCard, [data-guide-overlay="agent-reply"] .guideCard');
+        if (await page.locator('[data-guide-overlay="agent-chat"]').count()) {
+          assertEq(await page.locator('[data-guide="comments.openChat"][data-guide-active]').count(), 1, "Open in chat on Codex's answer");
+          await primary.click();
+          await page.waitForSelector('[data-guide-overlay="agent-reply"] .guideCard');
+        }
+        await primary.click();
+        await until(async () => await page.locator(".guideCard").count() === 0, { what: "the tour ends" });
+        assertEq(await progress("agent-comments"), "done");
+        assertNoProblems(page);
+      } finally {
+        await ctx.close();
+        await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: {}, suggestTours: false } } });
+      }
     });
 
     // Step 3a: the chat's computer side (docs/dev/local_agents.md "The chat's computer side").

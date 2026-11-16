@@ -20,6 +20,7 @@ import {
 import { pickerColors } from "../shared/model/palette.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
 import { t } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import { HL_IDLE, armedTo, disarmed, highlighterKey, menuClosed, menuOpened, nextArmed, toggled } from "./highlighterState.js";
 
 export function useTextHighlighter({ stored, setStored, seedColor, palette, setPalette, canHighlight, inkOpen, onArm, openSettings, setStatus }) {
@@ -175,6 +176,11 @@ export function useTextHighlighter({ stored, setStored, seedColor, palette, setP
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [armedId, inkOpen, cmds]);
+
+  // what the guide's highlighters tour waits for: one turned on, a strip
+  // button's menu opened
+  useEffect(() => { if (armedId) guideEvents.emit("highlighter.armed"); }, [armedId]);
+  useEffect(() => { if (state.menu) guideEvents.emit("highlighter.menu"); }, [state.menu?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = useMemo(() => shownPresets(list), [list]);
   const hidden = useMemo(() => hiddenPresets(list), [list]);

@@ -7,6 +7,7 @@
 import { Account, FAKE_AI_MODELS, keyLabel, wanted } from "../harness.mjs";
 import { closeEditor, editRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
+import { png } from "./pictures.mjs";
 import { TOURS } from "../../../src/guide/tours/index.js";
 
 export async function triggeredGuideScenarios(env) {
@@ -20,7 +21,7 @@ export async function triggeredGuideScenarios(env) {
   // for those it names in `offers`.
   const EVERYDAY = ["new-note-key", "slash-menu", "paste-as", "mentions", "objects", "tabs", "command-palette", "settings",
     "paper-details", "window-closed", "new-chat", "pdf-switch", "assistant-changes", "ink-selection", "bib-link",
-    "highlights", "notes"];
+    "highlights", "notes", "note-review"];
   const open = async (query, { setup, seenWindows = false, seen = [], offers = [], ...opts } = {}) => {
     // Progress follows the account to every browser, so each case starts
     // with the account's copy cleared as well as a fresh browser.
@@ -761,6 +762,208 @@ export async function triggeredGuideScenarios(env) {
       assertEq(await progress(page, "highlights"), "done");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  // The November guides (docs/dev/onboarding.md): each offered right after
+  // its feature was used, beside it, and walked to its end.
+  await step("triggered guide: a page made inside another offers its tour at the crumbs, which lead back up", async () => {
+    const top = await user.api("/api/pages", { method: "POST", body: { title: "Project plan" } });
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: top.id, content: "first idea" } });
+    const { ctx, page } = await open(`&page=${top.id}`, { seen: ["add-paper", "workspaces"] });
+    try {
+      await editRow(page, "first idea");
+      await page.keyboard.type(" /page");
+      await page.waitForSelector(".slashMenu");
+      await page.keyboard.press("Enter");
+      await until(() => { const id = new URL(page.url()).searchParams.get("block"); return id && id !== top.id; }, { what: "the new page opens" });
+      await page.waitForSelector('[data-guide-offer="sub-pages"] .guideCard');
+      await until(async () => await page.locator('[data-guide="page.crumbs"][data-guide-active]').count() === 1, { what: "the offer points at the crumbs" });
+      assert(!(await progress(page, "back")), "the page's link jump left the Back hint for another time");
+      await page.getByRole("button", { name: "Show me" }).click();
+      // the make-one step dropped: there is one
+      await walk(page, [["sub-crumbs", null], ["sub-move", null]]);
+      assertEq(await progress(page, "sub-pages"), "done");
+      await page.locator('[data-guide="page.crumbs"] .crumbBtn', { hasText: "Project plan" }).click();
+      await until(() => new URL(page.url()).searchParams.get("block") === top.id, { what: "the crumb leads back up" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A page's tab is emitted by another effect of the commit its page.opened
+  // came with: both reach the guide (useGuide's queue keeps the later one).
+  await step("triggered guide: the fourth page to get a tab offers the tabs hint, naming Split right; a tab's menu answers it", async () => {
+    const titles = ["Tab one", "Tab two", "Tab three", "Tab four", "Tab five"];
+    const made = [];
+    for (const title of titles) made.push(await user.api("/api/pages", { method: "POST", body: { title } }));
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    const { ctx, page } = await open(`&page=${made[0].id}`, { seen: ["add-paper", "workspaces"], offers: ["tabs"] });
+    try {
+      await page.locator(".topbar .tabStrip .tab", { hasText: "Tab one" }).waitFor();
+      let offered = false;
+      for (const title of titles.slice(1)) {
+        if (offered) break;
+        await page.keyboard.press("ControlOrMeta+p");
+        await page.getByRole("dialog", { name: "Open a page" }).getByRole("textbox").fill(title);
+        await until(async () => (await page.locator('[role="option"][data-kind="page"]').count()) === 1, { what: `${title} listed` });
+        await page.keyboard.press("Enter");
+        await page.locator(".topbar .tabStrip .tab", { hasText: title }).waitFor();
+        offered = await page.locator('[data-guide-offer="tabs"] .guideCard').waitFor({ timeout: 2000 }).then(() => true, () => false);
+      }
+      assert(offered, "the tabs hint was never offered");
+      assert((await page.locator(".guideCard .guideTitle").textContent()).includes("Split right"), "it names Split right");
+      await page.locator(".topbar .tabStrip .tab", { hasText: "Tab two" }).click({ button: "right" });
+      await until(async () => await page.locator('[data-guide-offer="tabs"]').count() === 0, { what: "a tab's menu answers the hint" });
+      assertEq(await progress(page, "tabs"), "done");
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    }
+  });
+
+  await step("triggered guide: Split right offers the side-by-side tour on the live pane; from the menu it has the user split first", async () => {
+    const one = await user.api("/api/pages", { method: "POST", body: { title: "Left notes" } });
+    const two = await user.api("/api/pages", { method: "POST", body: { title: "Right notes" } });
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    const { ctx, page } = await open(`&page=${two.id}`, { seen: ["add-paper", "workspaces"] });
+    try {
+      await page.locator(".topbar .tabStrip .tab", { hasText: "Right notes" }).waitFor();
+      await page.keyboard.press("ControlOrMeta+p");
+      await page.getByRole("dialog", { name: "Open a page" }).getByRole("textbox").fill("Left notes");
+      await until(async () => (await page.locator('[role="option"][data-kind="page"]').count()) === 1, { what: "the page listed" });
+      await page.keyboard.press("Enter");
+      await until(() => new URL(page.url()).searchParams.get("block") === one.id, { what: "the second page opens" });
+      const splitRight = async () => {
+        await page.locator(".topbar .tabStrip .tab", { hasText: "Right notes" }).click({ button: "right" });
+        await page.getByRole("menuitem", { name: "Split right" }).click();
+        await until(async () => (await page.locator(".tabGroup.framed").count()) === 2, { what: "two panes" });
+      };
+      await splitRight();
+      await page.waitForSelector('[data-guide-offer="split-view"] .guideCard');
+      assertEq(await page.locator('[data-guide="tabs.live"][data-guide-active]').count(), 1, "the offer rings the live pane");
+      assertEq(await page.locator(".guideCard .guideStep").textContent(), "Quick tour · 3 steps", "the split step is dropped: it is split");
+      await page.getByRole("button", { name: "Show me" }).click();
+      await page.waitForSelector('[data-guide-overlay="split-live"] .guideCard');
+      // the card tucked into the live pane, clear of the other one
+      const [card, other] = [await page.locator(".guideCard").boundingBox(), await page.locator('[data-guide="tabs.other"]').boundingBox()];
+      assert(card.x + card.width <= other.x + 1, "the card stays on the live pane");
+      await walk(page, [["split-live", null], ["split-move", null], ["split-join", null]]);
+      assertEq(await progress(page, "split-view"), "done");
+      // One pane again, then from the Tours menu: the user splits, and the tour goes on.
+      await page.locator(".tabGroup.framed.live .tabStrip .tab").first().click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Join tab groups" }).click();
+      await until(async () => (await page.locator(".tabGroup.framed").count()) === 0, { what: "one pane" });
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="split-view"]');
+      await page.waitForSelector('[data-guide-overlay="split-make"] .guideChip.turn');
+      await splitRight();
+      await page.waitForSelector('[data-guide-overlay="split-live"] .guideCard');
+      await page.getByRole("button", { name: "Dismiss" }).click();
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    }
+  });
+
+  await step("triggered guide: the highlighters tour turns one on, opens its menu, and ends on Duplicate", async () => {
+    const upload = await user.upload("/api/uploads", makePdf([["Highlighter tour", "A line to mark at once."]]), "marker.pdf", "application/pdf");
+    const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Marker paper", source_url: upload.source_url } });
+    const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"] });
+    try {
+      await waitForPdf(page);
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="highlighters"]');
+      await page.waitForSelector('[data-guide-overlay="hl-arm"] .guideCard');
+      const strip = page.locator('[data-guide="viewer.highlighter"] button').first();
+      await strip.click();
+      await page.waitForSelector('[data-guide-overlay="hl-style"] .guideCard');
+      assertEq(await strip.getAttribute("aria-pressed"), "true", "the highlighter is on");
+      await strip.click({ button: "right" });
+      await page.waitForSelector(".hlMenu");
+      await page.waitForSelector('[data-guide-overlay="hl-more"] .guideCard');
+      assertEq((await page.locator(".guideCard .keyCaps").count()) >= 2, true, "the keys drawn as caps");
+      // Done with the menu still open (Esc would leave the tour), which the card's press leaves open
+      await primary(page).click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      assertEq(await progress(page, "highlighters"), "done");
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: highlights left to check after a replacement offer the review tour, which opens a card from the Document menu", async () => {
+    const lines1 = ["Results were measured twice", "A sentence that later changed"];
+    const lines2 = ["Results were measured twice", "A sentence that was rewritten"];
+    const up1 = await user.upload("/api/uploads", makePdf([lines1]), "first.pdf", "application/pdf");
+    const up2 = await user.upload("/api/uploads", makePdf([lines2]), "second.pdf", "application/pdf");
+    const paper = await user.api(`/api/blocks/by-doc/${up2.doc_id}`, { method: "POST", body: { default_title: "Replaced paper", source_url: up2.source_url } });
+    const box = { x1: 72, y1: 82, x2: 360, y2: 103 };
+    const frac = [box.x1 / 612, box.y1 / 792, box.x2 / 612, box.y2 / 792].map((v) => Math.round(v * 10000) / 10000);
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+      properties: { quote: lines2[1], color: "rgba(255, 226, 143, 0.4)", pdf_position: { pageNumber: 1, width: 612, height: 792,
+        boundingRect: box, rects: [box], approx: true, match: 0.8, prev: { doc_id: up1.doc_id, pageNumber: 1, rects: [frac], quote: lines1[1] } } } } });
+    const { ctx, page } = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"] });
+    try {
+      await waitForPdf(page);
+      await page.waitForSelector('[data-guide-offer="highlight-review"] .guideCard', { timeout: 15000 });
+      assertEq(await page.locator('[data-guide="page.document"][data-guide-active]').count(), 1, "the offer points at the Document button");
+      await page.getByRole("button", { name: "Show me" }).click();
+      await page.waitForSelector('[data-guide-overlay="review-open"] .guideChip.turn');
+      assertEq(await page.locator('[data-guide="page.review"][data-guide-active]').count(), 1, "the step opened the menu at Review");
+      await page.click('[data-guide="page.review"]');
+      await page.waitForSelector('[data-guide-overlay="review-card"] .guideCard');
+      assertEq(await page.locator('[data-guide="pdf.reviewCard"][data-guide-active]').count(), 1, "the card the menu opened");
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="review-all"] .guideCard');
+      assertEq(await page.locator('[data-guide="page.acceptAll"][data-guide-active]').count(), 1, "back in the menu, at Accept all");
+      await primary(page).click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      assertEq(await progress(page, "highlight-review"), "done");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("triggered guide: the Files window's first showing says what it holds, and a picture placed says how to work it", async () => {
+    const upload = await user.upload("/api/uploads", makePdf([["Pictures and files", "A page to put a picture on."]]), "pics.pdf", "application/pdf");
+    const paper = await user.api(`/api/blocks/by-doc/${upload.doc_id}`, { method: "POST", body: { default_title: "Picture paper", source_url: upload.source_url } });
+    const files = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces"], offers: ["files-window"] });
+    try {
+      await waitForPdf(files.page);
+      // Nothing is suggested until the synced profile has loaded: a window
+      // shown in that first moment is hidden and shown again (View stays open).
+      await files.page.click('[data-guide="header.view"]');
+      const row = files.page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Files", exact: true });
+      let offered = false;
+      for (let tries = 0; tries < 5 && !offered; tries++) {
+        if (tries) await row.click(); // hide it again
+        await row.click();
+        offered = await files.page.locator('[data-guide-offer="files-window"] .guideCard .guideChip.tip')
+          .waitFor({ timeout: 3000 }).then(() => true, () => false);
+      }
+      assert(offered, "the Files window hint was never offered");
+      assertEq(await files.page.locator('[data-guide="files.grip"][data-guide-active]').count(), 1, "it points at the Files window");
+      await files.page.getByRole("button", { name: "Got it" }).click();
+      assertEq(await progress(files.page, "files-window"), "done");
+      assertNoProblems(files.page);
+    } finally { await files.ctx.close(); }
+    const pics = await open(`&page=${paper.id}`, { seenWindows: true, seen: ["add-paper", "notebook", "workspaces", "handwriting"], offers: ["pictures"] });
+    try {
+      await waitForPdf(pics.page);
+      await pics.page.click('[data-guide="pdf.inkButton"]');
+      await pics.page.waitForSelector(".pdfInkBar");
+      const chooser = pics.page.waitForEvent("filechooser");
+      await pics.page.click(".pdfInkBar button[aria-label='Picture']");
+      await (await chooser).setFiles({ name: "guide.png", mimeType: "image/png", buffer: png(120, 80) });
+      await pics.page.waitForSelector('[data-guide-offer="pictures"] .guideCard .guideChip.tip', { timeout: 15000 });
+      assertEq(await pics.page.locator('[data-guide="picture.toolbar"][data-guide-active]').count(), 1, "it points at the picture's bar");
+      await pics.page.getByRole("button", { name: "Got it" }).click();
+      assertEq(await progress(pics.page, "pictures"), "done");
+      assertNoProblems(pics.page);
+    } finally { await pics.ctx.close(); }
   });
 
   // A setup guide (docs/dev/onboarding.md, "Setup guides"): its steps open

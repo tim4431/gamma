@@ -627,7 +627,11 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   const offerResume = offerAvailable && !!offer.resume;
   const offerCard = useMemo(() => {
     if (!offerTour) return null;
-    const steps = stepsFor(offerTour);
+    // A step that has the user make what the trigger's own event says was
+    // just made is not counted, though its thing may not be on screen yet
+    // (a sub-page offered as it opens).
+    const made = offerTour.trigger?.event;
+    const steps = stepsFor(offerTour).filter((s) => !(s.creates && made && s.advanceOn?.event === made));
     const intro = offerTour.welcome && steps[0]?.intro ? steps[0] : null;
     // A slide with a setup guide gets its way in where the guide can start.
     if (intro) return { ...intro, id: offerTour.id, welcome: true, minutes: offerTour.minutes, anchor: null,
