@@ -175,6 +175,13 @@ export function folderNeighbour(tree, id, step) {
 export const filedIn = (map, ids) => (Array.isArray(ids) ? ids.filter((id) => map.has(id)) : []);
 // The path of the first folder a page is filed in ("" when none).
 export const firstFolderPath = (tree, ids) => folderPath(tree, filedIn(tree.folders, ids)[0]);
+// The folder of those a page is filed in (`ids`) that its crumbs lead to:
+// one at or below `from`, the folder the library showed when the page was
+// opened, so the path reads as the way it came; else its first; "" for none.
+export function placeFolder(tree, ids, from = "") {
+  const filed = filedIn(tree.folders, ids);
+  return (from && filed.find((id) => inFolder(tree, id, from))) || filed[0] || "";
+}
 
 // Whether folder `id` is inside a work folder: a folder of its chain, its
 // own included, carries the mark (explorer/workFolders.js workOf's rule).
