@@ -24,7 +24,7 @@
     "tools/branding/build-connections.py": "a86fef54e560430ce91df2bd18e25d96ef45b5e0e567c5cdfcca2c5f0c958bc4",
     "tools/branding/build-library.py": "a3a65d14cbb9763674632f3e05a6506017c3267857b3f96323d634c5a3818673",
     "tools/branding/build-workspaces.py": "36f319915fac8ebd446c6a8a6c37013320e1754beb5a472befa4d2750e85af9e",
-    "tools/branding/build.mjs": "cb892f08f81755a5850136a8902eb8ad8e45cdb9007eed16206a5ef93ff38c4f",
+    "tools/branding/build.mjs": "1beae60444957a2587e0ceb0812404c2373f0149cdaff16a9de8813d9ff93034",
     "tools/branding/check.test.mjs": "1ae671ea7785756b7a5828a82bb478c237b2efd1e37a2bdb2f17c6c5a38f5e11",
     "tools/branding/logo.mjs": "43bf2a2afdcdc7723a48e65c60bb6f8ba1debb9a108565fd962952bda22195f4",
     "tools/branding/mark.mjs": "dac6eea8dfd56679fa6387d8cb51f2f017e09c642508af32feda063aae495048",
