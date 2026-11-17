@@ -260,6 +260,15 @@ test("where the agent works: a choice of the offered directories until the first
   assert.deepEqual(workPlace(own, null, dirs, "d2"), { pick: true, value: "d2", options, text: "/tmp/b" });
   assert.equal(workPlace(own, null, dirs, "gone").value, "", "a directory no longer offered: none");
   assert.deepEqual(workPlace(own, null, []).options, [["", "Its own directory"]]);
+  // as a Codex thread starts in the project used last: the folders used last first, the newest the default
+  const used = ["gone", "d2", ""];
+  const byUse = [["", "Its own directory"], ["d2", "/tmp/b"], ["d1", "Scratch"]];
+  assert.deepEqual(workPlace(own, null, dirs, null, used), { pick: true, value: "d2", options: byUse, text: "/tmp/b" },
+    "the newest still offered");
+  assert.equal(workPlace(own, null, dirs, "", used).value, "", "a pick, Its own directory too, comes before the one used last");
+  assert.equal(workPlace(own, null, dirs, "d1", used).value, "d1");
+  assert.equal(workPlace(own, null, dirs, null, ["", "d2"]).value, "", "the last began in a directory of its own");
+  assert.equal(workPlace(own, null, dirs, "gone", ["d1"]).value, "d1", "a pick no longer offered: the one used last");
   // once the conversation has a turn, its own: shown among the others, not to change
   const said = { messages: [person, agent()] };
   assert.deepEqual(workPlace(own, said, dirs), { pick: false, value: "", options, text: "Its own directory" });

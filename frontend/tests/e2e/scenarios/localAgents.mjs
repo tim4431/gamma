@@ -823,7 +823,7 @@ export async function localAgentScenarios(env) {
     });
 
     // Step 2.8 of docs/research/agents-as-participants-plan.md: a chat with no AI service.
-    await step("local-agents: with no AI service, a library PDF's chat is Codex's, the setup card picks it again, and it answers in a directory offered", async () => {
+    await step("local-agents: with no AI service, a library PDF's chat is Codex's, the setup card picks it again, and it answers in the directory picked in the folder chip; a new chat starts there, and Add folder… offers and picks another", async () => {
       const notesDir = path.join(disk, "notes");
       fs.mkdirSync(path.join(notesDir, "sections"), { recursive: true });
       fs.writeFileSync(path.join(notesDir, "sections", "method.tex"), "We fit it by gradient descent.\n");
@@ -849,11 +849,14 @@ export async function localAgentScenarios(env) {
         await dock.locator(".computerStrip").waitFor();
         // the header keeps what applies to Codex's conversation
         await dock.getByRole("button", { name: "Chat history", exact: true }).waitFor();
-        // where it works: the directory offered, picked in the composer's chip ("Works in") before the first turn
-        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        // where it works: the folder chip at the bar's start, a directory of its own while none was used
+        // yet, the directory offered picked before the first turn
+        const place = dock.locator(".chatPlaceChip .uiSelectBtn");
+        assertEq((await place.innerText()).trim(), "Its own directory", "none used yet");
+        await place.click();
         await page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio", { name: "Notes", exact: true }).click();
         await dock.locator(".chatEmpty", { hasText: "it works in the directory you chose" }).waitFor();
-        await until(async () => (await dock.locator(".computerPlace").innerText()).trim() === "Notes", { what: "the strip names the pick" });
+        await until(async () => (await place.innerText()).trim() === "Notes", { what: "the chip names the pick" });
         await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill("what is this paper about?");
         await dock.getByRole("button", { name: "Send", exact: true }).click();
         // the reply in the chat's own transcript: its steps pill, its text, what it changed
@@ -862,17 +865,42 @@ export async function localAgentScenarios(env) {
         // outside a synced folder the changed file is named, not linked: no page holds it
         await dock.locator(".chatFileChanges code", { hasText: "sections/method.tex" }).waitFor();
         assertEq(await dock.locator(".chatFileChanges a").count(), 0, "no link to a file Gamma does not sync");
-        await until(async () => (await dock.locator(".computerPlace").innerText()).trim() === "Notes", { what: "the strip names the directory" });
-        assertEq(await dock.locator(".computerPlace").getAttribute("title"), "Start a new chat to work elsewhere", "the conversation's now");
-        // the chip shows where it works, no longer to change
-        await dock.locator(".chatModelChip .uiSelectBtn").click();
+        // the chip shows where it works, the conversation's now and no longer to change; the strip leaves it to the chip
+        await until(async () => (await place.getAttribute("title")) === "Codex works in Notes in this conversation: start a new chat to work elsewhere",
+          { what: "the conversation's now" });
+        assertEq([(await place.innerText()).trim(), await dock.locator(".computerPlace").count()].join(), "Notes,0", "named once, by the chip");
+        await place.click();
         const kept = page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio", { name: "Notes", exact: true });
         assertEq([await kept.getAttribute("aria-checked"), await kept.isDisabled()].join(), "true,true", "checked and disabled");
+        assertEq(await page.getByRole("menuitem", { name: "Add folder…", exact: true }).count(), 0, "nothing to add to a conversation's place");
+        await page.keyboard.press("Escape");
+        const stored = (await user.api(`/api/local-agents/chat?bucket=${paper.id}`)).conversation;
+        assertEq(stored.messages.at(-1).state, "done", "the turn ran");
+        // a new chat starts in the folder the last one began in, as a Codex thread in the project used last
+        await dock.getByRole("button", { name: "New chat", exact: true }).click();
+        await until(async () => (await place.getAttribute("title")) === "Codex works in Notes", { what: "the new chat's, to choose" });
+        await dock.locator(".chatEmpty", { hasText: "it works in the directory you chose" }).waitFor();
+        // Add folder…: the shell's folder dialog (no shell here: the ask is recorded and its PUT made as the
+        // shell makes it), the folder offered then picked
+        await page.evaluate(() => {
+          window.shellAsks = [];
+          window.addEventListener("message", (e) => { if (e.data?.source === "gamma-app") window.shellAsks.push(e.data); });
+        });
+        await place.click();
+        await page.getByRole("menuitem", { name: "Add folder…", exact: true }).click();
+        await until(async () => (await page.evaluate(() => window.shellAsks.map((a) => `${a.type}:${a.dir}`))).join() === "agent-dirs:new",
+          { what: "the shell asked for a folder" });
+        const draftsDir = path.join(disk, "drafts");
+        fs.mkdirSync(draftsDir, { recursive: true });
+        await user.api("/api/local-agents/dirs", { method: "PUT",
+          body: [...offered.dirs.map(({ id, path: at, name }) => ({ id, path: at, name })), { path: draftsDir, name: "" }] });
+        await until(async () => (await place.innerText()).trim() === "drafts", { timeout: 10000, what: "the folder added, picked" });
+        await place.click();
+        const rows = await page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio").allInnerTexts();
+        assertEq(rows.map((r) => r.trim()).join(), "Its own directory,Notes,drafts", "the folder used last before the others");
         await page.keyboard.press("Escape");
         assertNoProblems(page);
       } finally { await ctx.close(); }
-      const stored = (await user.api(`/api/local-agents/chat?bucket=${paper.id}`)).conversation;
-      assertEq(stored.messages.at(-1).state, "done", "the turn ran");
       assert(fs.readFileSync(path.join(notesDir, "sections", "method.tex"), "utf8").includes("weight decay"), "Codex edited the directory offered");
       await user.api("/api/local-agents/dirs", { method: "PUT", body: [] });
     });

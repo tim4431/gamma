@@ -4838,9 +4838,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   font-family: inherit;
 }
 /* The model chip: a borderless pill naming the model (and effort), whose
-   menu opens upward with the reasoning effort as a second section. */
-.chatModelChip { min-width: 0; display: inline-flex; }
-.chatModelChip .uiSelectBtn {
+   menu opens upward with the reasoning effort as a second section; with a
+   computer's agent the folder chip, the same pill naming where it works,
+   leads the bar and gives way first. */
+.chatModelChip, .chatPlaceChip { min-width: 0; display: inline-flex; }
+.chatPlaceChip { flex: 0 100 auto; }
+:is(.chatModelChip, .chatPlaceChip) .uiSelectBtn {
   border-color: transparent;
   background: transparent;
   box-shadow: none;
@@ -4848,7 +4851,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   max-width: 180px;
   min-width: 0;
 }
-.chatModelChip .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
+:is(.chatModelChip, .chatPlaceChip) .uiSelectBtn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.chatPlaceChip .uiSelectBtn > svg { flex-shrink: 0; }
 /* The chip's label is a row: the agent while there are several, then the
    model (with its effort), each ellipsized, the model giving way first,
    then the speed tier's glyph. In a reply's foot the same glyph sits

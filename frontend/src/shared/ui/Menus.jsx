@@ -308,9 +308,11 @@ function useMenuTrigger({ side = "below" } = {}) {
 // the trigger props (including its ref — passed to ContextMenu as ignoreRef
 // so the trigger's own click toggles) plus the open state; MenuSelect and
 // ActionMenu are the two shapes built on it.
-// `up` opens the menu above the trigger (y is then the menu's bottom edge).
-function useDropdown(up = false) {
-  const [menu, setMenu] = useState(null); // {x (right edge), y}
+// `up` opens the menu above the trigger (y is then the menu's bottom edge),
+// `start` lines it up with the trigger's left edge rather than its right
+// (a trigger at a bar's start).
+function useDropdown(up = false, start = false) {
+  const [menu, setMenu] = useState(null); // {x (the edge it lines up with), y}
   const triggerRef = useRef(null);
   const close = () => setMenu(null);
   const triggerProps = {
@@ -318,7 +320,7 @@ function useDropdown(up = false) {
     onClick: () => {
       if (menu) { close(); return; }
       const r = triggerRef.current.getBoundingClientRect();
-      setMenu({ x: r.right, y: up ? r.top - 4 : r.bottom + 4 });
+      setMenu({ x: start ? r.left : r.right, y: up ? r.top - 4 : r.bottom + 4 });
     },
   };
   return [menu, close, triggerProps, triggerRef];
@@ -337,21 +339,24 @@ function useDropdown(up = false) {
 // text (the current label by default) and may be a node, for a label that
 // carries a glyph of its own. A menu holding more than one choice
 // gives the main options a `heading` and lists the others as `sections`,
-// [{label, value, onChange, options, disabled, title}], each under its own
-// heading — the chat composer's chip with the reasoning effort and where a
-// computer's agent works; a `disabled` section shows its choice and takes
-// none, its `title` saying why on each row. `up` opens above the
-// trigger. `disabled` greys the trigger out and keeps the menu shut.
+// [{label, value, onChange, options}], each under its own heading — the
+// chat composer's chip with the reasoning effort and the speed. `locked`, a
+// sentence, shows the main options' choice and takes none, the sentence
+// the title of each row (where a conversation's agent works, once it
+// began). `actions` [{icon, label, title, onClick}] end
+// the menu, after a rule, as plain rows (the composer's folder chip's Add
+// folder…). `up` opens above the trigger, `start` from its left edge.
+// `disabled` greys the trigger out and keeps the menu shut.
 // `ghost` draws the trigger as a `uiBtn ghost` (no frame until hover), for a
 // choice inside a line of text.
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
-  display, heading, sections = [], up = false, disabled = false, ghost = false }) {
-  const [menu, close, triggerProps, triggerRef] = useDropdown(up);
+  display, heading, sections = [], actions = [], locked = "", up = false, start = false, disabled = false, ghost = false }) {
+  const [menu, close, triggerProps, triggerRef] = useDropdown(up, start);
   const id = useId(); // the trigger's: it names the menu
   const current = options.find(([v]) => v === value) || options[0];
   const CurrentIcon = current?.[2];
   const title = TriggerIcon ? `${t(current?.[1])} — ${label}` : label;
-  // `off` a disabled section's {title}.
+  // `off` a locked row's {title}.
   const choice = ([val, lab, OptIcon, trailing, tip], selected, pick, off = null) => (
     <button key={val} role="menuitemradio" aria-checked={selected} className="ctxMenuItem ctxMenuItemIconed"
       title={off?.title || tip || undefined} disabled={!!off} onClick={() => { close(); pick(val); }}>
@@ -380,16 +385,20 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
         {!iconOnly ? <ChevronDownIcon size={14} className="uiSelectChev" /> : null}
       </button>
       {menu ? (
-        <ContextMenu x={menu.x} y={menu.y} anchorRight anchorBottom={up} onClose={close} ignoreRef={triggerRef} className="uiSelectMenu"
-          aria-labelledby={id}>
+        <ContextMenu x={menu.x} y={menu.y} anchorRight={!start} anchorBottom={up} onClose={close} ignoreRef={triggerRef}
+          className="uiSelectMenu" aria-labelledby={id}>
           {heading ? <MenuLabel id={`${id}-0`}>{heading}</MenuLabel> : null}
-          {choices(heading ? `${id}-0` : null, options.map((option) => choice(option, option[0] === value, onChange)))}
+          {choices(heading ? `${id}-0` : null, options.map((option) => choice(option, option[0] === value, onChange,
+            locked ? { title: locked } : null)))}
           {sections.map((section, i) => (
             <React.Fragment key={section.label}>
               <MenuLabel id={`${id}-${i + 1}`}>{section.label}</MenuLabel>
-              {choices(`${id}-${i + 1}`, section.options.map((option) => choice(option, option[0] === section.value, section.onChange,
-                section.disabled ? { title: section.title } : null)))}
+              {choices(`${id}-${i + 1}`, section.options.map((option) => choice(option, option[0] === section.value, section.onChange)))}
             </React.Fragment>
+          ))}
+          {actions.length ? <MenuDivider /> : null}
+          {actions.map(({ icon, label: lab, title: tip, onClick }) => (
+            <MenuItem key={lab} icon={icon} title={tip} onClick={() => { close(); onClick(); }}>{lab}</MenuItem>
           ))}
         </ContextMenu>
       ) : null}

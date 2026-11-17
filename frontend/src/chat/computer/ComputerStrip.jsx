@@ -3,9 +3,10 @@
 // slot under its header: the agent and where it works, or what stops it
 // or waits for the person (computerChat.js stripLine), a plain line and not
 // a live region (the turn's pill in the transcript is the one read out,
-// and says how a turn goes); after it where the agent works outside a
-// synced folder (workPlace: the directory's name, chosen in the composer's
-// chip while the conversation has no turn); and its ⋯ menu, the desktop
+// and says how a turn goes); after it, while the composer gives way to a
+// note (a comment thread's conversation, a co-author's), where the agent
+// works outside a synced folder (workPlace: the directory's name, else the
+// composer's folder chip's); and its ⋯ menu, the desktop
 // shell's to do: Continue in a terminal and, on a page of a work folder
 // kept here, Show in Explorer (vaultState revealLabel). The page only asks: the shell reads the
 // session and the folder from its own server, never a command from the
@@ -43,11 +44,11 @@ function StripMenu({ bucket, label, session, reveal }) {
 }
 
 // Where the agent works: the directory's name after a folder glyph, the
-// conversation's once it has a turn (a new chat may work elsewhere).
+// conversation's (it has a turn).
 function Place({ place }) {
   if (!place) return null;
   return (
-    <span className="computerPlace" title={place.pick ? t("Where the agent works in this conversation") : t("Start a new chat to work elsewhere")}>
+    <span className="computerPlace" title={t("Where the agent works in this conversation")}>
       <FolderIcon size={14} /><span className="computerPlaceName">{place.text}</span>
     </span>
   );
@@ -65,7 +66,7 @@ export default function ComputerStrip({ side, bucket, page = false }) {
       {strip.kind === "checking" ? <span className="transferSpin inline" aria-hidden="true" />
         : strip.kind === "asking" ? <ShieldIcon size={14} aria-hidden="true" /> : null}
       <span className="chatHealthText">{strip.text}</span>
-      <Place place={place} />
+      {side.shown ? <Place place={place} /> : null}
       {offersMenu(info) ? (
         <StripMenu bucket={bucket} label={label} session={canContinue(info, conversation)} reveal={revealsFile(info, page)} />
       ) : null}
