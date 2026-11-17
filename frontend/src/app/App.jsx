@@ -9239,6 +9239,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setQuickOpen((v) => (v && v.prefix === prefix ? null : { prefix }));
     },
     back: () => goBackNavRef.current?.(),
+    // The tab the strip shows active: a pressed one whose page is still on
+    // its way, else the open page's.
+    closeTab: () => closeTab(tabPick || focusedBlockId),
     mouseBack: () => {
       if (navStackLen) goBackNavRef.current?.();
       else if (!homeMode) goHome();

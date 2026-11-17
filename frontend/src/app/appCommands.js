@@ -11,7 +11,7 @@
 // page shows comments: not a publication, readable), homePick (the one
 // page selected on the home library), homePicks (how many), organize (the
 // library may be changed: library/libraryAccess.js), search(all),
-// palette(prefix), back(), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
+// palette(prefix), back(), closeTab() (the active tab), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
 // toggleComments(), togglePdf(), toggleNotes(), toggleFiles() (the Files
 // window; on a phone its overlay), splitTab(side) and joinGroups()
 // with phone (one view at a time: no groups) and groups (how many tab groups),
@@ -30,6 +30,7 @@
 // do not apply): {toggle(), next()} }.
 import { t } from "../shared/i18n/i18n.js";
 import { isTextField } from "../shared/lib/hotkeys.js";
+import { IS_DESKTOP } from "../shared/lib/connector.js";
 
 export const GROUP_NAVIGATION = t("Navigation");
 export const GROUP_PAGE = t("Page");
@@ -98,6 +99,9 @@ export const APP_COMMANDS = [
   cmd("app.quickOpen", t("Go to page"), GROUP_NAVIGATION, "Mod-p", (c) => { c.palette(""); }, { when: (c) => !c.shareMode, inDialog: inPalette }),
   cmd("app.commandPalette", t("Command palette"), GROUP_NAVIGATION, "Mod-Shift-p", (c) => { c.palette(">"); }, { palette: false, inDialog: inPalette }),
   cmd("app.back", t("Back to where you were"), GROUP_NAVIGATION, "Alt-ArrowLeft", (c) => { c.back(); }),
+  // The active tab, as the tab's own Close. Ctrl+W is the desktop app's
+  // alone: a browser keeps it for its own tab, so there it starts unbound.
+  cmd("app.closeTab", t("Close tab"), GROUP_NAVIGATION, IS_DESKTOP ? "Mod-w" : null, (c) => { c.closeTab(); }, { when: (c) => c.hasPage && !c.shareMode }),
   cmd("app.settings", t("Open settings"), GROUP_NAVIGATION, "Mod-,", (c) => { c.openSettings(); }, { when: (c) => !c.shareMode }),
   cmd("app.keyboardSettings", t("Keyboard shortcuts…"), GROUP_NAVIGATION, null, (c) => { c.openSettings("keyboard"); }, { when: (c) => !c.shareMode }),
   cmd("app.workspaces", t("Workspaces…"), GROUP_NAVIGATION, null, (c) => { c.openSettings("workspaces"); }, { when: (c) => !c.shareMode }),

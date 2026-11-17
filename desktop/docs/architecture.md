@@ -1788,7 +1788,8 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
 
 - `main.js` — window + views + layout, theme mirror, native menu
   (accelerators only; hidden behind Alt on Windows; *Window* holds *Show
-  Gamma*, *Help* holds *Check for Updates…*), IPC for the shell pages, auto-login script, navigation guard
+  Gamma*, *Help* holds *Check for Updates…*; *Close Window* is
+  Ctrl/⌘+Shift+W, since Ctrl/⌘+W is the page's *Close tab*), IPC for the shell pages, auto-login script, navigation guard
   (only registered server origins may load in the content view; everything
   else — `target=_blank`, cross-origin redirects — opens in the system
   browser; a server's Gamma Cloud sign-in start is taken over, "Gamma Cloud

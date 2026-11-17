@@ -724,6 +724,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | F2 / Del | Rename / delete the selected page |
 | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo |
 | Alt+← | Back through link jumps |
+| Ctrl+W | In the desktop app: close the tab (Ctrl+Shift+W closes the window); in a browser, give Close tab a key in Settings → Keyboard |
 | Enter / Shift+Enter | New note / line break (swappable); in search: next / previous match; in chat: send / newline; in a comment: newline / send |
 | Tab / Shift+Tab | Indent / outdent a note; accept a filter chip; hop `{}` arguments or table cells |
 | ↑ / ↓ | On a note's first / last line: move into the note above / below |
