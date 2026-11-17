@@ -733,6 +733,28 @@ def test_the_makers_message_there_runs_here_and_its_reply_is_written_there(lab, 
     assert (there["state"], there["run"], there["holder"]) == ("done", home.chat_run_id(turn_id), f.token["id"])
 
 
+def test_a_message_steered_there_reaches_the_turn_here_once_and_joins_its_message_there(lab, nas, monkeypatch):
+    script_agent(monkeypatch, nas.log, delay=2, edits=[{"path": "main.tex", "old": "Weight Decay", "new": "Weight decay"}])
+    f = _made(lab, nas, "RC steer")
+    f.turn.once()
+    turn_id = _say(lab.owner, f.page, "Lower the title's case.")["turn"]["id"]
+    f.turn.once()
+    _until(lambda: _reply(lab, f.page)["steps"])
+    steer = {"id": "rcSteerOne", "text": "Only the first word."}
+    assert lab.editor.post(f"/api/local-agents/chat/turns/{turn_id}/steer", json=steer).status_code == 404
+    r = lab.owner.post(f"/api/local-agents/chat/turns/{turn_id}/steer", json=steer)
+    assert r.status_code == 200 and r.json() == {"steered": True}
+    f.turn.once()                                       # woken: the listing hands it over, the agent takes it
+    assert chats.steers_of(f.token["id"]) == []         # handed over once
+    assert runner.wait_idle(60)
+    reply = _reply(lab, f.page)
+    assert reply["state"] == "done" and reply["text"] == "Done: Lower the title's case.; Only the first word."
+    [taken] = reply["steers"]
+    assert (taken["id"], taken["text"], taken["place"]) == ("rcSteerOne", "Only the first word.", {"text": 0, "steps": 1})
+    r = lab.owner.post(f"/api/local-agents/chat/turns/{turn_id}/steer", json={"id": "rcSteerTwo", "text": "Late."})
+    assert r.status_code == 409
+
+
 def test_the_conversation_reads_while_the_computer_is_away_and_a_message_for_it_is_refused(lab, nas):
     f = _made(lab, nas, "RC away")
     f.turn.once()

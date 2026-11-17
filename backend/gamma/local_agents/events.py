@@ -319,6 +319,12 @@ def protected(path: str, cwd: str) -> bool:
     return len(parts) == 1 and parts[0].startswith(".")
 
 
+def steered(steer_id: str) -> dict:
+    """The agent took the message ``steer_id`` steered into its turn
+    (``Turn.steer``) into its conversation: from here on it works with it."""
+    return {"type": "steered", "id": steer_id}
+
+
 def done(*, ok: bool, text: str = "", error: str = "", stopped: bool = False, usage: dict | None = None,
          gamma_down: bool = False, busy: bool = False) -> dict:
     """The turn's end; ``gamma_down``, it failed because Gamma's tools did
@@ -401,10 +407,11 @@ class Turn:
     tools for the turn (``Gamma``, None for none): its token goes into that
     environment as ``TOKEN_ENV``, and the driver names ``gamma_url`` in the
     agent's own config. ``events()`` may be read
-    once; ``stop()`` and ``answer()`` may be called from any thread, any
-    number of times, and return at once. A driver subclasses it with
-    ``_run`` (the events of the turn, a ``done`` last), when the agent can
-    be asked to stop ``_on_stop``, and when it asks ``_reply``.
+    once; ``stop()``, ``answer()`` and ``steer()`` may be called from any
+    thread, any number of times, and return at once. A driver subclasses it
+    with ``_run`` (the events of the turn, a ``done`` last), when the agent
+    can be asked to stop ``_on_stop``, when it asks ``_reply``, and when it
+    takes a message while it works ``_steer``.
     """
 
     label = "The agent"
@@ -455,6 +462,20 @@ class Turn:
         except EOFError:
             return False
         return True
+
+    def steer(self, text: str, steer_id: str) -> bool:
+        """Hand ``text`` to the turn while it works (Steer, docs/dev/ai.md
+        "Queue and Steer") → whether it was written: False when the agent
+        cannot take it now (its turn ended or is ending, it never started,
+        it is gone, a driver that cannot). A ``steered`` event of
+        ``steer_id`` says when the agent took it in; one written that never
+        is the caller's to send as the next turn."""
+        if self.child is None or self._stop.is_set():
+            return False
+        try:
+            return self._steer(text, steer_id)
+        except EOFError:
+            return False
 
     def close(self) -> None:
         """Stop the turn and kill its CLI now, whether or not ``events()``
@@ -533,6 +554,11 @@ class Turn:
         the person, ``owner``, or Gamma itself, ``gamma``); EOFError when
         the agent is gone."""
         raise EOFError
+
+    def _steer(self, text: str, steer_id: str) -> bool:
+        """Write a message steered into the turn (``steer``) → whether it
+        went; EOFError when the agent is gone."""
+        return False
 
     def _asked(self, ask_id: str, held) -> None:
         """An ask waits for its answer, which the driver writes with

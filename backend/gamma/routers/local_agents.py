@@ -487,6 +487,12 @@ class AnswerBody(BaseModel):
     note: str = ""
 
 
+class SteerBody(BaseModel):
+    id: str = ""
+    text: str = ""
+    selections: list | None = None
+
+
 MAX_NOTE = 2000   # characters of what a decline tells the agent
 
 
@@ -922,6 +928,48 @@ def stop_turn(turn_id: str, request: Request):
     if turn["ws"] != ws:
         raise HTTPException(status_code=404, detail="No turn has that id.")
     return {"stopped": runner.stop_chat(ws, turn_id, conversation["id"])}
+
+
+@router.post("/chat/turns/{turn_id}/steer")
+def steer_turn(turn_id: str, body: SteerBody, request: Request):
+    """``{id, text, selections}``: a message the person steers into their
+    turn while its agent works (docs/dev/ai.md "Queue and Steer") →
+    ``{steered: true}`` once it is handed to the agent, which takes it in
+    at its next step (the message's ``steers`` then say where). A turn that
+    runs on another computer keeps it for that computer to take
+    (``chats.steer_run``) and wakes it. Only the account whose conversation
+    it is steers it, never the agent's owner reading a co-author's. 400 for
+    no text, too long a one or an id Gamma does not make; 404 for a turn of
+    no conversation of the account's; 409 for a turn that takes no message
+    now (queued, ended, or its agent refused it): the chat sends it as the
+    next one."""
+    from ..computers import registry
+    from ..local_agents import chats, runner
+
+    item = chats.steer_of(body.model_dump())
+    if item is None:
+        raise HTTPException(status_code=400, detail="Write a message first, of at most "
+                                                    f"{chats.MAX_TEXT} characters.")
+    user_id = require_personal_user_id(request, SESSION_ONLY)
+    turn = _local_turn(turn_id)
+    if turn is None:
+        ws, conversation, _ = _far_turn(request, turn_id)
+        if conversation["user_id"] != user_id:
+            raise HTTPException(status_code=404, detail=chats.NO_TURN)
+        try:
+            holder = chats.steer_run(ws, turn_id, item)
+        except chats.ChatError as e:
+            raise _refused(e) from None
+        registry.wake(holder, "chat")
+        return {"steered": True}
+    ws, conversation, _ = _conversation_of(request, turn["conversation_id"], seated=False)
+    if turn["ws"] != ws:
+        raise HTTPException(status_code=404, detail=chats.NO_TURN)
+    try:
+        runner.steer_chat(ws, turn_id, item)
+    except chats.ChatError as e:
+        raise _refused(e) from None
+    return {"steered": True}
 
 
 @router.post("/chat/turns/{turn_id}/asks/{ask_id}")

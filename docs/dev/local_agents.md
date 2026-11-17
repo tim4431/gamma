@@ -684,7 +684,13 @@ while the computer is off.
   each write with the next `seq` (an older one changes nothing: `stale`),
   the last always sent, retried while the NAS cannot be reached, a lost
   one by the next flush (`home.missed`; one refused there waits for the
-  next change); a 409 stops the turn.
+  next change); a 409 stops the turn. The listing's `steers` are the
+  messages steered into its turns there (`chats.steer_run`, kept in that
+  server's memory and handed out once, `chats.steers_of`), each given to
+  its turn here (`runner.steer_relayed`); the message it writes back
+  carries their `steers` (`home.CHAT_FIELDS`, checked there by
+  `chats.steered_of`). One a restart there loses, or one the agent never
+  takes, goes as the next turn from that server's chat.
 - **Stop**: a queued turn ends at once; a running one is flagged and its
   computer woken (it stops it and writes its end, or, for a turn it no
   longer runs, ends it there under its run); a running one whose computer
@@ -799,8 +805,12 @@ steps").
   starts). The agent's: `{id, role: "agent", agent, label, turn_id, state:
   queued | running | done | failed | stopped, text, steps: [{id, kind:
   read | edit | run | search | other, status, path? | program?}], asks,
-  changes, changed, built, error, fresh, model, effort, threads?, at,
-  ended_at}`: `asks` what waits for the person ("Asking in the chat"),
+  changes, changed, built, error, fresh, model, effort, threads?, steers?,
+  at, ended_at}`: `asks` what waits for the person ("Asking in the chat"),
+  `steers` the messages the person steered into the turn that its agent
+  took in (`[{id, text, selections, at, place: {text, steps}}]`, at most
+  20, `place` where the reply stood then: the length of its text and how
+  many steps had come; `chats.steered_of`),
   `threads` the comment threads its agent opened in the turn (a turn of
   this server's: `threads.opened`), `model` and
   `effort` what the turn asked for (null for the agent's default),
@@ -892,6 +902,17 @@ steps").
      at the end the changed files from the snapshots, `built`, the state
      and its words. The whole error and stderr tail stay in
      `agent_turns.error`.
+- **Steer** (`runner.steer_chat`, `_ChatTurn.steer`): a message the person
+  steers into the running turn (`chats.steer_of`: `{id, text, selections}`)
+  goes to the agent as `prompt.build_steer` writes it (the request and the
+  passages as `{page, quote}`, data in a JSON block), through the driver's
+  `steer`. When the agent says it took it in (`steered`), the turn records
+  where the reply stood (its paragraphs and steps so far, the agent's next
+  text a paragraph of its own) and writes it in the message's `steers`, its
+  `place` the length of the text those paragraphs make. One the agent never
+  takes is the chat's to send as the next turn (its queue). A turn of
+  another server's running here takes it from that server's listing
+  (`steer_relayed`, below).
 - **Stop** (`runner.stop_chat`): a running turn's stop is set (it ends
   `stopped`), a queued one leaves its queue, one its worker holds while it
   waits for a slot ends `stopped` at once (given its slot, it finds its
@@ -1455,7 +1476,10 @@ and the owner can delete it; notes it changes only through the turn's asks.
 `events.start(name, argv=, cwd=, prompt=, session=, images=, ask=, stream=,
 model=, effort=, gamma=, title=)` starts one turn of an agent and gives a `Turn`: `session` (the
 agent's session or thread id, "" until known), `pid`, `events()` (blocks;
-read once) and `stop()` (thread-safe, returns at once, idempotent).
+read once), `stop()` (thread-safe, returns at once, idempotent) and
+`steer(text, id)` (thread-safe: a message the person steered into the turn
+while it works, "Steer" under "The chat's computer side"; whether it was
+written, False once the turn ends or before it can take one).
 `gamma` is `events.Gamma(url, token)`, Gamma's tools for the turn, or
 None; `title` a new Codex thread's name (a chat turn's conversation's
 title; Claude Code takes none). `events()` gives plain dicts:
@@ -1465,6 +1489,7 @@ title; Claude Code takes none). `events()` gives plain dicts:
 | `session` | `id` |
 | `text` | `text`, a whole message the agent wrote |
 | `tool` | `id`, `kind` (`read`, `edit`, `run`, `search`, `gamma`, `other`), `title` (one line: `Read sections/intro.tex`, `Run latexmk -pdf main.tex`, `Read Gamma: read_page`), `status` (`started`, `completed`, `failed`), `path` (read, edit: relative to the directory with `/` when inside it, else absolute), `command` (run), `output` (a run's last 2000 characters, at its end), `tool` (gamma: the tool's name) |
+| `steered` | `id`: the agent took in the message steered under that id (`steer`) and works with it from here |
 | `done` | `ok`, `text` (the last message), `error` ("" when ok), `stopped`, `usage`, `gamma_down` (Gamma's tools did not start or connect: `events.GammaDown`) |
 
 Every turn ends with exactly one `done`: at its end, on `stop()`, on a
@@ -1599,12 +1624,20 @@ sandbox check) or 120 s (`thread/start`, `thread/resume`, `turn/start`).
    after that leaves it declined. A Stop answers what
    waits `cancel`, then interrupts. `serverRequest/resolved` for an id Gamma
    did not answer withdraws the ask. The other requests stay refused.
+9. **A steer** is `turn/steer {threadId, expectedTurnId, clientUserMessageId:
+   <its id>, input: [{type: "text", text}]}`, not waited for. Codex takes
+   it at once (its instant interrupt cuts what the model writes; a command
+   running finishes) and reports a `userMessage` item whose `clientId` is
+   that id: the `steered` event. After the turn's end it answers -32600
+   "no active turn to steer" and no item names it (checked on codex-cli
+   0.169.0).
 
 ### Claude Code
 
-`claude -p --output-format stream-json --verbose --restricted
---permission-mode acceptEdits --permission-prompts none --strict-mcp-config
---tools Read,Edit,Write,Glob,Grep --disallowedTools Bash,WebFetch,WebSearch`,
+`claude -p --input-format stream-json --output-format stream-json --verbose
+--replay-user-messages --restricted --permission-mode acceptEdits
+--permission-prompts none --strict-mcp-config --tools Read,Edit,Write,Glob,Grep
+--disallowedTools Bash,WebFetch,WebSearch`,
 then, with `gamma`, `--mcp-config {"mcpServers":{"gamma_turn":{"type":"http",
 "url":<the address>,"headers":{"Authorization":"Bearer
 ${GAMMA_AGENT_MCP_TOKEN}"}}}} --allowedTools mcp__gamma_turn` (`claude.mcp_config`:
@@ -1635,10 +1668,19 @@ so nothing positional follows them.
   refused. The cost: the user's own settings
   (a chosen model) are not read either, so the account's default model
   answers.
-- **The prompt** goes on stdin from a thread of its own, started at once
-  (Claude Code waits about 3 s for stdin), and stdin is closed after it.
-  The pictures are not passed: the prompt names them and Claude Code opens
-  them with Read.
+- **The prompt** goes on stdin as a `user` line with `client_composed:
+  true` (no `@path` or `/command` read in it), from a thread of its own,
+  started at once (Claude Code waits about 3 s for stdin), and stdin stays
+  open until the turn's `result`. The pictures are not passed: the prompt
+  names them and Claude Code opens them with Read.
+- **A steer** is one more `user` line, its `uuid` the steer's id (never
+  before the prompt's). Claude Code reads it once the tool calls running
+  finish and answers it in the same response; `--replay-user-messages`
+  echoes it then (`isReplay`, that `uuid`): the `steered` event. One
+  written after the turn's last call starts another turn in the same
+  process, a second `result`, so a `result` while a steer written is not
+  echoed does not end the turn: the next one does, the token reports
+  added. After that a steer is refused (checked on Claude Code 2.1.235).
 - **Lines**: `system`/`init` → `session` (`session_id`); with `gamma` its
   `mcp_servers` must name `gamma_turn` `connected`, else the turn fails
   ("Gamma's tools did not connect for Claude Code (it says failed).",
@@ -1651,7 +1693,8 @@ so nothing positional follows them.
   lines' `tool_result` blocks end the matching tool (`is_error` failed).
   `result` → `done`: ok when `subtype` is `success` and not `is_error`,
   the error the `result` text or the subtype.
-- **`stop()`** kills it: in this form (a text prompt) `-p` has no interrupt.
+- **`stop()`** kills it: without `ask` Gamma speaks no control protocol to
+  it, so there is no interrupt.
 - **With `ask`** (a turn whose agent may ask, "Asking in the chat") the flags are their own, `ASK_FLAGS`: `-p --input-format
   stream-json --output-format stream-json --verbose --restricted
   --permission-mode acceptEdits --permission-prompt-tool stdio
@@ -1809,6 +1852,7 @@ and nothing of the turn's row.
 | GET | `/api/local-agents/chat?bucket=&version=&agent=&thread=&conversation=` | the chat's computer side ("The chat's computer side") of a bucket (a page's id, a folder's or `home`), an account with an agent on here, a co-author an agent here serves (a synced folder's file or folder alone), or the vault's maker on its work folder: `{computer, conversation}`, `computer` the strip (`{agent, label, ready, problem, models, folder, paused, turn, session, folder_id, dir, grants, lent}`, `agent` the one picked (`agent`, while the account turned it on or its owner lends it) or else the account's first (`store.agent_for`, else the first lent), null for none, `session` whether a terminal can continue the conversation (never a co-author's), `ready` and `problem` from `catalog.cached`, `turn` `runner.chat_state` or null, `folder`, `folder_id` and `paused` the work folder's ("", null and false outside one), `dir` where the agent works (`{kind: "vault", name, path}`, the path for the vault's maker alone; `{kind: "offered", id, name}`; null for a directory of its own), `grants` the commands allowed in the conversation in that directory, `[{command, cwd, host}]` (none for a co-author's), `lent` `{by}` for an agent another account lends, else null) and `conversation` the bucket's active one (`{id, title, agent, thread_id, messages, version}`, null for none, and for one of another agent than `agent`), or with `thread` the account's conversation of that comment thread on the bucket, else a co-author's there with the account's agent ("A comment sent to an agent", "A co-author's turn"), or with `conversation` a co-author's chat conversation of the bucket with the account's agent (`chats.lent_one`; null for any other), a co-author's carrying `person`, their username; with `version` the stored one, `{computer, same: true}` |
 | POST | `/api/local-agents/chat/turns` | `{bucket, text, selections?, id?, agent?, model?, effort?, dir?}` → 202 `{conversation, turn: {id, state}}`, `agent` the one picked (left out, the account's first, `store.agent_for`; another computer's turn runs that computer's), `dir` where the conversation works outside a work folder kept here (an offered directory's id, or `""` for one of its own; left out, the active conversation's): another `agent` or a `dir` other than the active conversation's starts a new one (`chats.begin`); 400 for no text, past 20,000 characters, a malformed `id`, a `dir` no offered directory has, or a model or effort the agent did not list; 409 while a turn of the conversation is queued or running ("Codex is still working on the last message…", named by that turn's agent), while the account has no agent on here ("Turn on Codex or Claude Code in Settings → AI → Agents first.") or not the one picked ("Turn on Claude Code in Settings → AI first."), for a folder paused or choosing its files, and for an agent known not to be ready (its problem); 403 when the account is no editor or writes are refused. A repeated `id` (the person's message's) answers the turn it made |
 | POST | `/api/local-agents/chat/turns/{id}/stop` | `{stopped}` (`runner.stop_chat`); the conversation's account's, or its agent's owner's (`chats.readable`) |
+| POST | `/api/local-agents/chat/turns/{id}/steer` | `{id, text, selections?}` → `{steered: true}`: a message steered into the running turn (`runner.steer_chat`; a turn on another computer kept for it, `chats.steer_run`, and the computer woken). The conversation's own account alone. 400 for no text, past 20,000 characters or a malformed `id`; 404 for a turn of no conversation of the account's; 409 for one that takes none now ("The agent is not taking messages now: …"): queued, ended, or its agent refused it |
 | POST | `/api/local-agents/chat/new` | `{bucket}` → `{conversation: null}`, the active conversation archived whichever its agent; 409 while a turn runs |
 | GET | `/api/local-agents/chat/history?bucket=` | `{conversations: [{id, title, agent, updated_at, turns}], active, lent}`: the archived ones newest first (never a thread's), and the active one as they are listed (`chats.listed`, null for none), whichever its agent, which the chat's History lists while another agent is picked; the account's own on every server, whatever became of its agents (no seat asked); `lent` the chat conversations there, active or archived, of the co-authors the account's agents serve, each with its `person` (`chats.lent_history`), read, stopped, answered and exported, never opened or deleted (404) |
 | GET | `/api/local-agents/chat/history/{id}/export` | a conversation of the account's, active or archived, or a co-author's with the account's agent (`chats.readable`), as a file to keep (`chat_export.export_file` with the agent's label: the person's messages with their passages, the agent's steps in words, its reply, what it changed and how its turn ended); 404 for another account's, as the other history routes; like the list and delete, it asks no seat, so a conversation whose agent was turned off is still the account's to keep |
@@ -2023,7 +2067,13 @@ nobody else learns it exists), 403 for a token or the guest
   ("Message Codex on this computer…" its placeholder, or "on TIM-PC"); the
   **Allowed in this chat** chip shows while the strip lists `grants`
   (Gamma AI's `GrantChip`); Send, and Stop in its place while a turn is
-  queued or running. A first read that fails says so where the
+  queued or running and the box is empty. A message sent meanwhile waits
+  in the chat's queue with its passages and goes as the next turn once
+  this one ends done; a turn stopped or failed pauses it. Its **Steer**
+  hands it to the turn while the agent works (`steeringTurn`: running, not
+  waiting for its directory), and the turn's row shows it where the agent
+  took it in (`computerChat.js` `steerParts`: the part before it, the
+  message, the turn going on; [ai.md](ai.md#queue-and-steer)). A first read that fails says so where the
   conversation would be ("Could not load chat: …", **Try again**) and
   Send stays off until a read lands; a poll that fails keeps what was read.
 - **The header** has what applies to such a conversation: Export (the

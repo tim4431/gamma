@@ -17,7 +17,7 @@ import { FolderIcon } from "../../shared/ui/Icons";
 import { stripFacts } from "../agents.js";
 import {
   AWAY_POLL_MS, POLL_MS, SOURCES_MAX, TEXT_MAX, answerBody, askPath, awayFrom, canSend, chatPath, emptyLine, isRemote,
-  lastEnded, liveTurn, modelChoice, modelDisplay, retryOf, shownMessages, sourcesBody, turnBody, workPlace,
+  lastEnded, liveTurn, modelChoice, modelDisplay, retryOf, shownMessages, sourcesBody, steeringTurn, turnBody, workPlace,
 } from "./computerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -113,7 +113,8 @@ export const computerExportPath = (id) => `${API}/local-agents/chat/history/${en
 //   the conversation's {model, effort} (computerChat.modelChoice) and, for
 //   a conversation that begins, `dir` where it works (computerChat
 //   workPlace); answer(turnId, askId, decision, note) answers what the turn
-//   asks, throwing a refusal for the card to say; stop(turnId) and
+//   asks, throwing a refusal for the card to say; steer(turnId, item) hands
+//   a queued message to the running turn, throwing the refusal; stop(turnId) and
 //   newChat() do what they say and read the conversation again;
 //   revokeGrants() takes back what was allowed in the conversation;
 //   say(text) is the status pill
@@ -246,6 +247,13 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
     }
   }, [load]);
 
+  // A queued message steered into the running turn `id` (chat/chatQueue.js
+  // `{id, text, parts}`): handed to its agent, which takes it in at its next
+  // step; throws the server's refusal (409: the turn takes none now, and the
+  // queue sends it as the next turn).
+  const steer = useCallback((id, item) => apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/steer`,
+    post({ id: item.id, text: String(item.text).slice(0, TEXT_MAX), selections: item.parts?.selections || [] })), []);
+
   const stop = useCallback((id) => act(async () => {
     await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/stop`, post({}));
   }, (message) => t("Couldn't stop {agent}: {message}", { agent: label, message })), [act, label]);
@@ -267,7 +275,7 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
 
   return {
     computer: state.computer, conversation: state.conversation, read: state.read, error: state.error, busy,
-    reload: load, say, send, answer, stop, newChat, revokeGrants,
+    reload: load, say, send, answer, steer, stop, newChat, revokeGrants,
   };
 }
 
@@ -296,10 +304,15 @@ const places = new Map();
 //               server says is queued for it before the conversation shows
 //               it; "" for none, `working` while there is one (New chat and
 //               History's other conversations wait for it)
-//   ready(text) whether `text` can go now; send(text) → whether the turn
-//               was made
-//   retry(i)    Retry for the failed turn at the transcript's index `i`,
-//               null when it is not the newest or nothing could go now
+//   ready(text) whether `text` can go now; queues(text) whether it could
+//               wait for the turn under way (the chat's queue);
+//               send(text, passages?) → whether the turn was made, with a
+//               queued message's passages or the composer's
+//   retry(row)  Retry for the failed turn the transcript's row draws (its
+//               `turnId`), null when it is not the newest or nothing could
+//               go now
+//   steering    the turn a queued message's Steer goes to: the one whose
+//               agent works now, "" for none (computerChat.js steeringTurn)
 //   chip        the model chip's props (chat/AgentChip.jsx: label, text,
 //               models, model, onModel, sections): the agent's models and
 //               efforts and where it works, the choice the conversation's
@@ -349,12 +362,16 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   // Off until the conversation was read: one that failed may hold a turn.
   const landed = chat.read && !chat.error;
   const ready = (text) => landed && !shown && !chat.busy && canSend(info, conversation, text);
+  // Whether a message could wait for the turn under way (the chat's queue).
+  const queues = (text) => landed && !shown && !!String(text || "").trim();
 
-  async function send(text) {
+  // `passages` a queued message's (chat/chatQueue.js), else the
+  // composer's, which a sent message takes off it.
+  async function send(text, passages = null) {
     if (!ready(text)) return false;
-    const sent = await chat.send(String(text).slice(0, TEXT_MAX), pdfSelections, how());
+    const sent = await chat.send(String(text).slice(0, TEXT_MAX), passages || pdfSelections, how());
     if (sent) {
-      setPdfSelections([]);
+      if (!passages) setPdfSelections([]);
       // A first turn's picks are its conversation's now, and a new chat
       // starts from the agent's default and no folder.
       if (!conversation) {
@@ -367,8 +384,9 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
 
   // Retry on a failed turn, the newest: the person's message again, with
   // its passages, while a message could go.
-  const retry = (i) => {
-    const again = retryOf(conversation, conversation?.messages?.[i]);
+  const retry = (row) => {
+    const again = retryOf(conversation, (conversation?.messages || [])
+      .find((m) => m.role === "agent" && m.turn_id === row?.turnId));
     if (!again || !ready(again.text)) return null;
     return () => chat.send(again.text, again.selections, how());
   };
@@ -426,7 +444,8 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   } : null;
 
   return {
-    chat, info, label, where, messages, stopId, working: !!stopId, ready, send, retry, chip, grants,
+    chat, info, label, where, messages, stopId, working: !!stopId, ready, queues, send, retry, chip, grants,
+    steering: landed && !shown ? steeringTurn(conversation) : "",
     place, pickPlace, sources, links, empty, shown,
   };
 }

@@ -310,6 +310,14 @@ export const ScissorsIcon = (p) => (
 export const CornerDownLeftIcon = (p) => (
   <Icon {...p}><path d="m9 10-5 5 5 5" /><path d="M20 4v7a4 4 0 0 1-4 4H4" /></Icon>
 );
+// The chat queue's Steer: a message turned into the reply under way.
+export const CornerDownRightIcon = (p) => (
+  <Icon {...p}><path d="m15 10 5 5-5 5" /><path d="M4 4v7a4 4 0 0 0 4 4h12" /></Icon>
+);
+// A message waiting at the end of the line (the chat queue's rows).
+export const ListEndIcon = (p) => (
+  <Icon {...p}><path d="M16 5H3" /><path d="M16 12H3" /><path d="M9 19H3" /><path d="m16 16-3 3 3 3" /><path d="M21 5v12a2 2 0 0 1-2 2h-6" /></Icon>
+);
 export const PanelTopIcon = (p) => (
   <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /></Icon>
 );

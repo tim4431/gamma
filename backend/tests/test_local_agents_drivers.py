@@ -263,6 +263,30 @@ def test_codex_silent_for_too_long_is_stopped(monkeypatch, work, log):
     assert done == events.done(ok=False, error="Codex said nothing for 10 minutes.")
 
 
+def _steered_on(turn, when, text="Only the abstract."):
+    """The turn's events, ``text`` steered in (id ``s1``) at the first event
+    ``when`` takes → (the events, what ``steer`` answered)."""
+    out, answered = [], []
+    for event in turn.events():
+        out.append(event)
+        if not answered and when(event):
+            answered.append(turn.steer(f'```json\n{{"message": "{text}"}}\n```', "s1"))
+    return out, answered
+
+
+def test_codex_takes_a_steer_at_once_and_refuses_one_after_its_end(monkeypatch, work, log):
+    script_agent(monkeypatch, log, commands=["ls"], delay=1.0)
+    turn = _turn("codex", work)
+    out, answered = _steered_on(turn, lambda e: e["type"] == "tool" and e["status"] == "completed")
+    assert answered == [True]
+    kinds = [e["type"] for e in out]
+    assert kinds.index("steered") < kinds.index("text") and out[kinds.index("steered")] == events.steered("s1")
+    assert out[-1]["ok"] and out[-1]["text"] == "Done: Fix the intro.; Only the abstract."
+    sent = next(m["params"] for m in requests_in(log) if m.get("method") == "turn/steer")
+    assert sent["clientUserMessageId"] == "s1" and sent["expectedTurnId"]
+    assert turn.steer("too late", "s2") is False
+
+
 # --- Claude Code ---------------------------------------------------------------------
 
 def test_claude_answers_a_turn(monkeypatch, work, log):
@@ -281,11 +305,38 @@ def test_claude_answers_a_turn(monkeypatch, work, log):
     entries = read_log(log)
     argv = entries[0]["argv"]
     assert argv == claude.FLAGS
-    assert argv[:14] == ["-p", "--output-format", "stream-json", "--verbose", "--restricted", "--permission-mode",
-                         "acceptEdits", "--permission-prompts", "none", "--strict-mcp-config", "--tools",
+    assert argv[:17] == ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+                         "--replay-user-messages", "--restricted", "--permission-mode", "acceptEdits",
+                         "--permission-prompts", "none", "--strict-mcp-config", "--tools",
                          "Read,Edit,Write,Glob,Grep", "--disallowedTools", "Bash,WebFetch,WebSearch"]
     assert not [n for n in entries[0]["env"] if n.startswith("GAMMA_") or n == "CLAUDECODE"]
     assert next(e["stdin"] for e in entries if "stdin" in e) == PROMPT
+
+
+def test_claude_reads_a_steer_after_its_tool_calls_and_answers_it_in_the_same_response(monkeypatch, work, log):
+    script_agent(monkeypatch, log, steer_wait=3.0)
+    turn = _turn("claude", work)
+    out, answered = _steered_on(turn, lambda e: e["type"] == "tool" and e["kind"] == "search")
+    assert answered == [True]
+    kinds = [e["type"] for e in out]
+    assert kinds.index("steered") < kinds.index("text")
+    assert out[-1]["ok"] and out[-1]["text"] == "Done: Fix the intro.; Only the abstract."
+    written = [e["in"] for e in read_log(log) if "in" in e and e["in"].get("type") == "user"]
+    assert written[1]["uuid"] == "s1" and written[1]["client_composed"] is True
+    assert turn.steer("too late", "s2") is False
+
+
+def test_a_claude_steer_its_turn_did_not_read_keeps_it_going_into_the_next(monkeypatch, work, log):
+    # Written after the turn's last call: Claude Code answers it in a second
+    # turn of the same process, and that result ends Gamma's turn.
+    script_agent(monkeypatch, log, late_steers=True, delay=0.5)
+    turn = _turn("claude", work)
+    out, answered = _steered_on(turn, lambda e: e["type"] == "tool" and e["kind"] == "search")
+    assert answered == [True]
+    kinds = [e["type"] for e in out]
+    assert kinds.count("text") == 2 and kinds.index("text") < kinds.index("steered")
+    assert out[-1]["ok"] and out[-1]["text"] == "Done: Only the abstract."
+    assert out[-1]["usage"] == {"input_tokens": 20, "output_tokens": 10}
 
 
 def test_claude_resumes_only_a_session_id_that_looks_like_one(monkeypatch, work, log):

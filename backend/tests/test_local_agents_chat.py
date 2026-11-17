@@ -353,6 +353,37 @@ def test_stop_and_what_waits_for_a_running_turn(lab, disk, monkeypatch):
     assert store.conversation_of(other["id"]) is None
 
 
+def test_a_message_steered_into_a_running_turn_joins_it_where_the_agent_took_it(lab, disk, monkeypatch):
+    f = _folder(lab, disk)
+    script_agent(monkeypatch, disk.log, delay=2, edits=[{"path": "main.tex", "old": TITLE, "new": "T"}])
+    turn_id = _say(lab.owner, f.page, "Shorten the title.")["turn"]["id"]
+    _running(lab, turn_id)
+    _until(lambda: _reply(lab, f.page)["steps"])
+    steer = {"id": "steer1", "text": "Only the first word.", "selections": [{"text": "the title", "page": 1}]}
+    # the conversation's own account alone steers it
+    assert lab.editor.post(f"/api/local-agents/chat/turns/{turn_id}/steer", json=steer).status_code == 404
+    r = lab.owner.post(f"/api/local-agents/chat/turns/{turn_id}/steer", json=steer)
+    assert r.status_code == 200 and r.json() == {"steered": True}
+    assert runner.wait_idle(30)
+    reply = _reply(lab, f.page)
+    assert reply["state"] == "done" and reply["text"] == "Done: Shorten the title.; Only the first word."
+    [taken] = reply["steers"]
+    assert (taken["id"], taken["text"], taken["selections"][0]["text"]) == ("steer1", "Only the first word.",
+                                                                            "the title")
+    # the edit had run when Codex took it, and nothing of its reply was written yet
+    assert taken["place"] == {"text": 0, "steps": 1} and taken["at"]
+    sent = next(m["params"] for m in requests_in(disk.log) if m.get("method") == "turn/steer")
+    assert '"message": "Only the first word."' in sent["input"][0]["text"]
+    # the export reads as the chat does: the turn's steps, the message steered in, the turn going on
+    conversation_id = _chat(lab.owner, f.page)["conversation"]["id"]
+    md = lab.owner.get(f"/api/local-agents/chat/history/{conversation_id}/export").text
+    steered = md.index("> the title *(p. 1)*\n\nOnly the first word.")
+    assert md.index("**Steps**") < steered < md.index("Done: Shorten the title.; Only the first word.")
+    # once the turn has ended, a message goes as the next one
+    r = lab.owner.post(f"/api/local-agents/chat/turns/{turn_id}/steer", json={"id": "steer2", "text": "Late."})
+    assert r.status_code == 409 and r.json()["detail"] == chats.NOT_STEERED
+
+
 def _turn_tokens() -> list[tuple]:
     with connect_users_db() as conn:
         return conn.execute("SELECT user_id, workspace_id, name, expires_at FROM integration_tokens "
