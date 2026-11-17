@@ -72,7 +72,7 @@ if (check) {
     } catch (error) { failures.push(`${p}: ${error.message}`); }
   }
   for (const entry of manifest) if (!lock.outputs[entry.destination]) failures.push(`Unrecorded destination: ${entry.destination}`);
-  for (const dir of ['desktop/assets/appx', 'desktop/assets/store', 'extension/assets/icons', 'docs/assets/branding', 'android/app/src/main/res', 'android/store']) {
+  for (const dir of ['desktop/assets/appx', 'desktop/assets/icons', 'desktop/assets/store', 'extension/assets/icons', 'docs/assets/branding', 'android/app/src/main/res', 'android/store']) {
     for (const p of files(dir).filter(p => /\.(png|svg)$/.test(p))) if (!lock.outputs[p]) failures.push(`Unmanaged asset: ${p}`);
   }
   if (failures.length) throw new Error(failures.join('\n'));

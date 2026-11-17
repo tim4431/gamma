@@ -642,8 +642,8 @@ while the computer is off.
   names the computer and its presence (`computer`, `online`, `since`),
   offers the models the computer announced with its assistants (`models`,
   at most 32) and the directories it offers (`dirs`, `[{id, name}]`, which
-  a conversation that begins picks among: the composer chip's *Works in*,
-  as locally),
+  a conversation that begins picks among: the composer's folder chip, as
+  locally),
   says where the agent works (`dir`: the work folder by its name, an
   offered directory by its id and name, null for one of its own) and why
   an online computer's agent is not ready. While the computer is off the
@@ -757,9 +757,10 @@ server's page"), until step 4 of the plan links computers in Settings.
 The chat draws such a conversation wherever the composer's chip picks a
 computer's agent ("The client"): on a page, a folder or the library, in
 its own transcript and composer, as it draws Gamma AI's, under a strip
-saying where the agent works (the synced folder's name, or while the
-conversation has no turn a menu of the offered directories and *No
-folder*). Only they see their conversations; for anyone
+saying where the agent works (the synced folder's name), else with the
+composer's folder chip, a menu of the offered directories and *Its own
+directory* while the conversation has no turn ("The strip"). Only they see
+their conversations; for anyone
 else the chat is as it is. Where its owner lets it, the agent may ask on a
 card to go beyond its confinement ("Asking in the chat"); else Codex keeps
 its sandbox and Claude Code its file tools. Its model, the reply as it is
@@ -1894,9 +1895,9 @@ nobody else learns it exists), 403 for a token or the guest
   computer that is away and an amber "not ready" after one with a problem
   (`computerChat.agentHint`, the sentence the row's title; still
   pickable), then the picked one's models and
-  efforts (Gamma AI's speed too) and, for a computer's agent outside a
-  synced folder, *Works in* (below, "The strip"), in every bucket: a page, a folder, the
-  library. The chip reads the agent, then its model and effort ("Codex on
+  efforts (Gamma AI's speed too); where a computer's agent works outside a
+  synced folder is the bar's folder chip (below, "The strip"), in every
+  bucket: a page, a folder, the library. The chip reads the agent, then its model and effort ("Codex on
   TIM-PC · GPT-5.5 · high", the model ellipsized first), named "Agent,
   model and reasoning effort". A viewer has Gamma AI alone. The agent shown is the bucket's
   pick for the tab's life (`chatSide.js` `useChatAgent`, beside
@@ -1968,15 +1969,28 @@ nobody else learns it exists), 403 for a token or the guest
   you: Codex wants to run a command"), amber when the agent cannot run
   (its problem), its computer is away or the synced folder is paused;
   drawn from the list's facts (`agents.stripFacts`) until the read lands.
-  After it, where the agent works outside a synced folder
-  (`computerChat.workPlace`): the folder glyph and the directory's name.
-  It is chosen in the composer's chip, a *Works in* section of the offered
-  directories and *Its own directory* (each row the folder glyph), while
-  the conversation has no turn, and sent with its first turn as `dir`;
-  then it is the conversation's: the section shows it disabled and the
-  strip's name is titled "Start a new chat to work elsewhere". With no
-  directory offered on this computer the empty transcript's line ends in
-  a ghost *Offer a directory…*, which opens Settings → AI → Agents. Its ⋯
+  Where the agent works outside a synced folder (`computerChat.workPlace`)
+  is the **folder chip** at the start of the composer's bar
+  (`chat/computer/PlaceChip.jsx`, a `MenuSelect` opening upward from its
+  left edge, `start`), as a Codex thread's project: the folder glyph and
+  the directory's name, titled "Codex works in Notes". Its menu, *Works
+  in*, lists *Its own directory* and the offered directories, the ones
+  used last first, and in the desktop app on this computer's own server,
+  for its own agent (`offerDirs`: `IS_DESKTOP` and the listing's `here`),
+  *Add folder…* after a rule (`addPlace`): the shell's folder dialog
+  (`askShellWatching("agent-dirs", {dir: "new"})`, the same ask as
+  Settings' *Offer a directory…*, its question and its word), then the
+  listing read each second until it lists one more, which the
+  conversation that begins then works in. A new conversation starts where
+  the last one of this browser began (`chat/computer/usedDirs.js`,
+  `gamma-agent-dirs-used`: the ids, the newest first, "" for a directory
+  of its own, noted at a first turn; one no longer offered passed over),
+  as Codex opens a new thread in the project used last; a pick in the
+  bucket comes first. The choice is sent with the first turn as `dir`;
+  then it is the conversation's: the chip's rows are locked with the title
+  "Start a new chat to work elsewhere", the trigger titled "Codex works in
+  Notes in this conversation: start a new chat to work elsewhere", and
+  *Add folder…* is gone. Its ⋯
   offers Continue in a terminal and, on a page of a work folder kept here
   alone (`revealsFile`), Show in folder.
 - **What it asks.** While a live turn has `asks`, each is a card under the
@@ -2591,10 +2605,12 @@ are drawn in the bar over the whole window and answered with `POST
   the chip reaching Codex, the reply seen part-way as it is typed, a
   running turn's Background tasks row and its Stop; with no AI service, a
   library PDF's chat that is Codex's, the setup card picking Codex again
-  after Gamma AI, a directory offered picked in the strip and edited, the
-  reply, its pill *1 step · edited 1 file* and what it changed in the
-  transcript, the file named as text, not linked, outside a synced folder;
-  with no AI service, Codex
+  after Gamma AI, a directory offered picked in the composer's folder chip
+  and edited, the reply, its pill *1 step · edited 1 file* and what it changed in the
+  transcript, the file named as text, not linked, outside a synced folder,
+  the chip then locked; a new chat starting in that folder, and *Add
+  folder…* asking the shell and picking the folder it offered, the one used
+  listed first; with no AI service, Codex
   reading a library PDF's highlight through Gamma's tools with its turn's
   token (the prompt pointing to `read_page` by the page's id and pasting
   none of its notes, the call answered, the reply quoting the highlight

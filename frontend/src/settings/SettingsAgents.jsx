@@ -23,7 +23,7 @@
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
-import { askShell } from "../vault/useVault.js";
+import { askShellWatching } from "../vault/useVault.js";
 import { sinceText } from "../vault/vaultState.js";
 import { agentPeople, computerAgents, localAgent } from "../chat/agents.js";
 import { readLocalAgents, useLocalAgents } from "../chat/useLocalAgents.js";
@@ -36,10 +36,6 @@ import { BotIcon, FolderIcon, FolderPlusIcon, PlusIcon, ServerIcon, ShieldIcon, 
 import { T, t } from "../shared/i18n/i18n.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
-// How long the page reads the listing again after asking the shell, and how
-// often: the shell's question waits for the person.
-const WATCH_MS = 60_000;
-const WATCH_EVERY_MS = 1000;
 
 // An agent's line under its name: its version and how it stands, a
 // problem in the amber every agent's problem is said in (.agentProblem).
@@ -69,16 +65,10 @@ export function SettingsAgents({ connection, signedIn, setStatus, onConnections,
   // After an ask of the shell: what it changes (the listing, unless `read`
   // and `current` name another read) read again until it changed.
   const watching = React.useRef(null);
-  React.useEffect(() => () => clearInterval(watching.current), []);
+  React.useEffect(() => () => watching.current?.stop(), []);
   function ask(type, fields, { read = readLocalAgents, current = () => listingRef.current } = {}) {
-    askShell(type, fields);
-    clearInterval(watching.current);
-    const before = JSON.stringify(current());
-    const until = Date.now() + WATCH_MS;
-    watching.current = setInterval(async () => {
-      const now = await read().catch(() => current());
-      if (Date.now() > until || JSON.stringify(now) !== before) clearInterval(watching.current);
-    }, WATCH_EVERY_MS);
+    watching.current?.stop();
+    watching.current = askShellWatching(type, fields, read, current);
   }
 
   // A change the page makes itself, then the listing read again; `failed`
