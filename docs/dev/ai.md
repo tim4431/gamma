@@ -1003,10 +1003,10 @@ computer runs that the account turned on in Settings → AI → Agents, and
 each agent on of each of the account's other computers shown to the
 server, "Codex on TIM-PC", one entry per computer, those that keep the
 page's work folder first, an offline one's listed offline). With more than one, the chip's menu lists them first,
-each by its icon, then a computer agent's *Works in* (local_agents.md "The
-chat's computer side"), then the picked one's models and reasoning effort
-(Gamma AI's speed too): who, where, then how, so in a short chat window
-the sections in sight are the first ones. A row of an agent that cannot answer now ends in a
+each by its icon, then the picked one's models and reasoning effort
+(Gamma AI's speed too): who, then how. Where a computer's agent works is
+the folder chip at the bar's other end (local_agents.md "The chat's
+computer side"). A row of an agent that cannot answer now ends in a
 hint (`computerChat.agentHint`, a `MenuSelect` option's `trailing`): a
 muted "offline" for another computer that is away, an amber "not ready"
 (`.agentProblem`) for one with a problem, the whole sentence its title; it

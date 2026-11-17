@@ -413,21 +413,28 @@ export function diffRows(diff) {
 // vault's, already named in the strip's line as the folder; {kind:
 // "offered", id, name}; null for a directory of its own): null for a
 // vault's and a co-author's (a synced folder's alone); else {pick, value,
-// options, text}, `options` the directories offered (this computer's
-// `dirs`, GET /api/local-agents' [{id, path, name}], or another computer's,
-// the server's `computer.dirs`) after "Its own directory" as [value, name],
-// `value` the one it works in ("" its own), `text` its name, which the
-// strip says after its line. While the conversation has no turn it is
-// still to choose (`pick`, in the composer's chip: `value` the one
-// `picked` while it is offered, else ""); once it has one it is the
-// conversation's, kept among the options when no longer offered.
-export function workPlace(info, conversation, dirs = [], picked = "") {
+// options, text}, `options` "Its own directory" then the directories
+// offered (this computer's `dirs`, GET /api/local-agents' [{id, path,
+// name}], or another computer's, the server's `computer.dirs`) as [value,
+// name], those used last first (`used`: the ids conversations of this
+// browser began in, the newest first, "" for a directory of its own;
+// chat/computer/usedDirs.js), `value` the one it works in ("" its own),
+// `text` its name, which the composer's folder chip shows. While the
+// conversation has no turn it is still to choose (`pick`): `value` the one
+// `picked` for it while that is offered, else the one used last that
+// still is, as a new Codex thread starts in the project used last, else
+// ""; once it has one it is the conversation's, kept among the options
+// when no longer offered.
+export function workPlace(info, conversation, dirs = [], picked = null, used = []) {
   if (!info || info.dir?.kind === "vault" || info.lent) return null;
   const offered = ((isRemote(info) ? info.dirs : dirs) || []).filter((d) => d && d.id);
-  const options = [["", t("Its own directory")], ...offered.map((d) => [d.id, String(d.name || d.path || d.id)])];
+  const rank = (id) => (used.includes(id) ? used.indexOf(id) : used.length);
+  const ordered = [...offered].sort((a, b) => rank(a.id) - rank(b.id));
+  const options = [["", t("Its own directory")], ...ordered.map((d) => [d.id, String(d.name || d.path || d.id)])];
   const pick = !conversation?.messages?.length;
+  const listed = (id) => options.some(([v]) => v === id);
   const kept = info.dir?.kind === "offered" ? String(info.dir.id || "") : "";
-  const value = pick ? (offered.some((d) => d.id === picked) ? picked : "") : kept;
+  const value = !pick ? kept : picked != null && listed(picked) ? picked : used.find(listed) ?? "";
   const known = options.find(([v]) => v === value);
   const text = known ? known[1] : String(info.dir.name || "");
   return { pick, value, options: known ? options : [...options, [value, text]], text };

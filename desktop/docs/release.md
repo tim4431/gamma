@@ -22,7 +22,15 @@ Linux is a Debian/Ubuntu `.deb` for x64 (`linux` + `deb` blocks): it
 installs to `/opt/Gamma` with the binary `gamma` (also symlinked into
 `/usr/bin`; `executableName` in the config — the default would have been
 the package name `gamma-desktop`) and a desktop entry in the *Office*
-category. `sudo apt install ./Gamma-<version>-linux-amd64.deb` pulls the
+category, `gamma.desktop`. Its icon is `assets/icons/` (16 to 512 px, from
+the brand generator): the hicolor theme has no 1024x1024 directory, so the
+1024 px `icon.png` alone left the menu and the dock without one. The entry
+is named after `desktopName` in `package.json` (`linux.syncDesktopName`),
+whose name Electron gives the window (the Wayland app_id and the X11
+WM_CLASS `gamma`, matching `StartupWMClass=gamma`), so the dock files the
+running window under the entry's icon; the app's own name stays
+`gamma-desktop`, and with it the profile folder. The release job checks both
+on the installed package. `sudo apt install ./Gamma-<version>-linux-amd64.deb` pulls the
 runtime dependencies (GTK 3, NSS, …) that electron-builder lists in the
 package. The unpacked `dist/linux-unpacked` dir has no setuid
 `chrome-sandbox` (the deb's postinst sets that up, plus an AppArmor profile

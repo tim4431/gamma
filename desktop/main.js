@@ -4862,7 +4862,7 @@ async function removeServer(id, opts = {}) {
 }
 
 // Help → Check for Updates…: the only update flow that answers with a
-// dialog; the automatic checks stay silent (bar pill / launcher row).
+// dialog; the automatic checks stay silent (the bar's update icon / launcher row).
 async function checkForUpdatesInteractive() {
   const st = await updater.check();
   const opts = { title: 'Gamma', message: '', buttons: ['OK'] };
@@ -4873,16 +4873,13 @@ async function checkForUpdatesInteractive() {
       : st.error === 'store' ? 'Installed from the Microsoft Store: updates arrive through the Store.'
       : st.error === 'mas' ? 'Installed from the Mac App Store: updates arrive through the App Store.'
       : String(st.error || '');
-  } else if (st.status === 'downloaded') {
-    opts.message = `Gamma ${st.version} is ready to install.`;
-    opts.detail = 'It installs when you restart.';
-    opts.buttons = ['Restart to update', 'Later'];
+  } else if (st.status === 'downloaded' || (st.status === 'downloading' && !st.installing)) {
+    opts.message = st.line; // lib/updater.js words the update found
+    opts.buttons = ['Update now', 'Later'];
   } else if (st.status === 'downloading') {
-    opts.message = `Downloading Gamma ${st.version}…`;
-    opts.detail = 'You will be offered a restart when it is ready.';
+    opts.message = st.line;
   } else if (st.status === 'available') {
-    opts.message = `Gamma ${st.version} is available.`;
-    opts.detail = 'This build cannot update itself; the download page opens in your browser.';
+    opts.message = st.line;
     opts.buttons = ['Download', 'Later'];
   } else if (st.status === 'error') {
     opts.message = 'Could not check for updates.';

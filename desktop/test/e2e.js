@@ -1422,7 +1422,7 @@ async function main() {
       const row = await content.textContent('#updText');
       assert(/Not available in this build/.test(row), row);
       assert(await content.locator('#btnUpdate').isHidden(), 'no check button when unsupported');
-      assert(await bar.locator('#btnUpdate').isHidden(), 'no update pill in the bar');
+      assert(await bar.locator('#btnUpdate').isHidden(), 'no update icon in the bar');
       // Help → Check for Updates…: its box is only recorded under test, with the answer that installs nothing.
       const before = await hook(app, (s) => s.asked.length);
       await app.evaluate(({ Menu }) => Menu.getApplicationMenu().getMenuItemById('check-updates').click());

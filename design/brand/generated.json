@@ -7,7 +7,7 @@
     "design/brand/compositions/hero-light.svg": "10ded132b2433a84fd12cc91dc2f7f4a2e550880f9738384a918b677e8212584",
     "design/brand/compositions/logo.svg": "14872e644f9397c2ef2468d9e170b0910833931b4df92c88a2115cfe2393379a",
     "design/brand/marks/favicon.svg": "aa87ab7a445627b7cb8ffa71b63b36ceb6848815549233a0c6f6d8bd48a2002b",
-    "design/brand/outputs.json": "d92021ae03f190eaa98ef273298256b9eae36cbae658fdabf7d7ae801eb9aec8",
+    "design/brand/outputs.json": "93e0890124537626501dbf5e797602e4ba926ba93427b27d3bcd939d1f96a0b8",
     "design/brand/tokens.json": "8778598768aefb172e4dc17f43e060fff18f87717ffa00977b64494e341c397f",
     "frontend/package-lock.json": "5c3eb21c12a060dd72f650ff28fdea418d2bda6801d740d62ea0f826eb3719a8",
     "frontend/src/shared/illustrations/brands/LICENSE.md": "9046848b63a5c92bff14e4accca80bd987e0623b74adf9226ce5198d312b79d5",
@@ -205,6 +205,78 @@
         1024
       ],
       "sha256": "7e7ac6e6c34f74618c0da435ed5030890b32faeb744ca428fd9b3f509747d768"
+    },
+    "desktop/assets/icons/16x16.png": {
+      "source": "marks/favicon.svg",
+      "variant": "icon",
+      "size": [
+        16,
+        16
+      ],
+      "sha256": "f6d64b3e6f965cd1eb8062490e8ca654bc368e8ec211109b37ab1c91d1928e6f"
+    },
+    "desktop/assets/icons/24x24.png": {
+      "source": "marks/favicon.svg",
+      "variant": "icon",
+      "size": [
+        24,
+        24
+      ],
+      "sha256": "fbbb4438a9d40ea41e0dfe3e19717e1a15f3131848cb90993fc1898cae6f3116"
+    },
+    "desktop/assets/icons/32x32.png": {
+      "source": "marks/favicon.svg",
+      "variant": "icon",
+      "size": [
+        32,
+        32
+      ],
+      "sha256": "b2ce63ce5436229e9b1be5e839a5a5968d42c49a64191db49233a7abe7b997ab"
+    },
+    "desktop/assets/icons/48x48.png": {
+      "source": "marks/favicon.svg",
+      "variant": "icon",
+      "size": [
+        48,
+        48
+      ],
+      "sha256": "9aec153f069fba8af5bd261382da2dcc8a3cbc35c61cb3757680a4e3cbadfc91"
+    },
+    "desktop/assets/icons/64x64.png": {
+      "source": "marks/favicon.svg",
+      "variant": "icon",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "16104632bd3321b07c89f357146c927afe644d0344f74b48089daa4c89248eb6"
+    },
+    "desktop/assets/icons/128x128.png": {
+      "source": "marks/favicon.svg",
+      "variant": "icon",
+      "size": [
+        128,
+        128
+      ],
+      "sha256": "b8eac77d38386d8cf5787f4521b509fa276ca8aaf35c47b43c43f95cf1492e9e"
+    },
+    "desktop/assets/icons/256x256.png": {
+      "source": "marks/favicon.svg",
+      "variant": "icon",
+      "size": [
+        256,
+        256
+      ],
+      "sha256": "d93fa9cc06cc8ac29c04115984147ab4ce2b731dfca532145fd1bd61e0b95f99"
+    },
+    "desktop/assets/icons/512x512.png": {
+      "source": "marks/favicon.svg",
+      "variant": "icon",
+      "size": [
+        512,
+        512
+      ],
+      "sha256": "96e63c9a3a02c32df03d680fa771459437c8b598c40a4d3380e4dcb4486355b2"
     },
     "backend/gamma/mcp_icon.png": {
       "source": "marks/favicon.svg",

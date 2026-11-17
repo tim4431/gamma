@@ -98,6 +98,7 @@ generated illustrations uses `branding.typewriter()`; see the
 | `frontend/public/media/icons/` | Favicon, served at `/media/icons/favicon.svg` |
 | `frontend/public/media/gamma-scene-light.svg` | The demo server's landing picture: a generated crop of the hero composition |
 | `desktop/assets/icon.png` | Electron window and installer icon |
+| `desktop/assets/icons/` | The Linux `.deb`'s icon set, 16 to 512 px (the icon theme has no 1024 px size) |
 | `desktop/assets/entitlements.mac.plist` | macOS signing entitlements |
 | `desktop/assets/appx/` | Microsoft Store package tiles, splash screens, and scale variants |
 | `desktop/assets/store/` | Store listing artwork and listing text |

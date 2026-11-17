@@ -15,7 +15,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Module = require('module');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -151,11 +150,7 @@ class FakeWindow extends Emitter {
 }
 electron.BaseWindow = FakeWindow;
 electron.WebContentsView = FakeView;
-const resolveFilename = Module._resolveFilename;
-Module._resolveFilename = function (request, ...rest) {
-  return request === 'electron' ? 'electron' : resolveFilename.call(this, request, ...rest);
-};
-require.cache.electron = { id: 'electron', filename: 'electron', loaded: true, exports: electron };
+require('./stubModules')({ electron });
 
 process.env.GAMMA_SHELL_TEST = '1';
 const registry = require('../lib/registry');

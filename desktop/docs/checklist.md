@@ -121,12 +121,12 @@ fails too, on any system. Each item below names the e2e step that covers it
 
 | # | Check | How |
 |---|---|---|
-| 7.1 | Dev tree / test harness: updater reports `unsupported`, the launcher's Updates row says so, no pill in the bar; *Help → Check for Updates…* says updates are not available | auto: *updater: disabled under test, state exposed through the shell* (the menu item clicked, its box recorded) |
+| 7.1 | Dev tree / test harness: updater reports `unsupported`, the launcher's Updates row says so, no update icon in the bar; *Help → Check for Updates…* says updates are not available | auto: *updater: disabled under test, state exposed through the shell* (the menu item clicked, its box recorded) |
 | 7.2 | Packaged app, no newer release: *Help → Check for Updates…* says *latest version*; the launcher row reads *Up to date* | manual |
 | 7.3 | Packaged app, offline: the row reads *Update check failed: …*, nothing else complains; *Try again* re-checks | manual |
-| 7.4 | Windows: install an older version, publish a newer release → within ~15 s of launch the bar shows *Restart to update* (row: *ready; installs when you restart*); clicking it quits, stops every sidecar, installs silently, and the relaunched app reports the new version | manual, needs a real release |
-| 7.5 | macOS (unsigned): same setup shows the *Update: <v>* pill; clicking opens the release page in the browser instead of installing | manual (build on a Mac) |
-| 7.6 | Linux (.deb): same setup as 7.4 shows *Restart to update*; clicking it opens a pkexec password prompt, `dpkg -i` runs, and the relaunched app reports the new version | manual, needs a real release |
+| 7.4 | Windows: install an older version, publish a newer release → within ~15 s of launch the bar shows the *Update now* icon (accent colour; its title the version and the download's progress); pressed while it downloads it turns to a spinner (row: *Updating…*), and once the download is done the app quits, stops every sidecar, installs silently, and the relaunched app reports the new version; pressed after the download (row: *ready; installs when you restart*), the same at once | manual, needs a real release; the queued press: `test/updater.test.js` |
+| 7.5 | macOS (unsigned): same setup shows the icon titled *Gamma <v> is available*; clicking opens the release page in the browser instead of installing | manual (build on a Mac) |
+| 7.6 | Linux (.deb): same setup as 7.4 shows the *Update now* icon; clicking it opens a pkexec password prompt once the download is done, `dpkg -i` runs, and the relaunched app reports the new version | manual, needs a real release |
 
 ## 8. Release
 

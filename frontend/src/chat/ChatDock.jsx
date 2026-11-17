@@ -70,6 +70,7 @@ import { historyRows, lastTurnState, sessionRows, sessionsAway, sessionsDir, ses
 } from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
 import AgentChip, { agentIcon } from "./AgentChip.jsx";
+import PlaceChip from "./computer/PlaceChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
 import { canRecord, createRecorder, gestureContext } from "../recording/recorder.js";
 import { extensionFor } from "../recording/recording.js";
@@ -340,8 +341,9 @@ export default function ChatDock({
   // the computer's agents the account turned on, or on a page another
   // computer keeps that computer's), which the composer's chip picks from,
   // and `localAgents` this computer's listing (GET /api/local-agents: the
-  // directories it offers them, and the agents found that the setup card
-  // offers to turn on). A computer's agent picked, the chat talks to it
+  // directories it offers them, which the composer's folder chip adds to
+  // in the desktop app, and the agents found that the setup card offers to
+  // turn on). A computer's agent picked, the chat talks to it
   // through chat/computer/.
   agents = null, localAgents = null,
   onGrip, onFold, collapsed, onClose,
@@ -377,7 +379,8 @@ export default function ChatDock({
   // work folder (side.links); Gamma AI's replies keep the page's own.
   const outerLinks = useContext(PathLinkContext);
   const side = useComputerSide(onComputer ? chatKey : "", agent, {
-    page: !!focusedBlockId, dirs: localAgents?.dirs || NO_DIRS, pdfSelections, setPdfSelections, setStatus,
+    page: !!focusedBlockId, dirs: localAgents?.dirs || NO_DIRS, here: localAgents?.here === true, pdfSelections, setPdfSelections,
+    setStatus,
     shown: onComputer ? shownChat : null,
   });
   // The draft comes back after a remount in the conversation it was typed
@@ -2356,14 +2359,6 @@ export default function ChatDock({
               <div className="chatEmptyAgain">
                 <button type="button" className="uiBtn sm" disabled={side.chat.busy} onClick={side.chat.reload}>{t("Try again")}</button>
               </div>
-            ) : side.empty.offer && openSettings ? (
-              <div className="chatEmptyAgain">
-                {/* where else it may work: a directory offered in Settings → AI → Agents */}
-                <button type="button" className="uiBtn sm ghost" {...settingsIntent} onClick={() => openSettings("agents")}
-                  title={t("Offer a directory of this computer for {agent} to work in, in Settings → AI → Agents", { agent: side.label })}>
-                  {t("Offer a directory…")}
-                </button>
-              </div>
             ) : null}
           </div>
         )) : visibleMessages.length || !aiKnown || (loadedFor !== chatKey && !session.recall(chatKey)) ? null
@@ -2437,7 +2432,8 @@ export default function ChatDock({
           buttons never take the focus, so a press keeps an on-screen
           keyboard up. With a computer's agent it takes the message and
           the PDF passages alone (`attaches` false), each passage noting
-          its source line. */}
+          its source line, and the toolbar starts with the folder chip,
+          where the agent works. */}
       <form
         ref={composerRef}
         className={`chatComposer${closed ? " off" : ""}`}
@@ -2572,6 +2568,10 @@ export default function ChatDock({
           ) + t(" (@ paper)")}
         />
         <div className="chatComposerBar">
+          {/* where a computer's agent works, at the bar's start as a Codex thread's folder */}
+          {onComputer && side.place ? (
+            <PlaceChip place={side.place} agent={side.label} onPick={side.pickPlace} onAdd={side.addPlace} />
+          ) : null}
           {attaches ? <span data-popover="chatdocs" className="popoverAnchor">
             <button
               type="button"
