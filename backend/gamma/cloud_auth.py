@@ -124,7 +124,7 @@ from .chatgpt_oauth import _b64url
 from .db import account_id, account_name, connect_users_db, page_now
 from .logbuf import log
 from .publisher_sessions import cipher
-from .server_settings import LOOPBACK_HOSTS, _get_raw, _set_raw, public_url_settings, validate_public_url
+from .server_settings import LOOPBACK_HOSTS, _get_raw, _set_raw, public_url_settings, validate_origin
 
 PROVIDER = "gamma-cloud"
 POLICIES = ("refuse", "claim", "provision", "invited")
@@ -283,7 +283,7 @@ def validate_issuer(value: str) -> str:
     if not value:
         return ""
     try:
-        return validate_public_url(value)
+        return validate_origin(value, lan_http=False)
     except ValueError:
         raise ValueError("The issuer is the account server's HTTPS address without a path (HTTP only for localhost).") from None
 
@@ -443,12 +443,24 @@ def verify_id_token(token: str, *, issuer: str, client_id: str, nonce: str) -> d
 
 # --- the flow -----------------------------------------------------------------
 
+def cloud_public_url() -> str:
+    """The admin-confirmed public URL as Gamma Cloud takes it: https, or
+    plain http on this computer, the addresses the account server calls
+    back to and lists (cloud/gammacloud/servers.py ``norm_url``). A plain
+    http one of this network, which assistants may use
+    (server_settings.validate_public_url), is none here: the server signs
+    in and is listed as a server with no public URL."""
+    url = public_url_settings()["public_url"]
+    parts = urlsplit(url)
+    return url if parts.scheme == "https" or parts.hostname in LOOPBACK_HOSTS else ""
+
+
 def callback_base(request) -> str:
     """This server's address for the callback: the admin-confirmed public
     URL, else the request's own origin (a local sidecar on 127.0.0.1)."""
     # Unlike mcp_oauth.public_base, no Host checks: a plain-HTTP LAN origin
     # or a sidecar without a confirmed public URL must still reach the callback.
-    configured = public_url_settings()["public_url"]
+    configured = cloud_public_url()
     return configured or str(request.base_url).rstrip("/")
 
 
@@ -457,7 +469,7 @@ def needs_connect() -> bool:
     public URL the account server will not call back to for that client:
     it must be connected first (``connect_begin``)."""
     cfg = settings()
-    public = public_url_settings()["public_url"]
+    public = cloud_public_url()
     return (cfg["enabled"] and cfg["client_id"] == DEFAULT_CLIENT_ID and bool(public)
             and urlsplit(public).hostname not in LOOPBACK_HOSTS)
 
@@ -557,9 +569,10 @@ def connect_begin(*, next_path: str) -> str:
         raise CloudAuthError("Enter the account server's address and save it first.")
     if cfg["source"] == "environment":
         raise CloudAuthError("Cloud sign-in is managed by GAMMA_CLOUD_* on this server.")
-    base = public_url_settings()["public_url"]
+    base = cloud_public_url()
     if not base:
-        raise CloudAuthError("Confirm this server's public URL first.")
+        raise CloudAuthError("Confirm this server's public URL first." if not public_url_settings()["public_url"]
+                             else "Gamma Cloud connects a server at its https:// address: this server's public URL is plain HTTP.")
     if urlsplit(base).hostname in LOOPBACK_HOSTS:
         raise CloudAuthError("A server on this computer needs no connection: it signs in as the desktop app.")
     endpoint = _connect_endpoint(cfg["issuer"], "gamma_server_connect_endpoint")
@@ -574,7 +587,7 @@ def connect_finish(*, code: str, state: str, error: str = "") -> tuple[str, str]
     """The account server sent the admin's browser back: trade the code for
     this server's client and save it. Returns (the path to go back to, ""
     or what went wrong)."""
-    base = public_url_settings()["public_url"]
+    base = cloud_public_url()
     pending = mcp_oauth.load("cloud_connect", base, state, consume=True) if state and base else None
     if not pending:
         return "/", "This connection expired or was already used. Start again."
@@ -1069,7 +1082,7 @@ def server_url(request=None) -> str:
     admin-confirmed public URL, else, for a local sidecar, the loopback
     origin a sign-in came in on (remembered in the settings KV for the
     hourly check), else "" (a LAN address is not listed)."""
-    configured = public_url_settings()["public_url"]
+    configured = cloud_public_url()
     if configured:
         return configured
     if request is not None:

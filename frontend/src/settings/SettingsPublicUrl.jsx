@@ -38,7 +38,7 @@ export function PublicUrlSettings({ setStatus }) {
   const needsAction = !!saved && !managed && (dirty || !confirmed) && !!draft.trim();
   return <>
     <Row icon={LinkIcon} label={t("Public server URL")}
-      hint={managed ? t("Set by the server's environment") : t("The address assistants use to reach Gamma; HTTPS unless localhost")}
+      hint={managed ? t("Set by the server's environment") : t("The address assistants use to reach Gamma; HTTPS unless on this computer or this network")}
       title={t("Assistant sign-in (MCP OAuth) needs to know the address this server is reached at. Confirm it once; no restart. Changing it later makes assistants connect again.")}>
       <span className="setRowControls">
         {saved && !managed ? (

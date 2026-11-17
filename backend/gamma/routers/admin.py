@@ -54,7 +54,7 @@ from ..server_settings import (
     set_guest_ttl_hours,
     validate_guest_ttl_hours,
     set_public_url,
-    validate_public_url,
+    confirmable_public_url,
     set_default_quota_mb,
     usage_bytes,
     validate_quota_mb,
@@ -161,7 +161,7 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
             if (request.headers.get("sec-fetch-site") == "cross-site"
                     or (origin and urlsplit(origin).netloc.lower() != request.url.netloc.lower())):
                 raise HTTPException(403, "Cross-origin server settings changes are not allowed.")
-            validate_public_url(payload.public_url)
+            confirmable_public_url(payload.public_url)
         # Validate the complete request before persisting any setting.
         if payload.quota_mb is not None:
             check_within_plan(validate_quota_mb(payload.quota_mb))

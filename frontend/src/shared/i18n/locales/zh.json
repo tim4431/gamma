@@ -4753,7 +4753,7 @@
   "The Zotero note this block or page is linked to.": "此块或页面关联的 Zotero 笔记。",
   "The Zotero sign-in timed out. Connect again to retry.": "Zotero 登录已超时。请重新连接以重试。",
   "The account that deleted it; the app cannot name an account from its id.": "删除它的账户；应用无法根据 ID 显示账户名称。",
-  "The address assistants use to reach Gamma; HTTPS unless localhost": "助手访问 Gamma 所用的地址；除 localhost 外须为 HTTPS",
+  "The address assistants use to reach Gamma; HTTPS unless on this computer or this network": "助手访问 Gamma 所用的地址；不在本机或本地网络上时须为 HTTPS",
   "The address of a SearXNG instance with the JSON format turned on (search › formats in its settings.yml).": "一个已开启 JSON 格式的 SearXNG 实例地址（其 settings.yml 中的 search › formats）。",
   "The address saved for “{provider}” answered, but not in a format Gamma understands.": "为“{provider}”保存的地址有响应，但格式不是 Gamma 能理解的。",
   "The agent is working…": "智能体正在处理…",
