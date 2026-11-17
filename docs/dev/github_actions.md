@@ -640,13 +640,13 @@ dispatch, it needs the file on `main` once before the first run.
 gammapdf.com ([sites/README.md](../../sites/README.md)); it depends on no
 app code, only on `sites/`, `PRIVACY.md`, `TERMS.md`, `desktop/ui/fonts/` (the
 Inter file the pages use), `docker-compose.yml.example` (the front page shows
-it) and `docs/`: the artwork the build copies and the
-user guide it renders as a page, so a change under `docs/` on `main` deploys
-the site.
+it) and `docs/`: the artwork the build copies and the user guide and the design pages it
+renders as pages, so a change under `docs/` on `main` deploys the site.
 `check`: `npm ci`, `node build.mjs --strict` (fails on an internal link,
 picture or anchor that resolves to nothing), the key pages present in `dist/` (index,
-404, pricing, privacy, terms, the user guide, the sitemap,
-`_redirects`, `_headers`, the favicon, the font), no `<!--#` build directive left unexpanded, and `wrangler
+404, pricing, privacy, terms, the user guide, the design pages' index, the sitemap,
+`_redirects`, `_headers`, the favicon, the font), no `<!--#` build directive left unexpanded, no documentation section
+listed twice in the sidebar, and `wrangler
 deploy --dry-run` (bundles the Worker and reads `wrangler.jsonc` — no
 credentials). Runs on a PR touching those paths and first on every deploy. `deploy` (a push to `main` touching those paths, or
 a dispatch from any branch — the `build-site` skill, `gh workflow run

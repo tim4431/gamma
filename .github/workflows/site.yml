@@ -71,6 +71,9 @@ jobs:
           if grep -rl '<!--#' dist --include='*.html'; then
             echo "::error::a build directive was not expanded"; exit 1
           fi
+          if grep -o '<summary>[^<]*</summary>' dist/docs/index.html | sort | uniq -d | grep .; then
+            echo "::error::a documentation section is listed twice in the sidebar"; exit 1
+          fi
       - name: Worker and config (dry run)
         working-directory: sites
         run: npx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/worker"

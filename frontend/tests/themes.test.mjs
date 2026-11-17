@@ -117,7 +117,8 @@ test("the desktop shell and the extension carry the same tokens and font as the 
 test("the design pages' colour sheets are drawn from the current tokens and palette", () => {
   for (const [name, draw] of Object.entries(SHEETS)) {
     const file = path.join(SHEETS_DIR, name);
-    assert.ok(fs.existsSync(file) && fs.readFileSync(file, "utf8") === draw(),
+    // A checkout may turn the file's LF into CRLF, as sameCopy allows.
+    assert.ok(fs.existsSync(file) && fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n") === draw(),
       `docs/design/assets/${name} is out of date: run \`node tools/designSheets.mjs\` in frontend/`);
   }
 });

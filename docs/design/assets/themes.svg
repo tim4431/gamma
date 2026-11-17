@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="428" viewBox="0 0 960 428" role="img" aria-label="Gamma's themes: each one's chrome, content, focused block, buttons and role colours" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="396" viewBox="0 0 960 396" role="img" aria-label="Gamma's themes: each one's chrome, content, focused block, buttons and role colours" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
 <title>Gamma's themes: each one's chrome, content, focused block, buttons and role colours</title>
 <style>
-.l { fill: #292822; } .m { fill: #6b6a65; } .rim { stroke: #0000001f; }
-@media (prefers-color-scheme: dark) { .l { fill: #f0ede6; } .m { fill: #a9a69e; } .rim { stroke: #ffffff2e; } }
+.l { fill: #292822; } .m { fill: #6b6a65; } .rim { stroke: #c7c2b6; }
+@media (prefers-color-scheme: dark) { .l { fill: #f0ede6; } .m { fill: #a9a69e; } .rim { stroke: #45443f; } }
 .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
 </style>
 <g transform="translate(12 12)">
@@ -28,11 +28,10 @@
 <circle cx="204" cy="115.5" r="4" fill="#2f8f57"/>
 </g>
 <rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#dddddd"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#ffffff" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#ffffff</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#1a1a1a" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#1a1a1a</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#3a7bd5" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#3a7bd5</text>
 <text y="158" font-size="13" font-weight="600" class="l">Light</text>
-<text y="175" font-size="11" class="m">Bright &amp; crisp</text>
-<rect x="0.5" y="184.5" width="10" height="10" rx="2" fill="#ffffff" class="rim"/><text x="15" y="193" font-size="10" class="m mono">#ffffff</text>
-<rect x="72.5" y="184.5" width="10" height="10" rx="2" fill="#1a1a1a" class="rim"/><text x="87" y="193" font-size="10" class="m mono">#1a1a1a</text>
-<rect x="144.5" y="184.5" width="10" height="10" rx="2" fill="#3a7bd5" class="rim"/><text x="159" y="193" font-size="10" class="m mono">#3a7bd5</text>
 </g>
 <g transform="translate(252 12)">
 <clipPath id="card-dark"><rect width="216" height="136" rx="12"/></clipPath>
@@ -57,11 +56,10 @@
 <circle cx="204" cy="115.5" r="4" fill="#4caf7d"/>
 </g>
 <rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#333333"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#1a1a1a" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#1a1a1a</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#eeeeee" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#eeeeee</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#5b9bd5" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#5b9bd5</text>
 <text y="158" font-size="13" font-weight="600" class="l">Dark</text>
-<text y="175" font-size="11" class="m">A quieter backdrop</text>
-<rect x="0.5" y="184.5" width="10" height="10" rx="2" fill="#1a1a1a" class="rim"/><text x="15" y="193" font-size="10" class="m mono">#1a1a1a</text>
-<rect x="72.5" y="184.5" width="10" height="10" rx="2" fill="#eeeeee" class="rim"/><text x="87" y="193" font-size="10" class="m mono">#eeeeee</text>
-<rect x="144.5" y="184.5" width="10" height="10" rx="2" fill="#5b9bd5" class="rim"/><text x="159" y="193" font-size="10" class="m mono">#5b9bd5</text>
 </g>
 <g transform="translate(492 12)">
 <clipPath id="card-gamma-light"><rect width="216" height="136" rx="12"/></clipPath>
@@ -86,11 +84,10 @@
 <circle cx="204" cy="115.5" r="4" fill="#287956"/>
 </g>
 <rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#c7c2b6"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#efeee9" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#efeee9</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#292822" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#292822</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#92620e" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#92620e</text>
 <text y="158" font-size="13" font-weight="600" class="l">Gamma Light</text>
-<text y="175" font-size="11" class="m">Warm gray &amp; amber</text>
-<rect x="0.5" y="184.5" width="10" height="10" rx="2" fill="#efeee9" class="rim"/><text x="15" y="193" font-size="10" class="m mono">#efeee9</text>
-<rect x="72.5" y="184.5" width="10" height="10" rx="2" fill="#292822" class="rim"/><text x="87" y="193" font-size="10" class="m mono">#292822</text>
-<rect x="144.5" y="184.5" width="10" height="10" rx="2" fill="#92620e" class="rim"/><text x="159" y="193" font-size="10" class="m mono">#92620e</text>
 </g>
 <g transform="translate(732 12)">
 <clipPath id="card-gamma-dark"><rect width="216" height="136" rx="12"/></clipPath>
@@ -115,13 +112,12 @@
 <circle cx="204" cy="115.5" r="4" fill="#6fc89f"/>
 </g>
 <rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#45443f"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#272725" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#272725</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#f0ede6" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#f0ede6</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#e8b451" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#e8b451</text>
 <text y="158" font-size="13" font-weight="600" class="l">Gamma Dark</text>
-<text y="175" font-size="11" class="m">Charcoal &amp; soft gold</text>
-<rect x="0.5" y="184.5" width="10" height="10" rx="2" fill="#272725" class="rim"/><text x="15" y="193" font-size="10" class="m mono">#272725</text>
-<rect x="72.5" y="184.5" width="10" height="10" rx="2" fill="#f0ede6" class="rim"/><text x="87" y="193" font-size="10" class="m mono">#f0ede6</text>
-<rect x="144.5" y="184.5" width="10" height="10" rx="2" fill="#e8b451" class="rim"/><text x="159" y="193" font-size="10" class="m mono">#e8b451</text>
 </g>
-<g transform="translate(12 224)">
+<g transform="translate(12 208)">
 <clipPath id="card-sepia"><rect width="216" height="136" rx="12"/></clipPath>
 <g clip-path="url(#card-sepia)">
 <rect width="216" height="136" fill="#f0e9d6"/>
@@ -144,13 +140,12 @@
 <circle cx="204" cy="115.5" r="4" fill="#5f7519"/>
 </g>
 <rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#e0d8c0"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#fdf6e3" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#fdf6e3</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#073642" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#073642</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#1b6fa3" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#1b6fa3</text>
 <text y="158" font-size="13" font-weight="600" class="l">Sepia</text>
-<text y="175" font-size="11" class="m">Warm paper, deep ink</text>
-<rect x="0.5" y="184.5" width="10" height="10" rx="2" fill="#fdf6e3" class="rim"/><text x="15" y="193" font-size="10" class="m mono">#fdf6e3</text>
-<rect x="72.5" y="184.5" width="10" height="10" rx="2" fill="#073642" class="rim"/><text x="87" y="193" font-size="10" class="m mono">#073642</text>
-<rect x="144.5" y="184.5" width="10" height="10" rx="2" fill="#1b6fa3" class="rim"/><text x="159" y="193" font-size="10" class="m mono">#1b6fa3</text>
 </g>
-<g transform="translate(252 224)">
+<g transform="translate(252 208)">
 <clipPath id="card-solarized"><rect width="216" height="136" rx="12"/></clipPath>
 <g clip-path="url(#card-solarized)">
 <rect width="216" height="136" fill="#eee8d5"/>
@@ -173,13 +168,12 @@
 <circle cx="204" cy="115.5" r="4" fill="#859900"/>
 </g>
 <rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#ddd6c1"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#fdf6e3" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#fdf6e3</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#657b83" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#657b83</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#268bd2" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#268bd2</text>
 <text y="158" font-size="13" font-weight="600" class="l">Solarized Light</text>
-<text y="175" font-size="11" class="m">Warm paper, softer ink</text>
-<rect x="0.5" y="184.5" width="10" height="10" rx="2" fill="#fdf6e3" class="rim"/><text x="15" y="193" font-size="10" class="m mono">#fdf6e3</text>
-<rect x="72.5" y="184.5" width="10" height="10" rx="2" fill="#657b83" class="rim"/><text x="87" y="193" font-size="10" class="m mono">#657b83</text>
-<rect x="144.5" y="184.5" width="10" height="10" rx="2" fill="#268bd2" class="rim"/><text x="159" y="193" font-size="10" class="m mono">#268bd2</text>
 </g>
-<g transform="translate(492 224)">
+<g transform="translate(492 208)">
 <clipPath id="card-gray"><rect width="216" height="136" rx="12"/></clipPath>
 <g clip-path="url(#card-gray)">
 <rect width="216" height="136" fill="#e9e9e9"/>
@@ -202,13 +196,12 @@
 <circle cx="204" cy="115.5" r="4" fill="#2f8f57"/>
 </g>
 <rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#dcdcdc"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#f4f4f4" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#f4f4f4</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#2d2d2d" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#2d2d2d</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#3a7bd5" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#3a7bd5</text>
 <text y="158" font-size="13" font-weight="600" class="l">Gray</text>
-<text y="175" font-size="11" class="m">Soft &amp; neutral</text>
-<rect x="0.5" y="184.5" width="10" height="10" rx="2" fill="#f4f4f4" class="rim"/><text x="15" y="193" font-size="10" class="m mono">#f4f4f4</text>
-<rect x="72.5" y="184.5" width="10" height="10" rx="2" fill="#2d2d2d" class="rim"/><text x="87" y="193" font-size="10" class="m mono">#2d2d2d</text>
-<rect x="144.5" y="184.5" width="10" height="10" rx="2" fill="#3a7bd5" class="rim"/><text x="159" y="193" font-size="10" class="m mono">#3a7bd5</text>
 </g>
-<g transform="translate(732 224)">
+<g transform="translate(732 208)">
 <clipPath id="sys-l"><rect width="108" height="136"/></clipPath><clipPath id="sys-d"><rect x="108" width="108" height="136"/></clipPath>
 <g clip-path="url(#sys-l)"><clipPath id="card-sys-l"><rect width="216" height="136" rx="12"/></clipPath>
 <g clip-path="url(#card-sys-l)">
@@ -255,6 +248,5 @@
 </g>
 <rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#333333"/></g>
 <text y="158" font-size="13" font-weight="600" class="l">System</text>
-<text y="175" font-size="11" class="m">Match your device</text>
 </g>
 </svg>

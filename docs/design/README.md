@@ -47,12 +47,3 @@ each page links at its end.
 | [AI](ai.md) | Your own model, what the chat sees, what the agent may reach and change, agents on your computer, assistants over MCP |
 | [Formats and portability](formats.md) | What each export keeps, the annotated PDF, background tasks |
 | [Architecture](architecture.md) | The server and its apps, where data is kept, Gamma Cloud, upgrades, privacy, running your own server |
-
-## Keeping these pages true
-
-These pages describe Gamma as it is. A change to a rule they state
-changes the page in the same commit, and a page links the developer
-docs that hold the mechanics rather than repeating them. The pictures of
-the themes and the palette are drawn from the app's own values: run
-`node tools/designSheets.mjs` in `frontend/` after changing a theme or
-the default palette, and `npm test` there fails until you do.

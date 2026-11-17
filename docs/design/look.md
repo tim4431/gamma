@@ -2,15 +2,16 @@
 
 How Gamma looks, and the few rules that keep every window, menu and dialog
 looking like one app. The two pictures on this page are drawn from the app's
-own colour values by `frontend/tools/designSheets.mjs`, and a test fails
-when they fall behind, so they show what the app shows.
+own colour values, so they show what the app shows. The values themselves,
+sizes and timings included, are in the developer guide's
+[UI design conventions](../dev/ui-design.md#tokens).
 
 ## Themes
 
-<img alt="Eight cards, one per theme: Light, Dark, Gamma Light, Gamma Dark, Sepia, Solarized Light, Gray, and System split between Light and Dark. Each shows the top bar with a tab, a notes surface with a focused row, a primary Save button, a secondary Cancel button, a link in the accent colour and three dots for danger, warning and success" src="assets/themes.svg" width="100%">
+<img alt="A card per theme, each named, and one for System split between Light and Dark. Each shows the top bar with a tab, a notes surface with a focused row, a primary Save button, a secondary Cancel button, a link in the accent colour and three dots for danger, warning and success" src="assets/themes.svg" width="100%">
 
-Gamma has seven themes, plus System, which follows the device between Light
-and Dark. You pick one in Settings → Appearance. The theme belongs to your
+Gamma's themes are above; System follows the device between Light and
+Dark. You pick one in Settings → Appearance. The theme belongs to your
 account, so every browser you sign in on draws in it from the app's first
 screen.
 
@@ -27,9 +28,9 @@ the selected row. The light recipe steps each surface from the ground
 toward the ink. The dark one takes the chrome and the wells toward black and
 raised surfaces toward the ink. Each theme also lists by hand the few
 values where the recipe would visibly differ from the colours it was tuned
-to. A new theme can be its seeds and nothing else,
-and every part of the app follows it, including the desktop app's own bar. The browser extension cannot know your account's theme, so
-it follows the system's light or dark.
+to. A new theme can be its seeds and nothing else, and every part of the
+app follows it, including the desktop app's own bar. The browser extension
+cannot know your account's theme, so it follows the system's light or dark.
 
 A few colours are the same in every theme. Amber marks warnings and
 conflicts, and the dimming behind a dialog or a zoomed picture is plain
@@ -60,7 +61,7 @@ and the library read as one app inside one frame:
 | Chrome | the top bar and its tabs, the Settings rail, collapsed side bars |
 | Content | the library, the notes, every docked window (notes, chat, comments, files), dialogs |
 | Quiet fill | a hovered row, code, a table head, a chat bubble |
-| Selected | the focused note: the accent at 6 % over the content (11 % in a dark theme) |
+| Selected | the focused note: a faint tint of the accent over the content |
 | Floating | menus, popovers and tips, lifted by a shadow |
 | Field | a text field that must stand out on the content, such as the chat's composer |
 
@@ -80,18 +81,12 @@ shadow sets it apart. So a control that must stand out on the content
   figures (Times New Roman first), so digits read as digits beside the
   formulas cropped from the page, then the serif faces of Chinese, Japanese
   and Korean.
-- **Eight sizes, each with a job.** Nothing is smaller than 11 px.
-
-  | Size | Job |
-  |---|---|
-  | 11 px | captions, badges, key caps |
-  | 12 px | hints, section labels, tabs, small buttons |
-  | 13 px | the default: buttons, menus, dialog fields |
-  | 14 px | list rows, text fields, chat messages |
-  | 15 px | the notes' reading text |
-  | 17 px | pane and section titles |
-  | 20 px | the page title |
-  | 24 px | the largest headings |
+- **Eight sizes, each with a job**, from the smallest to the largest:
+  captions and key caps; hints, section labels and tabs; the default, for
+  buttons, menus and dialog fields; list rows, text fields and chat
+  messages; the notes' reading text; pane and section titles; the page
+  title; the largest headings. A size is always one of these, and nothing
+  is smaller than 11 px.
 
 - **Weights**: 400 for text, 500 for controls, 600 for headings, labels and
   what is active. 700 is only **bold** in your notes.
@@ -102,29 +97,29 @@ shadow sets it apart. So a control that must stand out on the content
 
 ## Size
 
-- **Interface size** (Settings → Appearance, 70 to 160 %) scales text and
-  controls together. A PDF keeps its own zoom.
+- **Interface size** (Settings → Appearance) scales text and controls
+  together. A PDF keeps its own zoom.
 - **Text size** of the notes or the chat: hold Ctrl (⌘ on a Mac) and scroll
   over it. It lasts for the session; a reload goes back to 100 %.
 - **One size set for mouse and finger.** A touch screen does not get bigger
   buttons. A thin target such as a resize grip gets a larger area to hit,
   not a larger look. The exceptions are the editing bar only a touch
-  screen shows, whose buttons are 36 px, and a text box's handles on a
+  screen shows, whose buttons are larger, and a text box's handles on a
   touch screen.
 
 ## Shape, depth and icons
 
-- **Corners** come from five steps: 4 px for tags and key caps, 6 px for
-  icon buttons, rows and chips, 8 px for buttons, fields, menus and
-  popovers, 12 px for cards, panels and dialogs, and fully round for pills.
+- **Corners** come from five steps, rounder as a thing grows: tags and key
+  caps; icon buttons, rows and chips; buttons, fields, menus and popovers;
+  cards, panels and dialogs; and fully round for pills.
 - **Depth** has three steps: raised controls (buttons, chips, the composer),
   what floats (menus, popovers, tips, floating toolbars), and dialogs. A
   dark theme shades with black, a light one with a little of its ink.
-- **Icons** are one stroke set on a 24-unit grid, at three sizes: 14 px
-  beside text, 16 px in buttons and toolbars, 20 px in pane headers and
-  empty states. The stroke is drawn 1.6 px wide at every size, so a 14 and
-  a 20 side by side look equally heavy. A close button is always the round
-  × icon, never the letter.
+- **Icons** are one stroke set, at three sizes: beside text, in buttons and
+  toolbars, and in pane headers and empty states. The stroke is drawn the
+  same width at every size, so a small icon and a large one side by side
+  look equally heavy. A close button is always the round × icon, never the
+  letter.
 
 ## Buttons
 
@@ -147,14 +142,13 @@ New chat, which becomes Discard chat, is the model.
 Motion says where a thing comes from and where it goes. It never decorates
 and never makes you wait.
 
-- **Coming is slower than going.** A menu or a dialog arrives in 240 ms and
-  leaves in 160 ms; a toast arrives in 400 ms. Hover and press take 100 ms.
+- **Coming is slower than going.** A menu or a dialog arrives a little more
+  slowly than it leaves, a toast more slowly still; hover and press are the
+  quickest.
 - **Things grow from where they open.** A menu grows from the point or the
   button it opens from, a popover from its button's corner, a dialog from
-  its middle. A menu is first seen where it stays: it never appears on one
-  side of its button and then jumps to the other.
-- **Popups under the caret appear at once.** The `/`, `[[` and `@` menus
-  and the selection bar fade in over 100 ms, so typing never waits on one.
+  its middle, and each is first seen where it stays
+  ([Interaction](interaction.md#menus-and-popups)).
 - **Only a badge or a switch overshoots**, once. Nothing else bounces.
 - **A theme changes in one frame.** Every colour switches together, so no
   button eases from the old theme's colour while the rest has changed.
@@ -163,15 +157,14 @@ and never makes you wait.
 
 ## Colours you draw with
 
-<img alt="The default palette. Highlight: yellow, green, blue and purple washes behind the word 'passage' on a white page and on a flipped dark page, each also as an underline in a deeper tone. Ink highlight: eight highlighter strokes, the same four plus pink, peach, cyan and light gray. Pen: fourteen pen strokes from black and gray through blue, teal, green, amber, orange, red, pink and violet to brown and white" src="assets/palette.svg" width="100%">
+<img alt="The default palette. Highlight: yellow, green, blue and purple washes behind the word 'passage' on a white page and on a flipped dark page, each also as an underline in a deeper tone. Ink highlight: highlighter strokes, the same colours plus pink, peach, cyan and light gray. Pen: pen strokes from black and gray through blue, teal, green, amber, orange, red, pink and violet to brown and white" src="assets/palette.svg" width="100%">
 
 Highlights, highlighter strokes, pens and text boxes draw from one palette,
 which you edit in Settings → Appearance › Colors. It is a set of named
-groups of colours, each with its own transparency: up to 12 groups of up to
-24 colours. Each of the four places that offer colours (text highlights,
-the highlighter, the pen, text boxes) shows one group of your choice. A new
-account has the three groups above: the four classic highlight colours, the
-highlighter's eight, and the pens' fourteen.
+groups of colours, each colour with its own transparency. Each of the four
+places that offer colours (text highlights, the highlighter, the pen, text
+boxes) shows one group of your choice. A new account has the groups above:
+the classic highlight colours, the highlighter's and the pens'.
 
 **A stored colour is the colour itself, not a slot.** A highlight keeps the
 colour it was made in. Gamma never stores "palette colour 2" and looks it

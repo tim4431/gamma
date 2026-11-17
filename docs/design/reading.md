@@ -39,7 +39,7 @@ three looks:
 | Look | Means | What you do |
 |---|---|---|
 | Solid | found word for word | nothing |
-| Dashed | found roughly (80 % alike or more by default), or an area whose place is an estimate | check it: its card shows how alike it reads, a picture of where it was and the words that changed; Accept, Move… or Discard |
+| Dashed | found roughly, alike enough by your setting (Settings → Reading & editing), or an area whose place is an estimate | check it: its card shows how alike it reads, a picture of where it was and the words that changed; Accept, Move… or Discard |
 | Hollow | not found | it stays where it was with its notes; its card may offer the closest match, or you move it by hand |
 
 Some rules that follow from how people revise papers:
@@ -48,11 +48,11 @@ Some rules that follow from how people revise papers:
   from a dashed guess. Replacing the PDF twice before you check a dashed
   highlight looks again for the text it had when it was last solid.
 - **The text counts for more than its place.** A passage reworded where
-  it was still wins while it reads very alike (above about 86 %); below
+  it was still wins while it reads very alike; below
   that, an exact copy elsewhere wins. So after figures are renumbered,
   "Fig. 3" lands on the new Fig. 3 rather than on the old sentence that
   now says "Fig. 4".
-- **Short passages must match exactly** (12 characters by default), since
+- **Short passages must match exactly** (how short is a setting too), since
   a rough match of three words is a guess.
 - **Areas follow what is inside them**: first the text they hold, then the
   picture under them, then the page's other highlights.

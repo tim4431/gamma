@@ -48,15 +48,29 @@ const MEDIA = {
 // puts the page in the documentation sidebar, with its headings; without one
 // the page stands alone (the privacy policy, the terms, and deleting a Gamma
 // Cloud account, which the apps and the store listings link to). The design
-// pages (docs/design/) are a section of their own, its README the first.
+// pages are a section of their own (designPages below).
 const DOCS = [
   { source: 'PRIVACY.md', at: 'privacy/' },
   { source: 'TERMS.md', at: 'terms/' },
   { source: 'DELETE_ACCOUNT.md', at: 'delete-account/' },
   { source: 'docs/user_guide/user_guide.md', at: 'docs/', section: 'User guide' },
-  ...['README', 'look', 'interaction', 'blocks', 'library', 'reading', 'comments', 'workspaces', 'sync', 'ai', 'formats', 'architecture']
-    .map(name => ({ source: `docs/design/${name}.md`, at: name === 'README' ? 'docs/design/' : `docs/design/${name}/`, section: 'Design' })),
+  ...designPages(),
 ];
+
+// docs/design/README.md, then each page its table of pages links, in that
+// order. A page of docs/design/ the table leaves out, or a link to no page,
+// fails the build: the table is where a new page is listed.
+function designPages() {
+  const dir = path.join(ROOT, 'docs', 'design');
+  const listed = [...new Set([...fs.readFileSync(path.join(dir, 'README.md'), 'utf8').matchAll(/^\| \[[^\]]+\]\(([\w-]+)\.md\)/gm)].map(m => m[1]))];
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.md') && f !== 'README.md').map(f => f.slice(0, -3));
+  const unlisted = files.filter(f => !listed.includes(f)), missing = listed.filter(f => !files.includes(f));
+  if (unlisted.length || missing.length) {
+    throw new Error(`docs/design/README.md's table of pages disagrees with the folder: ${[...unlisted.map(f => `${f}.md not listed`), ...missing.map(f => `${f}.md missing`)].join(', ')}`);
+  }
+  return [{ source: 'docs/design/README.md', at: 'docs/design/', section: 'Design' },
+    ...listed.map(name => ({ source: `docs/design/${name}.md`, at: `docs/design/${name}/`, section: 'Design' }))];
+}
 
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
 const warnings = [];

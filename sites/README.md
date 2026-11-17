@@ -216,8 +216,10 @@ needs two repository secrets:
   open the menu) and in both color schemes (the screenshot and demos are shown
   as recorded, slightly dimmed in dark mode).
 - Documentation pages are edited in `docs/`, never here. A document that
-  should also be on the site is added to `DOCS` in `build.mjs`; a new
-  design page joins the list of names there, in the order the sidebar shows. Link between
+  should also be on the site is added to `DOCS` in `build.mjs`. A design
+  page is listed instead in the table of pages of `docs/design/README.md`,
+  whose order the sidebar follows; a page of `docs/design/` the table
+  leaves out fails the build. Link between
   documents with relative paths to the `.md` files, as GitHub needs anyway.
 - A new hand-written page: add a `.html` under `site/` with the two
   includes; the sitemap picks it up.
