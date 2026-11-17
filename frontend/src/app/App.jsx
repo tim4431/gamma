@@ -13799,7 +13799,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         appRef.current?.classList.toggle("dragOver", dropHere);
       }}
       onDragLeave={shareMode ? undefined : (e) => {
-        if (e.currentTarget === e.target) appRef.current?.classList.remove("dragOver");
+        // A drag that leaves the window (or is cancelled there) leaves from
+        // whatever element is under the pointer, toward nothing in the app.
+        if (!e.currentTarget.contains(e.relatedTarget)) appRef.current?.classList.remove("dragOver");
       }}
       onDrop={shareMode ? undefined : (e) => {
         appRef.current?.classList.remove("dragOver");
