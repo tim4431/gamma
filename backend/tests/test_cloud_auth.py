@@ -671,6 +671,29 @@ def test_connecting_a_server_at_a_public_address(cloud, monkeypatch):
         cloud_auth.save_settings(issuer="", client_id="", client_secret="")
 
 
+def test_a_plain_http_address_of_this_network_is_none_to_gamma_cloud(cloud, monkeypatch):
+    # Confirmed for assistants (a NAS without a certificate), it is no address
+    # the account server calls back to or lists: the server signs in as one
+    # with no public URL, through a loopback origin, and is offered no connection.
+    monkeypatch.delenv("GAMMA_CLOUD_ISSUER", raising=False)
+    cloud_auth.save_settings(issuer=ISSUER, client_id="", client_secret="")
+    _set_raw("public_url", "http://192.168.1.10:8000")
+    make_user("ca_lan", "pw-ca_lan-123", is_admin=1)
+    try:
+        assert not cloud_auth.needs_connect()
+        auth = start(browser("http://127.0.0.1:8000"))
+        assert auth["redirect_uri"] == "http://127.0.0.1:8000/api/auth/cloud/callback"
+        assert cloud_auth.server_url() == "", "not on the person's server list"
+        r = login("ca_lan", "pw-ca_lan-123").get("/api/auth/cloud/connect/start", follow_redirects=False)
+        assert "plain HTTP" in parse_qs(urlsplit(r.headers["location"]).query)["cloud_connect_error"][0]
+        # the account server's own address stays https (or loopback)
+        with pytest.raises(ValueError):
+            cloud_auth.validate_issuer("http://192.168.1.20:8080")
+    finally:
+        _set_raw("public_url", "")
+        cloud_auth.save_settings(issuer="", client_id="", client_secret="")
+
+
 def _b64(raw):
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 

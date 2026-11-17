@@ -622,7 +622,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 - To remove Gamma from an assistant, open **Remove Gamma from …** at the end of its tab and run the commands there (for DeepSeek Harness, with the app quit: it takes the plugin out and deletes the saved connection), then **Disconnect** the connection under **Connected assistants**.
 - Paste a Gamma page, block or share link into the question and the assistant reads that page, in whichever of the connection's workspaces it is.
 - Its answers link what they cite, as the chat's do: a PDF's passage, or a file's line (`method.tex:12`), which opens in Gamma marked.
-- A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. A connection expires after 90 days; the same pane lists every connection of your account and disconnects one.
+- A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. It is an https:// address; a server on your own network may use its plain http:// one, such as `http://192.168.1.10:8000` or `http://nas.local:8000`. A connection expires after 90 days; the same pane lists every connection of your account and disconnects one.
 
 ### Connect an assistant
 

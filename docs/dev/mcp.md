@@ -639,7 +639,8 @@ then the primary Allow and Cancel.
 
 ## Self-hosted and remote connections
 
-Open Gamma at its public HTTPS address, then sign in as an administrator and
+Open Gamma at its public HTTPS address, or on this network at its plain
+HTTP one, then sign in as an administrator and
 open **Settings → Server → Public server URL**. The field
 suggests the browser's origin. Check it and click **Confirm** once.
 Gamma stores the address in `users.db` and immediately uses it for OAuth,
@@ -654,11 +655,29 @@ rather than the proxy's backend connection URL. Changing the address requires
 assistants to reconnect; the previous hostname is removed from the allowlist
 unless separately allowed. Clearing the field restores request-based discovery.
 
+Plain HTTP is taken on this computer and on this network, where a NAS has
+no certificate: `http://192.168.1.10:8000`, `http://nas.local:8000`, a
+Tailscale address. A host counts as this network's by its form alone,
+once normalized (`host_scope.literal` "lan": a private address, a
+single-label name, a `.local`, `.lan`, `.home.arpa` or `.internal` name; a
+host written as one number, `3405803781`, is the address it stands for).
+A name of that form is looked up when it is confirmed in Settings
+(`server_settings.confirmable_public_url`): one that resolves to an
+address on the internet is refused, since assistants send their tokens to
+it in the clear, and so is one whose lookup does not answer in time
+([https.md](https.md#plain-http)). `GAMMA_PUBLIC_URL` is taken as written.
+Any other host needs HTTPS. Browser sign-in over plain HTTP needs that
+confirmed address: a name `GAMMA_MCP_ALLOWED_HOSTS` allows takes manual
+tokens alone (`mcp_oauth.public_base`). Gamma Cloud
+uses only an https or loopback address (`cloud_auth.cloud_public_url`):
+with a plain-HTTP one of this network, cloud sign-in and the server list
+go as with no public URL ([cloud_accounts.md](cloud_accounts.md)).
+
 `GAMMA_PUBLIC_URL` overrides the saved address and makes the field read-only. Its hostname is
 automatically allowed too. `GAMMA_MCP_ALLOWED_HOSTS` adds other allowed host
-authorities, for example `nas.local:8000` for manual tokens. Localhost and
-loopback remain allowed by default. Browser sign-in over HTTP is restricted to
-localhost/loopback; HTTP LAN and path-prefixed deployments can use manual tokens.
+authorities, for example a second name of the server for manual tokens.
+Localhost and loopback remain allowed by default. A path-prefixed
+deployment has no browser sign-in and can use manual tokens.
 
 OAuth handles sign-in, not network reachability. A remote assistant still needs
 to reach Gamma's server. A public listing cannot access a user's localhost by itself.

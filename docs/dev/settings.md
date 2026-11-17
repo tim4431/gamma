@@ -1054,7 +1054,8 @@ a "confirmed" / "not confirmed" tag and, while the address is unconfirmed or
 edited, one Confirm button. It is prefilled from the browser origin but saved
 only on confirmation; the saved address immediately configures assistant
 sign-in and the MCP host allowlist and persists in the server `settings`
-table. An existing `GAMMA_PUBLIC_URL` environment override is shown
+table. It is an https address, or a plain http one on this computer or this
+network ([https.md](https.md#plain-http)), which Gamma Cloud does not use. An existing `GAMMA_PUBLIC_URL` environment override is shown
 read-only.
 
 **Reports** (Users, `SettingsReports.jsx` `ContentReports`, `GET

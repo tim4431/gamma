@@ -29,7 +29,7 @@ const desktopOnly = (entry) => ({ ...entry, desktop: true });
 // What people call a proxy setting, shared by every row of the Network proxy pane.
 const PROXY_WORDS = "proxy http https socks socks5 vpn clash v2ray network firewall no_proxy bypass internet china";
 const entries = [
-  e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
+  e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless on this computer or this network"), "public address HTTPS HTTP LAN NAS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
   e("translation", t("Interface language"), t("Language"), t("Interface text only."), "interface text locale english chinese 中文 语言"),
   e("appearance", t("Dark PDF pages"), t("PDF pages"), t("Light text on a dark page; figures invert too."), "flip invert page colors"),
