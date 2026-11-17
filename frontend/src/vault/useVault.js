@@ -137,7 +137,8 @@ export function useVault(pageId, enabled, { track = "", tick = "", setStatus = n
 // (desktop/preload.js): `keep-folder-on-disk {folder}` (sync a folder with a
 // directory), `follow-file-on-disk {page}` (push from a file), `reveal-on-disk
 // {page}`, `relocate-file {page}`, `carry-to-server {page}` (an opened PDF to
-// another server's library), each for the workspace open here. The first two
+// another server's library), `copy-file {page}` (its file on the clipboard),
+// each for the workspace open here. The first two
 // keep their names from before synced vaults, the only ones a desktop app
 // released before them passes on: it may show a page of a server updated
 // since. The shell answers the page nothing: what it does reaches the page

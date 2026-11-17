@@ -946,7 +946,9 @@ page the panel is on:
   Add label ▸ · Move to folder ▸ (a library page among them) · Move into
   page… · Move to library (a sub-page among the topmost) · Add to library…
   (opened PDFs, in place of the two moves) · Duplicate (not an opened PDF) |
-  Copy link · Share… · Export… ·
+  Copy link · Copy PDF (Copy file for another format: the desktop app, one
+  page whose document is a file, the shell's `copy-file` ask,
+  [architecture.md](../../desktop/docs/architecture.md)) · Share… · Export… ·
   Ask AI about this page · Properties | Delete (Del). The three rows for
   pages inside pages are in "Sub-pages" above. Properties, for one page, opens the read-only
   Properties popover at the menu's point

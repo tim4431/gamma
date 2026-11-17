@@ -281,6 +281,7 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 | `reveal-on-disk {ws, page}` (the vault chip's *Show in Explorer*, *Show in Finder* on a Mac) | `shell:reveal-from-page` | `revealOnDisk` |
 | `relocate-file {ws, page}` (the banner's *Locate…*) | `shell:relocate-from-page` | `relocateFile` |
 | `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening files and folders") |
+| `copy-file {ws, page}` (the library page menu's *Copy PDF*, *Copy file*) | `shell:copy-file-from-page` | `copyFileFromPage`: the page's `properties.doc` read from the open server, local or remote, its file fetched with the window's session from `/api/uploads/<hash><ext>` into a `gamma-copy-*` directory of the system's temporary one, named after the page (the copy before it removed), and put on the clipboard as a file (`lib/fileClipboard.js`: macOS `public.file-url`, Windows CF_HDROP through Windows PowerShell's `Set-Clipboard -LiteralPath`, the path in the environment, Linux `text/uri-list`); under the test harness only recorded (`copiedFile`) |
 | `continue-in-terminal {ws, page}` (the chat's computer side, *Continue in a terminal*) | `shell:terminal-from-page` | `terminalFromPage` |
 | `tracked {link, cancelled}` (the host's tracking dialog of a work folder of another server, saved or cancelled) | `shell:tracked-from-page` | `trackedFromPage` |
 | `set-agent {ws, agent, enabled}` (Settings → AI: an agent of this computer turned on or off) | `shell:set-agent-from-page` | `setAgentFromPage` → `setAgent` |

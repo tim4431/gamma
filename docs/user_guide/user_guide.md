@@ -278,7 +278,7 @@ The agent never deletes a page for good: a deleted page stays in Recently delete
 The home page lists your pages, most recent first, with a **Recently viewed** strip on top.
 
 - **Labels** are words you'll search for. **Folders** are labels that nest, for a topic or a talk. Neither one copies a paper ([which to use](#labels-or-folders)).
-- **Select** like a file manager: click, Ctrl+click, Shift+click; double-click opens; right-click for rename, move, label, share, export, properties, delete. Done to many pages at once, the change shows in **Background tasks** as it goes, page by page, with **Stop**. It runs in the tab: closing or reloading the tab stops it part way.
+- **Select** like a file manager: click, Ctrl+click, Shift+click; double-click opens; right-click for rename, move, label, share, export, properties, delete. In the desktop app, **Copy PDF** puts a paper's PDF on the clipboard as a file, to paste into a folder or a chat; **Duplicate** makes a second page with the same notes and highlights. Done to many pages at once, the change shows in **Background tasks** as it goes, page by page, with **Stop**. It runs in the tab: closing or reloading the tab stops it part way.
 - **Recently deleted** keeps a page for 30 days, with its notes and files.
 
 ### Labels or folders?

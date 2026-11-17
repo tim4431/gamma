@@ -86,7 +86,7 @@ import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, ClipboardIcon, CloudIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitPageIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
@@ -15253,6 +15253,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 [
                   !many && !shareMode && (
                     <MenuItem key="link" icon={LinkIcon} onClick={() => { close(); copyPageLink(homeMenu.id); }}>{t("Copy link")}</MenuItem>
+                  ),
+                  // the file itself on this computer's clipboard, for a paste
+                  // into a folder or another app: the desktop app's shell puts
+                  // it there (a browser cannot put a file on the clipboard)
+                  !many && IS_DESKTOP && fileHash(acted[0]?._doc) && (
+                    <MenuItem key="copyfile" icon={ClipboardIcon} title={t("Put the file on this computer's clipboard, to paste it into a folder or another app")}
+                      onClick={() => { close(); askShell("copy-file", { page: homeMenu.id }); }}>{isPdf(acted[0]._doc) ? t("Copy PDF") : t("Copy file")}</MenuItem>
                   ),
                   !many && lib.organize && (
                     <MenuItem key="share" icon={ShareIcon} title={t("Share this page — a link, and who may view or edit it")}

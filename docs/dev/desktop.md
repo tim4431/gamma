@@ -60,7 +60,9 @@ profile and the `?ws=<id>&page=<id>` URL ([architecture.md](../../desktop/docs/a
 /api/blocks/<id>` (its `format`, `hash`, `ext` and `copy`: an opened PDF's
 hash for its annotations, a carried page's own PDF and its stored name in
 the export), read of the app's own local server only, which is always the
-shell's release; the change feed's `format` (`GET
+shell's release, but for Copy PDF, which reads the `hash` and `ext` of the
+open server's page, local or remote, and fetches `/api/uploads/<hash><ext>`
+(a server without `properties.doc` gets "This page has no file to copy"); the change feed's `format` (`GET
 /api/sync/changes?limit=1`) of both servers before a carry, which refuses
 a target of an older one; the routes of `/api/remote-servers` on its own
 local servers ([https.md](https.md)): `POST /check` before each token it

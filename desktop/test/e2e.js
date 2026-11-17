@@ -569,6 +569,21 @@ async function main() {
       return 'tab closed, window open';
     });
 
+    await step('Copy PDF in a library page\'s menu puts the page\'s PDF on the clipboard as a file named after the page', async () => {
+      const row = content.locator('.fileRow', { hasText: 'E2E paper' }).first();
+      await row.waitFor({ timeout: 15_000 });
+      await row.click({ button: 'right' });
+      await content.locator('.ctxMenuItem', { hasText: 'Copy PDF' }).click();
+      const file = await waitFor(() => hook(app, (s) => s.copiedFile()), 'a file on the clipboard', 15_000);
+      assert.equal(path.basename(file), 'E2E paper.pdf');
+      const dir = await hook(app, (s, id) => s.registry.get(id).dataDir, ids.alpha);
+      const wsDir = fs.readdirSync(path.join(dir, 'workspaces'))[0];
+      const stored = fs.readFileSync(path.join(dir, 'workspaces', wsDir, 'uploads', path.basename(sourceUrl)));
+      assert(fs.readFileSync(file).equals(stored), 'the page\'s own PDF, byte for byte');
+      assert(/E2E paper\.pdf is on the clipboard/.test((await hook(app, (s) => s.notice())) || ''), 'the bar says so');
+      return file;
+    });
+
     await step('page exports in every mode (frozen bundle: pypdf, ziamath fonts)', async () => {
       const res = await content.evaluate(async (pageId) => {
         const out = {};
