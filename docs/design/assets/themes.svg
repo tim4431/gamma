@@ -1,0 +1,252 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="396" viewBox="0 0 960 396" role="img" aria-label="Gamma's themes: each one's chrome, content, focused block, buttons and role colours" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
+<title>Gamma's themes: each one's chrome, content, focused block, buttons and role colours</title>
+<style>
+.l { fill: #292822; } .m { fill: #6b6a65; } .rim { stroke: #c7c2b6; }
+@media (prefers-color-scheme: dark) { .l { fill: #f0ede6; } .m { fill: #a9a69e; } .rim { stroke: #45443f; } }
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+</style>
+<g transform="translate(12 12)">
+<clipPath id="card-light"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-light)">
+<rect width="216" height="136" fill="#f5f5f5"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#ffffff"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#1a1a1a">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#888888">Notes</text>
+<rect y="31" width="216" height="105" fill="#ffffff"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#1a1a1a">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#333333">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#f3f7fd"/>
+<text x="14" y="90" font-size="10" fill="#1a1a1a">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#888888">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#3a7bd5"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#ffffff">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#ffffff" stroke="#dddddd"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#1a1a1a">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#3a7bd5">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#c23b3b"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#2f8f57"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#dddddd"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#ffffff" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#ffffff</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#1a1a1a" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#1a1a1a</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#3a7bd5" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#3a7bd5</text>
+<text y="158" font-size="13" font-weight="600" class="l">Light</text>
+</g>
+<g transform="translate(252 12)">
+<clipPath id="card-dark"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-dark)">
+<rect width="216" height="136" fill="#111111"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#1a1a1a"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#eeeeee">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#888888">Notes</text>
+<rect y="31" width="216" height="105" fill="#1a1a1a"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#eeeeee">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#dddddd">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#21262c"/>
+<text x="14" y="90" font-size="10" fill="#eeeeee">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#888888">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#3a7bd5"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#ffffff">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#232323" stroke="#333333"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#eeeeee">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#5b9bd5">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#e05c5c"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#4caf7d"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#333333"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#1a1a1a" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#1a1a1a</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#eeeeee" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#eeeeee</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#5b9bd5" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#5b9bd5</text>
+<text y="158" font-size="13" font-weight="600" class="l">Dark</text>
+</g>
+<g transform="translate(492 12)">
+<clipPath id="card-gamma-light"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-gamma-light)">
+<rect width="216" height="136" fill="#e6e5e0"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#efeee9"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#292822">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#6b6a65">Notes</text>
+<rect y="31" width="216" height="105" fill="#efeee9"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#292822">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#44423c">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#e9e5dd"/>
+<text x="14" y="90" font-size="10" fill="#292822">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#6b6a65">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#80530a"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#ffffff">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#f2f1ed" stroke="#c7c2b6"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#292822">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#92620e">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#b53d35"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#287956"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#c7c2b6"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#efeee9" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#efeee9</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#292822" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#292822</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#92620e" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#92620e</text>
+<text y="158" font-size="13" font-weight="600" class="l">Gamma Light</text>
+</g>
+<g transform="translate(732 12)">
+<clipPath id="card-gamma-dark"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-gamma-dark)">
+<rect width="216" height="136" fill="#1b1b19"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#272725"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#f0ede6">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#a9a69e">Notes</text>
+<rect y="31" width="216" height="105" fill="#272725"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#f0ede6">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#ded9cd">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#39352b"/>
+<text x="14" y="90" font-size="10" fill="#f0ede6">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#a9a69e">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#dba13b"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#1b1b1a">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#30302e" stroke="#45443f"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#f0ede6">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#e8b451">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#f08b80"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#6fc89f"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#45443f"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#272725" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#272725</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#f0ede6" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#f0ede6</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#e8b451" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#e8b451</text>
+<text y="158" font-size="13" font-weight="600" class="l">Gamma Dark</text>
+</g>
+<g transform="translate(12 208)">
+<clipPath id="card-sepia"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-sepia)">
+<rect width="216" height="136" fill="#f0e9d6"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#fdf6e3"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#073642">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#657b83">Notes</text>
+<rect y="31" width="216" height="105" fill="#fdf6e3"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#073642">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#365b64">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#f0eee0"/>
+<text x="14" y="90" font-size="10" fill="#073642">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#657b83">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#14608f"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#ffffff">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#fdf6e3" stroke="#e0d8c0"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#073642">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#1b6fa3">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#c1382b"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#5f7519"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#e0d8c0"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#fdf6e3" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#fdf6e3</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#073642" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#073642</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#1b6fa3" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#1b6fa3</text>
+<text y="158" font-size="13" font-weight="600" class="l">Sepia</text>
+</g>
+<g transform="translate(252 208)">
+<clipPath id="card-solarized"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-solarized)">
+<rect width="216" height="136" fill="#eee8d5"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#fdf6e3"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#657b83">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#839496">Notes</text>
+<rect y="31" width="216" height="105" fill="#fdf6e3"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#657b83">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#586e75">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#f1f0e3"/>
+<text x="14" y="90" font-size="10" fill="#657b83">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#839496">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#268bd2"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#ffffff">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#eee8d5" stroke="#ddd6c1"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#657b83">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#268bd2">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#dc322f"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#859900"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#ddd6c1"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#fdf6e3" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#fdf6e3</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#657b83" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#657b83</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#268bd2" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#268bd2</text>
+<text y="158" font-size="13" font-weight="600" class="l">Solarized Light</text>
+</g>
+<g transform="translate(492 208)">
+<clipPath id="card-gray"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-gray)">
+<rect width="216" height="136" fill="#e9e9e9"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#f4f4f4"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#2d2d2d">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#7d7d7d">Notes</text>
+<rect y="31" width="216" height="105" fill="#f4f4f4"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#2d2d2d">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#434343">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#e9edf3"/>
+<text x="14" y="90" font-size="10" fill="#2d2d2d">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#7d7d7d">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#3a7bd5"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#ffffff">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#f4f4f4" stroke="#dcdcdc"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#2d2d2d">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#3a7bd5">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#c23b3b"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#2f8f57"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#dcdcdc"/>
+<rect x="0.5" y="168.5" width="10" height="10" rx="2" fill="#f4f4f4" class="rim"/><text x="15" y="177" font-size="10" class="m mono">#f4f4f4</text>
+<rect x="72.5" y="168.5" width="10" height="10" rx="2" fill="#2d2d2d" class="rim"/><text x="87" y="177" font-size="10" class="m mono">#2d2d2d</text>
+<rect x="144.5" y="168.5" width="10" height="10" rx="2" fill="#3a7bd5" class="rim"/><text x="159" y="177" font-size="10" class="m mono">#3a7bd5</text>
+<text y="158" font-size="13" font-weight="600" class="l">Gray</text>
+</g>
+<g transform="translate(732 208)">
+<clipPath id="sys-l"><rect width="108" height="136"/></clipPath><clipPath id="sys-d"><rect x="108" width="108" height="136"/></clipPath>
+<g clip-path="url(#sys-l)"><clipPath id="card-sys-l"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-sys-l)">
+<rect width="216" height="136" fill="#f5f5f5"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#ffffff"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#1a1a1a">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#888888">Notes</text>
+<rect y="31" width="216" height="105" fill="#ffffff"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#1a1a1a">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#333333">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#f3f7fd"/>
+<text x="14" y="90" font-size="10" fill="#1a1a1a">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#888888">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#3a7bd5"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#ffffff">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#ffffff" stroke="#dddddd"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#1a1a1a">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#3a7bd5">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#c23b3b"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#2f8f57"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#dddddd"/></g>
+<g clip-path="url(#sys-d)"><clipPath id="card-sys-d"><rect width="216" height="136" rx="12"/></clipPath>
+<g clip-path="url(#card-sys-d)">
+<rect width="216" height="136" fill="#111111"/>
+<rect x="10" y="7" width="76" height="28" rx="6" fill="#1a1a1a"/>
+<text x="20" y="25" font-size="10" font-weight="500" fill="#eeeeee">Paper</text>
+<text x="98" y="25" font-size="10" font-weight="500" fill="#888888">Notes</text>
+<rect y="31" width="216" height="105" fill="#1a1a1a"/>
+<text x="14" y="53" font-size="13" font-weight="600" fill="#eeeeee">Reading notes</text>
+<text x="14" y="69" font-size="10" fill="#dddddd">A highlight becomes a note</text>
+<rect x="8" y="76" width="200" height="20" rx="6" fill="#21262c"/>
+<text x="14" y="90" font-size="10" fill="#eeeeee">The focused block</text>
+<text x="202" y="90" font-size="10" text-anchor="end" fill="#888888">p. 3</text>
+<rect x="14" y="104" width="50" height="22" rx="6" fill="#3a7bd5"/>
+<text x="39" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#ffffff">Save</text>
+<rect x="70.5" y="104.5" width="57" height="21" rx="6" fill="#232323" stroke="#333333"/>
+<text x="99" y="119" font-size="10" font-weight="500" text-anchor="middle" fill="#eeeeee">Cancel</text>
+<text x="137" y="119" font-size="10" font-weight="500" fill="#5b9bd5">Open</text>
+<circle cx="180" cy="115.5" r="4" fill="#e05c5c"/>
+<circle cx="192" cy="115.5" r="4" fill="#d9822b"/>
+<circle cx="204" cy="115.5" r="4" fill="#4caf7d"/>
+</g>
+<rect x="0.5" y="0.5" width="215" height="135" rx="11.5" fill="none" stroke="#333333"/></g>
+<text y="158" font-size="13" font-weight="600" class="l">System</text>
+</g>
+</svg>

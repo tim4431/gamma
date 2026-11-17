@@ -2137,7 +2137,7 @@ through `cloud_auth._http` and its user agent:
 ```json
 {"version": "v1.4.0 (abc123def456)", "schema": 31, "accounts": 4,
  "active_accounts": 2, "uploads_bytes": 734003200, "data_bytes": 912680550,
- "public_url": "https://alice.gammapdf.com",
+ "public_url": "https://alice-user.gammapdf.com",
  "last_write_at": "2026-10-05T08:41:17Z", "errors": 0, "uptime_s": 259200}
 ```
 

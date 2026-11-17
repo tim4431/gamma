@@ -658,9 +658,10 @@ with `--kind-pdf`. Under 600 px the date column hides.
 not toolbar buttons. New page (`newPageAllowed`: not in a label view, not
 while only folders show) is a `pageCardAdd` tile / `folderNewBtn` row that
 creates a blank page in the open folder via `POST /api/pages` and opens it
-with the title ready to type — creating a page never needs a file; a PDF is
-attached on the page afterwards (the paperclip in the page header, or a PDF
-dropped on the open page). New folder is the same tile/row shape and turns
+with the title ready to type — creating a page never needs a file; a document is attached on the page afterwards,
+from the paperclip in the page header alone (a file dropped on the open
+page becomes a file chip in its notes, [block_centric.md](block_centric.md)
+"Stage 4"). New folder is the same tile/row shape and turns
 into its own name input in place (Enter or blur commits, Escape cancels); it
 is hidden while the folder is filtered to files-only, to labels, or inside a
 label view. Committing inserts the folder block, last among its siblings:

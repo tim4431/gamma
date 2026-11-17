@@ -2064,9 +2064,11 @@ shell asks the user with its native picker. The vault dialog is a view of
 the sync panel (`desktop/ui/bar.html`): the directory, what `POST /preview`
 found there, the switches *Pull* and *Push: off / PDFs / everything*, a
 sentence saying what the first round does, *Sync* and *Cancel*. A vault of
-another server keeps Pull on and pushes PDFs at most: its view's Pull
-switch cannot be turned off, and the shell refuses both before sending
-anything. The panel's rows and the sentences the shell says are read by
+another server keeps Pull on and pushes PDFs at most, unless it is a work
+folder made of an empty folder there, which pushes everything and pulls
+("A vault on another server"): its view's Pull switch cannot be turned
+off, and the shell refuses the other switches before sending anything
+(`keeping.REMOTE_RULE`, `REMOTE_WORK_RULE`). The panel's rows and the sentences the shell says are read by
 `desktop/lib/keeping.js`, which keeps the vocabulary; an up-to-date row
 also counts the names the scan refused among those not synced, and says
 *push turned off* (`push_off`) and *n in another vault* (`shared`), with

@@ -118,8 +118,10 @@ switch on the Admin page: a plan held back reads "Coming soon" on the
 Plan page and the website, and a subscriber cannot switch to it.
 
 **A plan ending.** A cancel runs to the end of the paid period. A failed
-payment keeps the plan 7 days. After that a Lite or Plus account keeps
-its library under the free allowance; a Pro server turns read-only at
+payment keeps the plan 7 days. After that a Lite or Plus library is closed but kept, as
+the account can no longer sign in to the shared server: nothing is
+deleted, and a new plan opens it again (cloud_accounts.md "Plans on the
+share host"); a Pro server turns read-only at
 once (reads and exports work), is stopped after 30 days and deleted after
 90, with a mail at each step. A grant that was given a date ends the
 same way. Deleting an account cancels at Stripe first and purges the row
