@@ -255,10 +255,12 @@ def purge_unused(ws: str, pages_conn: sqlite3.Connection) -> None:
         live = _live_docs(pages_conn)
         with connect_data_db(ws) as conn:
             ensure_schema(conn)
-            drop_docs(conn, [r[0] for r in conn.execute("SELECT doc_id FROM text_fts_docs") if r[0] not in live])
-            pdf_meta.purge(conn, live)
-            translate_store.purge(conn, live)
-            conn.commit()
+            # The lock before the reads: a read turned into a write while
+            # another connection writes is refused at once, never waited for.
+            with write_txn(conn):
+                drop_docs(conn, [r[0] for r in conn.execute("SELECT doc_id FROM text_fts_docs") if r[0] not in live])
+                pdf_meta.purge(conn, live)
+                translate_store.purge(conn, live)
             settle(conn)
     except Exception as e:  # noqa: BLE001 — derived data: the next sweep tries again
         log.warning(f"[search] cleanup of unused documents failed: {e}")
