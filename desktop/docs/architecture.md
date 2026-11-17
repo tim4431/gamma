@@ -1948,8 +1948,10 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   its `PYINSTALLER`, which it installs into the running Python when the
   installed versions differ, on the release runners and by hand alike.
 - `assets/icon.png` — app icon (1024 px, the favicon mark, from the brand
-  generator; electron-builder derives ico/icns and the Linux icon set, and
-  App Store Connect wants the icns's 1024 px image). `assets/entitlements.mac.plist` —
+  generator; electron-builder derives ico/icns from it, and App Store
+  Connect wants the icns's 1024 px image). `assets/icons/` — the `.deb`'s
+  icon set, 16 to 512 px from the same generator (the hicolor theme has no
+  1024 px size: [release.md](release.md)). `assets/entitlements.mac.plist` —
   hardened-runtime entitlements for signed mac builds, the microphone
   among them ("The microphone").
 - `assets/appx/` and `assets/store/` — tracked Store package/listing images;

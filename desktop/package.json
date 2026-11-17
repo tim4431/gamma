@@ -5,6 +5,7 @@
   "homepage": "https://github.com/tim4431/Gamma",
   "author": "Tim <tim4431@users.noreply.github.com>",
   "main": "main.js",
+  "desktopName": "gamma.desktop",
   "private": true,
   "scripts": {
     "store-art": "node ../tools/branding/build.mjs",
