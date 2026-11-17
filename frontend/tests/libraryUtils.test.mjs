@@ -10,7 +10,7 @@ import {
   folderNeighbour, folderPath, folderPathHolds, folderPathNames, folderPosition, folderPositions, folderSubtree, folderTargets,
   formatFullDate, formatLabel, formatRelativeTime, formatShortDate,
   inFolder, isFreshLibrary, isLinkInput, labelName, libraryTree, normalizeLinkInput, pageBlocksOf, pageFormat, pageKindLabel,
-  siblingFolders,
+  placeFolder, siblingFolders,
 } from "../src/library/libraryUtils.js";
 
 // The listing's trees: physics (with a subfolder whose name holds the path
@@ -97,6 +97,17 @@ test("a filing keeps the ids that name a block; filing into a folder refines the
   assert.deepEqual(addToFolder(tree, ["phys", "bio"], "qec"), ["bio", "qec"], "physics gives way to its subfolder");
   assert.deepEqual(addToFolder(tree, ["gone"], "bio"), ["bio"], "the refiling drops a dangling id");
   assert.deepEqual(addToFolder(tree, [], "phys"), ["phys"]);
+});
+
+test("a page's crumbs lead to the folder it was opened from, one below it, else its first", () => {
+  const tree = libraryTree(listing);
+  assert.equal(placeFolder(tree, ["bio", "qec"]), "bio", "opened from the root: its first folder");
+  assert.equal(placeFolder(tree, ["bio", "qec"], "qec"), "qec", "the folder the library showed");
+  assert.equal(placeFolder(tree, ["bio", "qec"], "phys"), "qec", "a folder lists the pages filed below it: that one");
+  assert.equal(placeFolder(tree, ["bio", "phys"], "qec"), "bio", "a folder above the one shown is not the way it came");
+  assert.equal(placeFolder(tree, ["gone", "qec"], "bio"), "qec", "a dangling id is passed by");
+  assert.equal(placeFolder(tree, [], "phys"), "", "at the root: no folder");
+  assert.equal(placeFolder(tree, undefined), "");
 });
 
 // A deeper tree for the typed paths below: Lab holds Clocks (holding

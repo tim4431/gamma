@@ -221,6 +221,26 @@ matches no label makes a new one rather than picking a folder of that name. The 
 flows, and its harness files pages by path through `Account.folder` /
 `label` / `file`.
 
+**Where the open page is.** The crumbs over a filed page's title
+(`editor/PageCrumbs.jsx`) are the path of one folder it is filed in, each
+folder a crumb that opens it in the library, Back returning. A page in
+several folders shows one path: the folder the library showed when the
+page was opened (`folderFilter`), or one below it, when the page is filed
+there, so the path reads as the way it came; else its first folder
+(`placeFolder` in libraryUtils). A sub-page shows its top's, then the pages
+above it ("Sub-pages"); a work folder's file shows its directory ("Work
+folders"); a page at the root shows none. The folder the crumbs name has
+no chip under the title (the label field's edit lists it with the others).
+A share view's topbar names the path instead.
+
+**Home.** The topbar's Home (a phone's Library tab) goes, from a page, back
+to the library view it was opened from, its folder and label kept, as
+closing the page's tab does, and its title then reads *Back to* the
+folder's path. Over the library it goes to the root. The folder is the one
+the library showed last, not the page's: a page opened from search or Quick
+open goes back to whatever folder was browsed before. It is not in a
+page's address, so after a reload Home goes to the root.
+
 ## Sub-pages
 
 A page can sit inside another page, as in Notion: it is reached through
@@ -358,9 +378,10 @@ stay the model with the labels:
   ("Moving one" below). Its fold is the browser pref `subPagesCollapsed`
   ([settings.md](settings.md)); a page with no sub-pages shows nothing;
 - **the crumbs** (`editor/PageCrumbs.jsx`) at the top of the page header:
-  the ancestors, top first, each a button that opens its page (Back
-  returns), separated by `/`, the page's own title below. A library page
-  has none;
+  the path of the folder its top is filed in ("Where the open page is"
+  above), then the ancestors, top first, each a button that opens its page
+  (Back returns), separated by `/`, the page's own title below. A library
+  page has only its folder's;
 - **the Files window** (`explorer/FilesWindow.jsx`, "Work folders" below):
   the folders as a tree beside the page, each library folder's top pages
   under it; a sub-page is reached from its top page, as in the listing.

@@ -4,8 +4,9 @@ import { Account, FIELD_END, wanted } from "../harness.mjs";
 // labels"): New folder makes an empty folder that stays and lists first, a
 // rename is one op on the folder tree that touches no page, folders keep an
 // order of their own, deleting one unfiles its pages, the page header's
-// label field makes a label or picks a folder, and dragging a page files it
-// by id.
+// label field makes a label or picks a folder, dragging a page files it
+// by id, a page's crumbs name the folder path it was opened through, and
+// Home from a page goes back to that folder.
 export async function folderScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("folders")) return;
@@ -218,7 +219,9 @@ export async function folderScenarios(env) {
       // the folder itself, by its whole name: "New label “beta”" holds it too
       await page.locator(".categorySuggestionItem", { hasText: /^Beta$/ }).waitFor();
       await page.keyboard.press("Enter");
-      await field.locator(".categoryBadge.folderChip", { hasText: "Beta" }).waitFor();
+      // its only folder: the crumbs over the title name it, no chip does
+      await page.locator(".pageCrumbs .crumbFolder", { hasText: /^Beta$/ }).waitFor();
+      assertEq(await field.locator(".folderChip").count(), 0, "no chip for the folder the crumbs name");
       const beta = await user.folder("Beta");
       await until(async () => (await pageOf(paper.id)).properties.folders?.includes(beta), { what: "filed in the folder of that name" });
       assertEq((await tree("folders")).filter((f) => f.content.toLowerCase() === "beta").length, 1, "no folder was made");
@@ -385,6 +388,51 @@ export async function folderScenarios(env) {
         { hasText: "“label:nosuch” is searched as text: no label is named nosuch" }).waitFor();
       await page.locator(".searchPopover .searchHint", { hasText: "No matches." }).waitFor();
       assertEq(await hits.count(), 0, "a label that does not exist finds nothing");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A page's place over its title (editor/PageCrumbs.jsx): the path of a
+  // folder it is filed in, the way it came when it was opened through one,
+  // else its first, that folder's chip left out; a crumb opens its folder,
+  // Back returning. Home from a page goes back to the folder it was opened
+  // from, and from there to the library's root.
+  await step("folders: a page's crumbs are the folder path it was opened through, and Home goes back to that folder, then the root", async () => {
+    const side = await user.folder("Side");
+    const inner = await user.folder("Trail/Inner");
+    const placed = await user.api("/api/pages", { method: "POST", body: { title: "Two-place paper", folders: [side, inner] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, `${server.base}/?folder=${inner}&ws=${user.ws}`);
+    const names = (locator) => locator.allInnerTexts().then((texts) => texts.map((s) => s.trim()).join("|"));
+    const crumbs = page.locator(".pageCrumbs .crumbFolder");
+    const chips = page.locator('[data-guide="page.labels"] .folderChip');
+    const home = page.getByRole("button", { name: "Home", exact: true });
+    const param = (key) => new URL(page.url()).searchParams.get(key) || "";
+    const paperRow = page.locator(".fileRow", { hasText: "Two-place paper" });
+    try {
+      // opened from Inner, its second folder: the path it came through
+      await paperRow.dblclick();
+      await until(async () => (await names(crumbs)) === "Trail|Inner", { what: "the path it was opened through" });
+      assertEq(await names(chips), "Side", "its other folder keeps its chip");
+      assertEq(await home.getAttribute("title"), "Back to Trail / Inner", "Home names where it goes");
+      await home.click();
+      await until(() => param("folder") === inner, { what: "Home goes back to Inner" });
+      await paperRow.waitFor();
+      assertEq(await home.getAttribute("title"), "Home", "over the library, Home is the root's");
+      await home.click();
+      await until(() => !param("folder"), { what: "a second press, the library's root" });
+      await page.locator(".fileList .folderRow", { hasText: "Trail" }).waitFor();
+
+      // opened with no folder on the way: its first, its crumb opening that folder, Back returning
+      await page.goto(`${server.base}/?page=${placed.id}&ws=${user.ws}`);
+      await until(async () => (await names(crumbs)) === "Side", { what: "its first folder" });
+      assertEq(await names(chips), "Trail / Inner", "the other, a chip by its path");
+      await crumbs.first().click();
+      await until(() => param("folder") === side, { what: "the crumb opens Side" });
+      await paperRow.waitFor();
+      await page.locator('[data-guide="header.back"]').click();
+      await until(async () => (await names(crumbs)) === "Side", { what: "Back returns to the page" });
+      assertEq(await home.getAttribute("title"), "Back to Side", "and Home now goes back to Side");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
