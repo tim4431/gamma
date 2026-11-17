@@ -1990,9 +1990,7 @@ nobody else learns it exists), 403 for a token or the guest
   then it is the conversation's: the chip's rows are locked with the title
   "Start a new chat to work elsewhere", the trigger titled "Codex works in
   Notes in this conversation: start a new chat to work elsewhere", and
-  *Add folder…* is gone. The strip names the directory itself only while
-  the composer gives way to a note (a comment thread's conversation, a
-  co-author's). Its ⋯
+  *Add folder…* is gone. Its ⋯
   offers Continue in a terminal and, on a page of a work folder kept here
   alone (`revealsFile`), Show in folder.
 - **What it asks.** While a live turn has `asks`, each is a card under the
@@ -2607,10 +2605,12 @@ are drawn in the bar over the whole window and answered with `POST
   the chip reaching Codex, the reply seen part-way as it is typed, a
   running turn's Background tasks row and its Stop; with no AI service, a
   library PDF's chat that is Codex's, the setup card picking Codex again
-  after Gamma AI, a directory offered picked in the strip and edited, the
-  reply, its pill *1 step · edited 1 file* and what it changed in the
-  transcript, the file named as text, not linked, outside a synced folder;
-  with no AI service, Codex
+  after Gamma AI, a directory offered picked in the composer's folder chip
+  and edited, the reply, its pill *1 step · edited 1 file* and what it changed in the
+  transcript, the file named as text, not linked, outside a synced folder,
+  the chip then locked; a new chat starting in that folder, and *Add
+  folder…* asking the shell and picking the folder it offered, the one used
+  listed first; with no AI service, Codex
   reading a library PDF's highlight through Gamma's tools with its turn's
   token (the prompt pointing to `read_page` by the page's id and pasting
   none of its notes, the call answered, the reply quoting the highlight

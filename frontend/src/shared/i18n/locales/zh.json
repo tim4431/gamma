@@ -5525,7 +5525,6 @@
   "Where it was before the PDF was replaced.": "PDF 替换前它所在的位置。",
   "Where it was before the file changed.": "文件更改前它所在的位置。",
   "Where the PDF is read from, when that is not the stored copy.": "读取 PDF 的地址（当它不是已存文件时）。",
-  "Where the agent works in this conversation": "智能体在此对话中工作的位置",
   "Where the box sits on its page and how large it is, in points.": "文本框在页面上的位置和大小，单位为点。",
   "Where the picture sits on its page and how large it is, in points.": "图片在页面上的位置和大小，单位为点。",
   "Where the record came from and what tied it to this PDF.": "记录的来源，以及它如何与此 PDF 对应。",

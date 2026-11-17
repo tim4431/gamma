@@ -5,8 +5,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Module = require('module');
 const { EventEmitter } = require('events');
+const stubModules = require('./stubModules');
 
 Object.defineProperty(process, 'platform', { value: 'linux' }); // in-app install (not macOS)
 delete process.env.GAMMA_SHELL_TEST;
@@ -17,15 +17,10 @@ const autoUpdater = Object.assign(new EventEmitter(), {
   async checkForUpdates() {},
   quitAndInstall() { this.restarts += 1; },
 });
-const stubs = {
+stubModules({
   electron: { app: { getVersion: () => '1.0.0', isPackaged: true } },
   'electron-updater': { autoUpdater },
-};
-const resolveFilename = Module._resolveFilename;
-Module._resolveFilename = function (request, ...rest) {
-  return Object.hasOwn(stubs, request) ? request : resolveFilename.call(this, request, ...rest);
-};
-for (const [id, exports] of Object.entries(stubs)) require.cache[id] = { id, filename: id, loaded: true, exports };
+});
 
 const updater = require('../lib/updater');
 updater.init({ onChange: () => {}, openExternal: () => {} });

@@ -3,16 +3,14 @@
 // slot under its header: the agent and where it works, or what stops it
 // or waits for the person (computerChat.js stripLine), a plain line and not
 // a live region (the turn's pill in the transcript is the one read out,
-// and says how a turn goes); after it, while the composer gives way to a
-// note (a comment thread's conversation, a co-author's), where the agent
-// works outside a synced folder (workPlace: the directory's name, else the
-// composer's folder chip's); and its ⋯ menu, the desktop
+// and says how a turn goes; where it works outside a synced folder is the
+// composer's folder chip, PlaceChip.jsx); and its ⋯ menu, the desktop
 // shell's to do: Continue in a terminal and, on a page of a work folder
 // kept here, Show in Explorer (vaultState revealLabel). The page only asks: the shell reads the
 // session and the folder from its own server, never a command from the
 // page.
 import { ContextMenu, MenuItem, useMenuTrigger } from "../../shared/ui/Menus";
-import { FolderIcon, HardDriveIcon, MoreIcon, ShieldIcon, TerminalIcon } from "../../shared/ui/Icons";
+import { HardDriveIcon, MoreIcon, ShieldIcon, TerminalIcon } from "../../shared/ui/Icons";
 import { t } from "../../shared/i18n/i18n.js";
 import { askShell } from "../../vault/useVault.js";
 import { revealLabel } from "../../vault/vaultState.js";
@@ -43,21 +41,10 @@ function StripMenu({ bucket, label, session, reveal }) {
   );
 }
 
-// Where the agent works: the directory's name after a folder glyph, the
-// conversation's (it has a turn).
-function Place({ place }) {
-  if (!place) return null;
-  return (
-    <span className="computerPlace" title={t("Where the agent works in this conversation")}>
-      <FolderIcon size={14} /><span className="computerPlaceName">{place.text}</span>
-    </span>
-  );
-}
-
 // `side` is useComputerSide's for the bucket `bucket`, `page` whether the
 // bucket is a page.
 export default function ComputerStrip({ side, bucket, page = false }) {
-  const { info, label, place } = side;
+  const { info, label } = side;
   const conversation = side.chat.conversation;
   const strip = stripLine(info, liveTurn(conversation));
   if (!strip.text) return null;
@@ -66,7 +53,6 @@ export default function ComputerStrip({ side, bucket, page = false }) {
       {strip.kind === "checking" ? <span className="transferSpin inline" aria-hidden="true" />
         : strip.kind === "asking" ? <ShieldIcon size={14} aria-hidden="true" /> : null}
       <span className="chatHealthText">{strip.text}</span>
-      {side.shown ? <Place place={place} /> : null}
       {offersMenu(info) ? (
         <StripMenu bucket={bucket} label={label} session={canContinue(info, conversation)} reveal={revealsFile(info, page)} />
       ) : null}

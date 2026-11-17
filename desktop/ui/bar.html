@@ -68,6 +68,7 @@
   .updBtn .spin { display: none; }
   .updBtn.installing svg { display: none; }
   .updBtn.installing .spin { display: block; }
+  .updBtn.installing:disabled { opacity: 1; }
   /* The sync button: what this computer keeps, summed up; its panel lists it. */
   .syncBtn {
     display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; margin-right: 2px;
@@ -388,17 +389,16 @@
     // would hide the bar (not while the launcher is up or the device's own
     // server starts).
     $('btnHideBar').hidden = !state.barHideable;
+    // lib/updater.js words the update found (`line`); pressed while it
+    // downloads, the icon is a spinner until Gamma restarts.
     const upd = state.update || {};
     const updBtn = $('btnUpdate');
-    const updTip = upd.status === 'downloaded' ? `Update now: restarts into Gamma ${upd.version}`
-      : upd.status === 'downloading' && upd.installing ? `Updating to Gamma ${upd.version}: downloading (${upd.percent || 0}%), then Gamma restarts`
-      : upd.status === 'downloading' ? `Update now: Gamma ${upd.version} is downloading (${upd.percent || 0}%); Gamma restarts into it once it is done`
-      : upd.status === 'available' ? `Gamma ${upd.version} is available: opens the download page`
-      : '';
-    updBtn.hidden = !updTip;
-    updBtn.title = updTip;
+    const installing = upd.status === 'downloading' && Boolean(upd.installing);
+    updBtn.hidden = !upd.line;
+    updBtn.title = upd.line || '';
+    updBtn.disabled = installing;
     updBtn.setAttribute('aria-label', upd.status === 'available' ? `Download Gamma ${upd.version}` : 'Update now');
-    updBtn.classList.toggle('installing', upd.status === 'downloading' && Boolean(upd.installing));
+    updBtn.classList.toggle('installing', installing);
     const st = $('status');
     st.innerHTML = '';
     if (state.busy) {

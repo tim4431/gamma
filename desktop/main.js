@@ -4873,20 +4873,13 @@ async function checkForUpdatesInteractive() {
       : st.error === 'store' ? 'Installed from the Microsoft Store: updates arrive through the Store.'
       : st.error === 'mas' ? 'Installed from the Mac App Store: updates arrive through the App Store.'
       : String(st.error || '');
-  } else if (st.status === 'downloaded') {
-    opts.message = `Gamma ${st.version} is ready to install.`;
-    opts.detail = 'Update now restarts Gamma into it; otherwise it installs when Gamma quits.';
+  } else if (st.status === 'downloaded' || (st.status === 'downloading' && !st.installing)) {
+    opts.message = st.line; // lib/updater.js words the update found
     opts.buttons = ['Update now', 'Later'];
-  } else if (st.status === 'downloading' && st.installing) {
-    opts.message = `Downloading Gamma ${st.version}…`;
-    opts.detail = 'Gamma restarts into it once it is done.';
   } else if (st.status === 'downloading') {
-    opts.message = `Downloading Gamma ${st.version}…`;
-    opts.detail = 'Update now restarts Gamma into it once it is done.';
-    opts.buttons = ['Update now', 'Later'];
+    opts.message = st.line;
   } else if (st.status === 'available') {
-    opts.message = `Gamma ${st.version} is available.`;
-    opts.detail = 'This build cannot update itself; the download page opens in your browser.';
+    opts.message = st.line;
     opts.buttons = ['Download', 'Later'];
   } else if (st.status === 'error') {
     opts.message = 'Could not check for updates.';

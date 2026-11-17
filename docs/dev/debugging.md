@@ -854,6 +854,15 @@ instead of fixing; the fix removes its entry.
   the pane to its file card, whose HEAD 404s too). Seen while several
   groups ran at once, on dev's tip as well as with changes beside it (3
   of 5 such runs); the group run alone passed.
+- **settings: administrators see their own account separately from all
+  users** (`frontend/tests/e2e/scenarios/settings.mjs:2747`, this machine,
+  2026-11-16): the third quota commit ("1200" typed, Enter) sent no PUT,
+  so the wait for the server's 1200 timed out; the server log has the
+  first two PUTs back to back, then the page's idle chunks (pdf.js, Quick
+  Open, the palette) loading. Seen in 2 of 3 full runs of a branch that
+  does not touch Settings → Users or `UnitInput`, while 5 other groups
+  ran beside it; dev's tip passed one such run, and the group run alone
+  passed.
 - **The brand check** (`tools/branding/build.mjs --check`, this machine,
   2026-11-14): one run ended with an uncaught file-system error (its stack
   lost) while the backend suite and the frontend tests ran beside it; 18

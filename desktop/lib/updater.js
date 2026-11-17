@@ -45,13 +45,27 @@ let state = {
   installing: false, // Update now pressed while downloading: restart once it is done
   inApp: IN_APP_INSTALL, // false = "available" means: open the download page
   releaseUrl: REPO_URL + '/releases/latest',
+  line: '', // what an update found offers, in words (lineOf)
 };
 let onChange = () => {};
 let openExternal = () => {};
 let updater = null;
 
+// The one sentence every surface says of an update found (the bar's icon's
+// title, the launcher's Updates row, Help → Check for Updates…'s box), ""
+// while none is.
+function lineOf(s) {
+  const found = `Gamma ${s.version}`;
+  if (s.status === 'available') return `${found} is available. This build cannot update itself; the download page opens in your browser.`;
+  if (s.status === 'downloading' && s.installing) return `${found} is downloading (${s.percent || 0}%); Gamma restarts into it once it is done.`;
+  if (s.status === 'downloading') return `${found} is downloading (${s.percent || 0}%). Update now restarts Gamma into it once it is done.`;
+  if (s.status === 'downloaded') return `${found} is ready. Update now restarts Gamma into it; otherwise it installs when Gamma quits.`;
+  return '';
+}
+
 function set(patch) {
   state = { ...state, ...patch };
+  state.line = lineOf(state);
   onChange(state);
 }
 
@@ -142,7 +156,7 @@ function install() {
     restart();
     return 'restart';
   }
-  if (state.status === 'downloading' && updater && IN_APP_INSTALL) {
+  if (state.status === 'downloading') {
     if (!state.installing) set({ installing: true });
     return 'queued';
   }

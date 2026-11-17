@@ -326,13 +326,24 @@ function useDropdown(up = false, start = false) {
   return [menu, close, triggerProps, triggerRef];
 }
 
+// An action row of a dropdown's menu ({icon, label, title, onClick, danger,
+// disabled}): ActionMenu's items and MenuSelect's `actions`, closing the
+// menu as it acts.
+const actionRow = (close) => ({ icon, label: lab, title, onClick, danger, disabled: off }) => (
+  <MenuItem key={lab} icon={icon} title={t(title)} danger={danger} disabled={off} onClick={() => { close(); onClick(); }}>
+    {t(lab)}
+  </MenuItem>
+);
+
 // A <select> replacement: options are [value, label] pairs; the menu marks
 // the current one with a check. `block` stretches the trigger into a field.
 // Options are [value, label] or [value, label, Icon] tuples — with an Icon the
 // pill and the menu items lead with the glyph (same look as ActionMenu items).
 // A fourth element is the row's `trailing` node, after its label as a
 // MenuItem's (a hint such as the chat picker's "offline"), and a fifth the
-// row's title; such a row stays pickable.
+// row's title; such a row stays pickable. The labels go through `t()`
+// unless they are `names` (data: a folder's name, which a catalog key of
+// the same spelling would translate).
 // `icon` collapses the trigger to that fixed glyph + chevron (no value label) —
 // the current choice rides in the tooltip instead. `iconOnly` also removes the
 // chevron for especially tight toolbars. `display` replaces the trigger's
@@ -343,25 +354,26 @@ function useDropdown(up = false, start = false) {
 // chat composer's chip with the reasoning effort and the speed. `locked`, a
 // sentence, shows the main options' choice and takes none, the sentence
 // the title of each row (where a conversation's agent works, once it
-// began). `actions` [{icon, label, title, onClick}] end
-// the menu, after a rule, as plain rows (the composer's folder chip's Add
-// folder…). `up` opens above the trigger, `start` from its left edge.
+// began). `actions` (ActionMenu's items) end the menu, after a rule, as
+// plain rows (the composer's folder chip's Add folder…). `up` opens above the trigger, `start` from its left edge.
 // `disabled` greys the trigger out and keeps the menu shut.
 // `ghost` draws the trigger as a `uiBtn ghost` (no frame until hover), for a
 // choice inside a line of text.
 function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon, iconOnly = false,
-  display, heading, sections = [], actions = [], locked = "", up = false, start = false, disabled = false, ghost = false }) {
+  display, heading, sections = [], actions = [], locked = "", names = false, up = false, start = false, disabled = false,
+  ghost = false }) {
   const [menu, close, triggerProps, triggerRef] = useDropdown(up, start);
   const id = useId(); // the trigger's: it names the menu
+  const say = names ? String : t;
   const current = options.find(([v]) => v === value) || options[0];
   const CurrentIcon = current?.[2];
-  const title = TriggerIcon ? `${t(current?.[1])} — ${label}` : label;
+  const title = TriggerIcon ? `${say(current?.[1])} — ${label}` : label;
   // `off` a locked row's {title}.
-  const choice = ([val, lab, OptIcon, trailing, tip], selected, pick, off = null) => (
+  const choice = ([val, lab, OptIcon, trailing, tip], selected, pick, off = null, words = t) => (
     <button key={val} role="menuitemradio" aria-checked={selected} className="ctxMenuItem ctxMenuItemIconed"
       title={off?.title || tip || undefined} disabled={!!off} onClick={() => { close(); pick(val); }}>
       {OptIcon ? <span className="ctxMenuIcon"><OptIcon size={14} /></span> : null}
-      <span className="ctxMenuText">{t(lab)}</span>
+      <span className="ctxMenuText">{words(lab)}</span>
       {trailing ?? null}
       {selected ? <CheckIcon size={14} className="ctxMenuCheck" /> : null}
     </button>
@@ -379,7 +391,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
         ) : (
           <>
             {CurrentIcon ? <CurrentIcon size={14} /> : null}
-            <span className="uiSelectLabel">{display ?? t(current?.[1])}</span>
+            <span className="uiSelectLabel">{display ?? say(current?.[1])}</span>
           </>
         )}
         {!iconOnly ? <ChevronDownIcon size={14} className="uiSelectChev" /> : null}
@@ -389,7 +401,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
           className="uiSelectMenu" aria-labelledby={id}>
           {heading ? <MenuLabel id={`${id}-0`}>{heading}</MenuLabel> : null}
           {choices(heading ? `${id}-0` : null, options.map((option) => choice(option, option[0] === value, onChange,
-            locked ? { title: locked } : null)))}
+            locked ? { title: locked } : null, say)))}
           {sections.map((section, i) => (
             <React.Fragment key={section.label}>
               <MenuLabel id={`${id}-${i + 1}`}>{section.label}</MenuLabel>
@@ -397,9 +409,7 @@ function MenuSelect({ value, onChange, options, label, block, icon: TriggerIcon,
             </React.Fragment>
           ))}
           {actions.length ? <MenuDivider /> : null}
-          {actions.map(({ icon, label: lab, title: tip, onClick }) => (
-            <MenuItem key={lab} icon={icon} title={tip} onClick={() => { close(); onClick(); }}>{lab}</MenuItem>
-          ))}
+          {actions.map(actionRow(close))}
         </ContextMenu>
       ) : null}
     </>
@@ -423,12 +433,7 @@ function ActionMenu({ label, icon: Icon, items, disabled, iconOnly = false }) {
       </button>
       {menu ? (
         <ContextMenu x={menu.x} y={menu.y} anchorRight onClose={close} ignoreRef={triggerRef} aria-labelledby={id}>
-          {items.map(({ icon: ItemIcon, label: lab, title, onClick, danger, disabled: off }) => (
-            <MenuItem key={lab} icon={ItemIcon} title={t(title)} danger={danger} disabled={off}
-              onClick={() => { close(); onClick(); }}>
-              {t(lab)}
-            </MenuItem>
-          ))}
+          {items.map(actionRow(close))}
         </ContextMenu>
       ) : null}
     </>

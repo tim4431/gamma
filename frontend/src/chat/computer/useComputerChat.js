@@ -11,6 +11,7 @@
 // the computer's agents.
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, makeId } from "../../shared/lib/utils";
+import { IS_DESKTOP } from "../../shared/lib/connector.js";
 import { GammaNavContext } from "../../shared/ui/Widgets";
 import { t } from "../../shared/i18n/i18n.js";
 import { askShellWatching } from "../../vault/useVault.js";
@@ -284,16 +285,13 @@ const pickKey = (bucket, agent, conversation) => `${bucket}\n${agent}\n${convers
 // first turn; a bucket with none starts where the last conversation did
 // (usedDirs).
 const places = new Map();
-// The watch of the listing after Add folder… (askShellWatching), one at a
-// time.
-let adding = null;
 
 // What ChatDock reads of the side for the bucket `bucket` ("" while no
 // computer's agent is the one shown: nothing is read) and the agent picked
 // (`agent`), with `page` whether the bucket is a page, `dirs` the
-// directories this computer offers, `offerDirs` whether this window can
-// offer it another (the desktop app on this computer's own server: Add
-// folder…), and the PDF passages selected (App's,
+// directories this computer offers, `here` whether this server is this
+// computer's (GET /api/local-agents' `here`: the desktop app then offers
+// it another, Add folder…), and the PDF passages selected (App's,
 // which go with the next message and are cleared once the server took it):
 //   chat        useComputerChat's state
 //   info        the strip's facts: the server's, else the picked agent's
@@ -330,7 +328,7 @@ let adding = null;
 //               thread's, {conversation} a co-author's), null for its own:
 //               nothing is sent from the chat then (a thread's replies are
 //               its messages, a co-author's chat is theirs)
-export function useComputerSide(bucket, agent, { page = false, dirs = [], offerDirs = false, pdfSelections = [], setPdfSelections,
+export function useComputerSide(bucket, agent, { page = false, dirs = [], here = false, pdfSelections = [], setPdfSelections,
   setStatus, shown = null }) {
   const chat = useComputerChat(bucket, bucket ? agent : null, setStatus, shown);
   const info = chat.computer || stripFacts(agent);
@@ -347,8 +345,7 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], offerD
   };
   // Where a conversation that begins works, once the server said where it
   // stands (a vault's own directory is the vault's).
-  const place = chat.computer
-    ? workPlace(chat.computer, conversation, dirs, places.has(bucket) ? places.get(bucket) : null, usedDirs()) : null;
+  const place = chat.computer ? workPlace(chat.computer, conversation, dirs, places.get(bucket), usedDirs()) : null;
   const pickPlace = (dir) => {
     places.set(bucket, dir);
     redraw((n) => n + 1);
@@ -358,12 +355,14 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], offerD
   // Add folder…: the shell's folder dialog offers the directory picked to
   // the agents (`agent-dirs`, its question and its word), and the listing
   // is read again until it lists one more, which the bucket's conversation
-  // that begins then works in.
-  const addPlace = offerDirs && !remote && place?.pick ? () => {
-    adding?.stop();
+  // that begins then works in; one watch at a time, stopped with the chat.
+  const adding = useRef(null);
+  useEffect(() => () => adding.current?.stop(), []);
+  const addPlace = IS_DESKTOP && here && !remote && place?.pick ? () => {
+    adding.current?.stop();
     const had = new Set(dirs.map((d) => d.id));
-    adding = askShellWatching("agent-dirs", { dir: "new" }, () => readLocalAgents().then((listing) => listing?.dirs || []), () => dirs);
-    adding.done.then((now) => {
+    adding.current = askShellWatching("agent-dirs", { dir: "new" }, () => readLocalAgents().then((listing) => listing?.dirs || []), () => dirs);
+    adding.current.done.then((now) => {
       const added = (now || []).find((d) => !had.has(d.id));
       if (added) pickPlace(added.id);
     });

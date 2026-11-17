@@ -132,6 +132,11 @@ export async function localAgentScenarios(env) {
     const home = `${server.base}/?ws=${user.ws}`;
     const at = (id) => `${server.base}/?page=${id}&ws=${user.ws}`;
     const desktop = (opts = {}) => user.context(browser, { userAgent: DESKTOP_UA, ...opts });
+    // What the page asks the desktop shell, recorded as window.shellAsks: no shell runs here.
+    const recordShellAsks = (page) => page.evaluate(() => {
+      window.shellAsks = [];
+      window.addEventListener("message", (e) => { if (e.data?.source === "gamma-app") window.shellAsks.push(e.data); });
+    });
     // written as an editor that finished a while ago, so a round takes it at once
     const write = (file, bytes) => {
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -767,11 +772,7 @@ export async function localAgentScenarios(env) {
       try {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
-        // what the page asks the desktop shell (no shell here: the asks are recorded)
-        await page.evaluate(() => {
-          window.shellAsks = [];
-          window.addEventListener("message", (e) => { if (e.data?.source === "gamma-app") window.shellAsks.push(e.data); });
-        });
+        await recordShellAsks(page);
         await selectOnPdf(page, 1, "The penalty");
         const chip = dock.locator(".chatSelChips .chatSelChip").first();
         await until(async () => (await chip.innerText()).includes("sections/method.tex:3"), { what: "the chip names the passage's source line" });
@@ -880,23 +881,23 @@ export async function localAgentScenarios(env) {
         await dock.getByRole("button", { name: "New chat", exact: true }).click();
         await until(async () => (await place.getAttribute("title")) === "Codex works in Notes", { what: "the new chat's, to choose" });
         await dock.locator(".chatEmpty", { hasText: "it works in the directory you chose" }).waitFor();
-        // Add folder…: the shell's folder dialog (no shell here: the ask is recorded and its PUT made as the
-        // shell makes it), the folder offered then picked
-        await page.evaluate(() => {
-          window.shellAsks = [];
-          window.addEventListener("message", (e) => { if (e.data?.source === "gamma-app") window.shellAsks.push(e.data); });
-        });
+        // Add folder…: the shell's folder dialog (its ask recorded, its PUT made here as the shell makes it), the
+        // folder it offers then picked
+        await recordShellAsks(page);
         await place.click();
         await page.getByRole("menuitem", { name: "Add folder…", exact: true }).click();
         await until(async () => (await page.evaluate(() => window.shellAsks.map((a) => `${a.type}:${a.dir}`))).join() === "agent-dirs:new",
           { what: "the shell asked for a folder" });
         const draftsDir = path.join(disk, "drafts");
         fs.mkdirSync(draftsDir, { recursive: true });
+        // listed before Notes, which the chip ranks first as the one used
         await user.api("/api/local-agents/dirs", { method: "PUT",
-          body: [...offered.dirs.map(({ id, path: at, name }) => ({ id, path: at, name })), { path: draftsDir, name: "" }] });
+          body: [{ path: draftsDir, name: "" }, ...offered.dirs.map(({ id, path: at, name }) => ({ id, path: at, name }))] });
         await until(async () => (await place.innerText()).trim() === "drafts", { timeout: 10000, what: "the folder added, picked" });
         await place.click();
-        const rows = await page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio").allInnerTexts();
+        const listed = page.getByRole("group", { name: "Works in" }).getByRole("menuitemradio");
+        await until(async () => (await listed.count()) === 3, { what: "the menu, its three rows" });
+        const rows = await listed.allInnerTexts();
         assertEq(rows.map((r) => r.trim()).join(), "Its own directory,Notes,drafts", "the folder used last before the others");
         await page.keyboard.press("Escape");
         assertNoProblems(page);

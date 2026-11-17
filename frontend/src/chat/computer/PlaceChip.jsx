@@ -9,19 +9,21 @@ import { MenuSelect } from "../../shared/ui/Menus";
 import { FolderIcon, FolderPlusIcon } from "../../shared/ui/Icons";
 import { t } from "../../shared/i18n/i18n.js";
 
-// `place` workPlace's, `agent` the agent's name, `onPick(id)` the choice of
-// a conversation that begins, `onAdd` null where no folder can be added here.
+// `place` workPlace's (its options' names the directories' own, shown as
+// they are), `agent` the agent's name, `onPick(id)` the choice of a
+// conversation that begins, `onAdd` null where no folder can be added
+// (another computer's agent, a browser, a conversation already begun).
 export default function PlaceChip({ place, agent, onPick, onAdd = null }) {
   const words = { agent, folder: place.text };
   const label = place.pick ? t("{agent} works in {folder}", words)
     : t("{agent} works in {folder} in this conversation: start a new chat to work elsewhere", words);
-  const add = onAdd && place.pick ? [{
+  const add = onAdd ? [{
     icon: FolderPlusIcon, label: t("Add folder…"), onClick: onAdd,
     title: t("Choose a folder on this computer for {agent} to work in", words),
   }] : [];
   return (
     <span className="chatPlaceChip">
-      <MenuSelect up start label={label} heading={t("Works in")} value={place.value} onChange={onPick}
+      <MenuSelect up start names label={label} heading={t("Works in")} value={place.value} onChange={onPick}
         options={place.options.map(([value, name]) => [value, name, FolderIcon])}
         locked={place.pick ? "" : t("Start a new chat to work elsewhere")} actions={add} />
     </span>

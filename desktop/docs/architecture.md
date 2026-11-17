@@ -1690,7 +1690,10 @@ download is done it restarts into the update (`quitAndInstall`); pressed
 while it still downloads it notes the press (`installing`: the icon turns
 to a spinner, the row says *Updating…*) and restarts as soon as the
 download is done, a failed download dropping the press
-(`test/updater.test.js`). *Help → Check for
+(`test/updater.test.js`). The update found is worded once, in the state's
+`line` (`lineOf`: "Gamma 0.4.3 is downloading (42%). Update now restarts
+Gamma into it once it is done."), which the icon's title, the row and the
+dialog all show. *Help → Check for
 Updates…* is the only flow that answers with a dialog; under the test
 harness that dialog is only recorded (`ask`, the hook's `asked`) and takes
 its last button, *Later* or *OK*, which installs nothing. The feed is the
