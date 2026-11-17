@@ -4862,7 +4862,7 @@ async function removeServer(id, opts = {}) {
 }
 
 // Help → Check for Updates…: the only update flow that answers with a
-// dialog; the automatic checks stay silent (bar pill / launcher row).
+// dialog; the automatic checks stay silent (the bar's update icon / launcher row).
 async function checkForUpdatesInteractive() {
   const st = await updater.check();
   const opts = { title: 'Gamma', message: '', buttons: ['OK'] };
@@ -4875,11 +4875,15 @@ async function checkForUpdatesInteractive() {
       : String(st.error || '');
   } else if (st.status === 'downloaded') {
     opts.message = `Gamma ${st.version} is ready to install.`;
-    opts.detail = 'It installs when you restart.';
-    opts.buttons = ['Restart to update', 'Later'];
+    opts.detail = 'Update now restarts Gamma into it; otherwise it installs when Gamma quits.';
+    opts.buttons = ['Update now', 'Later'];
+  } else if (st.status === 'downloading' && st.installing) {
+    opts.message = `Downloading Gamma ${st.version}…`;
+    opts.detail = 'Gamma restarts into it once it is done.';
   } else if (st.status === 'downloading') {
     opts.message = `Downloading Gamma ${st.version}…`;
-    opts.detail = 'You will be offered a restart when it is ready.';
+    opts.detail = 'Update now restarts Gamma into it once it is done.';
+    opts.buttons = ['Update now', 'Later'];
   } else if (st.status === 'available') {
     opts.message = `Gamma ${st.version} is available.`;
     opts.detail = 'This build cannot update itself; the download page opens in your browser.';

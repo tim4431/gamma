@@ -574,13 +574,18 @@
         btn.onclick = () => gammaShell.updateInstall();
         break;
       case 'downloading':
-        text.textContent = `Downloading Gamma ${u.version}… ${u.percent || 0}%`;
-        btn.disabled = true;
+        // Update now while it downloads: Gamma restarts into it once it is done.
+        text.textContent = u.installing ? `Downloading Gamma ${u.version}… ${u.percent || 0}%; Gamma restarts into it once it is done.`
+          : `Downloading Gamma ${u.version}… ${u.percent || 0}%`;
+        btn.className = 'uiBtn sm primary';
+        btn.textContent = u.installing ? 'Updating…' : 'Update now';
+        btn.disabled = Boolean(u.installing);
+        btn.onclick = () => gammaShell.updateInstall();
         break;
       case 'downloaded':
         text.textContent = `Gamma ${u.version} is ready; it installs when you restart.`;
         btn.className = 'uiBtn sm primary';
-        btn.textContent = 'Restart to update';
+        btn.textContent = 'Update now';
         btn.onclick = () => gammaShell.updateInstall();
         break;
       case 'error':

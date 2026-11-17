@@ -866,7 +866,7 @@ the window out of another.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│ ⌈γ⌉ Alpha · Rydberg lab ▾   Starting Beta…   ☁ Synced [↑ Restart to update] ⟳  – □ ✕ │  shell bar (38 px, is the title bar)
+│ ⌈γ⌉ Alpha · Rydberg lab ▾   Starting Beta…   ☁ Synced ⇧ ⟳  – □ ✕ │  shell bar (38 px, is the title bar)
 ├────────────────────────────────────────────────────────────┤
 │                                                            │
 │   launcher (file://ui/launcher.html)                       │  content view
@@ -1681,16 +1681,24 @@ users get.
 ## In-app updates
 
 `lib/updater.js` wraps `electron-updater`, VS Code style: a silent check
-15 s after launch and every 4 h, download in the background, then one
-attention-seeking control — the **Restart to update** pill in the shell bar
-(and the same action in the launcher's Updates row). *Help → Check for
+15 s after launch and every 4 h, download in the background, and from the
+moment a newer version is found one attention-seeking control — **Update
+now**, an icon in the accent colour in the shell bar (its title says the
+version and the download's progress), and the same action in the launcher's
+Updates row and Help → Check for Updates…'s dialog. Pressed once the
+download is done it restarts into the update (`quitAndInstall`); pressed
+while it still downloads it notes the press (`installing`: the icon turns
+to a spinner, the row says *Updating…*) and restarts as soon as the
+download is done, a failed download dropping the press
+(`test/updater.test.js`). *Help → Check for
 Updates…* is the only flow that answers with a dialog; under the test
 harness that dialog is only recorded (`ask`, the hook's `asked`) and takes
 its last button, *Later* or *OK*, which installs nothing. The feed is the
 GitHub Release (details and the signing caveat: [release.md](release.md)).
 
 State machine (`update` in the shell state): `idle` → `checking` →
-`up-to-date` | `downloading` (percent) → `downloaded` | `error`;
+`up-to-date` | `downloading` (percent, `installing` once Update now was
+pressed) → `downloaded` | `error`;
 `unsupported` in dev builds, under the test harness, in a Microsoft
 Store install (`process.windowsStore`; the Store delivers those updates,
 see [release.md](release.md#microsoft-store)) and in the Mac App Store
@@ -1700,11 +1708,11 @@ update installs on restart (`quitAndInstall`, silent NSIS run; unsigned
 builds are fine — electron-updater only verifies a publisher when one is
 configured). On **Linux** (the `.deb`) the same flow runs through
 electron-updater's `DebUpdater` (chosen from `resources/package-type`): the
-new `.deb` downloads in the background and *Restart to update* installs it
+new `.deb` downloads in the background and *Update now* installs it
 with `dpkg -i` under `pkexec`, so the user gets a password prompt, then the
 app relaunches. On **macOS** an unsigned app cannot self-update (Squirrel.Mac
 requires a valid signature), so the shell reports `available` instead of
-downloading and the pill / button opens the release page; `IN_APP_INSTALL`
+downloading and the bar's icon / the row's button opens the release page; `IN_APP_INSTALL`
 in `lib/updater.js` is the switch to flip once the builds are signed.
 
 ## Shell state
