@@ -4897,6 +4897,9 @@ async function checkForUpdatesInteractive() {
 function buildMenu() {
   const { servers } = registry.load();
   const wc = () => (content ? content.webContents : null);
+  // Ctrl+W (⌘W) is the page's: Gamma's Close tab, as in a browser. The
+  // window closes on Ctrl+Shift+W (⇧⌘W), Chrome's key for it.
+  const closeWindow = { role: 'close', accelerator: 'CmdOrCtrl+Shift+W' };
   const template = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     {
@@ -4914,7 +4917,7 @@ function buildMenu() {
         { type: 'separator' },
         ...backgroundItems('Keep Running in the Background', 'Start at Login'),
         { type: 'separator' },
-        process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
+        process.platform === 'darwin' ? closeWindow : { role: 'quit' },
       ],
     },
     { role: 'editMenu' },
@@ -4939,7 +4942,7 @@ function buildMenu() {
       role: 'window', // macOS lists the open windows under it
       submenu: [
         { role: 'minimize' },
-        process.platform === 'darwin' ? { role: 'zoom' } : { role: 'close' },
+        process.platform === 'darwin' ? { role: 'zoom' } : closeWindow,
         { type: 'separator' },
         { label: 'Show Gamma', click: () => showWindow() },
         ...(process.platform === 'darwin' ? [{ type: 'separator' }, { role: 'front' }] : []),

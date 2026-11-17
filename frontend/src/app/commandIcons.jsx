@@ -22,6 +22,7 @@ const COMMAND_ICONS = {
   "app.quickOpen": FileTextIcon,
   "app.commandPalette": TerminalIcon,
   "app.back": ArrowLeftIcon,
+  "app.closeTab": XIcon,
   "app.undo": UndoIcon,
   "app.redo": RedoIcon,
   "app.renameTitle": PencilIcon,
