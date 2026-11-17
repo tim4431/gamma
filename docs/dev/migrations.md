@@ -135,7 +135,7 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    raised past them; a data directory that old must first run the release
    named in `UPGRADE_VIA`, the newest one that still carries them, and the
    refusal says so. The floor is 19: a directory at 19 or later upgrades
-   here (steps 20 to 54). The normalizers are the one exception: they also
+   here (every step from 20 on). The normalizers are the one exception: they also
    run on a backup restore (`/api/import-data`), because a backup can be
    older than any step, so they stay for as long as such backups are
    accepted. A restored copy stamped below the base goes through the

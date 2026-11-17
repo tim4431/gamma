@@ -283,7 +283,7 @@ All state is SQLite + files on disk under a data directory (env
   `position` the order, `properties.pinned` a pin; a page is filed by id, in
   `properties.folders` and `properties.labels` (lists of block ids;
   [home_library.md](home_library.md) "Folders and labels"). A page may CARRY one
-  document, a PDF so far: one property, `properties.doc`, `{format, name,
+  document, of any format ([documents.md](documents.md)): one property, `properties.doc`, `{format, name,
   hash, ext, at, url?, size?, copy?}`, read through
   `documents.model.page_document` ([documents.md](documents.md); its stored
   file is `hash + ext`, read from the uploads, a path on this computer or

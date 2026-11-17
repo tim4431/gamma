@@ -55,7 +55,11 @@ the critiques behind it are in the research note
 
 - **R1. A token goes only to the address it was made for, over a
   connection that is that address.** No client of Gamma-to-Gamma traffic
-  follows a redirect, the sidecar's or the shell's.
+  follows a redirect, the sidecar's or the shell's, but for a stored
+  file's bytes: an offline copy's file download may be served from
+  another origin, so it follows a redirect and drops the token, the
+  workspace header and the cookie when the redirect leaves the origin
+  (`sync_engine._OffOriginRedirect`, [mirror.md](mirror.md) "What travels").
 - **R2. Nothing a server writes becomes an address or a trust decision
   without the person.** A `Location`, a certificate's subject, a status
   field are shown, never acted on, except the one automatic move (the
