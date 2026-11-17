@@ -65,11 +65,14 @@ jobs:
       - name: Pages assembled
         working-directory: sites
         run: |
-          for f in index.html 404.html pricing.html privacy/index.html terms/index.html delete-account/index.html docs/index.html sitemap.xml _redirects _headers media/favicon.svg media/inter.woff2; do
+          for f in index.html 404.html pricing.html privacy/index.html terms/index.html delete-account/index.html docs/index.html docs/design/index.html sitemap.xml _redirects _headers media/favicon.svg media/inter.woff2; do
             test -s "dist/$f" || { echo "::error::dist/$f is missing"; exit 1; }
           done
           if grep -rl '<!--#' dist --include='*.html'; then
             echo "::error::a build directive was not expanded"; exit 1
+          fi
+          if grep -o '<summary>[^<]*</summary>' dist/docs/index.html | sort | uniq -d | grep .; then
+            echo "::error::a documentation section is listed twice in the sidebar"; exit 1
           fi
       - name: Worker and config (dry run)
         working-directory: sites

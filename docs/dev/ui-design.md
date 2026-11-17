@@ -9,7 +9,10 @@ them instead of inventing new patterns.
 is the one place a design value is defined: every theme's colours and
 `color-scheme`, the type stacks and sizes, the control sizes, and the
 radius, shadow, spacing, motion and stacking scales. It holds custom properties only, no component
-rules. `index.html` links it as the first stylesheet, and Vite bundles it
+rules. The design pages' pictures of the themes and the palette
+([docs/design/look.md](../design/look.md)) are drawn from it and from
+`shared/model/palette.js` by `tools/designSheets.mjs`, which
+`tests/themes.test.mjs` holds to them. `index.html` links it as the first stylesheet, and Vite bundles it
 into the render-blocking entry CSS. So the first frame, splash included,
 paints from the same values as the app; the pre-paint script only sets the
 theme attributes. Component rules read tokens and never declare a colour

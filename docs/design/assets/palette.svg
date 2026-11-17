@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="424" viewBox="0 0 960 424" role="img" aria-label="Gamma's default colour palette: the Highlight, Ink highlight and Pen groups" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
+<title>Gamma's default colour palette: the Highlight, Ink highlight and Pen groups</title>
+<style>
+.l { fill: #292822; } .m { fill: #6b6a65; } .rim { stroke: #c7c2b6; }
+@media (prefers-color-scheme: dark) { .l { fill: #f0ede6; } .m { fill: #a9a69e; } .rim { stroke: #45443f; } }
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+</style>
+<text y="16" font-size="14" font-weight="600" class="l">Highlight</text>
+<text y="34" font-size="11" class="m">Text highlights: the wash at 65 %, a line style in a deeper tone of its hue, and both re-derived on a page with flipped colours</text>
+<rect x="0.5" y="48.5" width="106" height="63" rx="8" fill="#ffffff" class="rim"/>
+<rect x="115.5" y="48.5" width="106" height="63" rx="8" fill="#0f0f0f" class="rim"/>
+<rect x="12" y="60" width="60" height="18" rx="2" fill="#ffe28fa6"/>
+<text x="16" y="73" font-size="12" fill="#1a1a1a">passage</text>
+<text x="16" y="97" font-size="12" fill="#1a1a1a">passage</text>
+<rect x="16" y="100" width="47" height="1.6" fill="#d69f00"/>
+<rect x="127" y="60" width="60" height="18" rx="2" fill="rgba(255, 200, 41, 0.3)"/>
+<text x="131" y="73" font-size="12" fill="#f0f0f0">passage</text>
+<text x="131" y="97" font-size="12" fill="#f0f0f0">passage</text>
+<rect x="131" y="100" width="47" height="1.6" fill="rgba(255, 200, 41, 0.75)"/>
+<text x="0" y="129" font-size="11" font-weight="500" class="l">Yellow</text>
+<text x="222" y="129" font-size="10" text-anchor="end" class="m mono">#ffe28f</text>
+<rect x="246.5" y="48.5" width="106" height="63" rx="8" fill="#ffffff" class="rim"/>
+<rect x="361.5" y="48.5" width="106" height="63" rx="8" fill="#0f0f0f" class="rim"/>
+<rect x="258" y="60" width="60" height="18" rx="2" fill="#aaebaaa6"/>
+<text x="262" y="73" font-size="12" fill="#1a1a1a">passage</text>
+<text x="262" y="97" font-size="12" fill="#1a1a1a">passage</text>
+<rect x="262" y="100" width="47" height="1.6" fill="#20b620"/>
+<rect x="373" y="60" width="60" height="18" rx="2" fill="rgba(58, 245, 58, 0.3)"/>
+<text x="377" y="73" font-size="12" fill="#f0f0f0">passage</text>
+<text x="377" y="97" font-size="12" fill="#f0f0f0">passage</text>
+<rect x="377" y="100" width="47" height="1.6" fill="rgba(58, 245, 58, 0.75)"/>
+<text x="246" y="129" font-size="11" font-weight="500" class="l">Green</text>
+<text x="468" y="129" font-size="10" text-anchor="end" class="m mono">#aaebaa</text>
+<rect x="492.5" y="48.5" width="106" height="63" rx="8" fill="#ffffff" class="rim"/>
+<rect x="607.5" y="48.5" width="106" height="63" rx="8" fill="#0f0f0f" class="rim"/>
+<rect x="504" y="60" width="60" height="18" rx="2" fill="#9bcdffa6"/>
+<text x="508" y="73" font-size="12" fill="#1a1a1a">passage</text>
+<text x="508" y="97" font-size="12" fill="#1a1a1a">passage</text>
+<rect x="508" y="100" width="47" height="1.6" fill="#006bd6"/>
+<rect x="619" y="60" width="60" height="18" rx="2" fill="rgba(53, 154, 255, 0.3)"/>
+<text x="623" y="73" font-size="12" fill="#f0f0f0">passage</text>
+<text x="623" y="97" font-size="12" fill="#f0f0f0">passage</text>
+<rect x="623" y="100" width="47" height="1.6" fill="rgba(53, 154, 255, 0.75)"/>
+<text x="492" y="129" font-size="11" font-weight="500" class="l">Blue</text>
+<text x="714" y="129" font-size="10" text-anchor="end" class="m mono">#9bcdff</text>
+<rect x="738.5" y="48.5" width="106" height="63" rx="8" fill="#ffffff" class="rim"/>
+<rect x="853.5" y="48.5" width="106" height="63" rx="8" fill="#0f0f0f" class="rim"/>
+<rect x="750" y="60" width="60" height="18" rx="2" fill="#e6b4ffa6"/>
+<text x="754" y="73" font-size="12" fill="#1a1a1a">passage</text>
+<text x="754" y="97" font-size="12" fill="#1a1a1a">passage</text>
+<rect x="754" y="100" width="47" height="1.6" fill="#8f00d6"/>
+<rect x="865" y="60" width="60" height="18" rx="2" fill="rgba(190, 61, 255, 0.3)"/>
+<text x="869" y="73" font-size="12" fill="#f0f0f0">passage</text>
+<text x="869" y="97" font-size="12" fill="#f0f0f0">passage</text>
+<rect x="869" y="100" width="47" height="1.6" fill="rgba(190, 61, 255, 0.75)"/>
+<text x="738" y="129" font-size="11" font-weight="500" class="l">Purple</text>
+<text x="960" y="129" font-size="10" text-anchor="end" class="m mono">#e6b4ff</text>
+<text y="180" font-size="14" font-weight="600" class="l">Ink highlight</text>
+<text y="198" font-size="11" class="m">Highlighter strokes, at 60 % over the page</text>
+<rect x="0.5" y="212.5" width="104" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M16 238 C 40 228, 64 240, 89 230" fill="none" stroke="#ffe28f99" stroke-width="12" stroke-linecap="round"/>
+<text x="0" y="273" font-size="11" font-weight="500" class="l">Yellow</text>
+<text x="105" y="273" font-size="10" text-anchor="end" class="m mono">#ffe28f</text>
+<rect x="122.64285714285714" y="212.5" width="104" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M138.14285714285714 238 C 162.14285714285714 228, 186.14285714285714 240, 211.14285714285714 230" fill="none" stroke="#aaebaa99" stroke-width="12" stroke-linecap="round"/>
+<text x="122.14285714285714" y="273" font-size="11" font-weight="500" class="l">Green</text>
+<text x="227.14285714285714" y="273" font-size="10" text-anchor="end" class="m mono">#aaebaa</text>
+<rect x="244.78571428571428" y="212.5" width="104" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M260.2857142857143 238 C 284.2857142857143 228, 308.2857142857143 240, 333.2857142857143 230" fill="none" stroke="#9bcdff99" stroke-width="12" stroke-linecap="round"/>
+<text x="244.28571428571428" y="273" font-size="11" font-weight="500" class="l">Blue</text>
+<text x="349.2857142857143" y="273" font-size="10" text-anchor="end" class="m mono">#9bcdff</text>
+<rect x="366.92857142857144" y="212.5" width="104" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M382.42857142857144 238 C 406.42857142857144 228, 430.42857142857144 240, 455.42857142857144 230" fill="none" stroke="#e6b4ff99" stroke-width="12" stroke-linecap="round"/>
+<text x="366.42857142857144" y="273" font-size="11" font-weight="500" class="l">Purple</text>
+<text x="471.42857142857144" y="273" font-size="10" text-anchor="end" class="m mono">#e6b4ff</text>
+<rect x="489.07142857142856" y="212.5" width="104" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M504.57142857142856 238 C 528.5714285714286 228, 552.5714285714286 240, 577.5714285714286 230" fill="none" stroke="#f9a8d499" stroke-width="12" stroke-linecap="round"/>
+<text x="488.57142857142856" y="273" font-size="11" font-weight="500" class="l">Pink</text>
+<text x="593.5714285714286" y="273" font-size="10" text-anchor="end" class="m mono">#f9a8d4</text>
+<rect x="611.2142857142857" y="212.5" width="104" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M626.7142857142857 238 C 650.7142857142857 228, 674.7142857142857 240, 699.7142857142857 230" fill="none" stroke="#fdba7499" stroke-width="12" stroke-linecap="round"/>
+<text x="610.7142857142857" y="273" font-size="11" font-weight="500" class="l">Peach</text>
+<text x="715.7142857142857" y="273" font-size="10" text-anchor="end" class="m mono">#fdba74</text>
+<rect x="733.3571428571429" y="212.5" width="104" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M748.8571428571429 238 C 772.8571428571429 228, 796.8571428571429 240, 821.8571428571429 230" fill="none" stroke="#67e8f999" stroke-width="12" stroke-linecap="round"/>
+<text x="732.8571428571429" y="273" font-size="11" font-weight="500" class="l">Cyan</text>
+<text x="837.8571428571429" y="273" font-size="10" text-anchor="end" class="m mono">#67e8f9</text>
+<rect x="855.5" y="212.5" width="104" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M871 238 C 895 228, 919 240, 944 230" fill="none" stroke="#d4d4d899" stroke-width="12" stroke-linecap="round"/>
+<text x="855" y="273" font-size="11" font-weight="500" class="l">Light gray</text>
+<text x="960" y="273" font-size="10" text-anchor="end" class="m mono">#d4d4d8</text>
+<text y="324" font-size="14" font-weight="600" class="l">Pen</text>
+<text y="342" font-size="11" class="m">Pens and text boxes, opaque</text>
+<rect x="0.5" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M12 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#1f1f1f" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="0" y="417" font-size="11" font-weight="500" class="l">Black</text>
+<rect x="69.73076923076923" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M81.23076923076923 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#6b7280" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="69.23076923076923" y="417" font-size="11" font-weight="500" class="l">Gray</text>
+<rect x="138.96153846153845" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M150.46153846153845 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#1d4ed8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="138.46153846153845" y="417" font-size="11" font-weight="500" class="l">Blue</text>
+<rect x="208.19230769230768" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M219.69230769230768 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#0284c7" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="207.69230769230768" y="417" font-size="11" font-weight="500" class="l">Sky blue</text>
+<rect x="277.4230769230769" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M288.9230769230769 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#0f766e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="276.9230769230769" y="417" font-size="11" font-weight="500" class="l">Teal</text>
+<rect x="346.65384615384613" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M358.15384615384613 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#15803d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="346.15384615384613" y="417" font-size="11" font-weight="500" class="l">Green</text>
+<rect x="415.88461538461536" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M427.38461538461536 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#65a30d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="415.38461538461536" y="417" font-size="11" font-weight="500" class="l">Lime</text>
+<rect x="485.1153846153846" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M496.6153846153846 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#ca8a04" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="484.6153846153846" y="417" font-size="11" font-weight="500" class="l">Amber</text>
+<rect x="554.3461538461538" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M565.8461538461538 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#ea580c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="553.8461538461538" y="417" font-size="11" font-weight="500" class="l">Orange</text>
+<rect x="623.5769230769231" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M635.0769230769231 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#dc2626" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="623.0769230769231" y="417" font-size="11" font-weight="500" class="l">Red</text>
+<rect x="692.8076923076923" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M704.3076923076923 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#db2777" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="692.3076923076923" y="417" font-size="11" font-weight="500" class="l">Pink</text>
+<rect x="762.0384615384614" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M773.5384615384614 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#7c3aed" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="761.5384615384614" y="417" font-size="11" font-weight="500" class="l">Violet</text>
+<rect x="831.2692307692307" y="356.5" width="59" height="43" rx="8" fill="#ffffff" class="rim"/>
+<path d="M842.7692307692307 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#92400e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="830.7692307692307" y="417" font-size="11" font-weight="500" class="l">Brown</text>
+<rect x="900.5" y="356.5" width="59" height="43" rx="8" fill="#3a3a38" class="rim"/>
+<path d="M912 384 c 6 -14, 10 -14, 12 -2 s 6 12, 12 -2 s 6 -10, 12 -4" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="900" y="417" font-size="11" font-weight="500" class="l">White</text>
+</svg>

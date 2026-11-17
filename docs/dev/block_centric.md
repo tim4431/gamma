@@ -59,8 +59,9 @@ A page is the only container: at most one document, any number of files in
 its body, and optionally a bibliographic record (`meta`). There are no page
 types.
 
-**Reading window.** Opening a page whose document is a PDF shows the viewer
-beside the notes; a page without one centers the notes. Same page component,
+**Reading window.** Opening a page that carries a document shows its
+format's viewer beside the notes (the PDF reader, the code view, the
+picture, the player, the file card); a page without one centers the notes. Same page component,
 same dock, only the presence of a viewer differs — and the viewer is
 collapsible (`pdfHidden`) rather than a mode. Layout derives from the
 page's document (`documentView` over `pageDocument(page)`,
@@ -517,7 +518,8 @@ A multi-PDF viewer with `attachment_id` on highlights is not planned.
   inline, the rest as chips — a PDF copied in the file manager pastes like a
   screenshot does); dropped on the page body
   it becomes new blocks at the end of the page (`appendFileBlocks`); dropped
-  on the home library, PDFs/markdown import as pages. The page's document is
+  on the home library, every file becomes a page: a PDF a paper, a
+  Markdown file a note page, any other file a page that shows it. The page's document is
   attached ONLY from the header paperclip ("Attach a document") — a drop
   never attaches. A property strip under the title was tried and removed
   the same day: it repeated what the metadata popover shows.

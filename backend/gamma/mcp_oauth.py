@@ -54,8 +54,10 @@ def public_base(request: Request) -> str:
     except ValueError:
         if url.path not in ("", "/"):
             raise HTTPException(400, "MCP browser sign-in requires Gamma at the origin root, without a URL path prefix.") from None
-        raise HTTPException(400, "MCP browser sign-in requires HTTPS, or localhost for local use.") from None
-    if not local and url.netloc.lower() not in allowed:
+        raise HTTPException(400, "MCP browser sign-in requires HTTPS, or plain HTTP on this computer or this network.") from None
+    # Plain http beyond this computer is the confirmed (or GAMMA_PUBLIC_URL)
+    # address's alone: an allowed host the request names is not enough.
+    if not local and (url.netloc.lower() not in allowed or (url.scheme != "https" and not configured)):
         raise HTTPException(421, "Confirm the public server URL in Settings > Administration > Server first.")
     # Even with a configured canonical issuer, reject requests routed via an
     # unexpected Host. Local reverse proxies should preserve the external Host.

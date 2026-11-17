@@ -57,7 +57,9 @@ export async function subPageScenarios(env) {
   const fileRow = (page, title) => page.locator(".fileRow").filter({ has: page.locator(".fileRowName", { hasText: new RegExp(`^${title}$`) }) });
   const panel = (page) => page.locator(".subPagesPanel");
   const panelRows = (page) => panel(page).locator(".subPageRow:not(.subPageNew)");
-  const crumbs = (page) => page.locator(".pageCrumbs .crumbBtn");
+  // the pages above, after the crumbs of the folder its top is filed in
+  const crumbs = (page) => page.locator(".pageCrumbs .crumbBtn:not(.crumbFolder)");
+  const folderCrumbs = (page) => page.locator(".pageCrumbs .crumbFolder");
   // a page picker's rows (library/PagePicker.jsx) as "title path": the
   // page's title, then the pages a page inside is in
   const optionTexts = (dialog) => dialog.getByRole("option").evaluateAll((els) => els.map((el) =>
@@ -86,12 +88,15 @@ export async function subPageScenarios(env) {
 
       // its crumbs name the parent, and a crumb opens it
       await until(async () => (await crumbs(page).allInnerTexts()).join("|") === "Family top", { what: "the crumbs name the parent" });
+      await until(async () => (await folderCrumbs(page).allInnerTexts()).join("|") === "Shelf", { what: "led by its top's folder" });
       await crumbs(page).first().click();
       await until(() => blockOf(page) === top.id, { what: "the crumb opens the parent" });
       await until(async () => (await row(page, "Intro").locator(".blockRefChip").innerText()) === "Child one", { what: "the chip where /page was typed" });
       await until(async () => (await panelRows(page).allInnerTexts()).join("|") === "Child one", { what: "the panel lists the page inside" });
       assert((await panel(page).locator(".backlinksHead").innerText()).includes("1 page inside"), "the panel counts it");
-      assertEq(await crumbs(page).count(), 0, "a library page has no crumbs");
+      assertEq(await crumbs(page).count(), 0, "a library page has no page crumbs");
+      assertEq((await folderCrumbs(page).allInnerTexts()).join("|"), "Shelf", "but the folder it is filed in");
+      assertEq(await page.locator('[data-guide="page.labels"] .folderChip').count(), 0, "which has no chip: the crumb says it");
 
       // the library and the folder list the parent only, and count one page
       await goHome(page);

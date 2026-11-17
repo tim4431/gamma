@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { TOKEN_COPIES, sameCopy } from "../tools/copy-tokens.mjs";
+import { SHEETS, SHEETS_DIR } from "../tools/designSheets.mjs";
 import { BASELINE, contrastTable, declared, failures, parseColor, parseRules, resolveTheme } from "../tools/themes.mjs";
 import { DARK_THEMES, THEMES, UI_SCALE, themeScheme } from "../src/app/prefDefs.js";
 
@@ -108,6 +109,17 @@ test("the desktop shell and the extension carry the same tokens and font as the 
     const m = main.match(new RegExp(`'?${theme}'?: \\{ bg: '(#[0-9a-f]{6})'`));
     assert.ok(m, `desktop/main.js has a title-bar colour for ${theme}`);
     assert.equal(m[1], hex(resolveTheme(theme, TOKENS).colors["--bg-page"]), `desktop/main.js: ${theme}'s title bar is its --bg-page`);
+  }
+});
+
+// The design pages show the themes and the palette as pictures drawn from
+// the tokens and palette.js (docs/design/look.md).
+test("the design pages' colour sheets are drawn from the current tokens and palette", () => {
+  for (const [name, draw] of Object.entries(SHEETS)) {
+    const file = path.join(SHEETS_DIR, name);
+    // A checkout may turn the file's LF into CRLF, as sameCopy allows.
+    assert.ok(fs.existsSync(file) && fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n") === draw(),
+      `docs/design/assets/${name} is out of date: run \`node tools/designSheets.mjs\` in frontend/`);
   }
 });
 

@@ -29,14 +29,14 @@ Rules that hold throughout:
 
 ## 1. Pick
 
-The candidates are `docs/dev/*.md`, `docs/research/*.md`,
+The candidates are `docs/dev/*.md`, `docs/research/*.md`, `docs/design/*.md`,
 `frontend/src/README.md`, `desktop/docs/*.md`, the apps' READMEs
 (`cloud/`, `ipad/`, `android/`, `sites/`, `tools/*/`), and
 `.claude/skills/*/SKILL.md`, whose commands and paths drift as well. The
 last audit of each is the newest commit whose subject names its path:
 
 ```bash
-for f in docs/dev/*.md docs/research/*.md frontend/src/README.md desktop/docs/*.md \
+for f in docs/dev/*.md docs/research/*.md docs/design/*.md frontend/src/README.md desktop/docs/*.md \
          cloud/README.md ipad/README.md android/README.md sites/README.md tools/*/README.md \
          .claude/skills/*/SKILL.md; do
   d=$(git log -1 --format=%cs -F --grep="Docs audit of $f:" HEAD)

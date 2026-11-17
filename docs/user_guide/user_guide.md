@@ -1,6 +1,6 @@
 # Gamma user guide
 
-Read papers, keep what you learn. This guide shows each part of Gamma in a short animation and a few lines. Installing it is in the [README](../../README.md).
+Read papers, keep what you learn. This guide shows each part of Gamma in a short animation and a few lines. Installing it is in the [README](../../README.md), and how each part is designed, and why, in [Gamma's design](../design/README.md).
 
 | Section | What it covers |
 |---|---|
@@ -278,7 +278,7 @@ The agent never deletes a page for good: a deleted page stays in Recently delete
 The home page lists your pages, most recent first, with a **Recently viewed** strip on top.
 
 - **Labels** are words you'll search for. **Folders** are labels that nest, for a topic or a talk. Neither one copies a paper ([which to use](#labels-or-folders)).
-- **Select** like a file manager: click, Ctrl+click, Shift+click; double-click opens; right-click for rename, move, label, share, export, properties, delete. Done to many pages at once, the change shows in **Background tasks** as it goes, page by page, with **Stop**. It runs in the tab: closing or reloading the tab stops it part way.
+- **Select** like a file manager: click, Ctrl+click, Shift+click; double-click opens; right-click for rename, move, label, share, export, properties, delete. In the desktop app, **Copy PDF** puts a paper's PDF on the clipboard as a file, to paste into a folder or a chat; **Duplicate** makes a second page with the same notes and highlights. Done to many pages at once, the change shows in **Background tasks** as it goes, page by page, with **Stop**. It runs in the tab: closing or reloading the tab stops it part way.
 - **Recently deleted** keeps a page for 30 days, with its notes and files.
 
 ### Labels or folders?
@@ -622,7 +622,7 @@ Codex, Claude Code, DeepSeek Harness and any MCP client can search and read your
 - To remove Gamma from an assistant, open **Remove Gamma from …** at the end of its tab and run the commands there (for DeepSeek Harness, with the app quit: it takes the plugin out and deletes the saved connection), then **Disconnect** the connection under **Connected assistants**.
 - Paste a Gamma page, block or share link into the question and the assistant reads that page, in whichever of the connection's workspaces it is.
 - Its answers link what they cite, as the chat's do: a PDF's passage, or a file's line (`method.tex:12`), which opens in Gamma marked.
-- A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. A connection expires after 90 days; the same pane lists every connection of your account and disconnects one.
+- A remotely hosted Gamma needs its **Public server URL** confirmed once in Settings → Server. It is an https:// address; a server on your own network may use its plain http:// one, such as `http://192.168.1.10:8000` or `http://nas.local:8000`. A connection expires after 90 days; the same pane lists every connection of your account and disconnects one.
 
 ### Connect an assistant
 
@@ -724,6 +724,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | F2 / Del | Rename / delete the selected page |
 | Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo |
 | Alt+← | Back through link jumps |
+| Ctrl+W | In the desktop app: close the tab (Ctrl+Shift+W closes the window); in a browser, give Close tab a key in Settings → Keyboard |
 | Enter / Shift+Enter | New note / line break (swappable); in search: next / previous match; in chat: send / newline; in a comment: newline / send |
 | Tab / Shift+Tab | Indent / outdent a note; accept a filter chip; hop `{}` arguments or table cells |
 | ↑ / ↓ | On a note's first / last line: move into the note above / below |

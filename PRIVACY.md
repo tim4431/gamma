@@ -267,8 +267,12 @@ no one else.
 
 ## Sharing
 
-Gamma can create share links for pages. Anyone with a link can read (or,
-if you allow it, edit) that page on your server. Sharing is under your
+Gamma can create share links for a page (with the pages inside it) or a
+folder. A link is open to anyone who has it, to any signed-in account on
+your server, or only to the people you invite, and lets them read or, if
+you allow it, edit. Inviting someone by e-mail, on a server that signs in
+with Gamma Cloud, sends their address to the Gamma Cloud account server,
+which mails the invitation (see "Gamma Cloud" above). Sharing is under your
 control and can be revoked at any time from the app.
 
 ## Reports

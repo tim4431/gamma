@@ -7,8 +7,9 @@ computer announces itself to it over a channel of its own, and the server
 shows the vault's maker, in any window (a browser, an iPad, the desktop
 window on that server), that the folder or file is kept on *TIM-PC*,
 whether that computer is online or since when it is not, and which
-assistants are there (Codex, Claude Code). Nothing runs on the computer
-from that server yet.
+assistants are there (Codex, Claude Code). The same channel then carries
+work the other way: the turns of that computer's agent asked for from the
+server ("The agents' turns there"), and sessions over the channel.
 
 This is step 4a of [agent-collab.md](../research/agent-collab.md) ("How
 the server sees a vault"). The later steps build on the channel: 4b work

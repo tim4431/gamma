@@ -86,7 +86,7 @@ import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, ClipboardIcon, CloudIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitPageIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
@@ -270,6 +270,7 @@ import {
   inFolder,
   labelName,
   libraryTree,
+  placeFolder,
   siblingFolders,
   formatFullDate,
   formatRelativeTime,
@@ -9107,6 +9108,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const marks = useMarks({ ink: inkBySurface, inkSelection, inkFlash, boxes: textBoxes.bySurface, boxSel: textBoxes.sel,
     boxFlash: textBoxes.flash, pictures: pictures.bySurface, pictureSel: pictures.sel, pictureFlash: pictures.flash });
   const homeMode = !focusedBlockId && lib.browse;
+  // The Home button (a phone's Library tab): from a page, back to the
+  // library view it was opened from, its folder and label kept, as closing
+  // the page's tab returns to; over the library, its root. `homeBack` names
+  // that view for the button's title, "" for the root.
+  const pressHome = () => goHome(true, !homeMode);
+  const homeBack = homeMode ? "" : folderPath(libTree, folderFilter) || labelName(libTree, labelFilter);
   // The one page selected on the home library (F2 renames it), or "".
   const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
     ? [...selectedPages][0] : "";
@@ -9239,6 +9246,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setQuickOpen((v) => (v && v.prefix === prefix ? null : { prefix }));
     },
     back: () => goBackNavRef.current?.(),
+    // The tab the strip shows active: a pressed one whose page is still on
+    // its way, else the open page's.
+    closeTab: () => closeTab(tabPick || focusedBlockId),
     mouseBack: () => {
       if (navStackLen) goBackNavRef.current?.();
       else if (!homeMode) goHome();
@@ -9780,6 +9790,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     },
   });
   const { work: focusedFile, rules: openRules, titleLocked, inLibrary: openInLibrary } = work.open;
+  // Where the open page is, as the crumbs over its title read it: a work
+  // folder's file, its directory's folders (fileCrumbs); any other page, the
+  // path of a folder it is filed in, a sub-page by its top's, the one the
+  // library showed as it opened when it is filed there or below
+  // (placeFolder). A share's topbar names the path instead. The folder the
+  // crumbs lead to has no chip under the title; the label field's edit
+  // lists it with the others.
+  const placeTop = openFamily.ancestors[0]?.id;
+  const openPlace = shareMode || focusedFile ? ""
+    : placeFolder(libTree, placeTop ? pagesById.get(placeTop)?._folders : pageFolders, folderFilter);
+  const openCrumbs = focusedFile ? fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile })
+    : openPlace ? folderCrumbs(openPlace) : [];
   // The folder view's synced folder: who keeps it and how it syncs, for its heading.
   const workKeeper = workFolder ? work.keeperOf(workFolder) : null;
   // The Files window's reads, its first slot and the open page's reveal
@@ -10865,16 +10887,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <div className="sidebar" data-guide="dock.notes" ref={liveSidebarRef}>
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
-            {/* a file's folders from its work folder down, each opening that
-                folder, its own directory with the file selected as the tab's
-                Show in folder view does; the pages a sub-page is inside, each
-                opening that page */}
+            {/* the folders of the page's place (openCrumbs), each opening
+                that folder, a file's own directory with the file selected
+                as the tab's Show in folder view does; the pages a sub-page
+                is inside, each opening that page */}
             <PageCrumbs ancestors={openFamily.ancestors} onOpen={openFamilyPage}
               targetProps={lib.organize ? (page) => ({ ...pageDropProps(page.id, page.title), className: pageDropClass(page.id) }) : undefined}
-              folders={focusedFile ? fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile }) : []}
+              folders={openCrumbs}
               onOpenFolder={(id) => {
-                const own = fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile }).at(-1)?.id;
-                if (id === own) { goToFile(focusedBlockId, id); return; }
+                if (focusedFile && id === openCrumbs.at(-1)?.id) { goToFile(focusedBlockId, id); return; }
                 pushNav(); goHome(); openFolder(id);
               }} />
             {titleEditing && !readOnly && !titleLocked && focusedBlockId ? (
@@ -11029,7 +11050,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     );
                   })() : (() => {
-                    const chips = filingChips(libTree, { folders: openSubPage ? [] : pageFolders, labels: pageLabels, work_folder: focusedFile });
+                    // the folder the crumbs lead to is theirs, no chip
+                    const chips = filingChips(libTree, {
+                      folders: openSubPage ? [] : pageFolders.filter((id) => id !== openPlace), labels: pageLabels, work_folder: focusedFile });
                     return (
                     <span
                       className={`categoryFrontmatterValue ${chips.folders.length || chips.labels.length ? "" : "empty"}`}
@@ -13799,7 +13822,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         appRef.current?.classList.toggle("dragOver", dropHere);
       }}
       onDragLeave={shareMode ? undefined : (e) => {
-        if (e.currentTarget === e.target) appRef.current?.classList.remove("dragOver");
+        // A drag that leaves the window (or is cancelled there) leaves from
+        // whatever element is under the pointer, toward nothing in the app.
+        if (!e.currentTarget.contains(e.relatedTarget)) appRef.current?.classList.remove("dragOver");
       }}
       onDrop={shareMode ? undefined : (e) => {
         appRef.current?.classList.remove("dragOver");
@@ -13843,9 +13868,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {isPhone ? null : (
               <button
                 className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""} ${folderDragOver === "library" ? "dragOver" : ""}`}
-                onClick={goHome}
+                onClick={pressHome}
                 data-guide="header.home"
-                title={t("Home")}
+                title={homeBack ? t("Back to {folder}", { folder: homeBack }) : t("Home")}
                 aria-label={t("Home")}
                 {...libraryDropProps}
               >
@@ -14352,8 +14377,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button
                 className={`phoneTab ${homeMode && phoneMainActive ? "active" : ""}`}
                 // Over the library, a covering panel just closes; otherwise
-                // this is the Home button: back to the library's root.
-                onClick={() => { if (!homeMode || phoneMainActive) goHome(); setPhonePanel(null); }}
+                // this is the Home button (pressHome).
+                onClick={() => { if (!homeMode || phoneMainActive) pressHome(); setPhonePanel(null); }}
                 data-guide="header.home"
                 title={t("Library")}
                 aria-label={t("Library")}
@@ -15228,6 +15253,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 [
                   !many && !shareMode && (
                     <MenuItem key="link" icon={LinkIcon} onClick={() => { close(); copyPageLink(homeMenu.id); }}>{t("Copy link")}</MenuItem>
+                  ),
+                  // the file itself on this computer's clipboard, for a paste
+                  // into a folder or another app: the desktop app's shell puts
+                  // it there (a browser cannot put a file on the clipboard)
+                  !many && IS_DESKTOP && fileHash(acted[0]?._doc) && (
+                    <MenuItem key="copyfile" icon={ClipboardIcon} title={t("Put the file on this computer's clipboard, to paste it into a folder or another app")}
+                      onClick={() => { close(); askShell("copy-file", { page: homeMenu.id }); }}>{isPdf(acted[0]._doc) ? t("Copy PDF") : t("Copy file")}</MenuItem>
                   ),
                   !many && lib.organize && (
                     <MenuItem key="share" icon={ShareIcon} title={t("Share this page — a link, and who may view or edit it")}

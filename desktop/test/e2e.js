@@ -540,6 +540,50 @@ async function main() {
       return `${sourceUrl} → ${mine}`;
     });
 
+    await step('Ctrl+W (⌘W on a Mac) closes the open page\'s tab and leaves the window open; Close Window is Ctrl+Shift+W', async () => {
+      // A menu item's key is taken before the page sees it (the keys below
+      // reach the page directly, past the menu): none may take Ctrl+W.
+      const keys = await app.evaluate(({ Menu }) => {
+        const out = [];
+        const walk = (items) => items.forEach((i) => {
+          if (i.accelerator) out.push([i.role || i.label, String(i.accelerator)]);
+          if (i.submenu) walk(i.submenu.items);
+        });
+        walk(Menu.getApplicationMenu().items);
+        return out;
+      });
+      const plainW = /^(CmdOrCtrl|CommandOrControl|Ctrl|Control|Cmd|Command)\+W$/i;
+      assert.deepEqual(keys.filter(([, key]) => plainW.test(key)), [], 'a menu item takes Ctrl+W');
+      assert.deepEqual(keys.filter(([what]) => what === 'close').map(([, key]) => key), ['CmdOrCtrl+Shift+W'], 'Close Window: ' + JSON.stringify(keys));
+      const at = new URL(content.url());
+      at.searchParams.set('page', pageId);
+      await content.goto(at.href);
+      await waitLoggedIn(content);
+      const tab = content.locator('.tab.active', { hasText: 'E2E paper' });
+      await tab.waitFor({ timeout: 30_000 });
+      await content.keyboard.press('ControlOrMeta+KeyW');
+      await tab.waitFor({ state: 'detached', timeout: 10_000 });
+      await waitFor(() => !new URL(content.url()).searchParams.get('page'), 'back on the library', 10_000);
+      await sleep(500);
+      assert(await hook(app, (s) => s.hasWindow()), 'the window is still open');
+      return 'tab closed, window open';
+    });
+
+    await step('Copy PDF in a library page\'s menu puts the page\'s PDF on the clipboard as a file named after the page', async () => {
+      const row = content.locator('.fileRow', { hasText: 'E2E paper' }).first();
+      await row.waitFor({ timeout: 15_000 });
+      await row.click({ button: 'right' });
+      await content.locator('.ctxMenuItem', { hasText: 'Copy PDF' }).click();
+      const file = await waitFor(() => hook(app, (s) => s.copiedFile()), 'a file on the clipboard', 15_000);
+      assert.equal(path.basename(file), 'E2E paper.pdf');
+      const dir = await hook(app, (s, id) => s.registry.get(id).dataDir, ids.alpha);
+      const wsDir = fs.readdirSync(path.join(dir, 'workspaces'))[0];
+      const stored = fs.readFileSync(path.join(dir, 'workspaces', wsDir, 'uploads', path.basename(sourceUrl)));
+      assert(fs.readFileSync(file).equals(stored), 'the page\'s own PDF, byte for byte');
+      assert(/E2E paper\.pdf is on the clipboard/.test((await hook(app, (s) => s.notice())) || ''), 'the bar says so');
+      return file;
+    });
+
     await step('page exports in every mode (frozen bundle: pypdf, ziamath fonts)', async () => {
       const res = await content.evaluate(async (pageId) => {
         const out = {};
