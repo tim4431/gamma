@@ -31,6 +31,11 @@ key optional):
   ``declined``); a ``cancel`` ends the turn interrupted. The final message
   names the last decision: ``Ran it.`` or ``Did not run it.``;
 - ``delay``: seconds before the turn ends (turn/interrupt ends it sooner);
+  a ``turn/steer`` meanwhile is taken at once, as codex-cli 0.169.0 takes
+  it: answered ``{turnId}``, a ``userMessage`` item whose ``clientId`` is
+  its ``clientUserMessageId``, its message (the ``"message"`` of its JSON
+  block) added to the final one (``Done: <message>; <steered>``); one after
+  the turn's end is refused (-32600 "no active turn to steer");
 - ``deltas``: the pieces ``item/agentMessage/delta`` sends of the final
   message when ``initialize`` did not opt out of them (its words by
   default), ``typing`` seconds between two;
@@ -162,7 +167,7 @@ def wait_for(predicate, timeout: float | None):
         handle(message)
 
 
-state = {"turn": None, "interrupted": False, "config": None, "policy": None, "quiet": []}
+state = {"turn": None, "interrupted": False, "config": None, "policy": None, "quiet": [], "steered": []}
 
 
 def _model(model: str, name: str, efforts: list[str], effort: str, default: bool = False, hidden: bool = False):
@@ -292,8 +297,16 @@ def handle(message: dict) -> None:
         send({"id": request_id, "result": {}})
     elif method == "turn/start":
         state["turn"] = {"id": request_id, "params": params, "thread": params.get("threadId")}
+    elif method == "turn/steer" and state["turn"] is None:
+        send({"id": request_id, "error": {"code": -32600, "message": "no active turn to steer"}})
     elif method == "turn/steer":
         send({"id": request_id, "result": {"turnId": TURN}})
+        said = "".join(part.get("text", "") for part in params.get("input") or [])
+        item("item/started", state["turn"]["thread"], {"type": "userMessage", "id": f"um{request_id}",
+                                                       "clientId": params.get("clientUserMessageId"),
+                                                       "content": params.get("input") or []})
+        if params.get("clientUserMessageId"):
+            state["steered"].append(chat_message(said) or said)
     elif method == "turn/interrupt":
         send({"id": request_id, "result": {}})
         if FAIL != "hang":
@@ -500,6 +513,8 @@ def run_turn() -> None:
     text = answer_text(prompt_of(params), script, said)
     if decisions and not script.get("chat"):
         text = "Ran it." if decisions[-1] in ("accept", "acceptForSession") else "Did not run it."
+    if state["steered"]:
+        text = "; ".join([text, *state["steered"]])
     item("item/started", thread, {"type": "agentMessage", "id": "am0", "text": ""})
     if "item/agentMessage/delta" not in state["quiet"]:
         for piece in chunks(text):
@@ -520,7 +535,7 @@ def app_server() -> None:
             return
         handle(message)
         run_turn()
-        state["turn"] = None
+        state["turn"], state["steered"] = None, []
 
 
 def main() -> int:

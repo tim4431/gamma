@@ -719,6 +719,33 @@ def test_properties_no_parser_reads_as_an_object_never_stop_the_sweep(frank, tag
     assert translate_store.lookup(ws, gone, "zh-CN", MODEL, ["h"]) == {}
 
 
+def test_the_sweep_waits_for_another_writer_rather_than_keep_a_deleted_papers_translations(frank):
+    """The sweep reads what it deletes, so it takes data.db's write lock
+    before its reads: a writer holding the lock (the indexer, a manifest
+    written after an upload) makes it wait, as any write here waits. A
+    sweep that read first could not turn its read into a write while the
+    lock was held, and SQLite answered "database is locked" at once."""
+    from gamma import translate_store
+    from gamma.db import connect_pages_db, ws_db_path
+    from gamma.search import index as text_index
+
+    ws = workspace_of("tkept_frank")
+    with closing(connect_pages_db(ws)) as conn:
+        text_index.purge_unused(ws, conn)  # nothing else left to sweep: the kept translation is all it reads
+        gone = "f6" * 12
+        translate_store.put(ws, gone, "zh-CN", MODEL, [("h", "of a deleted paper")], brief=True)
+        writer = sqlite3.connect(ws_db_path(ws, "data.db"), isolation_level=None, check_same_thread=False)
+        writer.execute("BEGIN IMMEDIATE")
+        done = threading.Timer(0.5, writer.rollback)
+        done.start()
+        try:
+            text_index.purge_unused(ws, conn)
+        finally:
+            done.join()
+            writer.close()
+    assert translate_store.lookup(ws, gone, "zh-CN", MODEL, ["h"]) == {}
+
+
 def test_a_broken_store_never_fails_a_translation(frank, monkeypatch):
     from gamma import translate_store
 

@@ -12,8 +12,8 @@ import { TOURS } from "./tours/index.js";
 import { previewHighlight } from "./previewHighlight.js";
 import { previewArea } from "./previewArea.js";
 import { typeDemoNote } from "./typeDemoNote.js";
-import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMatch, guideStorage, retiresOffer, setupDone, setupIndex, setupTicks,
-  stepApplies, triggerMatches } from "./triggers.js";
+import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMatch, guideStorage, offerSteps, retiresOffer, setupDone, setupIndex,
+  setupTicks, stepApplies, triggerMatches } from "./triggers.js";
 import { createRunLog, madeItems, recordEvent } from "./finish.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { chordLabel } from "../shared/lib/hotkeys.js";
@@ -442,9 +442,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   useEffect(() => guideEvents.subscribe((name, payload) => {
     if (TRIGGER_EVENTS.has(name)) setPending((q) => [...q, { name, payload }]);
   }), []);
+  // Only those this render holds are taken off: one emitted by another
+  // effect of the same commit (a page's tab, after the page opened) is
+  // already queued behind them, and stays for the next run.
   useEffect(() => {
     if (!pending.length) return;
-    setPending([]);
+    setPending((q) => q.slice(pending.length));
     pending.forEach(consider);
   }, [pending, consider]);
   const factsKey = JSON.stringify(facts);
@@ -624,7 +627,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   const offerResume = offerAvailable && !!offer.resume;
   const offerCard = useMemo(() => {
     if (!offerTour) return null;
-    const steps = stepsFor(offerTour);
+    const steps = offerSteps(offerTour, stepsFor(offerTour));
     const intro = offerTour.welcome && steps[0]?.intro ? steps[0] : null;
     // A slide with a setup guide gets its way in where the guide can start.
     if (intro) return { ...intro, id: offerTour.id, welcome: true, minutes: offerTour.minutes, anchor: null,

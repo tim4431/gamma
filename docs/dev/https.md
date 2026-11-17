@@ -55,7 +55,11 @@ the critiques behind it are in the research note
 
 - **R1. A token goes only to the address it was made for, over a
   connection that is that address.** No client of Gamma-to-Gamma traffic
-  follows a redirect, the sidecar's or the shell's.
+  follows a redirect, the sidecar's or the shell's, but for a stored
+  file's bytes: an offline copy's file download may be served from
+  another origin, so it follows a redirect and drops the token, the
+  workspace header and the cookie when the redirect leaves the origin
+  (`sync_engine._OffOriginRedirect`, [mirror.md](mirror.md) "What travels").
 - **R2. Nothing a server writes becomes an address or a trust decision
   without the person.** A `Location`, a certificate's subject, a status
   field are shown, never acted on, except the one automatic move (the
@@ -443,6 +447,17 @@ Fake-IP answers (Clash, sing-box) count as none. Answers are kept 60 s.
   `tailscale serve` for https.
 - A NAS reached over loopback (an `ssh -L` tunnel, a local proxy) is the
   person's own tunnel: no warning.
+- **The Public URL** (Settings → Server,
+  [mcp.md](mcp.md#self-hosted-and-remote-connections)) takes plain http
+  on loopback and where the normalized host's `literal` scope is `lan`
+  (a host written as one number read as its address); such a name is
+  resolved once, when the address is confirmed in Settings
+  (`server_settings.confirmable_public_url`), and refused when `far` or
+  `unsure`.
+  Every other host, a dotted name of a split DNS or MagicDNS's included,
+  needs https. Assistants send their tokens there; Gamma Cloud never does:
+  `cloud_auth.cloud_public_url` reads a plain-http address of this network
+  as no address.
 
 ## Routes
 

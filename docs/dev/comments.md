@@ -1,7 +1,8 @@
 # Comments and the inbox
 
-People leave comments on a note, on a page, on a PDF highlight and on
-handwriting, reply to them and resolve them; an agent (Gamma AI, a
+People leave comments on a note, on a page, on a PDF highlight, on
+handwriting, on a region of a picture and on a range of a text file's
+lines, reply to them and resolve them; an agent (Gamma AI, a
 computer's Codex or Claude Code, a connection's integration token) may too,
 under its own name and for its account ("Who wrote a comment"). Backend: `gamma/comments.py` (storage, the rules, the
 writers, the sweep) and `gamma/routers/comments.py` (the API); the Inbox,

@@ -60,6 +60,7 @@ import { darkPageColor } from "../shared/model/palette.js";
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, EyeIcon, LocateIcon, XIcon } from "../shared/ui/Icons";
 import { placeFloating, surfaceSize, useFloatingPosition } from "../shared/ui/placement.js";
 import { t, tn } from "../shared/i18n/i18n.js";
+import { guideEvents } from "../guide/events.js";
 import { PAGE_ASPECT, beforeCrop, carriesNote, cropAspect, entryPosition, nextToCheck, pastLastPage, placeBox, rectsInCrop, reviewActions, reviewCardState, reviewList, reviewPlace, reviewStep } from "./highlightReview.js";
 
 // The hover's delays: the card shows once the pointer rests on the
@@ -310,6 +311,7 @@ function ReviewCard({ h, state, step, pinned, walked, ghost, drawn, offPage, und
   const ref = useRef(null);
   const [tick, setTick] = useState(0);
   const focusedRef = useRef(false);
+  useEffect(() => { guideEvents.emit("review.opened"); }, [h.id]);
   // Under the highlight, else over it; kept inside the window, following
   // the page as it scrolls (and the highlight, when a step took it
   // elsewhere). Hidden while the highlight is out of the viewer's sight,
@@ -473,7 +475,7 @@ function ReviewCard({ h, state, step, pinned, walked, ghost, drawn, offPage, und
   const count = t("{i} of {n}", { i: place.index + 1, n: place.total });
   const all = t("All reviewed");
   return (
-    <div ref={ref} className="hlReviewCard" role="dialog" aria-label={title} data-review-id={h.id} data-review-state={state.kind}
+    <div ref={ref} className="hlReviewCard" role="dialog" aria-label={title} data-guide="pdf.reviewCard" data-review-id={h.id} data-review-state={state.kind}
       data-review-step={step?.kind || undefined}
       tabIndex={-1} style={{ left: pos?.left ?? 0, top: pos?.top ?? 0, visibility: pos && !pos.hidden ? undefined : "hidden" }}
       onMouseEnter={review.hold} onMouseLeave={review.leave} onFocus={focusIn} onBlur={focusOut}

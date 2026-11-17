@@ -1,5 +1,6 @@
 // Files and documents (docs/dev/block_centric.md, stage 4): any file dropped
-// on a block row or on the page body becomes a file chip; a PDF chip promotes
+// on a block row or on the page body becomes a file chip (the page's drop
+// overlay goes when the drag leaves the window); a PDF chip promotes
 // to a DOCUMENT page (right-click → "Add to library" → by-doc, no re-upload)
 // filed in the project's folder, and offers "Open page" afterwards; a
 // document page's PDF is replaced by a new version; the upload endpoint takes
@@ -127,6 +128,28 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     assert(/^\[fit\.mat\]\(\/api\/uploads\/[0-9a-f]+\.mat\)$/.test(t[1].content), `mat block: ${t[1].content}`);
     assert(/^\[README\]\(\/api\/uploads\/[0-9a-f]+\.bin\)$/.test(t[2].content), `extension-less block: ${t[2].content}`);
     assertEq((await page.$$(".blockRow .fileChip")).length, 4, "four chips rendered");
+    assertNoProblems(page);
+  });
+
+  await step("files: a file dragged over the page shows the drop overlay, moved within the window keeps it, and dragged out of the window takes it away", async () => {
+    const seen = await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(["x"], "notes.txt", { type: "text/plain" }));
+      const app = document.querySelector(".app");
+      const over = document.querySelector(".workArea");
+      const fire = (type, relatedTarget) => over.dispatchEvent(new DragEvent(type, { dataTransfer: dt, relatedTarget, bubbles: true, cancelable: true }));
+      fire("dragover", null);
+      const shown = app.classList.contains("dragOver");
+      fire("dragleave", document.querySelector(".topbar"));
+      const kept = app.classList.contains("dragOver");
+      // Out of the window: the leave goes to nothing, from the element under
+      // the pointer, and no drop follows.
+      fire("dragleave", null);
+      return { shown, kept, after: app.classList.contains("dragOver") };
+    });
+    assert(seen.shown, "the overlay shows over the page");
+    assert(seen.kept, "moving onto the topbar keeps it");
+    assert(!seen.after, "leaving the window takes it away");
     assertNoProblems(page);
   });
 

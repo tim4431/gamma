@@ -7,16 +7,17 @@
 // the chat would take it, once the reply ended), Hide (the note keeps its
 // text) and, with others on the page, Hide all. A revert that stops says
 // why, with the button that reverts anyway where it can be forced.
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { EyeOffIcon, ShieldIcon, SparklesIcon, UndoIcon } from "../shared/ui/Icons";
 import { noteReview, usePageChanges, useStillReplying } from "../chat/noteReview.js";
 import { toolAnswers } from "../chat/approvals.js";
 import { ApprovalAnswers, useApprovalAnswer } from "../chat/ApprovalShell";
+import { guideEvents } from "../guide/events.js";
 
 // The bar's own presses are not the row's, which would open the editor.
-const bar = (label, children) => (
-  <div className="noteReviewBar" role="group" aria-label={label} onMouseDown={(e) => e.stopPropagation()}>
+const bar = (label, children, { guide } = {}) => (
+  <div className="noteReviewBar" role="group" aria-label={label} data-guide={guide} onMouseDown={(e) => e.stopPropagation()}>
     {children}
   </div>
 );
@@ -40,6 +41,9 @@ export function NoteReviewBar({ change, ask, onStatus }) {
   // The reply that made it still streams: its Revert waits, as its row's does.
   const replying = useStillReplying(change);
   const busy = !!state?.working;
+  // a change drawn in the note that ran without asking (the guide's hint)
+  const record = !ask && !!change;
+  useEffect(() => { if (record) guideEvents.emit("note.aiChange"); }, [record, change?.blockId]);
   if (ask) return <AskBar key={ask.id} ask={ask} />;
   const revert = async (force = false) => {
     setState({ working: true });
@@ -75,5 +79,5 @@ export function NoteReviewBar({ change, ask, onStatus }) {
         {t("Hide all")}
       </button>
     ) : null}
-  </>);
+  </>, { guide: "notes.review" });
 }

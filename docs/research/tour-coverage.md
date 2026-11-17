@@ -163,3 +163,49 @@ Turned down: the Arrange windows close-and-reopen steps (the hint does
 that job), a hint for an attachment landing in a closed chat, a Ctrl+F
 hint, full screen and page-number steps in the viewer tours, and a default
 key for showing the chat.
+
+## November: the features since the last tours
+
+Surveyed 15 November 2026 (dev at `0710f97c`): the merges into dev since
+the October tours (`355cc4ee`, 31 October), each feature's controls,
+anchors and the moment a guide could follow, against the 24 tours and 28
+hints then in `guide/tours/`. None of these features had a guide, and none
+of their controls an anchor.
+
+Taken (built in [dev/onboarding.md](../dev/onboarding.md)):
+
+- **Two pages side by side** (split screen, `tab_groups.md`): after the
+  first split, the live pane, a tab's Move to the other pane and Join tab
+  groups. The tabs hint names Split right (version 2), so a person who
+  never splits hears of it.
+- **Pages inside pages** (`home_library.md` "Sub-pages"): after the first
+  `/page` or New page inside, the crumbs and a tab's Move into page….
+- **Text highlighters** (the strip's presets and the four styles): offered
+  to someone who has picked a colour for six highlights in a load and never
+  turned one on; turn one on, its menu, Duplicate and the keys.
+- **Checking moved highlights** (a PDF replaced by a new version): while
+  highlights are left to check, the Document menu's Review, the card's
+  buttons and Accept all.
+- **Asking an agent** (`local_agents.md`): after the first comment sent to
+  an agent, its answer in the thread, Open in chat and a reply that goes
+  on; a hint at the Send to tick when a field that can ask one is written
+  in. The comments tour is now for the first comment among people, and
+  gained Notify me.
+- **Hints:** the Files window, an AI's change drawn in a note (Revert,
+  Hide), and a picture placed on a page.
+
+Found on the way, and fixed: the tabs hint had never been offered since it
+was built (15 October). A page's `tab.opened` comes from another effect of
+the commit its `page.opened` came with, and the guide's event queue was
+emptied whole after judging the first, so the second was lost. And a
+press on a card's button (Got it, Next) closed what the card pointed into
+when that closed on a document capture listener: a comment being written,
+the review card, a context menu.
+
+Left untaught, each self-explanatory or rare: the Properties popover (read
+only, and named where it opens), the selection toolbar (its buttons say
+what they do), the translated view's paragraph menu and glossary,
+Copy as reference point, e-mail invitations (an admin's), synced folders
+(set up in the desktop shell's own dialogs, which the guide cannot point
+into), Move block to page (a handle menu row the notes tour's menu step
+shows).

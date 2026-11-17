@@ -1003,10 +1003,10 @@ computer runs that the account turned on in Settings → AI → Agents, and
 each agent on of each of the account's other computers shown to the
 server, "Codex on TIM-PC", one entry per computer, those that keep the
 page's work folder first, an offline one's listed offline). With more than one, the chip's menu lists them first,
-each by its icon, then a computer agent's *Works in* (local_agents.md "The
-chat's computer side"), then the picked one's models and reasoning effort
-(Gamma AI's speed too): who, where, then how, so in a short chat window
-the sections in sight are the first ones. A row of an agent that cannot answer now ends in a
+each by its icon, then the picked one's models and reasoning effort
+(Gamma AI's speed too): who, then how. Where a computer's agent works is
+the folder chip at the bar's other end (local_agents.md "The chat's
+computer side"). A row of an agent that cannot answer now ends in a
 hint (`computerChat.agentHint`, a `MenuSelect` option's `trailing`): a
 muted "offline" for another computer that is away, an amber "not ready"
 (`.agentProblem`) for one with a problem, the whole sentence its title; it
@@ -1108,6 +1108,82 @@ a press keeps an on-screen keyboard up.
   under the chips with a remove button ("Pictures" below).
 - The draft and App's last ask survive the dock remounting
   ([chat_history.md](chat_history.md)).
+
+### Queue and Steer
+
+Codex's follow-ups, for Gamma AI and a computer's agent alike. While a
+reply runs, Send (Enter, or the circle button, which reads Send instead of
+Stop while the box holds a message) puts the message in the
+conversation's queue (`chat/chatQueue.js`) with what goes with it: Gamma
+AI's pictures, files, PDF passages, note chips and the cursor's block, a
+computer agent's passages. The queue is drawn above the composer
+(`chat/ChatQueue.jsx`), one row a message in the order they go: its grip
+(drag, or the arrow keys, through `shared/ui/useDragOrder.js`), its first
+picture, its text on one line, **Steer**, Delete, and ⋯ with Edit (in the
+row: Enter keeps, Escape leaves it) and Move up / down.
+
+- **The next one goes when the reply ends on its own**, a reply cut off at
+  a limit included: ChatDock sends the queue's first message as an
+  ordinary one, with its own parts. A reply that was stopped or failed
+  pauses the queue ("Paused: the reply did not finish"): each row offers
+  Send instead of Steer, and any message sent resumes it. Gamma AI's reply
+  says how it ended (`chatQueue.ended`, from `sendChat`); a computer agent's
+  turn by its message's state (`lastTurnState`).
+- **The queue is the conversation's for the tab's life**, kept apart from
+  the dock (Gamma AI's by the bucket, a computer agent's by the bucket and
+  the agent). A reply that ends while the dock shows another bucket leaves
+  its queue for when the dock comes back, and the next message goes then.
+  A reload loses it, as Codex's.
+- **Steer** hands a queued message to the reply under way. Ctrl/⌘+Shift+Enter
+  in the box (`enterKey.js` `steersOnEnter`) queues and steers at once.
+  The stream's head ends with `{"steer": id}` (`gamma/ai_steer.py`: an
+  inbox per streamed reply, in memory, bound to its account, closed when
+  the stream ends). `POST /api/ai/chat/steer/{id}` carries the text, the
+  passages it quotes in full and its pictures (`steerBody`); a message
+  with files, attached blocks or handwriting cannot steer and says so on
+  its button. The row reads "Steering…" at the queue's front until the
+  reply takes it in, and can then be neither moved nor deleted, since the
+  agent has it.
+- **Where the reply takes it in**, at once, as Codex's instant interrupt
+  (its `instant_interrupt` feature, on by default) does. While a message
+  waits (`Steering.pending`), the provider turn streaming stops at its next
+  event (`AgentLoop._round`): what the model wrote so far is its turn, and
+  it called nothing. The provider's stop reason and token report are never
+  cut off, but a turn cut before them reports no tokens, as a stopped one
+  doesn't. Once the stream ended, the round's calls not started yet are
+  skipped, each answered `STEERED_PAST` ("not run: the user sent a new
+  message…") so the model decides again with the message; the calls
+  running finish. A message that arrives after the model's whole answer
+  takes the reply on too. The last round a limit allows is never cut: a
+  message steered into it waits for the next message. The messages become
+  one user turn (`steered: true`, which `ai_protocols.base.attach_index`
+  passes over, so the question's own pictures and PDFs stay on the
+  question), the stream says `{"steered": {"ids"}}`, and the next round
+  opens. A plain chat (no tools) is cut and goes on the same way. A
+  provider silent while it thinks is cut at its next event, as Stop is. In the
+  transcript the reply's message so far ends there, the user's follows
+  (`steeredMessage`, tagged "Steered") and the reply goes on in a message
+  of its own, so the conversation replays as it happened.
+- **A reply that ends before it takes one** (stopped, failed, done just
+  before) leaves it queued at the front, and the steer request a reply
+  that already ended answers 404: it goes as the next message, or waits in
+  a paused queue.
+- **A computer's agent** (Codex CLI, Claude Code; on this computer or on
+  another one the chat reaches) is steered the same way through its
+  driver: Codex's own `turn/steer`, which it takes at once, and Claude
+  Code's streaming input, which it reads after its running tool calls
+  ([local_agents.md](local_agents.md) "The drivers"). Steer goes to the
+  turn while its agent works (not one waiting for its directory); the row
+  reads "Steering…" until the turn's message names it in `steers`, and the
+  transcript then draws it where the agent took it in
+  (`computerChat.js` `steerParts`).
+
+Tests: `tests/chatQueue.test.mjs` (order, pause, steering at the front,
+what Steer carries), `backend/tests/test_ai_steer.py` (a turn cut short
+while the model writes, calls not started skipped and the running one
+finished, the last round left whole, a plain chat cut; refusals) and the e2e
+`chat navigation` step "a message sent while the reply runs waits in the
+queue".
 
 ### Mentioning library papers
 
@@ -1761,7 +1837,9 @@ flowchart LR
   ask["POST /api/ai/chat"] --> build["context + prompt, fitted to the window"]
   build --> arm["arm the tools"] --> turn["one provider turn"]
   turn --> calls{"tool calls?"}
-  calls -- none --> saved(["reply saved"])
+  calls -- none --> steer{"steered in?"}
+  steer -- no --> saved(["reply saved"])
+  steer -- yes --> turn
   calls -- some --> group["group: reads batch, changes serial"]
   group --> gate{"Ask?"}
   gate -- yes --> card["{approval} card, wait"] --> run
@@ -1769,7 +1847,7 @@ flowchart LR
   run --> settle{"hit a wall?"}
   settle -- yes --> hand["{handoff} card, wait"] --> back
   settle -- no --> back["{action} chips, results appended"]
-  back --> turn
+  back --> steered["messages steered in appended"] --> turn
 ```
 
 The loop is `ai_agent.AgentLoop` (`gamma/ai_agent.py`) over

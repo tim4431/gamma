@@ -1,5 +1,6 @@
-"""Claude Code over ``claude -p --output-format stream-json``: the prompt on
-stdin, one JSON object per line on stdout, a ``result`` line last.
+"""Claude Code over ``claude -p --input-format stream-json --output-format
+stream-json``: the prompt a ``user`` line on stdin, which stays open while
+the turn runs, one JSON object per line on stdout, a ``result`` line last.
 
 Claude Code gets no shell: its tools are Read, Edit, Write, Glob and Grep
 (``--tools``), Bash and the web ones are denied, and it starts no MCP server
@@ -19,7 +20,19 @@ flags are those of Claude Code 2.1.318's ``--help``, checked against it
 ``--tools`` and ``--disallowedTools`` take several values, so nothing
 positional follows them (the prompt is on stdin).
 
-Without ``ask``, ``-p`` has no interrupt: ``stop()`` kills it.
+Without ``ask`` Gamma speaks no control protocol to it, so there is no
+interrupt: ``stop()`` kills it.
+
+A message the person steers into the turn (``steer``) is one more ``user``
+line on stdin, its ``uuid`` the steer's id. Claude Code reads it once the
+tool calls running finish and answers it in the same response
+(``--replay-user-messages`` echoes it then, ``isReplay`` with that
+``uuid``: the ``steered`` event); one that comes after the turn's last
+call starts another turn in the same process, a second ``result`` line
+after the first (both checked against Claude Code 2.1.235). So a
+``result`` while a steer written is not echoed yet does not end the turn:
+the next one does, their token reports added up. Once the turn ends, a
+steer is refused.
 
 A turn with ``ask`` (a chat turn of a folder whose agent may ask) has flags
 of its own (``ASK_FLAGS``): Bash among the tools and an ask rule for it
@@ -80,10 +93,12 @@ from ..logbuf import log
 from . import events, procs
 
 LABEL = "Claude Code"
-FLAGS = ["-p", "--output-format", "stream-json", "--verbose", "--restricted", "--permission-mode", "acceptEdits",
+FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--replay-user-messages",
+         "--restricted", "--permission-mode", "acceptEdits",
          "--permission-prompts", "none", "--strict-mcp-config", "--tools", "Read,Edit,Write,Glob,Grep",
          "--disallowedTools", "Bash,WebFetch,WebSearch"]
-ASK_FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--restricted",
+ASK_FLAGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+             "--replay-user-messages", "--restricted",
              "--permission-mode", "acceptEdits", "--permission-prompt-tool", "stdio", "--strict-mcp-config",
              "--tools", "Read,Edit,Write,Glob,Grep,Bash", "--disallowedTools", "WebFetch,WebSearch",
              "--settings", json.dumps({"permissions": {"ask": ["Bash"]}}, separators=(",", ":"))]
@@ -250,6 +265,11 @@ class ClaudeTurn(events.Turn):
                          cwd=cwd, ask=ask, env=ASK_ENV if ask else None, gamma=gamma)
         self.stream = stream
         self._tools: dict[str, dict] = {}   # tool_use id → its started event
+        self._steering: set[str] = set()   # the uuids of the steers written that Claude Code has not echoed
+        self._ending = False               # the turn's last result came: a steer is refused
+        self._steers = threading.Lock()
+        self._prompted = threading.Event()  # the prompt is on stdin: a steer never goes before it
+        self._results: list[dict] = []     # the results before the last, of turns a steer kept going
         if self.child is not None:
             # Claude Code waits about 3 s for stdin: the prompt goes at once,
             # from a thread of its own, as a long one may fill the pipe.
@@ -257,17 +277,23 @@ class ClaudeTurn(events.Turn):
                              daemon=True).start()
 
     def _write_prompt(self, prompt: str) -> None:
-        if not self.ask:
-            self.child.send(prompt)
-            self.child.close_stdin()
-            return
-        # stdin stays open: the answers to its prompts go there (``_finish`` closes it)
-        for line in ({"type": "control_request", "request_id": INIT, "request": {"subtype": "initialize"}},
-                     {"type": "user", "session_id": "",
-                      "message": {"role": "user", "content": [{"type": "text", "text": prompt}]},
-                      "parent_tool_use_id": None, "client_composed": True}):
+        # stdin stays open (``_finish`` closes it): the messages steered in go
+        # there, and with ask the answers to its prompts
+        lines = [_user_line(prompt)]
+        if self.ask:
+            lines.insert(0, {"type": "control_request", "request_id": INIT, "request": {"subtype": "initialize"}})
+        for line in lines:
             if not self.child.send(json.dumps(line, ensure_ascii=False) + "\n"):
                 return
+        self._prompted.set()
+
+    def _steer(self, text: str, steer_id: str) -> bool:
+        with self._steers:
+            if self._ending or not self._prompted.is_set():
+                return False
+            self._steering.add(steer_id)
+        self._send(_user_line(text, steer_id))
+        return True
 
     def _started(self, block: dict) -> dict | None:
         event = tool_started(block, self.cwd, gamma=bool(self.gamma_url))
@@ -317,6 +343,13 @@ class ClaudeTurn(events.Turn):
                     elif block.get("type") == "text" and (str(block.get("text") or "").strip() or self.stream):
                         yield {"type": "text", "text": str(block["text"])}
             elif kind == "user":
+                if line.get("isReplay"):
+                    with self._steers:
+                        taken = line.get("uuid") in self._steering
+                        self._steering.discard(line.get("uuid"))
+                    if taken:
+                        yield events.steered(str(line["uuid"]))
+                    continue
                 content = (line.get("message") or {}).get("content")
                 for block in content if isinstance(content, list) else []:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
@@ -334,6 +367,11 @@ class ClaudeTurn(events.Turn):
                 if self._unasked(request_id) is not None:
                     yield {"type": "ask_gone", "id": request_id}
             elif kind == "result":
+                with self._steers:
+                    self._ending = not self._steering
+                if not self._ending:
+                    self._results.append(line)  # a steer not read yet: Claude Code starts a turn for it
+                    continue
                 self._all_asks()  # the turn is over: nothing waits on an answer any more
                 yield self._result(line)
                 return
@@ -406,11 +444,26 @@ class ClaudeTurn(events.Turn):
         return events.STOP_GRACE_S
 
     def _result(self, line: dict) -> dict:
+        """The done of the turn's last ``result``, with the token reports of
+        the results before it added in."""
         ok = line.get("subtype") == "success" and not line.get("is_error")
         text = line.get("result") if isinstance(line.get("result"), str) else ""
-        usage = line.get("usage") if isinstance(line.get("usage"), dict) else {}
+        usage = {}
+        for each in [*self._results, line]:
+            reported = each.get("usage") if isinstance(each.get("usage"), dict) else {}
+            for key, value in reported.items():
+                counted = isinstance(value, int) and not isinstance(value, bool)
+                usage[key] = usage.get(key, 0) + value if counted else value
         return events.done(ok=ok, text=text, usage=usage,
                            error=text or str(line.get("subtype") or "") or "Claude Code's turn failed.")
+
+
+def _user_line(text: str, uuid: str = "") -> dict:
+    """A message on stdin: the prompt, or a message steered in under its id
+    (``uuid``, which the echo names); ``client_composed``, so Claude Code
+    reads no ``@path`` or ``/command`` in it."""
+    return {"type": "user", "session_id": "", "message": {"role": "user", "content": [{"type": "text", "text": text}]},
+            "parent_tool_use_id": None, "client_composed": True, **({"uuid": uuid} if uuid else {})}
 
 
 def start(*, argv: list[str], cwd: str, prompt: str, session: str = "", images: list[str] = (), ask: bool = False,

@@ -58,6 +58,7 @@ const folderAccessFor = require('./lib/folderAccess');
 const microphone = require('./lib/microphone');
 const permissions = require('./lib/permissions');
 const agentAsks = require('./lib/agentAsks');
+const fileClipboard = require('./lib/fileClipboard');
 const { pages: shellPages, isShellPage, trustedShellSender } = require('./lib/shellSecurity');
 const windowControls = require('./lib/windowControls');
 const terminal = require('./lib/terminal');
@@ -518,6 +519,14 @@ let copied = '';
 function copyText(text) {
   copied = text;
   if (!process.env.GAMMA_SHELL_TEST) Promise.resolve(clipboard.writeText(text)).catch(() => {});
+}
+
+// A file on the clipboard, as a file manager's Copy leaves it
+// (lib/fileClipboard.js); recorded alone under the test harness, as copyText.
+let copiedFile = '';
+function copyFile(file) {
+  copiedFile = file;
+  return process.env.GAMMA_SHELL_TEST ? Promise.resolve() : fileClipboard.putFile(file, { clipboard });
 }
 
 // The bar view over the content while a dropdown is open. The vault dialog
@@ -3013,6 +3022,42 @@ async function relocateFile(wsId, pageId) {
   return page;
 }
 
+// A page's Copy PDF (Copy file for another format, the library's page
+// menu): the file the page shows on the clipboard, for a paste into a folder
+// or another app. It is fetched from the open server with the window's
+// session, as the page's viewer reads it: the page's `properties.doc`
+// (GET /api/blocks/<id>) names it, served at /api/uploads/<hash><ext>,
+// a file read where it is included. It goes into a directory of its own
+// under the system's temporary one, named after the page; the one copied
+// before goes, since the clipboard holds one copy at a time. A page whose
+// document has no bytes on the server (a PDF read from its address, a work
+// folder's file too large to keep) is told so.
+let copyDir = '';
+async function copyFileFromPage(wsId, pageId) {
+  const shown = current;
+  const origin = openOrigin();
+  const ses = content.webContents.session;
+  const headers = { 'X-Gamma-Workspace': wsId };
+  const page = await serverApi(ses)(origin, `/api/blocks/${encodeURIComponent(pageId)}`, { headers });
+  const doc = (page.properties && page.properties.doc) || {};
+  if (!/^[A-Za-z0-9_.-]{1,128}$/.test(doc.hash || '') || !/^\.[a-z0-9]{1,12}$/.test(doc.ext || '')) {
+    throw new Error('This page has no file to copy.');
+  }
+  const r = await ses.fetch(`${origin}/api/uploads/${doc.hash}${doc.ext}`, { credentials: 'include', cache: 'no-store', redirect: 'error', headers });
+  if (!r.ok) throw new Error(r.status === 404 ? 'The server does not keep this page\'s file.' : `The file could not be read: HTTP ${r.status}.`);
+  const bytes = Buffer.from(await r.arrayBuffer());
+  stillOn(shown);
+  const stem = String(page.content || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/[. ]+$/, '').trim().slice(0, 120) || 'Gamma file';
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'gamma-copy-'));
+  const file = path.join(dir, stem + doc.ext);
+  await fs.promises.writeFile(file, bytes);
+  if (copyDir) fs.promises.rm(copyDir, { recursive: true, force: true }).catch(() => {});
+  copyDir = dir;
+  await copyFile(file);
+  showNotice(`${path.basename(file)} is on the clipboard: paste it into a folder or another app.`);
+  return file;
+}
+
 // A page's "Continue in a terminal" (its computer chat's strip): the agent's
 // session of the conversation the page shows, resumed in a terminal in the
 // work folder (lib/terminal.js). The page names only itself: what runs and
@@ -4862,7 +4907,7 @@ async function removeServer(id, opts = {}) {
 }
 
 // Help → Check for Updates…: the only update flow that answers with a
-// dialog; the automatic checks stay silent (bar pill / launcher row).
+// dialog; the automatic checks stay silent (the bar's update icon / launcher row).
 async function checkForUpdatesInteractive() {
   const st = await updater.check();
   const opts = { title: 'Gamma', message: '', buttons: ['OK'] };
@@ -4873,16 +4918,13 @@ async function checkForUpdatesInteractive() {
       : st.error === 'store' ? 'Installed from the Microsoft Store: updates arrive through the Store.'
       : st.error === 'mas' ? 'Installed from the Mac App Store: updates arrive through the App Store.'
       : String(st.error || '');
-  } else if (st.status === 'downloaded') {
-    opts.message = `Gamma ${st.version} is ready to install.`;
-    opts.detail = 'It installs when you restart.';
-    opts.buttons = ['Restart to update', 'Later'];
+  } else if (st.status === 'downloaded' || (st.status === 'downloading' && !st.installing)) {
+    opts.message = st.line; // lib/updater.js words the update found
+    opts.buttons = ['Update now', 'Later'];
   } else if (st.status === 'downloading') {
-    opts.message = `Downloading Gamma ${st.version}…`;
-    opts.detail = 'You will be offered a restart when it is ready.';
+    opts.message = st.line;
   } else if (st.status === 'available') {
-    opts.message = `Gamma ${st.version} is available.`;
-    opts.detail = 'This build cannot update itself; the download page opens in your browser.';
+    opts.message = st.line;
     opts.buttons = ['Download', 'Later'];
   } else if (st.status === 'error') {
     opts.message = 'Could not check for updates.';
@@ -4900,6 +4942,9 @@ async function checkForUpdatesInteractive() {
 function buildMenu() {
   const { servers } = registry.load();
   const wc = () => (content ? content.webContents : null);
+  // Ctrl+W (⌘W) is the page's: Gamma's Close tab, as in a browser. The
+  // window closes on Ctrl+Shift+W (⇧⌘W), Chrome's key for it.
+  const closeWindow = { role: 'close', accelerator: 'CmdOrCtrl+Shift+W' };
   const template = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     {
@@ -4917,7 +4962,7 @@ function buildMenu() {
         { type: 'separator' },
         ...backgroundItems('Keep Running in the Background', 'Start at Login'),
         { type: 'separator' },
-        process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
+        process.platform === 'darwin' ? closeWindow : { role: 'quit' },
       ],
     },
     { role: 'editMenu' },
@@ -4942,7 +4987,7 @@ function buildMenu() {
       role: 'window', // macOS lists the open windows under it
       submenu: [
         { role: 'minimize' },
-        process.platform === 'darwin' ? { role: 'zoom' } : { role: 'close' },
+        process.platform === 'darwin' ? { role: 'zoom' } : closeWindow,
         { type: 'separator' },
         { label: 'Show Gamma', click: () => showWindow() },
         ...(process.platform === 'darwin' ? [{ type: 'separator' }, { role: 'front' }] : []),
@@ -5108,6 +5153,7 @@ function registerIpc() {
     'shell:reveal-from-page': ['Could not show the file.', revealOnDisk],
     'shell:relocate-from-page': ['Could not locate the file.', relocateFile],
     'shell:carry-from-page': ['Could not add the page to the other server\'s library.', carryToServer],
+    'shell:copy-file-from-page': ['Could not copy the file.', copyFileFromPage],
     'shell:terminal-from-page': ['Could not open a terminal.', terminalFromPage],
     'shell:tracked-from-page': ['Could not go back to the synced folder.', trackedFromPage],
     'shell:set-agent-from-page': ['Could not change the agent.', setAgentFromPage],
@@ -5495,6 +5541,7 @@ if (process.env.GAMMA_SHELL_TEST) {
     errorBoxes,
     logPath,
     copied: () => copied,
+    copiedFile: () => copiedFile,
     update: () => updater.state(),
     remoteHealth,
     probeRemotes,

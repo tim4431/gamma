@@ -108,8 +108,19 @@ const Beacon = ({ rect }) => (
     style={{ top: rect.top + BEACON_INSET, left: rect.left + BEACON_INSET, width: rect.width - 2 * BEACON_INSET, height: rect.height - 2 * BEACON_INSET }} />
 );
 // Keep the caret where the user is typing, and keep a popover the card
-// points into open (outside-click checks listen on the document).
+// points into open. The app's outside-press checks listen on the document
+// in the capture phase (a menu, the comment margin, the review card…),
+// before any handler on the card could stop the press, so a card's presses
+// stop at the window, ahead of them all (GuideOverlay's effect). The
+// welcome deck reads its press for a swipe, and covers the app anyway: its
+// own handlers keep the focus.
 const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
+const stopCardPress = (e) => {
+  const card = e.target?.closest?.(".guideCard");
+  if (!card || card.classList.contains("welcomeDeck")) return;
+  e.stopPropagation();
+  if (e.type === "mousedown") e.preventDefault();
+};
 
 // The welcome deck: the first tour's arrival offer (its `intro` step, with
 // `slides`). What Gamma does, one slide at a time: its drawing on a tinted
@@ -266,6 +277,14 @@ export default function GuideOverlay({ guide, keybindings }) {
   const [held, setHeld] = useState(false);
   const cardRef = useRef(null);
   const rootRef = useRef(null);
+  useEffect(() => {
+    window.addEventListener("pointerdown", stopCardPress, true);
+    window.addEventListener("mousedown", stopCardPress, true);
+    return () => {
+      window.removeEventListener("pointerdown", stopCardPress, true);
+      window.removeEventListener("mousedown", stopCardPress, true);
+    };
+  }, []);
   const [cardPos, setCardPos] = useState(null);
   // A demo waiting on something slow (a paper downloading) says so.
   const [slow, setSlow] = useState(false);
@@ -402,8 +421,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       <div className="guideRoot" ref={rootRef} data-guide-finish={step.id}>
         <div className="guideScrim" onClick={guide.dismiss} aria-hidden="true" />
         {rect ? <Beacon rect={rect} /> : null}
-        <div className="guideCard guideCardCentered guideCardFinish" role="dialog" aria-live="polite" aria-label={t(step.title)}
-          onMouseDown={keepFocus} onPointerDown={(e) => e.stopPropagation()}>
+        <div className="guideCard guideCardCentered guideCardFinish" role="dialog" aria-live="polite" aria-label={t(step.title)}>
           <FinishContent finish={step} onAction={guide.finishAction} onDone={guide.dismiss} />
         </div>
       </div>
@@ -477,8 +495,6 @@ export default function GuideOverlay({ guide, keybindings }) {
           ref={cardRef}
           className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${(busy || inviting || held) && !cardPos && !centered ? "guideCardCorner" : ""}`}
           style={cardPos ? { top: cardPos.top, left: cardPos.left, width: CARD_W } : undefined}
-          onMouseDown={keepFocus}
-          onPointerDown={(e) => e.stopPropagation()}
           role="dialog"
           aria-live="polite"
           aria-label={plainText(t(step.title), keybindings)}

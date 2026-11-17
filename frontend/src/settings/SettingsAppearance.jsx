@@ -14,19 +14,9 @@ import {
   colorName, isDefaultPalette, newGroupId, normalizePalette, swatchCss,
 } from "../shared/model/palette.js";
 import { ColorPicker } from "../shared/ui/ColorPicker";
-import { T, t, tn } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
+import { THEME_CHOICES } from "./themeChoices.js"; // each choice's swatch paints from its theme's own tokens (ThemePreview)
 
-// The swatches paint from each theme's own tokens (ThemePreview).
-const THEMES = [
-  ["system", T("System"), T("Match your device")],
-  ["light", T("Light"), T("Bright & crisp")],
-  ["dark", T("Dark"), T("A quieter backdrop")],
-  ["gamma-light", T("Gamma Light"), T("Warm gray & amber")],
-  ["gamma-dark", T("Gamma Dark"), T("Charcoal & soft gold")],
-  ["sepia", T("Sepia"), T("Warm paper, deep ink")],
-  ["solarized", T("Solarized Light"), T("Warm paper, softer ink")],
-  ["gray", T("Gray"), T("Soft & neutral")],
-];
 
 // One colour group of the palette (Appearance › Colors): its name, its
 // swatches (each drawn at its alpha; the selected one opens the editor
@@ -126,7 +116,7 @@ export function AppearanceSettings({ value, diagnostics }) {
 
       <Section title={t("Theme")} scope="account" prefs={SECTION_PREFS.appearance["Theme"]}>
         <PictureChoices label={t("Theme")} value={value.theme} onChange={value.setTheme}
-          options={THEMES.map(([id, label, hint]) => ({ value: id, label, hint, preview: <ThemePreview theme={id} scheme={themeScheme(id)} /> }))} />
+          options={THEME_CHOICES.map(([id, label, hint]) => ({ value: id, label, hint, preview: <ThemePreview theme={id} scheme={themeScheme(id)} /> }))} />
       </Section>
 
       <Section title={t("PDF pages")} scope="account" prefs={SECTION_PREFS.appearance["PDF pages"]}>

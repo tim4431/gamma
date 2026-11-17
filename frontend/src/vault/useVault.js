@@ -137,11 +137,38 @@ export function useVault(pageId, enabled, { track = "", tick = "", setStatus = n
 // (desktop/preload.js): `keep-folder-on-disk {folder}` (sync a folder with a
 // directory), `follow-file-on-disk {page}` (push from a file), `reveal-on-disk
 // {page}`, `relocate-file {page}`, `carry-to-server {page}` (an opened PDF to
-// another server's library), each for the workspace open here. The first two
+// another server's library), `copy-file {page}` (its file on the clipboard),
+// each for the workspace open here. The first two
 // keep their names from before synced vaults, the only ones a desktop app
 // released before them passes on: it may show a page of a server updated
 // since. The shell answers the page nothing: what it does reaches the page
 // through the server.
 export function askShell(type, fields) {
   window.postMessage({ source: "gamma-app", type, ws: getCurrentWorkspace(), ...fields }, window.location.origin);
+}
+
+// How long the page reads again what an ask of the shell changes, and how
+// often: the shell's question waits for the person.
+const WATCH_MS = 60_000;
+const WATCH_EVERY_MS = 1000;
+
+// askShell, then what it changes read again (`read()`, a promise) until it
+// differs from what `current()` held before the ask, or a minute passed:
+// {done, stop}, `done` resolving to the changed answer, or null when
+// nothing changed (the person cancelled the shell's question) or `stop()`
+// ended the watch first.
+export function askShellWatching(type, fields, read, current) {
+  const before = JSON.stringify(current());
+  const until = Date.now() + WATCH_MS;
+  askShell(type, fields);
+  let stop = () => {};
+  const done = new Promise((resolve) => {
+    const timer = setInterval(async () => {
+      const now = await read().catch(() => current());
+      const changed = JSON.stringify(now) !== before;
+      if (changed || Date.now() > until) stop(changed ? now : null);
+    }, WATCH_EVERY_MS);
+    stop = (answer = null) => { clearInterval(timer); resolve(answer); };
+  });
+  return { done, stop: () => stop() };
 }

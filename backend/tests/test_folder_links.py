@@ -41,9 +41,16 @@ def disk(tmp_path, monkeypatch):
     run them inline with ``?wait=1`` or ``tick()``. The links a test leaves
     go with it: the data directory is the worker's, and a later file's
     ``tick()`` would run them (test_disk_push and test_linked_files take this
-    fixture too)."""
+    fixture too). The app's own tick (the lifespan's, every ``TICK_S``, in
+    a thread of its own) runs no link meanwhile: one landing between two
+    steps of a test ran its link there, and the test's own round, finding
+    nothing left to do, said so. The test's ``tick()``, on its own thread,
+    runs."""
     monkeypatch.setenv("GAMMA_FOLDER_LINKS", "1")
     monkeypatch.setattr(folder_links, "run_in_background", lambda link_id, **kw: None)
+    tests, real_round = threading.current_thread(), folder_links._tick_once
+    monkeypatch.setattr(folder_links, "_tick_once",
+                        lambda: real_round() if threading.current_thread() is tests else None)
     before = {link["id"] for link in folder_links.all_links()}
     yield tmp_path / "disk"
     for link in folder_links.all_links():

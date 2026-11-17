@@ -55,7 +55,8 @@ once.
 Each login creates a workspace directory, so it is rate limited to 10 per
 IP per hour.
 
-Everything keyed on `is_guest` applies: no exports, no workspace creation,
+Everything keyed on `is_guest` applies: no export of every workspace at
+once (its workspace and its pages export as anyone's do), no workspace creation,
 no cloud link, no integrations, no notices, no provider editing, the
 bounded default quota (`server_settings.user_limits` decides by `is_guest`,
 never by name), and the shared AI keys only while the admin's switch is on.

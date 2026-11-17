@@ -7,8 +7,10 @@ what the account server provisioned. The account's hosted server
 ``of_account`` while it is not deleted, as ``kind`` ``hosted``: it comes
 from that table, so an unlink or a Remove never takes it off.
 
-A URL is normalized with the rules Gamma's own public-URL setting uses
-(``backend/gamma/server_settings.py`` ``validate_public_url``, copied):
+A URL is normalized with the rules Gamma's own origins follow
+(``backend/gamma/server_settings.py`` ``validate_origin`` without
+``lan_http``, copied; the public-URL setting takes LAN http too, which
+Gamma Cloud never sees: ``cloud_auth.cloud_public_url``):
 ``https://host[:port]``, or plain HTTP for a loopback host only — the
 desktop sidecar, which the list shows as *this computer*.
 

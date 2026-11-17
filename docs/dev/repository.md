@@ -17,10 +17,11 @@ launcher, and desktop release workflows use these locations.
 | `ipad/` | The native iPad app: a Swift shell over the web app with a native Pencil layer, and the Gamma server inside it (CPython 3.13 for iOS; its entry and pins are `backend/gamma_mobile.py` and `backend/requirements-mobile.txt`, shared with the Android app; `scripts/build-python.sh` the bundle's Python, wheels and web app, all generated and ignored); XcodeGen project ([ipad/README.md](../../ipad/README.md), [ipad.md](ipad.md)) |
 | `android/` | The Android app: a Kotlin shell over the web app with a native pen layer for any stylus, and the Gamma server inside it on Chaquopy's CPython 3.13 (the same entry and pins as the iPad's); a Gradle project whose build takes `backend/`, the built web app and `desktop/ui/` from the repository. `app/src/main/` the app, `app/src/test/` the JVM tests, `app/src/androidTest/` the device tests, `store/` the Play listing art (generated) ([android/README.md](../../android/README.md), [android.md](android.md)) |
 | `extension/` | Browser connector, loaded unpacked without a build step; `scripts/zip.sh` makes the zip a release attaches and the Chrome Web Store takes, which `desktop.yml` and `check.yml` both run |
-| `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, badges, demos and screenshot from `docs/assets/` and the Inter font from `desktop/ui/fonts/`, shows `docker-compose.yml.example` on the front page, and renders the user guide, the privacy policy, the terms and the account-deletion page (`DELETE_ACCOUNT.md`) as pages ([sites/README.md](../../sites/README.md)) |
+| `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, badges, demos and screenshot from `docs/assets/` and the Inter font from `desktop/ui/fonts/`, shows `docker-compose.yml.example` on the front page, and renders the user guide, the design pages, the privacy policy, the terms and the account-deletion page (`DELETE_ACCOUNT.md`) as pages ([sites/README.md](../../sites/README.md)) |
 | `docs/dev/` | Architecture, implementation notes, and plans |
 | `docs/research/` | Design research: surveys, findings, and the reasoning behind chosen shapes |
 | `docs/user_guide/` | The user guide (`user_guide.md`) and its animations (`assets/`), published at gammapdf.com/docs |
+| `docs/design/` | How Gamma is designed, for users and as a reference: the look, the interaction rules, the data model, the library, sync, the AI, the architecture; published at gammapdf.com/docs/design. `assets/` holds the colour sheets `frontend/tools/designSheets.mjs` draws |
 | `docs/assets/` | Documentation images and animations |
 | `tools/readme-media/` | README capture scripts, renderers, and recording recipes |
 | `design/brand/` | Authoritative Gamma artwork, variant guidance and output provenance |
@@ -71,8 +72,20 @@ the `audit-docs` skill patrols the rest, a few files a run
 
 The user guide is also a page of gammapdf.com (`/docs/`), rendered from its
 file by the website build on every push to `main`
-([sites/README.md](../../sites/README.md)); `docs/dev/` and `docs/research/`
-stay on GitHub, where a link from the guide to them lands. Link between
+([sites/README.md](../../sites/README.md)), and so are the design pages
+(`/docs/design/`); `docs/dev/` and `docs/research/` stay on GitHub, where a
+link from the guide or a design page to them lands.
+
+The [design pages](../design/README.md) explain how Gamma is designed and
+why, for people who use it: the models, the rules and the reasoning, in
+the user guide's plain words. They state a rule, not its mechanics, and end
+by linking the `docs/dev/` and `docs/research/` files that hold those. A
+change to a rule a design page states updates that page in the same
+commit, as it does the topic doc. A design page names a number only where
+the number is the design (30 days in Recently deleted), not a tunable
+default. Its pictures of the themes and the palette are drawn from the
+tokens and `palette.js` (`node tools/designSheets.mjs` in `frontend/`),
+and `tests/themes.test.mjs` fails while they are out of date. Link between
 documents with relative paths to the `.md` files and use GitHub's heading
 anchors; the build turns those into site links and leaves a link to any other
 file in the repository pointing at GitHub. A link or anchor that resolves to
@@ -98,6 +111,7 @@ generated illustrations uses `branding.typewriter()`; see the
 | `frontend/public/media/icons/` | Favicon, served at `/media/icons/favicon.svg` |
 | `frontend/public/media/gamma-scene-light.svg` | The demo server's landing picture: a generated crop of the hero composition |
 | `desktop/assets/icon.png` | Electron window and installer icon |
+| `desktop/assets/icons/` | The Linux `.deb`'s icon set, 16 to 512 px (the icon theme has no 1024 px size) |
 | `desktop/assets/entitlements.mac.plist` | macOS signing entitlements |
 | `desktop/assets/appx/` | Microsoft Store package tiles, splash screens, and scale variants |
 | `desktop/assets/store/` | Store listing artwork and listing text |

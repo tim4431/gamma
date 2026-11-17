@@ -21,6 +21,9 @@ import GrantChip from "./GrantChip";
 import { refusalCopy, sendRevert } from "./AgentChanges";
 import RevertChanges from "./RevertChanges";
 import { forReplay, markReverted, revertRefusal, revertible } from "./aiRevert.js";
+import * as chatQueue from "./chatQueue.js";
+import { canSteer, quotedText, quotesOf, steerBody, steeredMessage, useChatQueue } from "./chatQueue.js";
+import ChatQueue from "./ChatQueue.jsx";
 import { noteReview } from "./noteReview.js";
 import { GRANTS_KEY, conversationId, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
@@ -37,7 +40,7 @@ import { backdropPress } from "../shared/ui/press.js";
 import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
-import { composing } from "../shared/lib/hotkeys.js";
+import { chordLabel, composing } from "../shared/lib/hotkeys.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
 import { BLOCK_TOOLS, changePlace, isChange, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
@@ -63,9 +66,11 @@ import {
   computerExportPath, computerHistory, computerSessions, deleteComputerChat, newComputerChat, openComputerChat,
   openComputerSession, useComputerSide,
 } from "./computer/useComputerChat.js";
-import { historyRows, sessionRows, sessionsAway, sessionsDir, sessionsWords, sourceNote } from "./computer/computerChat.js";
+import { historyRows, lastTurnState, sessionRows, sessionsAway, sessionsDir, sessionsWords, sourceNote, steerTaken,
+} from "./computer/computerChat.js";
 import ComputerStrip from "./computer/ComputerStrip.jsx";
 import AgentChip, { agentIcon } from "./AgentChip.jsx";
+import PlaceChip from "./computer/PlaceChip.jsx";
 import { GAMMA, agentChoice, agentLabel, asksNewChat, gammaAgent, newChatQuestion, pickAgent } from "./agents.js";
 import { canRecord, createRecorder, gestureContext } from "../recording/recorder.js";
 import { extensionFor } from "../recording/recording.js";
@@ -336,8 +341,9 @@ export default function ChatDock({
   // the computer's agents the account turned on, or on a page another
   // computer keeps that computer's), which the composer's chip picks from,
   // and `localAgents` this computer's listing (GET /api/local-agents: the
-  // directories it offers them, and the agents found that the setup card
-  // offers to turn on). A computer's agent picked, the chat talks to it
+  // directories it offers them, which the composer's folder chip adds to
+  // in the desktop app, and the agents found that the setup card offers to
+  // turn on). A computer's agent picked, the chat talks to it
   // through chat/computer/.
   agents = null, localAgents = null,
   onGrip, onFold, collapsed, onClose,
@@ -373,7 +379,8 @@ export default function ChatDock({
   // work folder (side.links); Gamma AI's replies keep the page's own.
   const outerLinks = useContext(PathLinkContext);
   const side = useComputerSide(onComputer ? chatKey : "", agent, {
-    page: !!focusedBlockId, dirs: localAgents?.dirs || NO_DIRS, pdfSelections, setPdfSelections, setStatus,
+    page: !!focusedBlockId, dirs: localAgents?.dirs || NO_DIRS, here: localAgents?.here === true, pdfSelections, setPdfSelections,
+    setStatus,
     shown: onComputer ? shownChat : null,
   });
   // The draft comes back after a remount in the conversation it was typed
@@ -396,6 +403,12 @@ export default function ChatDock({
   // A reply is streaming into THIS conversation. Other buckets stream on
   // their own — asking one paper never waits for another's answer.
   const busyHere = session.isActive(chatKey);
+  // The conversation's queue (chat/chatQueue.js): what is sent while its
+  // reply runs (`replying`) waits there. Gamma AI's is the bucket's, a
+  // computer agent's the bucket's with that agent.
+  const queueKey = onComputer ? `${agent.id}@${chatKey}` : chatKey;
+  const queue = useChatQueue(readOnly ? "" : queueKey);
+  const replying = onComputer ? side.working || side.chat.busy : busyHere;
   // The conversation's saves keep failing (chatSession retried what was
   // worth retrying): it lives only in this tab until one goes through.
   const saveError = session.saveError(chatKey);
@@ -1284,18 +1297,35 @@ export default function ChatDock({
     }
   }, [transcriptMessages, busyHere, onComputer]);
 
+  // What goes with a message from the composer (Gamma AI's): its pictures,
+  // files, PDF passages, note chips and the cursor's block. A queued
+  // message keeps its own (chat/chatQueue.js).
+  const composerParts = () => ({
+    images: chatImages, files: chatFiles, selections: pdfSelections, notes: chatNotes || [],
+    cursor: cursorChip ? { id: cursorChip.id, sel: cursorChip.sel || null } : null,
+  });
+  // ... taken off the composer, as a send or a queued message takes them.
+  function takeComposer() {
+    const parts = composerParts();
+    setPdfSelections([]);
+    setChatNotes?.([]);
+    if (parts.cursor?.sel) onSelectionSent?.();
+    setChatImages([]);
+    setChatFiles([]);
+    return parts;
+  }
   // What the message points at inside the notes: the chips, and the cursor
   // block's selection when it has one (first, as the server labels it S1).
-  function pendingNotes() {
-    const notes = chatNotes || [];
-    const cursorSel = cursorChip?.sel ? [{ id: cursorChip.id, ...cursorChip.sel }] : [];
-    return { notes, cursorSel };
-  }
+  const notesOf = (parts) => ({
+    notes: parts.notes || [],
+    cursorSel: parts.cursor?.sel ? [{ id: parts.cursor.id, ...parts.cursor.sel }] : [],
+  });
 
-  // The /api/ai/chat request for `text` after `prevMessages`, from what the
-  // composer holds now — the send and the context export build the same one.
-  function chatRequest(text, prevMessages, { selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey } = {}) {
-    const { notes, cursorSel } = pendingNotes();
+  // The /api/ai/chat request for `text` after `prevMessages`, with `parts`
+  // (what the composer holds now, by default) — the send and the context
+  // export build the same one.
+  function chatRequest(text, prevMessages, { parts = composerParts(), selectedDocs = chatDocs, includeNotes = chatIncludeNotes, attach = false, model = "", key = chatKey } = {}) {
+    const { notes, cursorSel } = notesOf(parts);
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     return {
       prompt: text,
@@ -1313,8 +1343,8 @@ export default function ChatDock({
       }),
       chat_key: key, // the conversation, for the provider's prompt cache
       model: model || chatModel || "",
-      selections: pdfSelections,
-      focus_block_id: cursorChip ? cursorChip.id : "",
+      selections: parts.selections || [],
+      focus_block_id: parts.cursor?.id || "",
       // Note chips: attached blocks go as ids (the server serves their
       // current text, id-labelled, so the agent can edit them); selected
       // note text as exact source ranges — edit_block mode "selection"
@@ -1333,9 +1363,9 @@ export default function ChatDock({
       system: chatSystem || "",
       pages: selectedDocs.length ? contextIds : [],
       include_notes: includeNotes,
-      images: chatImages,
+      images: parts.images || [],
       max_pictures: chatPictureBudget,
-      files: chatFiles,
+      files: parts.files || [],
       context_char_limit: chatContextChars,
       multi_context_char_limit: multiContextChars,
       ...agentPayload(prevMessages),
@@ -1380,11 +1410,14 @@ export default function ChatDock({
   // does not send its continuation over it (chat/FetchHandoffCards.jsx).
   const composerHasDraft = !!(chatInput.trim() || chatImages.length || chatFiles.length
     || pdfSelections.length || chatNotes?.length);
+  // Whether the composer's message can join the queue while the reply runs.
+  const queuesInput = !!chatInput.trim() && (onComputer ? side.queues(chatInput) : !aiOff && !readOnly);
 
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
-  // ChatGPT-style).
-  async function sendChat(rawText, { baseMessages, referenceMessage, model } = {}) {
+  // ChatGPT-style); `parts` what goes with the message (a queued one's),
+  // else what the composer holds, taken off it.
+  async function sendChat(rawText, { baseMessages, referenceMessage, model, parts } = {}) {
     if (readOnly || aiOff) return;
     const text = (rawText || "").trim();
     if (!text || busyHere) return;
@@ -1393,19 +1426,10 @@ export default function ChatDock({
     const selectedDocs = referenceMessage ? (referenceMessage.contextPages || []).map((p) => p.id) : chatDocs;
     const includeNotes = referenceMessage ? !!referenceMessage.includeNotes : chatIncludeNotes;
     if (referenceMessage) { setChatDocs(selectedDocs); setChatIncludeNotes(includeNotes); }
-    const selections = pdfSelections;
-    const selection = selections.map((s) => s.text).join("\n\n---\n\n");
-    setPdfSelections([]);
-    const { notes, cursorSel } = pendingNotes();
-    setChatNotes?.([]);
-    if (cursorSel.length) onSelectionSent?.();
-    const images = chatImages;
-    setChatImages([]);
-    const files = chatFiles;
-    setChatFiles([]);
+    const taken = parts || takeComposer();
+    const { images = [], files = [] } = taken;
     const prevMessages = baseMessages ?? chatMessages;
-    const quoted = [selection, ...cursorSel.map((n) => n.text), ...notes.map((n) => n.text)].filter(Boolean).join("\n\n---\n\n");
-    const shown = quoted ? `${text}\n\n> ${quoted.slice(0, 280)}${quoted.length > 280 ? "…" : ""}` : text;
+    const shown = quotedText(text, quotesOf(taken));
     // Names of PDFs that ride along with THIS message (displayed in the bubble)
     const contextIds = [...new Set([focusedBlockId, ...selectedDocs].filter(Boolean))];
     const pdfPages = contextIds.flatMap((id) => {
@@ -1435,13 +1459,19 @@ export default function ChatDock({
       ...(pdfNames.length ? { pdfs: pdfNames, pdfDocs: sendingPdf ? pdfPages.map((p) => p.id) : [] } : {}),
     };
     const sendKey = chatKey; // reply belongs to THIS conversation, even if the user navigates away
+    // What the reply streamed before messages the user steered into it, and
+    // those messages (chat/chatQueue.js): each steer closes the reply's
+    // message so far, puts the user's after it, and the reply goes on in a
+    // message of its own, so turns read in the order they happened.
+    const before = [];
     const showReply = (aiMsg, final) => {
-      const saved = session.update(sendKey, [...prevMessages, userMsg, aiMsg], final);
+      const saved = session.update(sendKey, [...prevMessages, userMsg, ...before, aiMsg], final);
       saved?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
     };
     chatStickRef.current = true; // sending always snaps back to the bottom
     const ctrl = new AbortController();
     if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl)) return;
+    chatQueue.started(sendKey);
     noteReview.replying(sendKey, true);
     // Under Unlimited a reply runs until it is done or stopped. A row in
     // Background tasks shows it, and its Stop reaches it from any folder or
@@ -1453,7 +1483,9 @@ export default function ChatDock({
         title: (chatTitle || deriveTitle([...prevMessages, userMsg]) || t("Untitled")).slice(0, 48) }),
     }) : null;
     let acc = ""; // streamed reply so far — kept on Stop
-    const actions = []; // organizer mutations streamed for this reply
+    let actions = []; // organizer mutations streamed for this reply's message
+    const allActions = []; // ... and for every message of it (a steer starts another)
+    let ended = false; // the reply ended on its own (not stopped, not failed): the queue goes on
     let coverage = null; // {"context": [...]} — what the model was given, per document
     let answered = null; // {"model": {id, name, effort, speed}} — which model answers, how
     let usage = null; // the provider's token report, summed over the reply's rounds
@@ -1469,7 +1501,7 @@ export default function ChatDock({
     let limit = null; // {"limit": {kind, rounds, changes, withheld?}} — a limit stopped the reply
     let reasoning = null; // {"reasoning"} lines — the model's thinking, sent back on later turns
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
-    const replyId = makeId(); // every version of this reply, partial or final, is one message
+    let replyId = makeId(); // every version of this reply's message, partial or final, is one message
     const aiMsg = (extra = {}) => ({
       id: replyId, role: "ai", text: acc,
       ...(actions.length ? { actions: [...actions] } : {}),
@@ -1493,10 +1525,8 @@ export default function ChatDock({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         signal: ctrl.signal,
-        // chatRequest reads this render's composer state — the clears above
-        // only change it for the next render.
         body: JSON.stringify({
-          ...chatRequest(text, prevMessages, { selectedDocs, includeNotes, attach: sendingPdf, model, key: sendKey }),
+          ...chatRequest(text, prevMessages, { parts: taken, selectedDocs, includeNotes, attach: sendingPdf, model, key: sendKey }),
           stream: true,
         }),
       });
@@ -1511,7 +1541,31 @@ export default function ChatDock({
       await readNdjson(res, (events) => {
         for (const ev of events) {
           if (ev.error) throw chatFailure(ev.error, ev);
-          if (ev.step) {
+          if (ev.steer) {
+            // The reply takes queued messages in under this id (Steer).
+            chatQueue.steerTo(sendKey, ev.steer);
+          } else if (ev.steered) {
+            // It took them: the reply's message so far ends here, theirs
+            // follows, and the reply goes on in a new message. A note edit
+            // the model was still writing was cut off with it: its preview
+            // goes (App's handleAgentEvent).
+            onAgentEvent?.({ type: "done", key: sendKey });
+            const took = chatQueue.landed(sendKey, ev.steered.ids || []);
+            if (acc || actions.length) before.push(aiMsg());
+            if (took.length) before.push(steeredMessage(took, makeId()));
+            acc = "";
+            actions = [];
+            handoffs.length = 0; // the rounds before it settled them
+            usage = null;
+            lastRound = null;
+            liveChars = 0;
+            liveArgs.clear();
+            coverage = null;
+            trimmed = null;
+            shortened = null;
+            reasoning = null;
+            replyId = makeId();
+          } else if (ev.step) {
             running = ev.step;
             helpers = [];
           } else if (ev.helper) {
@@ -1533,6 +1587,7 @@ export default function ChatDock({
             if (approval) noteReview.settle(approval.id);
             approval = null;
             actions.push(ev.action);
+            allActions.push(ev.action);
             // Live: the notes panel lights up the block the agent just
             // read/edited (and reloads the tree for an applied edit), and the
             // note shows what an edit changed until the user keeps or
@@ -1575,7 +1630,7 @@ export default function ChatDock({
             liveChars += (ev.delta || "").length;
           }
         }
-        if (acc || actions.length || usage || running || handoffs.length) {
+        if (acc || actions.length || usage || running || handoffs.length || before.length) {
           showReply(aiMsg({ partial: true, live: liveChars, ...(running ? { step: running } : {}),
             ...(helpers.length ? { helpers } : {}),
             ...(approval ? { approval } : {}),
@@ -1583,10 +1638,11 @@ export default function ChatDock({
         }
       });
       showReply(aiMsg({ text: acc || (actions.length ? "" : t("(no response)")) }), true);
+      ended = true;
       if (gammaLinksIn(acc).some((link) => link.kind === "citation")) guideEvents.emit("chat.cited");
       // The reply changed the library or notes: its list of changes, each
       // with its own undo, is on screen.
-      if (actions.some(isChange)) guideEvents.emit("chat.changed");
+      if (allActions.some(isChange)) guideEvents.emit("chat.changed");
     } catch (err) {
       const stopped = err?.name === "AbortError";
       // fetch's own TypeError ("Failed to fetch", or the body reader's
@@ -1604,6 +1660,9 @@ export default function ChatDock({
         : { text: acc || `Error: ${reason}`, ...(acc ? {} : { error: true }), ...failureFields(err) }), true);
     } finally {
       if (taskId) removeTask?.(taskId);
+      // What the reply did not take in is queued again; the queue goes on
+      // after a reply that ended on its own, and waits after Stop or a failure.
+      chatQueue.ended(sendKey, ended);
       session.finish(sendKey);
       onAgentEvent?.({ type: "done", key: sendKey });
       // A card the reply left waiting (stopped, or the stream failed) goes from its note too.
@@ -1611,10 +1670,10 @@ export default function ChatDock({
       noteReview.replying(sendKey, false);
       // Agent tools changed the library — reload the home feed. Read-only
       // tool calls (list/read/search) render as chips but change nothing.
-      if (actions.some(isChange)) onLibraryChange?.();
+      if (allActions.some(isChange)) onLibraryChange?.();
       // Note-block edits carry the page(s) they touched, so the open page's
       // block tree can reload and show the change.
-      const notePages = [...new Set(actions
+      const notePages = [...new Set(allActions
         .filter((a) => !a.error && BLOCK_TOOLS.includes(a.tool))
         .flatMap((a) => [a.page_id, a.src_page_id].filter(Boolean)))];
       if (notePages.length) onNotesChange?.(notePages);
@@ -1638,9 +1697,20 @@ export default function ChatDock({
 
   // The composer's message, to the agent shown: a computer's agent takes
   // it with the PDF passages selected, and the draft stays until the server
-  // made its turn.
-  async function sendChatMessage() {
+  // made its turn. While a reply runs it joins the conversation's queue,
+  // with what goes with it, and `steer` (Ctrl/⌘+Shift+Enter) hands it to
+  // the reply at once.
+  async function sendChatMessage({ steer = false } = {}) {
     const text = chatInput;
+    if (replying) {
+      if (!queuesInput) return;
+      const item = { id: makeId(), text, parts: onComputer ? { selections: pdfSelections } : takeComposer() };
+      if (onComputer) setPdfSelections([]);
+      chatQueue.enqueue(queueKey, item);
+      setChatInput("");
+      if (steer) steerQueued(item.id);
+      return;
+    }
     if (onComputer) {
       chatStickRef.current = true;
       if (await side.send(text)) setChatInput("");
@@ -1655,6 +1725,78 @@ export default function ChatDock({
   function stopChat() {
     session.stop(chatKey);
   }
+
+  // Steer: the queued message handed to the reply under way, Gamma AI's or
+  // a computer agent's turn, which takes it in at its next step
+  // (chat/chatQueue.js). Refused because the reply ended meanwhile (404,
+  // 409), it stays at the queue's front and goes as the next one.
+  async function steerQueued(id) {
+    const { reply, items } = chatQueue.queueOf(queueKey);
+    const target = onComputer ? side.steering : reply;
+    if (!target || !canSteer(items.find((m) => m.id === id))) return;
+    const item = chatQueue.steer(queueKey, id);
+    if (!item) return;
+    try {
+      if (onComputer) await side.chat.steer(target, item);
+      else {
+        await apiJson(`${API}/ai/chat/steer/${encodeURIComponent(target)}`,
+          { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(steerBody(item)) });
+      }
+    } catch (err) {
+      chatQueue.unsteer(queueKey, id);
+      if (err.status !== 404 && err.status !== 409) setStatus(t("Couldn't steer the reply: {message}", { message: err.message }));
+    }
+  }
+
+  // A queued message sent as the next one, with what went with it. A
+  // computer's agent that could not take it leaves it at the queue's front,
+  // the queue paused.
+  async function sendQueued(item) {
+    if (!onComputer) {
+      sendChat(item.text, { parts: item.parts });
+      return;
+    }
+    chatQueue.started(queueKey);
+    chatStickRef.current = true;
+    if (!(await side.send(item.text, item.parts.selections || []))) {
+      chatQueue.enqueue(queueKey, item);
+      chatQueue.move(queueKey, item.id, 0);
+      chatQueue.ended(queueKey, false);
+    }
+  }
+
+  // A queued message's Send while the queue is paused: it goes now, and the
+  // queue goes on after its reply.
+  function sendNow(id) {
+    const item = chatQueue.queueOf(queueKey).items.find((m) => m.id === id);
+    if (!item || replying) return;
+    chatQueue.remove(queueKey, id);
+    sendQueued(item);
+  }
+
+  // The next queued message goes once the reply before it ended on its own
+  // (Gamma AI's reply says so as it ends; a computer agent's turn, by how
+  // its message ended) and the conversation can take it.
+  // A computer agent's turn says what it took in (its message's `steers`):
+  // those messages leave the queue, as Gamma AI's stream says (sendChat).
+  const lastTurn = onComputer ? lastTurnState(side.chat.conversation) : "";
+  const canTakeQueued = onComputer ? side.ready(queue.items[0]?.text) : !readOnly && !aiOff && loadedFor === chatKey;
+  useEffect(() => {
+    if (!onComputer) return;
+    const taken = queue.items.filter((m) => m.state === "steering" && steerTaken(side.chat.conversation, m.id));
+    if (taken.length) chatQueue.landed(queueKey, taken.map((m) => m.id));
+  });
+  useEffect(() => {
+    if (replying || queue.paused || !queue.items.length || !canTakeQueued) return;
+    // A computer agent's turn ended: what it did not take in is queued again,
+    // and the queue goes on after one that ended done.
+    if (onComputer && ((lastTurn && lastTurn !== "done") || queue.items.some((m) => m.state === "steering"))) {
+      chatQueue.ended(queueKey, !lastTurn || lastTurn === "done");
+      return;
+    }
+    const item = chatQueue.next(queueKey);
+    if (item) sendQueued(item);
+  });
 
   // The recordings' recorder (recording/recorder.js), in one file: the
   // browser's container, or WAV on an iPad or an iPhone.
@@ -1815,7 +1957,7 @@ export default function ChatDock({
   // computer agent's failed turn has Retry alone, on the newest.
   function errorActions(m, idx) {
     if (onComputer) {
-      const retry = side.retry(idx);
+      const retry = side.retry(m);
       return retry ? [<button key="retry" type="button" className="uiBtn sm" onClick={retry}>{t("Retry")}</button>] : [];
     }
     const copy = failureCopy(m.errorKind, { provider: m.errorProvider, auth: m.errorAuth });
@@ -2114,6 +2256,19 @@ export default function ChatDock({
   } : null;
   const stop = onComputer ? (side.stopId ? { onClick: () => side.chat.stop(side.stopId), label: t("Stop {agent}", { agent: side.label }) } : null)
     : busyHere ? { onClick: stopChat, label: t("Stop generating") } : null;
+  // While the reply runs, Send queues; Ctrl/⌘+Shift+Enter hands the message
+  // to the reply at once (Steer).
+  const queueLabel = onComputer
+    ? t("Queue: sent when {agent} is done ({key} steers it into its turn now)", { agent: side.label, key: chordLabel("Mod-Shift-Enter") })
+    : t("Queue: sent when the reply ends ({key} steers it into the reply now)", { key: chordLabel("Mod-Shift-Enter") });
+  // Why a queued message's Steer is off while the reply runs ("" when it is
+  // on): Gamma AI's reply took no steer id, a computer agent's turn has not
+  // started, or the message carries what only a message of its own takes.
+  const steerTarget = onComputer ? side.steering : queue.reply;
+  const steerNote = (item) => (!replying ? ""
+    : !canSteer(item) ? t("Files, attached blocks and handwriting go with a message of their own: this one is sent when the reply ends")
+      : steerTarget ? "" : onComputer ? t("{agent} hasn't started yet: this one goes when its turn ends", { agent: side.label })
+        : t("This reply can't take messages in: this one is sent when it ends"));
   const headerContent = readOnly ? <span className="uiTag">{t("Read only")}</span>
     : actions.length > 0 && !canSave && !onComputer ? (
       <span className="uiTag" title={t("You can view this workspace: this conversation stays in this tab and isn't saved")}>
@@ -2204,14 +2359,6 @@ export default function ChatDock({
               <div className="chatEmptyAgain">
                 <button type="button" className="uiBtn sm" disabled={side.chat.busy} onClick={side.chat.reload}>{t("Try again")}</button>
               </div>
-            ) : side.empty.offer && openSettings ? (
-              <div className="chatEmptyAgain">
-                {/* where else it may work: a directory offered in Settings → AI → Agents */}
-                <button type="button" className="uiBtn sm ghost" {...settingsIntent} onClick={() => openSettings("agents")}
-                  title={t("Offer a directory of this computer for {agent} to work in, in Settings → AI → Agents", { agent: side.label })}>
-                  {t("Offer a directory…")}
-                </button>
-              </div>
             ) : null}
           </div>
         )) : visibleMessages.length || !aiKnown || (loadedFor !== chatKey && !session.recall(chatKey)) ? null
@@ -2270,15 +2417,23 @@ export default function ChatDock({
             <ArrowLeftIcon size={14} />{t("Back to the chat")}
           </button>
         </div>
-      ) : !readOnly ? (
-      // One box: the context chips on top, the message at full
-      // width, then a toolbar — [+], the PDF switch while a PDF is in
-      // context, the model chip (with reasoning effort), the mic when a
-      // connection can transcribe, send / stop. While recording the text
-      // and the toolbar give way to the waveform row. Its buttons never
-      // take the focus, so a press keeps an on-screen keyboard up. With a
-      // computer's agent it takes the message and the PDF passages alone
-      // (`attaches` false), each passage noting its source line.
+      ) : !readOnly ? (<>
+      <ChatQueue items={queue.items} paused={queue.paused && !replying}
+        steers={(item) => !!steerTarget && canSteer(item)} steerNote={steerNote}
+        onSteer={steerQueued} onSend={sendNow} onRemove={(id) => chatQueue.remove(queueKey, id)}
+        onEdit={(id, text) => chatQueue.edit(queueKey, id, text)} onMove={(id, to) => chatQueue.move(queueKey, id, to)}
+        setStatus={setStatus} />
+      {/* One box: the context chips on top, the message at full
+          width, then a toolbar — [+], the PDF switch while a PDF is in
+          context, the model chip (with reasoning effort), the mic when a
+          connection can transcribe, send / stop; while a reply runs and
+          the box holds a message, send queues it (above). While recording
+          the text and the toolbar give way to the waveform row. Its
+          buttons never take the focus, so a press keeps an on-screen
+          keyboard up. With a computer's agent it takes the message and
+          the PDF passages alone (`attaches` false), each passage noting
+          its source line, and the toolbar starts with the folder chip,
+          where the agent works. */}
       <form
         ref={composerRef}
         className={`chatComposer${closed ? " off" : ""}`}
@@ -2388,6 +2543,7 @@ export default function ChatDock({
           currentPageId={focusedBlockId} selected={chatDocs}
           onAttach={(id) => setChatDocs((prev) => prev.includes(id) ? prev : [...prev, id])}
           onSend={sendChatMessage}
+          onSteer={replying ? () => sendChatMessage({ steer: true }) : null}
           className="chatInput chatInputArea"
           data-guide="chat.input"
           rows={1}
@@ -2398,7 +2554,7 @@ export default function ChatDock({
           disabled={closed}
           // Until the chat knows its AI the field names nothing, so it
           // never offers to ask before it says a service is needed.
-          placeholder={onComputer ? (side.where ? t("Message {agent} on {computer}…", { agent: side.label, computer: side.where })
+          placeholder={replying ? t("Queue a follow-up…") : onComputer ? (side.where ? t("Message {agent} on {computer}…", { agent: side.label, computer: side.where })
             : t("Message {agent} on this computer…", { agent: side.label }))
             : !aiKnown ? "" : aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
@@ -2412,6 +2568,10 @@ export default function ChatDock({
           ) + t(" (@ paper)")}
         />
         <div className="chatComposerBar">
+          {/* where a computer's agent works, at the bar's start as a Codex thread's folder */}
+          {onComputer && side.place ? (
+            <PlaceChip place={side.place} agent={side.label} onPick={side.pickPlace} onAdd={side.addPlace} />
+          ) : null}
           {attaches ? <span data-popover="chatdocs" className="popoverAnchor">
             <button
               type="button"
@@ -2493,9 +2653,14 @@ export default function ChatDock({
           {chip.models.length || agentList.length > 1 ? (
             <AgentChip guide="chat.model" agents={agentList} agent={agent} onAgent={chooseAgent} {...chip} />
           ) : null}
-          {stop ? (
+          {stop && !queuesInput ? (
             <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stop.onClick} title={stop.label} aria-label={stop.label}>
               <StopIcon size={14} />
+            </button>
+          ) : replying ? (
+            <button className="uiBtn primary chatCircleBtn" type="submit" title={queueLabel} aria-label={t("Queue the message")}
+              disabled={!queuesInput}>
+              <ArrowUpIcon size={14} />
             </button>
           ) : dictation === "busy" ? (
             <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
@@ -2516,7 +2681,7 @@ export default function ChatDock({
         </>
         )}
       </form>
-      ) : null}
+      </>) : null}
       {revertFrom ? (
         <RevertChanges messages={chatMessages} fromId={revertFrom} busy={busyHere}
           onReverted={(id, indexes, answer) => changesReverted(id, indexes, answer)} onClose={() => setRevertFrom(null)} />

@@ -3,8 +3,9 @@
 // menu lists them first (chat/agents.js chatAgents), each by its icon and
 // where it runs, with a hint on one that cannot answer now ("offline",
 // "not ready": computerChat.js agentHint), then the picked one's models and
-// what else it takes (`sections`: the reasoning effort, the speed, where a
-// computer's agent works), and the chip reads the agent, its model and
+// what else it takes (`sections`: the reasoning effort, the speed; where a
+// computer's agent works is the bar's folder chip, computer/PlaceChip.jsx),
+// and the chip reads the agent, its model and
 // effort ("Codex on TIM-PC · GPT-5.5 · high"), the model giving way first.
 // With Gamma AI alone it is the model chip it always was. Picking another
 // agent is the chat's to answer (`onAgent`, which may ask first: a
@@ -35,14 +36,11 @@ function agentOption(a) {
 }
 
 // `agents` the chat's, `agent` the one shown; `models` [[id, label]] the
-// picked agent's, `model` the one chosen, `onModel(id)`; `place` the
-// section of where a computer's agent works ("Works in"), which comes
-// right under the agents, before the model: who, where, then how, and in
-// a short chat window the first sections are the ones in sight; `label`
+// picked agent's, `model` the one chosen, `onModel(id)`; `label`
 // the trigger's name with Gamma AI alone, `text` the model's words
 // ("GPT-5 · high"), `glyph` what follows them (Gamma AI's speed), `speed`
 // the speed tier it stands for.
-export default function AgentChip({ agents, agent, onAgent, models, model, onModel, place = null, sections = [], label, text = "",
+export default function AgentChip({ agents, agent, onAgent, models, model, onModel, sections = [], label, text = "",
   glyph = null, speed = "", guide }) {
   const several = (agents || []).length > 1;
   // The agent leads the chip whenever it is not Gamma AI alone.
@@ -66,7 +64,7 @@ export default function AgentChip({ agents, agent, onAgent, models, model, onMod
           {glyph}
         </>}
         options={several ? agents.map(agentOption) : models}
-        sections={[place, several ? modelSection : null, ...sections].filter(Boolean)}
+        sections={[several ? modelSection : null, ...sections].filter(Boolean)}
       />
     </span>
   );

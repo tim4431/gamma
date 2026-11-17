@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import http from "node:http";
-import { Account, FAKE_AI_MODELS, fakeAiModels, live, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, fakeAiModels, guideProgress, live, wanted } from "../harness.mjs";
+import { TOURS } from "../../../src/guide/tours/index.js";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -310,6 +311,106 @@ export async function chatNavigationScenarios(env) {
       await page.getByRole("button", { name: "Back", exact: true }).click();
       await until(async () => (await page.locator(".chatPanel").innerText()).includes("still going. Done."));
       assertEq(await stop.count(), 0);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: a message sent while the reply runs waits in the queue; Steer hands it to the reply where it lands, the next goes when the reply ends, and Stop pauses the queue until Send", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatStreams = []; // one fake stream per /api/ai/chat call, with what it asked
+      window.steers = [];      // what each POST /api/ai/chat/steer/{reply} carried
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/chat")) {
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStreams.push({
+                body: JSON.parse(init.body),
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              });
+              init.signal.addEventListener("abort", () => controller.error(new DOMException("Stopped", "AbortError")));
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        if (url.includes("/api/ai/chat/steer/")) {
+          window.steers.push({ reply: url.split("/").pop(), ...JSON.parse(init.body) });
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      const rows = page.locator(".chatQueueRow");
+      const push = (event) => page.evaluate((e) => window.chatStreams.at(-1).push(e), event);
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("Summarize my library");
+      await input.press("Enter");
+      await page.waitForFunction(() => window.chatStreams.length === 1);
+      await push({ steer: "reply-1" });
+      await push({ step: { id: "t1", tool: "list_pages", args: {} } });
+      // Enter while it runs queues, in order, and clears the box.
+      await input.fill("Then group them by year");
+      await input.press("Enter");
+      await input.fill("Flag error correction");
+      await input.press("Enter");
+      await until(async () => (await rows.allInnerTexts()).length === 2);
+      assertEq(await input.inputValue(), "", "a queued message leaves the box");
+      assert((await rows.nth(0).innerText()).includes("Then group them by year"), "the queue keeps the order sent");
+      // Steer the second: it goes to the reply under way, first in line until the reply takes it.
+      await rows.nth(1).getByRole("button", { name: "Steer" }).click();
+      await page.waitForFunction(() => window.steers.length === 1);
+      const steer = await page.evaluate(() => window.steers[0]);
+      assertEq(`${steer.reply} ${steer.text}`, "reply-1 Flag error correction");
+      await until(async () => (await rows.nth(0).innerText()).includes("Steering"));
+      await push({ action: { kind: "list", summary: "Listed 3 pages", tool: "list_pages", args: {}, result: "ok" } });
+      await push({ steered: { ids: [steer.id] } });
+      await push({ delta: "Flagged." });
+      // It lands in the transcript where the reply took it in.
+      const transcript = page.locator(".chatPanel .chatBubble");
+      await until(async () => (await transcript.allInnerTexts()).some((text) => text.includes("Flagged.")));
+      const order = (await transcript.allInnerTexts()).map((text) => text.trim());
+      const at = (word) => order.findIndex((text) => text.includes(word));
+      assert(at("Summarize my library") < at("Flag error correction") && at("Flag error correction") < at("Flagged."),
+        `the steered message sits inside the reply: ${JSON.stringify(order)}`);
+      assert(order[at("Flag error correction")].includes("Steered"), "the steered message says so");
+      assertEq(await rows.count(), 1, "the steered message left the queue");
+      // The reply ends on its own: the next queued message goes, after the whole conversation.
+      await page.evaluate(() => window.chatStreams[0].finish());
+      await page.waitForFunction(() => window.chatStreams.length === 2);
+      const second = await page.evaluate(() => window.chatStreams[1].body);
+      assertEq(second.prompt, "Then group them by year");
+      assertEq(second.history.map((h) => `${h.role}:${h.text}`).join(" | "),
+        "user:Summarize my library | ai: | user:Flag error correction | ai:Flagged.");
+      // Stop pauses the queue: nothing goes until the row's Send.
+      await push({ delta: "By year: 2019" });
+      await input.fill("One more thing");
+      await input.press("Enter");
+      await page.getByRole("button", { name: "Stop generating", exact: true }).click();
+      await page.locator(".chatQueueNote").waitFor();
+      await rows.first().getByRole("button", { name: "Send" }).waitFor();
+      assertEq(await page.evaluate(() => window.chatStreams.length), 2, "a stopped reply's queue waits");
+      await rows.first().getByRole("button", { name: "Send" }).click();
+      await page.waitForFunction(() => window.chatStreams.length === 3);
+      assertEq(await page.evaluate(() => window.chatStreams[2].body.prompt), "One more thing");
+      await push({ delta: "Sure." });
+      await page.evaluate(() => window.chatStreams[2].finish());
+      await until(async () => !(await rows.count()));
+      // Stored as it reads: the steered message a user turn of its own between the reply's two parts.
+      let stored;
+      await until(async () => {
+        stored = (await alice.api("/api/chats/home")).messages || [];
+        return stored.at(-1)?.text === "Sure." && !stored.at(-1).partial;
+      });
+      assertEq(stored.map((m) => `${m.role}${m.steered ? "*" : ""}`).join(" "), "user ai user* ai user ai user ai");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -1518,7 +1619,11 @@ export async function chatNavigationScenarios(env) {
     const notesPage = await alice.api("/api/pages", { method: "POST", body: { title: "Tracked page" } });
     const one = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "The cavity has a Q of 1e6." } });
     const two = await alice.api("/api/blocks", { method: "POST", body: { parent_id: notesPage.id, content: "Energy $E = mc$ here.", before: one.position } });
-    const ctx = await alice.context(browser);
+    // The guide's hint on the first AI change drawn in a note (docs/dev/onboarding.md): every other guide settled, so it is the load's one offer.
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    const settled = Object.fromEntries(Object.values(TOURS).filter((t) => t.id !== "note-review").map((t) => [t.id, { state: "dismissed", version: t.version }]));
+    await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { tourProgress: settled, suggestTours: true } } });
+    const ctx = await alice.context(browser, { suggestTours: true });
     await fakeAiModels(ctx);
     await ctx.addInitScript(() => {
       localStorage.setItem("gamma-ai-login-check", "off");
@@ -1576,6 +1681,10 @@ export async function chatNavigationScenarios(env) {
       await row(one).locator(".mdDiffView del.mdDiff", { hasText: "has" }).waitFor();
       assertEq(await row(one).locator(".mdDiffView ins.mdDiff").innerText(), "had");
       await row(one).locator(".noteReviewBar", { hasText: "Edited by AI" }).waitFor();
+      await page.waitForSelector('[data-guide-offer="note-review"] .guideCard');
+      assertEq(await row(one).locator('[data-guide="notes.review"][data-guide-active]').count(), 1, "the hint points at the note's bar");
+      await page.getByRole("button", { name: "Got it", exact: true }).click();
+      assertEq(await guideProgress(page, "alice", "note-review"), "done");
       await push(await edited(two, "Energy $E = mc$ here.", "Energy $E = mc^2$ here."));
       await row(two).locator(".mdDiffView del.mdDiff .katex").waitFor();
       await row(two).locator(".mdDiffView ins.mdDiff .katex").waitFor();
@@ -1647,6 +1756,7 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page);
     } finally {
       await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api(`/api/chats/${notesPage.id}`, { method: "PUT", body: { messages: [] } });
     }
   });

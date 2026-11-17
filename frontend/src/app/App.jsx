@@ -86,7 +86,7 @@ import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, ClipboardIcon, CloudIcon, CopyIcon, DatabaseIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitPageIcon, FitWidthIcon, FolderGlyph, HighlightIcon, SquareCheckIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
@@ -270,6 +270,7 @@ import {
   inFolder,
   labelName,
   libraryTree,
+  placeFolder,
   siblingFolders,
   formatFullDate,
   formatRelativeTime,
@@ -2577,7 +2578,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const groupTabs = (group) => orderTabs(group.tabs.map((id) => openTabs.find((tab) => tab.id === id)).filter(Boolean));
   const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), target);
   const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
-  const splitTabGroup = (groupId, side, tabId) => applyLayout(splitGroup(tabLayoutRef.current, groupId, side, tabId));
+  const splitTabGroup = (groupId, side, tabId) => {
+    const next = splitGroup(tabLayoutRef.current, groupId, side, tabId);
+    if (next === tabLayoutRef.current) return;
+    applyLayout(next);
+    guideEvents.emit("tabs.split");
+  };
   // A tab into a group of its own beside the one it is in: the tab menu's,
   // the bar menu's and the palette's Split right. The only tab of a group
   // opens an empty group beside it instead, where the library shows to
@@ -6440,6 +6446,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: "", parent_page: parentId }),
       });
+      // before the page opens: its link jump would offer the Back hint first
+      guideEvents.emit("subpage.created");
       await openNewPage(created.id);
     } catch (err) {
       setStatus(t("Create failed: {err}", { err: err.message || err }));
@@ -6467,6 +6475,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Create failed: {err}", { err: err.message || err }));
       return;
     }
+    guideEvents.emit("subpage.created");
     await openNewPage(id);
   }
 
@@ -9099,6 +9108,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const marks = useMarks({ ink: inkBySurface, inkSelection, inkFlash, boxes: textBoxes.bySurface, boxSel: textBoxes.sel,
     boxFlash: textBoxes.flash, pictures: pictures.bySurface, pictureSel: pictures.sel, pictureFlash: pictures.flash });
   const homeMode = !focusedBlockId && lib.browse;
+  // The Home button (a phone's Library tab): from a page, back to the
+  // library view it was opened from, its folder and label kept, as closing
+  // the page's tab returns to; over the library, its root. `homeBack` names
+  // that view for the button's title, "" for the root.
+  const pressHome = () => goHome(true, !homeMode);
+  const homeBack = homeMode ? "" : folderPath(libTree, folderFilter) || labelName(libTree, labelFilter);
   // The one page selected on the home library (F2 renames it), or "".
   const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
     ? [...selectedPages][0] : "";
@@ -9231,6 +9246,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setQuickOpen((v) => (v && v.prefix === prefix ? null : { prefix }));
     },
     back: () => goBackNavRef.current?.(),
+    // The tab the strip shows active: a pressed one whose page is still on
+    // its way, else the open page's.
+    closeTab: () => closeTab(tabPick || focusedBlockId),
     mouseBack: () => {
       if (navStackLen) goBackNavRef.current?.();
       else if (!homeMode) goHome();
@@ -9418,6 +9436,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // page in this session goes back to it while its text is still the start
   // of the demo's (guide/typeDemoNote.js).
   const guideNoteRef = useRef(null);
+  // The page's highlights and their review queue come before the guide,
+  // whose facts say whether some are left to review.
+  // Identity-stable: every keystroke in a note replaces `blocks`, but the
+  // derived highlights rarely change — returning the previous array when the
+  // content is identical keeps the viewer's per-page memo effective (otherwise
+  // each keystroke re-rendered every PdfPage's overlays).
+  // The list is the page's document's: a PDF's highlights under
+  // pdf_position, a picture's regions under image_position (positionKeyOf),
+  // so every reader of it (the jumps, the margin, the chat) takes a region
+  // with no branch.
+  const prevHighlightsRef = useRef({ json: "", value: [] });
+  const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock, positionKeyOf(doc), fileHash(doc))),
+    [blocks, treeBlocks, comments.countByBlock, doc]);
+  // The page's highlights to review after its PDF was replaced, in document
+  // order: the pending ones (drawn dashed until accepted or moved), the
+  // Document menu's Accept all, and with the lost ones (hollow) the review
+  // queue its Review counts and opens the first of, which also holds those
+  // a card moved or placed on its closest match while they wait for its
+  // Accept (`reviewWaiting`, PdfViewer's onReviewWaiting), as the card
+  // counts them (docs/dev/highlight_relocation.md).
+  const pendingHighlights = useMemo(() => pendingInOrder(highlights), [highlights]);
+  const [reviewWaiting, setReviewWaiting] = useState([]);
+  const reviewHighlights = useMemo(() => reviewQueue(highlights, reviewWaiting), [highlights, reviewWaiting]);
   const guide = useGuide({
     services: {
       // A finished tour's `restore`: "pen" re-arms the pen last drawn with
@@ -9529,6 +9570,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       welcomePage: !!welcomePageOf(homeBlocks),
       growingLibrary,
       annotatedPage,
+      // highlights the open PDF's replacement left to check (the Document
+      // menu's Review), which the reader may review
+      highlightsToReview: !!reviewHighlights.length && isPdf(doc) && !readOnly,
+      // a comment here can ask an agent (its field's Send to tick)
+      commentAgents: commentAgentList.length > 0,
       // the notebook view: the sheets fill the viewer, so the notes view's
       // own sheet and its tool row (the notebook tour's anchors) are not up
       notebookView: !!notebook,
@@ -9744,6 +9790,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     },
   });
   const { work: focusedFile, rules: openRules, titleLocked, inLibrary: openInLibrary } = work.open;
+  // Where the open page is, as the crumbs over its title read it: a work
+  // folder's file, its directory's folders (fileCrumbs); any other page, the
+  // path of a folder it is filed in, a sub-page by its top's, the one the
+  // library showed as it opened when it is filed there or below
+  // (placeFolder). A share's topbar names the path instead. The folder the
+  // crumbs lead to has no chip under the title; the label field's edit
+  // lists it with the others.
+  const placeTop = openFamily.ancestors[0]?.id;
+  const openPlace = shareMode || focusedFile ? ""
+    : placeFolder(libTree, placeTop ? pagesById.get(placeTop)?._folders : pageFolders, folderFilter);
+  const openCrumbs = focusedFile ? fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile })
+    : openPlace ? folderCrumbs(openPlace) : [];
   // The folder view's synced folder: who keeps it and how it syncs, for its heading.
   const workKeeper = workFolder ? work.keeperOf(workFolder) : null;
   // The Files window's reads, its first slot and the open page's reveal
@@ -10211,17 +10269,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     obs.observe(el);
     return () => obs.disconnect();
   }, [homeVisibleItems.length, homeItems.length, homeMode]);
-  // Identity-stable: every keystroke in a note replaces `blocks`, but the
-  // derived highlights rarely change — returning the previous array when the
-  // content is identical keeps the viewer's per-page memo effective (otherwise
-  // each keystroke re-rendered every PdfPage's overlays).
-  // The list is the page's document's: a PDF's highlights under
-  // pdf_position, a picture's regions under image_position (positionKeyOf),
-  // so every reader of it (the jumps, the margin, the chat) takes a region
-  // with no branch.
-  const prevHighlightsRef = useRef({ json: "", value: [] });
-  const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock, positionKeyOf(doc), fileHash(doc))),
-    [blocks, treeBlocks, comments.countByBlock, doc]);
   // What the comment cards stand beside on the document, the highlights or
   // regions and the ink groups (treeDerived.js commentAnchors); the viewer
   // keeps each page's slice while it reads the same.
@@ -10233,16 +10280,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const hash = fileHash(doc);
     return (thread) => threadPlace(thread, treeById.get(thread.block_id), hash);
   }, [treeById, doc]);
-  // The page's highlights to review after its PDF was replaced, in document
-  // order: the pending ones (drawn dashed until accepted or moved), the
-  // Document menu's Accept all, and with the lost ones (hollow) the review
-  // queue its Review counts and opens the first of, which also holds those
-  // a card moved or placed on its closest match while they wait for its
-  // Accept (`reviewWaiting`, PdfViewer's onReviewWaiting), as the card
-  // counts them (docs/dev/highlight_relocation.md).
-  const pendingHighlights = useMemo(() => pendingInOrder(highlights), [highlights]);
-  const [reviewWaiting, setReviewWaiting] = useState([]);
-  const reviewHighlights = useMemo(() => reviewQueue(highlights, reviewWaiting), [highlights, reviewWaiting]);
   // set by PdfViewer: scrolls to a highlight to review and opens its card
   // (with a step, `done`, the card says what it did: after a move from it)
   const pdfReviewRef = useRef(null);
@@ -10850,16 +10887,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <div className="sidebar" data-guide="dock.notes" ref={liveSidebarRef}>
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
-            {/* a file's folders from its work folder down, each opening that
-                folder, its own directory with the file selected as the tab's
-                Show in folder view does; the pages a sub-page is inside, each
-                opening that page */}
+            {/* the folders of the page's place (openCrumbs), each opening
+                that folder, a file's own directory with the file selected
+                as the tab's Show in folder view does; the pages a sub-page
+                is inside, each opening that page */}
             <PageCrumbs ancestors={openFamily.ancestors} onOpen={openFamilyPage}
               targetProps={lib.organize ? (page) => ({ ...pageDropProps(page.id, page.title), className: pageDropClass(page.id) }) : undefined}
-              folders={focusedFile ? fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile }) : []}
+              folders={openCrumbs}
               onOpenFolder={(id) => {
-                const own = fileCrumbs(libTree, workTree, { folders: pageFolders, work: focusedFile }).at(-1)?.id;
-                if (id === own) { goToFile(focusedBlockId, id); return; }
+                if (focusedFile && id === openCrumbs.at(-1)?.id) { goToFile(focusedBlockId, id); return; }
                 pushNav(); goHome(); openFolder(id);
               }} />
             {titleEditing && !readOnly && !titleLocked && focusedBlockId ? (
@@ -11014,7 +11050,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     );
                   })() : (() => {
-                    const chips = filingChips(libTree, { folders: openSubPage ? [] : pageFolders, labels: pageLabels, work_folder: focusedFile });
+                    // the folder the crumbs lead to is theirs, no chip
+                    const chips = filingChips(libTree, {
+                      folders: openSubPage ? [] : pageFolders.filter((id) => id !== openPlace), labels: pageLabels, work_folder: focusedFile });
                     return (
                     <span
                       className={`categoryFrontmatterValue ${chips.folders.length || chips.labels.length ? "" : "empty"}`}
@@ -11096,7 +11134,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     >{zoteroPdfShown ? <CloudDownloadIcon size={16} /> : <PaperclipIcon size={16} />}</button>
                     {openPopover === "attach" && doc ? (
-                      <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")}>
+                      <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")} data-guide="page.documentMenu">
                         <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={doc.url}>
                           <PaperclipIcon size={14} /> {doc.name || defaultPageTitle(doc)}
@@ -11113,13 +11151,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             review: the first one's card (a PDF's: a text file's ranges are
                             reviewed from their menus); the dashed ones accepted as one edit */}
                         {reviewHighlights.length && isPdf(doc) ? (
-                          <MenuItem icon={TextSearchIcon} onClick={reviewPending}
+                          <MenuItem icon={TextSearchIcon} onClick={reviewPending} data-guide="page.review"
                             title={t("Show the first dashed or hollow highlight with what it matched and where it was before")}>
                             {tn("Review {n} highlight", "Review {n} highlights", reviewHighlights.length)}
                           </MenuItem>
                         ) : null}
                         {pendingHighlights.length && !readOnly ? (
-                          <MenuItem icon={CheckIcon}
+                          <MenuItem icon={CheckIcon} data-guide="page.acceptAll"
                             onClick={() => { setOpenPopover(null); acceptHighlightPlaces(pendingHighlights.map((h) => h.id)); }}
                             title={t("Draw every dashed highlight solid where it is now")}>
                             {tn("Accept {n} rough match", "Accept all {n} rough matches", pendingHighlights.length)}
@@ -13784,7 +13822,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         appRef.current?.classList.toggle("dragOver", dropHere);
       }}
       onDragLeave={shareMode ? undefined : (e) => {
-        if (e.currentTarget === e.target) appRef.current?.classList.remove("dragOver");
+        // A drag that leaves the window (or is cancelled there) leaves from
+        // whatever element is under the pointer, toward nothing in the app.
+        if (!e.currentTarget.contains(e.relatedTarget)) appRef.current?.classList.remove("dragOver");
       }}
       onDrop={shareMode ? undefined : (e) => {
         appRef.current?.classList.remove("dragOver");
@@ -13828,9 +13868,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {isPhone ? null : (
               <button
                 className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""} ${folderDragOver === "library" ? "dragOver" : ""}`}
-                onClick={goHome}
+                onClick={pressHome}
                 data-guide="header.home"
-                title={t("Home")}
+                title={homeBack ? t("Back to {folder}", { folder: homeBack }) : t("Home")}
                 aria-label={t("Home")}
                 {...libraryDropProps}
               >
@@ -14337,8 +14377,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button
                 className={`phoneTab ${homeMode && phoneMainActive ? "active" : ""}`}
                 // Over the library, a covering panel just closes; otherwise
-                // this is the Home button: back to the library's root.
-                onClick={() => { if (!homeMode || phoneMainActive) goHome(); setPhonePanel(null); }}
+                // this is the Home button (pressHome).
+                onClick={() => { if (!homeMode || phoneMainActive) pressHome(); setPhonePanel(null); }}
                 data-guide="header.home"
                 title={t("Library")}
                 aria-label={t("Library")}
@@ -15213,6 +15253,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 [
                   !many && !shareMode && (
                     <MenuItem key="link" icon={LinkIcon} onClick={() => { close(); copyPageLink(homeMenu.id); }}>{t("Copy link")}</MenuItem>
+                  ),
+                  // the file itself on this computer's clipboard, for a paste
+                  // into a folder or another app: the desktop app's shell puts
+                  // it there (a browser cannot put a file on the clipboard)
+                  !many && IS_DESKTOP && fileHash(acted[0]?._doc) && (
+                    <MenuItem key="copyfile" icon={ClipboardIcon} title={t("Put the file on this computer's clipboard, to paste it into a folder or another app")}
+                      onClick={() => { close(); askShell("copy-file", { page: homeMenu.id }); }}>{isPdf(acted[0]._doc) ? t("Copy PDF") : t("Copy file")}</MenuItem>
                   ),
                   !many && lib.organize && (
                     <MenuItem key="share" icon={ShareIcon} title={t("Share this page — a link, and who may view or edit it")}

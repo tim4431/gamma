@@ -336,6 +336,10 @@ jobs:
           sudo apt-get install -y ./dist/Gamma-*.deb
           dpkg -s gamma-desktop | head -5
           ls -la /opt/Gamma/gamma /opt/Gamma/resources/gamma-server/gamma-server /usr/bin/gamma
+          # The icon in sizes the hicolor theme indexes (it has no 1024x1024),
+          # and the entry the running window (app_id / WM_CLASS gamma) matches.
+          ls /usr/share/icons/hicolor/48x48/apps/gamma.png /usr/share/icons/hicolor/256x256/apps/gamma.png
+          grep -qx 'StartupWMClass=gamma' /usr/share/applications/gamma.desktop
           xvfb-run -a /opt/Gamma/gamma --smoke | tee smoke-installed.log
           grep -q '^SMOKE {"ok":true' smoke-installed.log
 

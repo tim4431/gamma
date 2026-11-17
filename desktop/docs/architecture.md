@@ -281,6 +281,7 @@ is (`PAGE_ASKS` in `preload.js`) and exposes nothing:
 | `reveal-on-disk {ws, page}` (the vault chip's *Show in Explorer*, *Show in Finder* on a Mac) | `shell:reveal-from-page` | `revealOnDisk` |
 | `relocate-file {ws, page}` (the banner's *Locate…*) | `shell:relocate-from-page` | `relocateFile` |
 | `carry-to-server {ws, page}` (*Add to library…*'s *Another server…*) | `shell:carry-from-page` | `carryToServer` ("Opening files and folders") |
+| `copy-file {ws, page}` (the library page menu's *Copy PDF*, *Copy file*) | `shell:copy-file-from-page` | `copyFileFromPage`: the page's `properties.doc` read from the open server, local or remote, its file fetched with the window's session from `/api/uploads/<hash><ext>` into a `gamma-copy-*` directory of the system's temporary one, named after the page (the copy before it removed), and put on the clipboard as a file (`lib/fileClipboard.js`: macOS `public.file-url`, Windows CF_HDROP through Windows PowerShell's `Set-Clipboard -LiteralPath`, the path in the environment, Linux `text/uri-list`); under the test harness only recorded (`copiedFile`) |
 | `continue-in-terminal {ws, page}` (the chat's computer side, *Continue in a terminal*) | `shell:terminal-from-page` | `terminalFromPage` |
 | `tracked {link, cancelled}` (the host's tracking dialog of a work folder of another server, saved or cancelled) | `shell:tracked-from-page` | `trackedFromPage` |
 | `set-agent {ws, agent, enabled}` (Settings → AI: an agent of this computer turned on or off) | `shell:set-agent-from-page` | `setAgentFromPage` → `setAgent` |
@@ -866,7 +867,7 @@ the window out of another.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│ ⌈γ⌉ Alpha · Rydberg lab ▾   Starting Beta…   ☁ Synced [↑ Restart to update] ⟳  – □ ✕ │  shell bar (38 px, is the title bar)
+│ ⌈γ⌉ Alpha · Rydberg lab ▾   Starting Beta…   ☁ Synced ⇧ ⟳  – □ ✕ │  shell bar (38 px, is the title bar)
 ├────────────────────────────────────────────────────────────┤
 │                                                            │
 │   launcher (file://ui/launcher.html)                       │  content view
@@ -1681,16 +1682,27 @@ users get.
 ## In-app updates
 
 `lib/updater.js` wraps `electron-updater`, VS Code style: a silent check
-15 s after launch and every 4 h, download in the background, then one
-attention-seeking control — the **Restart to update** pill in the shell bar
-(and the same action in the launcher's Updates row). *Help → Check for
+15 s after launch and every 4 h, download in the background, and from the
+moment a newer version is found one attention-seeking control — **Update
+now**, an icon in the accent colour in the shell bar (its title says the
+version and the download's progress), and the same action in the launcher's
+Updates row and Help → Check for Updates…'s dialog. Pressed once the
+download is done it restarts into the update (`quitAndInstall`); pressed
+while it still downloads it notes the press (`installing`: the icon turns
+to a spinner, the row says *Updating…*) and restarts as soon as the
+download is done, a failed download dropping the press
+(`test/updater.test.js`). The update found is worded once, in the state's
+`line` (`lineOf`: "Gamma 0.4.3 is downloading (42%). Update now restarts
+Gamma into it once it is done."), which the icon's title, the row and the
+dialog all show. *Help → Check for
 Updates…* is the only flow that answers with a dialog; under the test
 harness that dialog is only recorded (`ask`, the hook's `asked`) and takes
 its last button, *Later* or *OK*, which installs nothing. The feed is the
 GitHub Release (details and the signing caveat: [release.md](release.md)).
 
 State machine (`update` in the shell state): `idle` → `checking` →
-`up-to-date` | `downloading` (percent) → `downloaded` | `error`;
+`up-to-date` | `downloading` (percent, `installing` once Update now was
+pressed) → `downloaded` | `error`;
 `unsupported` in dev builds, under the test harness, in a Microsoft
 Store install (`process.windowsStore`; the Store delivers those updates,
 see [release.md](release.md#microsoft-store)) and in the Mac App Store
@@ -1700,11 +1712,11 @@ update installs on restart (`quitAndInstall`, silent NSIS run; unsigned
 builds are fine — electron-updater only verifies a publisher when one is
 configured). On **Linux** (the `.deb`) the same flow runs through
 electron-updater's `DebUpdater` (chosen from `resources/package-type`): the
-new `.deb` downloads in the background and *Restart to update* installs it
+new `.deb` downloads in the background and *Update now* installs it
 with `dpkg -i` under `pkexec`, so the user gets a password prompt, then the
 app relaunches. On **macOS** an unsigned app cannot self-update (Squirrel.Mac
 requires a valid signature), so the shell reports `available` instead of
-downloading and the pill / button opens the release page; `IN_APP_INSTALL`
+downloading and the bar's icon / the row's button opens the release page; `IN_APP_INSTALL`
 in `lib/updater.js` is the switch to flip once the builds are signed.
 
 ## Shell state
@@ -1777,7 +1789,8 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
 
 - `main.js` — window + views + layout, theme mirror, native menu
   (accelerators only; hidden behind Alt on Windows; *Window* holds *Show
-  Gamma*, *Help* holds *Check for Updates…*), IPC for the shell pages, auto-login script, navigation guard
+  Gamma*, *Help* holds *Check for Updates…*; *Close Window* is
+  Ctrl/⌘+Shift+W, since Ctrl/⌘+W is the page's *Close tab*), IPC for the shell pages, auto-login script, navigation guard
   (only registered server origins may load in the content view; everything
   else — `target=_blank`, cross-origin redirects — opens in the system
   browser; a server's Gamma Cloud sign-in start is taken over, "Gamma Cloud
@@ -1948,8 +1961,10 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
   its `PYINSTALLER`, which it installs into the running Python when the
   installed versions differ, on the release runners and by hand alike.
 - `assets/icon.png` — app icon (1024 px, the favicon mark, from the brand
-  generator; electron-builder derives ico/icns and the Linux icon set, and
-  App Store Connect wants the icns's 1024 px image). `assets/entitlements.mac.plist` —
+  generator; electron-builder derives ico/icns from it, and App Store
+  Connect wants the icns's 1024 px image). `assets/icons/` — the `.deb`'s
+  icon set, 16 to 512 px from the same generator (the hicolor theme has no
+  1024 px size: [release.md](release.md)). `assets/entitlements.mac.plist` —
   hardened-runtime entitlements for signed mac builds, the microphone
   among them ("The microphone").
 - `assets/appx/` and `assets/store/` — tracked Store package/listing images;

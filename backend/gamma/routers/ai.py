@@ -16,8 +16,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
-                net_proxy, search_services, translate_engines)
+from .. import (agents, ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_steer, ai_usage,
+                chatgpt_oauth, net_proxy, search_services, translate_engines)
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -1708,6 +1708,28 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
     return {"ok": True}
 
 
+class AISteer(BaseModel):
+    id: str = Field(min_length=1, max_length=64)   # the client's id of the queued message
+    text: str = Field(default="", max_length=ai_steer.MAX_TEXT)
+    images: list = Field(default_factory=list, max_length=ai_pictures.MAX_BUDGET)
+
+
+@router.post("/ai/chat/steer/{reply_id}")
+def ai_chat_steer(reply_id: str, payload: AISteer, request: Request):
+    """A message the user hands to their chat reply while it runs (Steer,
+    gamma/ai_steer.py): it joins the conversation at the reply's next
+    boundary, and the stream's ``{"steered"}`` line says when. Authenticated
+    like the chat; only the account whose reply it is can steer it. 404 when
+    no reply of theirs runs under that id: it ended, and the client sends
+    the message as the next one."""
+    require_ws(request)
+    if not payload.text.strip() and not payload.images:
+        raise HTTPException(422, "Nothing to send")
+    if not ai_steer.push(reply_id, request.state.user_id or "", payload.model_dump()):
+        raise HTTPException(404, "This reply is no longer running")
+    return {"ok": True}
+
+
 class AIRevert(BaseModel):
     kind: Literal["edit", "create", "move", "delete", "pages", "trash"]
     block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
@@ -1941,7 +1963,25 @@ def ai_chat(payload: AIChatRequest, request: Request):
                                 f"retrying as text: {e}")
                     break
 
-    def agent_events(first_resp):
+    def steer_turn(item: dict) -> dict:
+        """The user turn of a message steered into this reply: its text and
+        its pictures (none for a model that reads text only), named under
+        it as a question's are."""
+        text = str(item.get("text") or "").strip()
+        shown = []
+        if pictures and item.get("images"):
+            with connect_pages_db(ws) as conn:
+                shown, _ = ai_pictures.request_pictures(ws, conn, item["images"], payload.max_pictures)
+        lines = ai_pictures.label_lines(shown)
+        content = f"{text}\n\n{lines}" if text and lines else text or lines
+        return {"role": "user", "content": content, **({"images": ai_pictures.parts(shown)} if shown else {})}
+
+    def steer_line(steering) -> str:
+        """The line after the stream's head when the reply takes steered
+        messages: the id the client steers it by."""
+        return json.dumps({"steer": steering.id}) + "\n" if steering else ""
+
+    def agent_events(first_resp, steering=None):
         """This reply's tool loop (gamma/ai_agent.py) with the chat's two
         pauses wired in: a permission set to Ask stops on an approval card,
         and a fetch a sign-in page, bot check or paywall stopped waits here
@@ -1959,6 +1999,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
             settle=PaperWait(ws, scope, scope["handoff_user"], stopped) if scope["paper_wait"] else None,
             pictures=pictures,
             stopped=stopped,
+            steering=steering,
         )
         return loop.run(first_resp)
 
@@ -1984,10 +2025,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
 
             if tools:
                 def agent_ndjson():
+                    steering = ai_steer.open_reply(user_id, steer_turn)
                     try:
-                        if head:
-                            yield head
-                        for kind, data in agent_events(resp):
+                        if first := head + steer_line(steering):
+                            yield first
+                        for kind, data in agent_events(resp, steering):
                             if kind == "usage" and _served_speed(answered, data):
                                 yield json.dumps({"model": answered}) + "\n"
                             if kind == "limit" and asked_unlimited and not unbounded:
@@ -1996,39 +2038,65 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     except Exception as e:
                         log.warning(f"[ai_chat] agent stream error: {e}")
                         yield json.dumps({"error": failure_detail(e), **_failure_info(e, rt, entry)}) + "\n"
+                    finally:
+                        if steering:
+                            steering.close()
 
                 return WatchedStream(keepalive_lines(agent_ndjson(), "ai_chat", abandoned=stopped, inbox=inbox),
                                      stopped, media_type="application/x-ndjson")
 
             def ndjson():
-                usage = []
+                # One provider turn, and one more for each time the user
+                # steered a message in while the model wrote (ai_steer): the
+                # turn stops at its next event, what it wrote so far and the
+                # message join the conversation, and the model goes on.
+                steering = ai_steer.open_reply(user_id, steer_turn)
+                current = resp
                 try:
-                    if head:
-                        yield head
-                    for kind, data in _sse_events(resp, _protocol(rt, entry)):
-                        if kind == "text":
-                            yield json.dumps({"delta": data}) + "\n"
-                        elif kind == "reasoning":
-                            # Saved with the reply and sent back on the next turn.
-                            said = reasoning_text(data)
-                            if said:
-                                yield json.dumps({"reasoning": said}) + "\n"
-                        elif kind == "usage":
-                            usage.append(data)
-                        elif kind == "stop" and truncated_stop(data):
-                            yield json.dumps({"truncated": True}) + "\n"
-                    # The provider's token report closes the stream — after
-                    # the model line again when it served another speed.
-                    for u in usage:
-                        if _served_speed(answered, u):
-                            yield json.dumps({"model": answered}) + "\n"
-                        count_usage(u)
-                        yield json.dumps({"usage": u}) + "\n"
+                    if first := head + steer_line(steering):
+                        yield first
+                    while True:
+                        usage, text, truncated = [], [], False
+                        for kind, data in _sse_events(current, _protocol(rt, entry)):
+                            if kind in ("text", "reasoning") and steering and steering.pending():
+                                break                   # cut short: the steered message goes next
+                            if kind == "text":
+                                text.append(data)
+                                yield json.dumps({"delta": data}) + "\n"
+                            elif kind == "reasoning":
+                                # Saved with the reply and sent back on the next turn.
+                                said = reasoning_text(data)
+                                if said:
+                                    yield json.dumps({"reasoning": said}) + "\n"
+                            elif kind == "usage":
+                                usage.append(data)
+                            elif kind == "stop" and truncated_stop(data):
+                                truncated = True
+                                yield json.dumps({"truncated": True}) + "\n"
+                        current.close()
+                        # The provider's token report closes the turn — after
+                        # the model line again when it served another speed.
+                        for u in usage:
+                            if _served_speed(answered, u):
+                                yield json.dumps({"model": answered}) + "\n"
+                            count_usage(u)
+                            yield json.dumps({"usage": u}) + "\n"
+                        steered = steering.take() if steering and not truncated else None
+                        if not steered:
+                            break
+                        messages = state["messages"]
+                        if "".join(text).strip():
+                            messages.append({"role": "assistant", "content": "".join(text)})
+                        messages.append(steered["turn"])
+                        yield json.dumps({"steered": {"ids": steered["ids"]}}) + "\n"
+                        current = open_upstream(messages, state["system"], state["pdf_b64s"], True)
                 except Exception as e:
                     log.warning(f"[ai_chat] stream error: {e}")
                     yield json.dumps({"error": failure_detail(e), **_failure_info(e, rt, entry)}) + "\n"
                 finally:
-                    resp.close()
+                    current.close()
+                    if steering:
+                        steering.close()
 
             return StreamingResponse(keepalive_lines(ndjson(), "ai_chat"),
                                      media_type="application/x-ndjson")

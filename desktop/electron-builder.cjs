@@ -146,7 +146,17 @@ module.exports = {
     // The binary and /usr/bin symlink (default would be the package name,
     // "gamma-desktop"); the install dir is /opt/Gamma (productName).
     executableName: 'gamma',
-    icon: 'assets/icon.png',
+    // The icon theme's sizes (assets/icons/<n>x<n>.png, from the brand
+    // generator, design/brand/outputs.json): hicolor has no 1024x1024
+    // directory, so the single 1024 px icon.png alone leaves the menu and
+    // the dock with no icon.
+    icon: 'assets/icons',
+    // The desktop entry named after package.json "desktopName"
+    // (gamma.desktop, as before) with StartupWMClass=gamma: Electron gives
+    // the window that name, the Wayland app_id and the X11 WM_CLASS, so the
+    // dock puts the running window under the entry's icon. Without
+    // desktopName the window said gamma-desktop and matched no entry.
+    syncDesktopName: true,
     category: 'Office',
     synopsis: 'PDF annotation and notes',
     // The desktop entry's MimeType. Not a fileAssociations entry: one with

@@ -14,11 +14,17 @@ export const EVENTS = [
   "home.opened",      // returned to the library
   "tab.opened",       // a page got a tab of its own
   "tab.menu",         // a tab's right-click menu opened
+  "tabs.split",       // a page was put beside another: Split right, or a tab dropped on a side of the page
+  "subpage.created",  // a page was made inside the open one (/page, New page inside), which opens next
   "nav.pushed",       // a link jump recorded a place for Back to return to
   "nav.back",         // Back (the button or Alt+←) returned to that place
   "palette.opened",   // the Ctrl+P page palette opened
   "commands.opened",  // the palette turned command palette (Ctrl+Shift+P, or > typed)
   "highlight.created", // {id, kind: "text" | "area"}
+  "highlighter.armed", // a text highlighter was turned on (its strip button, its key, a command)
+  "highlighter.menu", // a strip highlighter's menu opened (right-click or hold): its style, colour, order
+  "review.opened",    // a moved highlight's review card came up (hover, tap, the Document menu's Review, a step)
+  "picture.placed",   // a picture was put on a PDF page or a sheet, and selected
   "block.created",    // a new note: Enter (or Shift+Enter, as Settings has it) or the + beside a handle
   "block.indented",
   "note.lineBreak",   // Enter broke a line in a note with text, where Enter is not the new-note key
@@ -30,6 +36,7 @@ export const EVENTS = [
   "chat.cited",       // an AI reply finished with a citation link in it
   "chat.changed",     // an AI reply finished having changed the library or notes
   "chat.archived",    // {discard}: New chat kept the conversation in History (or, Alt+click, threw it away)
+  "note.aiChange",    // an AI's change that ran without asking was drawn in its note, with Revert and Hide
   "ink.selected",     // handwriting was selected (the lasso, or a tap on ink)
   "bibtex.shown",     // {folder}: the export dialog shows a bibliography and its Overleaf link
   "citation.shown",   // a citation's quote was found and marked in the PDF
@@ -55,7 +62,8 @@ export const EVENTS = [
   "recording.played", // {id}: a recording's playback started
   "search.results",   // {pdf, text}: a search's answers all came; pdf — some are text inside PDFs, text — some are lines of text files
   "search.filtered",  // {kind: folder | label}: a filter chip was made in the search box
-  "comment.created",  // {reply}: a comment was stored; reply — in a thread that was there
+  "comment.created",  // {reply, agent}: a comment was stored; reply — in a thread that was there; agent — it started an agent's turn
+  "comment.agentOffered", // writing began in a comment field that can ask an agent (its Send to tick)
   "import.finished",  // {source}: this tab's import finished (the server's name for it, importApi.js FORMATS' endpoint; the note apps' import sends one per app it brought notes of, "notability" / "goodnotes")
   "page.fileReplaced", // {id}: the open page's PDF was replaced from elsewhere (a file pushed from disk, another tab)
   "zotero.connected", // the Zotero account is connected: just now, or seen so by the link dialog

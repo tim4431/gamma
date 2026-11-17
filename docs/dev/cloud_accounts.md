@@ -1392,8 +1392,13 @@ and with `cloud.lead` to lead with it: on a hosted container and on a share
 host, whose people all come from Gamma Cloud, the page is that one button
 and the password form folds behind *Admin sign-in*.
 
-A server whose confirmed public URL is not a loopback one cannot sign in
-as the desktop client (`cloud_auth.needs_connect`). Until it has a client
+A server whose confirmed public URL is an https one cannot sign in
+as the desktop client (`cloud_auth.needs_connect`). Gamma Cloud reads the
+public URL through `cloud_auth.cloud_public_url`, an https or loopback
+address alone: a plain-http address of this network, confirmed for
+assistants ([mcp.md](mcp.md#self-hosted-and-remote-connections)), counts
+as none, so such a server signs in as one with no public URL and is
+offered no connection. Until it has a client
 of its own:
 
 - the login page shows no cloud button, and `start` sends the browser back
@@ -1622,7 +1627,7 @@ posts itself to `POST /api/me/servers` (an upsert, which refreshes
 `development build`), and `schema`, the data directory's `PRAGMA
 user_version` (`migrations.data_version()`; left out on a fresh install).
 Only a server linked to Gamma Cloud reports, and only these two numbers.
-The address is the confirmed public URL, named by its
+The address is the confirmed public URL (`cloud_public_url`), named by its
 host. A local sidecar has no public URL: it sends the loopback origin the
 sign-in came in on (remembered in the `settings` KV as `cloud_server_url`
 for the hourly check) and names itself after the machine. A plain LAN
@@ -2132,7 +2137,7 @@ through `cloud_auth._http` and its user agent:
 ```json
 {"version": "v1.4.0 (abc123def456)", "schema": 31, "accounts": 4,
  "active_accounts": 2, "uploads_bytes": 734003200, "data_bytes": 912680550,
- "public_url": "https://alice.gammapdf.com",
+ "public_url": "https://alice-user.gammapdf.com",
  "last_write_at": "2026-10-05T08:41:17Z", "errors": 0, "uptime_s": 259200}
 ```
 

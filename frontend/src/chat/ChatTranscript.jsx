@@ -32,7 +32,7 @@ import { sendsOnEnter } from "./enterKey.js";
 import { composing } from "../shared/lib/hotkeys.js";
 import { openReport } from "../support/reportContent.js";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ClockIcon, CopyIcon, FileIcon, FlagIcon, FolderIcon,
-  InfoIcon, PencilIcon, QuoteIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
+  CornerDownRightIcon, InfoIcon, PencilIcon, QuoteIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // What the model was given for a reply, per document — streamed by
@@ -357,6 +357,11 @@ function MessageRow({ m, i, last, responding, still, findHit, props }) {
               onReverted={changes.onReverted && m.id ? (indexes, answer, reverted) => changes.onReverted(m.id, indexes, answer, reverted) : undefined}
               onRevertMany={changes.onReverted && m.id && changes.many ? () => changes.onRevertMany(m.id) : undefined}
               onShowChange={m.id ? (k) => noteReview.show(changeSteps(changes.messages, m.id, k, changes.key)) : undefined} />
+          ) : null}
+          {isUser && m.steered ? (
+            <div className="chatMsgSteered" title={t("Sent into the reply while it ran: the reply took it in here")}>
+              <CornerDownRightIcon size={14} />{t("Steered")}
+            </div>
           ) : null}
           {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
             {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}

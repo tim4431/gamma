@@ -114,6 +114,8 @@ fails too, on any system. Each item below names the e2e step that covers it
 | 6.3 | macOS: traffic lights sit in the bar (`hiddenInset`), bar padded past them | manual (build on a Mac) |
 | 6.4 | Launcher and bar use Gamma's tokens/controls/icons (no emoji, no bespoke colors) | manual: compare with Settings in Gamma |
 | 6.5 | Alt reveals the native menu on Windows; accelerators work without it (Ctrl+R reload, Ctrl+Shift+I devtools, Ctrl+0/±) | manual |
+| 6.5b | A library page's *Copy PDF* puts the PDF on the clipboard: a paste in Explorer / Finder / the file manager makes the file, named after the page, and a paste into a chat app (WeChat, Slack) sends it | auto: *Copy PDF in a library page's menu…* (the file the shell made, byte for byte; the clipboard recorded only); manual: the paste on each system |
+| 6.5a | Ctrl+W (⌘W) closes the open page's tab and leaves the window open; Ctrl+Shift+W (⇧⌘W) closes the window | auto: *Ctrl+W (⌘W on a Mac) closes the open page's tab…* (no menu item takes Ctrl+W; the key pressed in the page); manual: the keys pressed on a real keyboard, where the menu sees them first |
 | 6.6 | Rename from the launcher updates the bar immediately | auto: *rename + remove from the launcher* + bar name via pushState |
 | 6.7 | Linux: title-bar overlay controls follow the desktop's title-bar layout (on GNOME only a close button), recolor with the theme and stay clear of the bar's content at whichever end holds them (buttons moved to the left in GNOME Tweaks clear the logo and the switcher once the window is focused again, the menu opens past them); the desktop entry shows the icon in the launcher/dock; `gamma` on PATH starts the app | manual (build on Linux) |
 
@@ -121,12 +123,12 @@ fails too, on any system. Each item below names the e2e step that covers it
 
 | # | Check | How |
 |---|---|---|
-| 7.1 | Dev tree / test harness: updater reports `unsupported`, the launcher's Updates row says so, no pill in the bar; *Help → Check for Updates…* says updates are not available | auto: *updater: disabled under test, state exposed through the shell* (the menu item clicked, its box recorded) |
+| 7.1 | Dev tree / test harness: updater reports `unsupported`, the launcher's Updates row says so, no update icon in the bar; *Help → Check for Updates…* says updates are not available | auto: *updater: disabled under test, state exposed through the shell* (the menu item clicked, its box recorded) |
 | 7.2 | Packaged app, no newer release: *Help → Check for Updates…* says *latest version*; the launcher row reads *Up to date* | manual |
 | 7.3 | Packaged app, offline: the row reads *Update check failed: …*, nothing else complains; *Try again* re-checks | manual |
-| 7.4 | Windows: install an older version, publish a newer release → within ~15 s of launch the bar shows *Restart to update* (row: *ready; installs when you restart*); clicking it quits, stops every sidecar, installs silently, and the relaunched app reports the new version | manual, needs a real release |
-| 7.5 | macOS (unsigned): same setup shows the *Update: <v>* pill; clicking opens the release page in the browser instead of installing | manual (build on a Mac) |
-| 7.6 | Linux (.deb): same setup as 7.4 shows *Restart to update*; clicking it opens a pkexec password prompt, `dpkg -i` runs, and the relaunched app reports the new version | manual, needs a real release |
+| 7.4 | Windows: install an older version, publish a newer release → within ~15 s of launch the bar shows the *Update now* icon (accent colour; its title the version and the download's progress); pressed while it downloads it turns to a spinner (row: *Updating…*), and once the download is done the app quits, stops every sidecar, installs silently, and the relaunched app reports the new version; pressed after the download (row: *ready; installs when you restart*), the same at once | manual, needs a real release; the queued press: `test/updater.test.js` |
+| 7.5 | macOS (unsigned): same setup shows the icon titled *Gamma <v> is available*; clicking opens the release page in the browser instead of installing | manual (build on a Mac) |
+| 7.6 | Linux (.deb): same setup as 7.4 shows the *Update now* icon; clicking it opens a pkexec password prompt once the download is done, `dpkg -i` runs, and the relaunched app reports the new version | manual, needs a real release |
 
 ## 8. Release
 

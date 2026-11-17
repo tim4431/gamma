@@ -248,19 +248,22 @@ def step_text(step: dict) -> str:
 
 def _turn(message: dict, agent: str) -> list[str]:
     """The agent's message: its steps, its reply, what it changed, and how
-    its turn ended when it did not answer."""
+    its turn ended when it did not answer; a message the person steered in
+    where the agent took it, the turn going on under its heading again."""
     label = str(message.get("label") or agent)
-    out = ["## " + " · ".join(str(bit) for bit in (label, message.get("model"), message.get("effort")) if bit), ""]
+    head = ["## " + " · ".join(str(bit) for bit in (label, message.get("model"), message.get("effort")) if bit), ""]
+    out = list(head)
     if message.get("fresh"):
         out += [f"*{label} started a new session: it did not remember the earlier turns.*", ""]
-    steps = [s for s in message.get("steps") or [] if isinstance(s, dict)]
-    if steps:
-        out += ["**Steps**", ""]
-        out += [f"- {step_text(s)}" + (" *(failed)*" if s.get("status") == "failed" else "") for s in steps]
-        out.append("")
-    text = str(message.get("text") or "").strip()
-    if text:
-        out += [text, ""]
+    for steps, text, steer in _parts(message):
+        if steps:
+            out += ["**Steps**", ""]
+            out += [f"- {step_text(s)}" + (" *(failed)*" if s.get("status") == "failed" else "") for s in steps]
+            out.append("")
+        if text:
+            out += [text, ""]
+        if steer is not None:
+            out += _asked(steer) + head
     named = [str(path) for path in message.get("changes") or [] if path]
     changed = max(_int(message.get("changed")), len(named))
     if changed or message.get("built"):
@@ -280,6 +283,24 @@ def _turn(message: dict, agent: str) -> list[str]:
     elif state in ("queued", "running"):
         out += [f"*{label} was still working when this was exported.*", ""]
     return out
+
+
+def _parts(message: dict) -> list[tuple[list, str, dict | None]]:
+    """The agent's message cut where messages were steered into its turn
+    (``steers``, each at its ``place``: the length of the text then and how
+    many steps had come), as the chat draws it (computerChat.js
+    ``steerParts``): ``[(steps, text, steer)]``, the last part's steer
+    None."""
+    text = str(message.get("text") or "")
+    steps = [s for s in message.get("steps") or [] if isinstance(s, dict)]
+    parts, at, step = [], 0, 0
+    for steer in message.get("steers") or []:
+        place = steer.get("place") if isinstance(steer, dict) and isinstance(steer.get("place"), dict) else {}
+        end = min(max(_int(place.get("text")), at), len(text))
+        upto = min(max(_int(place.get("steps")), step), len(steps))
+        parts.append((steps[step:upto], text[at:end].strip(), steer))
+        at, step = end, upto
+    return parts + [(steps[step:], text[at:].strip(), None)]
 
 
 def _asked(message: dict) -> list[str]:

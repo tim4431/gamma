@@ -56,6 +56,7 @@ This module is imported inside functions (gamma/local_agents/__init__.py).
 import json
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -73,6 +74,8 @@ HISTORY_CAP = 200        # archived conversations listed
 BUSY = ("queued", "running")
 MESSAGE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 HOME = "home"            # the library's bucket, as the AI chats name it
+MAX_STEERS = 20          # messages steered into one turn
+NOT_STEERED = "The agent is not taking messages now: this one goes as the next one."
 
 _COLUMNS = ("id", "bucket", "dir", "user_id", "agent", "title", "messages", "version", "created_at", "updated_at",
             "archived_at", "thread_id", "owner", "computer")
@@ -327,6 +330,35 @@ def _answered(ws: str, ended) -> None:
 
     for conversation_id, turn_id in ended:
         threads.settle(ws, conversation_id, turn_id)
+
+
+def steer_of(raw: dict) -> dict | None:
+    """A message steered into a turn as the person sent it (``{id, text,
+    selections}``), as kept: the text stripped, the selections as a
+    message's (``selections_of``); None when its id is not one Gamma makes
+    or it has no text or too long a one."""
+    text = raw.get("text") if isinstance(raw.get("text"), str) else ""
+    if not isinstance(raw.get("id"), str) or not MESSAGE_ID.match(raw["id"]) or not text.strip() \
+            or len(text.strip()) > MAX_TEXT:
+        return None
+    return {"id": raw["id"], "text": text.strip(), "selections": selections_of(raw.get("selections"))}
+
+
+def steered_of(raw) -> list[dict]:
+    """The messages a turn's agent took in while it worked, as its message
+    keeps them (``runner._ChatTurn._progress``; another computer's run
+    writes them too): ``{id, text, selections, at, place: {text, steps}}``,
+    ``place`` where the reply stood (characters of its text, its steps);
+    at most ``MAX_STEERS``, the malformed left out."""
+    out = []
+    for item in raw[:MAX_STEERS] if isinstance(raw, list) else []:
+        steer = steer_of(item) if isinstance(item, dict) else None
+        place = item.get("place") if steer and isinstance(item.get("place"), dict) else None
+        counts = [place.get(k) for k in ("text", "steps")] if place else []
+        if steer and all(isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in counts) and counts:
+            at = item.get("at") if isinstance(item.get("at"), str) else ""
+            out.append({**steer, "at": at[:40], "place": {"text": counts[0], "steps": counts[1]}})
+    return out
 
 
 def selections_of(raw) -> list[dict]:
@@ -960,6 +992,45 @@ def answer_run(ws: str, turn_id: str, ask_id: str, decision: str, note: str, by:
         message = {**reply, "asks": [a for a in asks if a.get("id") != ask_id]}
         _save(conn, conversation, [*messages[:at], message, *messages[at + 1:]])
     return row["holder"]
+
+
+# The messages steered into turns that run on another computer, until its
+# listing hands them over (``steers_of``): turn id -> {holder, run, items}.
+# Kept in memory, as Gamma AI's are (gamma/ai_steer.py): one a restart
+# loses, or one the agent never takes, goes as the next turn from the chat.
+_far_steers: dict[str, dict] = {}
+_far_lock = threading.Lock()
+
+
+def steer_run(ws: str, turn_id: str, item: dict) -> str:
+    """A message steered into a turn that runs on another computer
+    (``steer_of``'s), kept for that computer to take (``steers_of``) → the
+    token of the computer that runs it, the caller's to wake. ChatError
+    404 for no such turn, 409 for one not running."""
+    with connect_pages_db(ws) as conn:
+        row = run_of(conn, turn_id)
+    if row is None:
+        raise ChatError(404, NO_TURN)
+    if row["state"] != "running" or not row["holder"]:
+        raise ChatError(409, NOT_STEERED)
+    with _far_lock:
+        kept = _far_steers.get(turn_id)
+        if kept is None or kept["run"] != row["run"]:
+            kept = _far_steers[turn_id] = {"holder": row["holder"], "run": row["run"], "items": []}
+        if len(kept["items"]) >= MAX_STEERS:
+            raise ChatError(409, NOT_STEERED)
+        kept["items"].append(item)
+    return row["holder"]
+
+
+def steers_of(holder: str) -> list[dict]:
+    """The messages steered into the turns the computer ``holder`` runs
+    (``steer_run``), each handed out once: ``[{id, run, steer: {id, text,
+    selections}}]``."""
+    with _far_lock:
+        mine = [turn_id for turn_id, kept in _far_steers.items() if kept["holder"] == holder]
+        taken = [_far_steers.pop(turn_id) | {"id": turn_id} for turn_id in mine]
+    return [{"id": kept["id"], "run": kept["run"], "steer": item} for kept in taken for item in kept["items"]]
 
 
 def claim(ws: str, turn_id: str, *, user_id: str, holder: str, computer_id: str, run: str, agent: str,

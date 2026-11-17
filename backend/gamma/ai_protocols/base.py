@@ -110,10 +110,12 @@ def turn_files(message) -> list:
 
 def attach_index(messages) -> int:
     """Index of the message the request's own attachments ride on: the last
-    plain user turn (tool-result entries can follow it in agent rounds). They
-    go after the turn's own files and pictures, right before its text."""
+    plain user turn (tool-result entries can follow it in agent rounds), not
+    one the user steered into the reply later (``ai_steer``): the request's
+    pictures and PDFs are its question's. They go after the turn's own files
+    and pictures, right before its text."""
     for index in range(len(messages) - 1, -1, -1):
-        if messages[index]["role"] == "user":
+        if messages[index]["role"] == "user" and not messages[index].get("steered"):
             return index
     return len(messages) - 1
 

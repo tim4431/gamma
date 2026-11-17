@@ -260,7 +260,8 @@ def _chat_refusals():
 @router.get("/computers/chats")
 def waiting_chats(request: Request):
     """``{turns: [{id, conversation_id, bucket, agent, dir: {kind, id},
-    at}], stops: [{id, run}], answers: [{id, run, ask, decision, note}]}``:
+    at}], stops: [{id, run}], answers: [{id, run, ask, decision, note}],
+    steers: [{id, run, steer: {id, text, selections}}]}``:
     the turns that wait for this computer's
     agents (``chats.waiting_turns``), of the token's account's
     conversations with this computer and of the people its agent serves
@@ -268,8 +269,9 @@ def waiting_chats(request: Request):
     work folder paused there (oldest first, at most ``chats.MAX_WAITING``;
     none while the account may not edit, ``registry.taking``), ``dir``
     where its agent works by an id; the runs of it whose turns were asked
-    to stop (listed until the run writes its end); and the answers given
-    here to what its running turns ask (``chats.answers_of``)."""
+    to stop (listed until the run writes its end); the answers given
+    here to what its running turns ask (``chats.answers_of``); and the
+    messages steered into them, each handed out once (``chats.steers_of``)."""
     from ..local_agents import chats
 
     user_id, _username, ws, token_id = _computer(request)
@@ -284,7 +286,7 @@ def waiting_chats(request: Request):
                      if turn["agent"] in taking["agents"]]
         stops = chats.stops_of(conn, token_id)
         answers = chats.answers_of(conn, token_id)
-    return {"turns": turns, "stops": stops, "answers": answers}
+    return {"turns": turns, "stops": stops, "answers": answers, "steers": chats.steers_of(token_id)}
 
 
 @router.post("/computers/chats/{turn_id}/claim")
@@ -455,8 +457,9 @@ def _turn_fields(raw: dict) -> dict:
     computer's own file system may allow, left out), ``changed``, ``built``, ``error``,
     ``fresh``, ``asks`` (what the agent asks that this server may answer:
     ``_ask``, at most ``runner.MAX_ASKS``), ``waiting`` (an ask of the turn
-    waits for an answer on the computer alone), ``state`` (running or
-    an end), ``model``, ``effort``; ``ended_at`` is this server's clock
+    waits for an answer on the computer alone), ``steers`` (the messages
+    steered in that the agent took, ``chats.steered_of``), ``state``
+    (running or an end), ``model``, ``effort``; ``ended_at`` is this server's clock
     (``chats.write_run``), any other field left out. 400 for one of another
     shape."""
     from ..local_agents import chats, prompt, runner, store
@@ -496,6 +499,10 @@ def _turn_fields(raw: dict) -> dict:
         if not isinstance(raw["asks"], list):
             raise HTTPException(status_code=400, detail="asks is a list.")
         out["asks"] = [_ask(ask) for ask in raw["asks"][:runner.MAX_ASKS]]
+    if "steers" in raw:
+        if not isinstance(raw["steers"], list):
+            raise HTTPException(status_code=400, detail="steers is a list.")
+        out["steers"] = chats.steered_of(raw["steers"])
     if "changes" in raw:
         if not isinstance(raw["changes"], list) or not all(isinstance(p, str) for p in raw["changes"]):
             raise HTTPException(status_code=400, detail="changes is a list of paths.")

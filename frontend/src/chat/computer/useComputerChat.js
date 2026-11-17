@@ -11,13 +11,16 @@
 // the computer's agents.
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson, makeId } from "../../shared/lib/utils";
+import { IS_DESKTOP } from "../../shared/lib/connector.js";
 import { GammaNavContext } from "../../shared/ui/Widgets";
 import { t } from "../../shared/i18n/i18n.js";
-import { FolderIcon } from "../../shared/ui/Icons";
+import { askShellWatching } from "../../vault/useVault.js";
 import { stripFacts } from "../agents.js";
+import { readLocalAgents } from "../useLocalAgents.js";
+import { noteDirUsed, usedDirs } from "./usedDirs.js";
 import {
   AWAY_POLL_MS, POLL_MS, SOURCES_MAX, TEXT_MAX, answerBody, askPath, awayFrom, canSend, chatPath, emptyLine, isRemote,
-  lastEnded, liveTurn, modelChoice, modelDisplay, retryOf, shownMessages, sourcesBody, turnBody, workPlace,
+  lastEnded, liveTurn, modelChoice, modelDisplay, retryOf, shownMessages, sourcesBody, steeringTurn, turnBody, workPlace,
 } from "./computerChat.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -113,7 +116,8 @@ export const computerExportPath = (id) => `${API}/local-agents/chat/history/${en
 //   the conversation's {model, effort} (computerChat.modelChoice) and, for
 //   a conversation that begins, `dir` where it works (computerChat
 //   workPlace); answer(turnId, askId, decision, note) answers what the turn
-//   asks, throwing a refusal for the card to say; stop(turnId) and
+//   asks, throwing a refusal for the card to say; steer(turnId, item) hands
+//   a queued message to the running turn, throwing the refusal; stop(turnId) and
 //   newChat() do what they say and read the conversation again;
 //   revokeGrants() takes back what was allowed in the conversation;
 //   say(text) is the status pill
@@ -246,6 +250,13 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
     }
   }, [load]);
 
+  // A queued message steered into the running turn `id` (chat/chatQueue.js
+  // `{id, text, parts}`): handed to its agent, which takes it in at its next
+  // step; throws the server's refusal (409: the turn takes none now, and the
+  // queue sends it as the next turn).
+  const steer = useCallback((id, item) => apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/steer`,
+    post({ id: item.id, text: String(item.text).slice(0, TEXT_MAX), selections: item.parts?.selections || [] })), []);
+
   const stop = useCallback((id) => act(async () => {
     await apiJson(`${API}/local-agents/chat/turns/${encodeURIComponent(id)}/stop`, post({}));
   }, (message) => t("Couldn't stop {agent}: {message}", { agent: label, message })), [act, label]);
@@ -267,7 +278,7 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
 
   return {
     computer: state.computer, conversation: state.conversation, read: state.read, error: state.error, busy,
-    reload: load, say, send, answer, stop, newChat, revokeGrants,
+    reload: load, say, send, answer, steer, stop, newChat, revokeGrants,
   };
 }
 
@@ -278,13 +289,17 @@ export function useComputerChat(pageId, agent, setStatus, shown = null) {
 const picks = new Map();
 const pickKey = (bucket, agent, conversation) => `${bucket}\n${agent}\n${conversation?.id || ""}`;
 // The directory each bucket's next conversation is to work in (an offered
-// one's id, "" for one of its own), until its first turn.
+// one's id, "" for one of its own) where the person picked one, until its
+// first turn; a bucket with none starts where the last conversation did
+// (usedDirs).
 const places = new Map();
 
 // What ChatDock reads of the side for the bucket `bucket` ("" while no
 // computer's agent is the one shown: nothing is read) and the agent picked
 // (`agent`), with `page` whether the bucket is a page, `dirs` the
-// directories this computer offers, and the PDF passages selected (App's,
+// directories this computer offers, `here` whether this server is this
+// computer's (GET /api/local-agents' `here`: the desktop app then offers
+// it another, Add folder…), and the PDF passages selected (App's,
 // which go with the next message and are cleared once the server took it):
 //   chat        useComputerChat's state
 //   info        the strip's facts: the server's, else the picked agent's
@@ -296,30 +311,38 @@ const places = new Map();
 //               server says is queued for it before the conversation shows
 //               it; "" for none, `working` while there is one (New chat and
 //               History's other conversations wait for it)
-//   ready(text) whether `text` can go now; send(text) → whether the turn
-//               was made
-//   retry(i)    Retry for the failed turn at the transcript's index `i`,
-//               null when it is not the newest or nothing could go now
+//   ready(text) whether `text` can go now; queues(text) whether it could
+//               wait for the turn under way (the chat's queue);
+//               send(text, passages?) → whether the turn was made, with a
+//               queued message's passages or the composer's
+//   retry(row)  Retry for the failed turn the transcript's row draws (its
+//               `turnId`), null when it is not the newest or nothing could
+//               go now
+//   steering    the turn a queued message's Steer goes to: the one whose
+//               agent works now, "" for none (computerChat.js steeringTurn)
 //   chip        the model chip's props (chat/AgentChip.jsx: label, text,
 //               models, model, onModel, sections): the agent's models and
-//               efforts and where it works, the choice the conversation's
+//               efforts, the choice the conversation's
 //   grants      the Allowed in this chat chip's props (GrantChip), null
 //               while nothing is allowed
-//   place, pickPlace   where a conversation that begins works (workPlace)
+//   place, pickPlace   where the conversation works (workPlace), the
+//               composer's folder chip (PlaceChip.jsx), and the choice of
+//               one that begins
+//   addPlace    Add folder…: the shell's folder dialog, the folder it
+//               offers then picked; null where the window cannot offer one
 //   sources     the passages' source lines (usePassageSources)
 //   links       what a changed file's link resolves through (PathLink's
 //               context), null outside a work folder
-//   empty       {text, again, offer} the empty transcript's line, `again`
-//               when it says why the conversation could not be read (Try
-//               again), `offer` when this computer offers no directory to
-//               work in (Offer a directory…); null until the read
+//   empty       {text, again} the empty transcript's line, `again` when it
+//               says why the conversation could not be read (Try again);
+//               null until the read
 //   shown       the conversation the side shows in place of the bucket's
 //               own (`shown`, chatSide.js useChatShown: {thread} a comment
 //               thread's, {conversation} a co-author's), null for its own:
 //               nothing is sent from the chat then (a thread's replies are
 //               its messages, a co-author's chat is theirs)
-export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSelections = [], setPdfSelections, setStatus,
-  shown = null }) {
+export function useComputerSide(bucket, agent, { page = false, dirs = [], here = false, pdfSelections = [], setPdfSelections,
+  setStatus, shown = null }) {
   const chat = useComputerChat(bucket, bucket ? agent : null, setStatus, shown);
   const info = chat.computer || stripFacts(agent);
   const label = info?.label || agent?.label || "";
@@ -335,13 +358,28 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   };
   // Where a conversation that begins works, once the server said where it
   // stands (a vault's own directory is the vault's).
-  const place = chat.computer ? workPlace(chat.computer, conversation, dirs, places.get(bucket) || "") : null;
+  const place = chat.computer ? workPlace(chat.computer, conversation, dirs, places.get(bucket), usedDirs()) : null;
   const pickPlace = (dir) => {
     places.set(bucket, dir);
     redraw((n) => n + 1);
   };
   const how = () => ({ ...choice, ...(place?.pick ? { dir: place.value } : {}) });
   const remote = isRemote(info);
+  // Add folder…: the shell's folder dialog offers the directory picked to
+  // the agents (`agent-dirs`, its question and its word), and the listing
+  // is read again until it lists one more, which the bucket's conversation
+  // that begins then works in; one watch at a time, stopped with the chat.
+  const adding = useRef(null);
+  useEffect(() => () => adding.current?.stop(), []);
+  const addPlace = IS_DESKTOP && here && !remote && place?.pick ? () => {
+    adding.current?.stop();
+    const had = new Set(dirs.map((d) => d.id));
+    adding.current = askShellWatching("agent-dirs", { dir: "new" }, () => readLocalAgents().then((listing) => listing?.dirs || []), () => dirs);
+    adding.current.done.then((now) => {
+      const added = (now || []).find((d) => !had.has(d.id));
+      if (added) pickPlace(added.id);
+    });
+  } : null;
   const where = remote ? String(info.computer || "") : "";
   // The source lines need the window to be the computer the folder is on.
   const sources = usePassageSources(remote || !page ? "" : bucket, pdfSelections, lastEnded(conversation));
@@ -349,15 +387,20 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   // Off until the conversation was read: one that failed may hold a turn.
   const landed = chat.read && !chat.error;
   const ready = (text) => landed && !shown && !chat.busy && canSend(info, conversation, text);
+  // Whether a message could wait for the turn under way (the chat's queue).
+  const queues = (text) => landed && !shown && !!String(text || "").trim();
 
-  async function send(text) {
+  // `passages` a queued message's (chat/chatQueue.js), else the
+  // composer's, which a sent message takes off it.
+  async function send(text, passages = null) {
     if (!ready(text)) return false;
-    const sent = await chat.send(String(text).slice(0, TEXT_MAX), pdfSelections, how());
+    const sent = await chat.send(String(text).slice(0, TEXT_MAX), passages || pdfSelections, how());
     if (sent) {
-      setPdfSelections([]);
-      // A first turn's picks are its conversation's now, and a new chat
-      // starts from the agent's default and no folder.
+      if (!passages) setPdfSelections([]);
+      // A first turn's picks are its conversation's now: a new chat starts
+      // from the agent's default, in the folder this one began in.
       if (!conversation) {
+        if (place?.pick) noteDirUsed(place.value);
         picks.delete(key);
         places.delete(bucket);
       }
@@ -367,8 +410,9 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
 
   // Retry on a failed turn, the newest: the person's message again, with
   // its passages, while a message could go.
-  const retry = (i) => {
-    const again = retryOf(conversation, conversation?.messages?.[i]);
+  const retry = (row) => {
+    const again = retryOf(conversation, (conversation?.messages || [])
+      .find((m) => m.role === "agent" && m.turn_id === row?.turnId));
     if (!again || !ready(again.text)) return null;
     return () => chat.send(again.text, again.selections, how());
   };
@@ -395,23 +439,15 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   const empty = !conversation?.messages?.length && chat.error ? { text: chat.error, again: true }
     : chat.read ? { text: shown?.thread ? t("This comment thread has no conversation of yours with {agent}.", { agent: label })
       : shown ? t("This conversation is no longer one you can read.")
-        : emptyLine(info, label, where, place, page), again: false,
-    // this computer offers no directory: Settings → AI → Agents is where one is offered
-    offer: !shown && !remote && !!place?.pick && place.options.length < 2 } : null;
+        : emptyLine(info, label, where, place, page), again: false } : null;
 
-  // The composer's model chip (chat/AgentChip.jsx): where the agent works
-  // (`place`, while there is a choice: the conversation's once it has a
-  // turn, shown and not to change), its models and its efforts as
-  // sections, the choice the conversation's.
+  // The composer's model chip (chat/AgentChip.jsx): the agent's models and
+  // its efforts as a section, the choice the conversation's.
   const efforts = choice.shown?.efforts || [];
   const chip = {
     label: t("{agent}'s model", { agent: label }), text: modelDisplay(choice),
     models: models.map((m) => [m.id, m.label || m.id]), model: choice.model || choice.shown?.id || "",
     onModel: (model) => pickModel({ model, effort: choice.effort }),
-    place: place?.options.length > 1 ? {
-      label: t("Works in"), value: place.value, onChange: pickPlace, options: place.options.map(([value, name]) => [value, name, FolderIcon]),
-      ...(place.pick ? {} : { disabled: true, title: t("Start a new chat to work elsewhere") }),
-    } : null,
     sections: efforts.length ? [{
       label: t("Reasoning effort"), value: choice.effort, onChange: (effort) => pickModel({ model: choice.model, effort }),
       options: [["", choice.shown.effort ? t("Default ({effort})", { effort: choice.shown.effort }) : t("Default")],
@@ -426,8 +462,9 @@ export function useComputerSide(bucket, agent, { page = false, dirs = [], pdfSel
   } : null;
 
   return {
-    chat, info, label, where, messages, stopId, working: !!stopId, ready, send, retry, chip, grants,
-    place, pickPlace, sources, links, empty, shown,
+    chat, info, label, where, messages, stopId, working: !!stopId, ready, queues, send, retry, chip, grants,
+    steering: landed && !shown ? steeringTurn(conversation) : "",
+    place, pickPlace, addPlace, sources, links, empty, shown,
   };
 }
 

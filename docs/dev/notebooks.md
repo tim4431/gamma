@@ -342,8 +342,9 @@ No schema change: sheets are blocks and properties.
   `picturesDrag`): the sheet's picture layer takes that drop in the
   capture phase (`markup/PictureLayer.jsx`). `editor/slashCommands.js` has
   `/note` (a command's own name ranks before words that mention it, so
-  it comes before the callout and the links). `/page` is the new library
-  page ([home_library.md](home_library.md)); "page" is among `/note`'s
+  it comes before the callout and the links). `/page` is a new page
+  inside the open one, linked where it was typed
+  ([home_library.md](home_library.md#sub-pages)); "page" is among `/note`'s
   words, so typing "/page" lists the sheet too, after the new page.
 
 ## Not built yet

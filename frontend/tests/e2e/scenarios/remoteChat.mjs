@@ -153,7 +153,7 @@ export async function remoteChatScenarios(env) {
     const stripText = async (dock) => (await dock.locator(".computerStrip").innerText().catch(() => "")).trim();
     // The strip's line alone, and where the agent works after it (a page in no synced folder).
     const stripLine = async (dock) => (await dock.locator(".computerStrip .chatHealthText").innerText().catch(() => "")).trim();
-    const stripPlace = async (dock) => (await dock.locator(".computerStrip .computerPlace").innerText().catch(() => "")).trim();
+    const shownPlace = async (dock) => (await dock.locator(".chatPlaceChip .uiSelectBtn").innerText().catch(() => "")).trim();
     // `words` selected on PDF page `n`, as a drag ending in the viewer does.
     const selectOnPdf = (page, n, words) => page.evaluate(([n, words]) => {
       const span = [...document.querySelectorAll(`[data-page="${n}"] .textLayer span`)].find((s) => s.textContent.includes(words));
@@ -521,7 +521,7 @@ export async function remoteChatScenarios(env) {
         await waitForPdf(page, 1);
         const dock = await codexSide(page);
         await until(async () => (await stripLine(dock)) === `Codex on ${name}`, { what: `the strip names the computer: ${await stripText(dock)}` });
-        assertEq(await stripPlace(dock), "Its own directory", "the computer offers no directory: one of its own");
+        assertEq(await shownPlace(dock), "Its own directory", "the computer offers no directory: one of its own, in the folder chip");
         await dock.locator(".chatEmpty", { hasText: `it works in an empty directory of its own on ${name}.` }).waitFor();
         await dock.getByRole("textbox", { name: "Message Codex", exact: true }).fill(LOOSE_ASK);
         await dock.getByRole("button", { name: "Send", exact: true }).click();

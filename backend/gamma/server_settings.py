@@ -40,7 +40,9 @@ gamma/offsite.py) and the network proxy (`proxy`, gamma/proxy_settings.py),
 which read theirs with ``_peek_raw``, on a connection of their own.
 """
 
+import ipaddress
 import re
+import socket
 import sqlite3
 from contextlib import closing
 from ipaddress import IPv6Address
@@ -49,7 +51,7 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
-from . import config, db
+from . import config, db, host_scope
 from .db import account_name, connect_users_db, page_now
 
 MB = 1024 * 1024
@@ -113,9 +115,28 @@ def _set_raw(key: str, value: str) -> None:
 
 # Hosts that may use plain HTTP: the machine itself.
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+PLAIN_HTTP_ONLY = {False: "HTTP is allowed only for localhost.",
+                   True: "Plain HTTP is allowed only for localhost and addresses on this network (a private IP "
+                         "address, or a .local, .lan, .home.arpa or .internal name)."}
 
 
-def validate_public_url(value: str) -> str:
+def _plain_scope(host: str) -> str:
+    """``host_scope.literal`` of a normalized host, a host written as one
+    number or in hex (3405803781, 0xcb007105) read as the IPv4 address a
+    client connects to, never as a single-label name."""
+    try:
+        return host_scope.literal(str(ipaddress.IPv4Address(socket.inet_aton(host))))
+    except (OSError, ValueError):
+        return host_scope.literal(host)
+
+
+def validate_origin(value: str, *, lan_http: bool) -> str:
+    """``value`` as an http(s) origin, normalized (the host lower case and
+    IDNA-encoded, its default port dropped), "" for none, or ValueError: a
+    path, a query, a fragment or a user is refused. https anywhere; plain
+    http to this computer (LOOPBACK_HOSTS) and, with ``lan_http``, to an
+    address of this network by the normalized host's form alone
+    (``_plain_scope`` "lan", no DNS)."""
     value = value.strip()
     if not value:
         return ""
@@ -123,10 +144,8 @@ def validate_public_url(value: str) -> str:
         url = urlsplit(value)
         host = url.hostname or ""
         port = url.port
-        local = host in LOOPBACK_HOSTS
         if (len(value) > 2048 or re.search(r"[\s\\\x00-\x1f\x7f]", value)
                 or url.scheme not in {"http", "https"} or not host
-                or (url.scheme != "https" and not local)
                 or url.username is not None or url.password is not None
                 or url.path not in ("", "/") or "?" in value or "#" in value
                 or (port is not None and port < 1)):
@@ -140,12 +159,45 @@ def validate_public_url(value: str) -> str:
             if len(host) > 253 or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
                                           for label in host.split(".")):
                 raise ValueError
+        if url.scheme != "https" and not (host in LOOPBACK_HOSTS
+                                          or (lan_http and _plain_scope(host) == host_scope.LAN)):
+            raise ValueError
         authority = f"[{host}]" if ":" in host else host
         if port is not None and port != (443 if url.scheme == "https" else 80):
             authority += f":{port}"
         return f"{url.scheme}://{authority}"
     except (ValueError, UnicodeError):
-        raise ValueError("Enter an HTTPS server address without a path, query, or fragment. HTTP is allowed only for localhost.") from None
+        raise ValueError("Enter an HTTPS server address without a path, query, or fragment. "
+                         + PLAIN_HTTP_ONLY[lan_http]) from None
+
+
+def validate_public_url(value: str) -> str:
+    """The public server URL's form: https, or plain http on this computer or
+    this network, where assistants reach a NAS without a certificate
+    (docs/dev/https.md "Plain http"). Gamma Cloud uses only an https or
+    loopback one (cloud_auth.cloud_public_url)."""
+    return validate_origin(value, lan_http=True)
+
+
+def confirmable_public_url(value: str) -> str:
+    """``validate_public_url``, and DNS for plain http to a name of this
+    network: assistants send their tokens to it, so one that resolves to an
+    address on the internet is refused (``host_scope.resolved``: a search
+    domain can make nas.lan public), as a new link there is, and so is one
+    whose lookup did not answer in time. Only on a confirmation in Settings;
+    reads of the saved address ask no DNS, and GAMMA_PUBLIC_URL is taken as
+    the operator wrote it."""
+    url = validate_public_url(value)
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.scheme == "http" and host not in LOOPBACK_HOSTS:
+        scope, unsure = host_scope.resolved(host)
+        if scope == host_scope.FAR:
+            raise ValueError(f"{host} resolves to an address on the internet, where assistants would sign in over "
+                             "plain HTTP. Enter its https:// address.")
+        if unsure:
+            raise ValueError(f"{host} could not be looked up in time. Confirm it again, or enter its IP address.")
+    return url
 
 
 def public_url_settings() -> dict:
@@ -160,7 +212,7 @@ def public_url_settings() -> dict:
 def set_public_url(value: str) -> None:
     if config.public_url_override():
         raise ValueError("The public server URL is managed by GAMMA_PUBLIC_URL on this server.")
-    _set_raw("public_url", validate_public_url(value))
+    _set_raw("public_url", confirmable_public_url(value))
 
 
 def mcp_allowed_hosts(public_url: str | None = None) -> list[str]:

@@ -1629,9 +1629,13 @@ translation without asking a model, after a restart too.
   order), so no write whose check passed lands after the delete.
 - **Purge**: `search.index.purge_unused` calls `translate_store.purge` beside
   `pdf_meta.purge`, so a PDF that leaves the workspace takes its kept
-  translations and brief along. A file a duplicated page still shows has
-  not left: the sweep reads the file a copy shows (`file_hash`, as
-  `paper_of` does) as well as the `doc_id` column, which leaves copies out.
+  translations and brief along. The sweep is one transaction that takes
+  data.db's write lock before it reads what it deletes (`write_txn`), so a
+  writer at work (the indexer, an upload's manifest) makes it wait, rather
+  than fail at once with "database is locked". A file a duplicated page
+  still shows has not left: the sweep reads the file a copy shows
+  (`file_hash`, as `paper_of` does) as well as the `doc_id` column, which
+  leaves copies out.
 - **Errors**: every function logs its own sqlite errors and carries on as
   if nothing were kept. Derived data never fails a translation.
 

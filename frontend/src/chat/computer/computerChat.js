@@ -139,6 +139,12 @@ export function sourceNote(source) {
 // When the conversation's newest ended turn ended (its agent message's
 // `ended_at`), null before any: the passages' source lines are asked
 // again after it, since the agent may have moved them.
+// How the conversation's newest turn stands (queued, running, done,
+// failed, stopped), "" before its first.
+export function lastTurnState(conversation) {
+  return (conversation?.messages || []).findLast((m) => m.role === "agent")?.state || "";
+}
+
 export function lastEnded(conversation) {
   return (conversation?.messages || []).findLast((m) => m.role === "agent" && m.ended_at)?.ended_at || null;
 }
@@ -407,21 +413,28 @@ export function diffRows(diff) {
 // vault's, already named in the strip's line as the folder; {kind:
 // "offered", id, name}; null for a directory of its own): null for a
 // vault's and a co-author's (a synced folder's alone); else {pick, value,
-// options, text}, `options` the directories offered (this computer's
-// `dirs`, GET /api/local-agents' [{id, path, name}], or another computer's,
-// the server's `computer.dirs`) after "Its own directory" as [value, name],
-// `value` the one it works in ("" its own), `text` its name, which the
-// strip says after its line. While the conversation has no turn it is
-// still to choose (`pick`, in the composer's chip: `value` the one
-// `picked` while it is offered, else ""); once it has one it is the
-// conversation's, kept among the options when no longer offered.
-export function workPlace(info, conversation, dirs = [], picked = "") {
+// options, text}, `options` "Its own directory" then the directories
+// offered (this computer's `dirs`, GET /api/local-agents' [{id, path,
+// name}], or another computer's, the server's `computer.dirs`) as [value,
+// name], those used last first (`used`: the ids conversations of this
+// browser began in, the newest first, "" for a directory of its own;
+// chat/computer/usedDirs.js), `value` the one it works in ("" its own),
+// `text` its name, which the composer's folder chip shows. While the
+// conversation has no turn it is still to choose (`pick`): `value` the one
+// `picked` for it while that is offered, else the one used last that
+// still is, as a new Codex thread starts in the project used last, else
+// ""; once it has one it is the conversation's, kept among the options
+// when no longer offered.
+export function workPlace(info, conversation, dirs = [], picked = null, used = []) {
   if (!info || info.dir?.kind === "vault" || info.lent) return null;
   const offered = ((isRemote(info) ? info.dirs : dirs) || []).filter((d) => d && d.id);
-  const options = [["", t("Its own directory")], ...offered.map((d) => [d.id, String(d.name || d.path || d.id)])];
+  const rank = (id) => (used.includes(id) ? used.indexOf(id) : used.length);
+  const ordered = [...offered].sort((a, b) => rank(a.id) - rank(b.id));
+  const options = [["", t("Its own directory")], ...ordered.map((d) => [d.id, String(d.name || d.path || d.id)])];
   const pick = !conversation?.messages?.length;
+  const listed = (id) => options.some(([v]) => v === id);
   const kept = info.dir?.kind === "offered" ? String(info.dir.id || "") : "";
-  const value = pick ? (offered.some((d) => d.id === picked) ? picked : "") : kept;
+  const value = !pick ? kept : picked != null && listed(picked) ? picked : used.find(listed) ?? "";
   const known = options.find(([v]) => v === value);
   const text = known ? known[1] : String(info.dir.name || "");
   return { pick, value, options: known ? options : [...options, [value, text]], text };
@@ -643,37 +656,84 @@ export function stepChip(step) {
 // error card's fields (chat/chatErrors.js, kind "agent": the computer's own
 // sentence its headline),
 // `error` only when it wrote nothing (with text, the card is compact).
+// A turn the person steered messages into (`steers`, docs/dev/ai.md "Queue
+// and Steer") is drawn as Gamma AI's reply is: its part before each, ended,
+// then the person's message (`steered`), and the turn going on after it
+// (steerParts).
+const passagesOf = (selections) => (selections || []).filter((s) => s?.text).map((s) => ({ text: s.text, page: s.page || null }));
 export function shownMessages(conversation, info) {
   const label = info?.label || "";
   const away = awayFrom(info);
   const computer = isRemote(info) ? String(info.computer || "") : "";
   const models = info?.models || [];
   const vault = info?.dir?.kind === "vault";
-  return (conversation?.messages || []).map((m) => {
-    if (m.role === "user") {
-      return { id: m.id, role: "user", text: m.text || "",
-        passages: (m.selections || []).filter((s) => s?.text).map((s) => ({ text: s.text, page: s.page || null })) };
-    }
+  return (conversation?.messages || []).flatMap((m) => {
+    if (m.role === "user") return [{ id: m.id, role: "user", text: m.text || "", passages: passagesOf(m.selections) }];
     const live = isLive(m);
     const by = m.label || label;
-    const text = m.text || "";
+    const model = models.find((x) => x.id === m.model)?.label || m.model || "";
+    const parts = steerParts(m);
+    const earlier = parts.slice(0, -1).flatMap((part, k) => [
+      ...(part.text || part.steps.length ? [{
+        id: `${m.id}:${k}`, role: "ai", turnId: m.turn_id, label: by, text: part.text, partial: false,
+        pill: { label: turnLabel({ ...m, state: "done", steps: part.steps }, label), waiting: false, queued: false },
+        actions: part.steps.map(stepChip), asks: [], files: null, notice: "", threads: [], model, effort: m.effort || "",
+      }] : []),
+      { id: `${m.id}:steer:${part.steer.id}`, role: "user", text: part.steer.text, steered: true,
+        passages: passagesOf(part.steer.selections) },
+    ]);
+    const { text, steps } = parts.at(-1);
     const files = turnChanges(m);
     const waiting = live && (!!m.asks?.length || m.waiting === true);
     const ahead = !!m.turn_id && info?.turn?.turn_id === m.turn_id && info.turn.ahead === true;
-    return {
+    return [...earlier, {
       id: m.id, role: "ai", turnId: m.turn_id, label: by,
       text: m.state === "stopped" ? [text, `*(${t("stopped")})*`].filter(Boolean).join("\n\n") : text,
       partial: live,
-      pill: { label: turnLabel(m, label, away, computer, ahead), waiting, queued: live && !waiting && m.state === "queued" },
-      actions: (m.steps || []).map(stepChip),
+      pill: { label: turnLabel({ ...m, steps }, label, away, computer, ahead), waiting, queued: live && !waiting && m.state === "queued" },
+      actions: steps.map(stepChip),
       asks: live ? m.asks || [] : [],
       files: files ? { ...files, vault } : null,
       notice: m.fresh ? freshLine(by) : "", threads: m.threads || [],
-      model: models.find((x) => x.id === m.model)?.label || m.model || "", effort: m.effort || "",
+      model, effort: m.effort || "",
       ...(m.state === "failed" ? { ...(text ? {} : { error: true }), errorKind: "agent", errorProvider: by, errorSaid: endText(m) } : {}),
-    };
+    }];
   });
 }
+
+// An agent's message cut where messages were steered into its turn: [{text,
+// steps, steer}], the reply's text and steps up to each steer's `place`
+// (the length of the text then, how many steps had come) and that steer,
+// the last part what came after the last one (`steer` null). A message
+// with no steers is one part.
+export function steerParts(m) {
+  const text = m?.text || "";
+  const steps = m?.steps || [];
+  const parts = [];
+  let at = 0, step = 0;
+  for (const steer of m?.steers || []) {
+    const end = Math.min(Math.max(steer.place?.text || 0, at), text.length);
+    const upto = Math.min(Math.max(steer.place?.steps || 0, step), steps.length);
+    parts.push({ text: text.slice(at, end).trim(), steps: steps.slice(step, upto), steer });
+    at = end;
+    step = upto;
+  }
+  parts.push({ text: text.slice(at).trim(), steps: steps.slice(step), steer: null });
+  return parts;
+}
+
+// The turn a queued message's Steer hands it to (chat/chatQueue.js): the
+// conversation's turn while its agent works (running, not waiting for its
+// directory), "" for none.
+export function steeringTurn(conversation) {
+  const live = liveTurn(conversation);
+  return live?.state === "running" ? live.turn_id || "" : "";
+}
+
+// Whether the message with id `id` was steered into one of the
+// conversation's turns (its agent took it in).
+export const steerTaken = (conversation, id) => (conversation?.messages || [])
+  .some((m) => m.role === "agent" && (m.steers || []).some((s) => s.id === id));
 
 // The rows of the chat's History (chat/ChatHistoryPop.jsx): every agent's
 // conversations of the bucket together, the one shown first (`shown`,

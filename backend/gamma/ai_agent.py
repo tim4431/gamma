@@ -17,6 +17,7 @@ show or save::
     ("truncated", True)   the turn hit the provider's output cap
     ("limit", dict)       a limit stopped the reply: {kind: "rounds" | "changes"
                           | "window", rounds, changes}
+    ("steered", dict)     messages the user steered in became the next turn: {ids}
 
 Two callers drive it: the AI chat streams these to the browser
 (``routers/ai.py``), and a :class:`Helper` runs it inside one of the chat's
@@ -30,8 +31,16 @@ branched on:
   blocked waits for the PDF from the user's own browser inside the same
   turn.
 
-A helper passes neither: it has no card to show, so a blocked fetch reports
-what stopped it and the chat's own wait takes over once the helper answered.
+- ``steering`` is the reply's inbox of messages the user steered in while
+  it runs (:mod:`gamma.ai_steer`). The chat passes one, so such a message
+  joins the conversation at once, as Codex's instant interrupt has it: the
+  provider turn streaming stops at its next event, what the model wrote so
+  far is its turn, the round's calls not started yet are skipped (those
+  running finish), and the reply goes on with the message.
+
+A helper passes none of them: it has no card to show, so a blocked fetch
+reports what stopped it and the chat's own wait takes over once the helper
+answered.
 
 ``stopped`` is the chat's event for a client that left (Stop, a dropped
 connection). The loop checks it at every event a provider turn streams and
@@ -87,6 +96,8 @@ DECLINED = ("declined: the user did not allow this call, so nothing was changed.
             "what you would have changed.")
 DECLINED_SAYING = ('declined: the user did not allow this call, so nothing was changed, and '
                    'told you what to do instead: "{note}". Do that; do not repeat the declined call.')
+STEERED_PAST = ("not run: the user sent a new message before this call started. Read it, and call "
+                "again only if it is still wanted.")
 UNANSWERED = ("declined: the user did not answer the approval request in time, so nothing "
               "was changed. Do not repeat it; finish your reply and say what you would have "
               "changed.")
@@ -185,11 +196,15 @@ class AgentLoop:
     limits: the loop runs until the model answers, the window is full, or the
     client leaves. ``stopped`` is set once the client left: the turn
     streaming stops at its next event, and no further turn opens.
+    ``steering`` (an ``ai_steer.Steering``) gives the messages the user
+    steered in meanwhile: one waiting cuts the round short (``_round``), and
+    the next turn opens with them.
     """
 
     def __init__(self, *, ws: str, scope: dict, tools: list, conversation: Conversation,
                  open_round, read_events, on_usage=None, max_rounds: int = 0, unbounded: bool = False,
-                 gate=None, settle=None, pictures: bool = True, stopped: threading.Event | None = None):
+                 gate=None, settle=None, pictures: bool = True, stopped: threading.Event | None = None,
+                 steering=None):
         self.ws = ws
         self.scope = scope
         self.tools = tools
@@ -203,6 +218,8 @@ class AgentLoop:
         self.stopped = stopped
         self.gate = gate
         self.settle = settle
+        self.steering = steering
+        self.answer = None  # the last round's assistant turn, when it called nothing
         self.pictures = pictures
         self.armed = {t["name"] for t in tools}
         self.mutations = 0
@@ -220,22 +237,37 @@ class AgentLoop:
         limit stopped — the rounds, a change refused at the change limit
         once the model has answered, or the window — ends on a
         ``("limit", …)`` event, the rounds and the window after a line of
-        text saying so."""
+        text saying so. A message the user steered in (``steering``) is the
+        next turn's, after the round it cut short or after the answer, which
+        then does not end the reply. The last round a limit allows is never
+        cut: a message steered into it waits for the next message."""
         resp = first_resp
         for rounds in itertools.count(1):
-            calls = yield from self._round(resp)
+            out_of_rounds = self.max_rounds is not None and rounds >= self.max_rounds
+            calls = yield from self._round(resp, can_cut=not out_of_rounds)
             if calls is None:
                 return                                  # truncated, or the client left
             if not calls:
-                if self.change_limited:
+                steered = None if out_of_rounds or self._left() else self._steered()
+                if not steered:
+                    if self.change_limited:
+                        yield ("limit", self._limit(rounds))
+                    return                              # the model answered
+                # The user said more while the model answered: the answer is
+                # a turn of the conversation, and the reply goes on.
+                if self.answer["content"].strip():
+                    self.conversation.messages.append(self.answer)
+            else:
+                if out_of_rounds:
+                    yield ("delta", ROUND_LIMIT_NOTE)
                     yield ("limit", self._limit(rounds))
-                return                                  # the model answered
-            if self.max_rounds is not None and rounds >= self.max_rounds:
-                yield ("delta", ROUND_LIMIT_NOTE)
-                yield ("limit", self._limit(rounds))
-                return
-            if self._left():
-                return                                  # the client left: no further turn
+                    return
+                if self._left():
+                    return                              # the client left: no further turn
+                steered = self._steered()
+            if steered:
+                self.conversation.messages.append(steered["turn"])
+                yield ("steered", {"ids": steered["ids"]})
             try:
                 resp = self._reopen()
             except UpstreamError as e:
@@ -255,6 +287,14 @@ class AgentLoop:
         """Whether the client is gone (Stop, a dropped connection)."""
         return self.stopped is not None and self.stopped.is_set()
 
+    def _steered(self) -> dict | None:
+        """The messages the user steered in since the last boundary, as one
+        user turn (``ai_steer.Steering.take``), or None."""
+        return self.steering.take() if self.steering else None
+
+    def _steer_waits(self) -> bool:
+        return bool(self.steering) and self.steering.pending()
+
     def _limit(self, rounds: int) -> dict:
         """The ``("limit")`` payload: the change limit when a change was
         refused at it (more rounds would not have helped), else the round
@@ -262,17 +302,26 @@ class AgentLoop:
         return {"kind": "changes" if self.change_limited else "rounds", "rounds": rounds,
                 "changes": self.mutations}
 
-    def _round(self, resp):
+    def _round(self, resp, can_cut: bool = False):
         """Stream one provider turn, then run its tool calls. Returns the
-        calls it ran ([] when the model answered, None to stop)."""
+        calls it ran ([] when the model answered, None to stop). With
+        ``can_cut`` (another round may follow) a message the user steered in
+        cuts the round short: at the next event the model streams, its text
+        so far is its answer and it calls nothing; once the stream ended, the
+        calls not started yet are skipped. The provider's end of the turn
+        (its stop reason, its token report) is never cut off."""
         calls, text_parts = [], []
         previewed = {}   # call id -> content previewed so far (dedup)
         stop = ""
         thinking = None  # what the wire reported of the model's thinking
+        cut = False
         try:
             for kind, data in self.read_events(resp):
                 if self._left():
                     return None                         # the client left: stop the turn here
+                if can_cut and kind not in ("stop", "usage") and self._steer_waits():
+                    cut = True                          # the user steered in: the turn ends here
+                    break
                 if kind == "text":
                     text_parts.append(data)
                     yield ("delta", data)
@@ -297,17 +346,30 @@ class AgentLoop:
                     yield ("usage", data)
         finally:
             resp.close()
+        if cut:
+            self.answer = {"role": "assistant", "content": "".join(text_parts),
+                           **({"reasoning": thinking} if thinking else {})}
+            return []
         if truncated_stop(stop):
             # The output cap ended the round: say so rather than pass a
             # cut-off reply (or a half-written tool call) as finished.
             yield ("truncated", True)
             return None
         if not calls:
+            self.answer = {"role": "assistant", "content": "".join(text_parts),
+                           **({"reasoning": thinking} if thinking else {})}
             return []
         self.conversation.messages.append(
             {"role": "assistant", "content": "".join(text_parts), "tool_calls": calls,
              **({"reasoning": thinking} if thinking else {})})
-        for group in self._groups(calls):
+        groups = self._groups(calls)
+        for at, group in enumerate(groups):
+            if can_cut and self._steer_waits():
+                # The user steered in while earlier calls ran: what has not
+                # started does not, and the model reads why with the message.
+                for item in (item for rest in groups[at:] for item in rest):
+                    self.conversation.messages.append({"role": "tool", "call_id": item.id, "content": STEERED_PAST})
+                break
             if (yield from self._run_group(group)) is None:
                 return None
         return calls

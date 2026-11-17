@@ -40,6 +40,7 @@ import { useRefPicker } from "../editor/useRefPicker.js";
 import { useSlashMenu } from "../editor/useSlashMenu.js";
 import { chatPick } from "../chat/computer/chatSide.js";
 import { MAX_COMMENT } from "./comments.js";
+import { guideEvents } from "../guide/events.js";
 import { agentName, editHint, namedAgent, sendLabel, sendNote, startsTicked, tickAgent, tickedPlaceholder } from "./sendTo.js";
 
 // The unsent texts by field: `new:<block id>`, `reply:<thread id>`,
@@ -95,6 +96,9 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
   // (sendTo.js startsTicked); the agent it names, as chosen in its menu,
   // else its default (tickAgent). `@codex` typed ticks it for that agent.
   const ticks = !onCancel && agents.length > 0;
+  // Written in, a field that can ask an agent says so once (the guide's
+  // Send to hint, which points at this field's tick).
+  const [wrote, setWrote] = useState(false);
   const [tick, setTick] = useState(null);
   const [chosen, setChosen] = useState("");
   const ticked = ticks && (tick ?? startsTicked(thread, sendTo?.ticked, me));
@@ -225,6 +229,10 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
           refLabels={labelsFor ? labelsFor(text) : NO_LABELS}
           mentions={mentions}
           onChange={(e) => {
+            if (ticks && !wrote) {
+              setWrote(true);
+              guideEvents.emit("comment.agentOffered");
+            }
             edited(e.target.value);
             refPicker.onEdit(e);
             updateMathUi(e.target, true);
@@ -255,7 +263,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
       {tooLong || cancel || hint || ticks ? (
         <div className="commentComposerBar">
           {ticks ? (
-            <span className="commentSendTo" data-send-to={ticked ? target?.name : ""}>
+            <span className="commentSendTo" data-send-to={ticked ? target?.name : ""} data-guide={wrote ? "comments.sendTo" : undefined}>
               <label className="commentSendTick">
                 <input type="checkbox" checked={ticked} onChange={(e) => toggle(e.target.checked)}
                   aria-label={t("Send to {agent}", { agent: agentName(target) })} />

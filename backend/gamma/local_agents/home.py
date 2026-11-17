@@ -81,10 +81,10 @@ _KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # a picture's key (``annotations.p
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")    # a folder's, a directory's or a conversation's id there
 _TOKEN = re.compile(r"^gamma_[A-Za-z0-9_-]{20,128}$")   # a turn's token (``integrations.mint_turn``)
 # The agent message's fields a chat turn writes to the other server: ``asks`` those that server may answer
-# (the channel relays them), ``waiting`` that one waits for an answer on this computer alone (runner.py
-# ``_progress``).
+# (the channel relays them), ``waiting`` that one waits for an answer on this computer alone, ``steers`` the
+# messages steered in that the agent took (runner.py ``_progress``).
 CHAT_FIELDS = ("text", "steps", "asks", "changes", "changed", "built", "error", "fresh", "state", "ended_at", "model",
-               "effort", "waiting")
+               "effort", "waiting", "steers")
 NO_SUCH_DIR = "That server named no directory this computer offers it: Gamma ran nothing."
 NOT_KEPT = "The synced folder is no longer kept on this computer."
 NOT_OFFERED = "The directory this conversation works in is no longer offered on this computer."

@@ -235,7 +235,8 @@ function GroupFrame({ group, framed, live, barSlot, tabs, activeTabId, onActivat
     else onSplit(group.id, z, drag.id);
   };
   return (
-    <div className={`tabGroup${live ? " live" : ""}${framed ? " framed" : ""}`} data-group-id={group.id}>
+    <div className={`tabGroup${live ? " live" : ""}${framed ? " framed" : ""}`} data-group-id={group.id}
+      data-guide={framed ? (live ? "tabs.live" : "tabs.other") : undefined}>
       {framed ? (
         <div className="tabGroupHead" {...strip.headPress?.()}>
           <OpenTabs

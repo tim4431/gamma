@@ -77,7 +77,7 @@ export default function CommentsPanel({ threads, pageId, anchorText, labelOf, on
   // The header's actions (DockWindow), folded into its "⋯" when the window
   // is too narrow for them.
   const actions = [
-    notify && { id: "notify", icon: BellIcon, label: t("Notify me"), disabled: !level,
+    notify && { id: "notify", icon: BellIcon, label: t("Notify me"), disabled: !level, guide: "comments.notify",
       choice: { value: level, onChange: setLevel, options: [["all", t("All comments")], ["replies", t("Replies and @mentions")]] } },
   ].filter(Boolean);
   return (
