@@ -125,6 +125,7 @@
   .tileRenameInput,
   .linkNameInput,
   .chatInput,
+  .chatQueueEdit,
   .titleEdit,
   .metaInput,
   .mdImgCaptionInput,
@@ -4779,6 +4780,80 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 @keyframes reportRecordPulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .reportRecordDot { animation: none; } }
+/* The chat's queue (chat/ChatQueue.jsx): the messages sent while the reply
+   runs, a card the composer sits on, one row each — its grip, its first
+   picture, its text on one line, then Steer (or Send while paused),
+   Delete and ⋯. */
+.chatQueue {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  margin: 4px 10px calc(-1 * var(--space-5));
+  padding: var(--space-2) var(--space-2) calc(var(--space-5) + var(--space-2));
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--bg-field);
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.chatQueue + .chatComposer { z-index: 1; }
+.chatQueueList { position: relative; display: flex; flex-direction: column; }
+.chatQueueNote { padding: var(--space-1) var(--space-3) var(--space-2); font-size: var(--fs-2xs); color: var(--text-dim); }
+.chatQueueRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--ctl-icon-btn);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast), opacity var(--dur-fast);
+}
+.chatQueueRow:hover { background: var(--bg-hover); }
+.chatQueueRow.lifted { opacity: 0.4; }
+.chatQueueGrip {
+  width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); flex: none; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--radius-xs); background: transparent;
+  color: var(--text-dim);
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.chatQueueGrip:not(:disabled):hover { color: var(--text-bright); }
+/* The row's glyph says it waits; a pointer over the row finds the grip. */
+.chatQueueGripGlyph { display: none; }
+.chatQueueRow:is(:hover, :focus-within) .chatQueueGrip:not(:disabled) .chatQueueGlyph { display: none; }
+.chatQueueRow:is(:hover, :focus-within) .chatQueueGrip:not(:disabled) .chatQueueGripGlyph { display: block; }
+.chatQueueGrip:active { cursor: grabbing; }
+.chatQueueGrip:disabled { cursor: default; }
+.chatQueueThumb { width: 22px; height: 22px; flex: none; border-radius: var(--radius-xs); object-fit: cover; }
+.chatQueueText {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-sm); color: var(--text-primary);
+}
+.chatQueueRow.steering .chatQueueText { color: var(--text-muted); }
+.chatQueueEdit {
+  flex: 1; min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-field); color: var(--text-primary);
+  font: inherit; font-size: var(--fs-sm); line-height: 1.45;
+  resize: none; outline: none;
+  max-height: calc(6 * 1.45em + 8px);
+}
+.chatQueueAction { flex: none; gap: var(--space-2); color: var(--text-secondary); }
+.ctlBtn.chatQueueBtn { flex: none; width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); color: var(--text-muted); }
+.chatQueueState {
+  flex: none; display: inline-flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--space-3);
+  font-size: var(--fs-xs); color: var(--text-muted);
+}
+.dragGhost.chatQueueGhost {
+  transform: translate(-6px, -50%);
+  max-width: 280px; padding: 4px 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-sm);
+}
 /* The composer: one rounded box holding the context chips, the
    message with send / stop at its end, and a toolbar ([+], Full PDF, the
    model chip, mic). The box takes the field focus ring while anything inside
@@ -5339,6 +5414,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   border: 1px solid var(--border-subtle);
 }
 .chatMsgPdfs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); }
+/* A message the user steered into the reply while it ran (chat/chatQueue.js). */
+.chatMsgSteered {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-bottom: var(--space-1);
+  font-size: calc(var(--fs-2xs) * var(--text-scale, 1)); color: var(--text-muted);
+}
 .chatBubble.user .crumbBtn { color: inherit; }
 .chatPdfChip {
   display: inline-flex;

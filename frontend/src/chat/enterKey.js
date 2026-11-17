@@ -15,6 +15,12 @@ export function sendsOnEnter(e, onScreen = touchTyping()) {
   return !onScreen || e.ctrlKey || e.metaKey;
 }
 
+// Whether an Enter hands the message to the chat's reply under way (Steer,
+// chat/chatQueue.js): Ctrl/⌘+Shift+Enter, on any keyboard, as Codex's.
+export function steersOnEnter(e) {
+  return e.key === "Enter" && e.shiftKey && (e.ctrlKey || e.metaKey) && !composing(e);
+}
+
 // Whether an Enter sends a comment (comments/CommentComposer.jsx). The field
 // is a note's editor holding one block, so Enter breaks the line and Shift+Enter
 // sends. On an on-screen keyboard Return breaks the line, Shift or not, and

@@ -58,6 +58,10 @@ const SUNFLOWERS = ["Sunflowers turn east at dawn", "and west at dusk"];
 // The guide's Send to hint and agent tour: two comments sent to Codex, each answered in its thread.
 const TULIPS = ["Tulips close at night", "and open again by day"];
 const GUIDE_ASK = "Is night the right time?";
+// The chat's Steer: a turn long enough to steer a message into, answering it with its own reply.
+const STEER_ASK = "tighten the method";
+const STEER_REPLY = "Tightened the method.";
+const STEER = "keep the equation numbers";
 const GUIDE_REPLY = "Night is right.";
 const GUIDE_ASK_2 = "Is day the right time to open?";
 const GUIDE_REPLY_2 = "Day is right.";
@@ -122,6 +126,7 @@ export async function localAgentScenarios(env) {
         [LIB_ASK]: { edits: [], gamma: [{ tool: "comment", arguments: { page_id: "$page", quote: SUNFLOWERS[1], pdf_page: 1,
           body: LIB_QUESTION } }], delay: 0, typing: 0, chat: LIB_REPLY },
         [SESSION_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: SESSION_REPLY },
+        [STEER_ASK]: { edits: [], ask: [], delay: 4, typing: 0, chat: STEER_REPLY },
         [GUIDE_ASK]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY },
         [GUIDE_ASK_2]: { edits: [], ask: [], delay: 0, typing: 0, chat: GUIDE_REPLY_2 } } }),
   } });
@@ -677,6 +682,35 @@ export async function localAgentScenarios(env) {
       assertEq(JSON.stringify(since.filter((e) => e.in?.method === "thread/resume").map((e) => e.in.params.threadId)),
         JSON.stringify([chatThread]), "the conversation's session resumed");
       assertEq((await conversation()).messages.at(-1).fresh, false, "nothing forgotten");
+    });
+
+    await step("local-agents: a message sent while Codex works waits in the queue, and its Steer hands it to Codex's turn: it shows where Codex took it in, and the reply answers it", async () => {
+      const ctx = await desktop();
+      const page = await openPage(ctx, at(main.id));
+      try {
+        await waitForPdf(page, 1);
+        const dock = await codexSide(page);
+        const box = dock.getByRole("textbox", { name: "Message Codex", exact: true });
+        await box.fill(STEER_ASK);
+        await dock.getByRole("button", { name: "Send", exact: true }).click();
+        await dock.getByRole("button", { name: "Stop Codex", exact: true }).waitFor({ timeout: 10000 });
+        await until(async () => (await conversation()).messages.at(-1).state === "running", { timeout: 15000, what: "Codex works" });
+        await box.fill(STEER);
+        await box.press("Enter");
+        const row = dock.locator(".chatQueueRow", { hasText: STEER });
+        await row.getByRole("button", { name: "Steer", exact: true }).click();
+        const steered = dock.locator(".chatBubble.user", { hasText: STEER });
+        await steered.waitFor({ timeout: 20000 });
+        assert((await steered.innerText()).includes("Steered"), "the message says it was steered in");
+        await until(async () => !(await dock.locator(".chatQueueRow").count()), { what: "it left the queue" });
+        await until(async () => (await conversation()).messages.at(-1).state === "done", { timeout: 40000, what: "the turn ends" });
+        await dock.locator(".chatBubble.ai", { hasText: `${STEER_REPLY}; ${STEER}` }).waitFor({ timeout: 20000 });
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+      const turn = (await conversation()).messages.at(-1);
+      assertEq((turn.steers || []).map((s) => s.text).join(), STEER, "stored with its turn");
+      assert(heard().some((e) => e.in?.method === "turn/steer" && e.in.params.clientUserMessageId === turn.steers[0].id),
+        "Codex heard it under its id");
     });
 
     await step("local-agents: Stop ends Codex's turn, and New chat keeps the conversation in History", async () => {

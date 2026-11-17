@@ -13,7 +13,14 @@ of that path, ``{"tool"}`` another tool; ``blocked``, a path, is its
 withdrawing it (``control_cancel_request``) when an interrupt comes
 meanwhile; an interrupt ends the turn in an ``error_during_execution``
 result. It reads stdin to its end after the result, and exits at once when
-stdin ends before any user message (what listing the models does). Its
+stdin ends before any user message (what listing the models does). As
+Claude Code 2.1.235 does with ``--replay-user-messages``, a user message
+written while it works is echoed (``isReplay``, its ``uuid``) after its
+tool calls (after the Grep, waiting ``steer_wait`` seconds for one) and
+answered with the prompt (``Done: <message>; <steered>``); one written
+after the result starts another turn, a second result. ``late_steers``
+takes none while it works: it waits ``delay`` seconds before its result
+reading nothing, so a message written then starts the second turn. Its
 ``initialize`` answers ``models`` (``MODELS``, or the scripted ``models``).
 With ``--include-partial-messages`` its final text comes first as
 ``stream_event`` deltas (``deltas``, else its words, ``typing`` seconds
@@ -302,8 +309,12 @@ def turn(args: list[str]) -> int:
     assistant(session, "msg_2", {"type": "tool_use", "id": "toolu_grep", "name": "Grep",
                                  "input": {"pattern": "TODO"}})
     tool_result(session, "toolu_grep", "No matches", error=True)
+    steered = [chat_message(said) or said for said in take_steers(session, float(FAKE.get("steer_wait") or 0))] \
+        if stream and not FAKE.get("late_steers") else []
     decisions, cut = ask_all(session, cwd) if stream else ([], False)
-    if stream and not cut:  # an interrupt that comes meanwhile ends the turn
+    if stream and FAKE.get("late_steers"):
+        time.sleep(float(FAKE.get("delay") or 0))
+    elif stream and not cut:  # an interrupt that comes meanwhile ends the turn
         cut = wait_for(lambda m: False, max(0.2, float(FAKE.get("delay") or 0))) is INTERRUPTED
     if cut:
         out({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session,
@@ -322,6 +333,7 @@ def turn(args: list[str]) -> int:
         result = "Ran it." if decisions[-1] == "allow" else "Did not run it."
     else:
         result = FAKE.get("chat") or f"Done: {chat_message(prompt)}"
+    result = "; ".join([result, *steered])
     if "--include-partial-messages" in args:
         stream_text(session, result)
     assistant(session, "msg_3", {"type": "text", "text": result})
@@ -331,9 +343,34 @@ def turn(args: list[str]) -> int:
     line = {"type": "result", "subtype": "success", "is_error": False, "result": result, "session_id": session,
             "num_turns": 3, "usage": {"input_tokens": 10, "output_tokens": 5}}
     out(line)
-    if stream:
-        wait_for(lambda m: False, None)  # until stdin ends: a result ends the turn, not the process
+    while stream:  # until stdin ends: a result ends the turn, not the process; a message then starts another
+        message = wait_for(lambda m: m.get("type") == "user", None)
+        if message is None:
+            break
+        said = replay(session, message)
+        out({"type": "system", "subtype": "init", "session_id": session, "cwd": cwd, "tools": ["Read", "Edit"],
+             "mcp_servers": [], "permissionMode": "acceptEdits"})
+        assistant(session, "msg_4", {"type": "text", "text": f"Done: {chat_message(said) or said}"})
+        out({**line, "result": f"Done: {chat_message(said) or said}", "num_turns": 1})
     return 0
+
+
+def replay(session: str, message: dict) -> str:
+    """A user message read from stdin echoed (``--replay-user-messages``)
+    → its text."""
+    content = (message.get("message") or {}).get("content") or []
+    out({"type": "user", "message": message.get("message"), "parent_tool_use_id": None, "session_id": session,
+         "uuid": message.get("uuid") or uuid.uuid4().hex, "isReplay": True})
+    return "".join(part.get("text", "") for part in content if part.get("type") == "text")
+
+
+def take_steers(session: str, wait: float) -> list[str]:
+    """The user messages written while the turn worked, each echoed as it is
+    read (the first waited for ``wait`` seconds) → their texts."""
+    taken = []
+    while message := wait_for(lambda m: m.get("type") == "user", 0.05 if taken else max(wait, 0.05)):
+        taken.append(replay(session, message))
+    return taken
 
 
 def main() -> int:

@@ -56,8 +56,9 @@ in-flight reply per bucket. `active` is the set of streaming buckets, each
 with its own `AbortController`. Asking one paper, opening another and asking
 it too runs both requests at once. The composer, the Stop button and the
 edit/re-send controls are disabled only while THIS bucket's reply streams
-(`busyHere` in `ChatDock`), and Stop aborts only that one. A bucket refuses
-a second question until its reply ends. The stream's `done` agent event
+(`busyHere` in `ChatDock`), and Stop aborts only that one. A second
+question waits in the bucket's queue until its reply ends, or is steered
+into it ([ai.md](ai.md#queue-and-steer)). The stream's `done` agent event
 carries the bucket so a background reply finishing does not clear the open
 page's live edit preview (`handleAgentEvent`). Covered by
 `tests/chatSession.test.mjs` and the e2e `chat navigation` steps.

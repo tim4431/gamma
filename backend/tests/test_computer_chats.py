@@ -217,7 +217,7 @@ def test_the_chat_answers_the_maker_of_the_folders_binding_alone(lab, pc, anon, 
     evil = _mint(lab.editor, "Gamma desktop: EVIL-PC")
     evil_c = _bearer(evil["token"])
     _announce(evil_c, _kept(lab), name="EVIL-PC", computer_id="ccx-evil")
-    assert _ok(evil_c.get("/api/computers/chats")) == {"turns": [], "stops": [], "answers": []}
+    assert _ok(evil_c.get("/api/computers/chats")) == {"turns": [], "stops": [], "answers": [], "steers": []}
     assert evil_c.post(f"/api/computers/chats/{made['turn']['id']}/claim",
                        json={"run": "r", "agent": "codex"}).status_code == 404
     assert _chat(lab, who=lab.editor)["computer"]["computer"] == "EVIL-PC"
@@ -257,7 +257,7 @@ def test_a_turn_waits_here_runs_there_and_its_message_comes_back(lab, pc):
         at = conn.execute("SELECT queued_at FROM computer_chat_runs WHERE turn_id = ?", (turn,)).fetchone()[0]
     assert _chats(pc) == {"turns": [{"id": turn, "conversation_id": made["conversation"]["id"], "bucket": lab.main,
                                      "agent": "codex", "dir": {"kind": "vault", "id": lab.W}, "at": at}],
-                          "stops": [], "answers": []}
+                          "stops": [], "answers": [], "steers": []}
     assert _say(lab, "And another.", status=409)["detail"].startswith("Codex is still working")
 
     claimed = _claim(pc, turn)

@@ -41,6 +41,14 @@ checkpoint) and a file change to a protected part of the folder
 ``cancel``. ``serverRequest/resolved`` for one Gamma did
 not answer withdraws it. Every other request is refused as without.
 
+A message the person steers into the turn (``steer``) is a ``turn/steer``
+with its id as ``clientUserMessageId``, not waited for. Codex takes it at
+once (its instant interrupt cuts what the model is writing; a command
+running finishes) and reports it as a ``userMessage`` item whose
+``clientId`` is that id: the ``steered`` event. After the turn's end Codex
+refuses it (-32600 "no active turn to steer", codex-cli 0.169.0), and no
+item ever names it.
+
 No MCP server but Gamma's and no web search, whatever the user's
 config.toml says (nothing would ask before such a tool ran). Verified on
 this machine (codex-cli 0.167.0, three MCP servers in config.toml, a
@@ -376,6 +384,7 @@ class CodexTurn(events.Turn):
         self._last_text = ""
         self._usage: dict = {}
         self._completed: dict | None = None
+        self._steering: set[str] = set()   # the ids of the messages steered in that Codex has not reported taking
 
     # --- the protocol -------------------------------------------------------------
 
@@ -491,6 +500,11 @@ class CodexTurn(events.Turn):
             self._changes[item_id] = list(item.get("changes") or [])
         if kind in STEP_ITEMS:
             return item_steps(item, self.cwd, started=started, gamma=bool(self.gamma_url))
+        if kind == "userMessage" and started:
+            with self._ids:
+                taken = item.get("clientId") in self._steering
+                self._steering.discard(item.get("clientId"))
+            return [events.steered(str(item["clientId"]))] if taken else []
         if kind == "agentMessage" and not started:
             self._last_text = str(item.get("text") or "")
             # With stream, even an empty message ends what its deltas built.
@@ -562,6 +576,16 @@ class CodexTurn(events.Turn):
                 "input": [{"type": "text", "text": f"{who} declined that: {note}"}]}))
         else:
             self._send(answer)
+
+    def _steer(self, text: str, steer_id: str) -> bool:
+        if not self._thread or not self._turn_id or self._completed is not None:
+            return False
+        with self._ids:
+            self._steering.add(steer_id)
+        self._request("turn/steer", {"threadId": self._thread, "expectedTurnId": self._turn_id,
+                                     "clientUserMessageId": steer_id, "input": [{"type": "text", "text": text}]},
+                      0, wait=False)
+        return True
 
     def _flush(self):
         pending, self._pending = self._pending, []

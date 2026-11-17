@@ -4,7 +4,7 @@ import PageOption, { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
 import { insertMention, mentionAt, MAX_CHAT_REFERENCES } from "./paperMentions";
 import { composing } from "../shared/lib/hotkeys.js";
-import { sendsOnEnter } from "./enterKey.js";
+import { sendsOnEnter, steersOnEnter } from "./enterKey.js";
 import { t } from "../shared/i18n/i18n.js";
 
 // The chat composer, with the picker "@" opens over it: quick open's page
@@ -12,9 +12,10 @@ import { t } from "../shared/i18n/i18n.js";
 // "@". `tree`, `recentViews` and `openTabs` are what that ranking reads;
 // `selected` the attached page ids, checked in the list. `mentions` false
 // (a computer's agent, which takes no attached pages) opens no picker;
-// `label` names the field.
+// `label` names the field; `onSteer`, while a reply runs, takes the
+// steering chord (chat/enterKey.js steersOnEnter).
 export default function PaperMentionInput({
-  value, onChange, pages, tree, recentViews, openTabs, currentPageId, selected, onAttach, onSend, mentions = true, label = "",
+  value, onChange, pages, tree, recentViews, openTabs, currentPageId, selected, onAttach, onSend, onSteer = null, mentions = true, label = "",
   ...props
 }) {
   const input = useRef(null);
@@ -85,7 +86,8 @@ export default function PaperMentionInput({
             e.preventDefault(); choose(results[active]?.page); return;
           }
         }
-        if (sendsOnEnter(e)) { e.preventDefault(); onSend(); }
+        if (onSteer && steersOnEnter(e)) { e.preventDefault(); onSteer(); }
+        else if (sendsOnEnter(e)) { e.preventDefault(); onSend(); }
       }} />
   </div>;
 }

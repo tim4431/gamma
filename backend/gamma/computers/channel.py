@@ -520,14 +520,15 @@ class _Channel:
         next announce; the answers that server keeps for what the turns
         running here ask (``answers``, where this channel relays asks)
         handed to them (``runner.answer_relayed``: the first answer is the
-        one). A server from before the agents' buckets lists a turn by its
+        one); the messages steered into them (``steers``), handed to their
+        agents (``runner.steer_relayed``). A server from before the agents' buckets lists a turn by its
         work folder alone: it is queued in the vault here that keeps that
         folder, with the agent the vault names (``agent_folders``). Asked
         only while the channel's account has an agent
         on here; a server without the route (older), or one not reached, is
         asked again at a later turn. Never raises."""
         from .. import local_agents
-        from ..local_agents import catalog, runner, store
+        from ..local_agents import catalog, chats, runner, store
 
         self.chats_due, self.chats_at = False, time.monotonic()
         if not local_agents.enabled() or store.agent_for(link["created_by"]) is None:
@@ -565,6 +566,11 @@ class _Channel:
                 if isinstance(said, dict) and all(isinstance(said.get(k), str) for k in _ANSWER):
                     runner.answer_relayed(link["id"], said["id"], said["run"], said["ask"], said["decision"],
                                           said["note"] if isinstance(said.get("note"), str) else "")
+            for sent in got.get("steers") if isinstance(got.get("steers"), list) else []:
+                steer = chats.steer_of(sent["steer"]) if isinstance(sent, dict) and isinstance(
+                    sent.get("steer"), dict) and all(isinstance(sent.get(k), str) for k in ("id", "run")) else None
+                if steer:
+                    runner.steer_relayed(link["id"], sent["id"], sent["run"], steer)
         except Exception:  # noqa: BLE001 — a chat turn never stops the channel
             log.exception(f"[computers] queueing the chat turns of channel {link['id']}")
 

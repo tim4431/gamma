@@ -440,6 +440,33 @@ def answer_chat(ws: str, turn_id: str, ask_id: str, decision: str, note: str = "
     turning.answer(ask_id, decision, note)
 
 
+def steer_chat(ws: str, turn_id: str, item: dict) -> None:
+    """The person's message steered into the turn ``turn_id`` of a
+    conversation of this server's (``chats.steer_of``'s, ``_ChatTurn.steer``).
+    ChatError 409 when the turn takes none now (it ended, waits for its
+    slot, runs for another server, or its agent refused it): the chat sends
+    it as the next one."""
+    with _lock:
+        run = _active.get((ws, turn_id))
+        turning = run.get("chat") if run is not None else None
+    if turning is None or turning.home.remote or not turning.steer(item):
+        raise chats.ChatError(409, chats.NOT_STEERED)
+
+
+def steer_relayed(link_id: str, turn_id: str, run: str, item: dict) -> bool:
+    """A message the server of the channel ``link_id`` kept steered into its
+    turn ``turn_id`` (``chats.steers_of`` there, the listing's ``steers``),
+    handed to the agent while this computer runs that turn under the run
+    ``run`` → whether the agent took it to read. One it never reads goes as
+    the next turn from that server's chat."""
+    with _lock:
+        active = _active.get((link_id, turn_id))
+        turning = active.get("chat") if active is not None else None
+    if turning is None or not turning.home.remote or turning.home.run_id != run:
+        return False
+    return turning.steer(item)
+
+
 def runs_never(agent: str) -> None:
     """What ``agent`` may run was set back to never: each turn of it
     running declines the asks that wait (``_ChatTurn.decline_all``) and
@@ -1307,6 +1334,8 @@ class _ChatTurn(_Turning):
         self.fresh = False              # a follow-up whose agent remembers none of the earlier turns
         self.paragraphs: list[str] = []
         self.live = False               # the last paragraph is the message its deltas build
+        self.steering: dict[str, dict] = {}   # the messages steered in, handed to the agent, not taken yet
+        self.steers: list[dict] = []    # those it took: {id, text, selections, at, paragraphs, steps}
         self.changes: list[str] = []
         self.changed = 0
         self.built = False
@@ -1645,6 +1674,17 @@ class _ChatTurn(_Turning):
                         _asks_changed()
                     self._show(force=True)
                 return None
+        elif kind == "steered":
+            with self._asking:
+                item = self.steering.pop(str(event.get("id") or ""), None)
+                if item is not None:
+                    # What the agent writes next is a paragraph of its own, after the message.
+                    self.live = False
+                    self.steers.append({**item, "at": page_now(), "paragraphs": len(self.paragraphs),
+                                        "steps": len(self.steps)})
+            if item is not None:
+                self._show(force=True)
+            return None
         elif kind == "ask_gone":
             with self._asking:
                 ask_id = next((i for i, held in self.asks.items() if held["key"] == event.get("id")), None)
@@ -1834,6 +1874,29 @@ class _ChatTurn(_Turning):
         card["at"], card["expires_at"] = shown["at"], shown["expires_at"]
         return card
 
+    def steer(self, item: dict) -> bool:
+        """A message the person steered into the turn while it works
+        (``steer_chat``, ``steer_relayed``; ``chats.steer_of``'s) handed to
+        the agent (``events.Turn.steer``, ``prompt.build_steer``) → whether
+        it went. It joins the message where the reply stands once the agent
+        says it took it in (``steered``); one it never takes is the chat's
+        to send as the next turn."""
+        turn = self.turn
+        if turn is None or self._ended or self.stop.is_set():
+            return False
+        with self._asking:
+            if (item["id"] in self.steering or any(s["id"] == item["id"] for s in self.steers)
+                    or len(self.steering) + len(self.steers) >= chats.MAX_STEERS):
+                return False
+            self.steering[item["id"]] = item
+        text = prompt.build_steer(owner=self.person_name or "the owner", message=item["text"],
+                                  selections=[{"page": s["page"], "quote": s["text"]} for s in item["selections"]])
+        if turn.steer(text, item["id"]):
+            return True
+        with self._asking:
+            self.steering.pop(item["id"], None)
+        return False
+
     def answer(self, ask_id: str, decision: str, note: str = "") -> None:
         """The person's answer in the chat (``answer_chat``): a remote
         turn's asks are answered on this computer (``answer_computer``) and,
@@ -1995,15 +2058,25 @@ class _ChatTurn(_Turning):
         steps, the asks that wait (``_asked``; another server's message
         takes them only while its channel relays asks, ``_relays``, and
         says ``waiting`` while one waits for an answer on this computer
-        alone) and ``fresh``."""
+        alone), ``fresh``, and the messages steered in that the agent took,
+        each with where the reply stood then (``place``: the length of its
+        text so far, its steps so far), once there is one."""
         relays = self.home.remote and self._relays()
         with self._asking:
             paragraphs = list(self.paragraphs)
             steps = [dict(s) for s in self.steps]
             asks = [dict(held["shown"]) for held in self.asks.values()]
+            steers = list(self.steers)
         said = [self.preface] if self.preface else []
-        text = reply_text(said + paragraphs, self.root) if self.root else ""
-        out = {"text": text, "steps": steps, "asks": asks, "fresh": self.fresh}
+
+        def shown(kept: list[str]) -> str:
+            return reply_text(said + kept, self.root) if self.root else ""
+
+        out = {"text": shown(paragraphs), "steps": steps, "asks": asks, "fresh": self.fresh}
+        if steers:
+            out["steers"] = [{"id": s["id"], "text": s["text"], "selections": s["selections"], "at": s["at"],
+                              "place": {"text": len(shown(paragraphs[:s["paragraphs"]])), "steps": s["steps"]}}
+                             for s in steers]
         if self.home.remote:
             out["asks"], out["waiting"] = (asks, False) if relays else ([], bool(asks))
         return out

@@ -7,6 +7,7 @@ import {
   currentStep, diffRows, emptyLine, endText, freshLine, isLive, isRemote, lastEnded, liveTurn, markParts, modelChoice, modelDisplay,
   offersMenu, retryOf, revealsFile, scrolledToEnd, sourceNote, sourcesBody, stepNow, stepText, stripLine, turnBody, turnChanges, workPlace,
   turnLabel, waitsThere, historyRows, sessionRows, sessionsAway, sessionsDir, sessionsWords, shownMessages, stepChip,
+  steerTaken, steeringTurn,
 } from "../src/chat/computer/computerChat.js";
 import { isChange, splitActions } from "../src/chat/agentSteps.js";
 import { failureCopy } from "../src/chat/chatErrors.js";
@@ -646,4 +647,34 @@ test("History names each row's agent while the chat has several, a computer agen
   // one agent alone: nothing to tell apart
   const alone = historyRows({ shown: { title: "Now", preview: "" }, gamma, agents: agents.slice(0, 1) });
   assert.deepEqual(alone.map((r) => [r.agentName, r.by]), [[undefined, undefined], [undefined, undefined]]);
+});
+
+test("a turn steered into reads as its part before each message, the message, and the turn going on after it", () => {
+  const read = (path) => ({ id: path, kind: "read", status: "completed", path });
+  const turn = agent({
+    state: "running", text: "Looking at the intro.\n\nRenamed the section.", steps: [read("a.tex"), read("b.tex")],
+    steers: [{ id: "s1", text: "Only the intro.", selections: [{ text: "the intro", page: 2 }], at: "",
+      place: { text: "Looking at the intro.".length, steps: 1 } }],
+  });
+  const rows = shownMessages({ messages: [person, turn] }, ready);
+  assert.deepEqual(rows.map((r) => [r.role, r.text]), [
+    ["user", "fix this"], ["ai", "Looking at the intro."], ["user", "Only the intro."], ["ai", "Renamed the section."]]);
+  const [, before, steered, after] = rows;
+  assert.deepEqual([before.actions.length, after.actions.length], [1, 1]);
+  assert.equal(before.partial, false);
+  assert.equal(after.partial, true);
+  assert.equal(after.turnId, "t1");
+  assert.equal(steered.steered, true);
+  assert.deepEqual(steered.passages, [{ text: "the intro", page: 2 }]);
+  assert.equal(steerTaken({ messages: [turn] }, "s1"), true);
+  assert.equal(steerTaken({ messages: [turn] }, "s2"), false);
+  // taken before the agent wrote or did anything: no empty part before it
+  const early = shownMessages({ messages: [person, agent({ steers: [{ ...turn.steers[0], place: { text: 0, steps: 0 } }] })] }, ready);
+  assert.deepEqual(early.map((r) => r.role), ["user", "user", "ai"]);
+});
+
+test("Steer goes to the conversation's turn while its agent works, not one waiting for its directory", () => {
+  assert.equal(steeringTurn({ messages: [person, agent({ state: "running" })] }), "t1");
+  assert.equal(steeringTurn({ messages: [person, agent({ state: "queued" })] }), "");
+  assert.equal(steeringTurn({ messages: [person, agent()] }), "");
 });

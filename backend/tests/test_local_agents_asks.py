@@ -158,7 +158,8 @@ def _chat_prompt(message="Build it."):
 def test_the_drivers_start_differently_with_ask(work, monkeypatch):
     assert claude.command(["claude"]) == ["claude"] + claude.FLAGS
     assert claude.command(["claude"], ask=True, session="5e55-s") == ["claude", "-p", "--input-format", "stream-json",
-        "--output-format", "stream-json", "--verbose", "--restricted", "--permission-mode", "acceptEdits",
+        "--output-format", "stream-json", "--verbose", "--replay-user-messages", "--restricted", "--permission-mode",
+        "acceptEdits",
         "--permission-prompt-tool", "stdio", "--strict-mcp-config", "--tools", "Read,Edit,Write,Glob,Grep,Bash",
         "--disallowedTools", "WebFetch,WebSearch", "--settings", '{"permissions":{"ask":["Bash"]}}',
         "--resume", "5e55-s"]
