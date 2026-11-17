@@ -1,6 +1,6 @@
 # Gamma user guide
 
-Read papers, keep what you learn. This guide shows each part of Gamma in a short animation and a few lines. Installing it is in the [README](../../README.md).
+Read papers, keep what you learn. This guide shows each part of Gamma in a short animation and a few lines. Installing it is in the [README](../../README.md), and how each part is designed, and why, in [Gamma's design](../design/README.md).
 
 | Section | What it covers |
 |---|---|

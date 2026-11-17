@@ -8,7 +8,7 @@
 //                        copies), plus any picture a rendered document shows
 //   ./dist/<page>/       the repository's Markdown rendered through ./templates:
 //                        the privacy policy, the terms, the page on deleting a Gamma
-//                        Cloud account and the user guide (DOCS below)
+//                        Cloud account, the user guide and the design pages (DOCS below)
 //   ./dist/sitemap.xml   every page above
 //
 // `node build.mjs --strict` fails on a broken internal link, picture or anchor
@@ -47,12 +47,15 @@ const MEDIA = {
 // title is the first heading, the description the first paragraph. A `section`
 // puts the page in the documentation sidebar, with its headings; without one
 // the page stands alone (the privacy policy, the terms, and deleting a Gamma
-// Cloud account, which the apps and the store listings link to).
+// Cloud account, which the apps and the store listings link to). The design
+// pages (docs/design/) are a section of their own, its README the first.
 const DOCS = [
   { source: 'PRIVACY.md', at: 'privacy/' },
   { source: 'TERMS.md', at: 'terms/' },
   { source: 'DELETE_ACCOUNT.md', at: 'delete-account/' },
   { source: 'docs/user_guide/user_guide.md', at: 'docs/', section: 'User guide' },
+  ...['README', 'look', 'interaction', 'blocks', 'library', 'reading', 'comments', 'workspaces', 'sync', 'ai', 'formats', 'architecture']
+    .map(name => ({ source: `docs/design/${name}.md`, at: name === 'README' ? 'docs/design/' : `docs/design/${name}/`, section: 'Design' })),
 ];
 
 const IMAGE = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
@@ -207,7 +210,8 @@ const render = page => {
 pages.forEach(render);
 
 // The sidebar: each section's pages, the current one with its headings.
-const sections = DOCS.filter(d => d.section).map(doc => ({ ...doc, pages: pages.filter(p => p.section === doc.section) }));
+const sections = [...new Set(DOCS.map(d => d.section).filter(Boolean))]
+  .map(section => ({ section, pages: pages.filter(p => p.section === section) }));
 const nav = page => `<details class="docnav" open>
 <summary>Documentation</summary>
 <nav aria-label="Documentation">

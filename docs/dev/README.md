@@ -140,6 +140,11 @@ These describe the implementation unless explicitly marked as plans.
 
 ## Plans and design references
 
+- [Gamma's design](../design/README.md): the design pages, published
+  beside the user guide at gammapdf.com/docs/design. They explain each
+  area's model and rules for users and link back to the topic docs here;
+  a change to a rule they state updates them too.
+
 - [Frontend decomposition](frontend-refactor.md): the one live plan. The
   folder layout and the bundle split are done, and "Lazy boundaries" describes
   the chunks as built; moving state ownership out of `App.jsx` has started:

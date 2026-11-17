@@ -2,7 +2,7 @@
 
 The product website: the front page, the pricing page, and the
 repository's documents rendered as pages (the user guide, the privacy policy,
-the Gamma Cloud terms), served by a Cloudflare Worker with static assets.
+the Gamma Cloud terms, the design pages), served by a Cloudflare Worker with static assets.
 Nothing here is part of the app. The front page and `/pricing` are written by
 hand; the front page tells three stories, shows six tiles and carries the
 download and self-hosting sections, and the README and the user guide keep the
@@ -65,16 +65,20 @@ sites/
    | `TERMS.md` | `/terms/` |
    | `DELETE_ACCOUNT.md` | `/delete-account/` (how to delete a Gamma Cloud account; the Play listing's Data safety form links it) |
    | `docs/user_guide/user_guide.md` | `/docs/` |
+   | `docs/design/README.md` and the other pages of `docs/design/` | `/docs/design/`, `/docs/design/<name>/` |
 
    Everything about a page comes from its Markdown: the title is the first
    heading, the description the first paragraph, heading ids follow GitHub's
    rules so an anchor written for the repository works on the site too. The
-   sidebar lists the page's sections; on a narrow screen `site/docnav.js`,
+   sidebar lists the documentation's sections (the user guide, the design
+   pages), each with its pages, and the open page's headings; on a narrow screen `site/docnav.js`,
    which runs right after it in the page and is not deferred, folds it before
    the first paint. The user guide's interactive demos
    (`docs/user_guide/demos/`, a page and its script each, since the site's
    CSP allows no inline script) are copied as they are under `/docs/demos/`,
-   where the guide's links to them land. The developer guide and the research
+   where the guide's links to them land. The design pages' pictures
+   (`docs/design/assets/`) reach `/media/` like any picture a document shows.
+   The developer guide and the research
    notes are written for contributors and are not published: they stay on
    GitHub, where a link from the user guide to one of them lands. A relative
    link in a document becomes the page it points at when that document is
@@ -212,7 +216,8 @@ needs two repository secrets:
   open the menu) and in both color schemes (the screenshot and demos are shown
   as recorded, slightly dimmed in dark mode).
 - Documentation pages are edited in `docs/`, never here. A document that
-  should also be on the site is added to `DOCS` in `build.mjs`. Link between
+  should also be on the site is added to `DOCS` in `build.mjs`; a new
+  design page joins the list of names there, in the order the sidebar shows. Link between
   documents with relative paths to the `.md` files, as GitHub needs anyway.
 - A new hand-written page: add a `.html` under `site/` with the two
   includes; the sitemap picks it up.

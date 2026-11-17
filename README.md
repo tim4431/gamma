@@ -12,7 +12,7 @@
 <a href="https://testflight.apple.com/join/nTmSHDx6"><img src="./docs/assets/badges/testflight-ipad.svg" alt="Get the Gamma iPad app beta on TestFlight" width="240"></a>
 <a href="https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn"><img src="./docs/assets/badges/chrome-web-store.png" alt="Get the Gamma Connector browser extension from the Chrome Web Store" width="218"></a>
 
-**[Install](#install)** · **[User guide](./docs/user_guide/user_guide.md)** · [Try the demo](https://demo.gammapdf.com) · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
+**[Install](#install)** · **[User guide](./docs/user_guide/user_guide.md)** · [Design](./docs/design/README.md) · [Try the demo](https://demo.gammapdf.com) · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
 
 Every picture below is clickable and opens the matching part of the [user guide](./docs/user_guide/user_guide.md).
 
