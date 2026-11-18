@@ -3402,7 +3402,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications, commentSendTo, setCommentSendTo,
     topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, highlightPresets, setHighlightPresets,
-    chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
+    chatEffort, setChatEffort, chatSpeed, setChatSpeed, chatFollowUp, setChatFollowUp, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
@@ -6552,6 +6552,63 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       await openNewPage(created.id);
     } catch (err) {
       setStatus(t("Create failed: {err}", { err: err.message || err }));
+    }
+  }
+
+  // The chat's Create note (chat/ChatSelectionTip.jsx): a passage of its
+  // transcript, as Markdown, split into blocks as the editor's paste as
+  // blocks splits one (POST /markdown-blocks), at the end of the open
+  // page's notes; with no page open, a page of its own named `title` in the
+  // folder shown (none: the library's top), its blocks one op batch, a
+  // heading that names it left out for its own blocks. `structured`: the AI
+  // rewrote it, as the status line says. True once the note is in.
+  async function noteFromChat(markdown, { title = "", structured = false } = {}) {
+    const pageId = focusedBlockId;
+    const json = { "Content-Type": "application/json" };
+    let nodes;
+    try {
+      nodes = (await apiJson(`${API}/markdown-blocks`, { method: "POST", headers: json, body: JSON.stringify({ text: markdown }) }))?.blocks || [];
+    } catch (err) {
+      setStatus(err.status === 413 ? t("The selection is too large to make a note of.") : t("Couldn't make the note: {message}", { message: err.message }));
+      return false;
+    }
+    if (!nodes.length) return false;
+    const toBlock = (n) => makeNewBlock({ content: n.content || "", children: (n.children || []).map(toBlock) });
+    if (pageId) {
+      if (focusedBlockIdRef.current !== pageId) return false; // navigated away meanwhile
+      const created = nodes.map(toBlock);
+      setBlocks((prev) => [...prev, ...created]);
+      requestAnimationFrame(() => document.querySelector(`[data-block-id="${created[0].id}"]`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+      triggerFlash(created[0].id);
+      setStatus(structured ? t("A structured note was added at the end of this page.") : t("The note was added at the end of this page."));
+      return true;
+    }
+    const name = title || t("Note from the chat");
+    const head = nodes[0];
+    if (/^#{1,6}\s/.test(head.content || "") && head.content.replace(/^#{1,6}\s+/, "").trim() === name) {
+      nodes = [...(head.children || []), ...nodes.slice(1)];
+    }
+    try {
+      const created = await apiJson(`${API}/pages`, { method: "POST", headers: json,
+        body: JSON.stringify({ title: name, ...(folderFilter ? { folders: [folderFilter] } : {}) }) });
+      const ops = [];
+      const put = (list, parent) => {
+        let at = null;
+        for (const b of list) {
+          at = generateKeyBetween(at, null);
+          ops.push({ op: "insert", id: b.id, parent, position: at, content: b.content, props: b.properties });
+          put(b.children, b.id);
+        }
+      };
+      put(nodes.map(toBlock), created.id);
+      if (ops.length) await apiJson(`${API}/pages/${created.id}/ops`, { method: "POST", headers: json, body: JSON.stringify({ client: "", ops }) });
+      await fetchHomeBlocks();
+      setStatus(t("The note was saved as the page “{title}”.", { title: name }));
+      return true;
+    } catch (err) {
+      setStatus(t("Couldn't make the note: {message}", { message: err.message || err }));
+      return false;
     }
   }
 
@@ -12719,7 +12776,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           onAttachView={!homeMode && isPdf(doc) && pdfUrl && !pdfHidden ? attachViewToChat : undefined}
           chatModel={chatSendModel} setChatModel={setChatModel}
           chatEffort={chatEffort} setChatEffort={setChatEffort}
-          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
+          chatSpeed={chatSpeed} setChatSpeed={setChatSpeed} chatFollowUp={chatFollowUp}
           dictationModel={dictationModel} dictationLang={dictationLang}
           chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
@@ -12739,6 +12796,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
           askSignal={chatAsk}
+          onChatNote={shareMode || (focusedBlockId ? readOnly || notesLocked : !canWriteWorkspace) ? null : noteFromChat}
           agents={chatAgentList} localAgents={localAgents}
           onLibraryChange={fetchHomeBlocks}
           onAgentEvent={(ev) => agentEventRef.current?.(ev)}
@@ -14915,6 +14973,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setChatEffort,
           chatSpeed,
           setChatSpeed,
+          chatFollowUp,
+          setChatFollowUp,
           aiProvider,
           setAiProvider,
           deleteAiProvider,

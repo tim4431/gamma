@@ -6,6 +6,7 @@ protocol adapters (gamma/ai_protocols); route handlers deal in the common
 import http.client
 import json
 import re
+import socket
 import threading
 import time
 import urllib.error
@@ -150,6 +151,8 @@ class _OpenCall:
 
     def __init__(self, response, user_id: str):
         self._response, self._user_id = response, user_id or None
+        self._slot_lock = threading.Lock()
+        self._given_up = False   # interrupt(): its reader closes it (finish)
 
     def __getattr__(self, name):
         return getattr(self._response, name)
@@ -163,17 +166,82 @@ class _OpenCall:
     def __exit__(self, *exc):
         self.close()
 
+    def _free_slot(self):
+        with self._slot_lock:
+            user_id, self._user_id = self._user_id, None
+        if user_id:
+            _free_call_slot(user_id)
+
     def close(self):
-        user_id, self._user_id = self._user_id, None
+        """Close the response and free its slot. A call given up
+        (``interrupt``) is its reader's to close: closing it from another
+        thread would wait for that read to end, so only the slot goes."""
+        if self._given_up:
+            self._free_slot()
+            return
+        self.finish()
+
+    def finish(self):
+        """Close the response, given up or not: its reader's last act."""
         try:
             self._response.close()
         finally:
-            if user_id:
-                _free_call_slot(user_id)
+            self._free_slot()
+
+    def interrupt(self):
+        """Give the call up while another thread may still be reading it
+        (ai_steer.TurnRead): its call slot freed at once, and its socket
+        shut down both ways, which ends a read blocked on it at once on
+        Linux and macOS, and on Windows when the provider next sends (a
+        blocked receive there does not wake). The base socket's shutdown,
+        not an SSL socket's own, which would drop the TLS state the reader
+        is still in. The reader closes the response (``finish``)."""
+        self._given_up = True
+        self._free_slot()
+        raw = getattr(getattr(self._response, "fp", None), "raw", None)
+        sock = getattr(raw, "_sock", None)
+        if isinstance(sock, socket.socket):
+            try:
+                socket.socket.shutdown(sock, socket.SHUT_RDWR)
+            except OSError:
+                pass  # closed meanwhile, or never connected
 
     def __del__(self):
         if "_response" in self.__dict__:
             self.close()
+
+
+class Alarm(threading.Event):
+    """An event that also calls what is watching it when it is set: a
+    reply's ``stopped`` (routers/ai.py WatchedStream), so a provider turn
+    being read ends the moment the client leaves (``ai_steer.TurnRead``)
+    rather than at the turn's next event."""
+
+    def __init__(self):
+        super().__init__()
+        self._watchers: list = []
+        self._watch_lock = threading.Lock()
+
+    def set(self):
+        super().set()
+        with self._watch_lock:
+            watchers = list(self._watchers)
+        for fn in watchers:
+            fn()
+
+    @contextmanager
+    def watch(self, fn):
+        """While the block runs, ``fn`` is called when the event is set, at
+        once when it already is."""
+        with self._watch_lock:
+            self._watchers.append(fn)
+        try:
+            if self.is_set():
+                fn()
+            yield
+        finally:
+            with self._watch_lock:
+                self._watchers.remove(fn)
 
 
 # What a failure message says when the status alone doesn't (a 400 about the

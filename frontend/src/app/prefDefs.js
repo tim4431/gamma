@@ -357,6 +357,11 @@ export const PREFS = {
   // — chat/modelPrefs.js SPEED_ORDER). Each model gets it only when it has
   // that tier; a model without one is called as usual.
   chatSpeed: pref("gamma-chat-speed", ACCOUNT, ""),
+  // What a message sent while a reply runs does (chat/enterKey.js
+  // followUpSteers): "queue" waits for the reply to end, "steer" goes into
+  // it at once; Ctrl/⌘+Shift+Enter does the other. Codex's "Follow-up
+  // behavior".
+  chatFollowUp: pref("gamma-chat-follow-up", ACCOUNT, "queue", oneOf(["queue", "steer"])),
   // Connection check of the active provider at login (POST /api/ai/health):
   // "ping" (default) is the free credential check — OAuth entries hit the
   // usage endpoint, API keys list /v1/models, both 401 on a dead credential

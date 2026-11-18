@@ -712,7 +712,9 @@ AI:
   card is saved with a model, Settings closes, the status says "Connected —
   <model> ready" and the chat's message box takes the focus.
 - **Chat**: three sections. **Chat** holds the default reasoning effort,
-  the default speed and the snapshot-clearing switch. The effort menu
+  the default speed, the follow-up while a reply runs (`chatFollowUp`,
+  a Queue / Steer `Segmented`, [ai.md](ai.md#queue-and-steer)) and the
+  snapshot-clearing switch. The effort menu
   lists every level, since each model gets the nearest one it takes
   ([ai.md](ai.md#reasoning-effort)). A speed reaches only models whose
   provider offers that service tier ([ai.md](ai.md#speed-service-tier)).

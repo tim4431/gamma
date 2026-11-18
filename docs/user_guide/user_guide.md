@@ -210,6 +210,8 @@ Open the chat from the **View menu (≡) → AI Chat**. Gamma has no AI of its o
 - **Citations are clickable**: `p. 12` jumps the PDF to the passage and highlights it, and `method.tex:12` opens the file at line 12 and marks it. When the file has changed since, the line is found again by its text, and the code view says it moved.
 - The **model chip** switches the model, reasoning effort and speed. Each reply says what wrote it and what it cost in tokens.
 - Select part of a note and ask for a change: the assistant rewrites only that selection.
+- **Select text in the chat itself** to talk about it: **Ask about this** in the bar under the selection quotes it into your next message, ahead of your question. Right-click the selection (or use the bar's **⋯**) for **Copy** (as Markdown, formulas included) and **Create note**: **As it is** puts the passage at the end of the open page's notes (in a folder's or the library's chat it becomes a page of its own), and **Structured by AI** has the chat's model rewrite it into headings and bullet points first, adding nothing, without a turn in the conversation.
+- **While a reply runs**, a message you send waits above the box and goes when the reply ends; its **Steer** hands it to the reply at once, as Ctrl+Shift+Enter (⌘⇧↩ on a Mac) does. Settings → AI → Chat → **Follow-up while a reply runs** swaps them: on **Steer**, Enter steers and Ctrl+Shift+Enter queues.
 - Each paper and folder keeps its own conversation. **New chat** starts over and keeps the old one in History; Alt+click it to throw the old one away.
 
 ### AI services you can connect

@@ -4025,6 +4025,25 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   line-height: 1.5;
 }
 .chatUserText { white-space: pre-wrap; }
+/* A passage the message quoted (chat/chatQuotes.js splitQuoted): a muted
+   bar-led quote, three lines at most, the whole of it in its title. */
+.chatUserQuote {
+  margin: 0 0 var(--space-1);
+  padding: 0 0 0 var(--space-2);
+  border-left: 2px solid var(--border-hover);
+  color: var(--text-secondary);
+  font-size: calc(var(--fs-xs) * var(--text-scale, 1));
+  line-height: 1.45;
+}
+.chatUserText + .chatUserQuote { margin-top: var(--space-1); }
+.chatUserQuoteText {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 /* A failed request (ChatErrorCard): what went wrong, the fix, the details. */
 .chatErrorCard {
   margin-top: 8px;
@@ -4637,8 +4656,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatSelChipMath .katex { font-size: 1.05em; }
 /* Look comes from .uiClose.uiCloseSm; keep it pinned to the right of the chip. */
 .chatSelChipClose { margin-left: auto; }
-/* Selected note text a user attached reads in the muted label colour. */
-.chatSelChip.isNote .chatSelChipLabel { color: var(--text-muted); }
+/* Selected note text a user attached, and a quote of the transcript, read
+   in the muted label colour. */
+.chatSelChip:is(.isNote, .isQuote) .chatSelChipLabel { color: var(--text-muted); }
 /* attach-PDF toggle */
 .chatAttachToggle {
   display: inline-flex;

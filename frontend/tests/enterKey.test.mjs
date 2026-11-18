@@ -3,7 +3,7 @@
 // when Enter sends.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sendsOnEnter, sendsOnShiftEnter } from "../src/chat/enterKey.js";
+import { followUpSteers, sendsOnEnter, sendsOnShiftEnter, steersOnEnter } from "../src/chat/enterKey.js";
 
 const key = (k, extra = {}) => ({ key: k, shiftKey: false, ctrlKey: false, metaKey: false, keyCode: 13, nativeEvent: {}, ...extra });
 
@@ -41,4 +41,16 @@ test("in a comment on an on-screen keyboard Return breaks the line and the butto
   assert.equal(sendsOnShiftEnter(key("Enter"), true), false);
   assert.equal(sendsOnShiftEnter(key("Enter", { shiftKey: true }), true), false);
   assert.equal(sendsOnShiftEnter(key("Enter", { metaKey: true }), true), true, "a tablet's keyboard");
+});
+
+test("while a reply runs, Enter does what the follow-up preference says and Ctrl/⌘+Shift+Enter the other", () => {
+  assert.equal(steersOnEnter(key("Enter", { shiftKey: true, ctrlKey: true })), true);
+  assert.equal(steersOnEnter(key("Enter", { shiftKey: true, metaKey: true })), true);
+  assert.equal(steersOnEnter(key("Enter", { shiftKey: true })), false);
+  assert.equal(steersOnEnter(key("Enter", { shiftKey: true, ctrlKey: true, nativeEvent: { isComposing: true } })), false);
+  assert.equal(followUpSteers("queue"), false);
+  assert.equal(followUpSteers("queue", true), true);
+  assert.equal(followUpSteers("steer"), true);
+  assert.equal(followUpSteers("steer", true), false);
+  assert.equal(followUpSteers(undefined), false, "unset: queue");
 });
