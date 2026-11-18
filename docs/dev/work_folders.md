@@ -890,7 +890,7 @@ explorer draws one, of the rows the Files window draws
 1, its directories by name, numeric, each opening in place, then the files
 of each open one in the server's order, a "Show {n} more files" row and
 the Files window's note rows), each a `TreeRow` with indent guides, a
-chevron and its theme icon ("File icons" below). After each name the
+chevron and its kind's icon ("File icons" below). After each name the
 columns the header names: Format (`libraryUtils.pageFormat`: its
 document's, else its name's, a text file by its language; `formatLabel`
 names a format or such a `{format, language}`; a directory's the files
@@ -945,43 +945,39 @@ the files whose names hold its text.
 
 ## File icons
 
-A work folder's files and directories are drawn with Material Icon Theme's
-icons (`material-icon-theme`, MIT, a dev dependency pinned exactly), picked
-as VS Code picks them; a library page keeps its `FileGlyph`, a library
-folder its `FolderIcon`.
+A work folder's files and directories are drawn in Gamma's own stroke set
+by the kind their names say: a file as the library's sheet with its kind's
+mark and tint, a directory as the folder with its kind's mark, in the
+accent ([ui-design.md](ui-design.md#file-icons) "File icons" has the kinds,
+the marks, the tints and how to add one). A library page keeps its
+`FileGlyph` of its format, a library folder its `FolderIcon`.
 
-- **Shipped** by a Vite plugin, `frontend/tools/fileIcons.mjs`: the build
-  emits every SVG the theme's manifest names (`generateManifest()`, 1,256)
-  as `dist/assets/file-icons/<version>/<id>.svg`, with the theme's
-  `LICENSE` beside them, which the server caches as immutable
-  (`assets/`); the dev server answers the same paths from the package. The
-  map, the manifest's tables with their keys lowercased and the light
-  overlay (`compactMap`), is the virtual module `virtual:file-icons`, a lazy
-  chunk read the first time an icon is drawn (`shared/ui/fileIcons.js`).
-- **The rule** (`fileIcons.js` `iconFor(map, path, {dir, open, root,
-  light})`), VS Code's stylesheet ranking: the case ignored; a file's whole
-  name over any extension, the longest dotted extension over a shorter one
-  (`index.d.ts` is `typescript-def`), a key `parent/name` only under that
-  parent (`.config/graphqlrc`); then the language VS Code's built-in
-  associations give the path (`LANGUAGES`: twelve, `.gitignore`,
-  `tsconfig.*.json`, `Dockerfile.*`, `Jenkinsfile*`…), else the default; a
-  directory by its name, `open` its open icon; W itself the theme's root
-  folder (which `FileIcon` never draws: below); the light theme's variants
-  on a light scheme.
-- **Drawn** by `shared/ui/FileIcon.jsx`: an `<img>` of the icon's URL; a
-  name the theme has no icon for, a page with no file name and an icon that
-  fails to load draw `FileGlyph` (a directory `FolderIcon`). Where: the
-  Files window's rows and the folder view's, a file's tab, quick open's and
-  the chat picker's file rows (`FileOption`), search results, a path link in
-  a note and in the files an agent's turn changed (`FileChanges`), a
-  passage's source line in the chat's composer (`SelChip`'s `file`), the
-  `@` and `[[` pickers' page rows and Linked from, each by the file's name
+- **The rule** (`shared/ui/fileIcons.js` `fileKind(path)`,
+  `folderKind(path)`): the case ignored; a file's whole name
+  (`FILE_NAMES`: `Makefile`, `.gitignore`, `package-lock.json`), then the
+  name before its first dot (`FILE_STEMS`: `README.*`, `LICENSE.*`), a
+  `.env` or `.…rc` dotfile, then its longest dotted extension
+  (`EXTENSIONS`: `tar.gz` before `gz`, `index.d.ts` is `ts`'s); a directory
+  by its name without the dots and underscores around it (`FOLDER_NAMES`:
+  `.github` is `git`, `__pycache__` `temp`); W itself always
+  `SyncedFolderIcon` (below). A name of no kind is "": its page's format
+  draws a file, the plain folder a directory. Nothing is loaded or fetched:
+  the tables and the marks are in the bundle, a few KB, and an icon draws
+  in the row's first frame.
+- **Drawn** by `shared/ui/FileIcon.jsx` (`path`, the page's `format`,
+  `dir`, `root`, `size`): `FileGlyph` with the file's kind, `FolderKindIcon`
+  with the directory's, `SyncedFolderIcon` for the root. An open directory
+  keeps its icon; its chevron says it is open. Where: the Files window's
+  rows and the folder view's, a file's tab, quick open's and the chat
+  picker's file rows (`FileOption`), search results, a path link in a note
+  and in the files an agent's turn changed (`FileChanges`), a passage's
+  source line in the chat's composer (`SelChip`'s `file`), the `@` and
+  `[[` pickers' page rows and Linked from, each by the file's name
   (`file_name`) or path.
 - **The root**: W's card and row in the library, its row in the Files
   window and the folder view's heading wear Gamma's synced folder glyph
   (`Icons.jsx` `SyncedFolderIcon`, lucide's folder-sync: the folder open
-  at its corner for two sync arrows, in place of the theme's root ring,
-  which read as an empty status dot), its arrows in the tone of its sync
+  at its corner for two sync arrows), its arrows in the tone of its sync
   (`ok` synced or connected, accent while syncing or choosing, `warn` not
   syncing or offline). They say the computer that keeps it and how its
   sync stands as a `StateTag` (`vault/vaultState.js` `folderKeeper`, read
@@ -996,20 +992,23 @@ folder its `FolderIcon`.
   45 %), and on a phone a row's takes a line under the name. A card nobody
   this account knows keeps says "Synced folder".
 
-Tests: `frontend/tests/fileIcons.test.mjs` (the rule against the theme's
-own manifest: the cases VS Code was seen to draw, the languages, folders,
-the root, the light variants, the open ids derived), `fileTree.test.mjs`
+Tests: `frontend/tests/fileIcons.test.mjs` (the rule: a whole name, a
+stem, a dotfile, the longest extension, a directory's name without its dots
+and underscores, the format of a name of no kind; every name in one kind,
+every kind with its mark), `themes.test.mjs` (the design page's catalog
+drawn from the current tables), `fileTree.test.mjs`
 (the folder view's rows, the paths), `vaultState.test.mjs` (`folderKeeper`),
 `backend/tests/test_computers.py` (the route), and the browser suite's
-`work-folders` and `explorer` groups (the tree, a `.tex`'s, a `.py`'s and a
-`figures/` directory's icons, the root's computer).
+`work-folders`, `explorer` and `viewers` groups (the tree, a `.tex`'s, a
+`.py`'s, a `figures/` and a `raw/` directory's kinds, an open directory's,
+a tab's, the root's computer).
 
 ## The Files window
 
 A dock window, Files, shows the library's folders and the work folders'
 files as a tree beside the open page (`explorer/FilesWindow.jsx`, a lazy
 chunk with `FileTree.jsx` and `filesWindow.css`; its rows are the folder
-view's, `TreeRow.jsx` over `fileTree.js`, with their theme icons and the
+view's, `TreeRow.jsx` over `fileTree.js`, with their kinds' icons and the
 root's computer, "File icons" above). It is a view of the folders, which stay the model
 with the labels: no label nodes, no pages filed nowhere, no filter box
 (quick open is the search, "Files by name" above). View → Files and the

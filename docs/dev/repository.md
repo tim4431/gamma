@@ -21,7 +21,7 @@ launcher, and desktop release workflows use these locations.
 | `docs/dev/` | Architecture, implementation notes, and plans |
 | `docs/research/` | Design research: surveys, findings, and the reasoning behind chosen shapes |
 | `docs/user_guide/` | The user guide (`user_guide.md`) and its animations (`assets/`), published at gammapdf.com/docs |
-| `docs/design/` | How Gamma is designed, for users and as a reference: the look, the interaction rules, the data model, the library, sync, the AI, the architecture; published at gammapdf.com/docs/design. `assets/` holds the colour sheets `frontend/tools/designSheets.mjs` draws |
+| `docs/design/` | How Gamma is designed, for users and as a reference: the look, the interaction rules, the data model, the library, sync, the AI, the architecture; published at gammapdf.com/docs/design. `assets/` holds the colour and file-icon sheets `frontend/tools/designSheets.mjs` draws |
 | `docs/assets/` | Documentation images and animations |
 | `tools/readme-media/` | README capture scripts, renderers, and recording recipes |
 | `design/brand/` | Authoritative Gamma artwork, variant guidance and output provenance |
@@ -83,8 +83,9 @@ by linking the `docs/dev/` and `docs/research/` files that hold those. A
 change to a rule a design page states updates that page in the same
 commit, as it does the topic doc. A design page names a number only where
 the number is the design (30 days in Recently deleted), not a tunable
-default. Its pictures of the themes and the palette are drawn from the
-tokens and `palette.js` (`node tools/designSheets.mjs` in `frontend/`),
+default. Its pictures of the themes, the palette and the file icons are drawn from
+the tokens, `palette.js` and `fileIcons.js` (`node tools/designSheets.mjs`
+in `frontend/`),
 and `tests/themes.test.mjs` fails while they are out of date. Link between
 documents with relative paths to the `.md` files and use GitHub's heading
 anchors; the build turns those into site links and leaves a link to any other

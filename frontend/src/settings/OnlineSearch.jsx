@@ -14,12 +14,18 @@ import { BookIcon, GlobeIcon, KeyIcon, ServerIcon, Trash2Icon } from "../shared/
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
-// Per service: the form's fields, where to get them, and the row's icon.
+// Per service: the form's fields, where to get them, the row's icon, and
+// whether the assistant works without it (`optional`).
 const SERVICE_FORMS = {
   brave: {
     icon: KeyIcon,
     hint: T("Brave Search API dashboard (api-dashboard.search.brave.com) › API keys. Its plans include monthly free credits."),
     fields: [{ id: "api_key", label: T("API key"), secret: true, placeholder: "BSA…" }],
+  },
+  tavily: {
+    icon: KeyIcon,
+    hint: T("Tavily (app.tavily.com) › API Keys. Its free plan includes 1,000 searches a month."),
+    fields: [{ id: "api_key", label: T("API key"), secret: true, placeholder: "tvly-…" }],
   },
   searxng: {
     icon: ServerIcon,
@@ -28,6 +34,7 @@ const SERVICE_FORMS = {
   },
   openalex: {
     icon: BookIcon,
+    optional: true,
     hint: T("A free key from openalex.org/settings/api: ten times the keyless daily budget, and searches that are not paused when OpenAlex is busy."),
     fields: [{ id: "api_key", label: T("API key"), secret: true }],
   },
@@ -37,18 +44,24 @@ const ENGINE_OPTIONS = () => [
   ["auto", t("Automatic")],
   ["ai", t("Your AI connection")],
   ["brave", "Brave Search"],
+  ["tavily", "Tavily"],
   ["searxng", "SearXNG"],
   ["off", t("Off")],
 ];
 
+// A set-up service shows its first plain field (an address), else its
+// key's hint.
 function serviceHint(service, result) {
   if (result?.busy) return t("Testing…");
   if (result) return result.ok ? `✓ ${result.text}` : result.error;
+  const form = SERVICE_FORMS[service.id];
   if (service.configured) {
-    return service.id === "searxng" ? service.fields.url : t("Key {hint}", { hint: service.fields.api_key || "" });
+    const plain = form?.fields.find((f) => !f.secret);
+    const key = form?.fields.find((f) => f.secret);
+    return plain ? service.fields[plain.id] : t("Key {hint}", { hint: service.fields[key?.id] || "" });
   }
   if (service.server) return t("Provided by this server");
-  return service.id === "openalex" ? t("Optional — works without a key") : t("Not set up");
+  return form?.optional ? t("Optional — works without a key") : t("Not set up");
 }
 
 // The services are the pane's read (settingsReads.js), kept while the
@@ -104,8 +117,8 @@ export function OnlineSearchSettings() {
   const canEdit = info?.can_edit;
   return (<>
     <Row icon={GlobeIcon} label={t("Search the web with")}
-      hint={t("Lab pages, repositories and copies the registries miss")}
-      title={t("What the assistant's general web search goes through. Automatic takes Brave Search or SearXNG when one is set up below, else your AI connection's own web search (OpenAI, the ChatGPT sign-in and Anthropic have one; each search is one short extra call on it). Searching Crossref, arXiv and OpenAlex needs none of this.")}>
+      hint={t("Current facts, documentation, news, and pages the registries miss")}
+      title={t("What the assistant's general web search goes through: current facts, documentation, news, and pages the registries miss. Automatic takes Brave Search, Tavily or SearXNG when one is set up below, else your AI connection's own web search (OpenAI, the ChatGPT sign-in and Anthropic have one; each search is one short extra call on it). Searching Crossref, arXiv and OpenAlex needs none of this.")}>
       <MenuSelect label={t("Search the web with")} value={info?.engine || "auto"}
         options={ENGINE_OPTIONS()} onChange={(engine) => { if (canEdit && !busy) setEngine(engine); }} />
     </Row>

@@ -14,6 +14,7 @@ import pytest
 from fastapi import HTTPException
 
 import gamma.ai_web as web
+import gamma.web_fetch as web_fetch
 import gamma.openalex as openalex
 import gamma.routers.metadata as metadata_mod
 import gamma.routers.pdf as pdf_mod
@@ -356,7 +357,7 @@ def fetched(monkeypatch):
         return {"source_url": "https://pub.example.org/paper.pdf", "version": "publisher"}
 
     monkeypatch.setattr(pdf_mod, "resolve_source", resolve)
-    monkeypatch.setattr(web, "guarded_urlopen", lambda req, timeout=30: Upstream(
+    monkeypatch.setattr(web_fetch, "guarded_urlopen", lambda req, timeout=30: Upstream(
         req.full_url, PDF, "application/pdf"))
     web.clear_cache()
     yield calls
@@ -391,7 +392,7 @@ def test_fetch_paper_ranks_a_publication_lists_links(org, monkeypatch):
         raise HTTPException(status_code=400, detail="no PDF behind this page")
 
     monkeypatch.setattr(pdf_mod, "resolve_source", no_pdf)
-    monkeypatch.setattr(web, "guarded_urlopen", lambda req, timeout=30: Upstream(
+    monkeypatch.setattr(web_fetch, "guarded_urlopen", lambda req, timeout=30: Upstream(
         req.full_url, _publication_list().encode(), "text/html; charset=utf-8"))
     web.clear_cache()
     source = "https://lab.example.edu/publications/"
@@ -412,7 +413,7 @@ def test_fetch_failure_allows_one_look_for_another_copy_only_with_web_search(org
     def blocked(req, timeout=30):
         raise HTTPError(req.full_url, 403, "Forbidden", {"cf-mitigated": "challenge"}, io.BytesIO(b""))
 
-    monkeypatch.setattr(web, "guarded_urlopen", blocked)
+    monkeypatch.setattr(web_fetch, "guarded_urlopen", blocked)
     web.clear_cache()
     scope = {**folder(""), "handoff_user": org[1]["user_id"]}
     text, action = run_agent_tool(org[1]["ws"], scope, "fetch_paper", {"source": "https://pub.example.org/x.pdf"})

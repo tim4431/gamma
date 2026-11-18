@@ -69,7 +69,8 @@ export async function workFolderScenarios(env) {
     const fileRow = (page, name) => viewRow(page, "file", name);
     const dirRow = (page, name) => viewRow(page, "folder", name);
     const folderRow = (page, name) => page.locator(".fileList .folderRow", { has: page.locator(`.folderName:text-is("${name}")`) });
-    const iconOf = (row) => row.locator("img.fileIcon").first().getAttribute("src", { timeout: 10000 });
+    // the kind a row's icon draws (shared/ui/fileIcons.js): its sheet's or its folder's data-kind
+    const iconOf = (row) => row.locator("svg[data-kind]").first().getAttribute("data-kind", { timeout: 10000 });
     const treeFile = (dialog, rel) => dialog.locator(`.importTreeFile[title="${rel}"]`);
     const treeBox = (dialog, rel) => treeFile(dialog, rel).locator("input[type=checkbox]");
 
@@ -157,14 +158,14 @@ export async function workFolderScenarios(env) {
         await fileRow(page, "notes.md").waitFor();
         const names = (await page.locator(".folderTree .fileTreeName").allInnerTexts()).map((s) => s.trim());
         assertEq(names.join("|"), "figures|main.pdf|notes.md", "the directory, then the files by name");
-        // a directory opens in place, one level in, with its theme icon; a file's is its own
-        assert(/\/folder-images(_light)?\.svg$/.test(await iconOf(dirRow(page, "figures"))), "figures/ wears the theme's images folder");
-        assert(/\/pdf(_light)?\.svg$/.test(await iconOf(fileRow(page, "main.pdf"))), "main.pdf the theme's PDF");
+        // a directory opens in place, one level in, with its kind's icon; a file's is its own
+        assertEq(await iconOf(dirRow(page, "figures")), "image", "figures/ wears the images folder");
+        assertEq(await iconOf(fileRow(page, "main.pdf")), "pdf", "main.pdf the PDF sheet");
         await dirRow(page, "figures").click();
         await fileRow(page, "fig1.pdf").waitFor({ timeout: 15000 });
         assertEq(await dirRow(page, "figures").getAttribute("aria-expanded"), "true", "figures open");
         assertEq(await fileRow(page, "fig1.pdf").getAttribute("aria-level"), "2", "fig1.pdf one level in");
-        assert(/\/folder-images-open(_light)?\.svg$/.test(await iconOf(dirRow(page, "figures"))), "an open folder's icon");
+        assertEq(await iconOf(dirRow(page, "figures")), "image", "an open folder keeps its icon");
         await dirRow(page, "figures").focus();
         await page.keyboard.press("ArrowLeft");
         await until(async () => (await fileRow(page, "fig1.pdf").count()) === 0, { what: "ArrowLeft closes it" });
@@ -435,8 +436,8 @@ export async function workFolderScenarios(env) {
         await page.reload();
         const tab = page.locator(".tabStrip .tab", { hasText: main.content }).first();
         await tab.waitFor({ timeout: 15000 });
-        // its kind by its file's name: the theme's PDF icon, once the file's row is known
-        await tab.locator('img.fileIcon[src$="/pdf.svg"], img.fileIcon[src$="/pdf_light.svg"]').waitFor({ timeout: 10000 });
+        // its kind by its file's name: the PDF sheet, once the file's row is known
+        await tab.locator('svg.fileGlyph[data-kind="pdf"]').waitFor({ timeout: 10000 });
         await page.getByRole("button", { name: "Home", exact: true }).click();
         await page.locator(".recentsCarousel .pageCard", { hasText: main.content }).first().waitFor({ timeout: 15000 });
         await user.api(`/api/blocks/${ids.main}`, { method: "PUT", body: { properties: { pinned: new Date().toISOString() } } });

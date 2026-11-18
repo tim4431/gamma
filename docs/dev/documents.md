@@ -625,11 +625,13 @@ link against `sourceAddress` (a copy's upload address holds no DOI or
 arXiv id). `FileGlyph` (`shared/ui/Icons.jsx`) takes a `format` and draws
 a glyph per format (the PDF's stamp, a text's brackets, a picture's
 mountain, audio's note, video's play triangle, a plain sheet for a binary,
-a note's lines), tinted by format in `library/library.css`; the cards, the
+a note's lines), tinted in `library/library.css`; the cards, the
 pickers' rows, the open tabs (App's `tabKinds`) and the page family's
-`sub_pages[]` hand it theirs. A work folder's file is drawn by its name
-instead, with Material Icon Theme's icon (`shared/ui/FileIcon.jsx`,
-[work_folders.md](work_folders.md) "File icons"), `FileGlyph` its fallback. App
+`sub_pages[]` hand it theirs. A work folder's file is drawn by the kind
+its name says instead, the same sheet with a finer mark (a `.tex` file's
+Σ, a `.csv`'s table; `shared/ui/FileIcon.jsx`,
+[ui-design.md](ui-design.md#file-icons) "File icons"), its format where its
+name says no kind. App
 holds the open page's `doc` (`pageDocument(focusedBlock)`) and `docId`
 (`ownHash(doc)`); the chat (`chat/ChatDock.jsx`) takes `doc` and reads its
 PDF by `fileHash`.

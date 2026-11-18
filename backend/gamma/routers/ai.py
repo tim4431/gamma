@@ -36,6 +36,7 @@ from ..ai_agent import AgentLoop, ApprovalGate, Conversation, Helper, PaperWait
 from ..ai_tools import (
     AGENT_PROMPT,
     CITATION_PROMPT,
+    DATED_TOOLS,
     PICTURE_TOOLS,
     READ_CHARS_MAX,
     agent_system,
@@ -1567,13 +1568,14 @@ def _chat_scope(request: Request, ws: str, user_id: str, payload, runtime=None, 
             # What a block or a comment the chat makes says of who made it
             # (agents.stamp): Gamma AI, or a token's connection that drives it.
             "agent": agents.stamp(agents.of_request(request) or agents.gamma(), request.state.user or ""),
-            # Bound inside fetch_paper: streamed tools run in a separate
-            # thread, which does not inherit the request's ContextVars.
+            # Bound inside fetch_paper and fetch_url: streamed tools run in a
+            # separate thread, which does not inherit the request's ContextVars.
             # Journal sign-ins are on or off (a part of fetching, not a call to approve).
             "publisher_user": (personal if permission_state(payload.permissions, "publisher_cookies", False) != "off"
                                else None),
             # The account a blocked fetch_paper hands to the user's browser
-            # (gamma/fetch_handoff.py), whose delivered PDFs it reads.
+            # (gamma/fetch_handoff.py), whose delivered PDFs fetch_paper and
+            # fetch_url read.
             "handoff_user": personal,
             # Whether such a fetch waits on its card inside this reply
             # (ai_agent.PaperWait): the prompt tells the model which it is.
@@ -1667,10 +1669,14 @@ def _chat_prompt(ws: str, payload, scope: dict, tools, allow_native: bool, drop:
     # Agent chats replay each saved reply's tool calls/results so the
     # model keeps what it already listed/read/changed across turns.
     # The pages' PDFs ride with the document context on the oldest kept turn,
-    # the uploaded ones with this message (the wires' pdf_b64s).
+    # the uploaded ones with this message (the wires' pdf_b64s). A chat that
+    # reads the web is told today's date on its oldest turn, never in the
+    # system prompt, which no message may change (agent_system).
+    dated = DATED_TOOLS & {t["name"] for t in tools or ()}
     messages = _build_messages(payload, context, with_tools=bool(tools), located=located,
                                message_context=message_context, drop_turns=drop, picture_lines=lines,
-                               files=document_pdfs, quote_budget=quote_budget)
+                               files=document_pdfs, quote_budget=quote_budget,
+                               date_line=f"Today is {page_now()[:10]} (UTC)." if dated else "")
     # A custom prompt always applies; the built-in one only when there's a document
     documents = context or pdf_b64s or document_pdfs
     system = (payload.system or "").strip()[:8000] or (_SYSTEM_PROMPT if documents else "")

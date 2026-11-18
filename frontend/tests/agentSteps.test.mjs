@@ -161,6 +161,8 @@ test("the running step reads as what the agent is doing", () => {
   assert.equal(runningLabel({ tool: "read_page", args: { page_id: "zz" } }, titleOf), "Reading a page…");
   assert.equal(runningLabel({ tool: "something_new", args: {} }), "Working…");
   assert.equal(runningLabel({ tool: "search_web", args: { query: "raman lab" } }), "Searching the web for “raman lab”…");
+  assert.equal(runningLabel({ tool: "fetch_url", args: { url: "https://www.example.org/docs/a?b=1" } }), "Reading example.org…");
+  assert.equal(runningLabel({ tool: "fetch_url", args: { url: "not a url" } }), "Reading a web page…");
   assert.equal(runningLabel({ tool: "related_papers", args: { source: "doi:10.1/x" } }), "Following citations of doi:10.1/x…");
   assert.equal(runningLabel({ tool: "related_papers", args: {} }), "Following citations of a paper…");
   // The arguments a change is about: the new title, the folder, the edit's mode.
@@ -184,6 +186,7 @@ test("the running step reads as what the agent is doing", () => {
 
 test("a batch of calls reads as how many, not as one of them", () => {
   assert.equal(runningLabel({ tool: "fetch_paper", batch: 4 }), "Fetching 4 documents…");
+  assert.equal(runningLabel({ tool: "fetch_url", batch: 3 }), "Reading 3 web pages…");
   assert.equal(runningLabel({ tool: "read_page", batch: 2 }), "Reading 2 pages…");
   assert.equal(runningLabel({ tool: "", batch: 3, tools: ["read_page", "search_library"] }),
     "Running 3 steps at once…");

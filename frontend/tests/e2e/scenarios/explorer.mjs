@@ -8,7 +8,7 @@ import { Account, Server, makePdf, sleep, wanted } from "../harness.mjs";
 // with its sources, figures, a table and a note. Quick open finds a file by
 // name and by path among 20,000 seeded ones; the Files window beside an open
 // page reads nothing until it is shown, then reveals the page, draws its
-// rows with their theme icons and the root with its computer, opens and
+// rows with their kinds' icons and the root with its computer, opens and
 // moves by the keys, folds, closes and comes back as it was; a library
 // folder stands in it with its pages; a file's crumbs open its directory;
 // a note's link to a file is a mention of its page, and a path typed in
@@ -258,19 +258,14 @@ export async function explorerScenarios(env) {
         await until(async () => (await treeRow(page, "fig1.pdf").getAttribute("aria-selected")) === "true", { timeout: 15000, what: "fig1.pdf revealed" });
         assertEq(await treeRow(page, "figures").getAttribute("aria-expanded"), "true", "figures opened");
         assertEq(await treeRow(page, "raw").getAttribute("aria-expanded"), "false", "raw stays closed");
-        // a synced folder's rows by Material Icon Theme: a file by its name, a directory by its own; the root wears
-        // Gamma's synced folder glyph, with the computer that keeps it
-        const icon = (name) => treeRow(page, name).locator("img.fileIcon").first().getAttribute("src", { timeout: 2000 }).catch(() => "");
-        for (const [name, id] of [["main.tex", "tex"], ["plot.py", "python"], ["figures", "folder-images-open"], ["raw", "folder"]]) {
-          await until(async () => new RegExp(`/assets/file-icons/[^/]+/${id}(_light)?\\.svg$`).test((await icon(name)) || ""),
-            { timeout: 10000, what: `${name}'s icon is ${id}` });
+        // a synced folder's rows by the kind their names say (shared/ui/fileIcons.js): a file's sheet, a directory's
+        // folder, each with its kind's mark; the root wears Gamma's synced folder glyph, with the computer that keeps it
+        for (const [name, kind] of [["main.tex", "tex"], ["plot.py", "code"], ["figures", "image"], ["raw", "data"]]) {
+          assertEq(await treeRow(page, name).locator("svg[data-kind]").first().getAttribute("data-kind"), kind, `${name}'s icon is ${kind}'s`);
         }
         assertEq(await treeRow(page, "Paper").locator("svg .syncBadge").count(), 1, "the root's glyph is the synced folder's");
-        assertEq(await treeRow(page, "Paper").locator("img.fileIcon").count(), 0, "not the theme's root folder");
         assert(/^This computer · /.test(await treeRow(page, "Paper").locator(".fileTreeKeeper").innerText()),
           "the root names the computer that keeps it");
-        const served = await page.evaluate(async (src) => (await fetch(src)).headers.get("content-type"), await icon("main.tex"));
-        assert(/svg/.test(served || ""), `the icon is served as SVG: ${served}`);
 
         // fold and open by the grip, close and bring it back from the View menu
         await page.locator('[data-guide="files.grip"]').dblclick();

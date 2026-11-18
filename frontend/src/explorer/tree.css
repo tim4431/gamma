@@ -36,7 +36,7 @@
   border-color: var(--accent-fill);
   border-style: dashed;
 }
-.fileTreeRow > :is(svg, .fileIcon) { flex-shrink: 0; }
+.fileTreeRow > svg { flex-shrink: 0; }
 .fileTreeRow > svg:not(.fileGlyph) { color: var(--accent); }
 .fileTreeChevron {
   display: inline-flex;

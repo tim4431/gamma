@@ -96,7 +96,7 @@ export async function subPageScenarios(env) {
       assert((await panel(page).locator(".backlinksHead").innerText()).includes("1 page inside"), "the panel counts it");
       assertEq(await crumbs(page).count(), 0, "a library page has no page crumbs");
       assertEq((await folderCrumbs(page).allInnerTexts()).join("|"), "Shelf", "but the folder it is filed in");
-      assertEq(await page.locator('[data-guide="page.labels"] .folderChip').count(), 0, "which has no chip: the crumb says it");
+      await page.locator('[data-guide="page.labels"] .folderChip', { hasText: /^Shelf$/ }).waitFor();
 
       // the library and the folder list the parent only, and count one page
       await goHome(page);

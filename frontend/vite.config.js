@@ -4,7 +4,6 @@ import { promisify } from "node:util";
 import zlib from "node:zlib";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import fileIcons from "./tools/fileIcons.mjs";
 
 // A Brotli (quality 11) and a gzip (level 9) copy beside every emitted file
 // worth compressing, made once per build instead of per request: the backend
@@ -78,7 +77,7 @@ function preloadApp() {
 }
 
 export default defineConfig({
-  plugins: [react(), fileIcons(), precompress(), preloadApp()],
+  plugins: [react(), precompress(), preloadApp()],
   server: {
     proxy: {
       // ws: the page's live socket (/api/ws/page/…) rides the same proxy

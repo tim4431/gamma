@@ -156,12 +156,15 @@ class Anthropic(Protocol):
             headers["anthropic-beta"] = FAST_MODE_BETA
         return URLRequest(f"{conf['base_url']}/v1/messages", data=json.dumps(body).encode(), headers=headers)
 
-    def hosted_web_search(self, conf):
+    def hosted_web_search(self, conf, site=""):
         # Anthropic's server tool; a service speaking this API elsewhere
         # is not known to run it.
         if not is_anthropic_platform(conf.get("base_url", "")):
             return None
-        return {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+        tool = {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
+        if site:
+            tool["allowed_domains"] = [site]
+        return tool
 
     def reply_text(self, data):
         text = "".join(item.get("text", "") for item in data.get("content", []) if item.get("type") == "text")
@@ -203,11 +206,22 @@ class Anthropic(Protocol):
             block = event.get("content_block") or {}
             if block.get("type") == "tool_use":
                 state["tool"] = {"id": block.get("id") or "", "name": block.get("name") or "", "json": ""}
-            elif block.get("type") == "web_search_tool_result" and isinstance(block.get("content"), list):
-                # The hosted search's results arrive whole with the block.
-                found = [{"url": r["url"], "title": r.get("title") or ""} for r in block["content"]
-                         if isinstance(r, dict) and r.get("type") == "web_search_result" and r.get("url")]
-                if found:
+            elif block.get("type") == "server_tool_use" and block.get("name") == "web_search":
+                yield ("web_searched", {"error": ""})
+            elif block.get("type") == "web_search_tool_result":
+                # The hosted search's results arrive whole with the block; a
+                # failed search's content is one web_search_tool_result_error.
+                content = block.get("content")
+                if isinstance(content, dict):
+                    yield ("web_searched", {"error": str(content.get("error_code") or "unavailable")})
+                elif isinstance(content, list):
+                    yield ("web_searched", {"error": ""})
+                    found = [{"url": r["url"], "title": r.get("title") or "",
+                              **({"date": str(r["page_age"])} if r.get("page_age") else {})}
+                             for r in content
+                             if isinstance(r, dict) and r.get("type") == "web_search_result" and r.get("url")]
+                    # Even none: the search listed what it found, so a page
+                    # the model names beyond that is from memory.
                     yield ("web_sources", found)
         elif kind == "content_block_delta":
             delta = event.get("delta") or {}

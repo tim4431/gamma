@@ -241,7 +241,10 @@ Independent of the other steps.
   icon asserted. Docs: [dev/work_folders.md](../dev/work_folders.md),
   [dev/home_library.md](../dev/home_library.md).
 
-**As built** (1.1, 1.2, the word). The icons are C5's: `material-icon-theme`
+**As built** (1.1, 1.2, the word). *Superseded 2026-11-17 for the icons:
+Gamma draws its own, a mark per kind on its file sheet or folder in its
+stroke set, and the theme, its plugin and its virtual module are gone
+([dev/ui-design.md](../dev/ui-design.md#file-icons) "File icons").* The icons were C5's: `material-icon-theme`
 5.40.0 pinned as a dev dependency, `frontend/tools/fileIcons.mjs` emitting
 every SVG into `dist/assets/file-icons/<version>/` with the theme's
 `LICENSE`, the lowercased map as `virtual:file-icons` (a 27 KB Brotli lazy
@@ -1674,9 +1677,11 @@ New words get their `zh` strings ([dev/i18n.md](../dev/i18n.md)).
 - **The word** in the interface is *synced folder*, in English and in
   every catalog; *work folder* stays the code's and the developer docs'
   name for it.
-- **The icons** are the whole set, mapped as VS Code maps them with the
+- **The icons** were the whole set, mapped as VS Code maps them with the
   Material Icon Theme: its manifest's file names, extensions and folder
-  names, light variants where the theme has them.
+  names, light variants where the theme has them. Replaced on 2026-11-17
+  by Gamma's own kind icons, the theme's filled logos being the one foreign
+  set in the app ([dev/ui-design.md](../dev/ui-design.md#file-icons)).
 - **Marks on disk**: the marks of a file linked to disk are written
   there too, a synced folder's files and a page that follows one file
   (a vault of kind `file`) alike. A library PDF linked to nothing is

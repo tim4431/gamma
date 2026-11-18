@@ -673,7 +673,7 @@ function PopoverAnchor({ name, children, className = "" }) {
 
 // The topbar's tab strip (Chrome-style). Each tab leads with its page's kind
 // icon (`kindOf(id)` → {format, file}: its document's format, "" for none,
-// and a synced folder's file's name, whose theme icon it is); pinned tabs come
+// and a synced folder's file's name, whose kind's icon it is); pinned tabs come
 // first, keep their title and carry a pin (click to unpin) where the close
 // button would be.
 // The strip keeps the active tab in view, pans with a plain mouse wheel, and

@@ -40,6 +40,8 @@ test("the card's headline says what the call would do", () => {
   assert.equal(approvalTitle({ tool: "read_page", args: { page_id: "a" } }, { titleOf: (id) => (id === "a" ? "Attention" : "") }),
     "Read “Attention”");
   assert.equal(card("fetch_paper", {}, { source: "doi:10.1/x" }), "Fetch doi:10.1/x");
+  assert.equal(card("fetch_url", {}, { url: "https://example.org/a" }), "Read https://example.org/a");
+  assert.equal(card("read_paper", {}, { source: "arXiv:1706.03762" }), "Read arXiv:1706.03762 with a helper");
   assert.equal(approvalTitle({ tool: "a_new_tool" }, { permission: "Do things" }), "Use “Do things”");
   // A declined call's chip, from the fields copied onto it.
   assert.equal(declinedSummary({ approval: "deny", tool: "edit_block", title: "N", mode: "append" }),

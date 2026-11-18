@@ -151,14 +151,16 @@ export async function settingsScenarios(env) {
     try {
       await openSettings(page);
       await nav(page, "Tool usage").click();
-      const tools = row(page, "Search papers online");
-      assert((await tools.innerText()).includes("Find papers on Crossref, arXiv and OpenAlex, follow their citations, and search the web"));
+      const tools = row(page, "Search online");
+      assert((await tools.innerText()).includes("Search the web and Crossref, arXiv and OpenAlex, and follow papers' citations"));
       const engine = row(page, "Search the web with").getByRole("button", { name: "Search the web with", exact: true });
       assert((await engine.innerText()).includes("Automatic"));
       const brave = row(page, "Brave Search");
+      const tavily = row(page, "Tavily");
       const searxng = row(page, "SearXNG");
       const openalex = row(page, "OpenAlex");
       assert((await brave.innerText()).includes("Not set up"));
+      assert((await tavily.innerText()).includes("Not set up"));
       assert((await openalex.innerText()).includes("Optional — works without a key"));
 
       await brave.getByRole("button", { name: "Set up", exact: true }).click();
@@ -2378,7 +2380,7 @@ export async function settingsScenarios(env) {
         assertEq(await stateOf("Fetch documents"), "Allow");
 
         await choosePreset("Folder chat", "Read library");
-        for (const tool of ["Search papers online", "Fetch documents", "Use journal sign-ins", "Edit note blocks"]) {
+        for (const tool of ["Search online", "Fetch documents", "Use journal sign-ins", "Edit note blocks"]) {
           assertEq(await stateOf(tool), "Off", `${tool} is off in read-library mode`);
         }
         assertEq(await stateOf("Read pages"), "Allow");
@@ -2397,7 +2399,7 @@ export async function settingsScenarios(env) {
         assertEq(await preset("Folder chat").innerText(), "Custom");
         await choosePreset("PDF chat", "Read & search");
         assertEq(await stateOf("Edit note blocks", "PDF chat"), "Off");
-        assertEq(await stateOf("Search papers online", "PDF chat"), "Allow");
+        assertEq(await stateOf("Search online", "PDF chat"), "Allow");
 
         await master.uncheck();
         assertEq(await preset("Folder chat").isDisabled(), true);

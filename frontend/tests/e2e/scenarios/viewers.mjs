@@ -477,12 +477,11 @@ export async function viewerScenarios(env) {
           await menu.waitFor({ state: "detached" });
           return items;
         };
-        // a tab of a synced folder's file wears the theme's icon of its name
-        for (const [name, icon, word, close] of [["main.tex", "tex", "Text", "Close the file view"], ["fig.png", "image", "Picture", "Close the picture"],
-          ["tone.wav", "audio", "Player", "Close the player"], ["blob.bin", "hex", "File", "Close the file view"]]) {
+        // a tab of a synced folder's file wears the icon of its name's kind
+        for (const [name, kind, word, close] of [["main.tex", "tex", "Text", "Close the file view"], ["fig.png", "image", "Picture", "Close the picture"],
+          ["tone.wav", "audio", "Player", "Close the player"], ["blob.bin", "plain", "File", "Close the file view"]]) {
           await page.goto(at(ids[name]));
-          await page.locator(`.tabStrip .tab img.fileIcon[src$="/${icon}.svg"], .tabStrip .tab img.fileIcon[src$="/${icon}_light.svg"]`)
-            .first().waitFor({ timeout: 20000 });
+          await page.locator(`.tabStrip .tab svg.fileGlyph[data-kind="${kind}"]`).first().waitFor({ timeout: 20000 });
           const closeBtn = page.locator(".pdfCloseBtn");
           await closeBtn.waitFor();
           assertEq(await closeBtn.getAttribute("aria-label"), close, `${name}: the × names its pane`);
