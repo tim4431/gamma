@@ -1410,8 +1410,10 @@ export default function ChatDock({
   // does not send its continuation over it (chat/FetchHandoffCards.jsx).
   const composerHasDraft = !!(chatInput.trim() || chatImages.length || chatFiles.length
     || pdfSelections.length || chatNotes?.length);
-  // Whether the composer's message can join the queue while the reply runs.
-  const queuesInput = !!chatInput.trim() && (onComputer ? side.queues(chatInput) : !aiOff && !readOnly);
+  // Whether a message (the composer's, or a dictation's) can join the queue
+  // while the reply runs.
+  const queues = (text) => !!text.trim() && (onComputer ? side.queues(text) : !aiOff && !readOnly);
+  const queuesInput = queues(chatInput);
 
   // Core chat send. baseMessages overrides the history (used when re-sending
   // an edited message: everything after the edited message is discarded,
@@ -1699,11 +1701,10 @@ export default function ChatDock({
   // it with the PDF passages selected, and the draft stays until the server
   // made its turn. While a reply runs it joins the conversation's queue,
   // with what goes with it, and `steer` (Ctrl/⌘+Shift+Enter) hands it to
-  // the reply at once.
-  async function sendChatMessage({ steer = false } = {}) {
-    const text = chatInput;
+  // the reply at once. `text` a dictation's, sent in the composer's place.
+  async function sendChatMessage({ steer = false, text = chatInput } = {}) {
     if (replying) {
-      if (!queuesInput) return;
+      if (!queues(text)) return;
       const item = { id: makeId(), text, parts: onComputer ? { selections: pdfSelections } : takeComposer() };
       if (onComputer) setPdfSelections([]);
       chatQueue.enqueue(queueKey, item);
@@ -1720,7 +1721,7 @@ export default function ChatDock({
     setChatInput("");
     sendChat(text);
   }
-  sendTextRef.current = onComputer ? side.send : sendChat;
+  sendTextRef.current = (text) => sendChatMessage({ text });
 
   function stopChat() {
     session.stop(chatKey);
@@ -1854,7 +1855,8 @@ export default function ChatDock({
       const data = await apiJson(`${API}/ai/transcribe`, { method: "POST", body: form });
       const text = (data.text || "").trim();
       if (text && rec.autoSend) {
-        setChatInput("");
+        // As Send would: queued while a reply runs (it may have started or
+        // ended during the recording), sent otherwise.
         sendTextRef.current?.([rec.baseText.trim(), text].filter(Boolean).join(" "));
       } else if (text) {
         setChatInput((prev) => (prev.trim() ? `${prev.replace(/\s+$/, "")} ${text}` : text));
@@ -2653,29 +2655,31 @@ export default function ChatDock({
           {chip.models.length || agentList.length > 1 ? (
             <AgentChip guide="chat.model" agents={agentList} agent={agent} onAgent={chooseAgent} {...chip} />
           ) : null}
+          {/* The mic, while a reply runs too: its transcript is sent, or
+              queued, as a typed message would be. */}
+          {dictation === "busy" ? (
+            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
+              <span className="transferSpin inline" />
+            </button>
+          ) : canDictate ? (
+            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
+              <MicIcon size={14} />
+            </button>
+          ) : null}
           {stop && !queuesInput ? (
             <button className="uiBtn chatCircleBtn chatStopBtn" type="button" onClick={stop.onClick} title={stop.label} aria-label={stop.label}>
               <StopIcon size={14} />
             </button>
           ) : replying ? (
             <button className="uiBtn primary chatCircleBtn" type="submit" title={queueLabel} aria-label={t("Queue the message")}
-              disabled={!queuesInput}>
+              disabled={!queuesInput || dictation === "busy"}>
               <ArrowUpIcon size={14} />
             </button>
-          ) : dictation === "busy" ? (
-            <button className="uiBtn chatCircleBtn chatMicBtn" type="button" disabled title={t("Transcribing…")} aria-label={t("Transcribing")}>
-              <span className="transferSpin inline" />
-            </button>
           ) : (
-            <>
-              {canDictate ? <button className="uiBtn chatCircleBtn chatMicBtn" type="button" onClick={startDictation} title={t("Dictate — transcribed with your OpenAI key")} aria-label={t("Start dictation")}>
-                <MicIcon size={14} />
-              </button> : null}
-              <button className="uiBtn primary chatCircleBtn" type="submit" title={t("Send")} aria-label={t("Send")}
-                disabled={onComputer ? !side.ready(chatInput) : aiOff || !chatInput.trim()}>
-                <ArrowUpIcon size={14} />
-              </button>
-            </>
+            <button className="uiBtn primary chatCircleBtn" type="submit" title={t("Send")} aria-label={t("Send")}
+              disabled={dictation === "busy" || (onComputer ? !side.ready(chatInput) : aiOff || !chatInput.trim())}>
+              <ArrowUpIcon size={14} />
+            </button>
           )}
         </div>
         </>

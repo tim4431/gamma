@@ -315,12 +315,21 @@ export async function chatNavigationScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("chat navigation: a message sent while the reply runs waits in the queue; Steer hands it to the reply where it lands, the next goes when the reply ends, and Stop pauses the queue until Send", async () => {
+  await step("chat navigation: a message sent while the reply runs waits in the queue; Steer hands it to the reply where it lands, the next goes when the reply ends, Stop pauses the queue until Send, and a dictation queues as a typed message does", async () => {
     await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     const ctx = await alice.context(browser);
-    await fakeAiModels(ctx);
+    await fakeAiModels(ctx, { ...FAKE_AI_MODELS, transcribe: true });
     await ctx.addInitScript(() => {
       localStorage.setItem("gamma-ai-login-check", "off");
+      // A microphone that hears a tone, as recording.mjs fakes one.
+      Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => {
+        const tone = new AudioContext();
+        const osc = tone.createOscillator();
+        const out = tone.createMediaStreamDestination();
+        osc.connect(out);
+        osc.start();
+        return out.stream;
+      } } });
       window.chatStreams = []; // one fake stream per /api/ai/chat call, with what it asked
       window.steers = [];      // what each POST /api/ai/chat/steer/{reply} carried
       const fetch = window.fetch.bind(window);
@@ -337,6 +346,9 @@ export async function chatNavigationScenarios(env) {
               init.signal.addEventListener("abort", () => controller.error(new DOMException("Stopped", "AbortError")));
             },
           }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        if (url.endsWith("/api/ai/transcribe")) {
+          return Promise.resolve(new Response(JSON.stringify({ text: "Dictated follow-up" }), { headers: { "Content-Type": "application/json" } }));
         }
         if (url.includes("/api/ai/chat/steer/")) {
           window.steers.push({ reply: url.split("/").pop(), ...JSON.parse(init.body) });
@@ -402,15 +414,25 @@ export async function chatNavigationScenarios(env) {
       await page.waitForFunction(() => window.chatStreams.length === 3);
       assertEq(await page.evaluate(() => window.chatStreams[2].body.prompt), "One more thing");
       await push({ delta: "Sure." });
+      // The mic stays while the reply runs, and its ↑ (stop and send) queues the transcript.
+      await page.getByRole("button", { name: "Start dictation", exact: true }).click();
+      await page.getByRole("button", { name: "Stop, transcribe and send", exact: true }).click();
+      await until(async () => (await rows.allInnerTexts()).some((text) => text.includes("Dictated follow-up")),
+        { what: "the transcript waits in the queue" });
+      assertEq(await page.evaluate(() => window.chatStreams.length), 3, "the transcript waits for the reply");
       await page.evaluate(() => window.chatStreams[2].finish());
+      await page.waitForFunction(() => window.chatStreams.length === 4);
+      assertEq(await page.evaluate(() => window.chatStreams[3].body.prompt), "Dictated follow-up");
+      await push({ delta: "Noted." });
+      await page.evaluate(() => window.chatStreams[3].finish());
       await until(async () => !(await rows.count()));
       // Stored as it reads: the steered message a user turn of its own between the reply's two parts.
       let stored;
       await until(async () => {
         stored = (await alice.api("/api/chats/home")).messages || [];
-        return stored.at(-1)?.text === "Sure." && !stored.at(-1).partial;
+        return stored.at(-1)?.text === "Noted." && !stored.at(-1).partial;
       });
-      assertEq(stored.map((m) => `${m.role}${m.steered ? "*" : ""}`).join(" "), "user ai user* ai user ai user ai");
+      assertEq(stored.map((m) => `${m.role}${m.steered ? "*" : ""}`).join(" "), "user ai user* ai user ai user ai user ai");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

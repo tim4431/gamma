@@ -1081,7 +1081,8 @@ dictation.
 
 The composer is one rounded box: the context chips on top, the message at
 full width, then a toolbar of [+], the PDF switch, the model chip, the
-mic, and Send (or Stop while this bucket's reply streams). The box's
+mic (there while a reply streams too), and Send (or Stop while this
+bucket's reply streams). The box's
 buttons never take the focus (the form cancels a button's `mousedown`), so
 a press keeps an on-screen keyboard up.
 
@@ -1126,8 +1127,10 @@ reply runs, Send (Enter, or the circle button, which reads Send instead of
 Stop while the box holds a message) puts the message in the
 conversation's queue (`chat/chatQueue.js`) with what goes with it: Gamma
 AI's pictures, files, PDF passages, note chips and the cursor's block, a
-computer agent's passages. The queue is drawn above the composer
-(`chat/ChatQueue.jsx`), one row a message in the order they go: its grip
+computer agent's passages. A dictation goes the same way: its ↑ (stop
+and send) queues the transcript while a reply runs, deciding when the
+transcript comes back, and its ■ puts it in the box. The queue is drawn
+above the composer (`chat/ChatQueue.jsx`), one row a message in the order they go: its grip
 (drag, or the arrow keys, through `shared/ui/useDragOrder.js`), its first
 picture, its text on one line, **Steer**, Delete, and ⋯ with Edit (in the
 row: Enter keeps, Escape leaves it) and Move up / down.
