@@ -235,7 +235,8 @@ def test_a_failed_start_is_reported_and_retried_on_restart(entry, tmp_path):
     # The bind failed: the state file says so, and the supervisor waits.
     assert _settle(lambda: state.exists() and _state(state)["state"] == "stopped")
     assert "could not listen" in _state(state)["detail"]
-    assert "waiting for a restart" in log.getvalue()
+    # The supervisor writes the log line after the state file: wait for it too.
+    assert _settle(lambda: "waiting for a restart" in log.getvalue())
     time.sleep(0.05)
     assert len(made) == 1, "nothing runs again until the app asks"
 
