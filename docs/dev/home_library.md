@@ -229,8 +229,9 @@ page was opened (`folderFilter`), or one below it, when the page is filed
 there, so the path reads as the way it came; else its first folder
 (`placeFolder` in libraryUtils). A sub-page shows its top's, then the pages
 above it ("Sub-pages"); a work folder's file shows its directory ("Work
-folders"); a page at the root shows none. The folder the crumbs name has
-no chip under the title (the label field's edit lists it with the others).
+folders"); a page at the root shows none. The folder the crumbs name
+keeps its chip under the title with the page's other folders, so the row
+shows every folder the page is filed in and each chip keeps its menu.
 A share view's topbar names the path instead.
 
 **Home.** The topbar's Home (a phone's Library tab) goes, from a page, back

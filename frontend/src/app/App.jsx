@@ -9795,8 +9795,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // path of a folder it is filed in, a sub-page by its top's, the one the
   // library showed as it opened when it is filed there or below
   // (placeFolder). A share's topbar names the path instead. The folder the
-  // crumbs lead to has no chip under the title; the label field's edit
-  // lists it with the others.
+  // crumbs lead to keeps its chip under the title, as the others do.
   const placeTop = openFamily.ancestors[0]?.id;
   const openPlace = shareMode || focusedFile ? ""
     : placeFolder(libTree, placeTop ? pagesById.get(placeTop)?._folders : pageFolders, folderFilter);
@@ -11050,9 +11049,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     </div>
                     );
                   })() : (() => {
-                    // the folder the crumbs lead to is theirs, no chip
-                    const chips = filingChips(libTree, {
-                      folders: openSubPage ? [] : pageFolders.filter((id) => id !== openPlace), labels: pageLabels, work_folder: focusedFile });
+                    const chips = filingChips(libTree, { folders: openSubPage ? [] : pageFolders, labels: pageLabels, work_folder: focusedFile });
                     return (
                     <span
                       className={`categoryFrontmatterValue ${chips.folders.length || chips.labels.length ? "" : "empty"}`}

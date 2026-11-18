@@ -336,9 +336,10 @@ export async function zoteroLinkScenarios(env) {
         await blockRow(page, "great point").waitFor();
         await blockRow(page, "Key points").waitFor();
         const filing = page.locator('[data-guide="page.labels"]');
-        // the collection is where the paper is: its path over the title, no chip
+        // the collection is where the paper is: its path over the title, and its chip
         await until(async () => (await page.locator(".pageCrumbs .crumbFolder").allInnerTexts()).join("|") === "ML|Transformers",
           { what: "the collection's path over the title" });
+        await filing.locator(".categoryBadge.folderChip", { hasText: /Transformers/ }).waitFor();
         await filing.locator(".categoryBadge:not(.folderChip)", { hasText: /^transformers$/ }).waitFor();
         await pillState(page, "ok");
         await shot(page, "zotero-link-paper");
