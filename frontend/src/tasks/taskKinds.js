@@ -8,7 +8,7 @@
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { fmtBytes } from "../shared/lib/format.js";
 import { exportFormatOf } from "../transfers/transferFormats.js";
-import { elapsed, fmtElapsed, isActive } from "./taskModel.js";
+import { elapsed, fmtElapsed, isActive, remainingMs } from "./taskModel.js";
 
 const named = (value) => value || t("Untitled");
 
@@ -178,6 +178,9 @@ export const TASK_KINDS = {
   // This tab's own work (App.jsx adds and updates these rows).
   download: { icon: "download" },
   upload: { icon: "upload" },
+  // A folder, or many files, going into the library (transfers/uploadBatch.js):
+  // one row for the batch, which opens its dialog again (useUploadBatches' open).
+  uploads: { icon: "upload", open: "uploads" },
   file: { icon: "file" },
   ai: { icon: "sparkles", quiet: true },
   batch: { icon: "file" }, // the library's bulk actions over many pages (library/pageBatch.js)
@@ -242,6 +245,36 @@ export function progressCounts({ done, total, unit } = {}) {
     case "highlights": return tn("{done} of {total} highlight", "{done} of {total} highlights", total, args);
     default: return t("{done} of {total}", args);
   }
+}
+
+// "about 3 minutes left", from taskModel's remainingMs; "" while it cannot tell.
+export function fmtRemaining(ms) {
+  if (ms === undefined) return "";
+  if (ms < 60000) return t("less than a minute left");
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 60) return tn("about {n} minute left", "about {n} minutes left", minutes);
+  return tn("about {n} hour left", "about {n} hours left", Math.round(ms / 3600000));
+}
+
+// An upload's line as its bytes go, "12.0 MB / 40.0 MB · about 1 minute
+// left", the time left from `since` (ms), when it started.
+export function bytesInfo(loaded, total, since, now = Date.now()) {
+  const left = Number.isFinite(since) ? fmtRemaining(remainingMs(loaded, total, since, now)) : "";
+  return [total ? `${fmtBytes(loaded)} / ${fmtBytes(total)}` : fmtBytes(loaded), left].filter(Boolean).join(" · ");
+}
+
+// A tasks row's byte progress, for an upload's onProgress(loaded, total):
+// `patch({info, fraction})` once per visible percent, since each patch
+// re-renders the app.
+export function byteProgress(patch, now = Date.now) {
+  const since = now();
+  let shown = null;
+  return (loaded, total) => {
+    const pct = total ? Math.floor((loaded / total) * 100) : loaded;
+    if (pct === shown) return;
+    shown = pct;
+    patch({ info: bytesInfo(loaded, total, since, now()), fraction: total ? loaded / total : undefined });
+  };
 }
 
 // What a running job is doing: its phase, how far it got, the item at hand.
@@ -344,7 +377,9 @@ export function relocationSummary(r) {
   ].filter(Boolean).join(" ");
 }
 
-export const canOpen = (task) => !task.local && Boolean(kindOf(task).open);
+// A row with a window or a pane of its own: a job's, or this tab's folder
+// upload (the other local kinds have none).
+export const canOpen = (task) => Boolean(kindOf(task).open);
 
 // The path (under /api) a job's Stop posts to when its kind has a stop of
 // its own (a computer turn's, in the workspace it runs in), else "": the

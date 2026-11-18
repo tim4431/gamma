@@ -29,7 +29,7 @@ import { REOPEN_SETTINGS_KEY, resolveSettingsPane } from "../settings/settingsNa
 import { useTasks } from "../tasks/useTasks";
 import { useAppJobs } from "../tasks/useAppJobs";
 import { TaskBadge, TasksButton, TasksPanel } from "../tasks/TasksTray";
-import { progressText, relocationSummary, taskTitle } from "../tasks/taskKinds.js";
+import { byteProgress, bytesInfo, progressText, relocationSummary, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
@@ -59,7 +59,9 @@ import { cutObject, moveObjectInTree } from "../editor/mdObjects";
 import { scanMathSpans } from "../editor/mdScan";
 import { sourceRangeOfSelection } from "../editor/clickToSource";
 import { FileChipContext, forgetDocPages, rememberDocPage, setUploadReporter, uploadFilesAsLines } from "../transfers/FileChip";
-import { ASK_PAST_FILES, attachFile, dropFilter, promoteChip, routeFile, uploadName, uploadOneFile } from "../transfers/documentUploads.js";
+import { attachFile, dropFilter, hiddenName, itemPath, promoteChip, routeFile, uploadName, uploadOneFile } from "../transfers/documentUploads.js";
+import { uploadedPage } from "../transfers/uploadBatch.js";
+import { useUploadBatches } from "../transfers/useUploadBatches.js";
 import { uploadPdf } from "../shared/lib/uploadParts";
 import { CardLabels, KindToggle, ListFindBox, ListSearchElsewhere, PageCard, SelectCheck, ViewToggle } from "../library/FileBrowser";
 import { createChatSession } from "../chat/chatSession";
@@ -348,6 +350,7 @@ const SharePopover = lazySurface(() => import("../sharing/SharePopover"), (m) =>
 const ImportDialog = lazySurface(() => import("../transfers/ImportExport"), (m) => m.ImportDialog);
 const ExportDialog = lazySurface(() => import("../transfers/ImportExport"), (m) => m.ExportDialog);
 const ImportReviewDialog = lazySurface(() => import("../transfers/ImportReviewDialog"));
+const UploadDialog = lazySurface(() => import("../transfers/UploadDialog"));
 // Comments (docs/dev/comments.md "In the app"): a block's thread popover,
 // fetched when the pointer or focus reaches a comment control, and the
 // Comments window, with the View menu.
@@ -3515,7 +3518,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       openFolder(id === "home" ? "" : id);
       showChat();
     },
+    // a folder upload's dialog on its row (useUploadBatches); a page an import brought, opened
+    openUploads: (rowId) => uploads.open(rowId),
+    openPage: openImportedPage,
   });
+  // A page an import brought in (one alone, transfers/importReview.js
+  // onlyPage), opened once the library holds it.
+  async function openImportedPage(id) {
+    await fetchHomeBlocks();
+    await openBlock(id, { pushNav: true });
+  }
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
     { format: "pdf", highlights: true, notes: true, bundle: true, comments: false, notesAt: "beside" },
@@ -5976,17 +5988,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // before any page is bound to it (a dead link must not leave an empty page
   // behind; a document already in the library stays openable even once its
   // source has gone). Returns the attachment properties plus the viewer URL.
-  async function resolvePdfSource({ file, url }, taskId) {
+  // A file's bytes go to `track` (rowTrack: the task row's; a batch's own).
+  async function resolvePdfSource({ file, url }, taskId, track = rowTrack(taskId)) {
     if (file) {
       const filename = uploadName(file, "upload.pdf");
       // One request, or in parts past PART_BYTES (shared/lib/uploadParts.js);
       // XHRs either way, so the task row gets byte progress and a stop button.
-      const data = await uploadPdf(file, filename, {
-        onProgress: (loaded, total) => updateTask(taskId, {
-          info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
-        }),
-        onAbortable: (abort) => updateTask(taskId, { cancel: abort }),
-      });
+      const data = await uploadPdf(file, filename, { onProgress: track.progress, onAbortable: track.abortable });
       return { doc_id: data.doc_id, source_url: data.source_url, original_filename: filename,
         viewerUrl: data.source_url, note: "" };
     }
@@ -6034,17 +6042,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     await collab.flush();
   }
 
+  // A file's own row of Background tasks as the track its upload reports
+  // to: its bytes (taskKinds byteProgress, once per percent, with the time
+  // left) and the abort its Stop calls. A batch's files report to the
+  // batch instead (transfers/useUploadBatches.js).
+  const rowTrack = (id) => ({
+    progress: byteProgress((patch) => updateTask(id, patch)),
+    abortable: (abort) => updateTask(id, { cancel: abort }),
+  });
+
   // `folder`: the id of the folder the page is filed in ("" = none).
-  async function uploadOnePdf(file, folder = "") {
-    const transferId = addTask({ name: uploadName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
+  // `track`: a batch's, in place of a row of its own.
+  async function uploadOnePdf(file, folder = "", track = null) {
+    const transferId = track ? null : addTask({ name: uploadName(file, "upload.pdf"), kind: "upload", info: fmtBytes(file.size) });
     let src;
     try {
-      src = await resolvePdfSource({ file }, transferId);
+      src = await resolvePdfSource({ file }, transferId, track || rowTrack(transferId));
     } catch (err) {
-      updateTask(transferId, { state: "failed", info: "failed" });
+      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
       throw err;
     }
-    updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
+    if (transferId) updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
     const block = await getOrCreateBlockForDoc(src);
     if (folder) {
       // A PDF already in the library on a sub-page is filed where its top
@@ -6065,18 +6083,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return { src, block };
   }
 
-  async function importOneMarkdown(file, folder = "") {
+  async function importOneMarkdown(file, folder = "", track = null) {
     const filename = uploadName(file, "note.md");
-    const transferId = addTask({ name: filename, kind: "file", info: fmtBytes(file.size) });
+    const transferId = track ? null : addTask({ name: filename, kind: "file", info: fmtBytes(file.size) });
     const form = new FormData();
     form.append("file", file, filename);
     form.append("folder", folder);
     try {
       const data = await apiJson(`${API}/import/markdown`, { method: "POST", body: form });
-      updateTask(transferId, { state: "done", info: `${data.imported || 0} notes` });
+      if (transferId) updateTask(transferId, { state: "done", info: `${data.imported || 0} notes` });
       return { data, kind: "markdown" };
     } catch (err) {
-      updateTask(transferId, { state: "failed", info: "failed" });
+      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
       throw err;
     }
   }
@@ -6084,45 +6102,59 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A file of any other format as a library page of its own
   // (transfers/documentUploads.js uploadOneFile: the upload, then by-file,
   // which answers the page that already owns the file when one does).
-  async function uploadOneDocument(file, folder = "") {
+  async function uploadOneDocument(file, folder = "", track = null) {
     const name = uploadName(file);
-    const transferId = addTask({ name, kind: "upload", info: fmtBytes(file.size) });
+    const transferId = track ? null : addTask({ name, kind: "upload", info: fmtBytes(file.size) });
+    const { progress, abortable } = track || rowTrack(transferId);
     try {
-      const { page } = await uploadOneFile(file, {
-        folderId: folder, name,
-        onProgress: (loaded, total) => updateTask(transferId, {
-          info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
-        }),
-        onAbortable: (abort) => updateTask(transferId, { cancel: abort }),
-      });
-      updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
+      const { page } = await uploadOneFile(file, { folderId: folder, name, onProgress: progress, onAbortable: abortable });
+      if (transferId) updateTask(transferId, { state: "done", info: fmtBytes(file.size) });
       return page;
     } catch (err) {
-      updateTask(transferId, { state: "failed", info: "failed" });
+      if (transferId) updateTask(transferId, { state: "failed", info: "failed" });
       throw err;
     }
   }
 
-  // A dropped or picked directory: hidden, temporary and unstorable files
-  // are left out (transfers/fileRouting.js dropFilter), and
-  // past ASK_PAST_FILES files a question comes first (the hosted page cap
-  // counts every page made).
-  function uploadFolder(found) {
-    const { kept, skipped } = dropFilter(found);
-    if (!kept.length) {
-      setStatus(skipped.length ? t("Nothing to upload: the folder holds only hidden, temporary or unstorable files.") : t("The folder is empty."));
+  // One item of an upload (uploadFiles' {file, route}) the way its route
+  // says — a PDF the PDF way, a Markdown file a note, any other a document
+  // page — into the folder `folder`. → what it made (its page:
+  // uploadBatch.js uploadedPage).
+  const uploadOne = async ({ file, route }, folder, track = null) => (route === "pdf"
+    ? { ...(await uploadOnePdf(file, folder, track)), kind: "pdf" }
+    : route === "markdown" ? await importOneMarkdown(file, folder, track)
+      : { page: await uploadOneDocument(file, folder, track), kind: "file" });
+
+  // The page one upload made, opened: a PDF in its viewer, a document or a
+  // note once the library holds it.
+  async function openUploaded(made, filename) {
+    if (made.kind === "pdf") {
+      await openBlock(made.block.id, { viewerUrl: made.src.viewerUrl });
+      setStatus(t("Uploaded {filename} ({doc_id})", { filename, doc_id: made.src.doc_id }));
       return;
     }
-    if (kept.length <= ASK_PAST_FILES) { uploadFiles(kept); return; }
-    setConfirmBox({
-      title: T("Upload a folder"),
-      message: t("Upload {n} files to the library?", { n: kept.length }),
-      confirmLabel: t("Upload"),
-      onConfirm: () => uploadFiles(kept),
-    });
+    await fetchHomeBlocks();
+    await openBlock(uploadedPage(made), { pushNav: true });
+    setStatus(made.kind === "file" ? t("Uploaded {filename}.", { filename }) : t("Imported {filename} as a note.", { filename }));
   }
 
-  async function uploadFiles(fileList, base = homeMode && folderFilter && !workFolder ? folderFilter : "") {
+  // A dropped or picked directory: hidden, temporary and unstorable files
+  // are left out (transfers/fileRouting.js dropFilter; `left`, the
+  // directories a drop's walk never went into, with them), and the rest
+  // goes up as a batch with its dialog (uploadFiles).
+  function uploadFolder(found, left = []) {
+    const { kept, skipped } = dropFilter(found);
+    const leftOut = [...left.map(({ folder, name }) => `${[...folder, name].join("/")}/`), ...skipped.map(itemPath)];
+    if (!kept.length) {
+      setStatus(leftOut.length ? t("Nothing to upload: the folder holds only hidden, temporary or unstorable files.") : t("The folder is empty."));
+      return;
+    }
+    uploadFiles(kept, undefined, { folder: true, skipped: leftOut });
+  }
+
+  // `folder`: the files are a directory's (uploadFolder), `skipped` the
+  // paths it left out.
+  async function uploadFiles(fileList, base = homeMode && folderFilter && !workFolder ? folderFilter : "", { folder = false, skipped = [] } = {}) {
     if (shareMode) return;
     // A work folder open takes no upload: its files come from its directory.
     const besideWork = homeMode && !!workFolder && !base;
@@ -6137,67 +6169,63 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const items = Array.from(fileList || [])
       .map((it) => (it instanceof File ? { file: it, folder: folderFromRelPath(it.webkitRelativePath) } : it))
       .filter((it) => it?.file && routeFile(it.file))
-      .map(({ file, folder }) => ({ file, filename: uploadName(file), path: folder, route: routeFile(file) }));
+      .map(({ file, folder: path }) => ({ file, filename: uploadName(file), path, route: routeFile(file) }));
     if (!items.length) {
       setStatus(t("Nothing to upload: files of these kinds cannot be stored."));
       return;
     }
+    // A directory, or several files: one batch with one row.
+    if (folder || items.length > 1) { uploads.start(items, { base, besideWork, folder, skipped }); return; }
+    // A single file opens its page right away.
+    const [item] = items;
     setLoading(true);
-    const done = [];
-    const failed = [];
-    const stopped = []; // stopped from the tasks popover — not a failure
     try {
-      // The directories' folders are made once, before any file lands.
       let folderOf;
       try {
-        folderOf = await ensureFolders(items.map((it) => it.path).filter((path) => path.length), base);
+        folderOf = await ensureFolders(item.path.length ? [item.path] : [], base);
       } catch (err) {
         setStatus(t("Upload failed: {failed}", { failed: err.message }));
         return;
       }
-      for (const { file, filename, path, route } of items) {
-        const folder = folderOf(path);
-        setStatus(route === "markdown" ? t("Importing {filename}…", { filename }) : t("Uploading {filename}…", { filename }));
-        try {
-          done.push(route === "pdf" ? { ...(await uploadOnePdf(file, folder)), kind: "pdf" }
-            : route === "markdown" ? await importOneMarkdown(file, folder)
-              : { page: await uploadOneDocument(file, folder), kind: "file" });
-        } catch (err) {
-          if (err.aborted) stopped.push(filename);
-          else failed.push(`${filename} (${err.message})`);
-        }
+      setStatus(item.route === "markdown" ? t("Importing {filename}…", { filename: item.filename }) : t("Uploading {filename}…", { filename: item.filename }));
+      let made;
+      try {
+        made = await uploadOne(item, folderOf(item.path));
+      } catch (err) {
+        setStatus(err.aborted ? t("Upload stopped: {stopped}", { stopped: item.filename })
+          : t("Upload failed: {failed}", { failed: `${item.filename} (${err.message})` }));
+        return;
       }
-      const pdfDone = done.filter((item) => item.kind === "pdf");
-      if (done.some((item) => item.kind !== "markdown")) refreshQuota();
-      if (items.length === 1 && done.length && done[0].kind === "pdf") {
-        // A single upload opens its page right away.
-        const { src, block } = done[0];
-        await openBlock(block.id, { viewerUrl: src.viewerUrl });
-        setStatus(t("Uploaded {filename} ({doc_id})", { filename: items[0].filename, doc_id: src.doc_id }));
-      } else if (items.length === 1 && done.length && done[0].kind === "file") {
-        await fetchHomeBlocks();
-        await openBlock(done[0].page.id, { pushNav: true });
-        setStatus(t("Uploaded {filename}.", { filename: items[0].filename }));
-      } else if (items.length === 1 && done.length) {
-        await fetchHomeBlocks();
-        await openBlock(done[0].data.block_id, { pushNav: true });
-        setStatus(t("Imported {filename} as a note.", { filename: items[0].filename }));
-      } else if (done.length) {
-        fetchHomeBlocks();
-        setStatus(failed.length
-          ? t("Imported {n} of {n2} files — failed: {failed}", { n: done.length, n2: items.length, failed: failed.join(", ") })
-          : t("Imported {n} files.", { n: done.length }));
-      } else if (failed.length) {
-        setStatus(t("Upload failed: {failed}", { failed: failed.join(", ") }));
-      } else if (stopped.length) {
-        setStatus(t("Upload stopped: {stopped}", { stopped: stopped.join(", ") }));
-      }
-      if (besideWork && done.length && !failed.length) setStatus(t("Uploaded to the library: a synced folder's files come from its directory."));
+      if (made.kind !== "markdown") refreshQuota();
+      await openUploaded(made, item.filename);
+      if (besideWork) setStatus(t("Uploaded to the library: a synced folder's files come from its directory."));
       // Runs after the upload/import UI work and never delays its completion.
-      queueMetadataForUploads(pdfDone);
+      queueMetadataForUploads(made.kind === "pdf" ? [made] : []);
     } finally {
       setLoading(false);
     }
+  }
+
+  // A directory, or several files at once, goes up as one batch
+  // (transfers/useUploadBatches.js, its dialog UploadDialog.jsx): one row of
+  // Background tasks however many files. App hands it how a file goes up and
+  // what the batch does to the library as pages land and once it ends.
+  const uploads = useUploadBatches({
+    tasks, quota: quotaInfo, makeFolders: ensureFolders, upload: uploadOne, say: setStatus,
+    place: (base) => `${t("Library")} / ${folderPath(libTreeRef.current, base) || t("All pages")}`,
+    landed: (pdfs) => { fetchHomeBlocks(); queueMetadataForUploads(pdfs); },
+    ended: async ({ made, pdfs, one }) => {
+      if (made.some((m) => m.kind !== "markdown")) refreshQuota();
+      queueMetadataForUploads(pdfs);
+      if (one) await openUploaded(one.made, one.filename);
+      else fetchHomeBlocks();
+    },
+  });
+  // The folder a batch went into, in the library.
+  function showUploads(root) {
+    uploads.close();
+    if (!homeMode) goHome();
+    openFolder(root || lib.root);
   }
 
   async function importLogseq(files) {
@@ -6549,12 +6577,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           body: JSON.stringify(src),
         });
       } else {
+        const track = rowTrack(taskId);
         bound = await attachFile(pageId, file, {
-          replace, name: uploadName(file),
-          onProgress: (loaded, total) => updateTask(taskId, {
-            info: `${fmtBytes(loaded)} / ${fmtBytes(total)}`, fraction: total ? loaded / total : undefined,
-          }),
-          onAbortable: (abort) => updateTask(taskId, { cancel: abort }),
+          replace, name: uploadName(file), onProgress: track.progress, onAbortable: track.abortable,
         });
       }
       updateTask(taskId, { state: "done", info: replace ? t("replaced") : t("attached") });
@@ -6688,7 +6713,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const pct = total ? Math.min(99, Math.floor((loaded / total) * 100)) : 0;
         if (pct === u.lastPct) return;
         u.lastPct = pct;
-        updateTask(u.tid, { info: `${fmtBytes(loaded)} / ${fmtBytes(total)} — ${pct}%`, fraction: total ? loaded / total : undefined });
+        updateTask(u.tid, { info: `${bytesInfo(loaded, total, u.at)} — ${pct}%`, fraction: total ? loaded / total : undefined });
         if (Date.now() - u.at > 400 || total > 2 * 1024 * 1024) showPill(`Uploading ${u.name}… ${pct}%`);
       },
       done: (u, ok, detail) => {
@@ -13835,7 +13860,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           .filter(Boolean);
         if (entries.some((en) => en.isDirectory)) {
           e.preventDefault();
-          collectEntryFiles(entries).then(uploadFolder);
+          // A large tree takes a while to read: the pill counts it. Its
+          // hidden directories (a .git, node_modules) are never gone into.
+          const left = [];
+          const reading = (n) => postPill("folder-read", { msg: t("Reading the folder… {n} files", { n }), spinner: true });
+          collectEntryFiles(entries, { skip: hiddenName, left, onProgress: reading })
+            .then((found) => { postPill("folder-read", null); uploadFolder(found, left); });
           return;
         }
         const dropped = Array.from(e.dataTransfer.files || []);
@@ -14447,7 +14477,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </LazyBoundary>
       ) : null}
       {importReview ? <LazyBoundary><ImportReviewDialog {...importReview} folderPath={(id) => folderPath(libTree, id)} tasks={tasks}
+        onOpenPage={(page, summary) => {
+          setImportReview(null);
+          openImportedPage(page.id).then(() => setStatus(t("Imported “{title}”: {summary}.", { title: page.title || t("Untitled"), summary })));
+        }}
+        onShowFolder={(id) => { setImportReview(null); if (!homeMode) goHome(); openFolder(id || lib.root); }}
         onClose={() => setImportReview(null)} /></LazyBoundary> : null}
+      {uploads.dialog ? <LazyBoundary><UploadDialog {...uploads.dialog} tasks={tasks} onStart={uploads.confirm} onRetry={uploads.retry}
+        onShow={showUploads} onClose={uploads.close} /></LazyBoundary> : null}
       {trashOpen ? (
         <LazyBoundary>
         <RecentlyDeleted onClose={() => setTrashOpen(false)} confirm={setConfirmBox} setStatus={setStatus}

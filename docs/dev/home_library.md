@@ -739,7 +739,8 @@ files (any file, with no picker filter: a PDF and a Markdown note as
 before, any other file as a page whose document it is,
 `transfers/documentUploads.js`; a dropped folder leaves its dot entries,
 `node_modules`, temporary names and executables out, `dropFilter`, and
-asks first past 100 files), start a blank note page (`createPage`) and open
+goes up as one batch that asks first past 100 files or 500 MB,
+[import_export.md](import_export.md#uploading-a-folder-or-many-files)), start a blank note page (`createPage`) and open
 the Import dialog. A footer offers the first tour when it can start, and
 the drop tip. The panel shows only once the listing has loaded, only where the
 library can be organized (`lib.organize`: not for a workspace viewer or a

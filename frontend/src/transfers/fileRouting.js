@@ -51,6 +51,15 @@ function segmentsOf(item) {
   return [...folder, file?.name || ""].map((s) => String(s || "").trim());
 }
 
+// An upload item's path as one string, "thesis/figures/setup.gif".
+export const itemPath = (item) => segmentsOf(item).filter(Boolean).join("/");
+
+// A name a drop leaves out wherever it stands in a path, a directory's
+// with all it holds: a dot name, node_modules. A dropped folder's walk
+// never goes into such a directory (dropEntries.js collectEntryFiles'
+// `skip`), so a project's .git or node_modules is not read file by file.
+export const hiddenName = (name) => name.startsWith(".") || name === "node_modules";
+
 // What a dropped directory leaves out: dot directories and dot files,
 // node_modules, an editor's or the system's temporary names, and the
 // extensions the server refuses. The drop's own rule, not a work folder's
@@ -64,7 +73,7 @@ export function dropFilter(files) {
   for (const item of Array.from(files || [])) {
     const segments = segmentsOf(item);
     const leaf = segments[segments.length - 1];
-    const out = segments.some((s) => s.startsWith(".") || s === "node_modules")
+    const out = segments.some(hiddenName)
       || TEMP_NAME.test(leaf) || storedExtension(leaf) === null;
     (out ? skipped : kept).push(item);
   }

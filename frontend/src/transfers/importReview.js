@@ -171,6 +171,19 @@ export function resultPages(data) {
   }
   return [...unique.values()];
 }
+// The one page an import brought, the page to open once it is done, or
+// null. Of the report's pages (chats left out), those it made or changed,
+// else — when it made none — those it found already in the library; of
+// these the one that is inside none of the others. So a Notion page with
+// the pages inside it is that page, and two pages side by side are none.
+export function onlyPage(data) {
+  const pages = resultPages(data).filter(page => page.kind !== "chat" && page.id);
+  const brought = pages.filter(page => page.action !== "skip");
+  const among = brought.length ? brought : pages;
+  const ids = new Set(among.map(page => page.id));
+  const tops = among.filter(page => !page.parent || !ids.has(page.parent));
+  return tops.length === 1 ? tops[0] : null;
+}
 export const importWarnings = data => [...(data.skipped || []), ...(data.warnings || [])];
 // Whether a review's job failed on the file itself: the source's refusal
 // (nothing it reads, a damaged archive), which sending the file again

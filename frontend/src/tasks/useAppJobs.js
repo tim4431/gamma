@@ -8,7 +8,7 @@ import { useRef, useState } from "react";
 import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
-import { importSummary } from "../transfers/importReview";
+import { importSummary, onlyPage } from "../transfers/importReview";
 import { guideEvents } from "../guide/events.js";
 import { showInChat } from "../chat/computer/chatSide.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle, turnShown } from "./taskKinds.js";
@@ -31,6 +31,8 @@ export function useAppJobs({
   refreshSession,
   // the page `id` open (in this workspace) with its chat shown
   openPageChat,
+  // a folder upload's dialog on its row (transfers/useUploadBatches.js); the page `id` opened
+  openUploads, openPage,
 }) {
   const exportStartingRef = useRef(false); // a second press while the first start is answered starts nothing
   // An export being started, for the dialog's Export button to show busy
@@ -149,6 +151,8 @@ export function useAppJobs({
       setExportOpen(true);
     } else if (open === "import") {
       setImportReview(task.kind === "import-preview" ? { previewJobId: task.id, previewJob: task } : { jobId: task.id });
+    } else if (open === "uploads") {
+      openUploads?.(task.id);
     } else if (open === "handoff") {
       // A paper the chat could not download: its /go page leads on to the
       // publisher, and Gamma Connector knows the tab by that address.
@@ -240,7 +244,15 @@ export function useAppJobs({
         // another client's change, which lands at once
         fetchHomeBlocks({ still: !started });
         if (!shownInDialog && started) {
-          tasks.fetchJob(job.id).then((full) => full?.result && setStatus(t("Import: {summary}.", { summary: importSummary(full.result) }))).catch(() => {});
+          // one page alone (onlyPage) is offered in the pill, to open
+          tasks.fetchJob(job.id).then((full) => {
+            if (!full?.result) return;
+            const summary = importSummary(full.result);
+            const page = openPage ? onlyPage(full.result) : null;
+            if (!page) { setStatus(t("Import: {summary}.", { summary })); return; }
+            postPill(`job:${job.id}`, { msg: t("Imported “{title}”: {summary}.", { title: page.title || t("Untitled"), summary }),
+              action: { label: t("Open"), run: () => { postPill(`job:${job.id}`, null); openPage(page.id); } } }, { after: [20000, null] });
+          }).catch(() => {});
         }
       } else if (!shownInDialog && started && job.state === "failed") {
         setStatus(t("Import failed: {msg}", { msg: t(job.error) }));
