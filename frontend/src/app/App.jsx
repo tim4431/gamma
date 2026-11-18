@@ -83,6 +83,7 @@ import { doneWithOpenedFile, hostOpensFiles, listOpenedFiles, onFilesOpened, ope
   readOpenedFile } from "../transfers/openedFiles.js";
 import { importSource } from "../transfers/transferFormats.js";
 import { bibliographyPreview } from "../transfers/exportApi";
+import { copyTargets } from "../transfers/workspaceCopy.js";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
@@ -93,7 +94,7 @@ import {
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UnlinkIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
   PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, OnePaneIcon,
-  StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon,
+  StopIcon, GlobeIcon, ChevronRightIcon, FlagIcon, FoldersIcon,
 } from "../shared/ui/Icons";
 import ReportContentHost from "../support/ReportContentHost";
 import { openReport as openContentReport } from "../support/reportContent.js";
@@ -3503,11 +3504,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [exportJobId, setExportJobId] = useState(null);
   // Starting, reopening and retrying jobs, and what to say when one ends
   // (tasks/useAppJobs.js); `tasks` above calls its onJobFinished.
-  const { startWorkspaceExport, runBackupImport, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask, onJobFinished } = useAppJobs({
+  const { startWorkspaceExport, runBackupImport, copyPages, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask,
+    onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, exportTranslation, exportFolderTranslations,
     workspaceId: workspace?.id, refreshQuota, fetchHomeBlocks, refreshSession: checkSession,
+    confirm: (box) => setConfirmBox(box), switchWorkspace, // the box's state is declared further down
     // a page's chat, or a folder's or the library's (`home`) in the library's view
     openPageChat: (id) => {
       if (id !== "home" && !libTree.folders.has(id)) return id === focusedBlockId ? showChat() : openBlock(id, { then: "ask" });
@@ -14937,6 +14940,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           exportWorkspace,
           exportAll,
           importWorkspace,
+          // every page of `ws` into a new personal workspace `name`; its dialog said what stays in Zotero
+          duplicateWorkspace: (ws, name) => copyPages({ ws, name, checked: true }),
           tasks,
           setStatus,
           confirm: setConfirmBox,
@@ -15119,6 +15124,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               const opened = ids.every(openedFile);
               const anyOpened = ids.some(openedFile);
               const allLabelled = (l) => acted.every((b) => b?._labels?.includes(l));
+              const targets = copyTargets(workspaces, workspace?.id);
               const close = () => setHomeMenu(null);
               // A typed name: the label of that name, else a new one.
               const commitNewLabel = async () => {
@@ -15133,8 +15139,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               };
               // Open · Rename | New page inside | Pin · Add label · Move to
               // folder · Add to library… · Remove from library · Save a copy
-              // to library… · Move into page… · Move to library · Duplicate |
-              // Copy link · Share… · Export… · Ask AI | Delete — the same rows
+              // to library… · Move into page… · Move to library · Duplicate ·
+              // Copy to workspace | Copy link · Share… · Export… · Ask AI |
+              // Delete — the same rows
               // wherever the page was right-clicked (a Pages inside row's
               // without Rename: openSubPageMenu).
               return menuGroups(
@@ -15245,6 +15252,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ),
                   lib.organize && copied.length > 0 && (
                     <MenuItem key="duplicate" icon={CopyIcon} onClick={() => { close(); duplicatePages(copied); }}>{copied.length > 1 ? t("Duplicate {n} pages", { n: copied.length }) : t("Duplicate")}</MenuItem>
+                  ),
+                  // a copy in another workspace of this server, which anyone
+                  // who reads this one may make into one they edit
+                  // (transfers/workspaceCopy.js); a file opened from this
+                  // computer is added to the library first
+                  !shareMode && !authUser?.is_guest && !anyOpened && targets.length > 0 && (
+                    <SubMenuItem key="copyto" id="copyto" icon={FoldersIcon} label={t("Copy to workspace")}
+                      title={t("A copy in another workspace, with its notes, highlights, comments, chat and the pages inside it; it stays here too")}>
+                      {targets.map((w) => (
+                        <MenuItem key={w.id} icon={w.personal ? UserIcon : UsersIcon}
+                          onClick={() => { close(); copyPages({ ws: workspace.id, pages: ids, to: w.id }); }}>{w.name}</MenuItem>
+                      ))}
+                    </SubMenuItem>
                   ),
                 ],
                 [

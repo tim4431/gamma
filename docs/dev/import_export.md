@@ -2367,7 +2367,12 @@ block whose id the workspace already uses on another page gets a fresh id
 Import dialog's "Gamma export (.zip)" source reviews the zip like the
 other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
-a complete copy, so the Export dialog has no switches for it.
+a complete copy, so the Export dialog has no switches for it. Between two
+workspaces of one server the same export carries pages with no file to
+download: an opened file's Add to library (`page_gamma_zip`,
+[synced_vaults.md](synced_vaults.md)) and a copy or a Duplicate
+(`pages_gamma_zip`, which leaves a Zotero link's marks behind,
+[workspaces.md](workspaces.md) "Copies between workspaces").
 
 The review (`ws_backup._review_import`) reads the workspace through
 `connect_pages_db`, so one nobody has opened since the server's upgrade is

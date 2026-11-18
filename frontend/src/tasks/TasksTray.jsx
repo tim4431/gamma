@@ -10,7 +10,7 @@ import React from "react";
 import { Empty } from "../settings/SettingsKit";
 import ListMotion from "../shared/ui/ListMotion";
 import {
-  ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, DatabaseIcon, DownloadIcon,
+  ActivityIcon, AlertCircleIcon, CheckIcon, ClockIcon, CloudDownloadIcon, CopyIcon, DatabaseIcon, DownloadIcon,
   ExportIcon, FileIcon, HardDriveIcon, ImportIcon, RefreshIcon, SearchIcon, SparklesIcon, StopIcon,
   ShieldIcon, TerminalIcon, Trash2Icon, UploadIcon, XIcon,
 } from "../shared/ui/Icons";
@@ -21,7 +21,7 @@ import "./tasks.css";
 import { Popover } from "../shared/ui/Surfaces";
 
 const ICONS = {
-  activity: ActivityIcon, cloudDownload: CloudDownloadIcon, database: DatabaseIcon, download: DownloadIcon,
+  activity: ActivityIcon, cloudDownload: CloudDownloadIcon, copy: CopyIcon, database: DatabaseIcon, download: DownloadIcon,
   export: ExportIcon, file: FileIcon, hardDrive: HardDriveIcon, import: ImportIcon, search: SearchIcon,
   sparkles: SparklesIcon, terminal: TerminalIcon, trash: Trash2Icon, upload: UploadIcon,
 };

@@ -65,6 +65,18 @@ export const TASK_KINDS = {
       : params.source === "bucket" ? ["bucket-restore", { ws: params.ws, name: params.snapshot, mode: params.mode, into: params.into || "" }]
         : null),
   },
+  // Pages copied into another workspace (the library's Copy to workspace),
+  // or every page into a new one (Settings → Workspaces → Duplicate…;
+  // transfers/workspaceCopy.js). A copy of every page starts again as it
+  // was asked; one of picked pages is picked again in the library.
+  "workspace-copy": {
+    icon: "copy",
+    title: ({ params }) => (params.new
+      ? t("Duplicate “{name}” as “{copy}”", { name: named(params.name), copy: named(params.to_name) })
+      : tn("Copy {n} page to “{name}”", "Copy {n} pages to “{name}”", params.pages || 0, { name: named(params.to_name) })),
+    retry: ({ params }) => (params.all
+      ? ["workspace-copy", { ws: params.ws, ...(params.new ? { name: params.to_name } : { to: params.to }) }] : null),
+  },
   // A backup task's copy in the bucket, downloaded (Settings → Backups, admins).
   "bucket-download": {
     icon: "download", open: "settings:backups",

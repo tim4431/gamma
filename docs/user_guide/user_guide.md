@@ -392,6 +392,8 @@ A workspace is a separate library. The account menu lists yours and switches bet
 - **Personal** workspaces are yours alone; make more for separate projects.
 - **Shared** workspaces are created by an administrator, with **owners**, **editors** and **viewers**. An owner invites people from the workspace's **Manage** page: an account on this server or, where Gamma Cloud sign-in allows it, an e-mail address, which gets a link to join as an editor or a viewer.
 - Edits and cursors appear live; two people in the same block merge by span. On a network that blocks live connections, others' edits still arrive within a couple of seconds, without cursors.
+- **Copy pages to another workspace**: select them in the library, right-click, **Copy to workspace** and pick one you can edit. Each comes with its notes, highlights, handwriting, comments, chat and the pages inside it, filed in folders and labels of the same names there; the pages stay here too, and copying again adds nothing.
+- **Duplicate a workspace**: Settings → Workspaces, the workspace's **Data** menu (a clone's or a Zotero link's **More**) → **Duplicate…** makes a new personal workspace with a copy of every page. Recently deleted stays behind. A copy of a Zotero-linked workspace or of a clone is an ordinary workspace: what changes in it stays in it.
 - **Deleting** a workspace (its Manage page → Delete…) first keeps one final copy of it on the server, which an administrator can restore. For a big workspace that takes minutes: it runs in **Background tasks**, where you can stop it until the copy is written. Stopped, nothing is deleted.
 - Open tabs, pinned folders and reading positions follow your account across devices.
 
@@ -587,6 +589,7 @@ Settings → Workspaces › Clones and Zotero links → **Link a Zotero library�
 - **Detach** pauses the link and **Reattach** resumes it, merging what both sides did meanwhile. A PDF still in Zotero waits for the reattach.
 - **Remove link** ends it for good: the workspace stays an ordinary workspace of yours and the library stays in Zotero. A PDF that never came stays in Zotero, and the page takes one you attach. To link the library again later, pick that workspace under **Into**: its papers pair with their items by Zotero key, so nothing is doubled.
 - **Rolling back** a linked workspace from a snapshot (Settings → Backups) sends the restored version to Zotero; what Zotero changed meanwhile waits under Conflicts.
+- **Copying papers out** (Copy to workspace, or Duplicate…) makes ordinary pages that are not linked: a change to a copy never reaches Zotero, and a copy put in a workspace linked to another library becomes a new item there. A PDF Gamma has not downloaded yet stays in Zotero and the copy comes without it; Gamma says how many before it copies. To bring them first, open the papers, or set **PDFs from Zotero** to **All**.
 
 ### Limits
 
