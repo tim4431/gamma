@@ -4611,7 +4611,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   flex-shrink: 0;
 }
 .chatSelChipNote { color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A passage's source line: its file's theme icon before it (shared/ui/FileIcon.jsx). */
+/* A passage's source line: its file's kind icon before it (shared/ui/FileIcon.jsx). */
 .chatSelChipNote .kindGlyph { vertical-align: -3px; margin-right: 3px; }
 /* A passage too long to go whole: what the message keeps of it. */
 .chatSelChipNote.cut { color: var(--warn); }

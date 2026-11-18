@@ -9,10 +9,10 @@ them instead of inventing new patterns.
 is the one place a design value is defined: every theme's colours and
 `color-scheme`, the type stacks and sizes, the control sizes, and the
 radius, shadow, spacing, motion and stacking scales. It holds custom properties only, no component
-rules. The design pages' pictures of the themes and the palette
-([docs/design/look.md](../design/look.md)) are drawn from it and from
-`shared/model/palette.js` by `tools/designSheets.mjs`, which
-`tests/themes.test.mjs` holds to them. `index.html` links it as the first stylesheet, and Vite bundles it
+rules. The design pages' pictures of the themes, the palette and the file icons
+([docs/design/look.md](../design/look.md)) are drawn from it, from
+`shared/model/palette.js` and from `shared/ui/fileIcons.js` by
+`tools/designSheets.mjs`, which `tests/themes.test.mjs` holds to them. `index.html` links it as the first stylesheet, and Vite bundles it
 into the render-blocking entry CSS. So the first frame, splash included,
 paints from the same values as the app; the pre-paint script only sets the
 theme attributes. Component rules read tokens and never declare a colour
@@ -327,7 +327,9 @@ is `uiClose` with an `XIcon` inside (14, inline with the title it closes;
 16 in `uiCloseLg`), never a text ×. The conventions ratchet
 ([Ratchets](#ratchets)) counts a size off this scale, a `strokeWidth` on a
 sized icon and a text ×, on any `…Icon` component and on a glyph picked into
-a plain `Icon` (`const Icon = agentKindIcon(kind)`).
+a plain `Icon` (`const Icon = agentKindIcon(kind)`). A synced folder's file
+and directory icons are drawn in the same stroke, a mark per kind on the
+file sheet or the folder ([File icons](#file-icons)).
 
 ### Section labels
 
@@ -1918,22 +1920,64 @@ directory whatever the library's view.
 
 ### File icons
 
-A synced folder's files and directories wear Material Icon Theme's icons,
-as VS Code draws them (`shared/ui/FileIcon.jsx` over `shared/ui/fileIcons.js`,
-[work_folders.md](work_folders.md) "File icons"): an `<img>` with
-`FileGlyph`'s classes (`.tileGlyph`, and `.kindGlyph` at a size), so every
-place that sets a kind glyph's size and alignment sets the icon's; its room
-stays empty (`.fileIcon`) while the map is first read. The theme's light
-variants show on a light scheme (`data-scheme`). A library page keeps its
-`FileGlyph`, a library folder `FolderIcon`; a name the theme has no icon
-for, and an icon that fails, fall back to them. A synced folder's own
-card, row, Files window root and folder view heading wear one glyph of
-Gamma's, never the theme's root ring (which read as an empty status dot):
-`SyncedFolderIcon` (`shared/ui/Icons.jsx`, lucide's folder-sync; `FileIcon`
-draws it for `root`), its arrows in the tone of its sync (`.syncBadge` in
-library.css: `--ok` synced, the accent while syncing, `--warn` not syncing
-or offline, the folder's colour where nothing is known), at 16 in a row
-and at the cover's size on a card (`tileGlyph`, `size={null}`).
+A synced folder's files and directories are drawn in this stroke set, by
+the kind their names say, never by a third-party theme: a theme's filled,
+brand-coloured logos would be the one foreign set in the app.
+[`shared/ui/fileIcons.js`](../../frontend/src/shared/ui/fileIcons.js) is
+the one place the icons are defined: which names give each kind, each
+kind's mark and each file kind's tint. `shared/ui/FileIcon.jsx` draws one;
+the catalog on the design page
+([look.md](../design/look.md#shape-depth-and-icons),
+`docs/design/assets/file-icons.svg`) is drawn from the same tables by
+`tools/designSheets.mjs`, and `tests/themes.test.mjs` fails while the
+committed sheet is stale.
+
+<img alt="Every kind of file on the sheet in its tint, and every kind of directory in the accent folder, each with the first names that give it" src="../design/assets/file-icons.svg" width="100%">
+
+- **A kind** is a concept, shared by files and directories where both
+  have it: `code` is a `.py` file and `src/`, `image` a `.png` and
+  `figures/`, `tex` a `.tex` file and `paper/`. `fileKind(path)` reads a
+  file's whole name (`Makefile`, `.gitignore`), then the name before its
+  first dot (`README.*`, `LICENSE.*`), a `.env` or `.…rc` dotfile, then its
+  longest dotted extension (`tar.gz` before `gz`; LaTeX's `synctex.gz` is
+  `plain`); `folderKind(path)` a directory's name without the dots and
+  underscores around it (`.github` is `git`, `__pycache__` `temp`). Case is
+  ignored. A file of no kind draws its page's format (`glyphKind`: text is
+  `code`, a binary `plain`, a note `doc`), a directory of none the plain
+  folder. Each table lists the common names first, which the catalog shows.
+- **A file** is `FileGlyph` (`Icons.jsx`), the library's sheet with its
+  folded corner, filled `--bg-raised`, its kind's mark (`KIND_MARKS`)
+  under the fold, tinted by kind (`KIND_TONES`, a class library.css
+  colours): `.pdf` in `--kind-pdf`; `.code` in the accent (code, shell
+  scripts, notebooks, TeX, diffs); `.data` in `--kind-data` (tables,
+  datasets, JSON); `.media` in `--warn` (pictures, audio, video); the rest
+  in `--text-muted`. `--kind-pdf` and `--kind-data` are scheme constants of
+  one lightness and chroma, so no theme moves them. A PDF keeps its band at
+  a small size and its "PDF" lettering on a card. A library page's sheet
+  is the same glyph by its format, so a page looks alike in the library
+  and in its synced folder.
+- **A directory** is `FolderKindIcon`: `FolderIcon`'s folder with the same
+  mark two units higher, in its body (`FOLDER_MARK_SHIFT`), in the accent
+  as a library folder is. An open directory keeps its icon: the row's
+  chevron says it is open, as a library folder's does.
+- **The synced folder itself** (its card, row, Files window root and folder
+  view heading) wears `SyncedFolderIcon` (lucide's folder-sync; `FileIcon`
+  draws it for `root`), its arrows in the tone of its sync (`.syncBadge`
+  in library.css: `--ok` synced, the accent while syncing, `--warn` not
+  syncing or offline, the folder's colour where nothing is known), at 16
+  in a row and at the cover's size on a card (`tileGlyph`, `size={null}`).
+- **A mark** is drawn on the 24 grid, in the sheet's box x 7.5–16.5,
+  y 11–19, as `[tag, attributes]` elements in the icon's own stroke, and
+  for the 16 px icon first: its 1.6 px stroke is 2.4 units, so two strokes
+  stay 3.5 units apart and a small round is a dot (`fill: currentColor`),
+  not a ring. Strokes, never letters: a letter a mark's size cannot be
+  read at 16 px (the PDF's stamp is a band there). Check a new mark at 14,
+  16 and 20 px at a pixel ratio of 1 and 2, in a light and a dark theme.
+- **A new kind** is its mark, its tone if it has one, its names in the
+  tables and its label in `designSheets.mjs`, which refuses to write a
+  catalog missing a mark; then `node tools/designSheets.mjs`.
+  `tests/fileIcons.test.mjs` fails on a table naming a kind with no mark,
+  or a name listed under two kinds.
 
 ## Block editor interactions
 
@@ -2190,7 +2234,7 @@ page's notes refuse what the single-block action refuses
 | `editor/BacklinksPanel.jsx` | "Linked from N pages" under a page's notes: App's `/blocks/{id}/backlinks` list grouped by page, each linking block a three-line rendered snippet; a click opens its page at the block (`openBlockLink`, a link jump); the section is off until the account turns it on (`backlinksVisible`, Settings → Reading & editing › Notes — off, no backlinks are fetched), and its fold is the browser pref `backlinksCollapsed` |
 | `editor/SubPagesPanel.jsx` | "N pages inside" under a page's notes, above Linked from ([home_library.md](home_library.md#sub-pages)): the open page's sub-pages from `GET /pages/{id}/family`, a row each (a 14 px `FileGlyph` of the entry's `format`, the family answer's, so the PDF one for `pdf`, and the title, a button that opens the page, then the row's `MenuButton` "⋯" outside a share view, shown with the row as a `.rowMenuHost`'s, the page menu also on a right-click or a held finger through `menuPress`), and where the library may be changed a last "New page inside" row with a plus; there a row drags a page and wears `.dragOver` (the accent's background and a 1 px ring) while a page dragged over it would go inside. It borrows the backlinks panel's head, caret, rows and box (`.subPagesPanel` joins `.backlinksPanel`'s rule), folds in `Collapse`, and its fold is the browser pref `subPagesCollapsed`; a page with no sub-pages shows nothing |
 | `editor/PageCrumbs.jsx` | the crumbs at the top of a sub-page's or a work folder file's header (`nav.pageCrumbs`, "Where this page is"): a file's folders from its work folder down to its directory, each a `crumbBtn crumbFolder` opening that folder in the library (no drop target), or a sub-page's pages above it, top first, each opening that page; each crumb followed by a `/` `crumbSep`, the title below; one muted `--fs-xs` line, long titles cut with an ellipsis (`library.css`), a page crumb in the accent while a page dragged over it would go inside its page (`.dragOver`, as the folder path's crumbs); nothing for a library page |
-| `editor/PathLink.jsx` | a relative link in a note (`a.pathLink`): in a work folder's note (`PathLinkContext`, App's) a click opens the file the path names, or the status says "No tracked file at …"; elsewhere the plain link. `InternalLinkChip` is the notes' internal link, the `[[ref]]` chip's look (`.blockRefChip`) and click (Ctrl/⌘ left to the browser), drawn by the `[[ref]]` chip and the path link, which leads with its file's 14px theme icon ([File icons](#file-icons)) and is muted with `aria-busy` while the server is asked. Any other link in a note takes the accent (`:where(.blockRendered) a`), never the browser's blue |
+| `editor/PathLink.jsx` | a relative link in a note (`a.pathLink`): in a work folder's note (`PathLinkContext`, App's) a click opens the file the path names, or the status says "No tracked file at …"; elsewhere the plain link. `InternalLinkChip` is the notes' internal link, the `[[ref]]` chip's look (`.blockRefChip`) and click (Ctrl/⌘ left to the browser), drawn by the `[[ref]]` chip and the path link, which leads with its file's 14px kind icon ([File icons](#file-icons)) and is muted with `aria-busy` while the server is asked. Any other link in a note takes the accent (`:where(.blockRendered) a`), never the browser's blue |
 | `editor/BlockProperties.jsx`, `editor/blockProps.js`, `editor/blockProperties.css` | the Properties popover ([above](#the-properties-popover)): the surface, loaded on first use (head, status chips, Details / JSON, the row menu, placement, the server read), and the pure model it draws (`tests/blockProps.test.mjs`): a block's kind by the server's `block_kind` order (`blockKind`, `effectiveKind`), its sections of rows, one `CATALOG` entry per key of the [block properties catalog](../research/block-properties.md#the-catalog) and the rest under Other keys, the status chips, the key and SQL paths; the menus' Properties rows and `block.properties` / `app.pageProperties` use `BracesIcon` |
 | `editor/noteSanitize.js` | `rehypeNoteSanitize`, the sanitizer every rendered note goes through between `rehype-raw` and KaTeX ([One control set, everywhere](#one-control-set-everywhere)) |
 | `editor/callouts.js` | remark plugin for `> [!note] Title` callouts (type aliases → note/tip/warning/danger/important/quote; each type's colour is a `--callout-*` token); Obsidian's `[!note]-` / `+` fold flag makes a native `<details>` with the title as `<summary>` (chevron in app.css) |
@@ -2200,7 +2244,7 @@ page's notes refuse what the single-block action refuses
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder, and "with N pages inside" for a page deleted with its sub-pages) with Restore (a muted "Comes back when its file is tracked again." in its place for a work folder's file the server says a person may not restore) and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
 | `explorer/workFolders.js`, `explorer/knownPages.js`, `explorer/useFolderTree.js`, `explorer/useSummaries.js`, `explorer/FolderTree.jsx`, `explorer/TrackDialog.jsx`, `explorer/trackSelection.js`, `explorer/DetachDialog.jsx`, `explorer/detach.js` | work folders ([work_folders.md](work_folders.md)): the rules a file and a work folder's folders follow (twin of `gamma/work_folders/filing.py`), the page rows the listing does not carry merged into App's (`mergeKnown`), the folder view's sort, open directories and reads and the summaries of files open in tabs or recents, the folder view ([Trees](#trees)), the tracking dialog ([Dialogs](#dialogs)) with its pure choice, and Stop syncing (the API's detach, [Dialogs](#dialogs)) with its words |
 | `explorer/TreeRow.jsx`, `explorer/useTree.js`, `explorer/tree.css` | a tree's row and its keys and focus, the Files window's and the folder view's ([Trees](#trees)) |
-| `shared/ui/FileIcon.jsx`, `shared/ui/fileIcons.js`, `frontend/tools/fileIcons.mjs` | a synced folder's file and directory icons, Material Icon Theme's, the rule VS Code ranks them by and the build's plugin that ships them; a synced folder's own root drawn as `SyncedFolderIcon` ([File icons](#file-icons)) |
+| `shared/ui/FileIcon.jsx`, `shared/ui/fileIcons.js` | a synced folder's file and directory icons: the kinds their names give, each kind's mark and tint (drawn by `Icons.jsx` `FileGlyph` and `FolderKindIcon`, and into the design page's catalog by `tools/designSheets.mjs`); a synced folder's own root drawn as `SyncedFolderIcon` ([File icons](#file-icons)) |
 | `explorer/FilesWindow.jsx`, `explorer/FileTree.jsx`, `explorer/fileTree.js`, `explorer/filesWindow.css` | the Files window ([work_folders.md](work_folders.md) "The Files window"), a lazy chunk: a `DockWindow` titled Files with *Collapse all* (`CollapseIcon`) in its header over `.filesPanel`, a `role="tree"` ([Trees](#trees)) of `TreeRow`s, 28 px tall (44 px under `.phoneUI`), a library folder's with its muted count, a synced folder's root with its glyph and its keeper's `StateTag`; `fileTree.js` the rows of both trees and their keys |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), where a page sits among pages (`pageAncestors`, `topPageOf`, `pagePathLabel`, `pageDescendants`, [home_library.md](home_library.md#sub-pages)), and the library's page rows (`pageBlocksOf`, each with its document, `_doc`) |
 | `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, tabs that come, go and move through `ListMotion`, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |

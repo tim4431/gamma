@@ -346,7 +346,7 @@ function remindTargets(rest, people, me) {
 //           (rankRefPages: the recent ones before anything is typed), not
 //           the open page (`rootId`); `format` is its document's ("" for
 //           none, FileGlyph's), `file` a synced folder's file's name (its
-//           theme icon's, "" for any other page); `path` is where the page
+//           kind's icon, "" for any other page); `path` is where the page
 //           is: a sub-page's pages above it (`_path`), else its first folder
 // Every row has a `key` and its `section`. Empty when nothing answers,
 // which closes the menu.

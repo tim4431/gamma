@@ -253,9 +253,11 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.28);
   --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.35);
-  /* Scheme constants: a PDF page's file glyph (FileGlyph .pdf), and the
-     bracket-pair colours of raw $math$ (VSCode's). */
+  /* Scheme constants: the file glyphs' kind tints (FileGlyph .pdf, .data:
+     a PDF's red, a table's or dataset's green, alike in lightness and
+     chroma), and the bracket-pair colours of raw $math$ (VSCode's). */
   --kind-pdf: #e0776b;
+  --kind-data: #57b073;
   --bracket-1: #ffd700;
   --bracket-2: #da70d6;
   --bracket-3: #66c7ff;
@@ -300,6 +302,7 @@
   --shadow-2: 0 6px 20px -6px color-mix(in srgb, var(--ink) 18%, transparent), 0 1px 3px color-mix(in srgb, var(--ink) 7%, transparent);
   --shadow-3: 0 24px 64px -12px color-mix(in srgb, var(--ink) 30%, transparent);
   --kind-pdf: #c8483b;
+  --kind-data: #2a8d4f;
   --bracket-1: #0431fa;
   --bracket-2: #319331;
   --bracket-3: #7b3814;
